@@ -32,6 +32,7 @@ set_target_properties(box3d PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # Core: plain C++ wrapper around Box3D. No Houdini headers in here.
 # ---------------------------------------------------------------------------
 add_library(b3dop_core STATIC
+    src/Box3DShapes.h
     src/Box3DWorld.h
     src/Box3DWorld.cpp
 )

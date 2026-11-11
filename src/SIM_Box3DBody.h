@@ -1,7 +1,10 @@
 // SIM_Box3DBody.h
 //
-// Per-object Box3D settings. Attach to a DOP object (the registered DOP node
-// does this) and the solver reads it when it creates the matching b3Body.
+// Default Box3D settings for every point of a DOP object. Attach to a DOP
+// object (the registered DOP node does this).
+//
+// Per-point attributes (shape, friction, bounce, mass, active, ...) override
+// these; this node is only the fallback for points that do not have them.
 //
 // Mirrors b3dop::BodySettings, which mirrors the relevant parts of b3BodyDef
 // and b3ShapeDef.
@@ -26,6 +29,7 @@ public:
     GETSET_DATA_FUNCS_F("gravityscale",   GravityScale);
     GETSET_DATA_FUNCS_B("enablesleep",    EnableSleep);
     GETSET_DATA_FUNCS_B("isbullet",       IsBullet);
+    GETSET_DATA_FUNCS_I("defaultshape",   DefaultShape);    // 0 box, 1 sphere, 2 convex, 3 concave
 
     // Convenience: pack the options into the Houdini-free struct.
     b3dop::BodySettings toBodySettings() const;

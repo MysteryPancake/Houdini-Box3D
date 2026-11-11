@@ -32,22 +32,23 @@
 
 #include "Box3DWorld.h"
 
-// What we last handed to / read back from Box3D for one body, in DOP terms.
-// Compared against the DOP object's current values each step to detect edits
-// made by other DOP nodes (the stamp alone cannot see those).
+// What we last handed to / read back from Box3D for one body (one POINT of a
+// DOP object), in DOP terms. Compared against the point's current values each
+// step to detect edits made by other nodes (the stamp alone cannot see those).
 struct Box3DBodyMirror
 {
     double pos[3] = { 0, 0, 0 };
     float  rot[4] = { 0, 0, 0, 1 };   // x, y, z, w
     float  lin[3] = { 0, 0, 0 };
     float  ang[3] = { 0, 0, 0 };      // radians per second
+    bool   dynamic = false;           // a body the solver writes back (not static)
 };
 
 // Everything that is shared between timestep copies.
 struct Box3DSharedState
 {
     b3dop::Box3DWorld                           world;
-    std::unordered_map<int, Box3DBodyMirror>    mirror;   // key: SIM_Object id
+    std::unordered_map<uint64_t, Box3DBodyMirror> mirror; // key: b3dop::makeBodyKey(object id, point id)
     uint64_t                                    generation = 0;  // for logs
 
     // The sim time reading (SIM_Engine::getSimulationTime()) at the last

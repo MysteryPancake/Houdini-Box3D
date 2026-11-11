@@ -4,95 +4,381 @@
 #include "SIM_Box3DBody.h"
 #include "Box3DDebug.h"
 
+#include <GA/GA_Handle.h>
+#include <GA/GA_Iterator.h>
+#include <GA/GA_Primitive.h>
+#include <GU/GU_Detail.h>
+#include <GU/GU_DetailHandle.h>
+#include <GU/GU_PrimPacked.h>
 #include <PRM/PRM_Include.h>
 #include <SIM/SIM_CacheOptions.h>
 #include <SIM/SIM_DopDescription.h>
 #include <SIM/SIM_Engine.h>
 #include <SIM/SIM_Error.h>
-#include <SIM/SIM_Motion.h>
+#include <SIM/SIM_Geometry.h>
+#include <SIM/SIM_GeometryCopy.h>
 #include <SIM/SIM_Names.h>
 #include <SIM/SIM_Object.h>
 #include <SIM/SIM_ObjectArray.h>
-#include <SIM/SIM_Position.h>
-#include <SIM/SIM_PositionSimple.h>
 #include <SIM/SIM_Time.h>
 #include <SIM/SIM_Utils.h>
 #include <UT/UT_Error.h>
+#include <UT/UT_Matrix3.h>
+#include <UT/UT_Matrix4.h>
 #include <UT/UT_Quaternion.h>
 #include <UT/UT_Vector3.h>
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <mutex>
+#include <string>
+#include <type_traits>
+#include <unordered_map>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 namespace {
 
-// Names the world / per-object body settings are attached under.
+// Name the per-object default settings (SIM_Box3DBody) and the world are
+// attached under.
 const char *const kWorldDataName = "Box3DWorld";
 const char *const kBodyDataName  = "Box3DBody";
 
-// A snapshot of one DOP object's rigid-body state.
+// A snapshot of one point's rigid-body state.
 using DopBodyState = Box3DBodyMirror;
 
-bool
-readObjectState(const SIM_Object &obj, DopBodyState &out)
+// SIM_GeometryAutoReadLock/WriteLock::getGdp() differ in whether they return a
+// pointer or a reference. These make both spell the same way.
+template <class T> T *gdpPtr(T *p) { return p; }
+template <class T> T *gdpPtr(T &r) { return &r; }
+
+// Point attributes the solver understands. Names follow Houdini's RBD
+// conventions where one exists. Every one is optional; an invalid handle means
+// "use the default".
+struct PointAttrs
 {
-    const SIM_Position *pos = obj.getPosition();
-    if (!pos)
-        return false;
+    GA_ROHandleI  id;          // int    point id; else the point number
+    GA_ROHandleI  active;      // int    0 = static, else dynamic (default 1)
+    GA_ROHandleF  mass;        // float  -> density = mass / shape volume
+    GA_ROHandleF  friction;    // float
+    GA_ROHandleF  bounce;      // float  -> Box3D restitution
+    GA_ROHandleF  pscale;      // float  uniform size (default 1)
+    GA_ROHandleV3 scale;       // vector non-uniform size (default 1 1 1)
+    GA_ROHandleV3 v;           // vector linear velocity
+    GA_ROHandleV3 w;           // vector angular velocity, radians / second
+    GA_ROHandleQ  orient;      // quat   rotation
+    GA_ROHandleS  shape;       // string "box", "sphere"
 
-    UT_Vector3    p;
-    UT_Quaternion q;
-    pos->getPosition(p);
-    pos->getOrientation(q);
-
-    out.pos[0] = p.x();  out.pos[1] = p.y();  out.pos[2] = p.z();
-    out.rot[0] = q.x();  out.rot[1] = q.y();  out.rot[2] = q.z();  out.rot[3] = q.w();
-
-    out.lin[0] = out.lin[1] = out.lin[2] = 0.0f;
-    out.ang[0] = out.ang[1] = out.ang[2] = 0.0f;
-
-    // Velocities live on the SIM_Motion flavour of the Position data.
-    const SIM_Motion *motion = SIM_DATA_GETCONST(obj, SIM_POSITION_DATANAME, SIM_Motion);
-    if (motion)
+    explicit PointAttrs(const GU_Detail *gdp)
+        : id(gdp, GA_ATTRIB_POINT, "id"),
+          active(gdp, GA_ATTRIB_POINT, "active"),
+          mass(gdp, GA_ATTRIB_POINT, "mass"),
+          friction(gdp, GA_ATTRIB_POINT, "friction"),
+          bounce(gdp, GA_ATTRIB_POINT, "bounce"),
+          pscale(gdp, GA_ATTRIB_POINT, "pscale"),
+          scale(gdp, GA_ATTRIB_POINT, "scale"),
+          v(gdp, GA_ATTRIB_POINT, "v"),
+          w(gdp, GA_ATTRIB_POINT, "w"),
+          orient(gdp, GA_ATTRIB_POINT, "orient"),
+          shape(gdp, GA_ATTRIB_POINT, "shape")
     {
-        const UT_Vector3 v = motion->getVelocity();
-        const UT_Vector3 w = motion->getAngularVelocity();   // radians/second
-        out.lin[0] = v.x();  out.lin[1] = v.y();  out.lin[2] = v.z();
-        out.ang[0] = w.x();  out.ang[1] = w.y();  out.ang[2] = w.z();
     }
+};
+
+bool
+isFinite3(const double *p)
+{
+    return std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]);
+}
+
+// Box3D asserts on non-unit quaternions. Houdini users hand us zeros (an
+// attribute that was created with default 0) or slightly off-unit values.
+void
+sanitizeQuat(float q[4])
+{
+    double len2 = 0.0;
+    for (int i = 0; i < 4; ++i) len2 += double(q[i]) * double(q[i]);
+    if (!(len2 > 1e-12) || !std::isfinite(len2))
+    {
+        q[0] = q[1] = q[2] = 0.0f;  q[3] = 1.0f;
+        return;
+    }
+    const float inv = float(1.0 / std::sqrt(len2));
+    for (int i = 0; i < 4; ++i) q[i] *= inv;
+}
+
+// ---------------------------------------------------------------------------
+// Packed primitives
+//
+// A packed prim is ONE point + ONE primitive. Its geometry lives inside the
+// primitive, its position is the point's P, and its rotation / scale live in
+// the primitive's intrinsic transform, NOT in an `orient` attribute. So for a
+// packed point the solver
+//   * reads the rotation from the primitive's full transform,
+//   * writes P to the point and the rotation to the primitive's local transform,
+//   * builds hulls from the packed geometry, relative to the pivot.
+//
+// Everything that touches GU_PrimPacked is in this section, and the calls
+// whose exact HDK signature could not be checked without a Houdini build are
+// written so a different signature does not break the build (see the
+// *Packed* helpers below); the fallback is logged once and described in the
+// README.
+// ---------------------------------------------------------------------------
+
+struct PackedInfo
+{
+    const GU_PrimPacked *prim       = nullptr;       // null: a plain point
+    GA_Offset            primOff    = GA_INVALID_OFFSET;
+    double               P[3]       = { 0, 0, 0 };     // the point's position = the pivot in world space
+    double               m4[16]     = { 1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1 };
+    float                rot[4]     = { 0, 0, 0, 1 };  // rotation split out of m4's 3x3
+    double               scale[3]   = { 1, 1, 1 };
+    bool                 rotationFromPrim = false;     // body rotation = prim's, not `orient`
+};
+
+// GU_PrimPacked::isPackedPrimitive takes the primitive by reference in the
+// class reference; the pointer form is tried second.
+template <class P>
+auto isPackedImpl(const P *p, int) -> decltype(GU_PrimPacked::isPackedPrimitive(*p), bool())
+{
+    return GU_PrimPacked::isPackedPrimitive(*p);
+}
+template <class P>
+auto isPackedImpl(const P *p, long) -> decltype(GU_PrimPacked::isPackedPrimitive(p), bool())
+{
+    return GU_PrimPacked::isPackedPrimitive(p);
+}
+bool isPackedPrim(const GA_Primitive *p) { return p && isPackedImpl(p, 0); }
+
+// getFullTransform4 fills a UT_Matrix4D (or F, depending on the build).
+template <class P>
+auto fetchFull4(const P &p, double out[16], int)
+    -> decltype(p.getFullTransform4(std::declval<UT_Matrix4D &>()), bool())
+{
+    UT_Matrix4D m;
+    p.getFullTransform4(m);
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            out[r * 4 + c] = double(m(r, c));
+    return true;
+}
+template <class P>
+auto fetchFull4(const P &p, double out[16], long)
+    -> decltype(p.getFullTransform4(std::declval<UT_Matrix4F &>()), bool())
+{
+    UT_Matrix4F m;
+    p.getFullTransform4(m);
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            out[r * 4 + c] = double(m(r, c));
     return true;
 }
 
-// Returns true if velocities could be stored (object has Motion data).
-// Without Motion we still write position/orientation so the object moves, but
-// velocity stays only inside Box3D.
-bool
-writeObjectState(SIM_Object &obj, const DopBodyState &s)
+// Setting the rotation: the packed primitive's local transform is a 3x3.
+// If this HDK has no setLocalTransform(UT_Matrix3D), packed rotation cannot be
+// written back; the solver then treats packed points like plain ones
+// (rotation in `orient`) instead of fighting the primitive every step.
+template <class P, class = void>
+struct CanSetLocal3 : std::false_type {};
+template <class P>
+struct CanSetLocal3<P, std::void_t<decltype(std::declval<P &>().setLocalTransform(
+                           std::declval<const UT_Matrix3D &>()))>> : std::true_type {};
+constexpr bool kPackedRotationWritable = CanSetLocal3<GU_PrimPacked>::value;
+
+template <class P>
+void setLocal3(P &p, const double m[9], std::true_type)
 {
-    SIM_Motion *motion = SIM_DATA_GET(obj, SIM_POSITION_DATANAME, SIM_Motion);
-    if (motion)
+    UT_Matrix3D mat;
+    for (int r = 0; r < 3; ++r)
+        for (int c = 0; c < 3; ++c)
+            mat(r, c) = m[r * 3 + c];
+    p.setLocalTransform(mat);
+}
+template <class P>
+void setLocal3(P &, const double *, std::false_type) {}
+
+// Is this point's primitive a packed primitive? Fills everything the solver
+// needs from it. A plain point (no vertex, or a non-packed primitive) returns
+// a PackedInfo with prim == nullptr.
+PackedInfo
+getPackedInfo(const GU_Detail *gdp, GA_Offset ptoff)
+{
+    PackedInfo pk;
+    const GA_Offset vtx = gdp->pointVertex(ptoff);
+    if (!GAisValid(vtx))
+        return pk;
+    const GA_Offset po = gdp->vertexPrimitive(vtx);
+    if (!GAisValid(po))
+        return pk;
+    const GA_Primitive *prim = gdp->getPrimitive(po);
+    if (!isPackedPrim(prim))
+        return pk;
+
+    pk.prim    = static_cast<const GU_PrimPacked *>(prim);
+    pk.primOff = po;
+    const UT_Vector3 pos = gdp->getPos3(ptoff);
+    pk.P[0] = pos.x();  pk.P[1] = pos.y();  pk.P[2] = pos.z();
+    if (!fetchFull4(*pk.prim, pk.m4, 0))
     {
-        motion->setPosition(UT_Vector3(s.pos[0], s.pos[1], s.pos[2]));
-        motion->setOrientation(UT_Quaternion(s.rot[0], s.rot[1], s.rot[2], s.rot[3]));
-        motion->setVelocity(UT_Vector3(s.lin[0], s.lin[1], s.lin[2]));
-        motion->setAngularVelocity(UT_Vector3(s.ang[0], s.ang[1], s.ang[2]));
-        return true;
+        pk.prim = nullptr;          // cannot read the transform: treat as plain
+        return pk;
+    }
+    const double m3[9] = { pk.m4[0], pk.m4[1], pk.m4[2],
+                           pk.m4[4], pk.m4[5], pk.m4[6],
+                           pk.m4[8], pk.m4[9], pk.m4[10] };
+    b3dop::matrix3ToQuatScale(m3, pk.rot, pk.scale);
+    pk.rotationFromPrim = kPackedRotationWritable;
+    return pk;
+}
+
+// ---------------------------------------------------------------------------
+// Collision source geometry
+// ---------------------------------------------------------------------------
+
+// The points of one convex piece, as raw xyz in the space they are stored in.
+struct NamedPiece
+{
+    std::string                name;
+    std::vector<float>         xyz;
+    std::unordered_set<GA_Offset> seen;    // points already added (a point is shared by many prims)
+};
+
+struct PieceGroup
+{
+    std::vector<NamedPiece>                    pieces;
+    std::unordered_map<std::string, size_t>    byName;
+};
+
+// Group the points of a detail's primitives into pieces by the primitive
+// string attribute `name` (prims without one all land in one piece). A detail
+// with points but no primitives becomes one piece of all its points.
+void
+collectPieces(const GU_Detail *gdp, PieceGroup &out)
+{
+    const GA_ROHandleS nameH(gdp, GA_ATTRIB_PRIMITIVE, "name");
+
+    auto addPoint = [&](PieceGroup &g, const std::string &name, GA_Offset pt) {
+        auto it = g.byName.find(name);
+        if (it == g.byName.end())
+        {
+            it = g.byName.emplace(name, g.pieces.size()).first;
+            g.pieces.emplace_back();
+            g.pieces.back().name = name;
+        }
+        NamedPiece &np = g.pieces[it->second];
+        if (!np.seen.insert(pt).second)
+            return;
+        const UT_Vector3 p = gdp->getPos3(pt);
+        np.xyz.push_back(p.x());  np.xyz.push_back(p.y());  np.xyz.push_back(p.z());
+    };
+
+    bool anyPrim = false;
+    for (GA_Iterator it(gdp->getPrimitiveRange()); !it.atEnd(); ++it)
+    {
+        const GA_Offset po = *it;
+        const GA_Primitive *prim = gdp->getPrimitive(po);
+        if (!prim)
+            continue;
+        anyPrim = true;
+
+        std::string name;
+        if (nameH.isValid())
+            if (const char *n = nameH.get(po))
+                name = n;
+
+        const GA_Size nv = prim->getVertexCount();
+        for (GA_Size i = 0; i < nv; ++i)
+            addPoint(out, name, prim->getPointOffset(i));
     }
 
-    SIM_PositionSimple *position = SIM_DATA_GET(obj, SIM_POSITION_DATANAME, SIM_PositionSimple);
-    if (!position)
+    if (!anyPrim)
+        for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it)
+            addPoint(out, std::string(), *it);
+
+    for (NamedPiece &np : out.pieces)       // the `seen` sets are only needed while collecting
+        np.seen.clear();
+}
+
+// Per-object, per-sync cache of collision source geometry. Lives for one
+// syncObject() call. The only source is the geometry packed inside a point's
+// primitive; whether that is a simplified proxy or the full-detail geometry is
+// up to whoever built the Geometry input, the solver treats both the same.
+struct ShapeSources
+{
+    // Packed geometry, collected once per distinct source detail. The handle
+    // is kept in the entry so the detail (and so the pointer used as the key)
+    // stays alive for the whole call.
+    struct InnerEntry
     {
-        B3D_LOG("  writeBack: object id=%d Position is not writable (not SIM_PositionSimple)",
-                obj.getObjectId());
-        return false;
+        GU_ConstDetailHandle handle;
+        PieceGroup           pieces;
+    };
+    std::unordered_map<const GU_Detail *, InnerEntry> inner;
+
+    // Returns the pieces of a packed primitive's own geometry, or null.
+    const PieceGroup *innerPieces(const GU_PrimPacked &prim)
+    {
+        GU_ConstDetailHandle handle = prim.getPackedDetail();
+        GU_DetailHandleAutoReadLock lock(handle);
+        const GU_Detail *gdp = gdpPtr(lock.getGdp());
+        if (!gdp)
+            return nullptr;
+
+        auto it = inner.find(gdp);
+        if (it == inner.end())
+        {
+            InnerEntry e;
+            e.handle = handle;
+            collectPieces(gdp, e.pieces);
+            it = inner.emplace(gdp, std::move(e)).first;
+        }
+        return it->second.pieces.pieces.empty() ? nullptr : &it->second.pieces;
     }
-    B3D_LOG("  writeBack: object id=%d has no Motion data, writing position/orientation only",
-            obj.getObjectId());
-    position->setPosition(UT_Vector3(s.pos[0], s.pos[1], s.pos[2]));
-    position->setOrientation(UT_Quaternion(s.rot[0], s.rot[1], s.rot[2], s.rot[3]));
-    return false;
+};
+
+// ---------------------------------------------------------------------------
+// Point state
+// ---------------------------------------------------------------------------
+
+// Read P / orient / v / w of one point. Returns false if P is not finite.
+// For a packed point the rotation comes from the primitive, not `orient`.
+bool
+readPointState(const GU_Detail *gdp, const PointAttrs &a, GA_Offset off,
+               const PackedInfo &pk, DopBodyState &out)
+{
+    const UT_Vector3 p = gdp->getPos3(off);
+    out.pos[0] = p.x();  out.pos[1] = p.y();  out.pos[2] = p.z();
+    if (!isFinite3(out.pos))
+        return false;
+
+    out.rot[0] = out.rot[1] = out.rot[2] = 0.0f;  out.rot[3] = 1.0f;
+    if (pk.prim && pk.rotationFromPrim)
+    {
+        for (int i = 0; i < 4; ++i) out.rot[i] = pk.rot[i];
+        sanitizeQuat(out.rot);
+    }
+    else if (a.orient.isValid())
+    {
+        const UT_QuaternionF q = a.orient.get(off);
+        out.rot[0] = q.x();  out.rot[1] = q.y();  out.rot[2] = q.z();  out.rot[3] = q.w();
+        sanitizeQuat(out.rot);
+    }
+
+    out.lin[0] = out.lin[1] = out.lin[2] = 0.0f;
+    out.ang[0] = out.ang[1] = out.ang[2] = 0.0f;
+    if (a.v.isValid())
+    {
+        const UT_Vector3 v = a.v.get(off);
+        out.lin[0] = v.x();  out.lin[1] = v.y();  out.lin[2] = v.z();
+    }
+    if (a.w.isValid())
+    {
+        const UT_Vector3 w = a.w.get(off);
+        out.ang[0] = w.x();  out.ang[1] = w.y();  out.ang[2] = w.z();
+    }
+    return true;
 }
 
 // Returns a short description of what differs, or nullptr if the same.
@@ -115,31 +401,365 @@ describeStateDifference(const DopBodyState &a, const DopBodyState &b)
     return nullptr;
 }
 
+// Default settings for all points of an object (the Box3D Body DOP node), or
+// built-in defaults if the object has none.
 b3dop::BodySettings
-bodySettingsFor(const SIM_Object &obj)
+nodeSettingsFor(const SIM_Object &obj)
 {
     const SIM_Box3DBody *body = SIM_DATA_GETCONST(obj, kBodyDataName, SIM_Box3DBody);
     return body ? body->toBodySettings() : b3dop::BodySettings();
 }
 
-// Add one body (and, once the core supports it, its shapes).
-bool
-addObjectToWorld(b3dop::Box3DWorld &world, const SIM_Object &obj, const DopBodyState &st)
+// `active` = 0 makes a point static. Otherwise the node's body type applies.
+b3dop::BodySettings::Type
+bodyTypeFor(const b3dop::BodySettings &node, bool active)
 {
-    const uint64_t id = static_cast<uint64_t>(obj.getObjectId());
-    const bool ok = world.addBody(id, bodySettingsFor(obj), st.pos, st.rot);
-    // TODO: shapes from the object's Geometry / collision data.
-    // PLACEHOLDER: a 1x1x1 box so the body has mass (a shapeless dynamic body
-    // has zero mass and gravity does nothing to it).
-    if (ok)
+    return active ? node.type : b3dop::BodySettings::Type::Static;
+}
+
+bool
+pointIsActive(const PointAttrs &a, GA_Offset off)
+{
+    return !a.active.isValid() || a.active.get(off) != 0;
+}
+
+// The point's id: the `id` attribute, else the point number.
+int64_t
+pointId(const GU_Detail *gdp, const PointAttrs &a, GA_Offset off)
+{
+    return a.id.isValid() ? int64_t(a.id.get(off)) : int64_t(gdp->pointIndex(off));
+}
+
+uint64_t
+pointKey(const GU_Detail *gdp, const PointAttrs &a, int objectId, GA_Offset off)
+{
+    return b3dop::makeBodyKey(objectId, pointId(gdp, a, off));
+}
+
+// ---------------------------------------------------------------------------
+// Building the Box3D shapes for one point
+// ---------------------------------------------------------------------------
+
+// One collision piece of a body: a hull, or a box / sphere (the fallback when a
+// piece cannot be hulled, and the shape for box / sphere points).
+struct Piece
+{
+    bool              isHull = false;
+    b3dop::HullId     hull   = 0;
+    b3dop::ShapeSpec  spec;
+    float             volume = 0.0f;
+};
+
+struct BuiltShapes
+{
+    std::vector<Piece> pieces;
+    float              totalVolume = 0.0f;
+    const char        *note = nullptr;      // set when something fell back; logged once per body
+};
+
+// Merge pieces into one point set.
+void
+mergePieces(const std::vector<std::vector<float>> &pieces, std::vector<float> &out)
+{
+    out.clear();
+    for (const auto &p : pieces)
+        out.insert(out.end(), p.begin(), p.end());
+}
+
+// Turn one set of body-local points into a Piece: a hull if possible, else a
+// box fitted to the points. Returns false if there are no usable points.
+bool
+pieceFromPoints(b3dop::Box3DWorld &world, const std::vector<float> &pts, Piece &out, const char *&note)
+{
+    const int n = int(pts.size() / 3);
+    float vol = 0.0f;
+    const b3dop::HullId h = world.createHull(pts.data(), n, &vol);
+    if (h)
     {
-        const float half[3] = {0.5f, 0.5f, 0.5f};
-        if (!world.addBoxShape(id, half))
-            B3D_LOG("  addBoxShape(id=%d) FAILED", obj.getObjectId());
+        out.isHull = true;
+        out.hull   = h;
+        out.volume = vol;
+        return true;
     }
-    if (!ok)
-        B3D_LOG("  addBody(id=%d) FAILED", obj.getObjectId());
-    return ok;
+    // Fewer than 4 points, flat, or too complex to hull: fall back to the bounds.
+    if (b3dop::fitShapeToPoints(b3dop::ShapeType::Box, pts.data(), n, out.spec))
+    {
+        out.isHull = false;
+        out.volume = b3dop::shapeVolume(out.spec);
+        note = "a piece could not be hulled (flat, < 4 points or too complex); used its bounding box";
+        return true;
+    }
+    return false;
+}
+
+// Decide what shapes a point's body gets. See README, "Convex and concave".
+//
+//  box / sphere : plain point  -> unit shape scaled by pscale * scale
+//                 packed point -> fitted to the packed geometry's bounds
+//  convex       : ONE hull of the packed geometry
+//  concave      : one hull PER PIECE of the packed geometry (pieces grouped by
+//                 the prim `name` attribute); several shapes on one body
+//
+// The packed geometry is the collision geometry, whether it is a simplified
+// proxy or the full-detail mesh. A convex / concave point that is not packed
+// (or whose packed geometry is empty) falls back to a box so the body still
+// exists.
+BuiltShapes
+buildShapes(b3dop::Box3DWorld &world, ShapeSources &src, b3dop::ShapeType type,
+            float pscale, const float scale[3], const PackedInfo &pk)
+{
+    using namespace b3dop;
+    BuiltShapes out;
+
+    const bool wantGeometry = shapeNeedsGeometry(type);
+
+    // 1. The source: the packed primitive's own geometry (any shape type on a
+    //    packed point). A plain point has none.
+    const PieceGroup *group = pk.prim ? src.innerPieces(*pk.prim) : nullptr;
+
+    // 2. Its points, in BODY-LOCAL space, one set per piece.
+    std::vector<std::vector<float>> sets;
+    if (group)
+    {
+        for (const NamedPiece &np : group->pieces)
+        {
+            const int n = int(np.xyz.size() / 3);
+            if (n == 0)
+                continue;
+            // Packed geometry is in the primitive's own space: relative to the
+            // pivot, scale baked in, rotation out (and quantized so instances
+            // at different rotations share one hull).
+            std::vector<float> local;
+            packedPointsToBodyLocal(np.xyz.data(), n, pk.m4, pk.P, local);
+            sets.push_back(std::move(local));
+        }
+    }
+
+    // 3. Shapes from the point sets.
+    if (wantGeometry && !sets.empty())
+    {
+        std::vector<std::vector<float>> hulls;
+        if (type == ShapeType::Convex)
+        {
+            hulls.emplace_back();
+            mergePieces(sets, hulls.back());     // one hull from everything
+        }
+        else
+            hulls = std::move(sets);             // one hull per piece
+
+        for (const auto &pts : hulls)
+        {
+            Piece pc;
+            if (pieceFromPoints(world, pts, pc, out.note))
+            {
+                out.totalVolume += pc.volume;
+                out.pieces.push_back(pc);
+            }
+        }
+    }
+    else if (!wantGeometry && !sets.empty())
+    {
+        // box / sphere on a packed point: fit to the packed geometry's bounds.
+        std::vector<float> all;
+        mergePieces(sets, all);
+        Piece pc;
+        if (fitShapeToPoints(type, all.data(), int(all.size() / 3), pc.spec))
+        {
+            pc.volume = shapeVolume(pc.spec);
+            out.totalVolume += pc.volume;
+            out.pieces.push_back(pc);
+        }
+    }
+
+    // 4. Nothing usable: the unit shape scaled by pscale * scale.
+    if (out.pieces.empty())
+    {
+        if (wantGeometry)
+            out.note = pk.prim ? "packed geometry is empty; used a box"
+                               : "convex / concave needs a packed primitive; used a box";
+        Piece pc;
+        pc.spec   = makeShapeSpec(wantGeometry ? ShapeType::Box : type, pscale, scale);
+        pc.volume = shapeVolume(pc.spec);
+        out.totalVolume = pc.volume;
+        out.pieces.push_back(pc);
+    }
+    return out;
+}
+
+// Create the body + shapes for one point and apply its initial velocity.
+bool
+addPointBody(b3dop::Box3DWorld &world, ShapeSources &src, const b3dop::BodySettings &node,
+             const PointAttrs &a, GA_Offset off, int64_t bodyId, uint64_t key,
+             const PackedInfo &pk, const DopBodyState &st, bool active)
+{
+    b3dop::BodySettings b = node;
+    b.type = bodyTypeFor(node, active);
+    if (a.friction.isValid()) b.friction    = a.friction.get(off);
+    if (a.bounce.isValid())   b.restitution = a.bounce.get(off);
+
+    // Shape: `shape` string attribute, else the node's default.
+    b3dop::ShapeType type = node.defaultShape;
+    if (a.shape.isValid())
+        b3dop::parseShapeType(a.shape.get(off), type);   // unknown -> keep default
+
+    // pscale / scale size plain points. A packed point's size is its
+    // primitive's transform, so they only matter as the fallback box there.
+    const float ps = a.pscale.isValid() ? float(a.pscale.get(off)) : 1.0f;
+    float sc[3] = { 1.0f, 1.0f, 1.0f };
+    if (a.scale.isValid())
+    {
+        const UT_Vector3 s = a.scale.get(off);
+        sc[0] = s.x();  sc[1] = s.y();  sc[2] = s.z();
+    }
+
+    const BuiltShapes shapes = buildShapes(world, src, type, ps, sc, pk);
+    (void)bodyId;                   // only used by the debug log
+    if (shapes.note)
+        B3D_LOG("  body id=%lld: %s", (long long)bodyId, shapes.note);
+
+    // mass -> density (Box3D computes mass from density * volume; for a
+    // compound the volume is the sum of the pieces).
+    if (a.mass.isValid())
+    {
+        const float mass = float(a.mass.get(off));
+        if (mass > 0.0f && std::isfinite(mass) && shapes.totalVolume > 0.0f)
+            b.density = mass / shapes.totalVolume;
+    }
+
+    if (!world.addBody(key, b, st.pos, st.rot))
+        return false;
+
+    int added = 0;
+    for (const Piece &pc : shapes.pieces)
+        added += (pc.isHull ? world.addHullShape(key, pc.hull) : world.addShape(key, pc.spec)) ? 1 : 0;
+    if (added == 0)
+    {
+        world.removeBody(key);      // never leave a shapeless body behind
+        return false;
+    }
+    world.setVelocity(key, st.lin, st.ang);     // no-op for static bodies
+    return true;
+}
+
+struct SyncCounts
+{
+    int added = 0, edited = 0, retyped = 0, failed = 0, duplicates = 0, badP = 0;
+};
+
+// Sync one object's points into the world. Returns true if any of its points
+// is a body we will write back (dynamic).
+bool
+syncObject(Box3DSharedState &st, const SIM_Object &obj,
+           std::unordered_set<uint64_t> &seen, SyncCounts &c)
+{
+    const SIM_Geometry *geo = SIM_DATA_GETCONST(obj, SIM_GEOMETRY_DATANAME, SIM_Geometry);
+    if (!geo)
+    {
+        B3D_LOG("  object id=%d has no Geometry data, skipped", obj.getObjectId());
+        return false;
+    }
+    SIM_GeometryAutoReadLock lock(geo);
+    const GU_Detail *gdp = gdpPtr(lock.getGdp());
+    if (!gdp)
+        return false;
+
+    const PointAttrs a(gdp);
+    const b3dop::BodySettings node = nodeSettingsFor(obj);
+    b3dop::Box3DWorld &world = st.world;
+    bool hasDynamic = false;
+
+    ShapeSources sources;       // packed geometry, collected lazily per distinct source
+
+    for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it)
+    {
+        const GA_Offset off = *it;
+        const int64_t   bid = pointId(gdp, a, off);
+        const uint64_t  key = b3dop::makeBodyKey(obj.getObjectId(), bid);
+
+        if (!seen.insert(key).second)
+        {
+            ++c.duplicates;         // two points with the same `id`: first wins
+            continue;
+        }
+
+        const PackedInfo pk = getPackedInfo(gdp, off);
+        DopBodyState cur;
+        if (!readPointState(gdp, a, off, pk, cur))
+        {
+            ++c.badP;
+            seen.erase(key);        // treated as absent: body (if any) is removed
+            continue;
+        }
+
+        const bool active = pointIsActive(a, off);
+        const b3dop::BodySettings::Type wantType = bodyTypeFor(node, active);
+
+        auto mit = st.mirror.find(key);
+        if (mit == st.mirror.end())
+        {
+            if (!addPointBody(world, sources, node, a, off, bid, key, pk, cur, active))
+            {
+                ++c.failed;
+                continue;
+            }
+            cur.dynamic = (wantType == b3dop::BodySettings::Type::Dynamic);
+            st.mirror[key] = cur;
+            ++c.added;
+            hasDynamic = hasDynamic || cur.dynamic;
+            continue;
+        }
+
+        // Existing body. Did `active` flip?
+        b3dop::BodySettings::Type haveType;
+        if (world.getBodyType(key, haveType) && haveType != wantType)
+        {
+            world.setBodyType(key, wantType);
+            mit->second.dynamic = (wantType == b3dop::BodySettings::Type::Dynamic);
+            ++c.retyped;
+        }
+
+        // Did something else edit P / orient / v / w since we wrote it?
+        if (describeStateDifference(cur, mit->second))
+        {
+            world.setTransform(key, cur.pos, cur.rot);
+            world.setVelocity(key, cur.lin, cur.ang);
+            const bool dyn = mit->second.dynamic;
+            mit->second = cur;
+            mit->second.dynamic = dyn;
+            ++c.edited;
+        }
+        hasDynamic = hasDynamic || mit->second.dynamic;
+    }
+    return hasDynamic;
+}
+
+// Make sure `orient`, `v` and `w` exist on the points so results have
+// somewhere to go. Returns true if `orient` was just created.
+bool
+ensureResultAttribs(GU_Detail *gdp)
+{
+    bool createdOrient = false;
+
+    if (!gdp->findPointAttribute("v"))
+    {
+        gdp->addFloatTuple(GA_ATTRIB_POINT, "v", 3);
+        if (GA_Attribute *attr = gdp->findPointAttribute("v"))
+            attr->setTypeInfo(GA_TYPE_VECTOR);
+    }
+    if (!gdp->findPointAttribute("w"))
+    {
+        gdp->addFloatTuple(GA_ATTRIB_POINT, "w", 3);
+        if (GA_Attribute *attr = gdp->findPointAttribute("w"))
+            attr->setTypeInfo(GA_TYPE_VECTOR);
+    }
+    if (!gdp->findPointAttribute("orient"))
+    {
+        gdp->addFloatTuple(GA_ATTRIB_POINT, "orient", 4);
+        if (GA_Attribute *attr = gdp->findPointAttribute("orient"))
+            attr->setTypeInfo(GA_TYPE_QUATERNION);
+        createdOrient = true;
+    }
+    return createdOrient;
 }
 
 } // namespace
@@ -218,15 +838,14 @@ SIM_SolverBox3D::currentWorldSettings() const
 SIM_Solver::SIM_Result
 SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
                                       SIM_ObjectArray &objects,
-                                      SIM_ObjectArray &newobjects,
-                                      SIM_ObjectArray &feedbacktoobjects,
+                                      SIM_ObjectArray & /*newobjects*/,
+                                      SIM_ObjectArray & /*feedbacktoobjects*/,
                                       const SIM_Time &timestep)
 {
     // Whatever the engine reports as "now" during a solve. We never assume
     // whether that is the start or the end of the step; see canContinue().
     const double now = engine.getSimulationTime();
     const double dt  = timestep;
-
 
     if (objects.entries() == 0)
         return SIM_SOLVER_SUCCESS;
@@ -261,7 +880,7 @@ SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
     }
 
     if (reason)
-        rebuildWorldFromObjects(*worldData, objects, reason);
+        createFreshWorld(*worldData, reason);
     if (!worldData->hasValidWorld())
     {
         addError(objects(0), SIM_MESSAGE, "Box3D: world creation failed", UT_ERROR_ABORT);
@@ -271,14 +890,10 @@ SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
     Box3DSharedState *st = worldData->state();
     std::lock_guard<std::mutex> lock(st->mutex);
 
-    if (!reason)
-    {
-        syncObjectSet(*worldData, objects, newobjects);
-    }
-
-    pushObjectStateIn(*worldData, objects);
+    std::vector<char> objectHasDynamic;
+    syncFromGeometry(*worldData, objects, objectHasDynamic);
     stepWorld(*worldData, static_cast<float>(dt));
-    writeResultsBack(*worldData, objects);
+    writeResultsBack(*worldData, objects, objectHasDynamic);
 
     st->markStepped(now);
 
@@ -311,109 +926,63 @@ SIM_SolverBox3D::findOrCreateWorldData(SIM_ObjectArray &objects)
 }
 
 void
-SIM_SolverBox3D::rebuildWorldFromObjects(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects,
-                                         const char *reason)
+SIM_SolverBox3D::createFreshWorld(SIM_Box3DWorld &worldData, const char *reason)
 {
+    (void)reason;       // only used by the debug log
     B3D_COUNT(rebuilds);
     B3D_LOG("REBUILD #%d: %s", B3D_COUNTER(rebuilds), reason);
 
     // Fresh state; the previous one (if any) is left alone for whichever
-    // timestep data still points at it.
-    if (!worldData.createWorld(currentWorldSettings()))
-        return;
-
-    Box3DSharedState *st = worldData.state();
-    for (exint i = 0; i < objects.entries(); ++i)
-    {
-        const SIM_Object *obj = objects(i);
-        DopBodyState s;
-        if (!readObjectState(*obj, s))
-        {
-            B3D_LOG("  object id=%d has no Position data, skipped", obj->getObjectId());
-            continue;
-        }
-        addObjectToWorld(st->world, *obj, s);
-        st->mirror[obj->getObjectId()] = s;     // DOP state is the truth
-        B3D_LOG("  body id=%d pos=(%g %g %g) lin=(%g %g %g) type=%d", obj->getObjectId(),
-                s.pos[0], s.pos[1], s.pos[2], s.lin[0], s.lin[1], s.lin[2],
-                (int)bodySettingsFor(*obj).type);
-    }
+    // timestep data still points at it. Its mirror is empty, so
+    // syncFromGeometry() adds every point as a new body.
+    worldData.createWorld(currentWorldSettings());
 }
 
 void
-SIM_SolverBox3D::syncObjectSet(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects,
-                               SIM_ObjectArray &newobjects)
+SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects,
+                                  std::vector<char> &objectHasDynamic)
 {
     Box3DSharedState *st = worldData.state();
-
-    std::unordered_set<int> present;
-    for (exint i = 0; i < objects.entries(); ++i)
-        present.insert(objects(i)->getObjectId());
 
     // TODO: the engine says objects in `newobjects` should not be solved on the
     // step they appear in, so they keep their initial conditions. A rigid body
     // world has no per-body "skip this step"; decide how to treat them (e.g.
     // step them as kinematic for one step).
 
-    // Removed objects.
+    std::unordered_set<uint64_t> seen;
+    SyncCounts                   counts;
+    objectHasDynamic.assign(size_t(objects.entries()), 0);
+
+    for (exint i = 0; i < objects.entries(); ++i)
+        objectHasDynamic[size_t(i)] = syncObject(*st, *objects(i), seen, counts) ? 1 : 0;
+
+    // Bodies whose point (or whole object) is gone.
+    int removed = 0;
     for (auto it = st->mirror.begin(); it != st->mirror.end();)
     {
-        if (!present.count(it->first))
+        if (!seen.count(it->first))
         {
-            B3D_LOG("  sync: object id=%d removed -> removeBody", it->first);
-            st->world.removeBody(static_cast<uint64_t>(it->first));
+            st->world.removeBody(it->first);
             it = st->mirror.erase(it);
+            ++removed;
         }
         else
             ++it;
     }
 
-    // Added objects.
-    for (exint i = 0; i < objects.entries(); ++i)
+    // Hulls built for bodies that were then removed (or never created) are
+    // no longer needed; hulls still used by a body stay cached for the next
+    // body that instances the same geometry.
+    st->world.pruneHulls();
+
+    if (counts.added || counts.edited || counts.retyped || counts.failed ||
+        counts.duplicates || counts.badP || removed)
     {
-        const SIM_Object *obj = objects(i);
-        if (st->mirror.count(obj->getObjectId()))
-            continue;
-        DopBodyState s;
-        if (!readObjectState(*obj, s))
-            continue;
-        B3D_LOG("  sync: object id=%d added -> addBody", obj->getObjectId());
-        addObjectToWorld(st->world, *obj, s);
-        st->mirror[obj->getObjectId()] = s;
+        B3D_LOG("  sync: +%d added, -%d removed, %d edited externally, %d type changes, "
+                "%d failed, %d duplicate ids, %d non-finite P  (bodies now %d)",
+                counts.added, removed, counts.edited, counts.retyped, counts.failed,
+                counts.duplicates, counts.badP, st->world.bodyCount());
     }
-}
-
-void
-SIM_SolverBox3D::pushObjectStateIn(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects)
-{
-    Box3DSharedState *st = worldData.state();
-
-    for (exint i = 0; i < objects.entries(); ++i)
-    {
-        const SIM_Object *obj = objects(i);
-        auto it = st->mirror.find(obj->getObjectId());
-        if (it == st->mirror.end())
-            continue;
-
-        DopBodyState cur;
-        if (!readObjectState(*obj, cur))
-            continue;
-
-        const char *what = describeStateDifference(cur, it->second);
-        if (!what)
-            continue;
-
-        // Someone else changed this object since we wrote it. DOPs wins.
-        B3D_LOG("  external edit on object id=%d (%s) -> pushing into Box3D",
-                obj->getObjectId(), what);
-        const uint64_t id = static_cast<uint64_t>(obj->getObjectId());
-        st->world.setTransform(id, cur.pos, cur.rot);
-        st->world.setVelocity(id, cur.lin, cur.ang);
-        it->second = cur;
-    }
-
-    // TODO: kinematic targets, forces from other DOP nodes, per-body setting
-    //       changes (SIM_Box3DBody), gravity / sleep changes without a rebuild.
 }
 
 void
@@ -423,47 +992,101 @@ SIM_SolverBox3D::stepWorld(SIM_Box3DWorld &worldData, float timestep)
 }
 
 void
-SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects)
+SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects,
+                                  const std::vector<char> &objectHasDynamic)
 {
     Box3DSharedState *st = worldData.state();
-    bool warnedStub = false;
 
     for (exint i = 0; i < objects.entries(); ++i)
     {
+        // Objects with only static points: nothing to write, and asking for
+        // the non-const geometry would copy it for no reason.
+        if (!objectHasDynamic[size_t(i)])
+            continue;
+
         SIM_Object *obj = objects(i);
-        auto it = st->mirror.find(obj->getObjectId());
-        if (it == st->mirror.end())
+        SIM_GeometryCopy *geo = SIM_DATA_GET(*obj, SIM_GEOMETRY_DATANAME, SIM_GeometryCopy);
+        if (!geo)
+        {
+            B3D_LOG("  writeBack: object id=%d Geometry is not writable (not a SIM_GeometryCopy)",
+                    obj->getObjectId());
+            continue;
+        }
+
+        SIM_GeometryAutoWriteLock lock(geo);
+        GU_Detail *gdp = gdpPtr(lock.getGdp());
+        if (!gdp)
             continue;
 
-        const uint64_t id = static_cast<uint64_t>(obj->getObjectId());
-        DopBodyState s = it->second;    // start from what we know
+        const bool createdOrient = ensureResultAttribs(gdp);
 
-        const bool gotT = st->world.getTransform(id, s.pos, s.rot);
-        const bool gotV = st->world.getVelocity(id, s.lin, s.ang);
+        const PointAttrs a(gdp);          // bound AFTER the attributes exist
+        GA_RWHandleV3 vOut(gdp, GA_ATTRIB_POINT, "v");
+        GA_RWHandleV3 wOut(gdp, GA_ATTRIB_POINT, "w");
+        GA_RWHandleQ  qOut(gdp, GA_ATTRIB_POINT, "orient");
 
-        if (!gotT || !gotV)
+        if (createdOrient && qOut.isValid())
         {
-            // Body missing from the world (e.g. addBody failed). Leave the DOP
-            // state alone and re-snapshot it so the next step does not
-            // misreport an "external edit".
-            if (!warnedStub)
+            // A new quaternion attribute defaults to 0,0,0,0, which is not a
+            // rotation. Start every point (static ones too) at identity.
+            for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it)
+                qOut.set(*it, UT_QuaternionF(0.0f, 0.0f, 0.0f, 1.0f));
+        }
+
+        int missing = 0;
+        for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it)
+        {
+            const GA_Offset off = *it;
+            const uint64_t  key = pointKey(gdp, a, obj->getObjectId(), off);
+
+            auto mit = st->mirror.find(key);
+            if (mit == st->mirror.end() || !mit->second.dynamic)
+                continue;
+
+            DopBodyState s = mit->second;
+            if (!st->world.getTransform(key, s.pos, s.rot) ||
+                !st->world.getVelocity(key, s.lin, s.ang))
             {
-                B3D_LOG("  writeBack: Box3D has no body for some objects; DOP state untouched for them");
-                warnedStub = true;
+                ++missing;      // leave the point alone; next sync re-snapshots it
+                continue;
             }
-            DopBodyState cur;
-            if (readObjectState(*obj, cur))
-                it->second = cur;
-            continue;
+
+            gdp->setPos3(off, UT_Vector3(float(s.pos[0]), float(s.pos[1]), float(s.pos[2])));
+            if (qOut.isValid()) qOut.set(off, UT_QuaternionF(s.rot[0], s.rot[1], s.rot[2], s.rot[3]));
+            if (vOut.isValid()) vOut.set(off, UT_Vector3(s.lin[0], s.lin[1], s.lin[2]));
+            if (wOut.isValid()) wOut.set(off, UT_Vector3(s.ang[0], s.ang[1], s.ang[2]));
+
+            // A packed primitive's rotation is NOT the point's `orient`: it is
+            // the primitive's own transform. Without this the packed geometry
+            // would move but never rotate. Keep its scale, replace the rotation.
+            PackedInfo pk = getPackedInfo(gdp, off);
+            if (pk.prim && pk.rotationFromPrim)
+            {
+                const double oldM3[9] = { pk.m4[0], pk.m4[1], pk.m4[2],
+                                          pk.m4[4], pk.m4[5], pk.m4[6],
+                                          pk.m4[8], pk.m4[9], pk.m4[10] };
+                double newM3[9];
+                b3dop::composeMatrix3(s.rot, oldM3, newM3);
+                GU_PrimPacked *prim = static_cast<GU_PrimPacked *>(gdp->getPrimitive(pk.primOff));
+                setLocal3(*prim, newM3, std::integral_constant<bool, kPackedRotationWritable>());
+                pk = getPackedInfo(gdp, off);       // re-read what the primitive now holds
+            }
+
+            // Re-read what the points actually hold (P may be stored in lower
+            // precision than Box3D's), so next step's edit detection compares
+            // like with like and does not report our own write as an edit.
+            DopBodyState stored;
+            if (readPointState(gdp, a, off, pk, stored))
+            {
+                stored.dynamic = true;
+                mit->second = stored;
+            }
+            else
+                mit->second = s;
         }
 
-        if (!writeObjectState(*obj, s))
-        {
-            // DOP can't hold velocity here, so what we re-read next step is 0.
-            s.lin[0] = s.lin[1] = s.lin[2] = 0.0f;
-            s.ang[0] = s.ang[1] = s.ang[2] = 0.0f;
-        }
-        it->second = s;
+        if (missing)
+            B3D_LOG("  writeBack: object id=%d: %d points have no Box3D body", obj->getObjectId(), missing);
     }
 }
 

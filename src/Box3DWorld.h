@@ -11,14 +11,19 @@
 //                               keeps the door open for BOX3D_DOUBLE_PRECISION)
 //   * quaternions: float[4] in x, y, z, w order (same as UT_QuaternionF).
 //                  Box3D's b3Quat is {v.x, v.y, v.z, s}, i.e. the same layout.
-//   * ids        : caller-supplied uint64_t. For DOPs this will be the
-//                  SIM_Object id (or an index into a packed-primitive set).
+//   * ids        : caller-supplied uint64_t. The DOP solver uses one body per
+//                  POINT, keyed by makeBodyKey(objectId, pointId).
 #pragma once
 
 #include <cstdint>
 #include <memory>
 
+#include "Box3DShapes.h"
+
 namespace b3dop {
+
+// Handle to a convex hull owned by the world's hull cache. 0 is invalid.
+using HullId = uint64_t;
 
 struct WorldSettings
 {
@@ -42,6 +47,9 @@ struct BodySettings
     float gravityScale   = 1.0f;
     bool  enableSleep    = true;
     bool  isBullet       = false;
+
+    // Used when a point has no (or an unknown) `shape` attribute.
+    ShapeType defaultShape = ShapeType::Box;
 };
 
 class Box3DWorld
@@ -69,10 +77,44 @@ public:
     bool hasBody(uint64_t id) const;
     int  bodyCount() const;
 
+    // Change an existing body between static / kinematic / dynamic.
+    bool setBodyType(uint64_t id, BodySettings::Type type);
+    bool getBodyType(uint64_t id, BodySettings::Type &out) const;
+
+    // Density used by shapes added to this body AFTER the call. The solver sets
+    // it once it knows the total shape volume (mass attribute -> density).
+    bool setBodyDensity(uint64_t id, float density);
+
     // ---- shapes --------------------------------------------------------
-    bool addBoxShape(uint64_t bodyId, const float halfExtents[3]);
-    bool addSphereShape(uint64_t bodyId, float radius);
-    // bool addHullShape(uint64_t bodyId, const float *points, int pointCount);
+    // `center` is the shape's offset from the body origin (default: centred).
+    bool addBoxShape(uint64_t bodyId, const float halfExtents[3], const float center[3] = nullptr);
+    bool addSphereShape(uint64_t bodyId, float radius, const float center[3] = nullptr);
+    bool addShape(uint64_t bodyId, const ShapeSpec &shape);   // box or sphere, incl. shape.center
+
+    // ---- convex hulls ----------------------------------------------------
+    // Hulls are built in two steps so the caller can learn the volume (to turn
+    // a mass into a density) before any shape exists:
+    //
+    //   1. createHull(points) -> HullId, plus the hull volume. Points are
+    //      body-local xyz triples. Hulls are cached by CONTENT, so a thousand
+    //      packed prims instancing one source cost one hull build. Fails (0) if
+    //      there are fewer than 4 usable points, a point is not finite, the
+    //      points are flat or collinear, or the hull is too big even after
+    //      reducing the vertex budget; the caller then falls back to a box.
+    //   2. addHullShape(bodyId, hullId), once per piece. Several hulls on one
+    //      body is a runtime compound: the right way to get a DYNAMIC concave
+    //      body in Box3D. Overlapping pieces count their overlap twice in the
+    //      mass.
+    //
+    // Box3D clones the hull into its own database when the shape is created,
+    // so the cache entry is only needed until then. Entries that no shape uses
+    // are released by pruneHulls().
+    HullId createHull(const float *xyz, int pointCount, float *outVolume = nullptr);
+    bool   addHullShape(uint64_t bodyId, HullId hull);
+    void   pruneHulls();                // frees cache entries no body uses
+    int    hullCacheSize() const;
+    int    shapeCount(uint64_t bodyId) const;
+    float  bodyMass(uint64_t bodyId) const;      // Box3D's computed mass, 0 if unknown
     // bool addMeshShape(...);   // static colliders only, probably
 
     // ---- read back / push in -------------------------------------------

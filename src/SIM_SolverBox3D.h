@@ -12,6 +12,8 @@
 #include <SIM/SIM_OptionsUser.h>
 #include <SIM/SIM_DataUtils.h>
 
+#include <vector>
+
 #include "Box3DWorld.h"
 
 class SIM_Box3DWorld;
@@ -47,24 +49,25 @@ private:
     // object. Uses the non-const accessor only on the object that carries it.
     SIM_Box3DWorld *findOrCreateWorldData(SIM_ObjectArray &objects);
 
-    // Throw away the cached world and rebuild from the DOP objects.
-    void rebuildWorldFromObjects(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects,
-                                 const char *reason);
+    // Start a new Box3D world (the previous shared state is left alone for any
+    // timestep data still pointing at it). Its mirror is empty, so the next
+    // syncFromGeometry() adds every point as a new body.
+    void createFreshWorld(SIM_Box3DWorld &worldData, const char *reason);
 
-    // World is current: add bodies for new object ids, remove bodies for ids
-    // that disappeared.
-    void syncObjectSet(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects,
-                       SIM_ObjectArray &newobjects);
-
-    // Detect edits made to DOP state since we last wrote it (other nodes,
-    // kinematic animation, ...) and push them into Box3D.
-    void pushObjectStateIn(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects);
+    // Every point of every object's Geometry is one body. Adds bodies for new
+    // points, removes bodies whose point is gone, and pushes edits made by
+    // other nodes (P, orient, v, w, active) into Box3D. objectHasDynamic gets
+    // one flag per object: does it have any dynamic point to write back.
+    void syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects,
+                          std::vector<char> &objectHasDynamic);
 
     void stepWorld(SIM_Box3DWorld &worldData, float timestep);
 
-    // Position, orientation, linear and angular velocity. A rebuild has only
-    // this to work from, so everything it needs must be written.
-    void writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects);
+    // P, orient, v and w of the dynamic points (and, for packed primitives, the
+    // primitive's own transform). A rebuild has only this to work from, so
+    // everything it needs must be written.
+    void writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects,
+                          const std::vector<char> &objectHasDynamic);
 
     void publishEvents(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects);
 

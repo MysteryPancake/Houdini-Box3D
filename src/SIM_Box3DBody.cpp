@@ -51,7 +51,19 @@ SIM_Box3DBody::getDescription()
     static PRM_Name    theBulletName("isbullet", "Bullet (Fast Object CCD)");
     static PRM_Default theBulletDefault(0);
 
+    static PRM_Name theShapeName("defaultshape", "Default Shape");
+    static PRM_Name theShapeChoices[] = {
+        PRM_Name("0", "Box"),
+        PRM_Name("1", "Sphere"),
+        PRM_Name("2", "Convex Hull"),
+        PRM_Name("3", "Concave (Hull per Piece)"),
+        PRM_Name(0)
+    };
+    static PRM_ChoiceList theShapeMenu(PRM_CHOICELIST_SINGLE, theShapeChoices);
+    static PRM_Default    theShapeDefault(0);                 // box
+
     static PRM_Template theTemplates[] = {
+        PRM_Template(PRM_ORD,    1, &theShapeName,       &theShapeDefault, &theShapeMenu),
         PRM_Template(PRM_ORD,    1, &theBodyTypeName,    &theBodyTypeDefault, &theBodyTypeMenu),
         PRM_Template(PRM_FLT_J,  1, &theDensityName,     &theDensityDefault),
         PRM_Template(PRM_FLT_J,  1, &theFrictionName,    &theFrictionDefault),
@@ -95,5 +107,12 @@ SIM_Box3DBody::toBodySettings() const
     s.gravityScale   = static_cast<float>(getGravityScale());
     s.enableSleep    = getEnableSleep();
     s.isBullet       = getIsBullet();
+    switch (getDefaultShape())
+    {
+        case 1:  s.defaultShape = b3dop::ShapeType::Sphere;  break;
+        case 2:  s.defaultShape = b3dop::ShapeType::Convex;  break;
+        case 3:  s.defaultShape = b3dop::ShapeType::Concave; break;
+        default: s.defaultShape = b3dop::ShapeType::Box;     break;
+    }
     return s;
 }

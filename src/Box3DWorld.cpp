@@ -4,7 +4,9 @@
 #include <box3d/box3d.h>
 
 #include <algorithm>
+#include <cmath>
 #include <unordered_map>
+#include <vector>
 
 namespace b3dop {
 
@@ -16,6 +18,33 @@ struct Box3DWorld::Impl
     // Shape material/density comes from the body settings, remembered here
     // because shapes are added after the body exists.
     std::unordered_map<uint64_t, BodySettings> bodySettings;
+
+    // Convex hull cache, keyed by a hash of the point data. We own these
+    // b3HullData (b3CreateHull allocates, b3DestroyHull frees); Box3D clones
+    // them into its own world database when a shape is made.
+    struct HullEntry
+    {
+        b3HullData *hull   = nullptr;
+        float       volume = 0.0f;
+        int         refs   = 0;          // shapes created from it, across all bodies
+    };
+    std::unordered_map<HullId, HullEntry>              hulls;
+    std::unordered_map<uint64_t, std::vector<HullId>>  bodyHulls;   // hulls each body's shapes use
+
+    void releaseHull(HullId h)
+    {
+        auto it = hulls.find(h);
+        if (it != hulls.end() && it->second.refs > 0)
+            --it->second.refs;
+    }
+    void destroyAllHulls()
+    {
+        for (auto &kv : hulls)
+            if (kv.second.hull)
+                b3DestroyHull(kv.second.hull);
+        hulls.clear();
+        bodyHulls.clear();
+    }
 };
 
 namespace {
@@ -52,6 +81,31 @@ makeVec(const float v[3])
     r.y = v[1];
     r.z = v[2];
     return r;
+}
+
+b3Vec3
+makeVec3(const float *v)       // null -> origin
+{
+    b3Vec3 r;
+    r.x = v ? v[0] : 0.0f;
+    r.y = v ? v[1] : 0.0f;
+    r.z = v ? v[2] : 0.0f;
+    return r;
+}
+
+// FNV-1a over the raw bytes of the points, with the count mixed in. Never 0.
+HullId
+hashPoints(const float *xyz, int count)
+{
+    uint64_t h = 1469598103934665603ull ^ uint64_t(uint32_t(count));
+    const unsigned char *bytes = reinterpret_cast<const unsigned char *>(xyz);
+    const size_t n = size_t(count) * 3 * sizeof(float);
+    for (size_t i = 0; i < n; ++i)
+    {
+        h ^= bytes[i];
+        h *= 1099511628211ull;
+    }
+    return h ? h : 1ull;
 }
 
 b3ShapeDef
@@ -100,6 +154,7 @@ Box3DWorld::destroy()
     myImpl->worldId = b3_nullWorldId;
     myImpl->bodies.clear();
     myImpl->bodySettings.clear();
+    myImpl->destroyAllHulls();      // after the world: Box3D holds its own clones
 }
 
 bool
@@ -161,6 +216,14 @@ Box3DWorld::removeBody(uint64_t id)
         b3DestroyBody(it->second);
     myImpl->bodies.erase(it);
     myImpl->bodySettings.erase(id);
+
+    auto bh = myImpl->bodyHulls.find(id);
+    if (bh != myImpl->bodyHulls.end())
+    {
+        for (HullId h : bh->second)
+            myImpl->releaseHull(h);
+        myImpl->bodyHulls.erase(bh);
+    }
 }
 
 bool
@@ -173,32 +236,191 @@ int
 Box3DWorld::bodyCount() const { return static_cast<int>(myImpl->bodies.size()); }
 
 bool
-Box3DWorld::addBoxShape(uint64_t bodyId, const float halfExtents[3])
+Box3DWorld::setBodyDensity(uint64_t id, float density)
+{
+    auto it = myImpl->bodySettings.find(id);
+    if (it == myImpl->bodySettings.end())
+        return false;
+    it->second.density = density;
+    return true;
+}
+
+bool
+Box3DWorld::addBoxShape(uint64_t bodyId, const float halfExtents[3], const float center[3])
 {
     auto it = myImpl->bodies.find(bodyId);
     if (it == myImpl->bodies.end())
         return false;
 
     // The hull and shape def are cloned by Box3D, so the temporary is fine.
-    const b3BoxHull hull = b3MakeBoxHull(halfExtents[0], halfExtents[1], halfExtents[2]);
+    const bool offset = center && (center[0] != 0.0f || center[1] != 0.0f || center[2] != 0.0f);
+    const b3BoxHull hull = offset
+        ? b3MakeOffsetBoxHull(halfExtents[0], halfExtents[1], halfExtents[2], makeVec3(center))
+        : b3MakeBoxHull(halfExtents[0], halfExtents[1], halfExtents[2]);
     const b3ShapeDef def = shapeDefFor(myImpl->bodySettings[bodyId]);
     const b3ShapeId shape = b3CreateHullShape(it->second, &def, &hull.base);
     return !B3_IS_NULL(shape);
 }
 
 bool
-Box3DWorld::addSphereShape(uint64_t bodyId, float radius)
+Box3DWorld::addSphereShape(uint64_t bodyId, float radius, const float center[3])
 {
     auto it = myImpl->bodies.find(bodyId);
     if (it == myImpl->bodies.end())
         return false;
 
     b3Sphere sphere;
-    sphere.center.x = sphere.center.y = sphere.center.z = 0.0f;
+    sphere.center = makeVec3(center);
     sphere.radius = radius;
     const b3ShapeDef def = shapeDefFor(myImpl->bodySettings[bodyId]);
     const b3ShapeId shape = b3CreateSphereShape(it->second, &def, &sphere);
     return !B3_IS_NULL(shape);
+}
+
+bool
+Box3DWorld::addShape(uint64_t bodyId, const ShapeSpec &shape)
+{
+    if (shape.type == ShapeType::Sphere)
+        return addSphereShape(bodyId, shape.radius, shape.center);
+    return addBoxShape(bodyId, shape.halfExtents, shape.center);
+}
+
+// ---------------------------------------------------------------------------
+// Convex hulls
+// ---------------------------------------------------------------------------
+
+HullId
+Box3DWorld::createHull(const float *xyz, int pointCount, float *outVolume)
+{
+    if (outVolume) *outVolume = 0.0f;
+    if (!xyz || pointCount < 4)
+        return 0;
+
+    for (int i = 0; i < pointCount * 3; ++i)
+        if (!std::isfinite(xyz[i]))
+            return 0;
+
+    const HullId key = hashPoints(xyz, pointCount);
+    auto cached = myImpl->hulls.find(key);
+    if (cached != myImpl->hulls.end())
+    {
+        if (outVolume) *outVolume = cached->second.volume;
+        return key;
+    }
+
+    std::vector<b3Vec3> pts(static_cast<size_t>(pointCount));
+    for (int i = 0; i < pointCount; ++i)
+    {
+        pts[size_t(i)].x = xyz[3 * i];
+        pts[size_t(i)].y = xyz[3 * i + 1];
+        pts[size_t(i)].z = xyz[3 * i + 2];
+    }
+
+    // b3CreateHull returns NULL when the hull is degenerate (flat, collinear) or
+    // when the result would exceed B3_MAX_HULL_VERTICES / FACES / EDGES. A smaller
+    // vertex budget makes the builder keep fewer vertices, which is how a very
+    // detailed point cloud still ends up as a valid (slightly smaller) hull. A
+    // fully triangulated hull hits the 128-edge limit at about 44 vertices, hence
+    // the 44 rung.
+    b3HullData *hull = nullptr;
+    for (int budget : { B3_MAX_HULL_VERTICES, 64, 44, 32, 16, 8 })
+    {
+        hull = b3CreateHull(pts.data(), pointCount, budget);
+        if (hull)
+            break;
+    }
+    if (!hull)
+        return 0;
+
+    const float volume = hull->volume;
+    if (!(volume > 1e-9f) || !std::isfinite(volume))
+    {
+        b3DestroyHull(hull);        // flat: no mass, no stable contacts
+        return 0;
+    }
+
+    Impl::HullEntry e;
+    e.hull   = hull;
+    e.volume = volume;
+    myImpl->hulls[key] = e;
+    if (outVolume) *outVolume = volume;
+    return key;
+}
+
+bool
+Box3DWorld::addHullShape(uint64_t bodyId, HullId hullId)
+{
+    auto bit = myImpl->bodies.find(bodyId);
+    auto hit = myImpl->hulls.find(hullId);
+    if (bit == myImpl->bodies.end() || hit == myImpl->hulls.end())
+        return false;
+
+    const b3ShapeDef def = shapeDefFor(myImpl->bodySettings[bodyId]);
+    const b3ShapeId shape = b3CreateHullShape(bit->second, &def, hit->second.hull);
+    if (B3_IS_NULL(shape))
+        return false;
+
+    ++hit->second.refs;
+    myImpl->bodyHulls[bodyId].push_back(hullId);
+    return true;
+}
+
+void
+Box3DWorld::pruneHulls()
+{
+    for (auto it = myImpl->hulls.begin(); it != myImpl->hulls.end();)
+    {
+        if (it->second.refs <= 0)
+        {
+            if (it->second.hull)
+                b3DestroyHull(it->second.hull);
+            it = myImpl->hulls.erase(it);
+        }
+        else
+            ++it;
+    }
+}
+
+int
+Box3DWorld::hullCacheSize() const { return static_cast<int>(myImpl->hulls.size()); }
+
+int
+Box3DWorld::shapeCount(uint64_t bodyId) const
+{
+    auto it = myImpl->bodies.find(bodyId);
+    return it == myImpl->bodies.end() ? 0 : b3Body_GetShapeCount(it->second);
+}
+
+float
+Box3DWorld::bodyMass(uint64_t bodyId) const
+{
+    auto it = myImpl->bodies.find(bodyId);
+    return it == myImpl->bodies.end() ? 0.0f : b3Body_GetMass(it->second);
+}
+
+bool
+Box3DWorld::setBodyType(uint64_t id, BodySettings::Type type)
+{
+    auto it = myImpl->bodies.find(id);
+    if (it == myImpl->bodies.end())
+        return false;
+
+    b3BodyType t = b3_dynamicBody;
+    if (type == BodySettings::Type::Static)         t = b3_staticBody;
+    else if (type == BodySettings::Type::Kinematic) t = b3_kinematicBody;
+    b3Body_SetType(it->second, t);
+    myImpl->bodySettings[id].type = type;
+    return true;
+}
+
+bool
+Box3DWorld::getBodyType(uint64_t id, BodySettings::Type &out) const
+{
+    auto it = myImpl->bodySettings.find(id);
+    if (it == myImpl->bodySettings.end())
+        return false;
+    out = it->second.type;
+    return true;
 }
 
 bool

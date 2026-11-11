@@ -5,12 +5,10 @@
 //
 // Output goes to stderr (shown in Houdini's console window).
 //
-// Other environment variables read (only in debug builds, read every step;
+// Other environment variable read (only in debug builds, read every step;
 // Houdini must be restarted for the environment itself to change):
 //
 //     BOX3DDOP_REQUESTED_CACHE=<int>  value getRequestedCacheSubclass() returns
-//     BOX3DDOP_PROBE_DEFAULTS=1       one-shot: create a SIM_Box3DBody in code
-//                                     and print its option values
 #pragma once
 
 #include <atomic>
