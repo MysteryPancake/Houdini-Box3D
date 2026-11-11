@@ -1,8 +1,8 @@
 # Houdini Box3D
 
-Houdini DOP wrapper for [Box3D](https://github.com/erincatto/box3d), a physics solver like the RBD Bullet Solver except faster.
+Houdini DOP wrapper for [Box3D](https://github.com/erincatto/box3d), one of the fastest rigid body solvers currently available.
 
-My goal is to make this wrapper deliver equivalent performance to the original codebase.
+My goal is keeping this wrapper well optimized to ensure the performance matches the original codebase.
 
 > [!CAUTION]
 > This is heavily vibe coded, as I made this for fun!
