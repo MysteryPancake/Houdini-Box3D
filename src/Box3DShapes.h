@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <unordered_map>
 #include <vector>
 
 namespace b3dop {
@@ -36,49 +37,35 @@ struct ShapeSpec
     float     center[3]      = { 0.0f, 0.0f, 0.0f };   // Box and Sphere
 };
 
-// Exact, case-sensitive compare: shape names are lowercase only.
-inline bool
-shapeNameEquals(const char *a, const char *b)
-{
-    return std::strcmp(a, b) == 0;
-}
-
-// Parse the value of the `shape` point attribute.
+// Parse the value of the `shape` point attribute. Exact, case-sensitive
+// compare: shape names are lowercase only.
 // Returns false for null / empty / unknown strings (caller uses its default).
 inline bool
 parseShapeType(const char *name, ShapeType &out)
 {
     if (!name || !*name)
         return false;
-    if (shapeNameEquals(name, "box") || shapeNameEquals(name, "cube"))
+    if (std::strcmp(name, "box") == 0 || std::strcmp(name, "cube") == 0)
     {
         out = ShapeType::Box;
         return true;
     }
-    if (shapeNameEquals(name, "sphere") || shapeNameEquals(name, "ball"))
+    if (std::strcmp(name, "sphere") == 0 || std::strcmp(name, "ball") == 0)
     {
         out = ShapeType::Sphere;
         return true;
     }
-    if (shapeNameEquals(name, "convex") || shapeNameEquals(name, "hull"))
+    if (std::strcmp(name, "convex") == 0 || std::strcmp(name, "hull") == 0)
     {
         out = ShapeType::Convex;
         return true;
     }
-    if (shapeNameEquals(name, "concave") || shapeNameEquals(name, "compound"))
+    if (std::strcmp(name, "concave") == 0 || std::strcmp(name, "compound") == 0)
     {
         out = ShapeType::Concave;
         return true;
     }
     return false;
-}
-
-// True for the shapes that are built from point data (hulls) rather than from
-// size attributes.
-inline bool
-shapeNeedsGeometry(ShapeType t)
-{
-    return t == ShapeType::Convex || t == ShapeType::Concave;
 }
 
 // Size convention: the shape is a UNIT shape (box 1x1x1, sphere diameter 1)
@@ -234,49 +221,6 @@ matrix3ToQuatScale(const double m[9], float outQ[4], double outScale[3])
     return true;
 }
 
-// A new local 3x3 for a packed primitive: keep the scale of `oldM3` (per row)
-// and replace the rotation with q. For uniform scale this is exact.
-inline void
-composeMatrix3(const float q[4], const double oldM3[9], double outM3[9])
-{
-    float  oq[4];
-    double sc[3];
-    matrix3ToQuatScale(oldM3, oq, sc);          // sc stays 1 if the old matrix is degenerate
-    double r[9];
-    quatToMatrix3(q, r);
-    for (int row = 0; row < 3; ++row)
-        for (int col = 0; col < 3; ++col)
-            outM3[row * 3 + col] = sc[row] * r[row * 3 + col];
-}
-
-// Axis-aligned bounds of a point set. Returns false if empty / non-finite.
-inline bool
-computeBoundsImpl(const float *xyz, int count, float outMin[3], float outMax[3])
-{
-    if (count <= 0) return false;
-    for (int j = 0; j < 3; ++j) { outMin[j] = xyz[j]; outMax[j] = xyz[j]; }
-    for (int i = 0; i < count; ++i)
-        for (int j = 0; j < 3; ++j)
-        {
-            const float v = xyz[3 * i + j];
-            if (!std::isfinite(v)) return false;
-            if (v < outMin[j]) outMin[j] = v;
-            if (v > outMax[j]) outMax[j] = v;
-        }
-    return true;
-}
-
-// Round to 5 significant digits. Used to make a derived value (the scale)
-// identical across instances whose transforms differ only by float noise.
-inline double
-quantizeSig5(double v)
-{
-    if (!(std::fabs(v) > 0.0) || !std::isfinite(v))
-        return v;
-    const double step = std::pow(10.0, std::floor(std::log10(std::fabs(v))) - 4.0);
-    return std::round(v / step) * step;
-}
-
 // The per-axis scale that packedPointsToBodyLocal bakes into the points: the row
 // lengths of the 3x3 of m4, rounded to 5 significant digits so instances that
 // differ only by float noise agree. Returns false if the matrix is degenerate.
@@ -287,8 +231,15 @@ packedScale(const double m4[16], double S[3])
     float q[4];
     if (!matrix3ToQuatScale(m3, q, S))
         return false;
+    // Round to 5 significant digits.
     for (int j = 0; j < 3; ++j)
-        S[j] = quantizeSig5(S[j]);
+    {
+        const double v = S[j];
+        if (!(std::fabs(v) > 0.0) || !std::isfinite(v))
+            continue;
+        const double step = std::pow(10.0, std::floor(std::log10(std::fabs(v))) - 4.0);
+        S[j] = std::round(v / step) * step;
+    }
     return true;
 }
 
@@ -339,6 +290,48 @@ packedHullKey(uint64_t sourceHash, const double pivot[3], const double S[3], uin
     return h ? h : 1ull;
 }
 
+// Group primitives into connected sets: two primitives are in the same set if
+// they share a point, directly or through other primitives. primPoints[i] holds
+// the point ids of primitive i. Returns the set of each primitive, numbered from
+// 0 in order of first appearance.
+template <class PointId>
+std::vector<int>
+connectedSets(const std::vector<std::vector<PointId>> &primPoints)
+{
+    const int        n = int(primPoints.size());
+    std::vector<int> parent(n);
+    for (int i = 0; i < n; ++i)
+        parent[i] = i;
+    auto root = [&](int i) {
+        while (parent[i] != i)
+            i = parent[i] = parent[parent[i]];
+        return i;
+    };
+
+    std::unordered_map<PointId, int> firstUser;     // point -> first primitive that uses it
+    for (int i = 0; i < n; ++i)
+        for (const PointId &pt : primPoints[i])
+        {
+            const auto ins = firstUser.emplace(pt, i);
+            if (ins.second)
+                continue;
+            const int a = root(ins.first->second), b = root(i);
+            if (a != b)
+                parent[a > b ? a : b] = a > b ? b : a;
+        }
+
+    std::vector<int> label(n, -1), sets(n);
+    int              next = 0;
+    for (int i = 0; i < n; ++i)
+    {
+        const int r = root(i);
+        if (label[r] < 0)
+            label[r] = next++;
+        sets[i] = label[r];
+    }
+    return sets;
+}
+
 // Bring the points of a packed primitive's inner geometry into BODY-LOCAL space.
 //
 //   m4     the primitive's full transform (inner space -> world), row-vector,
@@ -380,15 +373,6 @@ packedPointsToBodyLocal(const float *xyz, int count, const double m4[16],
             out[size_t(3 * i + j)] = float((double(xyz[3 * i + j]) - pivotIn[j]) * S[j]);
 }
 
-// Multiply every point by (pscale * scale).
-inline void
-scalePoints(std::vector<float> &xyz, float pscale, const float scale[3])
-{
-    for (size_t i = 0; i + 2 < xyz.size(); i += 3)
-        for (int j = 0; j < 3; ++j)
-            xyz[i + j] *= pscale * scale[j];
-}
-
 // A box or sphere fitted to a point set: the fallback when there are no
 // hullable points (fewer than 4, or flat), and the shape for `box` / `sphere`
 // on a packed primitive. The box is the bounds; the sphere is centred on the
@@ -397,9 +381,18 @@ scalePoints(std::vector<float> &xyz, float pscale, const float scale[3])
 inline bool
 fitShapeToPoints(ShapeType type, const float *xyz, int count, ShapeSpec &out)
 {
-    float lo[3], hi[3];
-    if (!computeBoundsImpl(xyz, count, lo, hi))
+    if (count <= 0)
         return false;
+    float lo[3] = { xyz[0], xyz[1], xyz[2] };
+    float hi[3] = { xyz[0], xyz[1], xyz[2] };
+    for (int i = 0; i < count; ++i)
+        for (int j = 0; j < 3; ++j)
+        {
+            const float v = xyz[3 * i + j];
+            if (!std::isfinite(v)) return false;
+            if (v < lo[j]) lo[j] = v;
+            if (v > hi[j]) hi[j] = v;
+        }
 
     const float kMin = 1e-4f;
     float half[3], mid[3];

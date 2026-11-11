@@ -1,7 +1,7 @@
 // SIM_SolverBox3D.cpp
 #include "SIM_SolverBox3D.h"
 #include "SIM_Box3DWorld.h"
-#include "SIM_Box3DBody.h"
+#include "SIM_Box3DData.h"
 #include "Box3DDebug.h"
 
 #include <GA/GA_Handle.h>
@@ -48,10 +48,10 @@
 
 namespace {
 
-// Name the per-object default settings (SIM_Box3DBody) and the world are
+// Name the per-object default settings (SIM_Box3DData) and the world are
 // attached under.
 const char *const kWorldDataName = "Box3DWorld";
-const char *const kBodyDataName  = "Box3DBody";
+const char *const kDataName      = "Box3DData";
 
 // A snapshot of one point's rigid-body state.
 using DopBodyState = Box3DBodyMirror;
@@ -93,12 +93,6 @@ struct PointAttrs
     {
     }
 };
-
-bool
-isFinite3(const double *p)
-{
-    return std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]);
-}
 
 // Box3D asserts on non-unit quaternions. Houdini users hand us zeros (an
 // attribute that was created with default 0) or slightly off-unit values.
@@ -158,7 +152,6 @@ auto isPackedImpl(const P *p, long) -> decltype(GU_PrimPacked::isPackedPrimitive
 {
     return GU_PrimPacked::isPackedPrimitive(p);
 }
-bool isPackedPrim(const GA_Primitive *p) { return p && isPackedImpl(p, 0); }
 
 // getFullTransform4 fills a UT_Matrix4D (or F, depending on the build).
 template <class P>
@@ -300,7 +293,7 @@ getPackedInfo(const GU_Detail *gdp, GA_Offset ptoff)
     if (!GAisValid(po))
         return pk;
     const GA_Primitive *prim = gdp->getPrimitive(po);
-    if (!isPackedPrim(prim))
+    if (!prim || !isPackedImpl(prim, 0))
         return pk;
 
     pk.prim    = static_cast<const GU_PrimPacked *>(prim);
@@ -423,6 +416,45 @@ collectPieces(const GU_Detail *gdp, PieceGroup &out)
     hashPieces(out);
 }
 
+// Group the points of the given primitives into pieces by connectivity: one
+// piece per set of primitives that share points (see b3dop::connectedSets).
+void
+collectConnectedPieces(const GU_Detail *gdp, const GA_Range &prims, PieceGroup &out)
+{
+    std::vector<const GA_Primitive *>   list;
+    std::vector<std::vector<GA_Offset>> primPoints;
+    for (GA_Iterator it(prims); !it.atEnd(); ++it)
+    {
+        const GA_Primitive *prim = gdp->getPrimitive(*it);
+        if (!prim)
+            continue;
+        list.push_back(prim);
+        primPoints.emplace_back();
+        const GA_Size nv = prim->getVertexCount();
+        for (GA_Size i = 0; i < nv; ++i)
+            primPoints.back().push_back(prim->getPointOffset(i));
+    }
+
+    const std::vector<int> setOf = b3dop::connectedSets(primPoints);
+    for (size_t i = 0; i < list.size(); ++i)
+    {
+        while (out.pieces.size() <= size_t(setOf[i]))
+        {
+            out.pieces.emplace_back();
+            out.pieces.back().name = std::to_string(out.pieces.size() - 1);
+        }
+        NamedPiece &np = out.pieces[setOf[i]];
+        for (const GA_Offset pt : primPoints[i])
+        {
+            if (!np.seen.insert(pt).second)
+                continue;
+            const UT_Vector3 p = gdp->getPos3(pt);
+            np.xyz.push_back(p.x());  np.xyz.push_back(p.y());  np.xyz.push_back(p.z());
+        }
+    }
+    hashPieces(out);
+}
+
 // A packed FRAGMENT embeds the whole source detail but stands for only the
 // primitives in its range (Pack SOP with a `name` attribute: one fragment per
 // name, all sharing one source). Its collision geometry is those primitives'
@@ -465,14 +497,18 @@ struct ShapeSources
     struct InnerEntry
     {
         GU_ConstDetailHandle handle;
-        PieceGroup           pieces;
+        PieceGroup           pieces;             // grouped by the `name` attribute
+        PieceGroup           connected;          // one piece per set of connected primitives
+        bool                 connectedBuilt = false;
     };
     std::unordered_map<const GU_Detail *, InnerEntry> inner;
     // Fragments: (shared source detail, fragment name) -> that fragment's piece.
     std::map<std::pair<const GU_Detail *, std::string>, InnerEntry> fragments;
 
-    // Returns the pieces of a packed primitive's own geometry, or null.
-    const PieceGroup *innerPieces(const GU_PrimPacked &prim)
+    // Returns the pieces of a packed primitive's own geometry, or null. With
+    // `connected` the pieces are the sets of connected primitives rather than the
+    // groups by `name`.
+    const PieceGroup *innerPieces(const GU_PrimPacked &prim, bool connected)
     {
         GU_ConstDetailHandle handle = prim.getPackedDetail();
         GU_DetailHandleAutoReadLock lock(handle);
@@ -482,7 +518,9 @@ struct ShapeSources
 
         // A packed fragment: the detail is the WHOLE source, shared by every
         // fragment of it, so only this fragment's own primitives are used.
-        if (const GU_PackedFragment *frag = asFragment(prim))
+        const GU_PackedFragment *frag = asFragment(prim);
+        InnerEntry              *entry = nullptr;
+        if (frag)
         {
             const std::string name = frag->isIntValue() ? std::to_string(frag->intValue())
                                                         : std::string(frag->name().c_str());
@@ -495,19 +533,38 @@ struct ShapeSources
                 collectFragmentPiece(gdp, frag->getPrimitiveRange(), name, e.pieces);
                 fit = fragments.emplace(key, std::move(e)).first;
             }
-            return fit->second.pieces.pieces.empty() || fit->second.pieces.pieces[0].xyz.empty()
-                       ? nullptr : &fit->second.pieces;
+            entry = &fit->second;
+        }
+        else
+        {
+            auto it = inner.find(gdp);
+            if (it == inner.end())
+            {
+                InnerEntry e;
+                e.handle = handle;
+                collectPieces(gdp, e.pieces);
+                it = inner.emplace(gdp, std::move(e)).first;
+            }
+            entry = &it->second;
         }
 
-        auto it = inner.find(gdp);
-        if (it == inner.end())
+        if (!connected)
+            return entry->pieces.pieces.empty() || entry->pieces.pieces[0].xyz.empty()
+                       ? nullptr : &entry->pieces;
+
+        if (!entry->connectedBuilt)
         {
-            InnerEntry e;
-            e.handle = handle;
-            collectPieces(gdp, e.pieces);
-            it = inner.emplace(gdp, std::move(e)).first;
+            if (frag)
+                collectConnectedPieces(gdp, frag->getPrimitiveRange(), entry->connected);
+            else
+            {
+                collectConnectedPieces(gdp, gdp->getPrimitiveRange(), entry->connected);
+                if (entry->connected.pieces.empty())        // points only, no primitives
+                    collectPieces(gdp, entry->connected);
+            }
+            entry->connectedBuilt = true;
         }
-        return it->second.pieces.pieces.empty() ? nullptr : &it->second.pieces;
+        return entry->connected.pieces.empty() ? nullptr : &entry->connected;
     }
 };
 
@@ -523,7 +580,7 @@ readPointState(const GU_Detail *gdp, const PointAttrs &a, GA_Offset off,
 {
     const UT_Vector3 p = gdp->getPos3(off);
     out.pos[0] = p.x();  out.pos[1] = p.y();  out.pos[2] = p.z();
-    if (!isFinite3(out.pos))
+    if (!std::isfinite(out.pos[0]) || !std::isfinite(out.pos[1]) || !std::isfinite(out.pos[2]))
         return false;
 
     out.rot[0] = out.rot[1] = out.rot[2] = 0.0f;  out.rot[3] = 1.0f;
@@ -572,41 +629,6 @@ describeStateDifference(const DopBodyState &a, const DopBodyState &b)
     for (int i = 0; i < 3; ++i)
         if (std::fabs(a.ang[i] - b.ang[i]) > eps) return "angular velocity";
     return nullptr;
-}
-
-// Default settings for all points of an object (the Box3D Body DOP node), or
-// built-in defaults if the object has none.
-b3dop::BodySettings
-nodeSettingsFor(const SIM_Object &obj)
-{
-    const SIM_Box3DBody *body = SIM_DATA_GETCONST(obj, kBodyDataName, SIM_Box3DBody);
-    return body ? body->toBodySettings() : b3dop::BodySettings();
-}
-
-// `active` = 0 makes a point static. Otherwise the node's body type applies.
-b3dop::BodySettings::Type
-bodyTypeFor(const b3dop::BodySettings &node, bool active)
-{
-    return active ? node.type : b3dop::BodySettings::Type::Static;
-}
-
-bool
-pointIsActive(const PointAttrs &a, GA_Offset off)
-{
-    return !a.active.isValid() || a.active.get(off) != 0;
-}
-
-// The point's id: the `id` attribute, else the point number.
-int64_t
-pointId(const GU_Detail *gdp, const PointAttrs &a, GA_Offset off)
-{
-    return a.id.isValid() ? int64_t(a.id.get(off)) : int64_t(gdp->pointIndex(off));
-}
-
-uint64_t
-pointKey(const GU_Detail *gdp, const PointAttrs &a, int objectId, GA_Offset off)
-{
-    return b3dop::makeBodyKey(objectId, pointId(gdp, a, off));
 }
 
 // ---------------------------------------------------------------------------
@@ -669,7 +691,8 @@ pieceFromPoints(b3dop::Box3DWorld &world, const std::vector<float> &pts, Piece &
 //
 //  box / sphere : plain point  -> unit shape scaled by pscale * scale
 //                 packed point -> fitted to the packed geometry's bounds
-//  convex       : ONE hull of the packed geometry
+//  convex       : ONE hull of the packed geometry, or with hullPerConnected one
+//                 hull per set of connected primitives (several shapes on one body)
 //  concave      : one hull PER PIECE of the packed geometry (pieces grouped by
 //                 the prim `name` attribute); several shapes on one body
 //
@@ -679,16 +702,20 @@ pieceFromPoints(b3dop::Box3DWorld &world, const std::vector<float> &pts, Piece &
 // exists.
 BuiltShapes
 buildShapes(b3dop::Box3DWorld &world, ShapeSources &src, b3dop::ShapeType type,
-            float pscale, const float scale[3], const PackedInfo &pk)
+            bool hullPerConnected, float pscale, const float scale[3], const PackedInfo &pk)
 {
     using namespace b3dop;
     BuiltShapes out;
 
-    const bool wantGeometry = shapeNeedsGeometry(type);
+    // Convex / concave are built from point data (hulls); box / sphere from size attributes.
+    const bool wantGeometry = (type == ShapeType::Convex || type == ShapeType::Concave);
 
     // 1. The source: the packed primitive's own geometry (any shape type on a
     //    packed point). A plain point has none.
-    const PieceGroup *group = pk.prim ? src.innerPieces(*pk.prim) : nullptr;
+    //    Convex with hullPerConnected splits it into connected sets of primitives.
+    const bool        mergeAll = (type == ShapeType::Convex) && !hullPerConnected;
+    const PieceGroup *group    = pk.prim ? src.innerPieces(*pk.prim, type == ShapeType::Convex && hullPerConnected)
+                                         : nullptr;
 
     // 1b. Convex / concave on a packed point: the hull of each instance of one
     //     source is a function of (source, pivot, scale), so look it up by that
@@ -696,7 +723,6 @@ buildShapes(b3dop::Box3DWorld &world, ShapeSources &src, b3dop::ShapeType type,
     double S[3];
     if (group && wantGeometry && packedScale(pk.m4, S))
     {
-        const bool convex = (type == ShapeType::Convex);
         auto addKeyed = [&](uint64_t sourceHash, uint32_t kind,
                             const std::vector<const NamedPiece *> &from) {
             const uint64_t key = packedHullKey(sourceHash, pk.pivot, S, kind);
@@ -736,7 +762,7 @@ buildShapes(b3dop::Box3DWorld &world, ShapeSources &src, b3dop::ShapeType type,
             out.pieces.push_back(pc);
         };
 
-        if (convex)
+        if (mergeAll)
         {
             std::vector<const NamedPiece *> all;
             for (const NamedPiece &np : group->pieces)
@@ -776,7 +802,7 @@ buildShapes(b3dop::Box3DWorld &world, ShapeSources &src, b3dop::ShapeType type,
     if (wantGeometry && !sets.empty())
     {
         std::vector<std::vector<float>> hulls;
-        if (type == ShapeType::Convex)
+        if (mergeAll)
         {
             hulls.emplace_back();
             mergePieces(sets, hulls.back());     // one hull from everything
@@ -831,7 +857,7 @@ addPointBody(b3dop::Box3DWorld &world, ShapeSources &src, const b3dop::BodySetti
              std::string *fallbackNote = nullptr)
 {
     b3dop::BodySettings b = node;
-    b.type = bodyTypeFor(node, active);
+    b.type = active ? node.type : b3dop::BodySettings::Type::Static;     // `active` = 0 makes a point static
     if (a.friction.isValid()) b.friction    = a.friction.get(off);
     if (a.bounce.isValid())   b.restitution = a.bounce.get(off);
 
@@ -850,7 +876,7 @@ addPointBody(b3dop::Box3DWorld &world, ShapeSources &src, const b3dop::BodySetti
         sc[0] = s.x();  sc[1] = s.y();  sc[2] = s.z();
     }
 
-    const BuiltShapes shapes = buildShapes(world, src, type, ps, sc, pk);
+    const BuiltShapes shapes = buildShapes(world, src, type, node.hullPerConnectedSet, ps, sc, pk);
     (void)bodyId;                   // only used by the debug log
     if (shapes.note)
     {
@@ -931,7 +957,10 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj,
         return false;
 
     const PointAttrs a(gdp);
-    const b3dop::BodySettings node = nodeSettingsFor(obj);
+    // Default settings for all points of an object (the Box3D Data DOP node), or
+    // built-in defaults if the object has none.
+    const SIM_Box3DData *dataNode = SIM_DATA_GETCONST(obj, kDataName, SIM_Box3DData);
+    const b3dop::BodySettings node = dataNode ? dataNode->toBodySettings() : b3dop::BodySettings();
     b3dop::Box3DWorld &world = st.world;
     bool hasDynamic = false;
 
@@ -960,11 +989,11 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj,
         s.key = b3dop::makeBodyKey(objectId, s.bid);
         const PackedInfo pk = getPackedInfo(gdp, s.off);
         s.ok     = readPointState(gdp, a, s.off, pk, s.cur);
-        s.active = pointIsActive(a, s.off);
+        s.active = !a.active.isValid() || a.active.get(s.off) != 0;
     });
 
     // ---- pass 2 (serial): apply to Box3D, the mirror and `seen` -------------
-    // Same order and same rules as before, so "first duplicate id wins" holds.
+    // Runs in point order, so "first duplicate id wins" holds.
     for (PointSnap &s : snaps)
     {
         const GA_Offset off = s.off;
@@ -986,7 +1015,8 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj,
         }
 
         const bool active = s.active;
-        const b3dop::BodySettings::Type wantType = bodyTypeFor(node, active);
+        const b3dop::BodySettings::Type wantType =
+            active ? node.type : b3dop::BodySettings::Type::Static;
 
         auto mit = st.mirror.find(key);
         if (mit == st.mirror.end())
@@ -1202,7 +1232,7 @@ SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
     const char *reason = nullptr;
     {
         Box3DSharedState *st = worldData->state();
-        if (!worldData->hasValidWorld())
+        if (!st || !st->world.isValid())
         {
             reason = "no valid world (first step, reset, or copied from empty)";
         }
@@ -1228,13 +1258,13 @@ SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
 
     if (reason)
         createFreshWorld(*worldData, reason);
-    if (!worldData->hasValidWorld())
+    Box3DSharedState *st = worldData->state();
+    if (!st || !st->world.isValid())
     {
         addError(objects(0), SIM_MESSAGE, "Box3D: world creation failed", UT_ERROR_ABORT);
         return SIM_SOLVER_FAIL;
     }
 
-    Box3DSharedState *st = worldData->state();
     std::lock_guard<std::mutex> lock(st->mutex);
 
     std::vector<char> objectHasDynamic;
@@ -1242,7 +1272,8 @@ SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
     stepWorld(*worldData, static_cast<float>(dt));
     writeResultsBack(*worldData, objects, objectHasDynamic);
 
-    st->markStepped(now);
+    st->stampTime = now;
+    st->stamped   = true;
 
     publishEvents(*worldData, objects);
     return SIM_SOLVER_SUCCESS;
@@ -1406,7 +1437,9 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
         for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it)
         {
             const GA_Offset off = *it;
-            const uint64_t  key = pointKey(gdp, a, obj->getObjectId(), off);
+            // The point's id: the `id` attribute, else the point number.
+            const int64_t   pid = a.id.isValid() ? int64_t(a.id.get(off)) : int64_t(gdp->pointIndex(off));
+            const uint64_t  key = b3dop::makeBodyKey(obj->getObjectId(), pid);
 
             auto mit = st->mirror.find(key);
             if (mit == st->mirror.end() || !mit->second.dynamic)

@@ -104,8 +104,6 @@ int main()
         CHECK(makeShapeSpec(ShapeType::Box, 1.0f, zero).halfExtents[0] > 0.0f);   // clamped
 
         CHECK(std::fabs(shapeVolume(b2) - 8.0f) < 1e-4f);               // 1 x 2 x 4
-        CHECK(std::fabs(densityFromMass(16.0f, b2, 1.0f) - 2.0f) < 1e-4f);
-        CHECK(densityFromMass(0.0f, b2, 7.0f) == 7.0f);                  // bad mass: fallback
         CHECK(makeBodyKey(1, 5) != makeBodyKey(2, 5) && makeBodyKey(1, 5) != makeBodyKey(1, 6));
 
         // Two "points" with different mass, dropped from the same height, plus
@@ -120,7 +118,7 @@ int main()
 
         BodySettings dyn;
         const ShapeSpec heavy = makeShapeSpec(ShapeType::Box, 1.0f, one);
-        dyn.density = densityFromMass(50.0f, heavy, 1.0f);
+        dyn.density = 50.0f / shapeVolume(heavy);
         const double hp[3] = { -2, 3, 0 }, sp[3] = { 2, 3, 0 };
         CHECK(pw.addBody(makeBodyKey(1, 1), dyn, hp, qid));
         CHECK(pw.addShape(makeBodyKey(1, 1), heavy));
@@ -167,7 +165,6 @@ int main()
         CHECK(!parseShapeType("Convex", t) && !parseShapeType("CONCAVE", t));
         CHECK(parseShapeType("compound", t) && t == ShapeType::Concave);
         CHECK(!parseShapeType("proxy", t));
-        CHECK(shapeNeedsGeometry(ShapeType::Convex) && !shapeNeedsGeometry(ShapeType::Box));
         CHECK(!parseShapeType("capsule", t));
 
         // quaternion <-> row matrix round trip, scale split
@@ -193,12 +190,22 @@ int main()
         // a degenerate matrix reports failure and gives identity
         const double zero9[9] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
         CHECK(!matrix3ToQuatScale(zero9, qb, sc) && qb[3] == 1.0f);
-        // composeMatrix3 keeps the scale, swaps the rotation
-        const float qn[4] = { s45, 0.0f, 0.0f, c45 };               // 0.7 rad about X
-        double mc[9];
-        composeMatrix3(qn, ms, mc);
-        CHECK(matrix3ToQuatScale(mc, qb, sc));
-        CHECK(std::fabs(sc[1] - 3) < 1e-6 && std::fabs(qb[0] - qn[0]) < 1e-5f && std::fabs(qb[1]) < 1e-5f);
+
+        // connected sets: prims 0-1-2 chain through shared points, 3 is alone, 4 joins 3
+        {
+            const std::vector<std::vector<int>> prims = { { 10, 11 }, { 11, 12 }, { 12, 13 },
+                                                          { 20, 21 }, { 21, 22 }, { 30 } };
+            const std::vector<int> sets = connectedSets(prims);
+            CHECK(sets.size() == 6);
+            CHECK(sets[0] == 0 && sets[1] == 0 && sets[2] == 0);
+            CHECK(sets[3] == 1 && sets[4] == 1);
+            CHECK(sets[5] == 2);
+            // a late primitive that bridges two earlier sets merges them
+            const std::vector<std::vector<int>> bridge = { { 1, 2 }, { 3, 4 }, { 2, 3 } };
+            const std::vector<int> bs = connectedSets(bridge);
+            CHECK(bs[0] == 0 && bs[1] == 0 && bs[2] == 0);
+            CHECK(connectedSets(std::vector<std::vector<int>>()).empty());
+        }
 
         // Packed prim: inner points around a pivot, M = S*R, translation t = P - pivot*S*R.
         // Body-local points must come out as (p - pivot) * S, rotation removed.

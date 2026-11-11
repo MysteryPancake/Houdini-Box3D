@@ -4,7 +4,7 @@
 // subclass has to be registered here.
 
 #include "SIM_Box3DWorld.h"
-#include "SIM_Box3DBody.h"
+#include "SIM_Box3DData.h"
 #include "SIM_SolverBox3D.h"
 
 // Mandatory for every Houdini DSO (the HDK DOP sample includes it too).
@@ -22,6 +22,6 @@ void
 initializeSIM(void *)
 {
     IMPLEMENT_DATAFACTORY(SIM_Box3DWorld);
-    IMPLEMENT_DATAFACTORY(SIM_Box3DBody);
+    IMPLEMENT_DATAFACTORY(SIM_Box3DData);
     IMPLEMENT_DATAFACTORY(SIM_SolverBox3D);
 }

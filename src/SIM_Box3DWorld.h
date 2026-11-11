@@ -75,7 +75,6 @@ struct Box3DSharedState
         const double d   = (now - stampTime) - timestep;
         return (d < 0 ? -d : d) <= tol;
     }
-    void markStepped(double now) { stampTime = now; stamped = true; }
 };
 
 class SIM_Box3DWorld : public SIM_Data
@@ -84,17 +83,9 @@ public:
     // The shared state, or null if there is no world yet.
     Box3DSharedState *state() const { return myState.get(); }
 
-    // The wrapped Box3D world, or null.
-    b3dop::Box3DWorld *world() const { return myState ? &myState->world : nullptr; }
-
     // Create a NEW shared state with a fresh Box3D world and point this data at
     // it. Does not touch the old state (other timesteps may still use it).
     bool createWorld(const b3dop::WorldSettings &settings);
-
-    // Drop this data's reference. The solver rebuilds next step.
-    void resetWorld();
-
-    bool hasValidWorld() const;
 
 protected:
     explicit SIM_Box3DWorld(const SIM_DataFactory *factory);

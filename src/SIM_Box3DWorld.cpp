@@ -87,14 +87,3 @@ SIM_Box3DWorld::createWorld(const b3dop::WorldSettings &settings)
     return true;
 }
 
-void
-SIM_Box3DWorld::resetWorld()
-{
-    myState.reset();
-}
-
-bool
-SIM_Box3DWorld::hasValidWorld() const
-{
-    return myState && myState->world.isValid();
-}

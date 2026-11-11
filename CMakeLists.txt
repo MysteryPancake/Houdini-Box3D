@@ -56,8 +56,9 @@ if(BOX3DDOP_CORE_ONLY)
 endif()
 
 # ---------------------------------------------------------------------------
-# Houdini plugin. Run cmake from the "Houdini Command Line Tools" shell so
-# %HFS% is set, or pass -DCMAKE_PREFIX_PATH=<HFS>/toolkit/cmake
+# Houdini plugin. Run cmake from a shell with the Houdini environment set so
+# HFS is set (Windows: "Houdini Command Line Tools"; Linux: source houdini_setup),
+# or pass -DCMAKE_PREFIX_PATH=<HFS>/toolkit/cmake
 # ---------------------------------------------------------------------------
 list(APPEND CMAKE_PREFIX_PATH "$ENV{HFS}/toolkit/cmake")
 find_package(Houdini REQUIRED)
@@ -65,8 +66,8 @@ find_package(Houdini REQUIRED)
 add_library(Box3DDOP SHARED
     src/SIM_Box3DWorld.h
     src/SIM_Box3DWorld.cpp
-    src/SIM_Box3DBody.h
-    src/SIM_Box3DBody.cpp
+    src/SIM_Box3DData.h
+    src/SIM_Box3DData.cpp
     src/SIM_SolverBox3D.h
     src/SIM_SolverBox3D.cpp
     src/SIM_Box3DRegister.cpp
@@ -77,5 +78,6 @@ if(BOX3DDOP_DEBUG)
     target_compile_definitions(Box3DDOP PRIVATE BOX3DDOP_DEBUG=1)
 endif()
 
-# Output name, and copies the DLL into Documents/houdiniX.Y/dso
+# Output name, and copies the plugin into the houdiniX.Y/dso folder (Documents on
+# Windows, the home directory on Linux)
 houdini_configure_target(Box3DDOP)

@@ -56,6 +56,10 @@ struct BodySettings
 
     // Used when a point has no (or an unknown) `shape` attribute.
     ShapeType defaultShape = ShapeType::Box;
+
+    // Convex shapes only: make one hull per set of connected primitives (a
+    // compound) instead of one hull of everything.
+    bool      hullPerConnectedSet = false;
 };
 
 class Box3DWorld

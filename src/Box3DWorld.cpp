@@ -93,16 +93,6 @@ makeQuat(const float q[4])   // x, y, z, w
 }
 
 b3Vec3
-makeVec(const float v[3])
-{
-    b3Vec3 r;
-    r.x = v[0];
-    r.y = v[1];
-    r.z = v[2];
-    return r;
-}
-
-b3Vec3
 makeVec3(const float *v)       // null -> origin
 {
     b3Vec3 r;
@@ -500,8 +490,8 @@ Box3DWorld::setVelocity(uint64_t id, const float linear[3], const float angular[
     if (it == myImpl->bodies.end())
         return false;
 
-    b3Body_SetLinearVelocity(it->second, makeVec(linear));
-    b3Body_SetAngularVelocity(it->second, makeVec(angular));
+    b3Body_SetLinearVelocity(it->second, makeVec3(linear));
+    b3Body_SetAngularVelocity(it->second, makeVec3(angular));
     return true;
 }
 
@@ -560,8 +550,8 @@ Box3DWorld::setVelocityByHandle(BodyHandle h, const float linear[3], const float
     if (!h)
         return false;
     const b3BodyId id = unpackBody(h);
-    b3Body_SetLinearVelocity(id, makeVec(linear));
-    b3Body_SetAngularVelocity(id, makeVec(angular));
+    b3Body_SetLinearVelocity(id, makeVec3(linear));
+    b3Body_SetAngularVelocity(id, makeVec3(angular));
     return true;
 }
 

@@ -9,24 +9,11 @@ My goal is keeping this wrapper optimized to ensure great performance, like in t
 > 
 > This isn't normally how I develop software!
 
-## Layout
+## Building
 
-```
-CMakeLists.txt
-extern/box3d/            <- put Box3D source here (or pass -DBOX3D_DIR=...)
-src/
-  Box3DShapes.h          Houdini-free: shape name parsing, size / volume / mass->density, body keys,
-                         packed-primitive transform math, hull point preparation
-  Box3DWorld.h/.cpp      Houdini-free wrapper around one b3World (pimpl, no HDK, no Box3D headers in the .h),
-                         including the convex hull cache
-  SIM_Box3DWorld         SIM_Data owning the world (a rebuildable cache)
-  SIM_Box3DBody          default settings for an object's points, also creates a "Box3D Body" DOP node
-  SIM_SolverBox3D        SIM_Solver (multi-object), creates a "Box3D Solver" DOP node
-  SIM_Box3DRegister.cpp  initializeSIM()
-tests/core_smoke.cpp
-```
+### Windows
 
-## Build, step 1: Box3D only (no Houdini needed)
+#### 1. Box3D only (no Houdini needed)
 
 ```
 cmake -S . -B build_core -G "Visual Studio 17 2022" -A x64 -DBOX3DDOP_CORE_ONLY=ON
@@ -35,7 +22,7 @@ build_core\Release\b3dop_core_smoke.exe
 ```
 Expected: prints the Box3D version, `world valid: yes`, `OK`.
 
-## Build, step 2: the Houdini plugin
+#### 2. The Houdini plugin
 
 Open "Houdini X.Y.Z > Command Line Tools" from the Start menu so %HFS% is set, then:
 
@@ -46,13 +33,53 @@ cmake --build build --config Release
 or open `build\Box3DDOP.sln` in Visual Studio. Use Release or RelWithDebInfo (not Debug).
 The DLL is copied to your Documents\houdiniX.Y\dso. Close Houdini before rebuilding.
 
-In Houdini: DOP network -> TAB -> "Box3D Solver" / "Box3D Body".
+### Linux
 
-## How bodies are made: point attributes
+You need g++, CMake, git and the development packages the HDK lists. On Debian-based
+distributions:
+
+```
+sudo apt-get install g++ cmake git mesa-common-dev libglu1-mesa-dev libxi-dev
+```
+On Red Hat-based distributions: `gcc-c++ cmake git mesa-libGL-devel mesa-libGLU-devel libXi-devel`.
+
+#### 1. Box3D only (no Houdini needed)
+
+```
+cmake -S . -B build_core -DCMAKE_BUILD_TYPE=Release -DBOX3DDOP_CORE_ONLY=ON
+cmake --build build_core -j
+./build_core/b3dop_core_smoke
+```
+Expected: prints the Box3D version, `world valid: yes`, `OK`.
+
+#### 2. The Houdini plugin
+
+Set up the Houdini environment so `$HFS` is set, then run the build script:
+
+```
+source /opt/hfsX.Y.ZZZ/houdini_setup
+./build.sh
+```
+If `$HFS` is not set, `build.sh` uses the newest `/opt/hfs*`. It fetches the Box3D
+submodule if needed, resets `build/` if the folder was moved, then configures
+(Release) and builds. To do it by hand:
+
+```
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+```
+Use Release or RelWithDebInfo (not Debug). The plugin is copied to `~/houdiniX.Y/dso`.
+Close Houdini before rebuilding.
+
+### In Houdini
+
+DOP network -> TAB -> "Box3D Solver" / "Box3D Data".
+
+## Point attributes
 
 Like Houdini's RBD solvers, the solver works on **points**. Every point in a DOP
-object's Geometry (the normal `Geometry` data) is one rigid body. There is no
-Position / Motion data path: an object without Geometry is ignored.
+object's Geometry (the normal `Geometry` data) is one rigid body. An object
+without Geometry is ignored.
 
 Attribute names follow Houdini's RBD names where one exists. All are optional
 except `P`.
@@ -63,11 +90,11 @@ except `P`.
 | `orient` | quaternion | rotation | identity |
 | `v` | vector | linear velocity | 0 |
 | `w` | vector | angular velocity, radians/s | 0 |
-| `mass` | float | density = mass / shape volume | density from Box3D Body node |
-| `friction` | float | shape friction | Box3D Body node |
-| `bounce` | float | restitution | Box3D Body node |
+| `mass` | float | density = mass / shape volume | density from Box3D Data node |
+| `friction` | float | shape friction | Box3D Data node |
+| `bounce` | float | restitution | Box3D Data node |
 | `active` | int | 0 = static, otherwise dynamic | dynamic |
-| `shape` | string | `box`, `sphere`, `convex`, `concave` (lowercase only, case-sensitive) | Box3D Body node's Default Shape |
+| `shape` | string | `box`, `sphere`, `convex`, `concave` (lowercase only, case-sensitive) | Box3D Data node's Default Shape |
 | `pscale` | float | uniform size (plain points) | 1 |
 | `scale` | vector | per-axis size (plain points) | 1 1 1 |
 | `id` | int | stable point id | point number |
@@ -94,7 +121,7 @@ between static and dynamic. Changing `shape`, `pscale`, `scale`, `mass`,
 `friction` or `bounce` on an existing body is NOT picked up (the body keeps the
 values it was created with) until the world is rebuilt (Reset Simulation).
 
-The Box3D Body node is now only the fallback for points that lack an attribute
+The Box3D Data node is only the fallback for points that lack an attribute
 (and sets damping, gravity scale, bullet, sleep for all points of the object).
 
 ## Convex and concave
@@ -117,6 +144,12 @@ because a hull per piece of a dense mesh gets expensive and each hull is capped
   per piece** and puts them all on the same body (Box3D calls this a runtime
   compound, and it is the way to get a dynamic concave body: triangle meshes
   only collide as static). The hulls are built at body-creation time only.
+* **Create Convex Hull per Set of Connected Primitives** (Box3D Data node, like
+  Bullet's option of the same name): for `convex` shapes, makes one hull per set
+  of connected primitives (primitives that share points) instead of one hull of
+  everything, all on the same body. It ignores `name`, and has no effect on
+  `concave`, `box` or `sphere`. Like the other node settings it is read when a
+  body is created. A packed detail with points and no primitives is one set.
 * A plain (non-packed) point has no geometry to hull. A `convex` / `concave`
   plain point falls back to a box scaled by `pscale * scale`, and the reason
   shows in the debug log. Pack the geometry to get real hulls.
@@ -166,17 +199,11 @@ A packed primitive is one point and one primitive. For these points:
   long as `getPackedDetail()` returns their geometry; an unloaded packed
   primitive has no geometry and gets the fallback box.
 
-## Verified in Houdini 22.0 (before the points rework)
-
-The earlier, Position/Motion-based version built and ran in Houdini 22.0.479:
-the world is created once and carried between timesteps (one `SIM_Box3DWorld`
-copy per cached timestep), Reset rebuilds, scrubbing over cached frames does not
-call the solver, `getRequestedCacheSubclass()` returns 1, and objects reach the
-solver as `newobjects` on the start frame and `objects` from the next.
+## Verification status
 
 The points-based solver, including convex / concave shapes and packed primitives,
-has NOT been compiled or run in Houdini yet. `tests/box3d_test.hiplc` was built
-for the old Position path and needs a points-based setup. The core
+has NOT been compiled or run in Houdini yet. `tests/box3d_test.hiplc` needs a
+points-based setup. The core
 (`Box3DShapes.h`, `Box3DWorld`) is covered by `b3dop_core_physics`: shape parsing,
 sizing, mass to density, packed-primitive matrix math, hull creation / limits /
 caching / instancing, offset hulls and compounds under real physics.
