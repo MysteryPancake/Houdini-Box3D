@@ -39,50 +39,32 @@ The DLL is copied to your Documents\houdiniX.Y\dso. Close Houdini before rebuild
 
 In Houdini: DOP network -> TAB -> "Box3D Solver" / "Box3D Body".
 
-## What is and isn't verified
+## Verified in Houdini 22.0
 
-* Box3D side (CMake, static lib, C++17 consumer, create/destroy world): built and run on Linux/GCC.
-* HDK side (`SIM_*`): written from memory of the HDK samples (SIM_SolverHair etc.),
-  then cross-checked against the HDK `DOP_GroupAndApply` sample (which exposed the
-  missing `UT_DSOVersion.h`, now included in `SIM_Box3DRegister.cpp`). NOT compiled. Expect to fix a few things on first build. Most likely spots:
-  - the DECLARE_DATAFACTORY / IMPLEMENT_DATAFACTORY macros
-  - `override` signatures (`solveObjectsSubclass`, `initializeSubclass`, `makeEqualSubclass`)
-  - SIM_DopDescription constructor arguments
-  Compare against `%HFS%\toolkit\samples\SIM\`.
+The plugin builds and loads in Houdini 22.0.479 and has been run in a DOP network
+(Object -> Box3D Body -> Box3D Solver):
 
-## Debugging the three open questions
+* Objects reach the solver as `newobjects` on the start frame and as `objects` from the next frame.
+* The world is created once, then carried between timesteps (shared state, one
+  `SIM_Box3DWorld` copy per cached timestep). Playing forward does not rebuild.
+* Reset simulation rebuilds the world from the object's Position / Motion data.
+* Scrubbing over cached frames does not call the solver at all.
+* `getRequestedCacheSubclass()` returns 1.
+* Gravity, velocity and write-back to the object give the expected results.
 
-Debug logging is compiled in by default (`-DBOX3DDOP_DEBUG=ON`; set OFF later).
-On Windows, GUI Houdini has no console, so log to a file. Set this BEFORE
-starting Houdini:
+The object needs Position data (an Empty Object has none; use an RBD Object or add a Position).
+
+## Debug logging
+
+Compiled in by default (`-DBOX3DDOP_DEBUG=ON`; pass OFF for a quiet build). Output goes to
+stderr, which shows up in Houdini's console window. It only prints when something happens:
+`REBUILD #n: <reason>`, bodies added/removed, external edits, and warnings/failures.
+
+Optional, set BEFORE starting Houdini (debug builds only):
 
 ```
-set BOX3DDOP_LOG=C:\temp\box3ddop.log
-set BOX3DDOP_PROBE_DEFAULTS=1          (question 2, one-shot)
-set BOX3DDOP_REQUESTED_CACHE=0         (question 3, try 0 then 1)
-houdini
+set BOX3DDOP_REQUESTED_CACHE=0         (override the default of 1)
 ```
-
-Build a DOP net: two or more objects, a Box3D Body node on each, a Box3D Solver.
-
-**1. Copy timing.** Look for `World[...] ctor / initialize / makeEqual / dtor`
-lines and the `counters:` line printed every step. Then try:
-* play frames 1..5: does `copied` go up by 1 per step? `rebuilds` should stay
-  at 1 and `continues` should grow (that is the design working).
-* scrub back to an earlier frame and step forward: expect one REBUILD with a
-  `stamp mismatch` reason.
-* change a solver parameter, or re-cook the same frame: see which path it takes.
-* the first `Step` line shows whether engine time during a solve is the step
-  start or end, and whether `getStartTime` is ever valid.
-
-**2. Parameter defaults.** Every step prints the solver parms and each object's
-`Box3DBody` values (data made by its DOP node). `PROBE:` lines show a
-SIM_Box3DBody created from code, which is the case the question was about.
-Expected defaults are printed on the line before it.
-
-**3. getRequestedCache.** Printed in `cache:` each step, plus a line each time
-the engine calls `getRequestedCacheSubclass()`. Run with 0 and 1 and compare
-earliest/latest cache time and whether scrubbing triggers rebuilds.
 
 ## Current state
 

@@ -15,19 +15,10 @@ std::atomic<uint64_t> theNextGeneration{ 1 };
 SIM_Box3DWorld::SIM_Box3DWorld(const SIM_DataFactory *factory)
     : BaseClass(factory)
 {
-    B3D_COUNT(worldCreated);
-    B3D_COUNT(worldLive);
-    B3D_LOG("World[%p] ctor            (created=%d live=%d)", (const void *)this,
-            B3D_COUNTER(worldCreated), B3D_COUNTER(worldLive));
 }
 
 SIM_Box3DWorld::~SIM_Box3DWorld()
 {
-    B3D_COUNT(worldDestroyed);
-    B3D_UNCOUNT(worldLive);
-    B3D_LOG("World[%p] dtor            (state=%p refs=%ld destroyed=%d live=%d)",
-            (const void *)this, (const void *)myState.get(), (long)myState.use_count(),
-            B3D_COUNTER(worldDestroyed), B3D_COUNTER(worldLive));
     // myState releases its reference; the Box3D world is destroyed when the
     // last timestep copy that points at it goes away.
 }
@@ -54,9 +45,6 @@ void
 SIM_Box3DWorld::initializeSubclass()
 {
     SIM_Data::initializeSubclass();
-    B3D_COUNT(worldInitialized);
-    B3D_LOG("World[%p] initialize      (dropping state=%p) initialized=%d",
-            (const void *)this, (const void *)myState.get(), B3D_COUNTER(worldInitialized));
     myState.reset();
 }
 
@@ -66,17 +54,10 @@ SIM_Box3DWorld::makeEqualSubclass(const SIM_Data *source)
     SIM_Data::makeEqualSubclass(source);
 
     const SIM_Box3DWorld *src = SIM_DATA_CASTCONST(source, SIM_Box3DWorld);
-    B3D_COUNT(worldCopied);
 
     if (src)
     {
         myState = src->myState;     // share, do not rebuild
-        B3D_LOG("World[%p] makeEqual       from World[%p] srcState=%p gen=%llu stamped=%d stamp=%g "
-                "refs=%ld creationTime=%g (copied=%d)",
-                (const void *)this, (const void *)src, (const void *)myState.get(),
-                (unsigned long long)(myState ? myState->generation : 0),
-                myState ? (int)myState->stamped : 0, myState ? myState->stampTime : 0.0,
-                (long)myState.use_count(), (double)getCreationTime(), B3D_COUNTER(worldCopied));
     }
     else
     {
@@ -102,9 +83,6 @@ SIM_Box3DWorld::createWorld(const b3dop::WorldSettings &settings)
         B3D_LOG("World[%p] createWorld FAILED", (const void *)this);
         return false;
     }
-    B3D_LOG("World[%p] createWorld     old state=%p -> new state=%p gen=%llu",
-            (const void *)this, (const void *)myState.get(), (const void *)fresh.get(),
-            (unsigned long long)fresh->generation);
     myState = std::move(fresh);
     return true;
 }

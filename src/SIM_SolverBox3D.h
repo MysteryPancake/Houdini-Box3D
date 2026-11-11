@@ -68,12 +68,6 @@ private:
 
     void publishEvents(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects);
 
-    // Debug-only helpers (empty in non-debug builds).
-    void debugLogStepHeader(SIM_Engine &engine, SIM_ObjectArray &objects,
-                            SIM_ObjectArray &newobjects, SIM_ObjectArray &feedback,
-                            double now, double dt);
-    void debugProbeBodyDefaults(SIM_ObjectArray &objects);
-
     static const SIM_DopDescription *getDescription();
 
     DECLARE_STANDARD_GETCASTTOTYPE();

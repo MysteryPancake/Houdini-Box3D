@@ -14,6 +14,7 @@
 #include <SIM/SIM_Object.h>
 #include <SIM/SIM_ObjectArray.h>
 #include <SIM/SIM_Position.h>
+#include <SIM/SIM_PositionSimple.h>
 #include <SIM/SIM_Time.h>
 #include <SIM/SIM_Utils.h>
 #include <UT/UT_Error.h>
@@ -64,16 +65,34 @@ readObjectState(const SIM_Object &obj, DopBodyState &out)
     return true;
 }
 
-void
+// Returns true if velocities could be stored (object has Motion data).
+// Without Motion we still write position/orientation so the object moves, but
+// velocity stays only inside Box3D.
+bool
 writeObjectState(SIM_Object &obj, const DopBodyState &s)
 {
     SIM_Motion *motion = SIM_DATA_GET(obj, SIM_POSITION_DATANAME, SIM_Motion);
-    if (!motion)
-        return;
-    motion->setPosition(UT_Vector3(s.pos[0], s.pos[1], s.pos[2]));
-    motion->setOrientation(UT_Quaternion(s.rot[0], s.rot[1], s.rot[2], s.rot[3]));
-    motion->setVelocity(UT_Vector3(s.lin[0], s.lin[1], s.lin[2]));
-    motion->setAngularVelocity(UT_Vector3(s.ang[0], s.ang[1], s.ang[2]));
+    if (motion)
+    {
+        motion->setPosition(UT_Vector3(s.pos[0], s.pos[1], s.pos[2]));
+        motion->setOrientation(UT_Quaternion(s.rot[0], s.rot[1], s.rot[2], s.rot[3]));
+        motion->setVelocity(UT_Vector3(s.lin[0], s.lin[1], s.lin[2]));
+        motion->setAngularVelocity(UT_Vector3(s.ang[0], s.ang[1], s.ang[2]));
+        return true;
+    }
+
+    SIM_PositionSimple *position = SIM_DATA_GET(obj, SIM_POSITION_DATANAME, SIM_PositionSimple);
+    if (!position)
+    {
+        B3D_LOG("  writeBack: object id=%d Position is not writable (not SIM_PositionSimple)",
+                obj.getObjectId());
+        return false;
+    }
+    B3D_LOG("  writeBack: object id=%d has no Motion data, writing position/orientation only",
+            obj.getObjectId());
+    position->setPosition(UT_Vector3(s.pos[0], s.pos[1], s.pos[2]));
+    position->setOrientation(UT_Quaternion(s.rot[0], s.rot[1], s.rot[2], s.rot[3]));
+    return false;
 }
 
 // Returns a short description of what differs, or nullptr if the same.
@@ -109,8 +128,15 @@ addObjectToWorld(b3dop::Box3DWorld &world, const SIM_Object &obj, const DopBodyS
 {
     const uint64_t id = static_cast<uint64_t>(obj.getObjectId());
     const bool ok = world.addBody(id, bodySettingsFor(obj), st.pos, st.rot);
-    // TODO: shapes from the object's Geometry / collision data
-    //       (world.addBoxShape / addSphereShape / hull).
+    // TODO: shapes from the object's Geometry / collision data.
+    // PLACEHOLDER: a 1x1x1 box so the body has mass (a shapeless dynamic body
+    // has zero mass and gravity does nothing to it).
+    if (ok)
+    {
+        const float half[3] = {0.5f, 0.5f, 0.5f};
+        if (!world.addBoxShape(id, half))
+            B3D_LOG("  addBoxShape(id=%d) FAILED", obj.getObjectId());
+    }
     if (!ok)
         B3D_LOG("  addBody(id=%d) FAILED", obj.getObjectId());
     return ok;
@@ -124,12 +150,10 @@ SIM_SolverBox3D::SIM_SolverBox3D(const SIM_DataFactory *factory)
     : BaseClass(factory),
       SIM_OptionsUser(this)
 {
-    B3D_LOG("Solver[%p] ctor", (const void *)this);
 }
 
 SIM_SolverBox3D::~SIM_SolverBox3D()
 {
-    B3D_LOG("Solver[%p] dtor", (const void *)this);
 }
 
 const SIM_DopDescription *
@@ -166,12 +190,11 @@ int
 SIM_SolverBox3D::getRequestedCacheSubclass() const
 {
     // SIM_Solver's default is 0. The header describes this as "the amount of
-    // history required by this solver". Our design does not read old timesteps
-    // (the world cache + DOP objects are enough), so 0 should be right, but
-    // that is unverified. To experiment without rebuilding:
-    //     set BOX3DDOP_REQUESTED_CACHE=1     (debug builds only)
-    const int value = B3D_ENV_INT("BOX3DDOP_REQUESTED_CACHE", 0);
-    B3D_LOG("Solver[%p] getRequestedCacheSubclass() -> %d", (const void *)this, value);
+    // history required by this solver". We ask for 1 timestep of history so
+    // the engine keeps the previous step (the world we continue from) alive.
+    // To experiment without rebuilding (debug builds only):
+    //     set BOX3DDOP_REQUESTED_CACHE=0
+    const int value = B3D_ENV_INT("BOX3DDOP_REQUESTED_CACHE", 1);
     return value;
 }
 
@@ -204,9 +227,6 @@ SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
     const double now = engine.getSimulationTime();
     const double dt  = timestep;
 
-    B3D_COUNT(stepsSolved);
-    debugLogStepHeader(engine, objects, newobjects, feedbacktoobjects, now, dt);
-    debugProbeBodyDefaults(objects);
 
     if (objects.entries() == 0)
         return SIM_SOLVER_SUCCESS;
@@ -253,10 +273,6 @@ SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
 
     if (!reason)
     {
-        B3D_COUNT(continues);
-        B3D_LOG("Step t=%g: CONTINUE world (state=%p gen=%llu stamp=%g bodies=%d) continues=%d",
-                now, (const void *)st, (unsigned long long)st->generation, st->stampTime,
-                st->world.bodyCount(), B3D_COUNTER(continues));
         syncObjectSet(*worldData, objects, newobjects);
     }
 
@@ -265,7 +281,6 @@ SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
     writeResultsBack(*worldData, objects);
 
     st->markStepped(now);
-    B3D_LOG("Step t=%g: done, stamp now %g (state=%p)", now, st->stampTime, (const void *)st);
 
     publishEvents(*worldData, objects);
     return SIM_SOLVER_SUCCESS;
@@ -286,16 +301,12 @@ SIM_SolverBox3D::findOrCreateWorldData(SIM_ObjectArray &objects)
         if (SIM_DATA_GETCONST(*obj, kWorldDataName, SIM_Box3DWorld))
         {
             SIM_Box3DWorld *w = SIM_DATA_GET(*obj, kWorldDataName, SIM_Box3DWorld);
-            B3D_LOG("World data found on object id=%d -> World[%p]", obj->getObjectId(),
-                    (const void *)w);
             return w;
         }
     }
 
     SIM_Object *carrier = objects(0);
     SIM_Box3DWorld *w = SIM_DATA_CREATE(*carrier, kWorldDataName, SIM_Box3DWorld, 0);
-    B3D_LOG("World data CREATED on object id=%d -> World[%p]", carrier->getObjectId(),
-            (const void *)w);
     return w;
 }
 
@@ -446,7 +457,12 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
             continue;
         }
 
-        writeObjectState(*obj, s);
+        if (!writeObjectState(*obj, s))
+        {
+            // DOP can't hold velocity here, so what we re-read next step is 0.
+            s.lin[0] = s.lin[1] = s.lin[2] = 0.0f;
+            s.ang[0] = s.ang[1] = s.ang[2] = 0.0f;
+        }
         it->second = s;
     }
 }
@@ -455,96 +471,4 @@ void
 SIM_SolverBox3D::publishEvents(SIM_Box3DWorld & /*worldData*/, SIM_ObjectArray & /*objects*/)
 {
     // TODO: begin/end touch, hit, sensor, and sleep events as DOP data.
-}
-
-// ---------------------------------------------------------------------------
-// Debug helpers
-// ---------------------------------------------------------------------------
-
-void
-SIM_SolverBox3D::debugLogStepHeader(SIM_Engine &engine, SIM_ObjectArray &objects,
-                                    SIM_ObjectArray &newobjects, SIM_ObjectArray &feedback,
-                                    double now, double dt)
-{
-#ifdef BOX3DDOP_DEBUG
-    SIM_Time start;
-    const bool startValid = getStartTime(start);
-
-    int newAlsoInObjects = 0;
-    for (exint i = 0; i < newobjects.entries(); ++i)
-        if (objects.findObjectById(newobjects(i)->getObjectId()))
-            ++newAlsoInObjects;
-
-    const SIM_CacheOptions &co = engine.getCacheOptions();
-    const UT_Vector3 g = getGravity();
-
-    B3D_LOG("==== Step #%d  solver=%p  engine time=%g (frame %d)  timestep=%g",
-            B3D_COUNTER(stepsSolved), (const void *)this, now,
-            engine.getSimulationFrame(engine.getSimulationTime()), dt);
-    B3D_LOG("  objects=%d newobjects=%d (of which also in objects: %d) feedback=%d",
-            (int)objects.entries(), (int)newobjects.entries(), newAlsoInObjects,
-            (int)feedback.entries());
-    B3D_LOG("  getStartTime valid=%d value=%g", (int)startValid, startValid ? (double)start : 0.0);
-    B3D_LOG("  cache: earliest=%g latest=%g enabled=%d maxMem=%lld getRequestedCache()=%d",
-            (double)engine.getEarliestCacheTime(), (double)engine.getLatestCacheTime(),
-            (int)co.getIsCacheEnabled(), (long long)co.getMaxCacheMemSize(), getRequestedCache());
-    B3D_LOG("  solver parms: gravity=(%g %g %g) substeps=%d sleep=%d",
-            g.x(), g.y(), g.z(), (int)getSubSteps(), (int)getEnableSleep());
-    B3D_LOG("  counters: worlds live=%d created=%d init=%d copied=%d destroyed=%d | "
-            "rebuilds=%d continues=%d",
-            B3D_COUNTER(worldLive), B3D_COUNTER(worldCreated), B3D_COUNTER(worldInitialized),
-            B3D_COUNTER(worldCopied), B3D_COUNTER(worldDestroyed), B3D_COUNTER(rebuilds),
-            B3D_COUNTER(continues));
-
-    for (exint i = 0; i < objects.entries(); ++i)
-    {
-        const SIM_Object *obj = objects(i);
-        const SIM_Box3DBody *b = SIM_DATA_GETCONST(*obj, kBodyDataName, SIM_Box3DBody);
-        if (b)
-            B3D_LOG("  obj id=%d Box3DBody: type=%d density=%g friction=%g restitution=%g "
-                    "lindamp=%g angdamp=%g gravscale=%g sleep=%d bullet=%d",
-                    obj->getObjectId(), (int)b->getBodyType(), (double)b->getDensity(),
-                    (double)b->getFriction(), (double)b->getRestitution(),
-                    (double)b->getLinearDamping(), (double)b->getAngularDamping(),
-                    (double)b->getGravityScale(), (int)b->getEnableSleep(), (int)b->getIsBullet());
-        else
-            B3D_LOG("  obj id=%d has NO Box3DBody data (defaults will be used)", obj->getObjectId());
-    }
-#else
-    (void)engine; (void)objects; (void)newobjects; (void)feedback; (void)now; (void)dt;
-#endif
-}
-
-void
-SIM_SolverBox3D::debugProbeBodyDefaults(SIM_ObjectArray &objects)
-{
-#ifdef BOX3DDOP_DEBUG
-    // One-shot: do PRM defaults reach options of SIM_Box3DBody data that is
-    // created from code (not through its DOP node)? Enable with
-    //     set BOX3DDOP_PROBE_DEFAULTS=1
-    static bool done = false;
-    if (done || !B3D_ENV_INT("BOX3DDOP_PROBE_DEFAULTS", 0) || objects.entries() == 0)
-        return;
-    done = true;
-
-    SIM_Object *obj = objects(0);
-    const char *probeName = "Box3DBodyProbe";
-    SIM_Box3DBody *p = SIM_DATA_CREATE(*obj, probeName, SIM_Box3DBody, 0);
-    if (!p)
-    {
-        B3D_LOG("PROBE: could not create SIM_Box3DBody in code");
-        return;
-    }
-    B3D_LOG("PROBE (created in code, expected defaults: type=2 density=1 friction=0.6 restitution=0 "
-            "lindamp=0 angdamp=0 gravscale=1 sleep=1 bullet=0):");
-    B3D_LOG("PROBE: type=%d density=%g friction=%g restitution=%g lindamp=%g angdamp=%g "
-            "gravscale=%g sleep=%d bullet=%d",
-            (int)p->getBodyType(), (double)p->getDensity(), (double)p->getFriction(),
-            (double)p->getRestitution(), (double)p->getLinearDamping(),
-            (double)p->getAngularDamping(), (double)p->getGravityScale(),
-            (int)p->getEnableSleep(), (int)p->getIsBullet());
-    obj->removeNamedSubData(probeName);
-#else
-    (void)objects;
-#endif
 }

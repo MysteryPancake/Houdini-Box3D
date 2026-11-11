@@ -3,15 +3,10 @@
 // Debug logging for the DOP plugin. Compiled in only when BOX3DDOP_DEBUG is
 // defined (CMake option BOX3DDOP_DEBUG, ON by default while bringing this up).
 //
-// Output goes to stderr (visible if you start Houdini from a console), or to
-// the file named by the BOX3DDOP_LOG environment variable (recommended on
-// Windows, where a GUI-launched Houdini has no console):
+// Output goes to stderr (shown in Houdini's console window).
 //
-//     set BOX3DDOP_LOG=C:\temp\box3ddop.log
-//
-// Other environment variables read (only in debug builds, read every step so
-// you can change them without rebuilding... but Houdini must be restarted for
-// the environment itself to change):
+// Other environment variables read (only in debug builds, read every step;
+// Houdini must be restarted for the environment itself to change):
 //
 //     BOX3DDOP_REQUESTED_CACHE=<int>  value getRequestedCacheSubclass() returns
 //     BOX3DDOP_PROBE_DEFAULTS=1       one-shot: create a SIM_Box3DBody in code
@@ -50,25 +45,15 @@ inline Counters &counters() { static Counters c; return c; }
 inline void log(const char *fmt, ...)
 {
     static std::mutex m;
-    static std::FILE *file = nullptr;
-    static bool inited = false;
 
     std::lock_guard<std::mutex> lock(m);
-    if (!inited)
-    {
-        inited = true;
-        const char *path = std::getenv("BOX3DDOP_LOG");
-        if (path && *path)
-            file = std::fopen(path, "a");
-    }
-    std::FILE *out = file ? file : stderr;
-    std::fputs("[b3dop] ", out);
+    std::fputs("[b3dop] ", stderr);
     va_list ap;
     va_start(ap, fmt);
-    std::vfprintf(out, fmt, ap);
+    std::vfprintf(stderr, fmt, ap);
     va_end(ap);
-    std::fputc('\n', out);
-    std::fflush(out);
+    std::fputc('\n', stderr);
+    std::fflush(stderr);
 }
 
 inline int envInt(const char *name, int fallback)
