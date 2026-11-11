@@ -2,7 +2,7 @@
 
 Houdini DOP wrapper for [Box3D](https://github.com/erincatto/box3d), one of the fastest rigid body solvers currently available.
 
-My goal is keeping this wrapper optimized to ensure great performance, like in the original codebase.
+My goal is optimizing this as much as possible to ensure the great performance of the original codebase.
 
 > [!CAUTION]
 > This is heavily vibe coded, as I'm still learning the HDK!
