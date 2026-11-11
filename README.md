@@ -1,7 +1,13 @@
-# Box3D DOP skeleton
+# Houdini Box3D
 
-Houdini DOP solver backed by Box3D. Bodies come from points and their attributes
-(see "How bodies are made" below).
+Houdini DOP wrapper for [Box3D](https://github.com/erincatto/box3d), similar to the RBD Bullet Solver except faster.
+
+My goal is to ensure this wrapper delivers similar performance to the original codebase.
+
+> [!CAUTION]
+> This is heavily vibe coded, as I made this for fun!
+> 
+> This isn't normally how I develop software!
 
 ## Layout
 
