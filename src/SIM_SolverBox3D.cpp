@@ -691,10 +691,10 @@ buildShapes(b3dop::Box3DWorld &world, ShapeSources &src, b3dop::ShapeType type,
                 std::vector<float> pts;
                 mergePieces(parts, pts);
                 const int n = int(pts.size() / 3);
-                const HullId h = world.createHullWithKey(key, pts.data(), n, &vol);
-                if (h)
+                const HullId built = world.createHullWithKey(key, pts.data(), n, &vol);
+                if (built)
                 {
-                    pc.isHull = true;  pc.hull = h;  pc.volume = vol;
+                    pc.isHull = true;  pc.hull = built;  pc.volume = vol;
                 }
                 else if (fitShapeToPoints(ShapeType::Box, pts.data(), n, pc.spec))
                 {
