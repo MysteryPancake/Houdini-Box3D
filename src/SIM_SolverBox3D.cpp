@@ -26,6 +26,7 @@
 #include <SIM/SIM_Utils.h>
 #include <UT/UT_Error.h>
 #include <UT/UT_Matrix3.h>
+#include <UT/UT_ParallelUtil.h>
 #include <UT/UT_Matrix4.h>
 #include <UT/UT_Quaternion.h>
 #include <UT/UT_Vector3.h>
@@ -33,6 +34,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <initializer_list>
 #include <map>
 #include <mutex>
 #include <string>
@@ -206,6 +208,29 @@ void setLocal3(P &p, const double m[9], std::true_type)
 }
 template <class P>
 void setLocal3(P &, const double *, std::false_type) {}
+
+// Below this many points a parallel pass costs more than it saves.
+constexpr size_t kMinParallelPoints = 2048;
+
+// Runs f(i) for i in [0, n), threaded on Houdini's TBB pool when n is large.
+// f must only read shared data, or write to element i of its own output; the
+// serial passes around each call are where the Box3D world, the mirror and the
+// `seen` set are touched.
+template <class F>
+void
+parallelForEach(size_t n, const F &f)
+{
+    if (n < kMinParallelPoints)
+    {
+        for (size_t i = 0; i < n; ++i)
+            f(i);
+        return;
+    }
+    UTparallelFor(UT_BlockedRange<size_t>(0, n), [&f](const UT_BlockedRange<size_t> &r) {
+        for (size_t i = r.begin(); i != r.end(); ++i)
+            f(i);
+    });
+}
 
 // Row-vector rotation matrix for unit quaternion q (x, y, z, w), taken from the
 // HDK (UT_QuaternionD::getRotationMatrix). The HDK reference does not state the
@@ -857,6 +882,30 @@ addPointBody(b3dop::Box3DWorld &world, ShapeSources &src, const b3dop::BodySetti
     return true;
 }
 
+// One point's result on its way from Box3D to the geometry (writeResultsBack).
+struct WriteItem
+{
+    GA_Offset     off   = GA_INVALID_OFFSET;
+    DopBodyState *entry = nullptr;          // this point's mirror entry
+    DopBodyState  s;                        // what Box3D reports now
+    DopBodyState  stored;                   // what the geometry holds after the write
+    bool          storedOk = false;
+    bool          hasM3    = false;         // packed rotation to write in the serial pass
+    GA_Offset     primOff  = GA_INVALID_OFFSET;
+    double        newM3[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+};
+
+// One point as read by the parallel pass of syncObject().
+struct PointSnap
+{
+    GA_Offset    off    = GA_INVALID_OFFSET;
+    int64_t      bid    = 0;
+    uint64_t     key    = 0;
+    DopBodyState cur;
+    bool         ok     = false;    // readPointState succeeded (P is finite)
+    bool         active = true;
+};
+
 struct SyncCounts
 {
     int added = 0, edited = 0, retyped = 0, failed = 0, duplicates = 0, badP = 0;
@@ -887,11 +936,40 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj,
 
     ShapeSources sources;       // packed geometry, collected lazily per distinct source
 
+    // ---- pass 1 (parallel): read every point's attributes -----------------
+    // Reads only. Offsets are gathered serially first (cheap), so pass 1 can
+    // index by position. When there is no `id` attribute the body id is the
+    // point number, which equals the position in a full point-range walk; it
+    // is filled here so the parallel pass never calls pointIndex().
+    std::vector<PointSnap> snaps;
+    snaps.reserve(size_t(gdp->getNumPoints()));
     for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it)
     {
-        const GA_Offset off = *it;
-        const int64_t   bid = pointId(gdp, a, off);
-        const uint64_t  key = b3dop::makeBodyKey(obj.getObjectId(), bid);
+        PointSnap s;
+        s.off = *it;
+        s.bid = int64_t(snaps.size());
+        snaps.push_back(s);
+    }
+
+    const int objectId = obj.getObjectId();
+    parallelForEach(snaps.size(), [&](size_t i) {
+        PointSnap &s = snaps[i];
+        if (a.id.isValid())
+            s.bid = int64_t(a.id.get(s.off));
+        s.key = b3dop::makeBodyKey(objectId, s.bid);
+        const PackedInfo pk = getPackedInfo(gdp, s.off);
+        s.ok     = readPointState(gdp, a, s.off, pk, s.cur);
+        s.active = pointIsActive(a, s.off);
+    });
+
+    // ---- pass 2 (serial): apply to Box3D, the mirror and `seen` -------------
+    // Same order and same rules as before, so "first duplicate id wins" holds.
+    for (PointSnap &s : snaps)
+    {
+        const GA_Offset off = s.off;
+        const int64_t   bid = s.bid;
+        const uint64_t  key = s.key;
+        DopBodyState   &cur = s.cur;
 
         if (!seen.insert(key).second)
         {
@@ -899,21 +977,20 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj,
             continue;
         }
 
-        PackedInfo pk = getPackedInfo(gdp, off);
-        DopBodyState cur;
-        if (!readPointState(gdp, a, off, pk, cur))
+        if (!s.ok)
         {
             ++c.badP;
             seen.erase(key);        // treated as absent: body (if any) is removed
             continue;
         }
 
-        const bool active = pointIsActive(a, off);
+        const bool active = s.active;
         const b3dop::BodySettings::Type wantType = bodyTypeFor(node, active);
 
         auto mit = st.mirror.find(key);
         if (mit == st.mirror.end())
         {
+            PackedInfo pk = getPackedInfo(gdp, off);    // only new bodies need it again
             readPackedPivot(pk);        // the hull is built from it
             std::string fallbackNote;
             if (!addPointBody(world, sources, node, a, off, bid, key, pk, cur, active, &fallbackNote))
@@ -1011,7 +1088,7 @@ SIM_SolverBox3D::getDescription()
     static PRM_Default theSubStepsDefault(4);
 
     static PRM_Name    theThreadsName("threads", "Threads (0 = All Cores)");
-    static PRM_Default theThreadsDefault(1);
+    static PRM_Default theThreadsDefault(0);   // 0 = all cores
 
     static PRM_Name    theSleepName("enablesleep", "Allow Sleeping");
     static PRM_Default theSleepDefault(1);
@@ -1294,6 +1371,10 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
                 qOut.set(*it, UT_QuaternionF(0.0f, 0.0f, 0.0f, 1.0f));
         }
 
+        // ---- pass 1 (serial): pull results out of Box3D ---------------------
+        // The mirror and the Box3D world are shared state, so they are only
+        // touched here and in pass 4.
+        std::vector<WriteItem> items;
         int missing = 0;
         for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it)
         {
@@ -1304,52 +1385,104 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
             if (mit == st->mirror.end() || !mit->second.dynamic)
                 continue;
 
-            DopBodyState s = mit->second;
-            if (!st->world.getTransformByHandle(s.handle, s.pos, s.rot) ||
-                !st->world.getVelocityByHandle(s.handle, s.lin, s.ang))
+            WriteItem w;
+            w.off   = off;
+            w.entry = &mit->second;     // stable: nothing is inserted or erased below
+            w.s     = mit->second;      // keeps handle and type
+            if (!st->world.getTransformByHandle(w.s.handle, w.s.pos, w.s.rot) ||
+                !st->world.getVelocityByHandle(w.s.handle, w.s.lin, w.s.ang))
             {
                 ++missing;      // leave the point alone; next sync re-snapshots it
                 continue;
             }
+            items.push_back(w);
+        }
 
-            gdp->setPos3(off, UT_Vector3(float(s.pos[0]), float(s.pos[1]), float(s.pos[2])));
+        // ---- pass 2 (parallel): write attributes, one task per point ---------
+        // Every item is a distinct point, so no two tasks write the same
+        // element. Pages must be hardened first, or the writes would race on
+        // copy-on-write pages that are still shared.
+        GA_RWHandleV3 pOut(gdp, GA_ATTRIB_POINT, "P");
+        for (GA_Attribute *attr : { pOut.isValid() ? pOut.getAttribute() : nullptr,
+                                    qOut.isValid() ? qOut.getAttribute() : nullptr,
+                                    vOut.isValid() ? vOut.getAttribute() : nullptr,
+                                    wOut.isValid() ? wOut.getAttribute() : nullptr })
+            if (attr)
+                attr->hardenAllPages();
+
+        {
+            // rotationMatrixFromQuat has a one-time convention check; run it
+            // here so no worker thread is the one that triggers (and logs) it.
+            const float identity[4] = { 0, 0, 0, 1 };
+            double      warm[9];
+            rotationMatrixFromQuat(identity, warm);
+        }
+
+        parallelForEach(items.size(), [&](size_t i) {
+            WriteItem       &w   = items[i];
+            const GA_Offset  off = w.off;
+            const DopBodyState &s = w.s;
+
+            if (pOut.isValid()) pOut.set(off, UT_Vector3(float(s.pos[0]), float(s.pos[1]), float(s.pos[2])));
             if (qOut.isValid()) qOut.set(off, UT_QuaternionF(s.rot[0], s.rot[1], s.rot[2], s.rot[3]));
             if (vOut.isValid()) vOut.set(off, UT_Vector3(s.lin[0], s.lin[1], s.lin[2]));
             if (wOut.isValid()) wOut.set(off, UT_Vector3(s.ang[0], s.ang[1], s.ang[2]));
 
             // A packed primitive's rotation is NOT the point's `orient`: it is
-            // the primitive's own transform. Without this the packed geometry
-            // would move but never rotate. Keep its scale, replace the rotation.
+            // the primitive's own transform. Work out the new matrix here (pure
+            // math, plus reads of the primitive), but do not write it: that is
+            // pass 3. Keep its scale, replace the rotation.
             PackedInfo pk = getPackedInfo(gdp, off);
             if (pk.prim && pk.rotationFromPrim)
             {
                 const double oldM3[9] = { pk.m4[0], pk.m4[1], pk.m4[2],
                                           pk.m4[4], pk.m4[5], pk.m4[6],
                                           pk.m4[8], pk.m4[9], pk.m4[10] };
-                double newM3[9];
-                composeLocal3(s.rot, oldM3, newM3);
-                GU_PrimPacked *prim = static_cast<GU_PrimPacked *>(gdp->getPrimitive(pk.primOff));
-                setLocal3(*prim, newM3, std::integral_constant<bool, kPackedRotationWritable>());
-                // What the primitive now holds, without reading it back: the
-                // rotation of the matrix just written. (This matches the old
-                // second getPackedInfo call, which split the same matrix.)
+                composeLocal3(s.rot, oldM3, w.newM3);
+                w.primOff = pk.primOff;
+                w.hasM3   = true;
+                // What the primitive will hold, without reading it back: the
+                // rotation of the matrix pass 3 writes.
                 double sc[3];
-                b3dop::matrix3ToQuatScale(newM3, pk.rot, sc);
+                b3dop::matrix3ToQuatScale(w.newM3, pk.rot, sc);
             }
 
             // Re-read what the points actually hold (P may be stored in lower
             // precision than Box3D's), so next step's edit detection compares
             // like with like and does not report our own write as an edit.
-            DopBodyState stored;
-            if (readPointState(gdp, a, off, pk, stored))
+            w.storedOk = readPointState(gdp, a, off, pk, w.stored);
+        });
+
+        for (GA_Attribute *attr : { pOut.isValid() ? pOut.getAttribute() : nullptr,
+                                    qOut.isValid() ? qOut.getAttribute() : nullptr,
+                                    vOut.isValid() ? vOut.getAttribute() : nullptr,
+                                    wOut.isValid() ? wOut.getAttribute() : nullptr })
+            if (attr)
+                attr->bumpDataId();
+
+        // ---- pass 3 (serial): packed primitive rotation ----------------------
+        // setLocalTransform + transformDirty stay serial: the HDK pages do not
+        // say whether they touch shared state.
+        for (const WriteItem &w : items)
+        {
+            if (!w.hasM3)
+                continue;
+            GU_PrimPacked *prim = static_cast<GU_PrimPacked *>(gdp->getPrimitive(w.primOff));
+            setLocal3(*prim, w.newM3, std::integral_constant<bool, kPackedRotationWritable>());
+        }
+
+        // ---- pass 4 (serial): update the mirror --------------------------------
+        for (WriteItem &w : items)
+        {
+            if (w.storedOk)
             {
-                stored.dynamic = true;
-                stored.type    = mit->second.type;
-                stored.handle  = mit->second.handle;
-                mit->second = stored;
+                w.stored.dynamic = true;
+                w.stored.type    = w.entry->type;
+                w.stored.handle  = w.entry->handle;
+                *w.entry = w.stored;
             }
             else
-                mit->second = s;        // s was copied from the entry: keeps handle and type
+                *w.entry = w.s;     // w.s was copied from the entry: keeps handle and type
         }
 
         if (missing)
