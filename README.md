@@ -135,10 +135,22 @@ A packed primitive is one point and one primitive. For these points:
 * **Shape.** `box` / `sphere` are fitted to the packed geometry's bounds (not a
   unit shape: `pscale` and `scale` only matter as the fallback if the packed
   geometry is empty). `convex` / `concave` hull the packed geometry (see above).
-* **Pivot.** Hull points are taken relative to the primitive's pivot, with the
+* **Pivot.** Hull points are taken relative to the primitive's pivot (read with
+  `GEO_PrimPacked::getPivot`, not derived from the transform's translation), with the
   primitive's scale baked in and its rotation removed, so the body origin is the
   point's `P` and shapes off-centre from the pivot are handled. Instances of one
-  source at different rotations share one cached hull.
+  source (Houdini shares one packed geometry between them, e.g. copy to points)
+  share one cached hull: the source's points are hashed once per sync, and each
+  instance only adds its pivot and scale to the cache key, so the body-local
+  points are only built the first time. The source is assumed not to deform or
+  animate.
+* **Packed fragments.** A Pack SOP run with a `name` attribute makes one packed
+  fragment per name, all sharing one source. Each fragment is its own body and
+  its collision geometry is only the points of that fragment's primitives (one
+  piece), not the whole source. Fragments of one source share the source
+  geometry, and a fragment's hull is keyed by (source, fragment name, pivot,
+  scale). The `name`-based pieces described under "Convex and concave" are for a
+  packed primitive that holds several named parts in ONE body, not for fragments.
 * **Rotation.** The body rotation is read from the primitive's own transform, not
   from `orient`. Results are written back to the point's `P` **and** to the
   primitive's local transform (the scale of the primitive is kept, the rotation
@@ -165,12 +177,25 @@ caching / instancing, offset hulls and compounds under real physics.
 
 If the HDK build complains, the likely spots are the packed-primitive calls in
 `SIM_SolverBox3D.cpp`: `GU_PrimPacked::isPackedPrimitive`,
-`getPackedDetail()`, `getFullTransform4()` and `setLocalTransform()`, plus
+`getPackedDetail()`, `getPivot()`, `getFullTransform4()`, `setLocalTransform()`,
+`transformDirty()`, `UT_QuaternionD::getRotationMatrix()`, and the fragment calls
+(`GU_PackedFragment` via `sharedImplementation()`, `getPrimitiveRange()`, `name()`), plus
 `GU_DetailHandleAutoReadLock`. The first, third and fourth are written so a
 different signature falls back instead of failing to compile; if
 `setLocalTransform(UT_Matrix3D)` does not exist, packed rotation cannot be
 written back and packed points are then treated like plain ones (rotation in
 `orient`), which means packed geometry will not visibly rotate.
+
+## Warnings on the node
+
+Problems that change what gets simulated are shown as warnings on the solver
+node (they are also in the debug log): a point that fell back to a box because
+its geometry could not be hulled (flat, fewer than 4 points, too complex) or
+was empty, points that could not become a body, duplicate `id`s, non-finite `P`,
+a Geometry that is not writable, and points with no Box3D body at write-back.
+Each kind is one warning per step with a count. Fallback shapes are decided when
+a body is created, so that warning appears on the frame the body is made, not
+every frame.
 
 ## Debug logging
 

@@ -25,6 +25,12 @@ namespace b3dop {
 // Handle to a convex hull owned by the world's hull cache. 0 is invalid.
 using HullId = uint64_t;
 
+// Opaque handle to a body, valid until that body is removed or the world is
+// destroyed. Looking a body up by key costs a hash lookup; a handle does not,
+// so callers that touch a body every step fetch it once (bodyHandle) and keep it.
+// 0 is invalid.
+using BodyHandle = uint64_t;
+
 struct WorldSettings
 {
     float gravity[3]    = { 0.0f, -9.80665f, 0.0f };
@@ -110,12 +116,28 @@ public:
     // so the cache entry is only needed until then. Entries that no shape uses
     // are released by pruneHulls().
     HullId createHull(const float *xyz, int pointCount, float *outVolume = nullptr);
+
+    // Same, but the caller supplies the cache key. For packed instances that
+    // Houdini says share one source: look the key up first (findHull) and only
+    // build the points on a miss. The caller promises that one key always means
+    // the same points. A 0 key is not allowed.
+    HullId findHull(HullId key, float *outVolume = nullptr) const;
+    HullId createHullWithKey(HullId key, const float *xyz, int pointCount, float *outVolume = nullptr);
     bool   addHullShape(uint64_t bodyId, HullId hull);
     void   pruneHulls();                // frees cache entries no body uses
     int    hullCacheSize() const;
     int    shapeCount(uint64_t bodyId) const;
     float  bodyMass(uint64_t bodyId) const;      // Box3D's computed mass, 0 if unknown
     // bool addMeshShape(...);   // static colliders only, probably
+
+    // ---- handle access -----------------------------------------------------
+    // The same operations as the keyed ones below, minus the hash lookup. A
+    // stale handle (body removed, world destroyed) must not be used.
+    BodyHandle bodyHandle(uint64_t id) const;     // 0 if there is no such body
+    bool getTransformByHandle(BodyHandle h, double outPos[3], float outRotXYZW[4]) const;
+    bool getVelocityByHandle(BodyHandle h, float outLinear[3], float outAngular[3]) const;
+    bool setVelocityByHandle(BodyHandle h, const float linear[3], const float angular[3]);
+    bool setTransformByHandle(BodyHandle h, const double pos[3], const float rotXYZW[4]);
 
     // ---- read back / push in -------------------------------------------
     bool getTransform(uint64_t id, double outPos[3], float outRotXYZW[4]) const;

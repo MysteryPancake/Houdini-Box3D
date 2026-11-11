@@ -42,6 +42,13 @@ struct Box3DBodyMirror
     float  lin[3] = { 0, 0, 0 };
     float  ang[3] = { 0, 0, 0 };      // radians per second
     bool   dynamic = false;           // a body the solver writes back (not static)
+
+    // Cached so the per-step loops need no hash lookups into the Box3D world:
+    // the body's handle, and the body type the solver last set (the same value
+    // Box3DWorld::getBodyType would return). Valid for the life of the entry:
+    // the mirror is per world, and an entry is erased when its body is removed.
+    b3dop::BodyHandle        handle = 0;
+    b3dop::BodySettings::Type type  = b3dop::BodySettings::Type::Dynamic;
 };
 
 // Everything that is shared between timestep copies.

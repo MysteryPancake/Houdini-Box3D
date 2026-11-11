@@ -49,6 +49,25 @@ struct Box3DWorld::Impl
 
 namespace {
 
+// A b3BodyId packed into a BodyHandle. b3BodyId is {int32 index1, uint16
+// world0, uint16 generation}; index1 is >= 1 for a live body, so a packed
+// valid id is never 0.
+BodyHandle
+packBody(b3BodyId id)
+{
+    return (uint64_t(uint32_t(id.index1)) << 32) | (uint64_t(id.world0) << 16) | uint64_t(id.generation);
+}
+
+b3BodyId
+unpackBody(BodyHandle h)
+{
+    b3BodyId id;
+    id.index1     = int32_t(uint32_t(h >> 32));
+    id.world0     = uint16_t((h >> 16) & 0xffffu);
+    id.generation = uint16_t(h & 0xffffu);
+    return id;
+}
+
 // b3Pos is float x/y/z normally and double x/y/z when Box3D is built with
 // BOX3D_DOUBLE_PRECISION. These helpers keep the double[3] boundary working in
 // both modes (this file is the only one that sees Box3D headers).
@@ -300,13 +319,31 @@ Box3DWorld::createHull(const float *xyz, int pointCount, float *outVolume)
         if (!std::isfinite(xyz[i]))
             return 0;
 
-    const HullId key = hashPoints(xyz, pointCount);
+    return createHullWithKey(hashPoints(xyz, pointCount), xyz, pointCount, outVolume);
+}
+
+HullId
+Box3DWorld::findHull(HullId key, float *outVolume) const
+{
+    if (outVolume) *outVolume = 0.0f;
     auto cached = myImpl->hulls.find(key);
-    if (cached != myImpl->hulls.end())
-    {
-        if (outVolume) *outVolume = cached->second.volume;
-        return key;
-    }
+    if (key == 0 || cached == myImpl->hulls.end())
+        return 0;
+    if (outVolume) *outVolume = cached->second.volume;
+    return key;
+}
+
+HullId
+Box3DWorld::createHullWithKey(HullId key, const float *xyz, int pointCount, float *outVolume)
+{
+    if (outVolume) *outVolume = 0.0f;
+    if (key == 0 || !xyz || pointCount < 4)
+        return 0;
+    if (const HullId hit = findHull(key, outVolume))
+        return hit;
+    for (int i = 0; i < pointCount * 3; ++i)
+        if (!std::isfinite(xyz[i]))
+            return 0;
 
     std::vector<b3Vec3> pts(static_cast<size_t>(pointCount));
     for (int i = 0; i < pointCount; ++i)
@@ -476,6 +513,64 @@ Box3DWorld::setTransform(uint64_t id, const double pos[3], const float rotXYZW[4
         return false;
 
     b3Body_SetTransform(it->second, makePos(pos), makeQuat(rotXYZW));
+    return true;
+}
+
+BodyHandle
+Box3DWorld::bodyHandle(uint64_t id) const
+{
+    auto it = myImpl->bodies.find(id);
+    return it == myImpl->bodies.end() ? 0 : packBody(it->second);
+}
+
+bool
+Box3DWorld::getTransformByHandle(BodyHandle h, double outPos[3], float outRotXYZW[4]) const
+{
+    if (!h)
+        return false;
+    const b3BodyId id = unpackBody(h);
+    const b3Pos    p  = b3Body_GetPosition(id);
+    const b3Quat   q  = b3Body_GetRotation(id);
+    outPos[0] = static_cast<double>(p.x);
+    outPos[1] = static_cast<double>(p.y);
+    outPos[2] = static_cast<double>(p.z);
+    outRotXYZW[0] = q.v.x;
+    outRotXYZW[1] = q.v.y;
+    outRotXYZW[2] = q.v.z;
+    outRotXYZW[3] = q.s;
+    return true;
+}
+
+bool
+Box3DWorld::getVelocityByHandle(BodyHandle h, float outLinear[3], float outAngular[3]) const
+{
+    if (!h)
+        return false;
+    const b3BodyId id = unpackBody(h);
+    const b3Vec3   v  = b3Body_GetLinearVelocity(id);
+    const b3Vec3   w  = b3Body_GetAngularVelocity(id);
+    outLinear[0]  = v.x;  outLinear[1]  = v.y;  outLinear[2]  = v.z;
+    outAngular[0] = w.x;  outAngular[1] = w.y;  outAngular[2] = w.z;
+    return true;
+}
+
+bool
+Box3DWorld::setVelocityByHandle(BodyHandle h, const float linear[3], const float angular[3])
+{
+    if (!h)
+        return false;
+    const b3BodyId id = unpackBody(h);
+    b3Body_SetLinearVelocity(id, makeVec(linear));
+    b3Body_SetAngularVelocity(id, makeVec(angular));
+    return true;
+}
+
+bool
+Box3DWorld::setTransformByHandle(BodyHandle h, const double pos[3], const float rotXYZW[4])
+{
+    if (!h)
+        return false;
+    b3Body_SetTransform(unpackBody(h), makePos(pos), makeQuat(rotXYZW));
     return true;
 }
 

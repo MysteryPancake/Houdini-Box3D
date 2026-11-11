@@ -9,6 +9,8 @@
 #include <GA/GA_Primitive.h>
 #include <GU/GU_Detail.h>
 #include <GU/GU_DetailHandle.h>
+#include <GU/GU_PackedFragment.h>
+#include <GU/GU_PackedImpl.h>
 #include <GU/GU_PrimPacked.h>
 #include <PRM/PRM_Include.h>
 #include <SIM/SIM_CacheOptions.h>
@@ -31,6 +33,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <map>
 #include <mutex>
 #include <string>
 #include <type_traits>
@@ -132,6 +135,7 @@ struct PackedInfo
     const GU_PrimPacked *prim       = nullptr;       // null: a plain point
     GA_Offset            primOff    = GA_INVALID_OFFSET;
     double               P[3]       = { 0, 0, 0 };     // the point's position = the pivot in world space
+    double               pivot[3]   = { 0, 0, 0 };     // GEO_PrimPacked::getPivot, the packed geometry's own space. NOT filled by getPackedInfo: call readPackedPivot first
     double               m4[16]     = { 1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1 };
     float                rot[4]     = { 0, 0, 0, 1 };  // rotation split out of m4's 3x3
     double               scale[3]   = { 1, 1, 1 };
@@ -195,12 +199,68 @@ void setLocal3(P &p, const double m[9], std::true_type)
         for (int c = 0; c < 3; ++c)
             mat(r, c) = m[r * 3 + c];
     p.setLocalTransform(mat);
+    // The primitive caches state derived from its transform (bounds, for the
+    // viewport and culling); tell it the transform changed.
+    p.transformDirty();
 }
 template <class P>
 void setLocal3(P &, const double *, std::false_type) {}
 
+// Row-vector rotation matrix for unit quaternion q (x, y, z, w), taken from the
+// HDK (UT_QuaternionD::getRotationMatrix). The HDK reference does not state the
+// matrix convention, so the first call checks the result against the Houdini-
+// free b3dop::quatToMatrix3 (which is unit-tested and defined as row-vector).
+// If they disagree (say the HDK matrix is transposed) it is logged once and the
+// b3dop one is used from then on, so a convention surprise cannot invert the
+// rotation written back to the primitive.
+void
+rotationMatrixFromQuat(const float q[4], double out[9])
+{
+    double ref[9];
+    b3dop::quatToMatrix3(q, ref);
+
+    const double   qx = q[0], qy = q[1], qz = q[2], qw = q[3];
+    UT_QuaternionD uq(qx, qy, qz, qw);
+    UT_Matrix3D    m;
+    uq.getRotationMatrix(m);
+    double hdk[9];
+    for (int r = 0; r < 3; ++r)
+        for (int c = 0; c < 3; ++c)
+            hdk[r * 3 + c] = m(r, c);
+
+    static std::once_flag once;
+    static bool           hdkAgrees = true;
+    std::call_once(once, [&] {
+        double err = 0.0;
+        for (int i = 0; i < 9; ++i)
+            err = std::fmax(err, std::fabs(hdk[i] - ref[i]));
+        hdkAgrees = err < 1e-5;
+        if (!hdkAgrees)
+            B3D_LOG("getRotationMatrix disagrees with the row-vector reference (max diff %g): "
+                    "using the reference for packed write-back", err);
+    });
+    for (int i = 0; i < 9; ++i)
+        out[i] = hdkAgrees ? hdk[i] : ref[i];
+}
+
+// A new local 3x3 for a packed primitive: keep the scale of `oldM3` (per row)
+// and replace the rotation with q. For uniform scale this is exact.
+void
+composeLocal3(const float q[4], const double oldM3[9], double outM3[9])
+{
+    float  oq[4];
+    double sc[3];
+    b3dop::matrix3ToQuatScale(oldM3, oq, sc);       // sc stays 1 if the old matrix is degenerate
+    double r[9];
+    rotationMatrixFromQuat(q, r);
+    for (int row = 0; row < 3; ++row)
+        for (int col = 0; col < 3; ++col)
+            outM3[row * 3 + col] = sc[row] * r[row * 3 + col];
+}
+
 // Is this point's primitive a packed primitive? Fills everything the solver
-// needs from it. A plain point (no vertex, or a non-packed primitive) returns
+// needs from it EXCEPT the pivot (see readPackedPivot): getPackedInfo runs for
+// every point every step, and the pivot is only needed to build a hull. A plain point (no vertex, or a non-packed primitive) returns
 // a PackedInfo with prim == nullptr.
 PackedInfo
 getPackedInfo(const GU_Detail *gdp, GA_Offset ptoff)
@@ -233,6 +293,18 @@ getPackedInfo(const GU_Detail *gdp, GA_Offset ptoff)
     return pk;
 }
 
+// Fills pk.pivot. Only needed when a body's hull is built, which happens once
+// per body, so it is a separate call instead of part of getPackedInfo.
+void
+readPackedPivot(PackedInfo &pk)
+{
+    if (!pk.prim)
+        return;
+    UT_Vector3 pv(0, 0, 0);
+    pk.prim->getPivot(pv);
+    pk.pivot[0] = pv.x();  pk.pivot[1] = pv.y();  pk.pivot[2] = pv.z();
+}
+
 // ---------------------------------------------------------------------------
 // Collision source geometry
 // ---------------------------------------------------------------------------
@@ -242,6 +314,7 @@ struct NamedPiece
 {
     std::string                name;
     std::vector<float>         xyz;
+    uint64_t                   hash = 0;   // of xyz; set once per shared source (see innerPieces)
     std::unordered_set<GA_Offset> seen;    // points already added (a point is shared by many prims)
 };
 
@@ -249,7 +322,30 @@ struct PieceGroup
 {
     std::vector<NamedPiece>                    pieces;
     std::unordered_map<std::string, size_t>    byName;
+    uint64_t                                   hash = 0;   // of all pieces in order: the key of the merged (convex) hull
 };
+
+// The `seen` sets are only needed while collecting. Hash each piece, and all of
+// them together, once: Houdini shares one packed source between its instances,
+// so this runs once per source (or fragment), not once per instance.
+void
+hashPieces(PieceGroup &out)
+{
+    out.hash = 0;
+    for (NamedPiece &np : out.pieces)
+    {
+        np.seen.clear();
+        np.hash = b3dop::hashFloats(np.xyz.data(), np.xyz.size());
+        out.hash = b3dop::mixHash(out.hash, np.hash);
+    }
+}
+
+// The fragment implementation of a packed primitive, or null if it is not one.
+const GU_PackedFragment *
+asFragment(const GU_PrimPacked &prim)
+{
+    return dynamic_cast<const GU_PackedFragment *>(prim.sharedImplementation());
+}
 
 // Group the points of a detail's primitives into pieces by the primitive
 // string attribute `name` (prims without one all land in one piece). A detail
@@ -297,8 +393,37 @@ collectPieces(const GU_Detail *gdp, PieceGroup &out)
         for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it)
             addPoint(out, std::string(), *it);
 
-    for (NamedPiece &np : out.pieces)       // the `seen` sets are only needed while collecting
-        np.seen.clear();
+    hashPieces(out);
+}
+
+// A packed FRAGMENT embeds the whole source detail but stands for only the
+// primitives in its range (Pack SOP with a `name` attribute: one fragment per
+// name, all sharing one source). Its collision geometry is those primitives'
+// points: ONE piece.
+void
+collectFragmentPiece(const GU_Detail *gdp, const GA_Range &range, const std::string &name,
+                     PieceGroup &out)
+{
+    out.pieces.emplace_back();
+    NamedPiece &np = out.pieces.back();
+    np.name = name;
+    out.byName.emplace(name, 0);
+    for (GA_Iterator it(range); !it.atEnd(); ++it)
+    {
+        const GA_Primitive *prim = gdp->getPrimitive(*it);
+        if (!prim)
+            continue;
+        const GA_Size nv = prim->getVertexCount();
+        for (GA_Size i = 0; i < nv; ++i)
+        {
+            const GA_Offset pt = prim->getPointOffset(i);
+            if (!np.seen.insert(pt).second)
+                continue;
+            const UT_Vector3 p = gdp->getPos3(pt);
+            np.xyz.push_back(p.x());  np.xyz.push_back(p.y());  np.xyz.push_back(p.z());
+        }
+    }
+    hashPieces(out);
 }
 
 // Per-object, per-sync cache of collision source geometry. Lives for one
@@ -316,6 +441,8 @@ struct ShapeSources
         PieceGroup           pieces;
     };
     std::unordered_map<const GU_Detail *, InnerEntry> inner;
+    // Fragments: (shared source detail, fragment name) -> that fragment's piece.
+    std::map<std::pair<const GU_Detail *, std::string>, InnerEntry> fragments;
 
     // Returns the pieces of a packed primitive's own geometry, or null.
     const PieceGroup *innerPieces(const GU_PrimPacked &prim)
@@ -325,6 +452,25 @@ struct ShapeSources
         const GU_Detail *gdp = gdpPtr(lock.getGdp());
         if (!gdp)
             return nullptr;
+
+        // A packed fragment: the detail is the WHOLE source, shared by every
+        // fragment of it, so only this fragment's own primitives are used.
+        if (const GU_PackedFragment *frag = asFragment(prim))
+        {
+            const std::string name = frag->isIntValue() ? std::to_string(frag->intValue())
+                                                        : std::string(frag->name().c_str());
+            const auto key = std::make_pair(gdp, name);
+            auto fit = fragments.find(key);
+            if (fit == fragments.end())
+            {
+                InnerEntry e;
+                e.handle = handle;
+                collectFragmentPiece(gdp, frag->getPrimitiveRange(), name, e.pieces);
+                fit = fragments.emplace(key, std::move(e)).first;
+            }
+            return fit->second.pieces.pieces.empty() || fit->second.pieces.pieces[0].xyz.empty()
+                       ? nullptr : &fit->second.pieces;
+        }
 
         auto it = inner.find(gdp);
         if (it == inner.end())
@@ -517,9 +663,73 @@ buildShapes(b3dop::Box3DWorld &world, ShapeSources &src, b3dop::ShapeType type,
     //    packed point). A plain point has none.
     const PieceGroup *group = pk.prim ? src.innerPieces(*pk.prim) : nullptr;
 
+    // 1b. Convex / concave on a packed point: the hull of each instance of one
+    //     source is a function of (source, pivot, scale), so look it up by that
+    //     key and build the body-local points only on a miss.
+    double S[3];
+    if (group && wantGeometry && packedScale(pk.m4, S))
+    {
+        const bool convex = (type == ShapeType::Convex);
+        auto addKeyed = [&](uint64_t sourceHash, uint32_t kind,
+                            const std::vector<const NamedPiece *> &from) {
+            const uint64_t key = packedHullKey(sourceHash, pk.pivot, S, kind);
+            Piece pc;
+            float vol = 0.0f;
+            if (const HullId h = world.findHull(key, &vol))
+            {
+                pc.isHull = true;  pc.hull = h;  pc.volume = vol;
+            }
+            else
+            {
+                std::vector<std::vector<float>> parts;
+                for (const NamedPiece *np : from)
+                {
+                    std::vector<float> local;
+                    packedPointsToBodyLocal(np->xyz.data(), int(np->xyz.size() / 3), pk.m4, pk.pivot, local);
+                    parts.push_back(std::move(local));
+                }
+                std::vector<float> pts;
+                mergePieces(parts, pts);
+                const int n = int(pts.size() / 3);
+                const HullId h = world.createHullWithKey(key, pts.data(), n, &vol);
+                if (h)
+                {
+                    pc.isHull = true;  pc.hull = h;  pc.volume = vol;
+                }
+                else if (fitShapeToPoints(ShapeType::Box, pts.data(), n, pc.spec))
+                {
+                    pc.isHull = false;
+                    pc.volume = shapeVolume(pc.spec);
+                    out.note = "a piece could not be hulled (flat, < 4 points or too complex); used its bounding box";
+                }
+                else
+                    return;
+            }
+            out.totalVolume += pc.volume;
+            out.pieces.push_back(pc);
+        };
+
+        if (convex)
+        {
+            std::vector<const NamedPiece *> all;
+            for (const NamedPiece &np : group->pieces)
+                if (!np.xyz.empty()) all.push_back(&np);
+            if (!all.empty())
+                addKeyed(group->hash, 1, all);
+        }
+        else
+            for (const NamedPiece &np : group->pieces)
+                if (!np.xyz.empty())
+                    addKeyed(np.hash, 2, { &np });
+
+        if (!out.pieces.empty())
+            return out;
+        // nothing usable: fall through to the unit-shape fallback below
+    }
+
     // 2. Its points, in BODY-LOCAL space, one set per piece.
     std::vector<std::vector<float>> sets;
-    if (group)
+    if (group && out.pieces.empty())
     {
         for (const NamedPiece &np : group->pieces)
         {
@@ -530,7 +740,7 @@ buildShapes(b3dop::Box3DWorld &world, ShapeSources &src, b3dop::ShapeType type,
             // pivot, scale baked in, rotation out (and quantized so instances
             // at different rotations share one hull).
             std::vector<float> local;
-            packedPointsToBodyLocal(np.xyz.data(), n, pk.m4, pk.P, local);
+            packedPointsToBodyLocal(np.xyz.data(), n, pk.m4, pk.pivot, local);
             sets.push_back(std::move(local));
         }
     }
@@ -590,7 +800,8 @@ buildShapes(b3dop::Box3DWorld &world, ShapeSources &src, b3dop::ShapeType type,
 bool
 addPointBody(b3dop::Box3DWorld &world, ShapeSources &src, const b3dop::BodySettings &node,
              const PointAttrs &a, GA_Offset off, int64_t bodyId, uint64_t key,
-             const PackedInfo &pk, const DopBodyState &st, bool active)
+             const PackedInfo &pk, const DopBodyState &st, bool active,
+             std::string *fallbackNote = nullptr)
 {
     b3dop::BodySettings b = node;
     b.type = bodyTypeFor(node, active);
@@ -615,7 +826,11 @@ addPointBody(b3dop::Box3DWorld &world, ShapeSources &src, const b3dop::BodySetti
     const BuiltShapes shapes = buildShapes(world, src, type, ps, sc, pk);
     (void)bodyId;                   // only used by the debug log
     if (shapes.note)
+    {
         B3D_LOG("  body id=%lld: %s", (long long)bodyId, shapes.note);
+        if (fallbackNote)
+            *fallbackNote = shapes.note;    // surfaced to the user as one warning per kind
+    }
 
     // mass -> density (Box3D computes mass from density * volume; for a
     // compound the volume is the sum of the pieces).
@@ -644,6 +859,7 @@ addPointBody(b3dop::Box3DWorld &world, ShapeSources &src, const b3dop::BodySetti
 struct SyncCounts
 {
     int added = 0, edited = 0, retyped = 0, failed = 0, duplicates = 0, badP = 0;
+    std::unordered_map<std::string, int> fallbacks;     // shape fallback note -> bodies that used it
 };
 
 // Sync one object's points into the world. Returns true if any of its points
@@ -682,7 +898,7 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj,
             continue;
         }
 
-        const PackedInfo pk = getPackedInfo(gdp, off);
+        PackedInfo pk = getPackedInfo(gdp, off);
         DopBodyState cur;
         if (!readPointState(gdp, a, off, pk, cur))
         {
@@ -697,12 +913,18 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj,
         auto mit = st.mirror.find(key);
         if (mit == st.mirror.end())
         {
-            if (!addPointBody(world, sources, node, a, off, bid, key, pk, cur, active))
+            readPackedPivot(pk);        // the hull is built from it
+            std::string fallbackNote;
+            if (!addPointBody(world, sources, node, a, off, bid, key, pk, cur, active, &fallbackNote))
             {
                 ++c.failed;
                 continue;
             }
+            if (!fallbackNote.empty())
+                ++c.fallbacks[fallbackNote];
             cur.dynamic = (wantType == b3dop::BodySettings::Type::Dynamic);
+            cur.type    = wantType;
+            cur.handle  = world.bodyHandle(key);
             st.mirror[key] = cur;
             ++c.added;
             hasDynamic = hasDynamic || cur.dynamic;
@@ -710,10 +932,10 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj,
         }
 
         // Existing body. Did `active` flip?
-        b3dop::BodySettings::Type haveType;
-        if (world.getBodyType(key, haveType) && haveType != wantType)
+        if (mit->second.type != wantType)
         {
             world.setBodyType(key, wantType);
+            mit->second.type    = wantType;
             mit->second.dynamic = (wantType == b3dop::BodySettings::Type::Dynamic);
             ++c.retyped;
         }
@@ -721,11 +943,13 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj,
         // Did something else edit P / orient / v / w since we wrote it?
         if (describeStateDifference(cur, mit->second))
         {
-            world.setTransform(key, cur.pos, cur.rot);
-            world.setVelocity(key, cur.lin, cur.ang);
-            const bool dyn = mit->second.dynamic;
+            const b3dop::BodyHandle h = mit->second.handle;
+            world.setTransformByHandle(h, cur.pos, cur.rot);
+            world.setVelocityByHandle(h, cur.lin, cur.ang);
+            cur.dynamic = mit->second.dynamic;
+            cur.type    = mit->second.type;
+            cur.handle  = h;
             mit->second = cur;
-            mit->second.dynamic = dyn;
             ++c.edited;
         }
         hasDynamic = hasDynamic || mit->second.dynamic;
@@ -975,6 +1199,21 @@ SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
     // body that instances the same geometry.
     st->world.pruneHulls();
 
+    // Problems the user should see on the node, not only in the debug log.
+    // One warning per kind per sync, with a count. Fallback shapes are only
+    // reported when a body is created, so they do not repeat every frame.
+    auto warn = [&](const std::string &msg) {
+        addError(objects(0), SIM_MESSAGE, msg.c_str(), UT_ERROR_WARNING);
+    };
+    for (const auto &fb : counts.fallbacks)
+        warn("Box3D: " + std::to_string(fb.second) + " point(s): " + fb.first);
+    if (counts.failed)
+        warn("Box3D: " + std::to_string(counts.failed) + " point(s) could not be turned into a body and are not simulated");
+    if (counts.duplicates)
+        warn("Box3D: " + std::to_string(counts.duplicates) + " point(s) share an `id` with another point; only the first of each is simulated");
+    if (counts.badP)
+        warn("Box3D: " + std::to_string(counts.badP) + " point(s) have a non-finite P and are skipped");
+
     if (counts.added || counts.edited || counts.retyped || counts.failed ||
         counts.duplicates || counts.badP || removed)
     {
@@ -1010,6 +1249,9 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
         {
             B3D_LOG("  writeBack: object id=%d Geometry is not writable (not a SIM_GeometryCopy)",
                     obj->getObjectId());
+            addError(obj, SIM_MESSAGE,
+                     "Box3D: this object's Geometry is not writable (not a SIM_GeometryCopy); results are not written back",
+                     UT_ERROR_WARNING);
             continue;
         }
 
@@ -1044,8 +1286,8 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
                 continue;
 
             DopBodyState s = mit->second;
-            if (!st->world.getTransform(key, s.pos, s.rot) ||
-                !st->world.getVelocity(key, s.lin, s.ang))
+            if (!st->world.getTransformByHandle(s.handle, s.pos, s.rot) ||
+                !st->world.getVelocityByHandle(s.handle, s.lin, s.ang))
             {
                 ++missing;      // leave the point alone; next sync re-snapshots it
                 continue;
@@ -1066,10 +1308,14 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
                                           pk.m4[4], pk.m4[5], pk.m4[6],
                                           pk.m4[8], pk.m4[9], pk.m4[10] };
                 double newM3[9];
-                b3dop::composeMatrix3(s.rot, oldM3, newM3);
+                composeLocal3(s.rot, oldM3, newM3);
                 GU_PrimPacked *prim = static_cast<GU_PrimPacked *>(gdp->getPrimitive(pk.primOff));
                 setLocal3(*prim, newM3, std::integral_constant<bool, kPackedRotationWritable>());
-                pk = getPackedInfo(gdp, off);       // re-read what the primitive now holds
+                // What the primitive now holds, without reading it back: the
+                // rotation of the matrix just written. (This matches the old
+                // second getPackedInfo call, which split the same matrix.)
+                double sc[3];
+                b3dop::matrix3ToQuatScale(newM3, pk.rot, sc);
             }
 
             // Re-read what the points actually hold (P may be stored in lower
@@ -1079,14 +1325,21 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
             if (readPointState(gdp, a, off, pk, stored))
             {
                 stored.dynamic = true;
+                stored.type    = mit->second.type;
+                stored.handle  = mit->second.handle;
                 mit->second = stored;
             }
             else
-                mit->second = s;
+                mit->second = s;        // s was copied from the entry: keeps handle and type
         }
 
         if (missing)
+        {
             B3D_LOG("  writeBack: object id=%d: %d points have no Box3D body", obj->getObjectId(), missing);
+            addError(obj, SIM_MESSAGE,
+                     ("Box3D: " + std::to_string(missing) + " point(s) have no Box3D body; their results were not written back").c_str(),
+                     UT_ERROR_WARNING);
+        }
     }
 }
 

@@ -273,7 +273,7 @@ computeBoundsImpl(const float *xyz, int count, float outMin[3], float outMax[3])
     return true;
 }
 
-// Round to 5 significant digits. Used to make derived values (scale, pivot)
+// Round to 5 significant digits. Used to make a derived value (the scale)
 // identical across instances whose transforms differ only by float noise.
 inline double
 quantizeSig5(double v)
@@ -284,66 +284,107 @@ quantizeSig5(double v)
     return std::round(v / step) * step;
 }
 
+// The per-axis scale that packedPointsToBodyLocal bakes into the points: the row
+// lengths of the 3x3 of m4, rounded to 5 significant digits so instances that
+// differ only by float noise agree. Returns false if the matrix is degenerate.
+inline bool
+packedScale(const double m4[16], double S[3])
+{
+    const double m3[9] = { m4[0], m4[1], m4[2],  m4[4], m4[5], m4[6],  m4[8], m4[9], m4[10] };
+    float q[4];
+    if (!matrix3ToQuatScale(m3, q, S))
+        return false;
+    for (int j = 0; j < 3; ++j)
+        S[j] = quantizeSig5(S[j]);
+    return true;
+}
+
+// FNV-1a style hashing, used to key hulls. hashFloats hashes the raw bytes of a
+// point set (once per shared packed source); mixHash folds one more value in.
+inline uint64_t
+hashFloats(const float *xyz, size_t floatCount)
+{
+    uint64_t h = 1469598103934665603ull ^ uint64_t(floatCount);
+    const unsigned char *b = reinterpret_cast<const unsigned char *>(xyz);
+    for (size_t i = 0, n = floatCount * sizeof(float); i < n; ++i)
+    {
+        h ^= b[i];
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
+inline uint64_t
+mixHash(uint64_t h, uint64_t v)
+{
+    for (int i = 0; i < 8; ++i)
+    {
+        h ^= (v >> (8 * i)) & 0xffull;
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
+// The cache key of a packed hull. Houdini says which prims share one source
+// (the same packed detail), so the source's points are hashed ONCE
+// (`sourceHash`) and an instance only adds what differs: the pivot and the
+// scale. `kind` separates one merged hull (convex) from per-piece hulls
+// (concave). Same inputs as packedPointsToBodyLocal, so the same key means the
+// same body-local points: the points need only be built on a cache miss.
+inline uint64_t
+packedHullKey(uint64_t sourceHash, const double pivot[3], const double S[3], uint32_t kind)
+{
+    uint64_t h = mixHash(sourceHash, kind);
+    for (int j = 0; j < 3; ++j)
+    {
+        const double pv = pivot[j] + 0.0, sv = S[j] + 0.0;      // +0.0: -0 and +0 hash alike
+        uint64_t a, b;
+        std::memcpy(&a, &pv, sizeof a);
+        std::memcpy(&b, &sv, sizeof b);
+        h = mixHash(mixHash(h, a), b);
+    }
+    return h ? h : 1ull;
+}
+
 // Bring the points of a packed primitive's inner geometry into BODY-LOCAL space.
 //
-//   m4   the primitive's full transform (inner space -> world), row-vector,
-//        i.e. GU_PrimPacked::getFullTransform4. It already contains the pivot
-//        and the point position.
-//   P    the body origin in world space: the packed point's position, which is
-//        where the pivot ends up.
+//   m4     the primitive's full transform (inner space -> world), row-vector,
+//          i.e. GU_PrimPacked::getFullTransform4. Only its 3x3 (scale and
+//          rotation) is used; its translation row is NOT read.
+//   pivot  the primitive's pivot in inner space, i.e. GEO_PrimPacked::getPivot.
+//          It is the inner point that sits at the packed point's P, so it is
+//          the body origin.
 //
-// With M = S * R (scale, then rotate) and translation t, the pivot is the inner
-// point that lands on P:  pivot = (P - t) * R^-1 * S^-1.  The result is
+// With M = S * R (scale, then rotate), the result is
 //
 //        (p - pivot) * S
 //
 // the points relative to the pivot, with the primitive's scale baked in and its
 // rotation removed (the body's rotation puts it back).
 //
-// Instancing: thousands of packed prims often share one source at different
-// rotations and positions. Their m4 / P differ by float noise, which would give
-// each a different hull key. So S and the pivot are first quantized (5
-// significant digits; the pivot to 1e-5 of the geometry's size), which makes
-// the output a pure function of the source points: instances hit the hull
-// cache. The cost is an error of about 1e-5 relative in the shape.
+// Instancing: instances of one packed primitive share the same source points and
+// the same pivot, so the pivot is used exactly as stored. Only the scale is
+// derived from the matrix (row lengths), and a rotated instance's row lengths
+// carry float noise (1 vs 0.99999994), which would give each instance a
+// different hull key. So S is rounded to 5 significant digits; the output is
+// then identical across instances and they hit the hull cache. The cost is a
+// relative error of about 1e-5 in the scale.
 // If the matrix is degenerate the points are returned unchanged.
 inline void
 packedPointsToBodyLocal(const float *xyz, int count, const double m4[16],
-                        const double P[3], std::vector<float> &out)
+                        const double pivotIn[3], std::vector<float> &out)
 {
     out.assign(xyz, xyz + size_t(count) * 3);
     if (count <= 0)
         return;
 
-    const double m3[9] = { m4[0], m4[1], m4[2],  m4[4], m4[5], m4[6],  m4[8], m4[9], m4[10] };
-    float  q[4];
     double S[3];
-    if (!matrix3ToQuatScale(m3, q, S))
+    if (!packedScale(m4, S))
         return;
 
-    // pivot = (P - t) * R^-1 * S^-1   (R^-1 of a row-vector rotation = transpose)
-    double rot[9];
-    quatToMatrix3(q, rot);
-    const double u[3] = { P[0] - m4[12], P[1] - m4[13], P[2] - m4[14] };
-    double pivot[3];
-    for (int j = 0; j < 3; ++j)
-        pivot[j] = (u[0] * rot[j * 3 + 0] + u[1] * rot[j * 3 + 1] + u[2] * rot[j * 3 + 2]) / S[j];
-
-    float lo[3], hi[3];
-    double ext = 0.0;
-    if (computeBoundsImpl(xyz, count, lo, hi))
-        for (int j = 0; j < 3; ++j)
-            if (hi[j] - lo[j] > ext) ext = hi[j] - lo[j];
-    const double step = (ext > 1e-12 ? ext : 1.0) * 1e-5;
-
-    for (int j = 0; j < 3; ++j)
-    {
-        S[j]     = quantizeSig5(S[j]);
-        pivot[j] = std::round(pivot[j] / step) * step;
-    }
     for (int i = 0; i < count; ++i)
         for (int j = 0; j < 3; ++j)
-            out[size_t(3 * i + j)] = float((double(xyz[3 * i + j]) - pivot[j]) * S[j]);
+            out[size_t(3 * i + j)] = float((double(xyz[3 * i + j]) - pivotIn[j]) * S[j]);
 }
 
 // Multiply every point by (pscale * scale).

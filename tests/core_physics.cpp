@@ -53,6 +53,30 @@ int main()
     CHECK(w.getVelocity(2, lin, ang));
     CHECK(std::fabs(lin[0] - 1) < 1e-5 && std::fabs(lin[2] - 3) < 1e-5 && std::fabs(ang[0] - 0.5f) < 1e-5);
 
+    // handle access gives the same answers as keyed access
+    {
+        const b3dop::BodyHandle h = w.bodyHandle(2);
+        CHECK(h != 0);
+        CHECK(w.bodyHandle(9999) == 0);
+        double hp[3]; float hq[4], hl[3], ha[3];
+        CHECK(w.getTransformByHandle(h, hp, hq));
+        CHECK(w.getTransform(2, p, q));
+        CHECK(hp[0] == p[0] && hp[1] == p[1] && hp[2] == p[2] && hq[3] == q[3]);
+        CHECK(w.getVelocityByHandle(h, hl, ha));
+        CHECK(hl[0] == lin[0] && hl[2] == lin[2] && ha[0] == ang[0]);
+        const double np2[3] = { -4, 8, 1 };
+        const float  v2[3] = { 0, 1, 0 }, a2[3] = { 0, 0, 2 };
+        CHECK(w.setTransformByHandle(h, np2, qid));
+        CHECK(w.setVelocityByHandle(h, v2, a2));
+        CHECK(w.getTransform(2, p, q));
+        CHECK(std::fabs(p[0] + 4) < 1e-5 && std::fabs(p[1] - 8) < 1e-5);
+        CHECK(w.getVelocity(2, lin, ang));
+        CHECK(std::fabs(lin[1] - 1) < 1e-5 && std::fabs(ang[2] - 2) < 1e-5);
+        CHECK(!w.getTransformByHandle(0, hp, hq));
+        // distinct bodies get distinct handles
+        CHECK(w.bodyHandle(3) != h);
+    }
+
     w.removeBody(2);
     CHECK(!w.hasBody(2) && w.bodyCount() == 2);
     CHECK(!w.getTransform(2, p, q));
@@ -186,7 +210,7 @@ int main()
         m4[15] = 1;
         const std::vector<float> inner = { 1, 2, 3,   2, 2, 3,   1, 4, 3,   1, 2, 6 };
         std::vector<float> loc;
-        packedPointsToBodyLocal(inner.data(), 4, m4, P, loc);
+        packedPointsToBodyLocal(inner.data(), 4, m4, pivot, loc);
         CHECK(std::fabs(loc[0]) < 1e-4f && std::fabs(loc[1]) < 1e-4f && std::fabs(loc[2]) < 1e-4f);  // the pivot is the origin
         CHECK(std::fabs(loc[3] - 2.0f) < 1e-4f && std::fabs(loc[4]) < 1e-4f);                      // +1 in x, S = 2
         CHECK(std::fabs(loc[7] - 6.0f) < 1e-4f);                                                    // +2 in y, S = 3
@@ -222,13 +246,71 @@ int main()
                     mk[12 + c] = Pk[c] - (pivot[0] * mk[0 * 4 + c] + pivot[1] * mk[1 * 4 + c] + pivot[2] * mk[2 * 4 + c]);
                 mk[15] = 1;
                 std::vector<float> lk;
-                packedPointsToBodyLocal(src.data(), 8, mk, Pk, lk);
+                packedPointsToBodyLocal(src.data(), 8, mk, pivot, lk);
                 const HullId hk = iw.createHull(lk.data(), 8);
                 CHECK(hk != 0);
                 if (k == 0) first = hk;
                 CHECK(hk == first);                                   // identical bytes -> one cache entry
             }
             CHECK(iw.hullCacheSize() == 1);
+        }
+
+        // Keyed hulls: Houdini says the instances share one source, so the source is
+        // hashed once and an instance only adds pivot + scale. Same source at 3
+        // rotations -> one key, built once, and the points are only needed on a miss.
+        {
+            Box3DWorld kw;
+            CHECK(kw.create(WorldSettings()));
+            std::vector<float> src;
+            for (int i = 0; i < 8; ++i)
+            {
+                src.push_back(float(pivot[0]) + ((i & 1) ? 0.37f : -0.61f));
+                src.push_back(float(pivot[1]) + ((i & 2) ? 0.52f : -0.23f));
+                src.push_back(float(pivot[2]) + ((i & 4) ? 0.91f : -0.44f));
+            }
+            const uint64_t sh = hashFloats(src.data(), src.size());
+            auto instanceM4 = [&](int k, double sk, double *m) {
+                const float ang = 0.9f + 1.7f * k;
+                float q[4] = { 0.3f * std::sin(0.5f * ang), std::sin(0.5f * ang) * 0.8f, 0.1f * std::sin(0.5f * ang), std::cos(0.5f * ang) };
+                const float ln = std::sqrt(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3]);
+                for (int c = 0; c < 4; ++c) q[c] /= ln;
+                double r[9];  quatToMatrix3(q, r);
+                for (int i = 0; i < 16; ++i) m[i] = 0;
+                for (int a = 0; a < 3; ++a)
+                    for (int b = 0; b < 3; ++b)
+                        m[a * 4 + b] = sk * r[a * 3 + b];
+                m[15] = 1;
+            };
+            uint64_t key0 = 0;
+            int builds = 0;
+            for (int k = 0; k < 3; ++k)
+            {
+                double m[16];  instanceM4(k, 1.5, m);
+                double S[3];
+                CHECK(packedScale(m, S));
+                const uint64_t key = packedHullKey(sh, pivot, S, 1);
+                if (k == 0) key0 = key;
+                CHECK(key == key0);                                   // rotation / noise does not change the key
+                float vol = 0.0f;
+                if (!kw.findHull(key, &vol))
+                {
+                    std::vector<float> loc;
+                    packedPointsToBodyLocal(src.data(), 8, m, pivot, loc);
+                    CHECK(kw.createHullWithKey(key, loc.data(), 8, &vol) == key);
+                    ++builds;
+                }
+                CHECK(vol > 0.0f);
+            }
+            CHECK(builds == 1 && kw.hullCacheSize() == 1);
+            double m2[16];  instanceM4(0, 2.0, m2);
+            double S2[3];
+            CHECK(packedScale(m2, S2));
+            CHECK(packedHullKey(sh, pivot, S2, 1) != key0);           // other scale: other hull
+            double S1[3];
+            double m1[16];  instanceM4(0, 1.5, m1);
+            CHECK(packedScale(m1, S1));
+            CHECK(packedHullKey(sh, pivot, S1, 2) != key0);           // per-piece vs merged: other key
+            CHECK(kw.createHullWithKey(0, src.data(), 8) == 0);       // 0 is not a key
         }
 
         // fit a box / sphere to an off-centre point set
