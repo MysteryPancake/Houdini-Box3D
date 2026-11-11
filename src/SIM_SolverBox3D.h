@@ -26,6 +26,7 @@ class SIM_SolverBox3D : public SIM_Solver, public SIM_OptionsUser
 public:
     GETSET_DATA_FUNCS_V3("gravity",     Gravity);
     GETSET_DATA_FUNCS_I("substeps",     SubSteps);
+    GETSET_DATA_FUNCS_I("threads",      Threads);       // Box3D threads; 0 = all cores
     GETSET_DATA_FUNCS_B("enablesleep",  EnableSleep);
 
 protected:

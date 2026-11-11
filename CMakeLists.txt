@@ -48,6 +48,9 @@ target_link_libraries(b3dop_core_smoke PRIVATE b3dop_core)
 add_executable(b3dop_core_physics tests/core_physics.cpp)
 target_link_libraries(b3dop_core_physics PRIVATE b3dop_core)
 
+add_executable(b3dop_core_threads tests/core_threads.cpp)
+target_link_libraries(b3dop_core_threads PRIVATE b3dop_core)
+
 if(BOX3DDOP_CORE_ONLY)
     return()
 endif()

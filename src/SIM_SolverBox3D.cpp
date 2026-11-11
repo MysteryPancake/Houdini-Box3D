@@ -36,6 +36,7 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
@@ -1009,12 +1010,16 @@ SIM_SolverBox3D::getDescription()
     static PRM_Name    theSubStepsName("substeps", "Box3D Sub-Steps");
     static PRM_Default theSubStepsDefault(4);
 
+    static PRM_Name    theThreadsName("threads", "Threads (0 = All Cores)");
+    static PRM_Default theThreadsDefault(1);
+
     static PRM_Name    theSleepName("enablesleep", "Allow Sleeping");
     static PRM_Default theSleepDefault(1);
 
     static PRM_Template theTemplates[] = {
         PRM_Template(PRM_FLT_J,  3, &theGravityName,  theGravityDefault),
         PRM_Template(PRM_INT_J,  1, &theSubStepsName, &theSubStepsDefault),
+        PRM_Template(PRM_INT_J,  1, &theThreadsName,  &theThreadsDefault),
         PRM_Template(PRM_TOGGLE, 1, &theSleepName,    &theSleepDefault),
         PRM_Template()
     };
@@ -1051,6 +1056,13 @@ SIM_SolverBox3D::currentWorldSettings() const
     s.gravity[1]  = g.y();
     s.gravity[2]  = g.z();
     s.subSteps    = static_cast<int>(getSubSteps());
+    {
+        // Box3D runs its own thread pool (not Houdini's). 0 means every core.
+        int n = static_cast<int>(getThreads());
+        if (n <= 0)
+            n = static_cast<int>(std::thread::hardware_concurrency());
+        s.workerCount = n < 1 ? 1 : (n > 32 ? 32 : n);      // Box3D's maximum is 32
+    }
     s.enableSleep = getEnableSleep();
     return s;
 }
@@ -1093,7 +1105,14 @@ SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
         else
         {
             std::lock_guard<std::mutex> lock(st->mutex);
-            if (!st->canContinue(now, dt))
+            if (st->world.settings().workerCount != currentWorldSettings().workerCount)
+            {
+                // Box3D sizes its thread pool when the world is created, so a
+                // new thread count means a new world. The DOP objects hold the
+                // state, so the rebuild only loses warm-starting and sleep.
+                reason = "thread count changed";
+            }
+            else if (!st->canContinue(now, dt))
             {
                 std::snprintf(reasonBuf, sizeof(reasonBuf),
                               "stamp mismatch: stamped=%d stamp=%g now=%g dt=%g (now-stamp=%g)",

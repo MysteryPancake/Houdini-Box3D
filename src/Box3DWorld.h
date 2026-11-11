@@ -35,7 +35,7 @@ struct WorldSettings
 {
     float gravity[3]    = { 0.0f, -9.80665f, 0.0f };
     int   subSteps      = 4;      // Box3D recommends ~4 per step
-    int   workerCount   = 1;      // keep 1 until threading is hooked up to Houdini
+    int   workerCount   = 1;      // > 1: Box3D's own thread pool, sized at creation (max 32)
     bool  enableSleep   = true;
     bool  enableContinuous = true;
 };

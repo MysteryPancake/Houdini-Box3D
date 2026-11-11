@@ -154,9 +154,9 @@ Box3DWorld::create(const WorldSettings &s)
     def.gravity.z = s.gravity[2];
     def.enableSleep      = s.enableSleep;
     def.enableContinuous = s.enableContinuous;
-    // Box3D spins up its own threads when workerCount > 1 and no task
-    // callbacks are given. Leave at 1 until enqueueTask/finishTask are routed
-    // to Houdini's task system.
+    // Box3D spins up its own thread pool when workerCount > 1 and no task
+    // callbacks are given (it does not use Houdini's task system). The pool is
+    // sized here; to change the count, create the world again.
     def.workerCount = static_cast<uint32_t>(std::max(1, s.workerCount));
 
     myImpl->settings = s;
