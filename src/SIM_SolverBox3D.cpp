@@ -14,6 +14,7 @@
 #include <GU/GU_PrimPacked.h>
 #include <PRM/PRM_Include.h>
 #include <SIM/SIM_CacheOptions.h>
+#include <SIM/SIM_Data.h>
 #include <SIM/SIM_DopDescription.h>
 #include <SIM/SIM_Engine.h>
 #include <SIM/SIM_Error.h>
@@ -1064,6 +1065,32 @@ ensureResultAttribs(GU_Detail *gdp)
     return createdOrient;
 }
 
+// Returns a writable SIM_GeometryCopy for the object's "Geometry" data.
+//
+// Objects from RBD Packed Object (and other SOP-referencing DOPs) carry a
+// Geometry that is a SIM_Geometry but not a SIM_GeometryCopy, so a plain
+// SIM_DATA_GET<SIM_GeometryCopy> returns null. SIM_DATA_RETURN_EXISTING returns
+// the data untouched when it already is a SIM_GeometryCopy. When it is the wrong
+// type, a new SIM_GeometryCopy replaces it, and SIM_DATA_ADOPT_EXISTING_ON_DELETE
+// copies the old geometry into the new data. This conversion happens once per
+// object; afterwards the data is already a SIM_GeometryCopy.
+SIM_GeometryCopy *
+getOrMakeWritableGeometry(SIM_Object &obj)
+{
+    if (SIM_GeometryCopy *geo = SIM_DATA_GET(obj, SIM_GEOMETRY_DATANAME, SIM_GeometryCopy))
+        return geo;
+
+    if (!SIM_DATA_GETCONST(obj, SIM_GEOMETRY_DATANAME, SIM_Geometry))
+        return nullptr;     // no Geometry at all: nothing to convert
+
+    SIM_GeometryCopy *geo = SIM_DATA_CREATE(obj, SIM_GEOMETRY_DATANAME, SIM_GeometryCopy,
+            SIM_DATA_RETURN_EXISTING | SIM_DATA_ADOPT_EXISTING_ON_DELETE);
+    if (geo)
+        B3D_LOG("  writeBack: object id=%d Geometry converted to a writable SIM_GeometryCopy",
+                obj.getObjectId());
+    return geo;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -1084,10 +1111,10 @@ SIM_SolverBox3D::getDescription()
     static PRM_Name    theGravityName("gravity", "Gravity");
     static PRM_Default theGravityDefault[] = { 0.0, -9.80665, 0.0 };
 
-    static PRM_Name    theSubStepsName("substeps", "Box3D Sub-Steps");
+    static PRM_Name    theSubStepsName("substeps", "Substeps");
     static PRM_Default theSubStepsDefault(4);
 
-    static PRM_Name    theThreadsName("threads", "Threads (0 = All Cores)");
+    static PRM_Name    theThreadsName("threads", "Threads");
     static PRM_Default theThreadsDefault(0);   // 0 = all cores
 
     static PRM_Name    theSleepName("enablesleep", "Allow Sleeping");
@@ -1340,13 +1367,13 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
             continue;
 
         SIM_Object *obj = objects(i);
-        SIM_GeometryCopy *geo = SIM_DATA_GET(*obj, SIM_GEOMETRY_DATANAME, SIM_GeometryCopy);
+        SIM_GeometryCopy *geo = getOrMakeWritableGeometry(*obj);
         if (!geo)
         {
-            B3D_LOG("  writeBack: object id=%d Geometry is not writable (not a SIM_GeometryCopy)",
+            B3D_LOG("  writeBack: object id=%d Geometry is not writable and could not be converted",
                     obj->getObjectId());
             addError(obj, SIM_MESSAGE,
-                     "Box3D: this object's Geometry is not writable (not a SIM_GeometryCopy); results are not written back",
+                     "Box3D: this object's Geometry is not writable and could not be converted to a SIM_GeometryCopy; results are not written back",
                      UT_ERROR_WARNING);
             continue;
         }

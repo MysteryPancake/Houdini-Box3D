@@ -85,8 +85,10 @@ int main()
     {
         using namespace b3dop;
         ShapeType t = ShapeType::Box;
-        CHECK(parseShapeType("Sphere", t) && t == ShapeType::Sphere);
-        CHECK(parseShapeType("BOX", t) && t == ShapeType::Box);
+        CHECK(parseShapeType("sphere", t) && t == ShapeType::Sphere);
+        CHECK(parseShapeType("box", t) && t == ShapeType::Box);
+        t = ShapeType::Sphere;
+        CHECK(!parseShapeType("Sphere", t) && !parseShapeType("BOX", t) && t == ShapeType::Sphere);   // case-sensitive
         t = ShapeType::Sphere;
         CHECK(!parseShapeType("convexhull", t) && t == ShapeType::Sphere);   // unknown: unchanged
         CHECK(!parseShapeType("", t) && !parseShapeType(nullptr, t));
@@ -159,9 +161,10 @@ int main()
     {
         using namespace b3dop;
         ShapeType t = ShapeType::Box;
-        CHECK(parseShapeType("Convex", t) && t == ShapeType::Convex);
+        CHECK(parseShapeType("convex", t) && t == ShapeType::Convex);
         CHECK(parseShapeType("hull", t) && t == ShapeType::Convex);
-        CHECK(parseShapeType("CONCAVE", t) && t == ShapeType::Concave);
+        CHECK(parseShapeType("concave", t) && t == ShapeType::Concave);
+        CHECK(!parseShapeType("Convex", t) && !parseShapeType("CONCAVE", t));
         CHECK(parseShapeType("compound", t) && t == ShapeType::Concave);
         CHECK(!parseShapeType("proxy", t));
         CHECK(shapeNeedsGeometry(ShapeType::Convex) && !shapeNeedsGeometry(ShapeType::Box));

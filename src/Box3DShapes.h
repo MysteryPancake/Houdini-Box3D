@@ -36,18 +36,11 @@ struct ShapeSpec
     float     center[3]      = { 0.0f, 0.0f, 0.0f };   // Box and Sphere
 };
 
-// Case-insensitive compare, ASCII only. (strcasecmp is not portable to MSVC.)
+// Exact, case-sensitive compare: shape names are lowercase only.
 inline bool
 shapeNameEquals(const char *a, const char *b)
 {
-    for (; *a && *b; ++a, ++b)
-    {
-        char ca = *a, cb = *b;
-        if (ca >= 'A' && ca <= 'Z') ca = char(ca - 'A' + 'a');
-        if (cb >= 'A' && cb <= 'Z') cb = char(cb - 'A' + 'a');
-        if (ca != cb) return false;
-    }
-    return *a == *b;
+    return std::strcmp(a, b) == 0;
 }
 
 // Parse the value of the `shape` point attribute.

@@ -67,7 +67,7 @@ except `P`.
 | `friction` | float | shape friction | Box3D Body node |
 | `bounce` | float | restitution | Box3D Body node |
 | `active` | int | 0 = static, otherwise dynamic | dynamic |
-| `shape` | string | `box`, `sphere`, `convex`, `concave` (case-insensitive) | Box3D Body node's Default Shape |
+| `shape` | string | `box`, `sphere`, `convex`, `concave` (lowercase only, case-sensitive) | Box3D Body node's Default Shape |
 | `pscale` | float | uniform size (plain points) | 1 |
 | `scale` | vector | per-axis size (plain points) | 1 1 1 |
 | `id` | int | stable point id | point number |
