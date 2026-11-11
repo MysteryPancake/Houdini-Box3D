@@ -1,0 +1,56 @@
+# --- CMake / build output ---------------------------------------------------
+build/
+build_*/
+out/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+cmake_install.cmake
+compile_commands.json
+Testing/
+_deps/
+
+# --- Compiled artifacts ----------------------------------------------------
+*.obj
+*.o
+*.lib
+*.a
+*.dll
+*.exp
+*.pdb
+*.ilk
+*.exe
+*.so
+*.dylib
+
+# --- Visual Studio ---------------------------------------------------------
+.vs/
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.suo
+*.user
+*.ipch
+*.tlog
+x64/
+Debug/
+Release/
+
+# --- Other IDEs ------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*~
+
+# --- OS junk ---------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Houdini ---------------------------------------------------------------
+*.hip.bak
+backup/
+*.bgeo.sc
+*.sc.tmp

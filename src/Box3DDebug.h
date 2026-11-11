@@ -1,0 +1,99 @@
+// Box3DDebug.h
+//
+// Debug logging for the DOP plugin. Compiled in only when BOX3DDOP_DEBUG is
+// defined (CMake option BOX3DDOP_DEBUG, ON by default while bringing this up).
+//
+// Output goes to stderr (visible if you start Houdini from a console), or to
+// the file named by the BOX3DDOP_LOG environment variable (recommended on
+// Windows, where a GUI-launched Houdini has no console):
+//
+//     set BOX3DDOP_LOG=C:\temp\box3ddop.log
+//
+// Other environment variables read (only in debug builds, read every step so
+// you can change them without rebuilding... but Houdini must be restarted for
+// the environment itself to change):
+//
+//     BOX3DDOP_REQUESTED_CACHE=<int>  value getRequestedCacheSubclass() returns
+//     BOX3DDOP_PROBE_DEFAULTS=1       one-shot: create a SIM_Box3DBody in code
+//                                     and print its option values
+#pragma once
+
+#include <atomic>
+#include <cstdlib>
+
+#ifdef BOX3DDOP_DEBUG
+
+#include <cstdarg>
+#include <cstdio>
+#include <mutex>
+
+namespace b3dop_dbg {
+
+struct Counters
+{
+    std::atomic<int> worldLive{0};        // SIM_Box3DWorld objects alive now
+    std::atomic<int> worldCreated{0};     // constructor calls
+    std::atomic<int> worldInitialized{0}; // initializeSubclass calls
+    std::atomic<int> worldCopied{0};      // makeEqualSubclass calls
+    std::atomic<int> worldDestroyed{0};   // destructor calls
+    std::atomic<int> stepsSolved{0};      // solveObjectsSubclass calls
+    std::atomic<int> rebuilds{0};         // full world rebuilds
+    std::atomic<int> continues{0};        // steps that reused the live world
+};
+
+inline Counters &counters() { static Counters c; return c; }
+
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+inline void log(const char *fmt, ...)
+{
+    static std::mutex m;
+    static std::FILE *file = nullptr;
+    static bool inited = false;
+
+    std::lock_guard<std::mutex> lock(m);
+    if (!inited)
+    {
+        inited = true;
+        const char *path = std::getenv("BOX3DDOP_LOG");
+        if (path && *path)
+            file = std::fopen(path, "a");
+    }
+    std::FILE *out = file ? file : stderr;
+    std::fputs("[b3dop] ", out);
+    va_list ap;
+    va_start(ap, fmt);
+    std::vfprintf(out, fmt, ap);
+    va_end(ap);
+    std::fputc('\n', out);
+    std::fflush(out);
+}
+
+inline int envInt(const char *name, int fallback)
+{
+    const char *v = std::getenv(name);
+    return (v && *v) ? std::atoi(v) : fallback;
+}
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+
+} // namespace b3dop_dbg
+
+#define B3D_LOG(...)             ::b3dop_dbg::log(__VA_ARGS__)
+#define B3D_COUNT(field)         (++::b3dop_dbg::counters().field)
+#define B3D_UNCOUNT(field)       (--::b3dop_dbg::counters().field)
+#define B3D_COUNTER(field)       (::b3dop_dbg::counters().field.load())
+#define B3D_ENV_INT(name, dflt)  ::b3dop_dbg::envInt(name, dflt)
+
+#else // !BOX3DDOP_DEBUG
+
+#define B3D_LOG(...)             ((void)0)
+#define B3D_COUNT(field)         ((void)0)
+#define B3D_UNCOUNT(field)       ((void)0)
+#define B3D_COUNTER(field)       (0)
+#define B3D_ENV_INT(name, dflt)  (dflt)
+
+#endif
