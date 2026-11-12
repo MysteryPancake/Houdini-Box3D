@@ -312,6 +312,19 @@ equal to what its body was built with.
   or it moves again (changes only; `entry->sleeping`). A user-written 0 wakes the body (checked in `checkProps` scans).
 * **Fast object** (`fastobject`): Box3D's `isBullet`, renamed because Houdini's `isbullet` means "treat as a Bullet
   object". Changes mid-simulation.
+* **Contact recycling** (`contactrecycling`, Box3D Data toggle default on, int point attribute): Box3D's per-body
+  `enableContactRecycling` (`BodySettings::contactRecycling` -> `b3BodyDef`). The distance is world-wide:
+  `WorldSettings::contactRecycleDistance` (solver `contactrecycledistance`, default 0.05 = Box3D's `10 * B3_LINEAR_SLOP`
+  at its default length units; 0 = off). It is not in `b3WorldDef`, so `create` sets it after `b3CreateWorld`, and
+  `applyTuning` pushes changes through `b3World_SetContactRecycleDistance` (non-finite: ignored, previous kept, like
+  gravity; negative acts as 0). A pair recycles only if both bodies have the flag and speculative contacts are on
+  (`contact.c`). Box3D copies the body flag into each contact's `b3_contactRecycleFlag` when the contact is created, and
+  `b3Body_EnableContactRecycling` only changes the body, so existing contacts keep the old behaviour.
+  `setContactRecyclingByHandle` therefore also rebuilds them for an awake dynamic body: `b3Body_Disable` + `b3Body_Enable`
+  destroys and recreates its contacts, but zeroes velocity and wakes, so the velocity is saved and restored. Sleeping,
+  static and kinematic bodies are not cycled (a cycle would wake them): they take it for new contacts only. A point-attribute
+  or node change goes through the usual prop path (`kPropAttribNames`, `nodeHash`, `applyPropChanges`).
+  `Box3DWorld::recycledContactCount()` (`b3World_GetCounters`) feeds the tests and a verbose log line.
 * **Impacts** (node `addimpact`, Add Impact Data; no attribute): with it on, a scan lists every body in
   `Box3DObjectSync::impacts`. `recordImpacts` gathers their contact points, skipping asleep dynamic bodies and contacts
   where neither body is awake. Only when there is at least one does it create a fresh `SIM_Impacts`
@@ -415,20 +428,20 @@ shared-state mutex is held for the whole step.
 Solver (read every step; only the thread count rebuilds the world): `gravity` (0,-9.80665,0), `substeps` (min 1,
 default 4), `autothreads` (on), `threads` (1..32, default 8), `enablesleep`, `timescale` (1), `enableaging` (off), and
 Box3D's tuning with Box3D's defaults: `contactstiffness` (30 Hz), `contactdamping` (10), `contactpushspeed` (3),
-`bouncethreshold` (1), `maxlinearspeed` (400), `enablecontinuous` (on), `enablespeculative` (on). Force DOPs:
+`bouncethreshold` (1), `contactrecycledistance` (0.05), `maxlinearspeed` (400), `enablecontinuous` (on), `enablespeculative` (on). Force DOPs:
 `useforces` (on), `forceswake` (off, disabled while `useforces` is off).
 
 Box3D Data (per object): `defaultshape` (0 box, 1 sphere, 2 convex hull, 3 concave, 4 capsule, 5 none), `autofit` (on),
 `hullperconnected`, `bodytype` (0 static, 1 kinematic, 2 dynamic), `computemass` (off), `mass` (1), `density` (1000),
 `friction` (0.6), `bounce` (0), `lineardamping`, `angulardamping`, `gravityscale` (1), `enablesleep`, `sleepthreshold`
-(0.05), `fastobject` (off), `addimpact` (off). Names match the point attributes that override them; material values
+(0.05), `fastobject` (off), `contactrecycling` (on), `addimpact` (off). Names match the point attributes that override them; material values
 have a hard minimum of 0 (Box3D asserts on negatives). `toBodySettings()` maps them to `b3dop::BodySettings`.
 
 ## Point attributes
 
 `P` (required), `orient` (not for packed points), `v`, `w` (rad/s), `id`, `active`, `animated`, `mass`, `computemass`,
 `density`, `inertialtensorstiffness`, `friction`, `bounce`, `lineardamping`, `angulardamping`, `gravityscale`,
-`enablesleep`, `bullet_want_deactivate`, `sleepthreshold`, `bullet_sleeping`, `fastobject`, `bullet_ignore`,
+`enablesleep`, `bullet_want_deactivate`, `sleepthreshold`, `bullet_sleeping`, `fastobject`, `contactrecycling`, `bullet_ignore`,
 `collisiongroup`, `collisionignore`, `min_activation_impulse`, `activationignore`, `dead`, `age`, `life`,
 `deforming`, `bullet_autofit_valid`, `bullet_georep`, `bullet_autofit`, `bullet_primS` / `R` / `T`, `bullet_radius`,
 `bullet_length`, `pscale`, `scale`. Negative material values are clamped to 0, non-finite ones ignored (`gravityscale`
@@ -459,7 +472,7 @@ Built in both configurations (`-DBOX3DDOP_CORE_ONLY=ON` builds only these):
 | Target | Checks |
 |---|---|
 | `b3dop_core_smoke` | Box3D version, create / destroy; expects `OK` |
-| `b3dop_core_physics` | Keyed and handle APIs, shape mapping, explicit primitives, mass, body types, resting heights, hulls (limits, caching, instancing), packed matrix math, `sanitizeQuat` / `storedPosition`, setters on existing bodies (material, damping, gravity, sleep, density, enable, shape replacement), live tuning, patterns and collision groups (incl. re-filtering), contacts, mass centring / inertia scaling, sleep threshold, kinematic targets, external forces (force / torque per step, summing, non-finite input, static / kinematic / sleeping bodies, gravity as a force) |
+| `b3dop_core_physics` | Keyed and handle APIs, shape mapping, explicit primitives, mass, body types, resting heights, hulls (limits, caching, instancing), packed matrix math, `sanitizeQuat` / `storedPosition`, setters on existing bodies (material, damping, gravity, sleep, density, enable, shape replacement), live tuning, patterns and collision groups (incl. re-filtering), contacts, mass centring / inertia scaling, sleep threshold, kinematic targets, external forces (force / torque per step, summing, non-finite input, static / kinematic / sleeping bodies, gravity as a force), contact recycling (world distance live, per-body flag at creation and on existing bodies, velocity kept, sleepers not woken) |
 | `b3dop_core_taskrunner [workers]` | Worlds on one shared host pool: tasks run, results match 1 worker |
 | `b3dop_core_threads [workers] [side] [steps]` | 1 vs N workers: speedup, fails if positions differ by > 1e-4 |
 

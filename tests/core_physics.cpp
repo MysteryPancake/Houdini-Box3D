@@ -1213,6 +1213,114 @@ int main()
         std::printf("external force checks done\n");
     }
 
+    // ---- contact recycling: world distance + per-body toggle ------------------------------
+    {
+        using namespace b3dop;
+        const float qid[4] = { 0, 0, 0, 1 };
+        const float dt = 1.0f / 60.0f;
+        WorldSettings ws;  ws.enableSleep = false;      // keep the resting box awake so it keeps making contacts
+        CHECK(ws.contactRecycleDistance == 0.05f);      // Box3D's default
+
+        ShapeSpec slab;  slab.halfExtents[0] = 20;  slab.halfExtents[2] = 20;
+        ShapeSpec cube;                                 // unit cube
+        BodySettings stat;  stat.type = BodySettings::Type::Static;
+        BodySettings dyn;
+
+        // A world with a floor and one resting box; returns the box.
+        auto setup = [&](Box3DWorld &rw, const BodySettings &boxBody, BodyHandle &boxOut) {
+            const double gp[3] = { 0, -0.5, 0 }, bp[3] = { 0, 0.5, 0 };
+            const BodyHandle g = rw.createBody(stat, gp, qid);
+            boxOut = rw.createBody(boxBody, bp, qid);
+            return g && boxOut && rw.createShape(g, stat, slab) && rw.createShape(boxOut, boxBody, cube);
+        };
+        auto settle = [&](Box3DWorld &rw, int steps) { for (int i = 0; i < steps; ++i) rw.step(dt); };
+
+        // default: a resting box has its contact recycled
+        Box3DWorld rw;
+        BodyHandle box = 0;
+        CHECK(rw.create(ws) && setup(rw, dyn, box));
+        CHECK(rw.contactRecyclingByHandle(box));
+        settle(rw, 120);
+        CHECK(rw.recycledContactCount() > 0);
+
+        // the world distance is live: 0 turns recycling off, a distance turns it back on
+        WorldSettings off = ws;  off.contactRecycleDistance = 0.0f;
+        rw.applyTuning(off);
+        settle(rw, 10);
+        CHECK(rw.recycledContactCount() == 0);
+        CHECK(rw.settings().contactRecycleDistance == 0.0f);
+        rw.applyTuning(ws);
+        settle(rw, 10);
+        CHECK(rw.recycledContactCount() > 0);
+
+        // a non-finite distance is ignored (previous value kept); a negative one acts as 0
+        WorldSettings bad = ws;  bad.contactRecycleDistance = std::nanf("");
+        rw.applyTuning(bad);
+        CHECK(rw.settings().contactRecycleDistance == 0.05f);
+        settle(rw, 10);
+        CHECK(rw.recycledContactCount() > 0);
+        WorldSettings neg = ws;  neg.contactRecycleDistance = -1.0f;
+        rw.applyTuning(neg);
+        settle(rw, 10);
+        CHECK(rw.recycledContactCount() == 0);
+
+        // per body: off at creation means this body's contacts are never recycled ...
+        Box3DWorld pw;
+        BodyHandle pbox = 0;
+        BodySettings noRec = dyn;  noRec.contactRecycling = false;
+        CHECK(pw.create(ws) && setup(pw, noRec, pbox));
+        CHECK(!pw.contactRecyclingByHandle(pbox));
+        settle(pw, 120);
+        CHECK(pw.recycledContactCount() == 0);
+        // ... and turning it on later reaches the existing contact (awake dynamic body)
+        pw.setContactRecyclingByHandle(pbox, true);
+        CHECK(pw.contactRecyclingByHandle(pbox));
+        settle(pw, 10);
+        CHECK(pw.recycledContactCount() > 0);
+
+        // turning it off on a body already resting on the floor also reaches the existing contact
+        rw.applyTuning(ws);
+        settle(rw, 10);
+        CHECK(rw.recycledContactCount() > 0);
+        rw.setContactRecyclingByHandle(box, false);
+        CHECK(!rw.contactRecyclingByHandle(box));
+        settle(rw, 10);
+        CHECK(rw.recycledContactCount() == 0);
+        rw.setContactRecyclingByHandle(box, true);
+        settle(rw, 10);
+        CHECK(rw.recycledContactCount() > 0);
+
+        // changing it leaves the body's velocity and awake state alone
+        WorldSettings zg = ws;  zg.gravity[1] = 0.0f;
+        Box3DWorld vw;
+        CHECK(vw.create(zg));
+        const double vp[3] = { 0, 5, 0 };
+        const BodyHandle vb = vw.createBody(dyn, vp, qid);
+        CHECK(vb && vw.createShape(vb, dyn, cube));
+        const float lin0[3] = { 1.0f, 2.0f, 3.0f }, ang0[3] = { 0.0f, 1.0f, 0.0f };
+        vw.setVelocityByHandle(vb, lin0, ang0);
+        vw.step(dt);
+        vw.setContactRecyclingByHandle(vb, false);
+        float lin[3], ang[3];
+        CHECK(vw.getVelocityByHandle(vb, lin, ang));
+        CHECK(std::fabs(lin[0] - 1.0f) < 1e-5f && std::fabs(lin[1] - 2.0f) < 1e-5f && std::fabs(lin[2] - 3.0f) < 1e-5f);
+        CHECK(std::fabs(ang[1] - 1.0f) < 1e-5f);
+        CHECK(vw.isAwakeByHandle(vb) && vw.isEnabledByHandle(vb));
+
+        // a sleeping body is not woken by the change, and static bodies and handle 0 are harmless
+        WorldSettings sleepy;                           // sleeping allowed
+        Box3DWorld sw;
+        BodyHandle sbox = 0;
+        CHECK(sw.create(sleepy) && setup(sw, dyn, sbox));
+        for (int i = 0; i < 400 && sw.isAwakeByHandle(sbox); ++i) sw.step(dt);
+        CHECK(!sw.isAwakeByHandle(sbox));
+        sw.setContactRecyclingByHandle(sbox, false);
+        CHECK(!sw.isAwakeByHandle(sbox) && !sw.contactRecyclingByHandle(sbox));
+        sw.setContactRecyclingByHandle(0, false);
+        CHECK(!sw.contactRecyclingByHandle(0));
+        std::printf("contact recycling checks done\n");
+    }
+
     w.destroy();
     CHECK(!w.isValid());
     std::printf(fails ? "FAILED\n" : "OK\n");

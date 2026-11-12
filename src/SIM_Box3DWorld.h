@@ -50,6 +50,7 @@ struct Box3DBodyProps
     float inertiaScale   = 1.0f;      // `inertialtensorstiffness`
     float sleepThreshold = 0.05f;     // `sleepthreshold`
     bool  fastObject     = false;     // `fastobject`
+    bool  contactRecycling = true;    // `contactrecycling`
     int   filterProfile  = -1;        // collisiongroup / collisionignore / object
     float minActivationImpulse = 0.0f;    // `min_activation_impulse`
     std::string activationIgnore;     // `activationignore`
@@ -155,7 +156,7 @@ struct Box3DSyncFingerprint
 
     // Prop markers (kPropAttribNames in SIM_SolverBox3D.cpp, primsId, nodeHash): when any
     // changed, the scan also compares every body's settings.
-    static constexpr int kNumPropIds = 24;
+    static constexpr int kNumPropIds = 25;
 
     int64_t   numPoints  = -1;      // -1 with primitives: packed topology is assumed fixed
     int64_t   numOffsets = -1;

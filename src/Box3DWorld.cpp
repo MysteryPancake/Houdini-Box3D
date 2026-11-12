@@ -302,6 +302,11 @@ Box3DWorld::create(const WorldSettings &s, std::shared_ptr<TaskRunner> tasks)
         myImpl->tasks.reset();
         return false;
     }
+    // Not part of b3WorldDef. A non-finite value falls back to the default.
+    if (std::isfinite(s.contactRecycleDistance))
+        b3World_SetContactRecycleDistance(myImpl->worldId, std::max(0.0f, s.contactRecycleDistance));
+    else
+        myImpl->settings.contactRecycleDistance = WorldSettings().contactRecycleDistance;
     b3World_SetCustomFilterCallback(myImpl->worldId, &filterCallback, &myImpl->filters);
     b3World_EnableSpeculative(myImpl->worldId, s.enableSpeculative);
     return true;
@@ -376,6 +381,7 @@ Box3DWorld::createBody(const BodySettings &body, const double position[3], const
     def.gravityScale   = body.gravityScale;
     def.enableSleep    = body.enableSleep;      // Box3D applies the world switch on top
     def.isBullet       = body.isBullet;
+    def.enableContactRecycling = body.contactRecycling;
     if (body.sleepThreshold >= 0.0f && std::isfinite(body.sleepThreshold))
         def.sleepThreshold = body.sleepThreshold;
     def.userData       = userData;
@@ -782,6 +788,27 @@ Box3DWorld::setGravityScaleByHandle(BodyHandle h, float gravityScale)
 }
 
 void
+Box3DWorld::setContactRecyclingByHandle(BodyHandle h, bool flag)
+{
+    if (!h)
+        return;
+    const b3BodyId id = unpackBody(h);
+    if (b3Body_IsContactRecyclingEnabled(id) == flag)
+        return;
+    b3Body_EnableContactRecycling(id, flag);
+    if (b3Body_GetType(id) != b3_dynamicBody || !b3Body_IsEnabled(id) || !b3Body_IsAwake(id))
+        return;
+    // Existing contacts keep the flag they were made with. Disabling a body destroys its contacts
+    // (they are rebuilt, with the new flag, on the next step) but also zeroes its velocity: restore it.
+    const b3Vec3 linear  = b3Body_GetLinearVelocity(id);
+    const b3Vec3 angular = b3Body_GetAngularVelocity(id);
+    b3Body_Disable(id);
+    b3Body_Enable(id);
+    b3Body_SetLinearVelocity(id, linear);
+    b3Body_SetAngularVelocity(id, angular);
+}
+
+void
 Box3DWorld::setSleepEnabledByHandle(BodyHandle h, bool enableSleep)
 {
     if (h)
@@ -1090,9 +1117,16 @@ Box3DWorld::applyTuning(const WorldSettings &s)
         b3World_SetRestitutionThreshold(w, std::max(0.0f, s.restitutionThreshold));
     if (s.maxLinearSpeed != cur.maxLinearSpeed)
         b3World_SetMaximumLinearSpeed(w, std::max(0.0f, s.maxLinearSpeed));
+    // Like gravity, a non-finite recycle distance is ignored and the previous one kept.
+    const bool recycleOk = std::isfinite(s.contactRecycleDistance);
+    if (recycleOk && s.contactRecycleDistance != cur.contactRecycleDistance)
+        b3World_SetContactRecycleDistance(w, std::max(0.0f, s.contactRecycleDistance));
+    const float keptRecycle = cur.contactRecycleDistance;
     const int workers = cur.workerCount;
     const float keptGravity[3] = { cur.gravity[0], cur.gravity[1], cur.gravity[2] };
     cur = s;
+    if (!recycleOk)
+        cur.contactRecycleDistance = keptRecycle;
     if (!gravityOk)
         for (int k = 0; k < 3; ++k)
             cur.gravity[k] = keptGravity[k];
@@ -1127,6 +1161,18 @@ float
 Box3DWorld::gravityScaleByHandle(BodyHandle h) const
 {
     return h ? b3Body_GetGravityScale(unpackBody(h)) : 0.0f;
+}
+
+bool
+Box3DWorld::contactRecyclingByHandle(BodyHandle h) const
+{
+    return h && b3Body_IsContactRecyclingEnabled(unpackBody(h));
+}
+
+int
+Box3DWorld::recycledContactCount() const
+{
+    return isValid() ? b3World_GetCounters(myImpl->worldId).recycledContactCount : 0;
 }
 
 bool

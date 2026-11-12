@@ -33,6 +33,7 @@ public:
     GETSET_DATA_FUNCS_F("contactstiffness", ContactStiffness);  // Box3D contact hertz
     GETSET_DATA_FUNCS_F("contactdamping",   ContactDamping);    // Box3D contact damping ratio
     GETSET_DATA_FUNCS_F("bouncethreshold",  BounceThreshold);   // Box3D restitution threshold
+    GETSET_DATA_FUNCS_F("contactrecycledistance", ContactRecycleDistance);  // 0 = no contact recycling
     GETSET_DATA_FUNCS_F("maxlinearspeed",   MaxLinearSpeed);
     GETSET_DATA_FUNCS_B("enablecontinuous", EnableContinuous);
     GETSET_DATA_FUNCS_B("enablespeculative", EnableSpeculative);

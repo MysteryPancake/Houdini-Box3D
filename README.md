@@ -93,6 +93,7 @@ All attributes are optional except `P`. If one is missing, the value from the Bo
 | `sleepthreshold` | float | Speed below which the body may fall asleep (after half a second) |
 | `bullet_sleeping` | int | Written by the solver: `1` while asleep. Set it to `0` to wake the body |
 | `fastobject` | int | Nonzero = a fast body can't pass through other moving bodies (it never passes through static ones) |
+| `contactrecycling` | int | `0` = this body's contacts are never recycled (see Contact Recycle Distance); default is the Box3D Data setting, on |
 | `active` | int | `0` = static, anything else = dynamic |
 | `animated` | int | With `active` = 0: the body follows its animated point and pushes what it touches |
 | `min_activation_impulse` | float | An inactive body hit at least this hard becomes active |
@@ -120,7 +121,7 @@ Every step the solver writes `P`, `orient`, `v` and `w` back to the dynamic poin
 
 Turn on **Add Impact Data** on the Box3D Data node to record the object's impacts in its **Impacts** data, which shows in the details view on steps that have at least one impact. This can increase simulation time and memory use.
 
-The **Box3D Solver** also has **Time Scale** (slow or fast motion), **Enable Aging**, and Box3D's own tuning: **Contact Stiffness** and **Contact Damping Ratio** (how firmly contacts resolve overlap), **Overlap Push Speed** (lower it if pieces that start out overlapping fly apart), **Bounce Threshold**, **Max Linear Speed**, **Continuous Collision** and **Speculative Contacts**. All solver parameters except the thread count can be animated.
+The **Box3D Solver** also has **Time Scale** (slow or fast motion), **Enable Aging**, and Box3D's own tuning: **Contact Stiffness** and **Contact Damping Ratio** (how firmly contacts resolve overlap), **Overlap Push Speed** (lower it if pieces that start out overlapping fly apart), **Bounce Threshold**, **Contact Recycle Distance**, **Max Linear Speed**, **Continuous Collision** and **Speculative Contacts**. All solver parameters except the thread count can be animated.
 
 ### Forces
 
@@ -133,6 +134,15 @@ Each force is evaluated once per step at every dynamic body's **centre of mass**
 - **Forces Wake Bodies** (off by default). Off, a sleeping body ignores forces until something else wakes it, so a constant force such as gravity doesn't keep resting bodies awake. Turn it on for wind or a fan that should blow resting pieces away; every body with a non-zero force then stays awake.
 - Forces act at the centre of mass, so a force only spins a body if the Force DOP returns a torque. Per-body `gravityscale` only scales the solver's own Gravity, not a Gravity Force.
 - A force that returns NaN or infinity for a body is skipped for that body, with a warning on the node.
+
+### Contact recycling
+
+To save time, Box3D reuses a touching pair's contact points for the next step when the pair has barely moved: less than the solver's **Contact Recycle Distance** (default 0.05) and turned under about 10 degrees since the points were last computed. The reused points are slightly less exact, which very occasionally shows up as a ghost collision on a thin, fast or character-like body.
+
+- **Contact Recycle Distance** (solver, 0.05) is one value for the whole world. Set it to 0 to turn recycling off everywhere; raise it for more speed and less accuracy. It can be animated.
+- **Contact Recycling** (Box3D Data, on) or the `contactrecycling` point attribute turns it off for individual bodies. A pair is recycled only if both bodies allow it, so switching it off on one body is enough.
+- Changing it on a body that already exists reaches the contacts it already has if the body is awake and dynamic (they are dropped and rebuilt on the next step, keeping its velocity). A sleeping, static or kinematic body only affects contacts made from then on.
+- Speculative Contacts off also turns recycling off.
 
 ### Changing attributes during the simulation
 

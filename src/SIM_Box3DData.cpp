@@ -68,6 +68,9 @@ SIM_Box3DData::getDescription()
     static PRM_Name    theFastObjectName("fastobject", "Fast Object");
     static PRM_Default theFastObjectDefault(0);
 
+    static PRM_Name    theRecyclingName("contactrecycling", "Contact Recycling");
+    static PRM_Default theRecyclingDefault(1);
+
     // Box3D: one threshold, fixed half second to sleep.
     static PRM_Name    theSleepThresholdName("sleepthreshold", "Sleep Threshold");
     static PRM_Default theSleepThresholdDefault(0.05);
@@ -145,6 +148,11 @@ SIM_Box3DData::getDescription()
         PRM_Template(PRM_TOGGLE, 1, &theFastObjectName,  &theFastObjectDefault, 0, 0, 0, 0, 1,
                      "Continuous collision against other moving bodies too, so a fast body cannot pass through them. "
                      "Every body already has it against static ones. Overridden by the fastobject point attribute."),
+        PRM_Template(PRM_TOGGLE, 1, &theRecyclingName,   &theRecyclingDefault, 0, 0, 0, 0, 1,
+                     "Let this body's contacts be reused between steps while it barely moves, which is faster. "
+                     "Turn it off for bodies where you see ghost collisions (for example a character or a very "
+                     "thin or fast piece). A pair is recycled only if both bodies allow it. Does nothing when the "
+                     "solver's Contact Recycle Distance is 0. Overridden by the contactrecycling point attribute."),
         PRM_Template(PRM_TOGGLE, 1, &theAddImpactName,   &theAddImpactDefault, 0, 0, 0, 0, 1,
                      "When turned on, any impacts that occur during the simulation are recorded in the "
                      "Impacts data on the DOP object. Turning this on may increase simulation time and memory use."),
@@ -184,6 +192,7 @@ SIM_Box3DData::toBodySettings() const
     s.gravityScale   = static_cast<float>(getGravityScale());
     s.enableSleep    = getEnableSleep();
     s.isBullet       = getFastObject();
+    s.contactRecycling = getContactRecycling();
     s.sleepThreshold = static_cast<float>(getSleepThreshold());
     s.hullPerConnectedSet = getHullPerConnected();
     s.autoFit        = getAutoFit();

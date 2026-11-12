@@ -72,6 +72,12 @@ struct WorldSettings
     float contactPushSpeed  = 3.0f;   // max speed overlapping shapes are pushed apart (m/s)
     float restitutionThreshold = 1.0f;    // slower collisions do not bounce (m/s)
     float maxLinearSpeed    = 400.0f; // m/s
+    // Contact recycling: a touching pair that has moved less than this since its contact points were
+    // last computed (and turned less than ~10 degrees) keeps them instead of recomputing, which
+    // saves time but is slightly less exact. World-wide; 0 turns recycling off for every body.
+    // Box3D's default is 10 * linear slop = 0.05 at its default length units (1 unit = 1 metre).
+    // Per body: BodySettings::contactRecycling.
+    float contactRecycleDistance = 0.05f;
 };
 
 // One contact point of a body after a step (getContactsByHandle).
@@ -97,6 +103,7 @@ struct BodySettings
     float linearDamping  = 0.0f;
     float angularDamping = 0.0f;
     float gravityScale   = 1.0f;
+    bool  contactRecycling = true;  // `contactrecycling`: this body's contacts may be recycled (see WorldSettings)
     bool  enableSleep    = true;
     bool  isBullet       = false;   // Box3D "bullet": continuous collision vs moving bodies too (`fastobject`)
     float sleepThreshold = 0.05f;   // m/s
@@ -152,6 +159,11 @@ public:
     void  setGravityScaleByHandle(BodyHandle h, float gravityScale);
     void  setSleepEnabledByHandle(BodyHandle h, bool enableSleep);   // the world switch applies on top
     void  setBulletByHandle(BodyHandle h, bool flag);
+    // Box3D copies a body's recycling flag into each contact when the contact is made, so on its own
+    // a change only reaches new contacts. For an awake dynamic body the existing ones are dropped
+    // too (disable + enable, velocity kept) so they are rebuilt with the new setting. A sleeping,
+    // static or kinematic body only affects contacts made from now on.
+    void  setContactRecyclingByHandle(BodyHandle h, bool flag);
     void  setDensityByHandle(BodyHandle h, float density);           // every shape, then mass from shapes
     void  setEnabledByHandle(BodyHandle h, bool enabled);            // disabled: no motion, no collisions
     bool  isEnabledByHandle(BodyHandle h) const;
@@ -205,6 +217,8 @@ public:
     bool  getMaterialByHandle(BodyHandle h, float &friction, float &restitution) const;
     bool  getDampingByHandle(BodyHandle h, float &linear, float &angular) const;
     float gravityScaleByHandle(BodyHandle h) const;
+    bool  contactRecyclingByHandle(BodyHandle h) const;
+    int   recycledContactCount() const;            // contacts recycled in the most recent step (0 if no world)
     bool  isSleepEnabledByHandle(BodyHandle h) const;
     bool  isAwakeByHandle(BodyHandle h) const;
     float massByHandle(BodyHandle h) const;

@@ -137,6 +137,7 @@ struct PointAttrs
     GA_ROHandleF  gravityscale;
     GA_ROHandleI  enablesleep;     // creation only
     GA_ROHandleI  fastObject;      // fastobject
+    GA_ROHandleI  contactRecycling;    // contactrecycling
     GA_ROHandleF  sleepThreshold;  // sleepthreshold
     GA_ROHandleF  pscale;
     GA_ROHandleV3 scale;
@@ -186,6 +187,7 @@ struct PointAttrs
         gravityscale   = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "gravityscale");
         enablesleep    = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "enablesleep");
         fastObject     = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "fastobject");
+        contactRecycling = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "contactrecycling");
         sleepThreshold = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "sleepthreshold");
         pscale         = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "pscale");
         scale          = GA_ROHandleV3(gdp, GA_ATTRIB_POINT, "scale");
@@ -223,6 +225,7 @@ const char *const kPropAttribNames[Box3DSyncFingerprint::kNumPropIds] = {
     "collisiongroup", "collisionignore", "animated", "density", "computemass",
     "inertialtensorstiffness", "sleepthreshold", "fastobject",
     "min_activation_impulse", "activationignore", "dead", "bullet_sleeping",
+    "contactrecycling",
 };
 
 // ---------------------------------------------------------------------------
@@ -1025,6 +1028,7 @@ readDynamicProps(const b3dop::BodySettings &node, const PointAttrs &a, GA_Offset
         if (t >= 0.0f) p.sleepThreshold = t;
     }
     p.fastObject = a.fastObject.isValid() ? a.fastObject.get(off) != 0 : node.isBullet;
+    p.contactRecycling = a.contactRecycling.isValid() ? a.contactRecycling.get(off) != 0 : node.contactRecycling;
     p.minActivationImpulse = 0.0f;
     if (a.minActivation.isValid())
     {
@@ -1106,6 +1110,7 @@ settingsFor(const b3dop::BodySettings &node, const Box3DBodyProps &p, b3dop::Bod
     b.filterProfile  = p.filterProfile;
     b.sleepThreshold = p.sleepThreshold;
     b.isBullet       = p.fastObject;
+    b.contactRecycling = p.contactRecycling;
     return b;
 }
 
@@ -1432,6 +1437,11 @@ applyPropChanges(b3dop::Box3DWorld &world, DopBodyState &e, const Box3DBodyProps
         world.setBulletByHandle(h, p.fastObject);
         changed |= kPropsChanged;
     }
+    if (p.contactRecycling != o.contactRecycling)
+    {
+        world.setContactRecyclingByHandle(h, p.contactRecycling);
+        changed |= kPropsChanged;
+    }
     if (p.sleepOk != o.sleepOk)
     {
         world.setSleepEnabledByHandle(h, p.sleepOk);
@@ -1515,12 +1525,13 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c, StepProgr
         nodeType = int(bt == 0 ? b3dop::BodySettings::Type::Static
                      : bt == 1 ? b3dop::BodySettings::Type::Kinematic
                                : b3dop::BodySettings::Type::Dynamic);
-        const float v[10] = { float(dataNode->getMass()), float(dataNode->getFriction()),
+        const float v[11] = { float(dataNode->getMass()), float(dataNode->getFriction()),
                               float(dataNode->getBounce()), float(dataNode->getLinearDamping()),
                               float(dataNode->getAngularDamping()), float(dataNode->getGravityScale()),
                               float(dataNode->getDensity()), dataNode->getComputeMass() ? 1.0f : 0.0f,
-                              float(dataNode->getSleepThreshold()), dataNode->getFastObject() ? 1.0f : 0.0f };
-        nodeHash = b3dop::hashFloats(v, 10);
+                              float(dataNode->getSleepThreshold()), dataNode->getFastObject() ? 1.0f : 0.0f,
+                              dataNode->getContactRecycling() ? 1.0f : 0.0f };
+        nodeHash = b3dop::hashFloats(v, 11);
         nodeHash = b3dop::mixHash(nodeHash, dataNode->getAddImpact() ? 1 : 2);
     }
     b3dop::Box3DWorld &world = st.world;
@@ -2522,6 +2533,9 @@ SIM_SolverBox3D::getDescription()
     static PRM_Name    theBounceThresholdName("bouncethreshold", "Bounce Threshold");
     static PRM_Default theBounceThresholdDefault(1.0);
     static PRM_Range   theBounceThresholdRange(PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 5);
+    static PRM_Name    theRecycleName("contactrecycledistance", "Contact Recycle Distance");
+    static PRM_Default theRecycleDefault(0.05);
+    static PRM_Range   theRecycleRange(PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 0.2);
     static PRM_Name    theMaxSpeedName("maxlinearspeed", "Max Linear Speed");
     static PRM_Default theMaxSpeedDefault(400.0);
     static PRM_Range   theMaxSpeedRange(PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 1000);
@@ -2567,6 +2581,11 @@ SIM_SolverBox3D::getDescription()
                      "How much contacts damp overlap recovery. Lower values recover faster but more energetically."),
         PRM_Template(PRM_FLT_J,  1, &theBounceThresholdName, &theBounceThresholdDefault, 0, &theBounceThresholdRange, 0, 0, 1,
                      "Collisions slower than this speed don't bounce, so resting pieces settle instead of jittering."),
+        PRM_Template(PRM_FLT_J,  1, &theRecycleName, &theRecycleDefault, 0, &theRecycleRange, 0, 0, 1,
+                     "A touching pair that has moved less than this distance (and turned under about 10 degrees) "
+                     "since its contact points were last computed keeps them for the next step, which is faster "
+                     "but slightly less exact. 0 turns recycling off for every body. Individual bodies can opt "
+                     "out with Contact Recycling on Box3D Data or the contactrecycling point attribute."),
         PRM_Template(PRM_FLT_J,  1, &theMaxSpeedName, &theMaxSpeedDefault, 0, &theMaxSpeedRange, 0, 0, 1,
                      "No body moves faster than this."),
         PRM_Template(PRM_TOGGLE, 1, &theContinuousName, &theContinuousDefault, 0, 0, 0, 0, 1,
@@ -2621,6 +2640,7 @@ SIM_SolverBox3D::currentWorldSettings() const
     s.contactHertz     = float(getContactStiffness());
     s.contactDampingRatio  = float(getContactDamping());
     s.restitutionThreshold = float(getBounceThreshold());
+    s.contactRecycleDistance = float(getContactRecycleDistance());
     s.maxLinearSpeed   = float(getMaxLinearSpeed());
     s.enableContinuous = getEnableContinuous();
     s.enableSpeculative = getEnableSpeculative();
@@ -2754,6 +2774,7 @@ SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
     // From here the step runs to the end (the write-back is quick), so the cached result is
     // always a whole step.
     stepWorld(*worldData, st->stepDt);
+    B3D_LOG_VERBOSE("  step: %d contact(s) recycled", st->world.recycledContactCount());
     writeResultsBack(*worldData, objects);
     // Contacts are read before the queued point writes, aging and deletions.
     recordImpacts(*st, objects, engine.getSimulationTime());
