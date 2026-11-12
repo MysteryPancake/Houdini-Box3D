@@ -992,7 +992,7 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
     const SIM_Geometry *geo = SIM_DATA_GETCONST(obj, SIM_GEOMETRY_DATANAME, SIM_Geometry);
     if (!geo)
     {
-        B3D_LOG("  object id=%d has no Geometry data, skipped", obj.getObjectId());
+        B3D_LOG_VERBOSE("  object id=%d has no Geometry data, skipped", obj.getObjectId());
         return false;
     }
     SIM_GeometryAutoReadLock lock(geo);
@@ -1040,7 +1040,7 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
     }
 #ifdef BOX3DDOP_DEBUG
     if (os.canSkip)
-        B3D_LOG("  object id=%d: full scan, changed: %s", objectId,
+        B3D_LOG_VERBOSE("  object id=%d: full scan, changed: %s", objectId,
                 describeFingerprintDifference(os.fp, fpNow).c_str());
 #endif
     const b3dop::BodySettings node = dataNode ? dataNode->toBodySettings() : b3dop::BodySettings();
@@ -1590,11 +1590,15 @@ SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
         warn("Box3D: " + std::to_string(counts.badP) + " point(s) have a non-finite P and are skipped");
 
     if (counts.skipped)
-        B3D_LOG("  sync: %d of %d object(s) unchanged, scan skipped", counts.skipped, int(objects.entries()));
+        B3D_LOG_VERBOSE("  sync: %d of %d object(s) unchanged, scan skipped", counts.skipped, int(objects.entries()));
+    // Adding / removing bodies is an event worth a line; edits, retypes and the problem
+    // counts can repeat every step, so those lines need BOX3DDOP_VERBOSE=1.
     if (counts.added || counts.edited || counts.retyped || counts.failed ||
         counts.duplicates || counts.badP || removed)
     {
-        B3D_LOG("  sync: +%d added, -%d removed, %d edited externally, %d type changes, "
+        const bool event = counts.added || removed;
+        (void)event;                // only used by the debug log
+        B3D_LOG_IF(event, "  sync: +%d added, -%d removed, %d edited externally, %d type changes, "
                 "%d failed, %d duplicate ids, %d non-finite P  (bodies now %d)",
                 counts.added, removed, counts.edited, counts.retyped, counts.failed,
                 counts.duplicates, counts.badP, st->world.bodyCount());
@@ -1714,7 +1718,7 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
         SIM_GeometryCopy *geo = getOrMakeWritableGeometry(*obj);
         if (!geo)
         {
-            B3D_LOG("  writeBack: object id=%d Geometry is not writable and could not be converted",
+            B3D_LOG_VERBOSE("  writeBack: object id=%d Geometry is not writable and could not be converted",
                     obj->getObjectId());
             addError(obj, SIM_MESSAGE,
                      "Box3D: this object's Geometry is not writable and could not be converted to a SIM_GeometryCopy; results are not written back",
@@ -1908,7 +1912,7 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
 
     if (missing)
     {
-        B3D_LOG("  writeBack: %d moved bodies had no readable state or no point to write to", missing);
+        B3D_LOG_VERBOSE("  writeBack: %d moved bodies had no readable state or no point to write to", missing);
         addError(objects(0), SIM_MESSAGE,
                  ("Box3D: " + std::to_string(missing) + " body(ies) could not be matched to a point; their results were not written back").c_str(),
                  UT_ERROR_WARNING);

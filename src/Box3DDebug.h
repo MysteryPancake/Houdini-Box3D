@@ -9,6 +9,9 @@
 // Houdini must be restarted for the environment itself to change):
 //
 //     BOX3DDOP_REQUESTED_CACHE=<int>  value getRequestedCacheSubclass() returns
+//     BOX3DDOP_VERBOSE=1              also log things that can happen EVERY step (sync skipped /
+//                                     full scan, edits detected, unmatched bodies). Off by default:
+//                                     a line per frame, flushed, slows Houdini down a lot.
 //     BOX3DDOP_VERIFY_READBACK=1      write-back also re-reads every point it wrote and logs
 //                                     "READBACK MISMATCH" if that differs (bit for bit) from the
 //                                     pose it predicted for the mirror. Slow; for checking only.
@@ -55,6 +58,13 @@ inline int envInt(const char *name, int fallback)
     const char *v = std::getenv(name);
     return (v && *v) ? std::atoi(v) : fallback;
 }
+
+// Read once. Per-step diagnostics go through B3D_LOG_VERBOSE and stay silent unless this is set.
+inline bool verbose()
+{
+    static const bool v = envInt("BOX3DDOP_VERBOSE", 0) != 0;
+    return v;
+}
 #if defined(_MSC_VER)
 #pragma warning(pop)
 #endif
@@ -62,6 +72,8 @@ inline int envInt(const char *name, int fallback)
 } // namespace b3dop_dbg
 
 #define B3D_LOG(...)             ::b3dop_dbg::log(__VA_ARGS__)
+#define B3D_LOG_VERBOSE(...)     do { if (::b3dop_dbg::verbose()) ::b3dop_dbg::log(__VA_ARGS__); } while (0)   // arguments are only evaluated when verbose
+#define B3D_LOG_IF(cond, ...)    do { if ((cond) || ::b3dop_dbg::verbose()) ::b3dop_dbg::log(__VA_ARGS__); } while (0)   // always when cond, else only when verbose
 #define B3D_COUNT(field)         (++::b3dop_dbg::counters().field)
 #define B3D_UNCOUNT(field)       (--::b3dop_dbg::counters().field)
 #define B3D_COUNTER(field)       (::b3dop_dbg::counters().field.load())
@@ -70,6 +82,8 @@ inline int envInt(const char *name, int fallback)
 #else // !BOX3DDOP_DEBUG
 
 #define B3D_LOG(...)             ((void)0)
+#define B3D_LOG_VERBOSE(...)     ((void)0)
+#define B3D_LOG_IF(cond, ...)    ((void)0)
 #define B3D_COUNT(field)         ((void)0)
 #define B3D_UNCOUNT(field)       ((void)0)
 #define B3D_COUNTER(field)       (0)

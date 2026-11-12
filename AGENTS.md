@@ -473,6 +473,11 @@ at write-back. Fallback warnings only appear on the frame the body is created.
 
 ## Debug logging (`Box3DDebug.h`)
 
+Anything that can happen EVERY step (sync skipped / full scan lines, external edits, unmatched bodies, objects
+without Geometry) uses `B3D_LOG_VERBOSE` / `B3D_LOG_IF(cond, ...)` and only prints with `BOX3DDOP_VERBOSE=1`: a flushed
+stderr line per frame slows Houdini a lot. Keep new per-step diagnostics on those macros; plain `B3D_LOG` is for one-off
+events (world rebuild, body creation notes, bodies added / removed).
+
 `B3D_LOG`, `B3D_COUNT`, `B3D_UNCOUNT`, `B3D_COUNTER`, `B3D_ENV_INT` compile to no-ops unless
 `BOX3DDOP_DEBUG`. Output goes to stderr with a `[b3dop]` prefix, mutex-guarded. Typical lines:
 `REBUILD #n: <reason>`, `sync: +A added, -R removed, ...`, per-body fallback notes. The only counter is `rebuilds`.
