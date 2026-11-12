@@ -257,6 +257,21 @@ jointSignature(b3dop::JointType type, b3dop::BodyHandle a, b3dop::BodyHandle b, 
     return h ? h : 1;
 }
 
+// Two quaternions differ beyond float noise: components compared after aligning signs (q and -q
+// are the same rotation). A dot-product test would miss rotations under ~0.16 degrees.
+bool
+quatDiffers(const float *a, const float *b, double eps = 1e-5)
+{
+    double dot = 0.0;
+    for (int k = 0; k < 4; ++k)
+        dot += double(a[k]) * double(b[k]);
+    const double sign = dot < 0.0 ? -1.0 : 1.0;
+    for (int k = 0; k < 4; ++k)
+        if (std::fabs(double(a[k]) - sign * double(b[k])) > eps)
+            return true;
+    return false;
+}
+
 // An anchor moved away from what the solver last wrote: edited upstream (q and -q are equal).
 bool
 frameEdited(const b3dop::JointFrame &now, const b3dop::JointFrame &wrote)
@@ -264,10 +279,7 @@ frameEdited(const b3dop::JointFrame &now, const b3dop::JointFrame &wrote)
     for (int k = 0; k < 3; ++k)
         if (std::fabs(now.pos[k] - wrote.pos[k]) > 1e-5 * std::max(1.0, std::fabs(wrote.pos[k])))
             return true;
-    double dot = 0.0;
-    for (int k = 0; k < 4; ++k)
-        dot += double(now.rot[k]) * double(wrote.rot[k]);
-    return std::fabs(dot) < 1.0 - 1e-6;
+    return quatDiffers(now.rot, wrote.rot);
 }
 
 // A frame as the geometry stores it (float P), so it compares equal when read back.
@@ -382,10 +394,7 @@ processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &ancho
         for (int k = 0; k < 3; ++k)
             if (std::fabs(w.pos[k] - live.pos[k]) > 1e-5 * std::max(1.0, std::fabs(live.pos[k])))
                 return false;
-        double dot = 0.0;
-        for (int k = 0; k < 4; ++k)
-            dot += double(w.rot[k]) * double(live.rot[k]);
-        return std::fabs(dot) >= 1.0 - 1e-6;
+        return !quatDiffers(w.rot, live.rot);
     };
 
     for (GA_Iterator it(gdp->getPrimitiveRange()); !it.atEnd(); ++it)
@@ -513,6 +522,11 @@ writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp, const std::vecto
     GA_RWHandleQ  orientH(gdp, GA_ATTRIB_POINT, "orient");
     if (!pH.isValid() || !orientH.isValid())
         return;
+    // A new quaternion attribute is 0,0,0,0: start every point at identity, as the solver's
+    // ensureResultAttribs does.
+    if (orientNew)
+        for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it)
+            orientH.set(*it, UT_QuaternionF(0.0f, 0.0f, 0.0f, 1.0f));
     bool wroteRestLength = false, wroteLocal = false;
     GA_RWHandleF restLengthH;
     GA_RWHandleV3 localPH;

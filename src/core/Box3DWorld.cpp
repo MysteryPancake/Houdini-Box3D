@@ -36,9 +36,9 @@ using HullRef = std::shared_ptr<const SharedHull>;
 size_t
 hullBytes(const b3HullData *h)
 {
-    return sizeof(b3HullData) + size_t(h->vertexCount) * (sizeof(b3HullVertex) + sizeof(b3Vec3)) +
-           size_t(h->edgeCount) * sizeof(b3HullHalfEdge) +
-           size_t(h->faceCount) * (sizeof(b3Plane) + sizeof(b3HullFace));
+    // The hull's whole allocation: header, vertex / point / edge / plane / face arrays, the SoA
+    // vertex and normal arrays and the edge cosines.
+    return size_t(h->byteCount);
 }
 
 class HullLibrary
@@ -504,7 +504,7 @@ Box3DWorld::create(const WorldSettings &s, std::shared_ptr<TaskRunner> tasks)
         def.hitEventThreshold = s.impactMinSpeed;
     def.frictionCallback    = frictionRule(s.frictionMixing);
     def.restitutionCallback = restitutionRule(s.restitutionMixing);
-    def.workerCount = static_cast<uint32_t>(std::max(1, s.workerCount));
+    def.workerCount = static_cast<uint32_t>(std::min(std::max(1, s.workerCount), int(B3_MAX_WORKERS)));
     if (tasks && def.workerCount > 1)
     {
         // The host's threads: Box3D starts none. The runner must outlive the b3World (see destroy).

@@ -131,70 +131,56 @@ SIM_Box3DData::getDescription()
         PRM_Template(PRM_SWITCHER, int(sizeof(theTabsDefaults) / sizeof(PRM_Default)), &theTabsName, theTabsDefaults),
         // --- Shape ---
         PRM_Template(PRM_ORD,    1, &theShapeName,       &theShapeDefault, &theShapeMenu, 0, 0, 0, 1,
-                     "Collision shape for points without a bullet_georep attribute. Concave / Compound builds one convex hull per piece."),
+                     "Collision shape for points without a bullet_georep attribute. Concave builds one convex hull per piece."),
         PRM_Template(PRM_TOGGLE, 1, &theAutoFitName,     &theAutoFitDefault, 0, 0, 0, 0, 1,
-                     "Fit Box, Sphere and Capsule shapes to each piece's geometry. When off, they come from pscale / scale and the bullet_prim* attributes."),
+                     "Fit Box, Sphere and Capsule shapes to each piece's geometry. Off uses pscale / scale and the bullet_prim* attributes."),
         PRM_Template(PRM_TOGGLE, 1, &theHullPerConnectedName, &theHullPerConnectedDefault, 0, 0, 0, 0, 1,
-                     "For Convex Hull shapes, build a separate hull for each set of connected primitives in a piece "
-                     "instead of one hull around the whole piece."),
+                     "Build one convex hull per set of connected primitives, instead of one hull around the whole piece."),
         // --- Body ---
         PRM_Template(PRM_ORD,    1, &theBodyTypeName,    &theBodyTypeDefault, &theBodyTypeMenu, 0, 0, 0, 1,
-                     "Static never moves, Kinematic follows its animation, Dynamic is fully simulated. Inactive points (active = 0) are static."),
+                     "Static never moves, Kinematic follows its animation, Dynamic is fully simulated. Points with active = 0 are static."),
         PRM_Template(PRM_TOGGLE, 1, &theComputeMassName, &theComputeMassDefault, 0, 0, 0, 0, 1,
-                     "Work out each body's mass from its Density and collision shape volume, instead of using Mass. "
-                     "Overridden by the computemass point attribute."),
+                     "Work out mass from Density and shape volume instead of using Mass. Overridden by the computemass attribute."),
         PRM_Template(PRM_FLT_J,  1, &theMassName, &theMassDefault, 0, &theMassRange, 0, 0, 1,
                      "Mass of each body (used when Compute Mass is off). Overridden by the mass point attribute.",
                      &theMassDisable),
         PRM_Template(PRM_FLT_J,  1, &theDensityName, &theDensityDefault, 0, &theDensityRange, 0, 0, 1,
-                     "Mass per unit volume (used when Compute Mass is on). 1000 is roughly water. "
-                     "Overridden by the density point attribute.", &theDensityDisable),
+                     "Mass per unit volume, used when Compute Mass is on (1000 is about water). Overridden by the density attribute.", &theDensityDisable),
         PRM_Template(PRM_FLT_J,  1, &theGravScaleName,   &theGravScaleDefault, 0, 0, 0, 0, 1,
-                     "Multiplies the solver's Gravity for these bodies: 0 floats, negative falls upward. "
-                     "Overridden by the gravityscale point attribute."),
+                     "Multiplies the solver's Gravity: 0 floats, negative falls upward. Overridden by the gravityscale attribute."),
         // --- Material ---
         PRM_Template(PRM_FLT_J,  1, &theFrictionName, &theFrictionDefault, 0, &theFrictionRange, 0, 0, 1,
-                     "How much surfaces resist sliding against each other. 0 is ice-slick. "
-                     "Overridden by the friction point attribute."),
+                     "How much surfaces resist sliding; 0 is ice-slick. Overridden by the friction attribute."),
         PRM_Template(PRM_FLT_J,  1, &theBounceName, &theBounceDefault, 0, &theBounceRange, 0, 0, 1,
-                     "How much speed is kept after a collision: 0 doesn't bounce, 1 bounces back at full speed. "
-                     "Overridden by the bounce point attribute."),
+                     "Speed kept after a collision: 0 doesn't bounce, 1 bounces at full speed. Overridden by the bounce attribute."),
         PRM_Template(PRM_FLT_J,  1, &theRollingName, &theRollingDefault, 0, &theRollingRange, 0, 0, 1,
-                     "How much round bodies (spheres, capsules, and hulls to a lesser degree) resist rolling on a surface. "
-                     "0 rolls freely. Overridden by the rollingresistance point attribute."),
+                     "How much round bodies resist rolling; 0 rolls freely. Overridden by the rollingresistance attribute."),
         PRM_Template(PRM_XYZ_J,  3, &theTangentName, theTangentDefaults, 0, 0, 0, 0, 1,
-                     "Makes this body's surface a conveyor belt: bodies touching it are dragged along this velocity, in "
-                     "this body's own axes, along the contact surface. It needs friction above 0 to grip. Changing it "
-                     "wakes the bodies resting on it. Overridden by the tangentvelocity point attribute."),
+                     "Makes this body a conveyor belt: touching bodies are dragged along this velocity, in the body's own axes. "
+                     "Needs friction above 0. Overridden by the tangentvelocity attribute."),
         PRM_Template(PRM_FLT_J,  1, &theLinDampName, &theLinDampDefault, 0, &theDampingRange, 0, 0, 1,
-                     "Slows movement over time, like air drag. 0 is no drag. "
-                     "Overridden by the lineardamping point attribute."),
+                     "Slows movement like air drag; 0 is none. Overridden by the lineardamping attribute."),
         PRM_Template(PRM_FLT_J,  1, &theAngDampName, &theAngDampDefault, 0, &theDampingRange, 0, 0, 1,
-                     "Slows spinning over time. 0 is no drag. Overridden by the angulardamping point attribute."),
+                     "Slows spinning; 0 is none. Overridden by the angulardamping attribute."),
         // --- Sleep & Contacts ---
         PRM_Template(PRM_TOGGLE, 1, &theSleepName,       &theSleepDefault, 0, 0, 0, 0, 1,
-                     "Let resting bodies stop simulating until touched. Needs the solver's Allow Sleeping on. "
-                     "Overridden by the enablesleep point attribute."),
+                     "Let resting bodies stop simulating until touched. Needs the solver's Allow Sleeping. Overridden by the enablesleep attribute."),
         PRM_Template(PRM_TOGGLE, 1, &theStartAsleepName, &theStartAsleepDefault, 0, 0, 0, 0, 1,
-                     "Bodies begin asleep until something touches them. Has no effect if Allow Sleeping is off. "
-                     "Overridden by the awake point attribute."),
+                     "Bodies begin asleep until touched. Needs Allow Sleeping. Overridden by the awake attribute."),
         PRM_Template(PRM_FLT_J,  1, &theSleepThresholdName, &theSleepThresholdDefault, 0, &theSleepThresholdRange, 0, 0, 1,
-                     "A body may fall asleep once its speed has stayed below this for half a second. "
-                     "Overridden by the sleepthreshold point attribute."),
+                     "A body falls asleep once its speed stays below this for half a second. Overridden by the sleepthreshold attribute."),
         PRM_Template(PRM_FLT_J,  1, &theCcdThresholdName, &theCcdThresholdDefault, 0, &theCcdThresholdRange, 0, 0, 1,
-                     "How far a body must move in one step, as a fraction of its thinnest size, before continuous "
-                     "collision sweeps it so it can't pass through things. Lower catches more tunnelling on thin, "
-                     "fast pieces but costs more. Needs the solver's Continuous Collision on. "
-                     "Overridden by the ccdthreshold point attribute."),
+                     "Move distance per step, as a fraction of the body's thinnest size, above which continuous collision kicks in. "
+                     "Lower stops more tunnelling but costs more. Overridden by the ccdthreshold attribute."),
         PRM_Template(PRM_TOGGLE, 1, &theFastObjectName,  &theFastObjectDefault, 0, 0, 0, 0, 1,
-                     "Continuous collision against moving bodies too, so a fast body can't pass through them."),
+                     "Also run continuous collision against moving bodies, so fast bodies can't pass through them."),
         PRM_Template(PRM_TOGGLE, 1, &theRecyclingName,   &theRecyclingDefault, 0, 0, 0, 0, 1,
-                     "Reuse this body's contacts between steps, which is faster. Turn off if you see ghost collisions on thin or fast bodies."),
+                     "Reuse contacts between steps for speed. Turn off if thin or fast bodies show ghost collisions."),
         // --- Output ---
         PRM_Template(PRM_TOGGLE, 1, &theFlipWindingName, &theFlipWindingDefault, 0, 0, 0, 0, 1,
-                     "Static meshes are one-sided. Turn on if bodies fall through from the side you expect to be solid."),
+                     "Static meshes are one-sided. Turn on if bodies fall through from the side that should be solid."),
         PRM_Template(PRM_TOGGLE, 1, &theAddImpactName,   &theAddImpactDefault, 0, 0, 0, 0, 1,
-                     "Record impacts in Impacts data on the DOP object. Can increase simulation time and memory use."),
+                     "Record impacts in Impacts data on the object. Costs extra time and memory."),
         PRM_Template()
     };
 

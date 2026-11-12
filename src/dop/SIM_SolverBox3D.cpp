@@ -370,6 +370,16 @@ struct PieceGroup
     }
 };
 
+// Some piece has points (a group whose first piece is empty is still usable).
+inline bool
+anyPieceNonEmpty(const PieceGroup &g)
+{
+    for (const NamedPiece &np : g.pieces)
+        if (!np.xyz.empty())
+            return true;
+    return false;
+}
+
 void
 appendPrimPoints(const GA_Primitive &prim, NamedPiece &np)
 {
@@ -626,8 +636,7 @@ struct ShapeSources
         {
             if (fresh)
                 SourceSummaryCache::instance().insert(sourceIdentity(gdp, firstOff, false), entry->pieces);
-            return entry->pieces.pieces.empty() || entry->pieces.pieces[0].xyz.empty()
-                       ? nullptr : &entry->pieces;
+            return anyPieceNonEmpty(entry->pieces) ? &entry->pieces : nullptr;
         }
 
         if (!entry->connectedBuilt)
@@ -707,14 +716,18 @@ readPointState(const GU_Detail *gdp, const PointAttrs &a, GA_Offset off,
 }
 
 // Position, orientation or velocity differ beyond float noise (q and -q are the same rotation).
+// The quaternions are compared component-wise after aligning signs: a dot-product test would
+// only see rotations above ~0.16 degrees (dot = cos(theta / 2)).
 bool
 poseDiffers(const Box3DBodyPose &a, const Box3DBodyPose &b)
 {
     const double eps = 1e-5;
     double dot = 0.0;
     for (int i = 0; i < 4; ++i) dot += double(a.rot[i]) * double(b.rot[i]);
-    if (std::fabs(dot) < 1.0 - 1e-6)
-        return true;
+    const double sign = dot < 0.0 ? -1.0 : 1.0;
+    for (int i = 0; i < 4; ++i)
+        if (std::fabs(double(a.rot[i]) - sign * double(b.rot[i])) > eps)
+            return true;
     for (int i = 0; i < 3; ++i)
         if (std::fabs(a.pos[i] - b.pos[i]) > eps || std::fabs(a.lin[i] - b.lin[i]) > eps ||
             std::fabs(a.ang[i] - b.ang[i]) > eps)
@@ -1795,7 +1808,10 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c, StepProgr
 
     // For the post-step passes; kept as they are while the object is skipped.
     os.bodies.clear();
-    // Bodies by `name`, for joint anchors (only while some object has a joint network).
+    // Bodies by `name`, for joint anchors (only while some object has a joint network). The old
+    // map is kept to see whether a rename changed what the names resolve to.
+    std::unordered_map<std::string, Box3DBodyMirror *> oldByName;
+    oldByName.swap(os.byName);
     os.byName.clear();
     os.namesKnown = st.wantNames;
     const GA_ROHandleS nameH(gdp, GA_ATTRIB_POINT, "name");
@@ -2024,6 +2040,10 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c, StepProgr
                 os.byName.emplace(std::move(n), entry);     // the first point of a name wins
         }
     }
+
+    // Joint anchors resolve by point `name`: a renamed piece re-resolves the joints.
+    if (keepNames && os.byName != oldByName)
+        ++st.bodyVersion;
 
     // Problems (retried and reported every step), deforming and driven bodies keep it scanning.
     os.entryCount   = stamped;
@@ -2806,33 +2826,31 @@ SIM_SolverBox3D::getDescription()
         PRM_Template(PRM_SWITCHER, int(sizeof(theTabsDefaults) / sizeof(PRM_Default)), &theTabsName, theTabsDefaults),
         // --- Simulation ---
         PRM_Template(PRM_FLT_J,  3, &theGravityName,  theGravityDefault, 0, 0, 0, 0, 1,
-                     "Acceleration applied to every dynamic body, in units per second squared. "
-                     "Scale it per body with Gravity Scale on Box3D Data."),
+                     "Acceleration of every dynamic body, in units per second squared. Scale per body with Gravity Scale on Box3D Data."),
         PRM_Template(PRM_TOGGLE, 1, &theUseForcesName, &theUseForcesDefault, 0, 0, 0, 0, 1,
-                     "Apply Force DOPs connected to the objects (Gravity, Wind, Fan, POP Force). Set Gravity above to 0 when using a Gravity Force."),
+                     "Apply Force DOPs connected to the objects (Wind, Fan, etc.). Set Gravity to 0 when using a Gravity Force."),
         PRM_Template(PRM_TOGGLE, 1, &theForcesWakeName, &theForcesWakeDefault, 0, 0, 0, 0, 1,
-                     "Let forces wake sleeping bodies. Turn on for wind or fans that should blow resting pieces away.",
+                     "Let forces wake sleeping bodies, e.g. wind that should blow resting pieces away.",
                      &theForcesWakeDisable),
         PRM_Template(PRM_INT_J,  1, &theSubStepsName, &theSubStepsDefault, 0, &theSubStepsRange, 0, 0, 1,
-                     "Solver passes per time step. More substeps make stacks and fast collisions more stable "
-                     "but take longer."),
+                     "Solver passes per time step. More is more stable for stacks and fast collisions, but slower."),
         PRM_Template(PRM_FLT_J,  1, &theTimeScaleName, &theTimeScaleDefault, 0, &theTimeScaleRange, 0, 0, 1,
                      "Multiplies the time step: below 1 is slow motion, above 1 fast motion."),
         PRM_Template(PRM_TOGGLE, 1, &theAgingName,    &theAgingDefault, 0, 0, 0, 0, 1,
-                     "Add the time step to each point's age, and mark points dead once age exceeds life."),
+                     "Add the frame time step (not Time Scale-adjusted) to each point's age, and mark points dead once age exceeds life."),
         PRM_Template(PRM_FLT_J,  1, &theMaxSpeedName, &theMaxSpeedDefault, 0, &theMaxSpeedRange, 0, 0, 1,
-                     "No body moves faster than this."),
+                     "Speed limit for every body, in units per second."),
         // --- Performance ---
         PRM_Template(PRM_TOGGLE, 1, &theAutoThreadsName, &theAutoThreadsDefault, 0, 0, 0, 0, 1,
-                     "Use one Box3D worker thread per CPU core (up to 32). Usually only faster for very large scenes."),
+                     "Use one worker thread per CPU core (up to 32). Usually only faster for very large scenes."),
         PRM_Template(PRM_INT_J,  1, &theThreadsName,  &theThreadsDefault, 0, &theThreadsRange,
                      0, 0, 1,
-                     "Number of Box3D worker threads. More helps large scenes; small ones can run faster with fewer.",
+                     "Number of worker threads. More helps large scenes; small ones can run faster with fewer.",
                      &theThreadsDisable),
         PRM_Template(PRM_TOGGLE, 1, &theSleepName,    &theSleepDefault, 0, 0, 0, 0, 1,
                      "Let resting bodies stop simulating until touched. Off keeps every body awake."),
         PRM_Template(PRM_FLT_J,  1, &theRecycleName, &theRecycleDefault, 0, &theRecycleRange, 0, 0, 1,
-                     "Reuse contacts for pairs that barely moved, which is faster but slightly less exact. 0 turns it off for every body."),
+                     "Reuse contacts for pairs that barely moved: faster but slightly less exact. 0 turns it off."),
         // --- Contacts ---
         PRM_Template(PRM_FLT_J,  1, &theStiffnessName, &theStiffnessDefault, 0, &theStiffnessRange, 0, 0, 1,
                      "How stiff contacts are (cycles per second). Higher values recover from overlap faster but can jitter."),
@@ -2841,7 +2859,7 @@ SIM_SolverBox3D::getDescription()
         PRM_Template(PRM_FLT_J,  1, &thePushSpeedName, &thePushSpeedDefault, 0, &thePushSpeedRange, 0, 0, 1,
                      "How fast overlapping pieces are pushed apart. Lower it if pieces that start out overlapping fly apart."),
         PRM_Template(PRM_TOGGLE, 1, &theContinuousName, &theContinuousDefault, 0, 0, 0, 0, 1,
-                     "Stop fast bodies passing through static ones (and, for Fast Object bodies, moving ones)."),
+                     "Stop fast bodies passing through static ones (and through moving ones, for Fast Object bodies)."),
         // --- Bounce & Friction ---
         PRM_Template(PRM_FLT_J,  1, &theBounceThresholdName, &theBounceThresholdDefault, 0, &theBounceThresholdRange, 0, 0, 1,
                      "Collisions slower than this speed don't bounce, so resting pieces settle instead of jittering."),
@@ -2855,11 +2873,11 @@ SIM_SolverBox3D::getDescription()
                      "How the bounce of two touching bodies is combined."),
         // --- Advanced ---
         PRM_Template(PRM_FLT_J,  1, &theIsoName, &theIsoDefault, 0, &theIsoRange, 0, 0, 1,
-                     "Stops nearly spherical bodies spinning oddly. 0 is a sphere, 0.5 a 1x1x2 box; only affects new bodies or mass changes."),
+                     "Treats nearly spherical bodies as spheres for spin. Applies to new bodies and mass changes."),
         PRM_Template(PRM_TOGGLE, 1, &theWarmName, &theWarmDefault, 0, 0, 0, 0, 1,
-                     "Advanced: reuse last step's contact forces. Leave on; turning it off makes stacks less stable."),
+                     "Reuse last step's contact forces. Leave on; off makes stacks less stable."),
         PRM_Template(PRM_FLT_J,  1, &theImpactSpeedName, &theImpactSpeedDefault, 0, &theImpactSpeedRange, 0, 0, 1,
-                     "Impact Data only includes pairs that collide faster than this. 0 includes every contact."),
+                     "Impact Data only includes collisions faster than this. 0 includes every contact."),
         PRM_Template()
     };
 
@@ -3286,13 +3304,11 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
             w.packedIdx = int(packedWrites.size());
             packedWrites.emplace_back();
         }
-        // `awake`: only changes are written (and only if the attribute exists).
+        // `awake`: only changes are written (and only if the attribute exists). entry->awake is
+        // updated where the write happens, so an unresolved point is retried next step.
         const bool nowAwake = !mv.fellAsleep;
         if (nowAwake != entry->awake)
-        {
             w.awakeState = nowAwake ? 1 : 0;
-            entry->awake = nowAwake;
-        }
     }
     if (items.empty())
         return;
@@ -3380,7 +3396,11 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
             if (qOut.isValid()) qOut.set(off, UT_QuaternionF(mv.rot[0], mv.rot[1], mv.rot[2], mv.rot[3]));
             if (vOut.isValid()) vOut.set(off, UT_Vector3(w.lin[0], w.lin[1], w.lin[2]));
             if (wOut.isValid()) wOut.set(off, UT_Vector3(w.ang[0], w.ang[1], w.ang[2]));
-            if (anyAwakeWrite && w.awakeState >= 0) awakeOut.set(off, int(w.awakeState));
+            if (anyAwakeWrite && w.awakeState >= 0)
+            {
+                awakeOut.set(off, int(w.awakeState));
+                w.entry->awake = (w.awakeState != 0);
+            }
 
             // Packed: the new 3x3 (the scale the sync read, the new rotation) is computed here and
             // written in pass 3, to the primitive the last sync stored.
