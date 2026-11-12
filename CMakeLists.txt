@@ -12,9 +12,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Box3D half works before involving the HDK.
 option(BOX3DDOP_CORE_ONLY "Build only the Houdini-free core and smoke test" OFF)
 
-# Debug logging in the Houdini plugin (see src/Box3DDebug.h). On by default;
-# turn OFF for a quiet build.
-option(BOX3DDOP_DEBUG "Compile debug logging into the Houdini plugin" ON)
+# Debug logging in the Houdini plugin (see src/Box3DDebug.h). Off by default;
+# configure with -DBOX3DDOP_DEBUG=ON to log to Houdini's console.
+option(BOX3DDOP_DEBUG "Compile debug logging into the Houdini plugin" OFF)
 
 # Where the Box3D source tree lives (the folder containing its CMakeLists.txt,
 # i.e. the INNER box3d folder if your zip unpacks as box3d/box3d/...).
@@ -27,6 +27,12 @@ set(BOX3D_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/box3d" CACHE PATH "Path to Box
 set(BUILD_SHARED_LIBS OFF)
 add_subdirectory("${BOX3D_DIR}" "${CMAKE_BINARY_DIR}/box3d" EXCLUDE_FROM_ALL)
 set_target_properties(box3d PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# How many Box3D worlds may exist at once (Box3D's own default is 128). Every rebuild makes a
+# new world and the old one lives on while cached frames use it, so long sessions and several
+# DOP networks add up. Each slot is a ~5 KB static array entry. Box3D caps it below 65535.
+set(BOX3DDOP_MAX_WORLDS 1024 CACHE STRING "Maximum number of Box3D worlds alive at once")
+target_compile_definitions(box3d PUBLIC B3_MAX_WORLDS=${BOX3DDOP_MAX_WORLDS})
 
 # ---------------------------------------------------------------------------
 # Core: plain C++ wrapper around Box3D. No Houdini headers in here.

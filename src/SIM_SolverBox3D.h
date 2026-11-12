@@ -14,6 +14,7 @@
 
 class SIM_Box3DWorld;
 class SIM_Engine;
+struct StepProgress;
 class SIM_Object;
 class SIM_ObjectArray;
 
@@ -54,11 +55,16 @@ private:
     // The world data on the first object carrying it, else created on the lowest-id object.
     SIM_Box3DWorld *findOrCreateWorldData(SIM_ObjectArray &objects);
 
-    // A new world for this data (other timesteps keep the old one).
-    void createFreshWorld(SIM_Box3DWorld &worldData, const char *reason);
+    // A new world for this data (other timesteps keep the old one). False if Box3D could not
+    // create one; the data then still holds its old state, which must not be continued.
+    bool createFreshWorld(SIM_Box3DWorld &worldData, const char *reason);
+    // The node error for a world that could not be created (names the world limit if hit).
+    void reportWorldCreationFailure(SIM_ObjectArray &objects);
 
     // One body per point: adds and removes bodies and pushes the points' changes into Box3D.
-    void syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects);
+    // False if the user cancelled (Escape) part way: the world is then half synced.
+    bool syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects,
+                          StepProgress &progress);
 
     void stepWorld(SIM_Box3DWorld &worldData, float timestep);
 

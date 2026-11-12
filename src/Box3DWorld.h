@@ -241,6 +241,8 @@ public:
 
     // ---- misc --------------------------------------------------------------
     static void version(int &major, int &minor, int &revision);
+    static int  liveWorldCount();   // Box3D worlds alive in this process (all Box3DWorlds)
+    static int  maxWorldCount();    // B3_MAX_WORLDS: create() fails once liveWorldCount() reaches it
 
 private:
     // The shape builders behind both APIs.

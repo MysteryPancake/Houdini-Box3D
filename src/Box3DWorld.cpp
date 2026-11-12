@@ -192,6 +192,11 @@ Box3DWorld::create(const WorldSettings &s)
     // Box3D's own thread pool (not Houdini's), sized here for the life of the world.
     def.workerCount = static_cast<uint32_t>(std::max(1, s.workerCount));
 
+    // At the limit b3CreateWorld asserts (a crash in builds with Box3D asserts on, such as
+    // RelWithDebInfo) before failing, so fail here first.
+    if (b3GetWorldCount() >= B3_MAX_WORLDS)
+        return false;
+
     myImpl->settings = s;
     myImpl->filters  = CollisionFilterTable();
     myImpl->worldId  = b3CreateWorld(&def);
@@ -1229,6 +1234,18 @@ Box3DWorld::version(int &major, int &minor, int &revision)
     major    = v.major;
     minor    = v.minor;
     revision = v.revision;
+}
+
+int
+Box3DWorld::liveWorldCount()
+{
+    return b3GetWorldCount();
+}
+
+int
+Box3DWorld::maxWorldCount()
+{
+    return B3_MAX_WORLDS;
 }
 
 } // namespace b3dop

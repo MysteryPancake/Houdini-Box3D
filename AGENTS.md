@@ -65,8 +65,15 @@ Layering (keep it):
 * A post-build step copies `icons/box3d.svg` to `<dso>/../config/Icons/DOP_<node name>.svg` (Houdini's default icon
   name for a node type is `<TABLE>_<name>`; the HDK alternative, `OP_Operator::setIconName`, needs the operator, which
   the automatic DOPs don't expose to us). Renaming a node's internal name means renaming its icon.
-* `BOX3DDOP_DEBUG` (default ON) defines `BOX3DDOP_DEBUG=1` for the plugin target only.
+* `BOX3DDOP_DEBUG` (default OFF) defines `BOX3DDOP_DEBUG=1` for the plugin target only.
 * `BOX3D_DIR` (default `extern/box3d`) must point at Box3D's own `CMakeLists.txt`.
+* `BOX3DDOP_MAX_WORLDS` (default 1024; Box3D's own default is 128) is passed to the `box3d` target as PUBLIC
+  `B3_MAX_WORLDS` (Box3D wraps it in `#ifndef`). Each slot is a ~5 KB static `b3World` (5008 bytes measured).
+  Rebuilds keep the previous world alive while cached frames share it, so worlds accumulate.
+  `Box3DWorld::create` checks `b3GetWorldCount() >= B3_MAX_WORLDS` itself before `b3CreateWorld`, which would
+  otherwise hit a `B3_ASSERT` (on in RelWithDebInfo) before failing. A failed rebuild returns false from
+  `createFreshWorld` and the solve fails (the old state is valid but from another time and must not be continued);
+  `reportWorldCreationFailure` names the limit when it is the cause.
 * `-DBOX3D_DOUBLE_PRECISION=ON` works: positions cross the boundary as `double[3]` and `Box3DWorld.cpp` converts through
   `decltype(b3Pos::x)`.
 * Release or RelWithDebInfo only.
@@ -163,6 +170,7 @@ entry is trusted while offset and key match; all slots are dropped when an entry
 ## Solver step (`solveObjectsSubclass`)
 
 ```
+StepProgress (UTgetInterrupt)                  Escape checks; Houdini's own "Stepping simulation" bar stays
 worldData = findOrCreateWorldData(objects)     first object carrying "Box3DWorld", else created on objects(0)
 rebuild if invalid / thread count changed / stamp mismatch -> createFreshWorld
 lock st->mutex
@@ -177,6 +185,17 @@ ageObjects         Enable Aging
 deleteDeadPoints   `dead` points
 stamp = now
 ```
+
+**Escape.** `StepProgress::check()` calls `UTgetInterrupt()->opInterrupt()` with no percent and no `opStart` of our
+own (SideFX's `SIM_VolumetricConnectedComponentBuilder` does the same), so Houdini's own "Stepping simulation" message
+and bar are left alone. SIM_Engine discards and re-cooks an interrupted step itself (`setSimulationTime`,
+`myLastCookInterrupted`); the stamp check makes that re-cook rebuild the world. `check()` is called at the
+start of the solve, before each object, every `kProgressEvery` (64) points in `syncObject` pass 2 (serial, between
+points, so no half-built body), and once before `stepWorld`. A cancel latches. Cancelled after the sync began:
+`st->stamped = false` (the half-synced world can never be continued; the next solve that would continue it rebuilds),
+a `UT_ERROR_MESSAGE` "Box3D: step cancelled", and `SIM_SOLVER_FAIL`. `b3World_Step` itself is not interruptible, and
+once it has run the step always finishes (write-back etc. are quick), so a cached step is always whole.
+`StepProgress` is at file scope (the header forward-declares it), not in the anonymous namespace.
 
 Data names: `"Box3DWorld"`, `"Box3DData"`, `SIM_GEOMETRY_DATANAME`.
 
@@ -411,7 +430,7 @@ is a manual scene. No CI.
 ## HDK calls
 
 Checked against the HDK reference: `GU_PrimPacked::isPackedPrimitive`, `getPackedDetail`, `sharedImplementation`,
-`getFullTransform4`, `setLocalTransform`, `getPivot`, `transformDirty`; `GU_PackedFragment::getPrimitiveRange`, `detailPtr`;
+`getFullTransform4`, `setLocalTransform`, `getPivot`, `transformDirty`; `GU_PackedFragment::getPrimitiveRange`, `detailPtr`; `UTgetInterrupt`, `UT_Interrupt::opInterrupt`;
 `GU_DetailHandleAutoReadLock` / `SIM_GeometryAutoReadLock::getGdp` (const pointer), `SIM_GeometryAutoWriteLock::getGdp`
 (reference); `GA_Detail::getPrimitiveList()` / `GA_PrimitiveList::getDataId()` / `bumpDataId()`,
 `findPointAttribute` (const), `getP`, `getNumPointOffsets`, `getNumPrimitiveOffsets`, `pointVertex`,

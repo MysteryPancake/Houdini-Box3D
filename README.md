@@ -167,10 +167,13 @@ Convex and concave shapes need **packed primitives** (one point plus one packed 
 - Use `id` if you delete points with `dead`. Without it, every later point counts as a new body.
 - Patterns don't match DOP groups yet.
 - Joints and constraints are not supported yet.
+- Escape cancels a step, under Houdini's usual "Stepping simulation" progress bar. Escape is checked while bodies are being built (the slow part of the first frame) and just before Box3D steps, not during Box3D's own step. A cancelled step isn't cached; the next one rebuilds the Box3D world from the geometry.
 
 ## Troubleshooting
 
-Debug logging is on by default and prints to Houdini's console window. Configure with `-DBOX3DDOP_DEBUG=OFF` for a quiet build.
+**"Box3D: world limit reached".** Each time the solver has to rebuild (for example when you simulate on from a frame that wasn't the last one stepped), it makes a new Box3D world, and the old one stays alive while cached frames still use it. Resetting the simulation or clearing the DOP cache frees them. The limit is 1024 by default; build with `-DBOX3DDOP_MAX_WORLDS=<n>` to change it.
+
+Debug logging is off by default. Configure with `-DBOX3DDOP_DEBUG=ON` to compile it in; it prints to Houdini's console window. CMake remembers the setting in an existing `build` folder, so delete that folder (or pass the option explicitly) when switching.
 
 ## For developers
 

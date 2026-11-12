@@ -32,6 +32,7 @@
 #include <SIM/SIM_Time.h>
 #include <SIM/SIM_Utils.h>
 #include <UT/UT_Error.h>
+#include <UT/UT_Interrupt.h>
 #include <UT/UT_Matrix3.h>
 #include <UT/UT_ParallelUtil.h>
 #include <UT/UT_Matrix4.h>
@@ -55,6 +56,24 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+// File scope (not the anonymous namespace): the header forward-declares it.
+// Escape during one solve. Like SideFX's own SIM code (SIM_VolumetricConnectedComponentBuilder),
+// no operation of our own: opInterrupt() under the one Houdini already runs while stepping, so
+// its "Stepping simulation" message and progress bar stay as they are (no percent passed).
+// Checked only from serial code, between whole points (never inside a Box3D call).
+struct StepProgress
+{
+    UT_Interrupt *boss      = nullptr;
+    bool          cancelled = false;        // latched: once true, every check says so
+
+    bool check()
+    {
+        if (!cancelled && boss)
+            cancelled = boss->opInterrupt() != 0;
+        return cancelled;
+    }
+};
 
 namespace {
 
@@ -1444,9 +1463,13 @@ struct SyncCounts
     std::unordered_map<std::string, int> fallbacks;     // note -> count
 };
 
-// Sync one object's points into the world.
+
+constexpr size_t kProgressEvery = 64;       // points between Escape checks in the sync
+
+// Sync one object's points into the world. Returns early (object half synced) if the user
+// cancels: the caller then discards the world (see solveObjectsSubclass).
 void
-syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
+syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c, StepProgress &progress)
 {
     const SIM_Geometry *geo = SIM_DATA_GETCONST(obj, SIM_GEOMETRY_DATANAME, SIM_Geometry);
     if (!geo)
@@ -1589,8 +1612,13 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
 
     // ---- pass 2 (serial, point order): apply to Box3D and the mirror ----------
     // An entry already carrying this step's stamp belongs to an earlier point (duplicate id).
+    // Escape is checked here, between points: building hulls for a new world is the slow part.
+    size_t pointIndex = 0;
     for (Box3DPointSlot &s : snaps)
     {
+        if (pointIndex++ % kProgressEvery == 0 && progress.check())
+            return;
+
         const GA_Offset off = s.off;
         const int64_t   bid = s.bid;
         const uint64_t  key = s.key;
@@ -2467,6 +2495,12 @@ SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
     if (objects.entries() == 0)
         return SIM_SOLVER_SUCCESS;
 
+    // Escape (see StepProgress).
+    StepProgress progress;
+    progress.boss = UTgetInterrupt();
+    if (progress.check())
+        return SIM_SOLVER_FAIL;         // cancelled before anything changed
+
     SIM_Box3DWorld *worldData = findOrCreateWorldData(objects);
     if (!worldData)
     {
@@ -2501,12 +2535,17 @@ SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
         }
     }
 
-    if (reason)
-        createFreshWorld(*worldData, reason);
+    // A failed rebuild leaves the old state in place, valid but from another time: never
+    // continue it.
+    if (reason && !createFreshWorld(*worldData, reason))
+    {
+        reportWorldCreationFailure(objects);
+        return SIM_SOLVER_FAIL;
+    }
     Box3DSharedState *st = worldData->state();
     if (!st || !st->world.isValid())
     {
-        addError(objects(0), SIM_MESSAGE, "Box3D: world creation failed", UT_ERROR_ABORT);
+        reportWorldCreationFailure(objects);
         return SIM_SOLVER_FAIL;
     }
 
@@ -2518,7 +2557,21 @@ SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
     // Solver parameters may be animated; only the thread count needs a new world.
     st->world.applyTuning(currentWorldSettings());
 
-    syncFromGeometry(*worldData, objects);
+    // Cancelled mid-sync, or before the (uninterruptible) Box3D step: the world may be half
+    // updated, so no step may continue from it. Unstamped, the next solve that would have
+    // continued it builds a fresh world from its geometry instead.
+    auto cancel = [&]() {
+        st->stamped = false;
+        addError(objects(0), SIM_MESSAGE, "Box3D: step cancelled", UT_ERROR_MESSAGE);
+        return SIM_SOLVER_FAIL;
+    };
+    if (!syncFromGeometry(*worldData, objects, progress))
+        return cancel();
+    if (progress.check())
+        return cancel();
+
+    // From here the step runs to the end (the write-back is quick), so the cached result is
+    // always a whole step.
     stepWorld(*worldData, st->stepDt);
     writeResultsBack(*worldData, objects);
     // Contacts are read before the queued point writes, aging and deletions.
@@ -2556,7 +2609,7 @@ SIM_SolverBox3D::findOrCreateWorldData(SIM_ObjectArray &objects)
     return w;
 }
 
-void
+bool
 SIM_SolverBox3D::createFreshWorld(SIM_Box3DWorld &worldData, const char *reason)
 {
     (void)reason;       // only used by the debug log
@@ -2564,11 +2617,30 @@ SIM_SolverBox3D::createFreshWorld(SIM_Box3DWorld &worldData, const char *reason)
     B3D_LOG("REBUILD #%d: %s", B3D_COUNTER(rebuilds), reason);
 
     // The old state stays for other timesteps; the empty mirror makes every point a new body.
-    worldData.createWorld(currentWorldSettings());
+    return worldData.createWorld(currentWorldSettings());
 }
 
 void
-SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects)
+SIM_SolverBox3D::reportWorldCreationFailure(SIM_ObjectArray &objects)
+{
+    const int live = b3dop::Box3DWorld::liveWorldCount();
+    const int max  = b3dop::Box3DWorld::maxWorldCount();
+    if (live >= max)
+    {
+        const std::string msg =
+            "Box3D: world limit reached (" + std::to_string(live) + " of " + std::to_string(max) +
+            " Box3D worlds alive). Each rebuild keeps the previous world while cached frames use it. "
+            "Reset the simulation or clear the DOP cache to free them, or raise BOX3DDOP_MAX_WORLDS "
+            "when building the plugin.";
+        addError(objects(0), SIM_MESSAGE, msg.c_str(), UT_ERROR_ABORT);
+    }
+    else
+        addError(objects(0), SIM_MESSAGE, "Box3D: world creation failed", UT_ERROR_ABORT);
+}
+
+bool
+SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects,
+                                  StepProgress &progress)
 {
     Box3DSharedState *st = worldData.state();
 
@@ -2582,7 +2654,13 @@ SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
     st->pointWrites.clear();
     st->deletions.clear();
     for (exint i = 0; i < objects.entries(); ++i)
-        syncObject(*st, *objects(i), counts);
+    {
+        if (progress.check())
+            return false;
+        syncObject(*st, *objects(i), counts, progress);
+        if (progress.cancelled)
+            return false;       // half synced: the caller discards the world
+    }
     st->world.finishFilterProfiles();       // before the step
 
     // Remove bodies whose point (or object) is gone: the unstamped entries.
@@ -2641,6 +2719,7 @@ SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
                 counts.added, removed, counts.edited, counts.retyped, counts.rebuilt, counts.updated,
                 counts.failed, counts.duplicates, counts.badP, st->world.bodyCount());
     }
+    return true;
 }
 
 void
