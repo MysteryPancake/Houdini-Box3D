@@ -224,6 +224,42 @@ int main()
         const double zero9[9] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
         CHECK(!matrix3ToQuatScale(zero9, qb, sc) && qb[3] == 1.0f);
 
+        // composeLocal3: replace the rotation, keep the per-row scale. Run over
+        // rotations that hit every branch of the matrix -> quaternion conversion
+        // (w large, and x / y / z dominant, incl. near 180 degrees).
+        {
+            const float axes[][3] = { {0, 1, 0}, {1, 0, 0}, {0, 0, 1}, {1, 2, 3}, {-2, 1, 0.5f} };
+            const float angs[]    = { 0.3f, 1.2f, 2.9f, 3.1f, -2.0f };
+            for (const auto &ax : axes)
+                for (float an : angs)
+                {
+                    const float al = std::sqrt(ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2]);
+                    const float sh = std::sin(0.5f * an) / al;
+                    const float qn[4] = { ax[0] * sh, ax[1] * sh, ax[2] * sh, std::cos(0.5f * an) };
+
+                    double out[9];
+                    composeLocal3(qn, ms, out);                       // ms = S(2,3,4) * R(0.7 about Y)
+                    float qo[4];  double so[3];
+                    CHECK(matrix3ToQuatScale(out, qo, so));
+                    const float d = qo[0] * qn[0] + qo[1] * qn[1] + qo[2] * qn[2] + qo[3] * qn[3];
+                    CHECK(std::fabs(std::fabs(d) - 1.0f) < 1e-5f);    // same rotation (q and -q are equal)
+                    CHECK(std::fabs(so[0] - 2) < 1e-6 && std::fabs(so[1] - 3) < 1e-6 && std::fabs(so[2] - 4) < 1e-6);
+
+                    // and it really is the row-vector rotation: row i of the result is scale[i] * rotated axis i
+                    double r[9];  quatToMatrix3(qn, r);
+                    float  q0[4];  double s0[3];
+                    matrix3ToQuatScale(ms, q0, s0);                   // the scale compose must keep (about 2, 3, 4)
+                    for (int i = 0; i < 9; ++i)
+                        CHECK(std::fabs(out[i] - s0[i / 3] * r[i]) < 1e-12);
+                }
+            // degenerate old matrix: scale falls back to 1, the rotation is still applied
+            double out0[9];
+            composeLocal3(qa, zero9, out0);
+            double ref0[9];  quatToMatrix3(qa, ref0);
+            for (int i = 0; i < 9; ++i)
+                CHECK(std::fabs(out0[i] - ref0[i]) < 1e-12);
+        }
+
         // connected sets: prims 0-1-2 chain through shared points, 3 is alone, 4 joins 3
         {
             const std::vector<std::vector<int>> prims = { { 10, 11 }, { 11, 12 }, { 12, 13 },

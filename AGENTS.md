@@ -275,15 +275,16 @@ at body/world creation; a rebuild (Reset Simulation or thread-count change) re-r
 * **Pivot**: `GEO_PrimPacked::getPivot` (not the transform translation). Body origin is the
   point's `P`.
 * **Rotation**: for packed points read from the primitive's full transform (`getFullTransform4`),
-  not `orient`. `rotationFromPrim` is `kPackedRotationWritable` (true iff
-  `setLocalTransform(UT_Matrix3D)` exists in this HDK; detected via SFINAE). If not writable,
-  packed points are treated like plain points (rotation via `orient`) and will not visibly rotate.
-* Write-back to packed prims: `composeLocal3` keeps the prim's per-row scale and replaces the
-  rotation with the Box3D quaternion, then `setLocalTransform` + `transformDirty()`.
-  `rotationMatrixFromQuat` uses `UT_QuaternionD::getRotationMatrix` and, on its first call,
-  compares against the unit-tested `b3dop::quatToMatrix3`; on disagreement (>1e-5) it logs
-  once and uses the reference from then on. A warm-up call runs on the main thread before
-  the parallel write pass so the `call_once` log is not triggered from a worker.
+  not `orient`. Packed points always take their rotation from the primitive and write it back
+  with `GEO_PrimPacked::setLocalTransform(const UT_Matrix3D &)` (public, inherited by
+  `GU_PrimPacked`).
+* Write-back to packed prims: `b3dop::composeLocal3` (in `Box3DShapes.h`, Houdini-free) keeps the
+  prim's per-row scale and replaces the rotation with the Box3D quaternion, then the solver calls
+  `setLocalTransform` + `transformDirty()`. The quaternion -> matrix step is the DIY
+  `quatToMatrix3`, deliberately NOT the HDK's `UT_QuaternionD::getRotationMatrix`: the read side
+  (`matrix3ToQuatScale`) is also DIY, and `core_physics` round-trips the pair (and fails if either
+  is transposed), so the two directions are guaranteed consistent without depending on the HDK's
+  undocumented matrix convention.
 
 ### writeResultsBack (per object with a dynamic point)
 
@@ -361,7 +362,7 @@ Build with `-DBOX3DDOP_CORE_ONLY=ON` (or as part of the normal build; all three 
 | Target | Checks |
 |---|---|
 | `b3dop_core_smoke` | Prints Box3D version, create/destroy; expects `OK` |
-| `b3dop_core_physics` | World/body API, handle API equivalence, attribute->shape mapping, mass->density, body type switching, capsule/sphere/box resting heights, hull creation/limits/caching/instancing, packed-matrix math, offset hulls, compounds under real physics |
+| `b3dop_core_physics` | World/body API, handle API equivalence, attribute->shape mapping, mass->density, body type switching, capsule/sphere/box resting heights, hull creation/limits/caching/instancing, packed-matrix math (quaternion<->matrix round trips, `composeLocal3`, row-vector convention), offset hulls, compounds under real physics |
 | `b3dop_core_threads [workers=4] [side=12] [steps=120]` | Same scene on 1 vs N workers, reports speedup, fails if positions differ by > 1e-4 |
 
 Houdini-side code (`SIM_*`) has no automated tests; `tests/box3d_test.hiplc` is a manual scene.
@@ -372,10 +373,13 @@ There is no CI configuration in this repo.
 Written against the HDK docs, and earlier project notes flagged these as the places a compile or
 behaviour problem is most likely after an HDK upgrade:
 
-* Packed prim API in `SIM_SolverBox3D.cpp`: `GU_PrimPacked::isPackedPrimitive` (reference vs
-  pointer overloads, both tried via SFINAE), `getPackedDetail()`, `getPivot()`,
-  `getFullTransform4()` (UT_Matrix4D vs F, both tried), `setLocalTransform(UT_Matrix3D)`
-  (detected, degrades gracefully), `transformDirty()`, `UT_QuaternionD::getRotationMatrix()`,
+* Packed prim API in `SIM_SolverBox3D.cpp`, hardcoded to the HDK class reference signatures
+  (no SFINAE shims; a mismatch is a compile error, not a silent fallback):
+  `static bool GU_PrimPacked::isPackedPrimitive(const GA_Primitive &)`,
+  `void GU_PrimPacked::getFullTransform4(UT_Matrix4D &) const`,
+  `void GEO_PrimPacked::setLocalTransform(const UT_Matrix3D &)`,
+  `void GEO_PrimPacked::getPivot(UT_Vector3 &) const`, `void GU_PrimPacked::transformDirty()`.
+  Still unchecked: `getPackedDetail()`,
   fragment calls (`GU_PackedFragment` via `sharedImplementation()`, `getPrimitiveRange()`,
   `name()`, `isIntValue()`, `intValue()`), and `GU_DetailHandleAutoReadLock`.
 * `gdpPtr()` overloads exist because `getGdp()` returns a pointer or a reference depending on

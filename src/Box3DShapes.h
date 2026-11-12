@@ -242,6 +242,25 @@ matrix3ToQuatScale(const double m[9], float outQ[4], double outScale[3])
     return true;
 }
 
+// A new local 3x3 for a packed primitive: keep the per-row scale of oldM3 and
+// replace its rotation with the unit quaternion q (x, y, z, w). Row-vector
+// layout, M = S * R, so row i of the result is scale[i] * row i of R. For a
+// uniform scale this is exact. If oldM3 is degenerate the scale is 1.
+// Uses only the DIY quatToMatrix3 / matrix3ToQuatScale pair, which are
+// unit-tested as inverses of each other.
+inline void
+composeLocal3(const float q[4], const double oldM3[9], double outM3[9])
+{
+    float  oq[4];
+    double sc[3];
+    matrix3ToQuatScale(oldM3, oq, sc);          // sc stays 1 if the old matrix is degenerate
+    double r[9];
+    quatToMatrix3(q, r);
+    for (int row = 0; row < 3; ++row)
+        for (int col = 0; col < 3; ++col)
+            outM3[row * 3 + col] = sc[row] * r[row * 3 + col];
+}
+
 // The per-axis scale that packedPointsToBodyLocal bakes into the points: the row
 // lengths of the 3x3 of m4, rounded to 5 significant digits so instances that
 // differ only by float noise agree. Returns false if the matrix is degenerate.

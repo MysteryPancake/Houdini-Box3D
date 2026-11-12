@@ -123,11 +123,8 @@ sanitizeQuat(float q[4])
 //   * writes P to the point and the rotation to the primitive's local transform,
 //   * builds hulls from the packed geometry, relative to the pivot.
 //
-// Everything that touches GU_PrimPacked is in this section, and the calls
-// whose exact HDK signature could not be checked without a Houdini build are
-// written so a different signature does not break the build (see the
-// *Packed* helpers below); the fallback is described in AGENTS.md ("Pieces and
-// packed geometry").
+// Everything that touches GU_PrimPacked is in this section; the HDK
+// signatures it relies on are listed below.
 // ---------------------------------------------------------------------------
 
 struct PackedInfo
@@ -139,59 +136,30 @@ struct PackedInfo
     double               m4[16]     = { 1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1 };
     float                rot[4]     = { 0, 0, 0, 1 };  // rotation split out of m4's 3x3
     double               scale[3]   = { 1, 1, 1 };
-    bool                 rotationFromPrim = false;     // body rotation = prim's, not `orient`
 };
 
-// GU_PrimPacked::isPackedPrimitive takes the primitive by reference in the
-// class reference; the pointer form is tried second.
-template <class P>
-auto isPackedImpl(const P *p, int) -> decltype(GU_PrimPacked::isPackedPrimitive(*p), bool())
-{
-    return GU_PrimPacked::isPackedPrimitive(*p);
-}
-template <class P>
-auto isPackedImpl(const P *p, long) -> decltype(GU_PrimPacked::isPackedPrimitive(p), bool())
-{
-    return GU_PrimPacked::isPackedPrimitive(p);
-}
+// HDK signatures used for packed prims (checked against the HDK class
+// reference, sidefx.com/docs/hdk):
+//   static bool GU_PrimPacked::isPackedPrimitive(const GA_Primitive &prim);
+//   void GU_PrimPacked::getFullTransform4(UT_Matrix4D &xform) const;
+//   void GEO_PrimPacked::setLocalTransform(const UT_Matrix3D &matrix);   // public, inherited
+//   void GEO_PrimPacked::getPivot(UT_Vector3 &pos) const;
+//   void GU_PrimPacked::transformDirty();                                // public
 
-// getFullTransform4 fills a UT_Matrix4D (or F, depending on the build).
-template <class P>
-auto fetchFull4(const P &p, double out[16], int)
-    -> decltype(p.getFullTransform4(std::declval<UT_Matrix4D &>()), bool())
+// Reads the primitive's full transform (local * pivot/instance) into row-major m[16].
+void
+fetchFull4(const GU_PrimPacked &p, double out[16])
 {
     UT_Matrix4D m;
     p.getFullTransform4(m);
     for (int r = 0; r < 4; ++r)
         for (int c = 0; c < 4; ++c)
-            out[r * 4 + c] = double(m(r, c));
-    return true;
-}
-template <class P>
-auto fetchFull4(const P &p, double out[16], long)
-    -> decltype(p.getFullTransform4(std::declval<UT_Matrix4F &>()), bool())
-{
-    UT_Matrix4F m;
-    p.getFullTransform4(m);
-    for (int r = 0; r < 4; ++r)
-        for (int c = 0; c < 4; ++c)
-            out[r * 4 + c] = double(m(r, c));
-    return true;
+            out[r * 4 + c] = m(r, c);
 }
 
-// Setting the rotation: the packed primitive's local transform is a 3x3.
-// If this HDK has no setLocalTransform(UT_Matrix3D), packed rotation cannot be
-// written back; the solver then treats packed points like plain ones
-// (rotation in `orient`) instead of fighting the primitive every step.
-template <class P, class = void>
-struct CanSetLocal3 : std::false_type {};
-template <class P>
-struct CanSetLocal3<P, std::void_t<decltype(std::declval<P &>().setLocalTransform(
-                           std::declval<const UT_Matrix3D &>()))>> : std::true_type {};
-constexpr bool kPackedRotationWritable = CanSetLocal3<GU_PrimPacked>::value;
-
-template <class P>
-void setLocal3(P &p, const double m[9], std::true_type)
+// Writes the packed primitive's rotation: its local transform is a 3x3.
+void
+setLocal3(GU_PrimPacked &p, const double m[9])
 {
     UT_Matrix3D mat;
     for (int r = 0; r < 3; ++r)
@@ -202,8 +170,6 @@ void setLocal3(P &p, const double m[9], std::true_type)
     // viewport and culling); tell it the transform changed.
     p.transformDirty();
 }
-template <class P>
-void setLocal3(P &, const double *, std::false_type) {}
 
 // Below this many points a parallel pass costs more than it saves.
 constexpr size_t kMinParallelPoints = 2048;
@@ -228,58 +194,6 @@ parallelForEach(size_t n, const F &f)
     });
 }
 
-// Row-vector rotation matrix for unit quaternion q (x, y, z, w), taken from the
-// HDK (UT_QuaternionD::getRotationMatrix). The HDK reference does not state the
-// matrix convention, so the first call checks the result against the Houdini-
-// free b3dop::quatToMatrix3 (which is unit-tested and defined as row-vector).
-// If they disagree (say the HDK matrix is transposed) it is logged once and the
-// b3dop one is used from then on, so a convention surprise cannot invert the
-// rotation written back to the primitive.
-void
-rotationMatrixFromQuat(const float q[4], double out[9])
-{
-    double ref[9];
-    b3dop::quatToMatrix3(q, ref);
-
-    const double   qx = q[0], qy = q[1], qz = q[2], qw = q[3];
-    UT_QuaternionD uq(qx, qy, qz, qw);
-    UT_Matrix3D    m;
-    uq.getRotationMatrix(m);
-    double hdk[9];
-    for (int r = 0; r < 3; ++r)
-        for (int c = 0; c < 3; ++c)
-            hdk[r * 3 + c] = m(r, c);
-
-    static std::once_flag once;
-    static bool           hdkAgrees = true;
-    std::call_once(once, [&] {
-        double err = 0.0;
-        for (int i = 0; i < 9; ++i)
-            err = std::fmax(err, std::fabs(hdk[i] - ref[i]));
-        hdkAgrees = err < 1e-5;
-        if (!hdkAgrees)
-            B3D_LOG("getRotationMatrix disagrees with the row-vector reference (max diff %g): "
-                    "using the reference for packed write-back", err);
-    });
-    for (int i = 0; i < 9; ++i)
-        out[i] = hdkAgrees ? hdk[i] : ref[i];
-}
-
-// A new local 3x3 for a packed primitive: keep the scale of `oldM3` (per row)
-// and replace the rotation with q. For uniform scale this is exact.
-void
-composeLocal3(const float q[4], const double oldM3[9], double outM3[9])
-{
-    float  oq[4];
-    double sc[3];
-    b3dop::matrix3ToQuatScale(oldM3, oq, sc);       // sc stays 1 if the old matrix is degenerate
-    double r[9];
-    rotationMatrixFromQuat(q, r);
-    for (int row = 0; row < 3; ++row)
-        for (int col = 0; col < 3; ++col)
-            outM3[row * 3 + col] = sc[row] * r[row * 3 + col];
-}
-
 // Is this point's primitive a packed primitive? Fills everything the solver
 // needs from it EXCEPT the pivot (see readPackedPivot): getPackedInfo runs for
 // every point every step, and the pivot is only needed to build a hull. A plain point (no vertex, or a non-packed primitive) returns
@@ -295,23 +209,18 @@ getPackedInfo(const GU_Detail *gdp, GA_Offset ptoff)
     if (!GAisValid(po))
         return pk;
     const GA_Primitive *prim = gdp->getPrimitive(po);
-    if (!prim || !isPackedImpl(prim, 0))
+    if (!prim || !GU_PrimPacked::isPackedPrimitive(*prim))
         return pk;
 
     pk.prim    = static_cast<const GU_PrimPacked *>(prim);
     pk.primOff = po;
     const UT_Vector3 pos = gdp->getPos3(ptoff);
     pk.P[0] = pos.x();  pk.P[1] = pos.y();  pk.P[2] = pos.z();
-    if (!fetchFull4(*pk.prim, pk.m4, 0))
-    {
-        pk.prim = nullptr;          // cannot read the transform: treat as plain
-        return pk;
-    }
+    fetchFull4(*pk.prim, pk.m4);
     const double m3[9] = { pk.m4[0], pk.m4[1], pk.m4[2],
                            pk.m4[4], pk.m4[5], pk.m4[6],
                            pk.m4[8], pk.m4[9], pk.m4[10] };
     b3dop::matrix3ToQuatScale(m3, pk.rot, pk.scale);
-    pk.rotationFromPrim = kPackedRotationWritable;
     return pk;
 }
 
@@ -586,7 +495,7 @@ readPointState(const GU_Detail *gdp, const PointAttrs &a, GA_Offset off,
         return false;
 
     out.rot[0] = out.rot[1] = out.rot[2] = 0.0f;  out.rot[3] = 1.0f;
-    if (pk.prim && pk.rotationFromPrim)
+    if (pk.prim)
     {
         for (int i = 0; i < 4; ++i) out.rot[i] = pk.rot[i];
         sanitizeQuat(out.rot);
@@ -1495,14 +1404,6 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
             if (attr)
                 attr->hardenAllPages();
 
-        {
-            // rotationMatrixFromQuat has a one-time convention check; run it
-            // here so no worker thread is the one that triggers (and logs) it.
-            const float identity[4] = { 0, 0, 0, 1 };
-            double      warm[9];
-            rotationMatrixFromQuat(identity, warm);
-        }
-
         parallelForEach(items.size(), [&](size_t i) {
             WriteItem       &w   = items[i];
             const GA_Offset  off = w.off;
@@ -1518,12 +1419,12 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
             // math, plus reads of the primitive), but do not write it: that is
             // pass 3. Keep its scale, replace the rotation.
             PackedInfo pk = getPackedInfo(gdp, off);
-            if (pk.prim && pk.rotationFromPrim)
+            if (pk.prim)
             {
                 const double oldM3[9] = { pk.m4[0], pk.m4[1], pk.m4[2],
                                           pk.m4[4], pk.m4[5], pk.m4[6],
                                           pk.m4[8], pk.m4[9], pk.m4[10] };
-                composeLocal3(s.rot, oldM3, w.newM3);
+                b3dop::composeLocal3(s.rot, oldM3, w.newM3);
                 w.primOff = pk.primOff;
                 w.hasM3   = true;
                 // What the primitive will hold, without reading it back: the
@@ -1553,7 +1454,7 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
             if (!w.hasM3)
                 continue;
             GU_PrimPacked *prim = static_cast<GU_PrimPacked *>(gdp->getPrimitive(w.primOff));
-            setLocal3(*prim, w.newM3, std::integral_constant<bool, kPackedRotationWritable>());
+            setLocal3(*prim, w.newM3);
         }
 
         // ---- pass 4 (serial): update the mirror --------------------------------
