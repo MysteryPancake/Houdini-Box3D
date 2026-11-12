@@ -90,7 +90,7 @@ int main()
         t = ShapeType::Sphere;
         CHECK(!parseShapeType("Sphere", t) && !parseShapeType("BOX", t) && t == ShapeType::Sphere);   // case-sensitive
         t = ShapeType::Sphere;
-        CHECK(!parseShapeType("convexhull", t) && t == ShapeType::Sphere);   // unknown: unchanged
+        CHECK(!parseShapeType("proxy", t) && t == ShapeType::Sphere);        // unknown: unchanged
         CHECK(!parseShapeType("", t) && !parseShapeType(nullptr, t));
 
         const float one[3] = { 1, 1, 1 }, aniso[3] = { 1, 2, 4 };
@@ -151,6 +151,30 @@ int main()
         // Point removed -> body removed, others untouched.
         pw.removeBody(makeBodyKey(1, 2));
         CHECK(!pw.hasBody(makeBodyKey(1, 2)) && pw.hasBody(makeBodyKey(1, 1)));
+
+        // a capsule dropped upright on the ground (its top face is y = 0)
+        // comes to rest at half its height.
+        const float stand[3] = { 1, 3, 1 };
+        const double capP[3] = { -6, 4, 0 };
+        CHECK(pw.addBody(makeBodyKey(1, 10), dyn, capP, qid));
+        CHECK(pw.addShape(makeBodyKey(1, 10), makeShapeSpec(ShapeType::Capsule, 1.0f, stand)));
+        for (int i = 0; i < 300; ++i) pw.step(1.0f / 60.0f);
+        CHECK(pw.getTransform(makeBodyKey(1, 10), p, q));
+        CHECK(std::fabs(p[1] - 1.5) < 0.06);                              // capsule: 3 tall
+        CHECK(pw.bodyMass(makeBodyKey(1, 10)) > 0.0f);
+
+        // a capsule placed off-centre via ShapeSpec::center moves the shape, not the body
+        {
+            Box3DWorld w3;
+            CHECK(w3.create(WorldSettings()));
+            const double o[3] = { 0, 0, 0 };
+            CHECK(w3.addBody(makeBodyKey(1, 1), dyn, o, qid));
+            ShapeSpec sp = makeShapeSpec(ShapeType::Capsule, 1.0f, stand);
+            sp.center[0] = 5.0f;
+            CHECK(w3.addShape(makeBodyKey(1, 1), sp));
+            CHECK(w3.shapeCount(makeBodyKey(1, 1)) == 1);
+        }
+
         std::printf("point-mapping checks done\n");
     }
 
@@ -159,13 +183,22 @@ int main()
     {
         using namespace b3dop;
         ShapeType t = ShapeType::Box;
-        CHECK(parseShapeType("convex", t) && t == ShapeType::Convex);
-        CHECK(parseShapeType("hull", t) && t == ShapeType::Convex);
-        CHECK(parseShapeType("concave", t) && t == ShapeType::Concave);
-        CHECK(!parseShapeType("Convex", t) && !parseShapeType("CONCAVE", t));
-        CHECK(parseShapeType("compound", t) && t == ShapeType::Concave);
+        // every bullet_georep value Houdini defines
+        CHECK(parseShapeType("convexhull", t) && t == ShapeType::Convex);
+        CHECK(parseShapeType("concave", t)    && t == ShapeType::Concave);
+        CHECK(parseShapeType("box", t)        && t == ShapeType::Box);
+        CHECK(parseShapeType("capsule", t)    && t == ShapeType::Capsule);
+        CHECK(parseShapeType("compound", t)   && t == ShapeType::Concave);
+        CHECK(parseShapeType("sphere", t)     && t == ShapeType::Sphere);
+        CHECK(parseShapeType("none", t)       && t == ShapeType::None);
+        CHECK(!parseShapeType("Convexhull", t) && !parseShapeType("CONCAVE", t));   // case-sensitive
+        // the old `shape` attribute names are gone
+        CHECK(!parseShapeType("convex", t) && !parseShapeType("hull", t));
+        CHECK(!parseShapeType("cube", t) && !parseShapeType("ball", t));
         CHECK(!parseShapeType("proxy", t));
-        CHECK(!parseShapeType("capsule", t));
+        // Houdini values Box3D cannot do are treated as unknown (caller uses its default)
+        t = ShapeType::Box;
+        CHECK(!parseShapeType("cylinder", t) && !parseShapeType("plane", t) && t == ShapeType::Box);
 
         // quaternion <-> row matrix round trip, scale split
         const float s45 = std::sin(0.5f * 0.7f), c45 = std::cos(0.5f * 0.7f);
@@ -332,6 +365,23 @@ int main()
         const std::vector<float> flat = { 0, 0, 0,  1, 0, 0,  0, 0, 1,  1, 0, 1 };
         CHECK(fitShapeToPoints(ShapeType::Box, flat.data(), 4, fit) && fit.halfExtents[1] > 0.0f);   // clamped
         CHECK(!fitShapeToPoints(ShapeType::Box, off.data(), 0, fit));
+
+        // capsule fits: bounds are x 2..4, y 0..2, z 0..6
+        CHECK(fitShapeToPoints(ShapeType::Capsule, off.data(), 4, fit));
+        CHECK(fit.type == ShapeType::Capsule && std::fabs(fit.radius - 3.0f) < 1e-6f   // wider of x / z
+              && std::fabs(fit.center[0] - 3.0f) < 1e-6f);
+        CHECK(fit.halfLength == 0.0f);                                            // too short: a sphere
+        const std::vector<float> tall = { -1, 0, -1,  1, 0, -1,  -1, 10, 1,  1, 0, 1 };
+        CHECK(fitShapeToPoints(ShapeType::Capsule, tall.data(), 4, fit));
+        CHECK(std::fabs(fit.radius - 1.0f) < 1e-6f && std::fabs(fit.halfLength - 4.0f) < 1e-6f);   // 10 tall = 4 + 4 + 2 caps
+
+        // makeShapeSpec for the capsule, and its volume
+        const float tallScale[3] = { 1, 4, 2 };
+        const ShapeSpec cap = makeShapeSpec(ShapeType::Capsule, 1.0f, tallScale);
+        CHECK(cap.type == ShapeType::Capsule && std::fabs(cap.radius - 1.0f) < 1e-6f && std::fabs(cap.halfLength - 1.0f) < 1e-6f);
+        CHECK(std::fabs(shapeVolume(cap) - (3.14159265f * 2.0f + (4.0f / 3.0f) * 3.14159265f)) < 1e-3f);
+        const float oneS[3] = { 1, 1, 1 };
+        CHECK(makeShapeSpec(ShapeType::Capsule, 1.0f, oneS).halfLength == 0.0f);          // unit capsule is a sphere
 
         // ---- hulls ------------------------------------------------------------
         Box3DWorld hw;

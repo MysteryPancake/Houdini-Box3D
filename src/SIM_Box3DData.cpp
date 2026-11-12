@@ -27,6 +27,14 @@ SIM_Box3DData::getDescription()
     static PRM_ChoiceList theBodyTypeMenu(PRM_CHOICELIST_SINGLE, theBodyTypeChoices);
     static PRM_Default    theBodyTypeDefault(2);              // dynamic
 
+    // Box3D requires density, friction, restitution and damping to be >= 0
+    // (B3_ASSERT in body.c / shape.c). Hard minimum 0; the slider max is only
+    // a UI convenience, so larger values can still be typed in.
+    static PRM_Range theDensityRange    (PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 10);
+    static PRM_Range theFrictionRange   (PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 1);
+    static PRM_Range theRestitutionRange(PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 1);
+    static PRM_Range theDampingRange    (PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 10);
+
     static PRM_Name    theDensityName("density", "Density");
     static PRM_Default theDensityDefault(1.0);
 
@@ -56,7 +64,9 @@ SIM_Box3DData::getDescription()
         PRM_Name("0", "Box"),
         PRM_Name("1", "Sphere"),
         PRM_Name("2", "Convex Hull"),
-        PRM_Name("3", "Concave (Hull per Piece)"),
+        PRM_Name("3", "Concave / Compound (Hull per Piece)"),
+        PRM_Name("4", "Capsule"),
+        PRM_Name("5", "None (No Collision)"),
         PRM_Name(0)
     };
     static PRM_ChoiceList theShapeMenu(PRM_CHOICELIST_SINGLE, theShapeChoices);
@@ -70,11 +80,11 @@ SIM_Box3DData::getDescription()
         PRM_Template(PRM_ORD,    1, &theShapeName,       &theShapeDefault, &theShapeMenu),
         PRM_Template(PRM_TOGGLE, 1, &theHullPerConnectedName, &theHullPerConnectedDefault),
         PRM_Template(PRM_ORD,    1, &theBodyTypeName,    &theBodyTypeDefault, &theBodyTypeMenu),
-        PRM_Template(PRM_FLT_J,  1, &theDensityName,     &theDensityDefault),
-        PRM_Template(PRM_FLT_J,  1, &theFrictionName,    &theFrictionDefault),
-        PRM_Template(PRM_FLT_J,  1, &theRestitutionName, &theRestitutionDefault),
-        PRM_Template(PRM_FLT_J,  1, &theLinDampName,     &theLinDampDefault),
-        PRM_Template(PRM_FLT_J,  1, &theAngDampName,     &theAngDampDefault),
+        PRM_Template(PRM_FLT_J,  1, &theDensityName, &theDensityDefault, 0, &theDensityRange),
+        PRM_Template(PRM_FLT_J,  1, &theFrictionName, &theFrictionDefault, 0, &theFrictionRange),
+        PRM_Template(PRM_FLT_J,  1, &theRestitutionName, &theRestitutionDefault, 0, &theRestitutionRange),
+        PRM_Template(PRM_FLT_J,  1, &theLinDampName, &theLinDampDefault, 0, &theDampingRange),
+        PRM_Template(PRM_FLT_J,  1, &theAngDampName, &theAngDampDefault, 0, &theDampingRange),
         PRM_Template(PRM_FLT_J,  1, &theGravScaleName,   &theGravScaleDefault),
         PRM_Template(PRM_TOGGLE, 1, &theSleepName,       &theSleepDefault),
         PRM_Template(PRM_TOGGLE, 1, &theBulletName,      &theBulletDefault),
@@ -117,7 +127,9 @@ SIM_Box3DData::toBodySettings() const
     {
         case 1:  s.defaultShape = b3dop::ShapeType::Sphere;  break;
         case 2:  s.defaultShape = b3dop::ShapeType::Convex;  break;
-        case 3:  s.defaultShape = b3dop::ShapeType::Concave; break;
+        case 3:  s.defaultShape = b3dop::ShapeType::Concave;  break;
+        case 4:  s.defaultShape = b3dop::ShapeType::Capsule;  break;
+        case 5:  s.defaultShape = b3dop::ShapeType::None;     break;
         default: s.defaultShape = b3dop::ShapeType::Box;     break;
     }
     return s;

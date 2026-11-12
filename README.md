@@ -94,16 +94,32 @@ except `P`.
 | `friction` | float | shape friction | Box3D Data node |
 | `bounce` | float | restitution | Box3D Data node |
 | `active` | int | 0 = static, otherwise dynamic | dynamic |
-| `shape` | string | `box`, `sphere`, `convex`, `concave` (lowercase only, case-sensitive) | Box3D Data node's Default Shape |
+| `bullet_georep` | string | Houdini's Bullet names: `convexhull`, `concave`, `box`, `capsule`, `compound`, `sphere`, `none` (lowercase only, case-sensitive). See "Shape names" below | Box3D Data node's Default Shape |
 | `pscale` | float | uniform size (plain points) | 1 |
 | `scale` | vector | per-axis size (plain points) | 1 1 1 |
 | `id` | int | stable point id | point number |
 
-**Size.** The shape is a unit shape scaled by `pscale * scale`, the same as
-Copy to Points on a unit primitive: a box is `pscale*scale` wide on each axis, a
-sphere has diameter `pscale * max(scale)`.
+**Size.** The shape fills a box of size `pscale * scale`, the same as Copy to
+Points on a unit primitive: a box is `pscale*scale` wide on each axis, a sphere
+has diameter `pscale * max(scale)`. A capsule stands along Y: the diameter is
+`pscale * max(scale.x, scale.z)` and the total height is `pscale * scale.y`, so
+a capsule no taller than it is wide is a sphere.
 
-**Convex and concave.** See the next section. `convex` is one hull, `concave` is
+**Shape names.** `bullet_georep` takes the values Houdini's RBD tools write:
+
+| Value | What the solver builds |
+| --- | --- |
+| `convexhull` | One convex hull of the packed geometry (see "Convex and concave") |
+| `concave`, `compound` | Several convex hulls on one body, one per piece of the packed geometry. Both names do the same thing |
+| `box`, `sphere` | A primitive, fitted to the packed geometry's bounds (or `pscale` / `scale` on a plain point) |
+| `capsule` | A capsule along Y, fitted inside the bounds. The caps are inside the bounds, so the straight section is `height - diameter` |
+| `none` | A static body with no collision shape. Nothing collides with it |
+
+Unknown or empty values use the Box3D Data node's Default Shape. That includes
+Houdini's `cylinder` and `plane`, which Box3D has no shape for. The old `shape`
+attribute and its names (`convex`, `hull`, `cube`, `ball`) are no longer read.
+
+**Convex and concave.** See the next section. `convexhull` is one hull, `concave` is
 several hulls on one body.
 
 **Identity.** Bodies are keyed by (object id, `id`). Use an `id` attribute if
@@ -117,7 +133,7 @@ Static points are not written.
 **Edits from other nodes.** If something else changes a point's `P`, `orient`,
 `v` or `w` between steps, the new value is pushed into Box3D. Points that appear
 get a body; points that disappear lose it; flipping `active` switches the body
-between static and dynamic. Changing `shape`, `pscale`, `scale`, `mass`,
+between static and dynamic. Changing `bullet_georep`, `pscale`, `scale`, `mass`,
 `friction` or `bounce` on an existing body is NOT picked up (the body keeps the
 values it was created with) until the world is rebuilt (Reset Simulation).
 
@@ -126,8 +142,8 @@ The Box3D Data node is only the fallback for points that lack an attribute
 
 ## Convex and concave
 
-There is a single input, the object's `Geometry`. A point whose `shape` is
-`convex` or `concave` gets hull shapes built from the geometry **packed inside
+There is a single input, the object's `Geometry`. A point whose `bullet_georep` is
+`convexhull`, `concave` or `compound` gets hull shapes built from the geometry **packed inside
 its primitive**, so these shapes need packed primitives (one point + one packed
 primitive per body, e.g. from Pack or RBD Packed Objects).
 
@@ -140,17 +156,17 @@ because a hull per piece of a dense mesh gets expensive and each hull is capped
 * Primitives inside the packed geometry are grouped into **pieces** by the
   primitive string attribute `name`. Primitives without a `name` all form one
   piece. A packed detail with points and no primitives is one piece.
-* `convex` merges all the pieces into **one** hull. `concave` makes **one hull
+* `convexhull` merges all the pieces into **one** hull. `concave` makes **one hull
   per piece** and puts them all on the same body (Box3D calls this a runtime
   compound, and it is the way to get a dynamic concave body: triangle meshes
   only collide as static). The hulls are built at body-creation time only.
 * **Create Convex Hull per Set of Connected Primitives** (Box3D Data node, like
-  Bullet's option of the same name): for `convex` shapes, makes one hull per set
+  Bullet's option of the same name): for `convexhull` shapes, makes one hull per set
   of connected primitives (primitives that share points) instead of one hull of
   everything, all on the same body. It ignores `name`, and has no effect on
   `concave`, `box` or `sphere`. Like the other node settings it is read when a
   body is created. A packed detail with points and no primitives is one set.
-* A plain (non-packed) point has no geometry to hull. A `convex` / `concave`
+* A plain (non-packed) point has no geometry to hull. A `convexhull` / `concave`
   plain point falls back to a box scaled by `pscale * scale`, and the reason
   shows in the debug log. Pack the geometry to get real hulls.
 * Packed geometry empty, fewer than 4 points, flat, or too complex to hull:
@@ -171,9 +187,9 @@ overlap twice.
 
 A packed primitive is one point and one primitive. For these points:
 
-* **Shape.** `box` / `sphere` are fitted to the packed geometry's bounds (not a
+* **Shape.** `box` / `sphere` / `capsule` are fitted to the packed geometry's bounds (not a
   unit shape: `pscale` and `scale` only matter as the fallback if the packed
-  geometry is empty). `convex` / `concave` hull the packed geometry (see above).
+  geometry is empty). `convexhull` / `concave` hull the packed geometry (see above).
 * **Pivot.** Hull points are taken relative to the primitive's pivot (read with
   `GEO_PrimPacked::getPivot`, not derived from the transform's translation), with the
   primitive's scale baked in and its rotation removed, so the body origin is the
@@ -252,7 +268,7 @@ external-edit detection, write-back of P/orient/v/w, and the Box3D core (bodies,
 shapes, step, transform/velocity/body type get/set), checked against the Box3D
 source (`b3dop_core_physics`).
 
-Still TODO: triangle-mesh shapes for static points, capsule, automatic convex
+Still TODO: triangle-mesh shapes for static points, `bullet_primR` / `bullet_primS` / `bullet_radius` / `bullet_length` overrides (primitives are always auto-fitted), automatic convex
 decomposition of concave geometry, picking up packed-geometry changes on a live body,
 kinematic bodies for animated passive points (`active = 0` is static for now),
 constraints (a second input on a SOP solver), live changes to shape / material

@@ -76,7 +76,8 @@ struct PointAttrs
     GA_ROHandleV3 v;           // vector linear velocity
     GA_ROHandleV3 w;           // vector angular velocity, radians / second
     GA_ROHandleQ  orient;      // quat   rotation
-    GA_ROHandleS  shape;       // string "box", "sphere"
+    GA_ROHandleS  georep;      // string bullet_georep: convexhull, concave, box, capsule, cylinder,
+                               //        compound, sphere, none (cylinder / plane are not supported by Box3D)
 
     explicit PointAttrs(const GU_Detail *gdp)
         : id(gdp, GA_ATTRIB_POINT, "id"),
@@ -89,7 +90,7 @@ struct PointAttrs
           v(gdp, GA_ATTRIB_POINT, "v"),
           w(gdp, GA_ATTRIB_POINT, "w"),
           orient(gdp, GA_ATTRIB_POINT, "orient"),
-          shape(gdp, GA_ATTRIB_POINT, "shape")
+          georep(gdp, GA_ATTRIB_POINT, "bullet_georep")
     {
     }
 };
@@ -861,10 +862,18 @@ addPointBody(b3dop::Box3DWorld &world, ShapeSources &src, const b3dop::BodySetti
     if (a.friction.isValid()) b.friction    = a.friction.get(off);
     if (a.bounce.isValid())   b.restitution = a.bounce.get(off);
 
-    // Shape: `shape` string attribute, else the node's default.
+    // Shape: `bullet_georep` string attribute, else the node's default.
     b3dop::ShapeType type = node.defaultShape;
-    if (a.shape.isValid())
-        b3dop::parseShapeType(a.shape.get(off), type);   // unknown -> keep default
+    if (a.georep.isValid())
+        b3dop::parseShapeType(a.georep.get(off), type);  // unknown -> keep default
+
+    // `none`: a static body with no collision shape (like Bullet, where it still
+    // exists for constraints). The one case where a body is allowed to be shapeless.
+    if (type == b3dop::ShapeType::None)
+    {
+        b.type = b3dop::BodySettings::Type::Static;
+        return world.addBody(key, b, st.pos, st.rot);
+    }
 
     // pscale / scale size plain points. A packed point's size is its
     // primitive's transform, so they only matter as the fallback box there.
@@ -1143,17 +1152,31 @@ SIM_SolverBox3D::getDescription()
 
     static PRM_Name    theSubStepsName("substeps", "Substeps");
     static PRM_Default theSubStepsDefault(4);
+    // Box3D clamps substeps to >= 1 (b3World_Step), so 0 is never meaningful.
+    // Hard minimum 1; the slider stops at 16 but typing a larger value is allowed.
+    static PRM_Range   theSubStepsRange(PRM_RANGE_RESTRICTED, 1, PRM_RANGE_UI, 16);
+
+    static PRM_Name    theAutoThreadsName("autothreads", "Use All Threads");
+    static PRM_Default theAutoThreadsDefault(1);
 
     static PRM_Name    theThreadsName("threads", "Threads");
-    static PRM_Default theThreadsDefault(0);   // 0 = all cores
+    static PRM_Default theThreadsDefault(8);
+    // Box3D clamps workers to [1, B3_MAX_WORKERS], and B3_MAX_WORKERS is 32.
+    static PRM_Range   theThreadsRange(PRM_RANGE_RESTRICTED, 1, PRM_RANGE_RESTRICTED, 32);
+    // Greyed out while "Use All Threads" is ticked.
+    static PRM_Conditional theThreadsDisable("{ autothreads == 1 }", PRM_CONDTYPE_DISABLE);
 
     static PRM_Name    theSleepName("enablesleep", "Allow Sleeping");
     static PRM_Default theSleepDefault(1);
 
     static PRM_Template theTemplates[] = {
         PRM_Template(PRM_FLT_J,  3, &theGravityName,  theGravityDefault),
-        PRM_Template(PRM_INT_J,  1, &theSubStepsName, &theSubStepsDefault),
-        PRM_Template(PRM_INT_J,  1, &theThreadsName,  &theThreadsDefault),
+        PRM_Template(PRM_INT_J,  1, &theSubStepsName, &theSubStepsDefault, 0, &theSubStepsRange),
+        PRM_Template(PRM_TOGGLE, 1, &theAutoThreadsName, &theAutoThreadsDefault),
+        PRM_Template(PRM_INT_J,  1, &theThreadsName,  &theThreadsDefault, 0, &theThreadsRange,
+                     0, 0, 1,
+                     "Number of Box3D worker threads. Only used when Use All Threads is off.",
+                     &theThreadsDisable),
         PRM_Template(PRM_TOGGLE, 1, &theSleepName,    &theSleepDefault),
         PRM_Template()
     };
@@ -1191,9 +1214,10 @@ SIM_SolverBox3D::currentWorldSettings() const
     s.gravity[2]  = g.z();
     s.subSteps    = static_cast<int>(getSubSteps());
     {
-        // Box3D runs its own thread pool (not Houdini's). 0 means every core.
+        // Box3D runs its own thread pool (not Houdini's). "Use All Threads"
+        // means every logical core; otherwise use the Threads parm.
         int n = static_cast<int>(getThreads());
-        if (n <= 0)
+        if (getAutoThreads())
             n = static_cast<int>(std::thread::hardware_concurrency());
         s.workerCount = n < 1 ? 1 : (n > 32 ? 32 : n);      // Box3D's maximum is 32
     }

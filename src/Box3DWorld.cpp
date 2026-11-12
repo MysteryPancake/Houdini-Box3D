@@ -287,11 +287,32 @@ Box3DWorld::addSphereShape(uint64_t bodyId, float radius, const float center[3])
 }
 
 bool
+Box3DWorld::addCapsuleShape(uint64_t bodyId, float radius, float halfLength, const float center[3])
+{
+    auto it = myImpl->bodies.find(bodyId);
+    if (it == myImpl->bodies.end())
+        return false;
+
+    const float c[3] = { center ? center[0] : 0.0f, center ? center[1] : 0.0f, center ? center[2] : 0.0f };
+    b3Capsule capsule;
+    capsule.center1.x = c[0];  capsule.center1.y = c[1] - halfLength;  capsule.center1.z = c[2];
+    capsule.center2.x = c[0];  capsule.center2.y = c[1] + halfLength;  capsule.center2.z = c[2];
+    capsule.radius    = radius;
+    // Box3D turns a capsule that is too short into a sphere by itself.
+    const b3ShapeDef def = shapeDefFor(myImpl->bodySettings[bodyId]);
+    const b3ShapeId shape = b3CreateCapsuleShape(it->second, &def, &capsule);
+    return !B3_IS_NULL(shape);
+}
+
+bool
 Box3DWorld::addShape(uint64_t bodyId, const ShapeSpec &shape)
 {
-    if (shape.type == ShapeType::Sphere)
-        return addSphereShape(bodyId, shape.radius, shape.center);
-    return addBoxShape(bodyId, shape.halfExtents, shape.center);
+    switch (shape.type)
+    {
+        case ShapeType::Sphere:   return addSphereShape(bodyId, shape.radius, shape.center);
+        case ShapeType::Capsule:  return addCapsuleShape(bodyId, shape.radius, shape.halfLength, shape.center);
+        default:                  return addBoxShape(bodyId, shape.halfExtents, shape.center);
+    }
 }
 
 // ---------------------------------------------------------------------------

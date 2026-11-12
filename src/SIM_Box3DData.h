@@ -29,7 +29,7 @@ public:
     GETSET_DATA_FUNCS_F("gravityscale",   GravityScale);
     GETSET_DATA_FUNCS_B("enablesleep",    EnableSleep);
     GETSET_DATA_FUNCS_B("isbullet",       IsBullet);
-    GETSET_DATA_FUNCS_I("defaultshape",   DefaultShape);    // 0 box, 1 sphere, 2 convex, 3 concave
+    GETSET_DATA_FUNCS_I("defaultshape",   DefaultShape);    // 0 box, 1 sphere, 2 convexhull, 3 concave/compound, 4 capsule, 5 none
     GETSET_DATA_FUNCS_B("hullperconnected", HullPerConnected); // convex: one hull per set of connected prims
 
     // Convenience: pack the options into the Houdini-free struct.

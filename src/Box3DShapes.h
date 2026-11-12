@@ -18,13 +18,15 @@ namespace b3dop {
 
 enum class ShapeType : int
 {
-    Box     = 0,
-    Sphere  = 1,
-    Convex  = 2,    // one convex hull of the packed geometry
-    Concave = 3,    // several convex hulls on ONE body (packed geometry pieces, grouped by `name`)
+    Box      = 0,
+    Sphere   = 1,
+    Convex   = 2,   // one convex hull of the packed geometry
+    Concave  = 3,   // several convex hulls on ONE body (packed geometry pieces, grouped by `name`)
+    Capsule  = 4,   // axis along the body's Y
+    None     = 5,   // no collision shape: a static body that nothing collides with
 };
 
-// A primitive shape (box or sphere) in body-local space. `center` is its offset
+// A primitive shape (box, sphere or capsule) in body-local space. `center` is its offset
 // from the body origin: zero for point-attribute shapes, non-zero when a box or
 // sphere is fitted to packed geometry whose bounds are not centred on the pivot.
 // Convex / Concave are not described by a ShapeSpec: they need point data, see
@@ -33,45 +35,49 @@ struct ShapeSpec
 {
     ShapeType type           = ShapeType::Box;
     float     halfExtents[3] = { 0.5f, 0.5f, 0.5f };   // Box
-    float     radius         = 0.5f;                   // Sphere
-    float     center[3]      = { 0.0f, 0.0f, 0.0f };   // Box and Sphere
+    float     radius         = 0.5f;                   // Sphere, Capsule
+    float     halfLength     = 0.5f;                   // Capsule: half the straight section, along Y
+    float     center[3]      = { 0.0f, 0.0f, 0.0f };   // every primitive
 };
 
-// Parse the value of the `shape` point attribute. Exact, case-sensitive
-// compare: shape names are lowercase only.
+// Parse the value of the `bullet_georep` point attribute, using Houdini's own
+// names: convexhull, concave, box, capsule, compound, sphere, none. Exact,
+// case-sensitive compare: the names are lowercase only.
+// `compound` and `concave` both give ShapeType::Concave (several convex hulls on
+// one body).
+// `cylinder` and `plane` are Houdini values Box3D has no shape for: they are
+// not recognised, so like any unknown value they return false.
 // Returns false for null / empty / unknown strings (caller uses its default).
 inline bool
 parseShapeType(const char *name, ShapeType &out)
 {
     if (!name || !*name)
         return false;
-    if (std::strcmp(name, "box") == 0 || std::strcmp(name, "cube") == 0)
-    {
-        out = ShapeType::Box;
-        return true;
-    }
-    if (std::strcmp(name, "sphere") == 0 || std::strcmp(name, "ball") == 0)
-    {
-        out = ShapeType::Sphere;
-        return true;
-    }
-    if (std::strcmp(name, "convex") == 0 || std::strcmp(name, "hull") == 0)
-    {
-        out = ShapeType::Convex;
-        return true;
-    }
-    if (std::strcmp(name, "concave") == 0 || std::strcmp(name, "compound") == 0)
-    {
-        out = ShapeType::Concave;
-        return true;
-    }
+    struct Entry { const char *name; ShapeType type; };
+    static const Entry kEntries[] = {
+        { "convexhull", ShapeType::Convex   },
+        { "concave",    ShapeType::Concave  },
+        { "box",        ShapeType::Box      },
+        { "capsule",    ShapeType::Capsule  },
+        { "compound",   ShapeType::Concave  },
+        { "sphere",     ShapeType::Sphere   },
+        { "none",       ShapeType::None     },
+    };
+    for (const Entry &e : kEntries)
+        if (std::strcmp(name, e.name) == 0)
+        {
+            out = e.type;
+            return true;
+        }
     return false;
 }
 
-// Size convention: the shape is a UNIT shape (box 1x1x1, sphere diameter 1)
-// scaled by pscale * scale, which is what Copy to Points does to a unit
-// primitive. For a sphere the largest scale component is used, since a sphere
-// cannot be non-uniformly scaled.
+// Size convention: the shape fills a bounding box of size pscale * scale, which
+// is what Copy to Points does to a unit primitive. A unit box is 1x1x1, a unit
+// sphere has diameter 1. For a sphere the largest scale component is used,
+// since a sphere cannot be non-uniformly scaled. A capsule stands along Y:
+// radius = half the larger of x / z, total height = y, so a capsule no taller
+// than it is wide collapses to a sphere.
 //
 // Zero / negative / non-finite components are clamped to a tiny positive size
 // so Box3D never sees a degenerate shape.
@@ -91,12 +97,18 @@ makeShapeSpec(ShapeType type, float pscale, const float scale[3])
     ShapeSpec s;
     // Convex / Concave have no size attributes of their own; this is only the
     // box a caller falls back to when it has no geometry to hull.
-    s.type = (type == ShapeType::Sphere) ? ShapeType::Sphere : ShapeType::Box;
+    s.type = (type == ShapeType::Sphere || type == ShapeType::Capsule) ? type : ShapeType::Box;
     if (type == ShapeType::Sphere)
     {
         float m = sx > sy ? sx : sy;
         m = m > sz ? m : sz;
         s.radius = 0.5f * m;
+    }
+    else if (type == ShapeType::Capsule)
+    {
+        const float r = 0.5f * (sx > sz ? sx : sz);
+        s.radius     = r;
+        s.halfLength = (0.5f * sy - r) > 0.0f ? (0.5f * sy - r) : 0.0f;
     }
     else
     {
@@ -110,9 +122,17 @@ makeShapeSpec(ShapeType type, float pscale, const float scale[3])
 inline float
 shapeVolume(const ShapeSpec &s)
 {
-    if (s.type == ShapeType::Sphere)
-        return (4.0f / 3.0f) * 3.14159265358979f * s.radius * s.radius * s.radius;
-    return 8.0f * s.halfExtents[0] * s.halfExtents[1] * s.halfExtents[2];
+    const float pi = 3.14159265358979f;
+    const float r  = s.radius;
+    switch (s.type)
+    {
+        case ShapeType::Sphere:
+            return (4.0f / 3.0f) * pi * r * r * r;
+        case ShapeType::Capsule:
+            return pi * r * r * (2.0f * s.halfLength) + (4.0f / 3.0f) * pi * r * r * r;
+        default:
+            return 8.0f * s.halfExtents[0] * s.halfExtents[1] * s.halfExtents[2];
+    }
 }
 
 // Houdini's `mass` attribute -> Box3D density (mass / volume). Returns
@@ -373,10 +393,11 @@ packedPointsToBodyLocal(const float *xyz, int count, const double m4[16],
             out[size_t(3 * i + j)] = float((double(xyz[3 * i + j]) - pivotIn[j]) * S[j]);
 }
 
-// A box or sphere fitted to a point set: the fallback when there are no
-// hullable points (fewer than 4, or flat), and the shape for `box` / `sphere`
-// on a packed primitive. The box is the bounds; the sphere is centred on the
-// bounds and sized to the largest extent, like the point-attribute sphere.
+// A primitive fitted to a point set: the fallback when there are no hullable
+// points (fewer than 4, or flat), and the shape for `box` / `sphere` /
+// `capsule` on a packed primitive. The box is the bounds; the sphere is centred
+// on the bounds and sized to the largest extent, like the point-attribute
+// sphere; the capsule stands along Y inside the bounds.
 // Degenerate (zero) extents are clamped like makeShapeSpec does.
 inline bool
 fitShapeToPoints(ShapeType type, const float *xyz, int count, ShapeSpec &out)
@@ -410,6 +431,13 @@ fitShapeToPoints(ShapeType type, const float *xyz, int count, ShapeSpec &out)
         out.type = ShapeType::Sphere;
         float m = half[0] > half[1] ? half[0] : half[1];
         out.radius = m > half[2] ? m : half[2];
+    }
+    else if (type == ShapeType::Capsule)
+    {
+        // Y axis; radius covers the wider of x / z; the caps sit inside the bounds.
+        out.type       = ShapeType::Capsule;
+        out.radius     = half[0] > half[2] ? half[0] : half[2];
+        out.halfLength = (half[1] - out.radius) > 0.0f ? (half[1] - out.radius) : 0.0f;
     }
     else
     {

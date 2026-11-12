@@ -99,7 +99,9 @@ public:
     // `center` is the shape's offset from the body origin (default: centred).
     bool addBoxShape(uint64_t bodyId, const float halfExtents[3], const float center[3] = nullptr);
     bool addSphereShape(uint64_t bodyId, float radius, const float center[3] = nullptr);
-    bool addShape(uint64_t bodyId, const ShapeSpec &shape);   // box or sphere, incl. shape.center
+    // The capsule stands along Y. halfLength: half the straight section.
+    bool addCapsuleShape(uint64_t bodyId, float radius, float halfLength, const float center[3] = nullptr);
+    bool addShape(uint64_t bodyId, const ShapeSpec &shape);   // box, sphere or capsule, incl. shape.center
 
     // ---- convex hulls ----------------------------------------------------
     // Hulls are built in two steps so the caller can learn the volume (to turn
