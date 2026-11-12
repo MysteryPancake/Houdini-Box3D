@@ -2,9 +2,9 @@
 #include "SIM_SolverBox3D.h"
 #include "SIM_Box3DWorld.h"
 #include "SIM_Box3DData.h"
-#include "Box3DDebug.h"
-#include "Box3DAffectors.h"
-#include "Box3DJointSync.h"
+#include "core/Box3DDebug.h"
+#include "sync/Box3DAffectors.h"
+#include "sync/Box3DJointSync.h"
 
 #include <GA/GA_AIFSharedStringTuple.h>
 #include <GA/GA_Handle.h>
@@ -149,14 +149,14 @@ struct PointAttrs
     GA_ROHandleI  ignore;          // bullet_ignore
     GA_ROHandleI  deforming;       // rebuild the shape every step
     GA_ROHandleI  autofitValid;    // bullet_autofit_valid: 0 = rebuild once (written back as 1)
-    GA_ROHandleS  collisionGroup;
-    GA_ROHandleS  collisionIgnore;
+    GA_ROHandleID collisionCategory;   // b3Filter: read as 64-bit (a 32-bit -1 is every bit)
+    GA_ROHandleID collisionMask;
+    GA_ROHandleI  collisionGroup;
     GA_ROHandleI  animated;
     GA_ROHandleF  density;
     GA_ROHandleI  computeMass;
     GA_ROHandleF  inertiaStiffness;    // inertialtensorstiffness
     GA_ROHandleF  minActivation;   // min_activation_impulse
-    GA_ROHandleS  activationIgnore;
     GA_ROHandleI  dead;
     GA_ROHandleI  sleeping;        // bullet_sleeping: a user-written 0 wakes the body
 
@@ -196,14 +196,14 @@ struct PointAttrs
         ignore         = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "bullet_ignore");
         deforming      = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "deforming");
         autofitValid   = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "bullet_autofit_valid");
-        collisionGroup = GA_ROHandleS(gdp, GA_ATTRIB_POINT, "collisiongroup");
-        collisionIgnore = GA_ROHandleS(gdp, GA_ATTRIB_POINT, "collisionignore");
+        collisionCategory = GA_ROHandleID(gdp, GA_ATTRIB_POINT, "collision_category");
+        collisionMask  = GA_ROHandleID(gdp, GA_ATTRIB_POINT, "collision_mask");
+        collisionGroup = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "collision_group");
         animated       = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "animated");
         density        = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "density");
         computeMass    = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "computemass");
         inertiaStiffness = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "inertialtensorstiffness");
         minActivation  = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "min_activation_impulse");
-        activationIgnore = GA_ROHandleS(gdp, GA_ATTRIB_POINT, "activationignore");
         dead           = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "dead");
         sleeping       = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "bullet_sleeping");
     }
@@ -216,9 +216,9 @@ const char *const kPropAttribNames[] = {
     "mass", "friction", "bounce", "lineardamping", "angulardamping", "gravityscale",
     "bullet_want_deactivate", "bullet_ignore", "deforming", "bullet_autofit_valid",
     "pscale", "scale",      // a plain point's convex / concave fallback box
-    "collisiongroup", "collisionignore", "animated", "density", "computemass",
+    "collision_category", "collision_mask", "animated", "density", "computemass",
     "inertialtensorstiffness", "sleepthreshold", "fastobject",
-    "min_activation_impulse", "activationignore", "dead", "bullet_sleeping",
+    "min_activation_impulse", "collision_group", "dead", "bullet_sleeping",
     "contactrecycling",
     "name",                 // joint anchors find bodies by it
 };
@@ -1077,7 +1077,13 @@ readDynamicProps(const b3dop::BodySettings &node, const PointAttrs &a, GA_Offset
         const float m = a.minActivation.get(off);
         if (m > 0.0f && std::isfinite(m)) p.minActivationImpulse = m;
     }
-    return p;                   // filterProfile, activationIgnore: ScanContext::props
+    if (a.collisionCategory.isValid())
+        p.filter.category = uint64_t(a.collisionCategory.get(off));
+    if (a.collisionMask.isValid())
+        p.filter.mask = uint64_t(a.collisionMask.get(off));
+    if (a.collisionGroup.isValid())
+        p.filter.group = a.collisionGroup.get(off);
+    return p;
 }
 
 // A string attribute read through its shared-string handles where it has them, so per-point work
@@ -1164,7 +1170,7 @@ settingsFor(const b3dop::BodySettings &node, const Box3DBodyProps &p, b3dop::Bod
     b.angularDamping = p.angularDamping;
     b.gravityScale   = p.gravityScale;
     b.enableSleep    = p.sleepOk;
-    b.filterProfile  = p.filterProfile;
+    b.filter         = p.filter;
     b.sleepThreshold = p.sleepThreshold;
     b.isBullet       = p.fastObject;
     b.contactRecycling = p.contactRecycling;
@@ -1219,27 +1225,12 @@ struct ScanContext
     const bool                 anyPrims;           // else no packed points
     ShapeSources               sources;
     GeorepLookup               georep;
-    b3dop::FilterProfile       baseProfile;        // the object's collision names
-    int                        baseProfileIdx = -1;
-
-    // Per-point strings, memoised by shared-string handle (props() runs serially).
-    StringAttr                        group, ignore, activationIgnore;
-    std::unordered_map<uint64_t, int> profileByHandles;     // (group, ignore) handles -> profile
-    std::unordered_map<int64_t, int>  activationByHandle;   // handle -> interned pattern
 
     ScanContext(Box3DSharedState &state, const GU_Detail *g, const PointAttrs &attrs,
-                const b3dop::BodySettings &n, const SIM_Object &obj)
+                const b3dop::BodySettings &n)
         : st(state), world(state.world), gdp(g), a(attrs), node(n), anyPrims(g->getNumPrimitives() > 0)
     {
         georep.bind(a);
-        group.bind(a.collisionGroup);
-        ignore.bind(a.collisionIgnore);
-        activationIgnore.bind(a.activationIgnore);
-        const UT_String &nm = obj.getName();
-        if (nm.isstring())
-            baseProfile.objectName = nm.buffer();
-        baseProfile.objectId = std::to_string(obj.getObjectId());
-        baseProfileIdx = world.filterProfile(baseProfile);
     }
 
     // The point's packed primitive with its pivot (what building shapes needs).
@@ -1250,61 +1241,8 @@ struct ScanContext
         return pk;
     }
 
-    // The object's profile, or the point's own when it has collisiongroup / collisionignore.
-    int filterProfile(GA_Offset off)
-    {
-        if (!group.valid() && !ignore.valid())
-            return baseProfileIdx;
-        const bool memo = group.memoisable() && ignore.memoisable();
-        uint64_t key = 0;
-        if (memo)
-        {
-            key = (uint64_t(uint32_t(group.id(off) + 1)) << 32) | uint64_t(uint32_t(ignore.id(off) + 1));
-            const auto it = profileByHandles.find(key);
-            if (it != profileByHandles.end())
-                return it->second;
-        }
-        b3dop::FilterProfile fp = baseProfile;
-        if (group.valid())
-            fp.group = group.str(off);
-        if (ignore.valid())
-            fp.ignore = ignore.str(off);
-        const int idx = world.filterProfile(fp);
-        if (memo)
-            profileByHandles.emplace(key, idx);
-        return idx;
-    }
-
-    // The point's activationignore, interned (-1: none).
-    int activationPattern(GA_Offset off)
-    {
-        if (!activationIgnore.valid())
-            return -1;
-        int64_t h = 0;
-        if (activationIgnore.memoisable())
-        {
-            h = activationIgnore.id(off);
-            if (h < 0)
-                return -1;
-            const auto it = activationByHandle.find(h);
-            if (it != activationByHandle.end())
-                return it->second;
-        }
-        const std::string pattern = activationIgnore.str(off);
-        const int idx = pattern.empty() ? -1 : st.intern(pattern);
-        if (activationIgnore.memoisable())
-            activationByHandle.emplace(h, idx);
-        return idx;
-    }
-
-    // The point's changeable settings, its collision profile and activation pattern included.
-    Box3DBodyProps props(GA_Offset off)
-    {
-        Box3DBodyProps p = readDynamicProps(node, a, off);
-        p.filterProfile    = filterProfile(off);
-        p.activationIgnore = activationPattern(off);
-        return p;
-    }
+    // The point's changeable settings.
+    Box3DBodyProps props(GA_Offset off) const { return readDynamicProps(node, a, off); }
 };
 
 // A point's shapes, plus their signature and scale key.
@@ -1538,9 +1476,9 @@ applyPropChanges(b3dop::Box3DWorld &world, Box3DBodyMirror &e, const Box3DBodyPr
             applyBodyMass(world, h, p, e.volume);
             changed |= kPropsChanged | kMassChanged;
         }
-        if (p.filterProfile != o.filterProfile)
+        if (p.filter != o.filter)
         {
-            world.setFilterProfileByHandle(h, p.filterProfile);
+            world.setFilterByHandle(h, p.filter);
             changed |= kPropsChanged;
         }
     }
@@ -1581,7 +1519,7 @@ applyPropChanges(b3dop::Box3DWorld &world, Box3DBodyMirror &e, const Box3DBodyPr
         world.setEnabledByHandle(h, !p.ignored);
         changed |= kPropsChanged;
     }
-    if (p.minActivationImpulse != o.minActivationImpulse || p.activationIgnore != o.activationIgnore)
+    if (p.minActivationImpulse != o.minActivationImpulse)
         changed |= kPropsChanged;       // read after the step; nothing to push
     e.props = p;
     return changed;
@@ -1774,7 +1712,7 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c, StepProgr
     const int problems0 = c.failed + c.duplicates + c.badP;
 
     a.bindBuildAttrs(gdp);
-    ScanContext ctx(st, gdp, a, node, obj);
+    ScanContext ctx(st, gdp, a, node);
     const bool anyPrims = ctx.anyPrims;
 
     // Settings are compared only when a prop marker changed (or deforming bodies need a rebuild
@@ -2312,8 +2250,7 @@ recordImpacts(Box3DSharedState &st, SIM_ObjectArray &objects, const SIM_Time &no
     st.impactObjects.swap(wrote);
 }
 
-// An inactive body hit with at least min_activation_impulse (not by a body matching
-// activationignore) turns dynamic now and moves from the next step (Box3D reports impulses
+// An inactive body hit with at least min_activation_impulse turns dynamic now and moves from the next step (Box3D reports impulses
 // after the step; Bullet can activate within it). Its `active` is set to 1.
 void
 activateByImpact(Box3DSharedState &st)
@@ -2333,11 +2270,6 @@ activateByImpact(Box3DSharedState &st)
             {
                 if (cp.impulse < e->props.minActivationImpulse)
                     continue;
-                const Box3DBodyMirror *o = static_cast<const Box3DBodyMirror *>(cp.otherUserData);
-                if (o && e->props.activationIgnore >= 0)
-                    if (const b3dop::FilterProfile *fp = st.world.filterProfileData(o->props.filterProfile))
-                        if (b3dop::patternsMatchProfile(st.strings[size_t(e->props.activationIgnore)], *fp))
-                            continue;
                 hit = true;
                 break;
             }
@@ -3190,7 +3122,6 @@ SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
         if (progress.cancelled)
             return false;       // half synced: the caller discards the world
     }
-    st->world.finishFilterProfiles();       // before the step
 
     // Static colliders from affector objects (Static Object DOP etc. with a collision relationship).
     Box3DAffectorCounts affectorCounts;

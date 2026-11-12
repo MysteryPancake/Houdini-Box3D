@@ -1,9 +1,9 @@
 // Box3DAffectors.cpp
 #include "Box3DAffectors.h"
-#include "Box3DAffectorMath.h"
-#include "Box3DDebug.h"
-#include "SIM_Box3DData.h"
-#include "SIM_Box3DWorld.h"
+#include "core/Box3DAffectorMath.h"
+#include "core/Box3DDebug.h"
+#include "dop/SIM_Box3DData.h"
+#include "dop/SIM_Box3DWorld.h"
 
 #include <GA/GA_Iterator.h>
 #include <GA/GA_Primitive.h>

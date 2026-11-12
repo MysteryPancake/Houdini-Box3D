@@ -154,7 +154,6 @@ struct Box3DWorld::Impl
     b3WorldId                             worldId = b3_nullWorldId;
     WorldSettings                         settings;
     std::shared_ptr<TaskRunner>           tasks;              // host threads (null: Box3D's own pool); outlives worldId
-    CollisionFilterTable                  filters;
     int                                   liveBodies = 0;     // every live body
     std::set<std::pair<BodyHandle, BodyHandle>> hitPairs;    // updateHitEvents()
 
@@ -359,6 +358,16 @@ isIdentityRotation(const float q[4])
     return !q || (std::fabs(q[0]) < 1e-6f && std::fabs(q[1]) < 1e-6f && std::fabs(q[2]) < 1e-6f);
 }
 
+b3Filter
+toB3Filter(const CollisionFilter &f)
+{
+    b3Filter out = b3DefaultFilter();
+    out.categoryBits = f.category;
+    out.maskBits     = f.mask;
+    out.groupIndex   = f.group;
+    return out;
+}
+
 b3ShapeDef
 shapeDefFor(const BodySettings &b, bool updateMass)
 {
@@ -367,11 +376,8 @@ shapeDefFor(const BodySettings &b, bool updateMass)
     def.density                 = b.density;
     def.baseMaterial.friction    = b.friction;
     def.baseMaterial.restitution = b.restitution;
-    // Custom filtering on for every shape (Box3D cannot turn it on later), with the body's
-    // profile + 1 in the user data (0 = none).
-    def.enableCustomFiltering   = true;
+    def.filter                  = toB3Filter(b.filter);
     def.enableHitEvents         = true;     // for the Impacts speed filter; costs nothing without a threshold
-    def.userData                = reinterpret_cast<void *>(intptr_t(b.filterProfile + 1));
     return def;
 }
 
@@ -410,20 +416,6 @@ restitutionRule(int mode)
         case 4: return &restitutionGeo;
         default: return nullptr;
     }
-}
-
-int
-shapeProfile(b3ShapeId id)
-{
-    return int(reinterpret_cast<intptr_t>(b3Shape_GetUserData(id))) - 1;
-}
-
-// Box3D's custom filter. Runs during pair finding, possibly on several threads: read only.
-bool
-filterCallback(b3ShapeId a, b3ShapeId b, void *context)
-{
-    const CollisionFilterTable *t = static_cast<const CollisionFilterTable *>(context);
-    return t->shouldCollide(shapeProfile(a), shapeProfile(b));
 }
 
 bool
@@ -503,7 +495,6 @@ Box3DWorld::create(const WorldSettings &s, std::shared_ptr<TaskRunner> tasks)
     myImpl->settings.gravity[0] = def.gravity.x;    // as applied (finite)
     myImpl->settings.gravity[1] = def.gravity.y;
     myImpl->settings.gravity[2] = def.gravity.z;
-    myImpl->filters  = CollisionFilterTable();
     myImpl->tasks    = std::move(tasks);
     myImpl->worldId  = b3CreateWorld(&def);
     if (!b3World_IsValid(myImpl->worldId))
@@ -516,7 +507,6 @@ Box3DWorld::create(const WorldSettings &s, std::shared_ptr<TaskRunner> tasks)
         b3World_SetContactRecycleDistance(myImpl->worldId, std::max(0.0f, s.contactRecycleDistance));
     else
         myImpl->settings.contactRecycleDistance = WorldSettings().contactRecycleDistance;
-    b3World_SetCustomFilterCallback(myImpl->worldId, &filterCallback, &myImpl->filters);
     b3World_EnableSpeculative(myImpl->worldId, s.enableSpeculative);
     b3World_EnableWarmStarting(myImpl->worldId, s.warmStarting);
     myImpl->hitPairs.clear();
@@ -1208,50 +1198,15 @@ Box3DWorld::getContactsByHandle(BodyHandle h, std::vector<ContactPoint> &out) co
     return int(out.size());
 }
 
-int
-Box3DWorld::filterProfile(const FilterProfile &p)
-{
-    return myImpl->filters.profile(p);
-}
-
 void
-Box3DWorld::finishFilterProfiles()
-{
-    myImpl->filters.finish();
-}
-
-bool
-Box3DWorld::shouldCollide(int a, int b) const
-{
-    return myImpl->filters.shouldCollide(a, b);
-}
-
-const FilterProfile *
-Box3DWorld::filterProfileData(int profile) const
-{
-    return myImpl->filters.get(profile);
-}
-
-void
-Box3DWorld::setFilterProfileByHandle(BodyHandle h, int profile)
+Box3DWorld::setFilterByHandle(BodyHandle h, const CollisionFilter &f)
 {
     if (!h)
         return;
+    const b3Filter bf = toB3Filter(f);
     const int n = bodyShapes(unpackBody(h), tShapes);
     for (int i = 0; i < n; ++i)
-    {
-        const b3ShapeId sid = tShapes[size_t(i)];
-        if (shapeProfile(sid) == profile)
-            continue;
-        b3Shape_SetUserData(sid, reinterpret_cast<void *>(intptr_t(profile + 1)));
-        // The filter only runs on new pairs, so drop the shape's contacts. SetFilter(invoke)
-        // does that but returns early on an unchanged filter: change it, then set it back.
-        const b3Filter f = b3Shape_GetFilter(sid);
-        b3Filter tmp = f;
-        tmp.groupIndex = f.groupIndex + 1;
-        b3Shape_SetFilter(sid, tmp, false);
-        b3Shape_SetFilter(sid, f, true);
-    }
+        b3Shape_SetFilter(tShapes[size_t(i)], bf, true);    // no-op when unchanged
 }
 
 void

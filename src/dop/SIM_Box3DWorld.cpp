@@ -1,7 +1,7 @@
 // SIM_Box3DWorld.cpp
 #include "SIM_Box3DWorld.h"
-#include "Box3DDebug.h"
-#include "Box3DHoudiniTasks.h"
+#include "core/Box3DDebug.h"
+#include "sync/Box3DHoudiniTasks.h"
 
 #include <PRM/PRM_Include.h>
 #include <SIM/SIM_DopDescription.h>

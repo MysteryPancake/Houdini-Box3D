@@ -1,6 +1,6 @@
 // Static triangle-mesh colliders (what Static Object / affector geometry becomes): a dynamic box
 // and sphere land on a two-triangle floor, and bad input is refused.
-#include "Box3DAffectorMath.h"
+#include "core/Box3DAffectorMath.h"
 #include "KeyedWorld.h"
 #include <cmath>
 #include <cstdint>

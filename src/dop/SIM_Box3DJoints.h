@@ -12,7 +12,7 @@
 
 #include <string>
 
-#include "Box3DJoints.h"
+#include "core/Box3DJoints.h"
 
 // The name Box3D Joints is attached under, and the default name of the network's geometry data.
 inline constexpr const char *kBox3DJointsDataName   = "Box3DJoints";

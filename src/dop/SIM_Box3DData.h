@@ -8,7 +8,7 @@
 #include <SIM/SIM_DataUtils.h>
 #include <SIM/SIM_OptionsUser.h>
 
-#include "Box3DWorld.h"
+#include "core/Box3DWorld.h"
 
 // The name Box3D Data is attached under on a DOP object.
 inline constexpr const char *kBox3DDataName = "Box3DData";

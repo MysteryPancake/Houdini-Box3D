@@ -4,7 +4,7 @@
 // API. Shape calls use the BodySettings given to addBody (density included, see setBodyDensity).
 #pragma once
 
-#include "Box3DWorld.h"
+#include "core/Box3DWorld.h"
 
 #include <memory>
 #include <unordered_map>

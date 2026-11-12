@@ -1,6 +1,6 @@
 // SIM_Box3DJoints.cpp
 #include "SIM_Box3DJoints.h"
-#include "Box3DWorld.h"
+#include "core/Box3DWorld.h"
 
 #include <PRM/PRM_Include.h>
 #include <SIM/SIM_DopDescription.h>

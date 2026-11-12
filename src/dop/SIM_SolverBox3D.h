@@ -10,7 +10,7 @@
 
 #include <vector>
 
-#include "Box3DWorld.h"
+#include "core/Box3DWorld.h"
 
 class SIM_Box3DWorld;
 class SIM_Engine;

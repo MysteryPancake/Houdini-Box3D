@@ -12,7 +12,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Box3D half works before involving the HDK.
 option(BOX3DDOP_CORE_ONLY "Build only the Houdini-free core and smoke test" OFF)
 
-# Debug logging in the Houdini plugin (see src/Box3DDebug.h). Off by default;
+# Debug logging in the Houdini plugin (see src/core/Box3DDebug.h). Off by default;
 # configure with -DBOX3DDOP_DEBUG=ON to log to Houdini's console.
 option(BOX3DDOP_DEBUG "Compile debug logging into the Houdini plugin" OFF)
 
@@ -38,11 +38,14 @@ target_compile_definitions(box3d PUBLIC B3_MAX_WORLDS=${BOX3DDOP_MAX_WORLDS})
 # Core: plain C++ wrapper around Box3D. No Houdini headers in here.
 # ---------------------------------------------------------------------------
 add_library(b3dop_core STATIC
-    src/Box3DShapes.h
-    src/Box3DJoints.h
-    src/Box3DWorld.h
-    src/Box3DWorld.cpp
+    src/core/Box3DShapes.h
+    src/core/Box3DJoints.h
+    src/core/Box3DWorld.h
+    src/core/Box3DWorld.cpp
+    src/core/Box3DAffectorMath.h
+    src/core/Box3DDebug.h
 )
+# Includes are written from src/ ("core/Box3DWorld.h"), so src/ is the include root.
 target_include_directories(b3dop_core PUBLIC src)
 # PRIVATE: Box3D's headers/defines stay out of the Houdini plugin's translation
 # units. It's a static lib, so CMake still links it into anything using b3dop_core.
@@ -91,22 +94,22 @@ endif()
 find_package(Houdini REQUIRED)
 
 add_library(Box3DDOP SHARED
-    src/SIM_Box3DWorld.h
-    src/SIM_Box3DWorld.cpp
-    src/SIM_Box3DData.h
-    src/SIM_Box3DData.cpp
-    src/SIM_Box3DJoints.h
-    src/SIM_Box3DJoints.cpp
-    src/Box3DJointSync.h
-    src/Box3DJointSync.cpp
-    src/SIM_SolverBox3D.h
-    src/SIM_SolverBox3D.cpp
-    src/Box3DAffectors.h
-    src/Box3DAffectors.cpp
-    src/Box3DAffectorMath.h
-    src/SIM_Box3DRegister.cpp
-    src/Box3DDebug.h
-    src/Box3DHoudiniTasks.h
+    # dop/: the DOP data types (nodes) and their registration
+    src/dop/SIM_Box3DWorld.h
+    src/dop/SIM_Box3DWorld.cpp
+    src/dop/SIM_Box3DData.h
+    src/dop/SIM_Box3DData.cpp
+    src/dop/SIM_Box3DJoints.h
+    src/dop/SIM_Box3DJoints.cpp
+    src/dop/SIM_SolverBox3D.h
+    src/dop/SIM_SolverBox3D.cpp
+    src/dop/SIM_Box3DRegister.cpp
+    # sync/: Houdini data -> Box3D world (joints, affector colliders, Houdini's task scheduler)
+    src/sync/Box3DJointSync.h
+    src/sync/Box3DJointSync.cpp
+    src/sync/Box3DAffectors.h
+    src/sync/Box3DAffectors.cpp
+    src/sync/Box3DHoudiniTasks.h
 )
 target_link_libraries(Box3DDOP PRIVATE Houdini b3dop_core)
 if(BOX3DDOP_DEBUG)

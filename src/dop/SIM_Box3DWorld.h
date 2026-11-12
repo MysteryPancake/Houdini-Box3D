@@ -22,7 +22,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "Box3DWorld.h"
+#include "core/Box3DWorld.h"
 
 // One body's pose and velocity as last given to / read from Box3D (DOP terms). Compared with
 // the point to detect edits by other nodes.
@@ -52,9 +52,8 @@ struct Box3DBodyProps
     float sleepThreshold = 0.05f;     // `sleepthreshold`
     bool  fastObject     = false;     // `fastobject`
     bool  contactRecycling = true;    // `contactrecycling`
-    int   filterProfile  = -1;        // collisiongroup / collisionignore / object
+    b3dop::CollisionFilter filter;    // `collision_category` / `collision_mask` / `collision_group`
     float minActivationImpulse = 0.0f;    // `min_activation_impulse`
-    int   activationIgnore = -1;      // `activationignore`: index into Box3DSharedState::strings, -1 = none
 };
 
 struct Box3DObjectSync;
@@ -309,17 +308,6 @@ struct Box3DSharedState
     std::vector<int>                            impactObjects;      // objects with Impacts data from last step (sorted)
 
     float stepDt = 0.0f;                        // this step's Box3D time step (DOP step * Time Scale)
-
-    // Interned strings (activationignore patterns): bodies store an index.
-    std::vector<std::string>                    strings;
-    std::unordered_map<std::string, int>        stringIds;
-    int intern(const std::string &str)
-    {
-        auto ins = stringIds.try_emplace(str, int(strings.size()));
-        if (ins.second)
-            strings.push_back(str);
-        return ins.first->second;
-    }
 
     double stampTime  = 0.0;                    // SIM_Engine::getSimulationTime() at the last solve
     bool   stamped    = false;

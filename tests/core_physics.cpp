@@ -1,6 +1,6 @@
 // Exercises the real Box3D calls in the wrapper: a box falls onto a static
 // ground box, comes to rest, and velocities/transforms round-trip.
-#include "Box3DShapes.h"
+#include "core/Box3DShapes.h"
 #include "KeyedWorld.h"
 #include <cmath>
 #include <cstdio>
@@ -961,93 +961,60 @@ int main()
         std::printf("mid-sim update checks done\n");
     }
 
-    // ---- Houdini patterns and collision groups ---------------------------------
+    // ---- collision filtering (Box3D's b3Filter) ---------------------------------
     {
         using namespace b3dop;
-        CHECK(globMatch("*", "anything") && globMatch("debris*", "debris12") && !globMatch("debris*", "rock"));
-        CHECK(globMatch("pi?ce", "piece") && !globMatch("pi?ce", "pice"));
-        CHECK(globMatch("obj[0-3]", "obj2") && !globMatch("obj[0-3]", "obj7") && globMatch("[!a]x", "bx"));
-        CHECK(matchPatternList("rock* glass", "glass") && matchPatternList("rock* glass", "rock_3"));
-        CHECK(!matchPatternList("* ^ground", "ground") && matchPatternList("* ^ground", "wall"));
-        CHECK(!matchPatternList("", "x") && !matchPatternList("*", ""));
-
-        CollisionFilterTable t;
-        FilterProfile ground;  ground.objectName = "ground";  ground.objectId = "0";
-        FilterProfile debris;  debris.objectName = "rbd";  debris.objectId = "1";  debris.group = "debris";
-        debris.ignore = "debris";                                       // debris pieces pass through each other
-        FilterProfile ghost;   ghost.objectName = "rbd";  ghost.objectId = "1";  ghost.ignore = "*";
-        const int g = t.profile(ground), d = t.profile(debris), h = t.profile(ghost);
-        CHECK(t.profile(debris) == d && t.size() == 3);                 // deduplicated
-        t.finish();
-        CHECK(t.shouldCollide(g, d) && !t.shouldCollide(d, d));
-        CHECK(!t.shouldCollide(h, g) && !t.shouldCollide(g, h));        // ignore is symmetric
-        CHECK(t.shouldCollide(-1, d) && t.shouldCollide(g, g));
-        FilterProfile byId;  byId.objectName = "a";  byId.objectId = "7";  byId.ignore = "0";   // ignores object id 0
-        const int bi = t.profile(byId);
-        CHECK(!t.shouldCollide(bi, g));                                 // before finish: computed on the fly
-        t.finish();
-        CHECK(!t.shouldCollide(bi, g) && t.shouldCollide(bi, d));
-
-        // Incremental finish(): profiles added in batches (growing past the first stride) give
-        // the same answers as matching every pair afresh.
-        {
-            CollisionFilterTable inc;
-            std::vector<FilterProfile> all;
-            for (int batch = 0; batch < 5; ++batch)
-            {
-                for (int k = 0; k < 40; ++k)
-                {
-                    const int i = batch * 40 + k;
-                    FilterProfile fp;
-                    fp.group      = "g" + std::to_string(i % 7);
-                    fp.objectName = "obj" + std::to_string(i);
-                    fp.objectId   = std::to_string(i);
-                    fp.ignore     = (i % 3 == 0) ? "g" + std::to_string((i + 1) % 7) : std::string();
-                    all.push_back(fp);
-                    inc.profile(fp);
-                }
-                inc.finish();
-            }
-            bool same = true;
-            for (size_t a = 0; a < all.size(); ++a)
-                for (size_t b = 0; b < all.size(); ++b)
-                {
-                    const bool brute = !patternsMatchProfile(all[a].ignore, all[b]) &&
-                                       !patternsMatchProfile(all[b].ignore, all[a]);
-                    same = same && inc.shouldCollide(int(a), int(b)) == brute;
-                }
-            CHECK(same);
-        }
+        CollisionFilter def;
+        CHECK(def.category == ~uint64_t(0) && def.mask == ~uint64_t(0) && def.group == 0);
+        CollisionFilter debris;  debris.category = 2;  debris.mask = ~uint64_t(2);   // ignores other debris
+        CHECK(debris != def && debris == debris);
 
         // In a world: two debris boxes dropped on each other fall through, a third collides
         KeyedWorld fw;
         CHECK(fw.create(WorldSettings()));
         const float qid[4] = { 0, 0, 0, 1 };
-        const int pg = fw.filterProfile(ground), pd = fw.filterProfile(debris);
-        FilterProfile solid;  solid.objectName = "rbd";  solid.objectId = "1";
-        const int ps = fw.filterProfile(solid);
-        fw.finishFilterProfiles();
-        CHECK(fw.shouldCollide(pg, pd) && !fw.shouldCollide(pd, pd) && fw.shouldCollide(ps, pd));
-        BodySettings st;  st.type = BodySettings::Type::Static;  st.filterProfile = pg;
+        BodySettings st;  st.type = BodySettings::Type::Static;     // default filter
         const double gp[3] = { 0, -0.5, 0 };
         ShapeSpec gs;  gs.halfExtents[0] = gs.halfExtents[2] = 50.0f;  gs.halfExtents[1] = 0.5f;
         const BodyHandle gh = fw.createBody(st, gp, qid);
         CHECK(fw.createShape(gh, st, gs));
         ShapeSpec cube;
-        BodySettings dd;  dd.filterProfile = pd;
+        BodySettings dd;  dd.filter = debris;
         const double p1[3] = { 0, 0.5, 0 }, p2[3] = { 0, 3, 0 };
         const BodyHandle d1 = fw.createBody(dd, p1, qid), d2 = fw.createBody(dd, p2, qid);
         CHECK(fw.createShape(d1, dd, cube) && fw.createShape(d2, dd, cube));
         for (int i = 0; i < 180; ++i) fw.step(1.0f / 60.0f);
         double p[3];  float q[4];
         CHECK(fw.getTransformByHandle(d2, p, q) && std::fabs(p[1] - 0.5) < 0.1);    // fell through d1 onto the ground
-        // give d2 the "solid" profile: it now collides with d1, so the two are pushed apart
+        // the default filter: d2 now collides with d1, so the two are pushed apart
         // (they overlap exactly, so the direction is Box3D's choice)
-        fw.setFilterProfileByHandle(d2, ps);
+        fw.setFilterByHandle(d2, CollisionFilter());
         for (int i = 0; i < 300; ++i) fw.step(1.0f / 60.0f);
         double o[3];
         CHECK(fw.getTransformByHandle(d2, p, q) && fw.getTransformByHandle(d1, o, q));
         CHECK(std::fabs(p[0] - o[0]) > 0.9 || std::fabs(p[1] - o[1]) > 0.9 || std::fabs(p[2] - o[2]) > 0.9);
+
+        // groups: the same negative group never collides, whatever the bits; the same positive
+        // group always does, even when the masks would say no
+        {
+            KeyedWorld gw;
+            CHECK(gw.create(WorldSettings()));
+            const BodyHandle g2 = gw.createBody(st, gp, qid);
+            CHECK(gw.createShape(g2, st, gs));
+            BodySettings neg;  neg.filter.group = -3;
+            BodySettings pos;  pos.filter.group = 4;  pos.filter.mask = 0;   // a zero mask hits nothing...
+            const double a1[3] = { 0, 0.5, 0 }, a2[3] = { 0, 3, 0 }, b1[3] = { 5, 0.5, 0 }, b2[3] = { 5, 3, 0 };
+            const BodyHandle n1 = gw.createBody(neg, a1, qid), n2 = gw.createBody(neg, a2, qid);
+            const BodyHandle q1 = gw.createBody(pos, b1, qid), q2 = gw.createBody(pos, b2, qid);
+            CHECK(gw.createShape(n1, neg, cube) && gw.createShape(n2, neg, cube));
+            CHECK(gw.createShape(q1, pos, cube) && gw.createShape(q2, pos, cube));
+            // ...so the positive group's bottom box needs the ground: keep it static
+            gw.setTypeByHandle(q1, BodySettings::Type::Static);
+            for (int i = 0; i < 180; ++i) gw.step(1.0f / 60.0f);
+            double pn[3], pq[3];
+            CHECK(gw.getTransformByHandle(n2, pn, q) && std::fabs(pn[1] - 0.5) < 0.1);   // through n1
+            CHECK(gw.getTransformByHandle(q2, pq, q) && std::fabs(pq[1] - 1.5) < 0.1);   // stacked on q1
+        }
 
         // contacts: d1 rests on the ground. Asked from the ground's side, the normal points from
         // the ground up into d1, with positive impulse

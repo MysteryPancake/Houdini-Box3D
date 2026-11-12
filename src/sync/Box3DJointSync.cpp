@@ -1,8 +1,8 @@
 // Box3DJointSync.cpp
 #include "Box3DJointSync.h"
-#include "Box3DDebug.h"
-#include "SIM_Box3DJoints.h"
-#include "SIM_Box3DWorld.h"
+#include "core/Box3DDebug.h"
+#include "dop/SIM_Box3DJoints.h"
+#include "dop/SIM_Box3DWorld.h"
 
 #include <GA/GA_Handle.h>
 #include <GA/GA_Iterator.h>

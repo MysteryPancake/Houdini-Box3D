@@ -102,9 +102,9 @@ All attributes are optional except `P`. If one is missing, the value from the Bo
 | `active` | int | `0` = static, anything else = dynamic |
 | `animated` | int | With `active` = 0: the body follows its animated point and pushes what it touches |
 | `min_activation_impulse` | float | An inactive body hit at least this hard becomes active |
-| `activationignore` | string | Patterns of bodies whose hits don't activate this one |
-| `collisiongroup` | string | A name that `collisionignore` and `activationignore` patterns can match |
-| `collisionignore` | string | Patterns of bodies this one doesn't collide with (`*` = nothing) |
+| `collision_category` | int | Bits for the layers this body is on (default: every bit) |
+| `collision_mask` | int | Bits for the layers this body collides with (default: every bit) |
+| `collision_group` | int | Bodies with the same non-zero group: positive = always collide, negative = never collide |
 | `bullet_ignore` | int | Nonzero = the body is left out of the simulation |
 | `deforming` | int | Nonzero = rebuild the collision shape from the current geometry every step |
 | `bullet_autofit_valid` | int | `0` = rebuild the collision shape once (the solver sets it back to `1`) |
@@ -122,7 +122,13 @@ All attributes are optional except `P`. If one is missing, the value from the Bo
 
 Every step the solver writes `P`, `orient`, `v` and `w` back to the dynamic points.
 
-`collisionignore` and `activationignore` patterns match another body's `collisiongroup`, its DOP object's name, or its object id. Separate patterns with spaces, use `*` and `?` as wildcards, and start a pattern with `^` to exclude.
+Collision filtering is Box3D's own. Two bodies in the same non-zero `collision_group` always collide if the group is positive and never collide if it's negative, whatever their bits. Otherwise they collide only when each one's `collision_mask` shares a bit with the other's `collision_category`. Some examples:
+
+- Pieces that never hit each other: give them all `i@collision_group = -1`.
+- Debris that ignores other debris but hits everything else: `i@collision_category = 2; i@collision_mask = ~2;`.
+- Something that only hits the ground: give the ground its own category bit and use that as the mask.
+
+The solver reads these as 64-bit integers. Attributes made with `i@` are 32-bit, which gives 31 usable layers, and `-1` still means every bit. For all 64 layers, create the attribute with 64-bit precision. Changing them mid-simulation takes effect on the next step. Static Object colliders use the defaults (every bit), so a body hits them unless its `collision_mask` is `0`.
 
 Turn on **Add Impact Data** on the Box3D Data node to record the object's impacts in its **Impacts** data, which shows in the details view on steps that have at least one impact. This can increase simulation time and memory use.
 
@@ -195,7 +201,6 @@ Attach a joint network to an object with a **SOP Geometry** DOP, Data Name `Join
 - `concave` / `compound` are built as several convex hulls.
 - Auto-fitted sizes aren't written back to `bullet_prim*`, `bullet_radius` or `bullet_length`.
 - Use `id` if you delete points with `dead`, otherwise every later point counts as a new body.
-- Patterns don't match DOP groups yet.
 - A joint network attached to several objects isn't updated during the simulation, so resimulating it from a cached frame other than the first puts its joints in the wrong place.
 - Escape cancels a step.
 

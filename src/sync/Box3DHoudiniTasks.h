@@ -14,7 +14,7 @@
 //    waiting for the whole group is fine.
 #pragma once
 
-#include "Box3DWorld.h"
+#include "core/Box3DWorld.h"
 
 #include <UT/UT_TaskGroup.h>
 #include <UT/UT_TaskScope.h>

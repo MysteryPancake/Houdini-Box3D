@@ -105,6 +105,22 @@ struct ContactPoint
     float      impulse       = 0.0f;        // total normal impulse over the step (N*s), > 0
 };
 
+// Box3D's b3Filter, checked by Box3D in its broad phase. Two shapes with the same non-zero
+// group: positive always collide, negative never. Otherwise they collide only when each one's
+// mask has a bit of the other's category. The defaults (every bit, group 0) collide with all.
+struct CollisionFilter
+{
+    uint64_t category = ~uint64_t(0);   // B3_DEFAULT_CATEGORY_BITS
+    uint64_t mask     = ~uint64_t(0);   // B3_DEFAULT_MASK_BITS
+    int      group    = 0;
+
+    bool operator==(const CollisionFilter &o) const
+    {
+        return category == o.category && mask == o.mask && group == o.group;
+    }
+    bool operator!=(const CollisionFilter &o) const { return !(*this == o); }
+};
+
 struct BodySettings
 {
     enum class Type { Static, Kinematic, Dynamic };
@@ -122,7 +138,7 @@ struct BodySettings
     bool  enableSleep    = true;
     bool  isBullet       = false;   // Box3D "bullet": continuous collision vs moving bodies too (`fastobject`)
     float sleepThreshold = 0.05f;   // m/s
-    int   filterProfile  = -1;      // collision filter profile (filterProfile()), -1 = none
+    CollisionFilter filter;         // `collision_category` / `collision_mask` / `collision_group`
 
     // Solver only:
     ShapeType defaultShape = ShapeType::Box;     // when `bullet_georep` is missing or unknown
@@ -261,14 +277,8 @@ public:
     static JointSettings defaultJointSettings(JointType type);
 
     // ---- collision filtering ---------------------------------------------------
-    // A profile names a body (group, object name, object id) and its ignore patterns
-    // (CollisionFilterTable). Shapes store their body's profile; a Box3D custom filter asks the
-    // table. Call finishFilterProfiles() after adding profiles, before stepping.
-    int   filterProfile(const FilterProfile &p);
-    void  finishFilterProfiles();
-    bool  shouldCollide(int profileA, int profileB) const;
-    const FilterProfile *filterProfileData(int profile) const;
-    void  setFilterProfileByHandle(BodyHandle h, int profile);       // also re-filters its contacts
+    // Set every shape of the body to `f` (Box3D re-filters the shape's contacts).
+    void  setFilterByHandle(BodyHandle h, const CollisionFilter &f);
 
     // Push changed settings into the live world. workerCount is kept (it needs a new world).
     void  applyTuning(const WorldSettings &s);

@@ -1,6 +1,6 @@
 // Box3D joints through Box3DWorld: every type, world anchors, live updates, breaking, feedback,
 // and the parameter table the Houdini side is built from.
-#include "Box3DWorld.h"
+#include "core/Box3DWorld.h"
 
 #include <cmath>
 #include <cstdio>
