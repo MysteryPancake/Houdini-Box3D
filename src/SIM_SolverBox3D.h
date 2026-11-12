@@ -22,6 +22,8 @@ class SIM_SolverBox3D : public SIM_Solver, public SIM_OptionsUser
 {
 public:
     GETSET_DATA_FUNCS_V3("gravity",     Gravity);
+    GETSET_DATA_FUNCS_B("useforces",    UseForces);     // apply the Force DOPs attached to the objects
+    GETSET_DATA_FUNCS_B("forceswake",   ForcesWake);    // a force also wakes a sleeping body
     GETSET_DATA_FUNCS_I("substeps",     SubSteps);
     GETSET_DATA_FUNCS_B("autothreads",  AutoThreads);   // every core, ignoring "threads"
     GETSET_DATA_FUNCS_I("threads",      Threads);       // 1..32

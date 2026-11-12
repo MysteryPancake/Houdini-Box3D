@@ -122,6 +122,18 @@ Turn on **Add Impact Data** on the Box3D Data node to record the object's impact
 
 The **Box3D Solver** also has **Time Scale** (slow or fast motion), **Enable Aging**, and Box3D's own tuning: **Contact Stiffness** and **Contact Damping Ratio** (how firmly contacts resolve overlap), **Overlap Push Speed** (lower it if pieces that start out overlapping fly apart), **Bounce Threshold**, **Max Linear Speed**, **Continuous Collision** and **Speculative Contacts**. All solver parameters except the thread count can be animated.
 
+### Forces
+
+The solver applies the **Force DOPs** connected to an object, the same way Houdini's own solvers do: Gravity Force, Wind Force, Fan Force, POP Force, Orbit Force and any custom `SIM_Force`. Connect the force node to the object the same way you would for any other solver.
+
+Each force is evaluated once per step at every dynamic body's **centre of mass**, with the body's mass, linear velocity and angular velocity, and the sum of the forces and torques goes into Box3D for that step. Box3D integrates them in every substep, so a constant force gives the same result as the same acceleration from **Gravity**. Static and kinematic bodies, `bullet_ignore` bodies and bodies that are asleep (see below) take no force.
+
+- **Use Force DOPs** (on by default) turns this off if you only want the solver's own **Gravity**.
+- **Gravity adds to a Gravity Force.** The solver's **Gravity** parameter defaults to (0, -9.80665, 0). If you also wire a Gravity Force into the object, bodies fall twice as fast. Set **Gravity** to 0 when you use a Gravity Force.
+- **Forces Wake Bodies** (off by default). Off, a sleeping body ignores forces until something else wakes it, so a constant force such as gravity doesn't keep resting bodies awake. Turn it on for wind or a fan that should blow resting pieces away; every body with a non-zero force then stays awake.
+- Forces act at the centre of mass, so a force only spins a body if the Force DOP returns a torque. Per-body `gravityscale` only scales the solver's own Gravity, not a Gravity Force.
+- A force that returns NaN or infinity for a body is skipped for that body, with a warning on the node.
+
 ### Changing attributes during the simulation
 
 Like Houdini's Bullet solver, most attributes can be changed mid-simulation (with a Geometry Wrangle DOP, a SOP Solver, or by animating the Box3D Data node) and take effect on the next step. That covers position, rotation, velocity, `active`, `animated`, the mass, friction, bounce, damping, gravity, sleep and collision attributes above, `bullet_ignore` and `dead`.
@@ -167,6 +179,7 @@ Convex and concave shapes need **packed primitives** (one point plus one packed 
 - Use `id` if you delete points with `dead`. Without it, every later point counts as a new body.
 - Patterns don't match DOP groups yet.
 - Joints and constraints are not supported yet.
+- Force DOPs act on the centre of mass only (`getForce`); Houdini's area and volume force variants (`getForceOnSphere` and others) are not used.
 - Escape cancels a step, under Houdini's usual "Stepping simulation" progress bar. Escape is checked while bodies are being built (the slow part of the first frame) and just before Box3D steps, not during Box3D's own step. A cancelled step isn't cached; the next one rebuilds the Box3D world from the geometry.
 
 ## Troubleshooting

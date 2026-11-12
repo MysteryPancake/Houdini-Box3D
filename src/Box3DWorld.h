@@ -159,6 +159,16 @@ public:
     // with updateMass = false, followed by one mass update.
     void  destroyShapesByHandle(BodyHandle h);
     void  wakeByHandle(BodyHandle h);
+    // ---- external forces (handle API) -----------------------------------------
+    // World position of the body's centre of mass (where forces act). False for no body.
+    bool  getCenterOfMassByHandle(BodyHandle h, double outPos[3]) const;
+    // A force (N) through the centre of mass and a torque (N*m) about it, in world space, for the
+    // NEXT step only: Box3D adds both to its integration in every substep and clears them when the
+    // step ends, so call this once per step before step(). Non-finite components count as 0.
+    // Only dynamic bodies take them. A sleeping body ignores them unless `wake`, which wakes it
+    // first; a constant force with wake = true therefore keeps every body awake.
+    void  applyForceByHandle(BodyHandle h, const float force[3], const float torque[3], bool wake);
+
 
     // Set every shape's density and apply the mass from the shapes; then, for dynamic bodies,
     // comAtOrigin moves the centre of mass to the body origin (parallel axis theorem) and

@@ -1088,6 +1088,131 @@ int main()
         std::printf("mass / sleep / kinematic checks done\n");
     }
 
+    // ---- external forces (what the solver does with Force DOPs) ----------------
+    {
+        using namespace b3dop;
+        WorldSettings zg;  zg.gravity[1] = 0.0f;       // no gravity: only our forces move things
+        Box3DWorld fw;
+        CHECK(fw.create(zg));
+        const float qid[4] = { 0, 0, 0, 1 };
+        ShapeSpec cube;                                 // unit cube
+        BodySettings dyn;                               // density 1 -> mass 1
+        const double at[3] = { 1, 2, 3 };
+        const BodyHandle b = fw.createBody(dyn, at, qid);
+        CHECK(b && fw.createShape(b, dyn, cube));
+        const float mass = fw.massByHandle(b);
+        CHECK(std::fabs(mass - 1.0f) < 1e-4f);
+
+        // the centre of mass of a centred cube is its origin
+        double com[3];
+        CHECK(fw.getCenterOfMassByHandle(b, com));
+        CHECK(std::fabs(com[0] - 1) < 1e-5 && std::fabs(com[1] - 2) < 1e-5 && std::fabs(com[2] - 3) < 1e-5);
+        CHECK(!fw.getCenterOfMassByHandle(0, com));
+
+        // a force acts for the coming step only: v = F / m * dt after one step, unchanged after two
+        const float dt = 1.0f / 60.0f;
+        const float F[3] = { 12.0f, 0, 0 }, none[3] = { 0, 0, 0 };
+        float lin[3], ang[3];
+        fw.applyForceByHandle(b, F, none, false);
+        fw.step(dt);
+        CHECK(fw.getVelocityByHandle(b, lin, ang));
+        CHECK(std::fabs(lin[0] - 12.0f / mass * dt) < 1e-3f);
+        CHECK(std::fabs(lin[1]) < 1e-6f && std::fabs(lin[2]) < 1e-6f);
+        CHECK(std::fabs(ang[0]) < 1e-6f && std::fabs(ang[1]) < 1e-6f && std::fabs(ang[2]) < 1e-6f);
+        const float vAfterOne = lin[0];
+        fw.step(dt);                                    // not re-applied: Box3D cleared it
+        CHECK(fw.getVelocityByHandle(b, lin, ang));
+        CHECK(std::fabs(lin[0] - vAfterOne) < 1e-4f);
+        std::printf("force: v after one step %.5f (expected %.5f)\n", vAfterOne, 12.0f / mass * dt);
+
+        // forces add up across calls in one step
+        const float zero[3] = { 0, 0, 0 };
+        fw.setVelocityByHandle(b, zero, zero);
+        const float F2[3] = { 0, 3.0f, 0 };
+        fw.applyForceByHandle(b, F2, none, false);
+        fw.applyForceByHandle(b, F2, none, false);
+        fw.step(dt);
+        CHECK(fw.getVelocityByHandle(b, lin, ang));
+        CHECK(std::fabs(lin[1] - 6.0f / mass * dt) < 1e-3f);
+
+        // a torque spins the body without moving it
+        fw.setVelocityByHandle(b, zero, zero);
+        const float T[3] = { 0, 0, 1.0f };
+        fw.applyForceByHandle(b, none, T, false);
+        fw.step(dt);
+        CHECK(fw.getVelocityByHandle(b, lin, ang));
+        CHECK(ang[2] > 0.0f);
+        CHECK(std::fabs(lin[0]) < 1e-5f && std::fabs(lin[1]) < 1e-5f && std::fabs(lin[2]) < 1e-5f);
+
+        // non-finite components count as 0 (no assert, no NaN)
+        fw.setVelocityByHandle(b, zero, zero);
+        const float bad[3] = { std::nanf(""), 6.0f, INFINITY };
+        fw.applyForceByHandle(b, bad, bad, false);
+        fw.step(dt);
+        double pp[3];  float pq[4];
+        CHECK(fw.getVelocityByHandle(b, lin, ang));
+        CHECK(std::isfinite(lin[0]) && std::isfinite(lin[1]) && std::isfinite(lin[2]));
+        CHECK(std::fabs(lin[1] - 6.0f / mass * dt) < 1e-3f && lin[0] == 0.0f && lin[2] == 0.0f);
+        CHECK(std::isfinite(ang[0]) && std::isfinite(ang[1]) && std::isfinite(ang[2]));
+        CHECK(fw.getTransformByHandle(b, pp, pq) && std::isfinite(pp[0]) && std::isfinite(pp[1]));
+
+        // static and kinematic bodies take nothing; handle 0 is harmless
+        BodySettings stat;  stat.type = BodySettings::Type::Static;
+        const double sp[3] = { 20, 0, 0 };
+        const BodyHandle sb = fw.createBody(stat, sp, qid);
+        CHECK(sb && fw.createShape(sb, stat, cube));
+        BodySettings kin;  kin.type = BodySettings::Type::Kinematic;
+        const double kp[3] = { 30, 0, 0 };
+        const BodyHandle kb = fw.createBody(kin, kp, qid);
+        CHECK(kb && fw.createShape(kb, kin, cube));
+        fw.applyForceByHandle(sb, F, T, true);
+        fw.applyForceByHandle(kb, F, T, true);
+        fw.applyForceByHandle(0, F, T, true);
+        fw.step(dt);
+        CHECK(fw.getVelocityByHandle(kb, lin, ang));
+        CHECK(lin[0] == 0.0f && ang[2] == 0.0f);
+        CHECK(fw.getVelocityByHandle(sb, lin, ang));
+        CHECK(lin[0] == 0.0f && ang[2] == 0.0f);
+
+        // sleeping: without wake the force is ignored, with wake it wakes the body and acts
+        const double sl[3] = { -10, 0, 0 };
+        const BodyHandle sleeper = fw.createBody(dyn, sl, qid);
+        CHECK(sleeper && fw.createShape(sleeper, dyn, cube));
+        for (int i = 0; i < 300 && fw.isAwakeByHandle(sleeper); ++i) fw.step(dt);
+        CHECK(!fw.isAwakeByHandle(sleeper));
+        fw.applyForceByHandle(sleeper, F, none, false);
+        fw.step(dt);
+        CHECK(!fw.isAwakeByHandle(sleeper));
+        CHECK(fw.getVelocityByHandle(sleeper, lin, ang) && lin[0] == 0.0f);
+        fw.applyForceByHandle(sleeper, F, none, true);
+        CHECK(fw.isAwakeByHandle(sleeper));
+        fw.step(dt);
+        CHECK(fw.getVelocityByHandle(sleeper, lin, ang));
+        CHECK(std::fabs(lin[0] - 12.0f / mass * dt) < 1e-3f);
+
+        // gravity as a force (m * g) falls like the world's own gravity
+        WorldSettings g1;                               // standard gravity
+        Box3DWorld gw, fw2;
+        CHECK(gw.create(g1));
+        CHECK(fw2.create(zg));
+        const double gp0[3] = { 0, 50, 0 };
+        const BodyHandle ga = gw.createBody(dyn, gp0, qid);
+        const BodyHandle gb = fw2.createBody(dyn, gp0, qid);
+        CHECK(ga && gb && gw.createShape(ga, dyn, cube) && fw2.createShape(gb, dyn, cube));
+        const float gForce[3] = { 0, -9.80665f * fw2.massByHandle(gb), 0 };
+        for (int i = 0; i < 60; ++i)
+        {
+            fw2.applyForceByHandle(gb, gForce, none, false);
+            gw.step(dt);
+            fw2.step(dt);
+        }
+        double ya[3], yb[3];  float qa[4], qb[4];
+        CHECK(gw.getTransformByHandle(ga, ya, qa) && fw2.getTransformByHandle(gb, yb, qb));
+        std::printf("gravity: world y=%.4f  as force y=%.4f\n", ya[1], yb[1]);
+        CHECK(std::fabs(ya[1] - yb[1]) < 0.02);
+        std::printf("external force checks done\n");
+    }
+
     w.destroy();
     CHECK(!w.isValid());
     std::printf(fails ? "FAILED\n" : "OK\n");

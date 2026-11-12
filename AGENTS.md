@@ -106,7 +106,7 @@ so the caller re-applies after a type change.
 
 **Changes to existing bodies.** `setMaterialByHandle` (every shape; Box3D re-mixes contact friction / restitution every
 step, so touching contacts follow), `setDampingByHandle`, `setGravityScaleByHandle`, `setSleepEnabledByHandle` (the
-world switch applies on top; disabling wakes the body), `setSleepThresholdByHandle` (Box3D's single threshold on
+world switch applies on top; disabling wakes the body), `getCenterOfMassByHandle` / `applyForceByHandle` (external forces, per step, see below), `setSleepThresholdByHandle` (Box3D's single threshold on
 `|v| + |w * maxExtent|`; negative = default), `setBulletByHandle`, `setDensityByHandle`, `setEnabledByHandle`
 (`b3Body_Disable`: no motion, no collisions, shapes kept), `destroyShapesByHandle` (releases the body's hulls; the
 caller re-adds shapes and applies the mass), `wakeByHandle`, `setTargetTransformByHandle` (kinematic: Box3D sets the
@@ -183,6 +183,7 @@ rebuild if invalid / thread count changed / stamp mismatch -> createFreshWorld
 lock st->mutex
 stepDt = dt * timescale; world.applyTuning(currentWorldSettings())
 syncFromGeometry   per object syncObject(); finishFilterProfiles; remove gone bodies; pruneHulls; warnings
+applyExternalForces  Use Force DOPs: SIM_Force data per object -> getForce at each dynamic body's centre of mass -> applyForceByHandle
 stepWorld          b3World_Step(stepDt, subSteps)
 writeResultsBack   awake dynamic bodies (move events): P / orient / v / w / packed transform / bullet_sleeping
 recordImpacts      Add Impact Data -> SIM_Impacts (only on steps with an impact)
@@ -237,6 +238,32 @@ skip.
 * Records of objects not seen are erased, so a returning object scans. A fresh world starts without records.
 * UNVERIFIED: that data ids survive the DOP copy between timesteps. If not, every step scans (correct, no gain). Debug
   builds log `sync: N of M object(s) unchanged, scan skipped` when it works.
+
+### External forces (`applyExternalForces`)
+
+Runs after `syncFromGeometry` and the last cancel check, before `stepWorld`, when `useforces` is on. Same lookup as
+Houdini's `SIM_SolverHair`: `obj->forEachConstSubData(collector, SIM_DataFilterByType("SIM_Force"), SIM_FORCES_DATANAME,
+SIM_DataFilterNone())` with a `SIM_EachDataCallback` (`ForceCollector`) that casts each sub-data to `SIM_Force`. Objects
+without force data get no entry, and with no forces anywhere the function returns before touching a body.
+
+Then one pass over `st.mirror` (order does not matter: a force depends only on its own body's state): skip bodies that
+are not `dynamic`, are `props.ignored`, are not live (`isLive`, object not seen by this sync), have no force data on their
+object, or are asleep while `forceswake` is off. For each remaining body: mass (`massByHandle`), world centre of mass
+(`getCenterOfMassByHandle`) and `v` / `w` (`getVelocityByHandle`) go into `SIM_Force::getForce(object, pos, vel, angvel,
+mass, force, torque)` for every force on the object, summed, and the sum goes in through `applyForceByHandle`
+(`b3Body_ApplyForceToCenter` + `b3Body_ApplyTorque`).
+
+* Box3D adds `invMass * force` and `invInertiaWorld * torque` in every substep's velocity integration
+  (`b3IntegrateVelocitiesTask`) and zeroes both when the step finishes, so they are per-step: never carry them over, and
+  a rebuilt world has none. `Box3DWorld` does not track them.
+* Box3D ignores a force on a body that is not in the awake set. `wake = false` (the default) therefore skips sleeping
+  bodies, which is what keeps gravity-like forces from holding resting bodies awake; `forceswake` passes `wake = true`.
+* Non-finite sums are skipped and counted (`ForceStats::nonFinite`, one node warning). `applyForceByHandle` also
+  sanitizes (`finiteVec3`) because Box3D asserts on non-finite vectors.
+* Evaluation is serial: `SIM_Force::getForce` thread-safety is not documented here.
+* Gravity Force DOP + the solver's `gravity` add up (both are applied). `gravityscale` only scales the solver's gravity.
+* Not used: `getForceOnCircle` / `getForceOnSphere` (area and volume variants), `getPointForces`.
+* `useforces` / `forceswake` are plain options read each step; nothing is stored in the world, so they need no rebuild.
 
 ### Mid-simulation updates
 
@@ -388,7 +415,8 @@ shared-state mutex is held for the whole step.
 Solver (read every step; only the thread count rebuilds the world): `gravity` (0,-9.80665,0), `substeps` (min 1,
 default 4), `autothreads` (on), `threads` (1..32, default 8), `enablesleep`, `timescale` (1), `enableaging` (off), and
 Box3D's tuning with Box3D's defaults: `contactstiffness` (30 Hz), `contactdamping` (10), `contactpushspeed` (3),
-`bouncethreshold` (1), `maxlinearspeed` (400), `enablecontinuous` (on), `enablespeculative` (on).
+`bouncethreshold` (1), `maxlinearspeed` (400), `enablecontinuous` (on), `enablespeculative` (on). Force DOPs:
+`useforces` (on), `forceswake` (off, disabled while `useforces` is off).
 
 Box3D Data (per object): `defaultshape` (0 box, 1 sphere, 2 convex hull, 3 concave, 4 capsule, 5 none), `autofit` (on),
 `hullperconnected`, `bodytype` (0 static, 1 kinematic, 2 dynamic), `computemass` (off), `mass` (1), `density` (1000),
@@ -414,7 +442,7 @@ Written: `P`, `orient`, `v`, `w` and packed transforms (awake dynamic bodies), `
 One `UT_ERROR_WARNING` per kind per step with a count: shape fallbacks (on the step a shape is built), points that could
 not become a body, duplicate `id`, non-finite `P`, non-finite `v` / `w` (read as zero; `readPointState`'s
 `badVelocity`), Geometry not writable, bodies not matched to a point at write-back. Also: non-finite solver Gravity
-(ignored, previous kept), and Box3D assertions that failed during the step (`Box3DWorld::assertCount()` delta,
+(ignored, previous kept), non-finite forces from Force DOPs (skipped per body), and Box3D assertions that failed during the step (`Box3DWorld::assertCount()` delta,
 reported by a scope guard in `solveObjectsSubclass`).
 
 ## Debug logging (`Box3DDebug.h`)
@@ -431,7 +459,7 @@ Built in both configurations (`-DBOX3DDOP_CORE_ONLY=ON` builds only these):
 | Target | Checks |
 |---|---|
 | `b3dop_core_smoke` | Box3D version, create / destroy; expects `OK` |
-| `b3dop_core_physics` | Keyed and handle APIs, shape mapping, explicit primitives, mass, body types, resting heights, hulls (limits, caching, instancing), packed matrix math, `sanitizeQuat` / `storedPosition`, setters on existing bodies (material, damping, gravity, sleep, density, enable, shape replacement), live tuning, patterns and collision groups (incl. re-filtering), contacts, mass centring / inertia scaling, sleep threshold, kinematic targets |
+| `b3dop_core_physics` | Keyed and handle APIs, shape mapping, explicit primitives, mass, body types, resting heights, hulls (limits, caching, instancing), packed matrix math, `sanitizeQuat` / `storedPosition`, setters on existing bodies (material, damping, gravity, sleep, density, enable, shape replacement), live tuning, patterns and collision groups (incl. re-filtering), contacts, mass centring / inertia scaling, sleep threshold, kinematic targets, external forces (force / torque per step, summing, non-finite input, static / kinematic / sleeping bodies, gravity as a force) |
 | `b3dop_core_taskrunner [workers]` | Worlds on one shared host pool: tasks run, results match 1 worker |
 | `b3dop_core_threads [workers] [side] [steps]` | 1 vs N workers: speedup, fails if positions differ by > 1e-4 |
 
@@ -452,12 +480,18 @@ Checked against the HDK reference: `GU_PrimPacked::isPackedPrimitive`, `getPacke
 `UT_String::multiMatch`, `isstring`, `buffer`; `UT_Matrix3D::extractScales`, `UT_QuaternionT::getRotationMatrix` /
 `updateFromRotationMatrix`; node icons as `config/Icons/DOP_<name>.svg`.
 
+Taken from the HDK samples in `DOP.zip` but not compiled against a real HDK: `SIM_Force::getForce` (public, const; arguments
+as in `SIM_ForceOrbit::getForceSubclass`), `SIM_EachDataCallback::callbackConst`, `SIM_DataFilterByType("SIM_Force")`,
+`SIM_FORCES_DATANAME`, `forEachConstSubData`, `SIM_DATA_CASTCONST`, and which header declares `SIM_EachDataCallback` (the
+solver includes `SIM/SIM_DataFilter.h` and `SIM/SIM_Force.h`). The force code was run against stand-in types for these.
+
 Still unchecked: the timestamp semantics behind `canContinue`, data ids surviving the DOP copy, the impact normal
 convention, and Bullet's `bullet_primR` order and `bullet_length` meaning (Bullet docs, not HDK).
 
 ## Known gaps / TODO
 
 * Constraints / joints (constraint networks); Box3D has the joints.
+* Force DOPs: only `getForce` at the centre of mass (no `getForceOnSphere` / area variants, no per-substep re-evaluation).
 * Static triangle-mesh and height-field colliders (see "planned"); `cylinder` / `plane` (no Box3D shape; hull or big
   box approximations possible).
 * `newobjects` are solved on their first step instead of keeping their initial state (TODO in `syncFromGeometry`).

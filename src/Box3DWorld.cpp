@@ -857,6 +857,35 @@ Box3DWorld::wakeByHandle(BodyHandle h)
         b3Body_SetAwake(id, true);
 }
 
+bool
+Box3DWorld::getCenterOfMassByHandle(BodyHandle h, double outPos[3]) const
+{
+    if (!h)
+        return false;
+    const b3Pos c = b3Body_GetWorldCenter(unpackBody(h));
+    outPos[0] = static_cast<double>(c.x);
+    outPos[1] = static_cast<double>(c.y);
+    outPos[2] = static_cast<double>(c.z);
+    return true;
+}
+
+void
+Box3DWorld::applyForceByHandle(BodyHandle h, const float force[3], const float torque[3], bool wake)
+{
+    if (!h)
+        return;
+    const b3BodyId id = unpackBody(h);
+    if (b3Body_GetType(id) != b3_dynamicBody)
+        return;
+    // Box3D asserts on non-finite input and a NaN would spread to the body's pose.
+    const b3Vec3 f = finiteVec3(force);
+    const b3Vec3 t = finiteVec3(torque);
+    if (f.x != 0.0f || f.y != 0.0f || f.z != 0.0f)
+        b3Body_ApplyForceToCenter(id, f, wake);
+    if (t.x != 0.0f || t.y != 0.0f || t.z != 0.0f)
+        b3Body_ApplyTorque(id, t, wake);
+}
+
 void
 Box3DWorld::applyMassByHandle(BodyHandle h, float density, bool comAtOrigin, float inertiaScale)
 {

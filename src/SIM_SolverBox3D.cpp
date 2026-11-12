@@ -20,9 +20,11 @@
 #include <PRM/PRM_Include.h>
 #include <SIM/SIM_CacheOptions.h>
 #include <SIM/SIM_Data.h>
+#include <SIM/SIM_DataFilter.h>
 #include <SIM/SIM_DopDescription.h>
 #include <SIM/SIM_Engine.h>
 #include <SIM/SIM_Error.h>
+#include <SIM/SIM_Force.h>
 #include <SIM/SIM_Geometry.h>
 #include <SIM/SIM_GeometryCopy.h>
 #include <SIM/SIM_Impacts.h>
@@ -2343,6 +2345,117 @@ deleteDeadPoints(Box3DSharedState &st, SIM_ObjectArray &objects)
     });
     items.clear();
 }
+
+// Collects the SIM_Force data an object carries (Gravity Force, Wind Force, Fan Force, POP
+// Force, any custom force DOP): the lookup Houdini's own solvers use (see SIM_SolverHair).
+class ForceCollector : public SIM_EachDataCallback
+{
+public:
+    explicit ForceCollector(std::vector<const SIM_Force *> &out) : myOut(out) {}
+
+    void callbackConst(const SIM_Data *data, const char *) override
+    {
+        if (const SIM_Force *f = SIM_DATA_CASTCONST(data, SIM_Force))
+            myOut.push_back(f);
+    }
+
+private:
+    std::vector<const SIM_Force *> &myOut;
+};
+
+struct ForceStats
+{
+    int bodies    = 0;      // bodies that got a force or torque
+    int nonFinite = 0;      // bodies whose force DOPs returned NaN / inf (those are skipped)
+};
+
+// Force DOPs: every dynamic body takes the sum of the SIM_Force data on its object, evaluated at
+// its centre of mass with its mass and velocities, the way Houdini's solvers do. The force and
+// torque go into Box3D for the coming step (it integrates them in every substep and clears them
+// afterwards), so this runs after the sync and right before the step. A Gravity Force DOP adds to
+// the solver's own Gravity: set that to 0 when using one.
+ForceStats
+applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects, bool wake)
+{
+    ForceStats stats;
+
+    struct ObjectForces
+    {
+        const SIM_Object              *object = nullptr;
+        std::vector<const SIM_Force *> forces;
+    };
+    // Objects without force data (the common case) have no entry.
+    std::unordered_map<int, ObjectForces> forcesOf;
+    for (exint i = 0; i < objects.entries(); ++i)
+    {
+        const SIM_Object *obj = objects(i);
+        ObjectForces of;
+        ForceCollector collector(of.forces);
+        obj->forEachConstSubData(collector, SIM_DataFilterByType("SIM_Force"),
+                                 SIM_FORCES_DATANAME, SIM_DataFilterNone());
+        if (of.forces.empty())
+            continue;
+        of.object = obj;
+        forcesOf.emplace(obj->getObjectId(), std::move(of));
+    }
+    if (forcesOf.empty())
+        return stats;
+
+    b3dop::Box3DWorld &world = st.world;
+    // Bodies are independent (a force depends on the body's own state only), so the map's
+    // order does not matter.
+    for (auto &kv : st.mirror)
+    {
+        const DopBodyState &e = kv.second;
+        if (!e.handle || !e.dynamic || e.props.ignored)
+            continue;
+        const auto of = forcesOf.find(e.objectId);
+        if (of == forcesOf.end() || !st.isLive(e))
+            continue;
+        if (!wake && !world.isAwakeByHandle(e.handle))
+            continue;                       // Box3D would ignore the force anyway
+
+        const float mass = world.massByHandle(e.handle);
+        double com[3];
+        float  lin[3], ang[3];
+        if (!(mass > 0.0f) || !std::isfinite(mass) ||
+            !world.getCenterOfMassByHandle(e.handle, com) ||
+            !world.getVelocityByHandle(e.handle, lin, ang))
+            continue;
+
+        const UT_Vector3 pos(static_cast<float>(com[0]), static_cast<float>(com[1]),
+                             static_cast<float>(com[2]));
+        const UT_Vector3 vel(lin[0], lin[1], lin[2]);
+        const UT_Vector3 angvel(ang[0], ang[1], ang[2]);
+
+        UT_Vector3 force(0.0f, 0.0f, 0.0f);
+        UT_Vector3 torque(0.0f, 0.0f, 0.0f);
+        for (const SIM_Force *sf : of->second.forces)
+        {
+            UT_Vector3 f(0.0f, 0.0f, 0.0f);
+            UT_Vector3 t(0.0f, 0.0f, 0.0f);
+            sf->getForce(*of->second.object, pos, vel, angvel, mass, f, t);
+            force  += f;
+            torque += t;
+        }
+
+        const float fv[3] = { float(force.x()),  float(force.y()),  float(force.z()) };
+        const float tv[3] = { float(torque.x()), float(torque.y()), float(torque.z()) };
+        const bool finite = std::isfinite(fv[0]) && std::isfinite(fv[1]) && std::isfinite(fv[2]) &&
+                            std::isfinite(tv[0]) && std::isfinite(tv[1]) && std::isfinite(tv[2]);
+        if (!finite)
+        {
+            ++stats.nonFinite;
+            continue;
+        }
+        if (fv[0] == 0.0f && fv[1] == 0.0f && fv[2] == 0.0f &&
+            tv[0] == 0.0f && tv[1] == 0.0f && tv[2] == 0.0f)
+            continue;
+        world.applyForceByHandle(e.handle, fv, tv, wake);
+        ++stats.bodies;
+    }
+    return stats;
+}
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -2362,6 +2475,13 @@ SIM_SolverBox3D::getDescription()
 {
     static PRM_Name    theGravityName("gravity", "Gravity");
     static PRM_Default theGravityDefault[] = { 0.0, -9.80665, 0.0 };
+
+    static PRM_Name    theUseForcesName("useforces", "Use Force DOPs");
+    static PRM_Default theUseForcesDefault(1);
+    static PRM_Name    theForcesWakeName("forceswake", "Forces Wake Bodies");
+    static PRM_Default theForcesWakeDefault(0);
+    // Greyed out while Use Force DOPs is off.
+    static PRM_Conditional theForcesWakeDisable("{ useforces == 0 }", PRM_CONDTYPE_DISABLE);
 
     static PRM_Name    theSubStepsName("substeps", "Substeps");
     static PRM_Default theSubStepsDefault(4);
@@ -2414,6 +2534,15 @@ SIM_SolverBox3D::getDescription()
         PRM_Template(PRM_FLT_J,  3, &theGravityName,  theGravityDefault, 0, 0, 0, 0, 1,
                      "Acceleration applied to every dynamic body, in units per second squared. "
                      "Scale it per body with Gravity Scale on Box3D Data."),
+        PRM_Template(PRM_TOGGLE, 1, &theUseForcesName, &theUseForcesDefault, 0, 0, 0, 0, 1,
+                     "Apply the forces from Force DOPs connected to the objects (Gravity Force, Wind Force, "
+                     "Fan Force, POP Force and custom forces), evaluated at each dynamic body's centre of mass. "
+                     "They add to Gravity above: set Gravity to 0 when you use a Gravity Force."),
+        PRM_Template(PRM_TOGGLE, 1, &theForcesWakeName, &theForcesWakeDefault, 0, 0, 0, 0, 1,
+                     "Let a force wake a sleeping body. Off, sleeping bodies ignore forces until something else "
+                     "wakes them, so a constant force such as gravity does not keep resting bodies awake. "
+                     "Turn it on for wind or fans that should blow resting pieces away.",
+                     &theForcesWakeDisable),
         PRM_Template(PRM_INT_J,  1, &theSubStepsName, &theSubStepsDefault, 0, &theSubStepsRange, 0, 0, 1,
                      "Solver passes per time step. More substeps make stacks and fast collisions more stable "
                      "but take longer."),
@@ -2610,6 +2739,17 @@ SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
         return cancel();
     if (progress.check())
         return cancel();
+
+    // Force DOPs go into the bodies now, for this step only (Box3D clears them afterwards).
+    if (getUseForces())
+    {
+        const ForceStats fs = applyExternalForces(*st, objects, getForcesWake());
+        if (fs.nonFinite)
+            addError(objects(0), SIM_MESSAGE,
+                     ("Box3D: " + std::to_string(fs.nonFinite) + " body(ies) got a non-finite force or torque "
+                      "from a Force DOP; it was ignored").c_str(), UT_ERROR_WARNING);
+        B3D_LOG_VERBOSE("  forces: %d bodies pushed", fs.bodies);
+    }
 
     // From here the step runs to the end (the write-back is quick), so the cached result is
     // always a whole step.
