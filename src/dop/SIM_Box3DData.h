@@ -26,6 +26,7 @@ public:
     GETSET_DATA_FUNCS_F("angulardamping", AngularDamping);
     GETSET_DATA_FUNCS_F("gravityscale",   GravityScale);
     GETSET_DATA_FUNCS_B("enablesleep",    EnableSleep);
+    GETSET_DATA_FUNCS_B("startasleep",    StartAsleep);     // point attribute: awake (0 = asleep)
     GETSET_DATA_FUNCS_B("fastobject",     FastObject);      // Box3D "bullet"
     GETSET_DATA_FUNCS_B("contactrecycling", ContactRecycling);  // contacts may be recycled (solver's Contact Recycle Distance)
     GETSET_DATA_FUNCS_F("sleepthreshold", SleepThreshold);

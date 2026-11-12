@@ -152,7 +152,9 @@ struct BodySettings
     float angularDamping = 0.0f;
     float gravityScale   = 1.0f;
     bool  contactRecycling = true;  // `contactrecycling`: this body's contacts may be recycled (see WorldSettings)
-    bool  enableSleep    = true;
+    bool  enableSleep    = true;    // `enablesleep`: this body may fall asleep
+    bool  startAwake     = true;    // `awake` at creation. A body that cannot sleep always starts awake
+    bool  startEnabled   = true;    // `enabled` at creation. A disabled body does not move or collide, and is never awake
     bool  isBullet       = false;   // Box3D "bullet": continuous collision vs moving bodies too (`fastobject`)
     bool  fastRotation   = false;   // `fastrotation`: no angular speed cap (B3_MAX_ROTATION per step); round bodies only
     float sleepThreshold = 0.05f;   // m/s
@@ -238,6 +240,10 @@ public:
     // with updateMass = false, followed by one mass update.
     void  destroyShapesByHandle(BodyHandle h);
     void  wakeByHandle(BodyHandle h);
+    // Put a body to sleep, and with it every body touching it (an island). Does nothing for a static or
+    // disabled body, a body that may not sleep, or when the world's sleeping is off. Box3D can refuse
+    // (an island waiting to be split), so check isAwakeByHandle if it matters.
+    void  sleepByHandle(BodyHandle h);
     // ---- external forces (handle API) -----------------------------------------
     // World position of the body's centre of mass (where forces act). False for no body.
     bool  getCenterOfMassByHandle(BodyHandle h, double outPos[3]) const;

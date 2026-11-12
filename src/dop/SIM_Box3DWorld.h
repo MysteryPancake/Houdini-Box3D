@@ -44,8 +44,8 @@ struct Box3DBodyProps
     float linearDamping  = 0.0f;      // `lineardamping`
     float angularDamping = 0.0f;      // `angulardamping`
     float gravityScale   = 1.0f;      // `gravityscale`
-    bool  sleepOk        = true;      // creation: bullet_want_deactivate, else enablesleep; later: the former only
-    bool  ignored        = false;     // `bullet_ignore`
+    bool  enableSleep    = true;      // `enablesleep`
+    bool  enabled        = true;      // `enabled`: 0 leaves the body out of the simulation
     bool  computeMass    = false;     // `computemass`
     float density        = 1000.0f;   // `density`
     float inertiaScale   = 1.0f;      // `inertialtensorstiffness`
@@ -56,7 +56,6 @@ struct Box3DBodyProps
     bool  contactRecycling = true;    // `contactrecycling`
     b3dop::CollisionFilter filter;    // `collision_category` / `collision_mask` / `collision_group`
     b3dop::MotionLocks     locks;     // `lock_linear` / `lock_angular`
-    float minActivationImpulse = 0.0f;    // `min_activation_impulse`
 };
 
 struct Box3DObjectSync;
@@ -73,7 +72,7 @@ struct Box3DBodyMirror : Box3DBodyPose
 
     bool     animated  = false;       // inactive + `animated`: kinematic, follows its point
     bool     driven    = false;       // given a target last step (velocity to clear)
-    bool     sleeping  = false;       // asleep, as last reported by a move event
+    bool     awake     = true;        // the value of `awake` as last read from or written to the point
     int64_t  pointIndex = -1;         // point number at the last scan (Impacts data)
 
     // The body's point, refreshed by every sync, so the write-back needs no lookup. Box3D's
@@ -134,13 +133,13 @@ struct Box3DWriteItem
     float             ang[3]   = { 0, 0, 0 };
     int               objectId = 0;
     int               packedIdx = -1;           // index into Box3DSharedState::packedWrites, or -1
-    int8_t            sleepState = -1;          // bullet_sleeping to write: -1 none, 0 awake, 1 asleep
+    int8_t            awakeState = -1;          // `awake` to write: -1 none, 0 asleep, 1 awake
 };
 
 // A point attribute written after the step, for any body (not only awake ones).
 struct Box3DPointWrite
 {
-    enum : unsigned { kAutofitValid = 1, kMass = 2, kActivate = 4 };
+    enum : unsigned { kAutofitValid = 1, kMass = 2 };
     GA_Offset         off      = GA_INVALID_OFFSET;
     Box3DBodyMirror  *entry    = nullptr;
     int               objectId = 0;
@@ -172,7 +171,7 @@ struct Box3DSyncFingerprint
 
     // Prop markers (kPropAttribNames in SIM_SolverBox3D.cpp, primsId, nodeHash): when any
     // changed, the scan also compares every body's settings. The .cpp static_asserts the count.
-    static constexpr int kNumPropIds = 30;
+    static constexpr int kNumPropIds = 29;
     using PropIds = std::array<GA_DataId, kNumPropIds>;
 
     int64_t   numPoints  = -1;      // -1 with primitives: packed topology is assumed fixed
@@ -216,7 +215,6 @@ struct Box3DObjectSync
     bool     anyDriven    = false;  // a moved animated body (velocity to clear): never skip
     bool     addImpact    = false;  // Box3D Data "Add Impact Data"
     std::vector<Box3DBodyMirror *> bodies;      // every body of the object (rebuilt by each full scan)
-    std::vector<Box3DBodyMirror *> activation;  // inactive bodies with min_activation_impulse > 0
     // `force` / `torque` data ids right after the solver last zeroed them (or found them all
     // zero): unchanged ids mean nothing new to apply.
     GA_DataId forceId  = GA_DataId(-1);

@@ -1571,5 +1571,110 @@ int main()
         std::printf("shared hull cache checks done\n");
     }
 
+    // ---- sleep and enable state: starting asleep / disabled, forced sleep, live enableSleep ------
+    {
+        using namespace b3dop;
+        const float  qid[4] = { 0, 0, 0, 1 };
+        const float  dt     = 1.0f / 60.0f;
+        const double hi[3]  = { 0, 5, 0 };
+        ShapeSpec    cube;
+        double p[3];  float q[4], lin[3], ang[3];
+        const float  zero[3] = { 0, 0, 0 };
+
+        KeyedWorld sw;                              // standard gravity
+        CHECK(sw.create(WorldSettings()));
+
+        // starts asleep: it does not fall until woken
+        BodySettings asleep;  asleep.startAwake = false;
+        const BodyHandle a = sw.createBody(asleep, hi, qid);
+        CHECK(a && sw.createShape(a, asleep, cube));
+        CHECK(!sw.isAwakeByHandle(a) && sw.isEnabledByHandle(a) && sw.isSleepEnabledByHandle(a));
+        for (int i = 0; i < 30; ++i) sw.step(dt);
+        CHECK(sw.getTransformByHandle(a, p, q) && std::fabs(p[1] - 5.0) < 1e-6);
+        CHECK(!sw.isAwakeByHandle(a));
+        sw.wakeByHandle(a);
+        CHECK(sw.isAwakeByHandle(a));
+        for (int i = 0; i < 30; ++i) sw.step(dt);
+        CHECK(sw.getTransformByHandle(a, p, q) && p[1] < 4.5);
+
+        // a body that may not sleep starts awake whatever startAwake says (Box3D's rule)
+        BodySettings never = asleep;  never.enableSleep = false;
+        const BodyHandle n = sw.createBody(never, hi, qid);
+        CHECK(n && sw.createShape(n, never, cube));
+        CHECK(sw.isAwakeByHandle(n) && !sw.isSleepEnabledByHandle(n));
+
+        // starts disabled: no motion, never awake; enabling makes it a normal awake body
+        BodySettings off;  off.startEnabled = false;
+        const BodyHandle d = sw.createBody(off, hi, qid);
+        CHECK(d && sw.createShape(d, off, cube));
+        CHECK(!sw.isEnabledByHandle(d) && !sw.isAwakeByHandle(d));
+        for (int i = 0; i < 30; ++i) sw.step(dt);
+        CHECK(sw.getTransformByHandle(d, p, q) && std::fabs(p[1] - 5.0) < 1e-6);
+        sw.setEnabledByHandle(d, true);
+        CHECK(sw.isEnabledByHandle(d) && sw.isAwakeByHandle(d));
+        for (int i = 0; i < 30; ++i) sw.step(dt);
+        CHECK(sw.getTransformByHandle(d, p, q) && p[1] < 4.5);
+
+        // asleep and disabled together: enabling leaves it awake (Enable puts it in the awake set)
+        BodySettings both = off;  both.startAwake = false;
+        const BodyHandle bo = sw.createBody(both, hi, qid);
+        CHECK(bo && sw.createShape(bo, both, cube));
+        CHECK(!sw.isEnabledByHandle(bo) && !sw.isAwakeByHandle(bo));
+        sw.setEnabledByHandle(bo, true);
+        CHECK(sw.isAwakeByHandle(bo));
+
+        // a velocity wakes a sleeping body (why the solver skips it for a body that starts asleep)
+        const BodyHandle sv = sw.createBody(asleep, hi, qid);
+        CHECK(sv && sw.createShape(sv, asleep, cube));
+        CHECK(!sw.isAwakeByHandle(sv));
+        const float push[3] = { 1, 0, 0 };
+        CHECK(sw.setVelocityByHandle(sv, push, zero));
+        CHECK(sw.isAwakeByHandle(sv));
+
+        // sleepByHandle: no gravity, so the body keeps still and awake until told to sleep
+        WorldSettings zg;  zg.gravity[0] = zg.gravity[1] = zg.gravity[2] = 0.0f;
+        KeyedWorld zw;
+        CHECK(zw.create(zg));
+        BodySettings dyn;
+        const BodyHandle z = zw.createBody(dyn, hi, qid);
+        CHECK(z && zw.createShape(z, dyn, cube));
+        CHECK(zw.isAwakeByHandle(z));
+        zw.sleepByHandle(z);
+        CHECK(!zw.isAwakeByHandle(z));
+        zw.step(dt);
+        CHECK(!zw.isAwakeByHandle(z));
+        zw.wakeByHandle(z);
+        CHECK(zw.isAwakeByHandle(z));
+        // turning sleep off wakes the body and keeps it from sleeping; sleepByHandle then does nothing
+        zw.sleepByHandle(z);
+        CHECK(!zw.isAwakeByHandle(z));
+        zw.setSleepEnabledByHandle(z, false);
+        CHECK(zw.isAwakeByHandle(z) && !zw.isSleepEnabledByHandle(z));
+        zw.sleepByHandle(z);
+        CHECK(zw.isAwakeByHandle(z));
+        zw.setSleepEnabledByHandle(z, true);
+        zw.sleepByHandle(z);
+        CHECK(!zw.isAwakeByHandle(z));
+        // static, disabled and null handles are left alone
+        BodySettings stat;  stat.type = BodySettings::Type::Static;
+        const BodyHandle st = zw.createBody(stat, hi, qid);
+        CHECK(st && zw.createShape(st, stat, cube));
+        zw.sleepByHandle(st);  zw.sleepByHandle(0);
+        CHECK(zw.isEnabledByHandle(st));
+        zw.setEnabledByHandle(z, false);
+        zw.sleepByHandle(z);
+        CHECK(!zw.isEnabledByHandle(z));
+        // with sleeping off in the world, sleepByHandle does nothing
+        WorldSettings noSleep = zg;  noSleep.enableSleep = false;
+        KeyedWorld nw;
+        CHECK(nw.create(noSleep));
+        const BodyHandle nb = nw.createBody(dyn, hi, qid);
+        CHECK(nb && nw.createShape(nb, dyn, cube));
+        nw.sleepByHandle(nb);
+        CHECK(nw.isAwakeByHandle(nb));
+        (void)lin; (void)ang;
+        std::printf("sleep / enable state checks done\n");
+    }
+
     return fails ? 1 : 0;
 }

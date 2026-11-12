@@ -64,6 +64,9 @@ SIM_Box3DData::getDescription()
     static PRM_Name    theSleepName("enablesleep", "Allow Sleeping");
     static PRM_Default theSleepDefault(1);
 
+    static PRM_Name    theStartAsleepName("startasleep", "Start Asleep");
+    static PRM_Default theStartAsleepDefault(0);
+
     // Box3D's "bullet" flag (Houdini's `isbullet` means something else).
     static PRM_Name    theFastObjectName("fastobject", "Fast Object");
     static PRM_Default theFastObjectDefault(0);
@@ -113,7 +116,7 @@ SIM_Box3DData::getDescription()
         PRM_Default(3, "Shape"),
         PRM_Default(5, "Body"),
         PRM_Default(4, "Material"),
-        PRM_Default(4, "Sleep & Contacts"),
+        PRM_Default(6, "Sleep & Contacts"),
         PRM_Default(2, "Output")
     };
 
@@ -156,7 +159,11 @@ SIM_Box3DData::getDescription()
                      "Slows spinning over time. 0 is no drag. Overridden by the angulardamping point attribute."),
         // --- Sleep & Contacts ---
         PRM_Template(PRM_TOGGLE, 1, &theSleepName,       &theSleepDefault, 0, 0, 0, 0, 1,
-                     "Let resting bodies stop simulating until touched. Needs the solver's Allow Sleeping on."),
+                     "Let resting bodies stop simulating until touched. Needs the solver's Allow Sleeping on. "
+                     "Overridden by the enablesleep point attribute."),
+        PRM_Template(PRM_TOGGLE, 1, &theStartAsleepName, &theStartAsleepDefault, 0, 0, 0, 0, 1,
+                     "Bodies begin asleep until something touches them. Has no effect if Allow Sleeping is off. "
+                     "Overridden by the awake point attribute."),
         PRM_Template(PRM_FLT_J,  1, &theSleepThresholdName, &theSleepThresholdDefault, 0, &theSleepThresholdRange, 0, 0, 1,
                      "A body may fall asleep once its speed has stayed below this for half a second. "
                      "Overridden by the sleepthreshold point attribute."),
@@ -217,6 +224,7 @@ SIM_Box3DData::toBodySettings() const
     s.angularDamping = static_cast<float>(getAngularDamping());
     s.gravityScale   = static_cast<float>(getGravityScale());
     s.enableSleep    = getEnableSleep();
+    s.startAwake     = !getStartAsleep();
     s.isBullet       = getFastObject();
     s.contactRecycling = getContactRecycling();
     s.sleepThreshold = static_cast<float>(getSleepThreshold());

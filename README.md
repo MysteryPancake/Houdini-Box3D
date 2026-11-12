@@ -94,22 +94,20 @@ All attributes are optional except `P`. If one is missing, the value from the Bo
 | `angulardamping` | float | Angular damping (0 or more) |
 | `gravityscale` | float | Multiplies gravity for this body; negative floats upward |
 | `enablesleep` | int | `0` = this body never sleeps |
-| `bullet_want_deactivate` | int | `1` = may sleep, `0` = kept awake (overrides `enablesleep`) |
 | `sleepthreshold` | float | Speed below which the body may fall asleep (after half a second) |
 | `ccdthreshold` | float | Continuous collision sweeps the body once it moves more than this fraction of its thinnest size in one step (default 0.5, the Box3D Data node's CCD Threshold). Lower it, e.g. to 0.1, on thin fast pieces that pass through things. Needs Continuous Collision on |
-| `bullet_sleeping` | int | Written by the solver: `1` while asleep. Set it to `0` to wake the body |
+| `awake` | int | `0` = asleep. Sets the starting state, then the solver keeps it up to date. Write it to sleep or wake the body |
+| `enabled` | int | `0` = the body is left out of the simulation |
 | `fastobject` | int | Nonzero = a fast body can't pass through other moving bodies (it never passes through static ones) |
 | `fastrotation` | int | Nonzero = no spin speed limit (normally 45° of rotation per step, about 180 rpm at 24 fps). Only for round pieces like wheels and balls: other shapes can miss collisions when spinning that fast |
 | `contactrecycling` | int | `0` = this body's contacts are never recycled (see Contact Recycle Distance); default is the Box3D Data setting, on |
 | `active` | int | `0` = static, anything else = dynamic |
 | `animated` | int | With `active` = 0: the body follows its animated point and pushes what it touches |
-| `min_activation_impulse` | float | An inactive body hit at least this hard becomes active |
 | `lock_linear` | vector | Per world axis, nonzero = no movement along that axis (e.g. `{0,0,1}` keeps it at its starting Z) |
 | `lock_angular` | vector | Per world axis, nonzero = no rotation about that axis (e.g. `{1,0,1}` = it only turns about Y) |
 | `collision_category` | int | Bits for the layers this body is on (default: every bit) |
 | `collision_mask` | int | Bits for the layers this body collides with (default: every bit) |
 | `collision_group` | int | Bodies with the same non-zero group: positive = always collide, negative = never collide |
-| `bullet_ignore` | int | Nonzero = the body is left out of the simulation |
 | `deforming` | int | Nonzero = rebuild the collision shape from the current geometry every step |
 | `bullet_autofit_valid` | int | `0` = rebuild the collision shape once (the solver sets it back to `1`) |
 | `bullet_georep` | string | Collision shape (see below) |
@@ -156,11 +154,11 @@ Reuses contacts between barely-moving pairs to save time. Very occasionally this
 
 ### Changing attributes during the simulation
 
-Like Houdini's Bullet solver, most attributes can be changed mid-simulation (with a Geometry Wrangle DOP, a SOP Solver, or by animating the Box3D Data node) and take effect on the next step. That covers position, rotation, velocity, `active`, `animated`, the mass, friction, bounce, damping, gravity, sleep and collision attributes above, `bullet_ignore` and `dead`.
+Like Houdini's Bullet solver, most attributes can be changed mid-simulation (with a Geometry Wrangle DOP, a SOP Solver, or by animating the Box3D Data node) and take effect on the next step. That covers position, rotation, velocity, `active`, `animated`, the mass, friction, bounce, damping, gravity, sleep and collision attributes above, `enabled` and `dead`.
 
 Collision shapes are kept once built. To rebuild one, set `bullet_autofit_valid = 0` (rebuilds once) or `deforming = 1` (rebuilds every step). This is how changes to `bullet_georep`, `bullet_autofit`, the `bullet_prim*` attributes, `bullet_radius`, `bullet_length` and the size of a box, sphere or capsule take effect. Convex and concave shapes follow scale changes on their own.
 
-`enablesleep` only applies when a body is created; use `bullet_want_deactivate` to change sleeping later. `id` has no special values: changing it turns the point into a new body.
+Sleeping a body also sleeps the bodies touching it. `id` has no special values: changing it turns the point into a new body.
 
 ### Shapes
 
@@ -202,6 +200,7 @@ Attach a joint network to an object with a **SOP Geometry** DOP, Data Name `Join
 ### Things to know
 
 - Bullet's collision padding attributes and solver settings (ERP, CFM, iterations) are ignored. Use Substeps and the contact settings.
+- Bullet's `bullet_want_deactivate`, `bullet_sleeping`, `bullet_ignore` and `min_activation_impulse` are not read. Use `enablesleep`, `awake` and `enabled`.
 - `concave` / `compound` are built as several convex hulls.
 - Auto-fitted sizes aren't written back to `bullet_prim*`, `bullet_radius` or `bullet_length`.
 - Use `id` if you delete points with `dead`, otherwise every later point counts as a new body.

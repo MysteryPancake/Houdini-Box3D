@@ -16,6 +16,8 @@ body engine, C17, a git submodule in `extern/box3d`). It registers three `SIM_Da
 
 Design goals: Box3D's native performance (handle-based hot paths, no per-body hash lookups, threaded per-point passes
 where safe) and Houdini Bullet behaviour (same attribute names and rules, as documented on the RBD Packed Object page).
+The exception is sleeping and enabling, which follow Box3D's own model (`enablesleep`, `awake`, `enabled`; see "Sleep and
+enable state"); Bullet's `bullet_want_deactivate`, `bullet_sleeping`, `bullet_ignore` and `min_activation_impulse` are not read.
 
 The code is largely LLM-written by an author still learning the HDK. Treat HDK usage with healthy skepticism (see
 "HDK calls").
@@ -219,10 +221,9 @@ stepDt = dt * timescale; world.applyTuning(currentWorldSettings())
 syncFromGeometry   per object syncObject(); remove gone bodies; pruneHulls; warnings
 applyExternalForces  Use Force DOPs: SIM_Force data per object -> getForce at each dynamic body's centre of mass -> applyForceByHandle
 world.step         b3World_Step(stepDt, subSteps); then the move events are read once into st.moves
-writeResultsBack   awake dynamic bodies (move events): P / orient / v / w / packed transform / bullet_sleeping
+writeResultsBack   awake dynamic bodies (move events): P / orient / v / w / packed transform / awake
 recordImpacts      Add Impact Data -> SIM_Impacts (only on steps with an impact)
-activateByImpact   min_activation_impulse
-writePointAttrs    queued point writes: bullet_autofit_valid = 1, computed mass, active = 1
+writePointAttrs    queued point writes: bullet_autofit_valid = 1, computed mass
 ageObjects         Enable Aging
 deleteDeadPoints   `dead` points
 stamp = now
@@ -259,7 +260,7 @@ Data names: `"Box3DWorld"`, `kBox3DDataName` (`"Box3DData"`, SIM_Box3DData.h), `
    `dead` -> queued for deletion, its body removed; unknown key -> `addPointBody`; known key -> `updateExistingBody`:
    mid-simulation updates (shape rebuild, then settings), type change (`wantedType`), then the animated target or an
    external edit (`poseDiffers`, eps 1e-5, q and -q equal -> `setTransformByHandle` + `setVelocityByHandle`). Both
-   paths then share one tail: point bookkeeping and stamp, queued point writes, impact / activation lists.
+   paths then share one tail: point bookkeeping and stamp, queued point writes, the object's body list.
 7. Records the fingerprint; problems (failed bodies, duplicate ids, bad P), deforming bodies and driven animated bodies
    keep the object scanning.
 
@@ -288,7 +289,7 @@ SIM_DataFilterNone())` with a `SIM_EachDataCallback` (`ForceCollector`) that cas
 
 Only objects with force DOPs or non-zero point forces are visited, and only their own bodies
 (`Box3DObjectSync::bodies`, rebuilt by each full scan and kept while the object is skipped): skip bodies that are not
-`dynamic()`, are `props.ignored`, or are asleep while `forceswake` is off. For each remaining body: mass (`massByHandle`), world centre of mass
+`dynamic()`, are not `props.enabled`, or are asleep while `forceswake` is off. For each remaining body: mass (`massByHandle`), world centre of mass
 (`getCenterOfMassByHandle`) and `v` / `w` (`getVelocityByHandle`) go into `SIM_Force::getForce(object, pos, vel, angvel,
 mass, force, torque)` for every force on the object, summed, and the sum goes in through `applyForceByHandle`
 (`b3Body_ApplyForceToCenter` + `b3Body_ApplyTorque`).
@@ -314,9 +315,8 @@ equal to what its body was built with.
   `Box3DBodyProps`, compared with `entry->props`; only the setters for what differs run. Compared only when `checkProps`
   (prop markers changed, none recorded yet, or deforming bodies); a scan triggered by an animated `P` alone does not.
   * Mass, `computemass`, `density`, `inertialtensorstiffness` -> `applyBodyMass` (same as a fresh build).
-  * Sleep: at creation `bullet_want_deactivate`, else `enablesleep`, else the node; afterwards only
-    `bullet_want_deactivate` (enablesleep is creation only, as in Bullet).
-  * `bullet_ignore` -> `setEnabledByHandle(false)`; a disabled body has no move events, so it is not written back.
+  * Sleep and enable state: `enablesleep` (else the node) -> `setSleepEnabledByHandle`, live; `enabled` ->
+    `setEnabledByHandle`. `awake` is not a setting: see "Sleep and enable state".
 * **Shape rebuild** (`rebuildPointShapes`) on `deforming` (every step), `bullet_autofit_valid == 0` (once) or, with
   `autoScale` (convex / concave only, as in Houdini), a size-key change beyond 1e-4 relative (`sizeKey` = packed row
   lengths or `pscale * scale`; the tolerance absorbs our own write-back's float noise). `planShapes` (the same code as a
@@ -336,7 +336,7 @@ equal to what its body was built with.
 
 * **The point is the centre of mass**, as in Houdini RBD (for a packed point, its pivot, which hulls are built around).
   `applyBodyMass` calls `applyMassByHandle(..., comAtOrigin = true, stiffness)` after creation, rebuild, a retype to
-  dynamic, activation and mass changes. Velocities are therefore the point's. No `computecom`: an off-centre pivot makes
+  dynamic and mass changes. Velocities are therefore the point's. No `computecom`: an off-centre pivot makes
   the piece turn about it, like in Houdini.
 * **CCD threshold** (`ccdthreshold`, float; node `ccdthreshold`, default 0.5 = Box3D's): `BodySettings::ccdThreshold`
   -> `b3BodyDef::safetyFactor` (negative / non-finite keep Box3D's default; Box3D asserts on negatives); changes use
@@ -360,9 +360,29 @@ equal to what its body was built with.
 * **Mass properties** (`computemass`, `density`, `inertialtensorstiffness`; node `computemass` / `density`):
   `boxDensity` = density with computemass, else mass / volume. With computemass the mass is written to `mass` (created
   if missing) on creation, rebuild or change.
-* **Sleep** (`sleepthreshold`, node default 0.05): Box3D's single threshold and fixed half second (`B3_TIME_TO_SLEEP`).
-  `bullet_sleeping`, if the attribute exists, is written by the write-back when a move event says the body fell asleep
-  or it moves again (changes only; `entry->sleeping`). A user-written 0 wakes the body (checked in `checkProps` scans).
+* **Sleep threshold** (`sleepthreshold`, node default 0.05): Box3D's single threshold and fixed half second
+  (`B3_TIME_TO_SLEEP`).
+* **Sleep and enable state** (`enablesleep`, `awake`, `enabled`): one attribute per Box3D concept
+  (`b3BodyDef::enableSleep` / `isAwake` / `isEnabled`).
+  * `enablesleep` (node: Allow Sleeping, in `nodeSettingsHash`) and `enabled` are settings (`Box3DBodyProps`) and change
+    live. `enabled` is `def.isEnabled` at creation (no create-then-disable); toggling later is `b3Body_Enable` /
+    `Disable`, which Box3D documents as expensive. A disabled body has no move events, so it is not written back.
+  * `awake` is state, not a setting. At creation it is `def.isAwake` (the point's value, else the node's Start Asleep).
+    Box3D starts a body that may not sleep awake regardless. The initial `v` / `w` are skipped for a body that is not
+    awake after creation, because `b3Body_SetLinearVelocity` wakes a sleeping body.
+  * `Box3DBodyMirror::awake` is the value of the attribute as the solver last read or wrote it, not the live Box3D state.
+    The write-back compares it with each move event (`!fellAsleep`) and writes the attribute, if it exists, only when
+    they differ. A `checkProps` scan (`awake` is a prop marker) compares the attribute with the mirror: a difference is a
+    user write, and applies `wakeByHandle` or `sleepByHandle`, then updates the mirror. Edge-triggered on purpose: a
+    level check would keep retrying a sleep Box3D refused, or wake a sleeping pile on every unrelated prop change.
+    `p.enabled == false` skips the check; enabling sets the mirror to awake (Box3D enables a body awake), so an `awake`
+    of 0 written with it puts the body to sleep right after.
+  * `sleepByHandle` does nothing for static or disabled bodies, a body with sleeping off, or when the world's sleeping is
+    off. `b3Body_SetAwake(false)` sleeps the whole island and Box3D may refuse (a pending island split), in which case
+    the next move event writes `awake = 1` back.
+  * Known limitation: forcing a body to sleep also sleeps the bodies touching it, but Box3D reports that through no move
+    event (forced sleep between steps modifies the already-consumed event array), so their `awake` attributes and mirrors
+    keep saying awake until they wake and fall asleep normally. A shape rebuild wakes the body (`wakeByHandle`).
 * **Fast object** (`fastobject`): Box3D's `isBullet`, renamed because Houdini's `isbullet` means "treat as a Bullet
   object". Changes mid-simulation.
 * **Contact recycling** (`contactrecycling`, Box3D Data toggle default on, int point attribute): Box3D's per-body
@@ -386,9 +406,6 @@ equal to what its body was built with.
   0, time, 0)` per point (normal of the surface hit, pointing at the body that gets the impact; ptnum = its `pointIndex`). An object
   with Impacts last step and none now loses the data (`removeNamedSubData`, `impactObjects`). No Feedback data (that is
   for mutual interaction with other solvers). UNVERIFIED: Houdini's impact normal convention.
-* **Activation by impact** (`min_activation_impulse`): inactive bodies with a threshold are listed
-  in `Box3DObjectSync::activation`. After the step, a contact at or above it makes the body dynamic (mass re-applied, woken), queues `active = 1` and forces a scan. It moves
-  from the next step; Bullet can activate within the step.
 * **Dead** (`dead`): queued as a `Box3DDeletion`; `deleteDeadPoints` checks every queued point (offset, `id` or number)
   before deleting any (`destroyPrimitive(prim, true)` for packed, else `destroyPointOffset(off,
   GA_DESTROY_DEGENERATE)`), then `bumpAllDataIds()` and `forceScan`. Without `id`, later points become new bodies.
@@ -397,7 +414,7 @@ equal to what its body was built with.
   `age` / `dead` pages hardened first.
 * **Time Scale**: Box3D steps by `stepDt = dt * timescale`; animated targets use it; `canContinue` uses the DOP step.
 
-**Point writes after the step** (`Box3DPointWrite`: `kAutofitValid`, `kMass`, `kActivate`): grouped per object
+**Point writes after the step** (`Box3DPointWrite`: `kAutofitValid`, `kMass`): grouped per object
 (`forEachObjectRun`), offsets via the templated `resolvePointOffsets`, then `recordFingerprintAfterWrite`.
 
 ### Building shapes (`addPointBody`, `planShapes`, `buildShapes`)
@@ -405,7 +422,7 @@ equal to what its body was built with.
 * Type: `wantedType` (active -> node type; inactive -> static, or kinematic if animated; shapeless -> static).
 * `readDynamicProps` + `settingsFor` give the settings; `planShapes` the shape type (`bullet_georep`, else node
   `defaultShape`) and pieces; `addPlannedShapes` adds them; `applyBodyMass`; then the initial `v` / `w` (after the mass,
-  because a moving centre of mass shifts the velocity; not for static or animated bodies); `bullet_ignore` disables.
+  because a moving centre of mass shifts the velocity; not for static or animated bodies, nor for one that is not awake).
 * The mirror entry is inserted (`try_emplace`) before the body exists and becomes its user data; it is erased again if
   the body cannot be built. A body is never left without shapes, except `none`. 64+ new bodies in one scan reserve the
   mirror once.
@@ -444,7 +461,7 @@ packed rotations follow Houdini's own quaternion convention.
 
 0. Move events (read once into `st.moves` right after the step; impacts use them too): every awake body and its
    transform (a body falling asleep appears once more). Only live dynamic entries become items, which point at their
-   move event rather than copying it; `bullet_sleeping` changes are noted. Velocities are fetched in a threaded pass
+   move event rather than copying it; `awake` changes are noted. Velocities are fetched in a threaded pass
    (Box3D allows read-only calls from several threads). Items are grouped per object.
 1. `getOrMakeWritableGeometry`: a plain `SIM_Geometry` (RBD Packed Object) is replaced once by a `SIM_GeometryCopy`
    (`SIM_DATA_RETURN_EXISTING | SIM_DATA_ADOPT_EXISTING_ON_DELETE`).
@@ -506,6 +523,7 @@ Objects that the solver is not given but that affect a solved object through a c
 * Bullet's solver tuning (ERP, CFM, split impulse, iterations, solve tolerance, randomized order) is not mapped; Box3D's
   own settings are offered.
 * Bullet's two sleep thresholds, Sleeping Time and `deactivation_time` are replaced by Box3D's one threshold.
+* `min_activation_impulse` (inactive bodies that activate when hit) was removed: Box3D has no equivalent, and it needed a contact scan after every step.
 * PLANNED (not started): static triangle-mesh colliders for the concave *point* case (affector meshes exist, see "Affector static colliders"). Box3D meshes (`b3CreateMeshShape`) and
   height fields only collide as static, which is why `concave` / `compound` are one hull per piece (Bullet's concave
   is a triangle mesh and may move). Intended split: a static (inactive, non-animated) `concave` point becomes a Box3D
@@ -531,14 +549,14 @@ have a hard minimum of 0 (Box3D asserts on negatives). `toBodySettings()` maps t
 
 `P` (required), `orient` (not for packed points), `v`, `w` (rad/s), `id`, `active`, `animated`, `mass`, `computemass`,
 `density`, `inertialtensorstiffness`, `friction`, `bounce`, `lineardamping`, `angulardamping`, `gravityscale`,
-`enablesleep`, `bullet_want_deactivate`, `sleepthreshold`, `ccdthreshold`, `bullet_sleeping`, `fastobject`, `fastrotation`, `contactrecycling`, `bullet_ignore`,
-`collision_category`, `collision_mask`, `collision_group`, `lock_linear`, `lock_angular`, `min_activation_impulse`, `dead`, `age`, `life`,
+`enablesleep`, `sleepthreshold`, `ccdthreshold`, `awake`, `enabled`, `fastobject`, `fastrotation`, `contactrecycling`,
+`collision_category`, `collision_mask`, `collision_group`, `lock_linear`, `lock_angular`, `dead`, `age`, `life`,
 `deforming`, `bullet_autofit_valid`, `bullet_georep`, `bullet_autofit`, `bullet_primS` / `R` / `T`, `bullet_radius`,
 `bullet_length`, `pscale`, `scale`. Negative material values are clamped to 0, non-finite ones ignored (`gravityscale`
 may be negative). Identity is `(object id, id or point number)`.
 
-Written: `P`, `orient`, `v`, `w` and packed transforms (awake dynamic bodies), `bullet_sleeping` (if it exists),
-`bullet_autofit_valid`, `mass` (computemass), `active` (activation), `age` / `dead` (aging); `dead` points are deleted.
+Written: `P`, `orient`, `v`, `w` and packed transforms (awake dynamic bodies), `awake` (if it exists),
+`bullet_autofit_valid`, `mass` (computemass), `age` / `dead` (aging); `dead` points are deleted.
 
 ## Warnings surfaced on the node
 

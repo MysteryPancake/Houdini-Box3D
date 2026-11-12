@@ -129,7 +129,7 @@ struct PointAttrs
     GA_ROHandleF  lineardamping;
     GA_ROHandleF  angulardamping;
     GA_ROHandleF  gravityscale;
-    GA_ROHandleI  enablesleep;     // creation only
+    GA_ROHandleI  enablesleep;     // 0 = this body never sleeps
     GA_ROHandleI  fastObject;      // fastobject
     GA_ROHandleI  fastRotation;    // fastrotation
     GA_ROHandleI  contactRecycling;    // contactrecycling
@@ -147,8 +147,8 @@ struct PointAttrs
     GA_ROHandleV3 primT;
     GA_ROHandleF  radius;
     GA_ROHandleF  length;
-    GA_ROHandleI  wantDeactivate;  // bullet_want_deactivate: 1 may sleep, 0 kept awake
-    GA_ROHandleI  ignore;          // bullet_ignore
+    GA_ROHandleI  enabled;         // 0 = left out of the simulation (Box3D isEnabled)
+    GA_ROHandleI  awake;           // 0 = asleep (Box3D isAwake): starts the body, and the solver keeps it up to date
     GA_ROHandleI  deforming;       // rebuild the shape every step
     GA_ROHandleI  autofitValid;    // bullet_autofit_valid: 0 = rebuild once (written back as 1)
     GA_ROHandleID collisionCategory;   // b3Filter: read as 64-bit (a 32-bit -1 is every bit)
@@ -160,9 +160,7 @@ struct PointAttrs
     GA_ROHandleF  density;
     GA_ROHandleI  computeMass;
     GA_ROHandleF  inertiaStiffness;    // inertialtensorstiffness
-    GA_ROHandleF  minActivation;   // min_activation_impulse
     GA_ROHandleI  dead;
-    GA_ROHandleI  sleeping;        // bullet_sleeping: a user-written 0 wakes the body
 
     // The constructor binds what the skip check and write-back need; bindBuildAttrs() the rest,
     // once an object is actually scanned.
@@ -198,8 +196,8 @@ struct PointAttrs
         primT          = GA_ROHandleV3(gdp, GA_ATTRIB_POINT, "bullet_primT");
         radius         = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "bullet_radius");
         length         = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "bullet_length");
-        wantDeactivate = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "bullet_want_deactivate");
-        ignore         = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "bullet_ignore");
+        enabled        = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "enabled");
+        awake          = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "awake");
         deforming      = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "deforming");
         autofitValid   = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "bullet_autofit_valid");
         collisionCategory = GA_ROHandleID(gdp, GA_ATTRIB_POINT, "collision_category");
@@ -211,9 +209,7 @@ struct PointAttrs
         density        = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "density");
         computeMass    = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "computemass");
         inertiaStiffness = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "inertialtensorstiffness");
-        minActivation  = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "min_activation_impulse");
         dead           = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "dead");
-        sleeping       = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "bullet_sleeping");
     }
 };
 
@@ -222,11 +218,11 @@ struct PointAttrs
 // bullet_autofit_valid = 0 or deforming = 1.
 const char *const kPropAttribNames[] = {
     "mass", "friction", "bounce", "lineardamping", "angulardamping", "gravityscale",
-    "bullet_want_deactivate", "bullet_ignore", "deforming", "bullet_autofit_valid",
+    "enablesleep", "enabled", "awake", "deforming", "bullet_autofit_valid",
     "pscale", "scale",      // a plain point's convex / concave fallback box
     "collision_category", "collision_mask", "animated", "density", "computemass",
     "inertialtensorstiffness", "sleepthreshold", "ccdthreshold", "fastobject",
-    "min_activation_impulse", "collision_group", "dead", "bullet_sleeping",
+    "collision_group", "dead",
     "contactrecycling", "lock_linear", "lock_angular", "fastrotation",
     "name",                 // joint anchors find bodies by it
 };
@@ -1025,8 +1021,7 @@ nonNegative(float v, float fallback)
 }
 
 // A point's changeable settings. Building and comparing both read through here, so an
-// untouched point compares equal. sleepOk is the creation rule; scans of existing bodies only
-// take bullet_want_deactivate (enablesleep is creation only, as in Bullet).
+// untouched point compares equal. (`awake` is not a setting: see startAwakeFor.)
 Box3DBodyProps
 readDynamicProps(const b3dop::BodySettings &node, const PointAttrs &a, GA_Offset off)
 {
@@ -1048,10 +1043,8 @@ readDynamicProps(const b3dop::BodySettings &node, const PointAttrs &a, GA_Offset
         const float g = a.gravityscale.get(off);
         if (std::isfinite(g)) p.gravityScale = g;      // may be negative
     }
-    p.sleepOk = node.enableSleep;
-    if (a.enablesleep.isValid())    p.sleepOk = a.enablesleep.get(off) != 0;
-    if (a.wantDeactivate.isValid()) p.sleepOk = a.wantDeactivate.get(off) != 0;
-    p.ignored = a.ignore.isValid() && a.ignore.get(off) != 0;
+    p.enableSleep = a.enablesleep.isValid() ? a.enablesleep.get(off) != 0 : node.enableSleep;
+    p.enabled     = !a.enabled.isValid() || a.enabled.get(off) != 0;
 
     p.computeMass = a.computeMass.isValid() ? a.computeMass.get(off) != 0 : node.computeMass;
     p.density     = node.density;
@@ -1086,12 +1079,6 @@ readDynamicProps(const b3dop::BodySettings &node, const PointAttrs &a, GA_Offset
     p.fastObject = a.fastObject.isValid() ? a.fastObject.get(off) != 0 : node.isBullet;
     p.fastRotation = a.fastRotation.isValid() && a.fastRotation.get(off) != 0;
     p.contactRecycling = a.contactRecycling.isValid() ? a.contactRecycling.get(off) != 0 : node.contactRecycling;
-    p.minActivationImpulse = 0.0f;
-    if (a.minActivation.isValid())
-    {
-        const float m = a.minActivation.get(off);
-        if (m > 0.0f && std::isfinite(m)) p.minActivationImpulse = m;
-    }
     if (a.collisionCategory.isValid())
         p.filter.category = uint64_t(a.collisionCategory.get(off));
     if (a.collisionMask.isValid())
@@ -1183,6 +1170,14 @@ applyBodyMass(b3dop::Box3DWorld &world, b3dop::BodyHandle h, const Box3DBodyProp
     world.applyMassByHandle(h, boxDensity(p, volume), true, p.inertiaScale, setShapeDensity);
 }
 
+// `awake` for a new body: the point's value, else the Box3D Data default. (Box3D starts a body that
+// may not sleep awake whatever this says.)
+bool
+startAwakeFor(const b3dop::BodySettings &node, const PointAttrs &a, GA_Offset off)
+{
+    return a.awake.isValid() ? a.awake.get(off) != 0 : node.startAwake;
+}
+
 // The node's settings with a point's values applied.
 b3dop::BodySettings
 settingsFor(const b3dop::BodySettings &node, const Box3DBodyProps &p, b3dop::BodySettings::Type type)
@@ -1194,7 +1189,8 @@ settingsFor(const b3dop::BodySettings &node, const Box3DBodyProps &p, b3dop::Bod
     b.linearDamping  = p.linearDamping;
     b.angularDamping = p.angularDamping;
     b.gravityScale   = p.gravityScale;
-    b.enableSleep    = p.sleepOk;
+    b.enableSleep    = p.enableSleep;
+    b.startEnabled   = p.enabled;
     b.filter         = p.filter;
     b.locks          = p.locks;
     b.sleepThreshold = p.sleepThreshold;
@@ -1418,7 +1414,9 @@ addPointBody(ScanContext &ctx, const Box3DPointSlot &s, const ShapePlan &plan, b
     storePlan(entry, plan);
 
     b3dop::BodySettings b = settingsFor(ctx.node, p, wantedType(ctx.node, s.active, animated, entry.shapeless));
-    b.density = boxDensity(p, plan.shapes.totalVolume);
+    b.density    = boxDensity(p, plan.shapes.totalVolume);
+    b.startAwake = startAwakeFor(ctx.node, ctx.a, s.off);
+    entry.awake  = b.startAwake;
 
     const b3dop::BodyHandle h = world.createBody(b, st.pos, st.rot, &entry);
     if (!h)
@@ -1433,14 +1431,13 @@ addPointBody(ScanContext &ctx, const Box3DPointSlot &s, const ShapePlan &plan, b
         applyBodyMass(world, h, p, plan.shapes.totalVolume, false);
 
         // After the mass is final (a moving centre of mass shifts the velocity). Animated bodies
-        // follow their point instead.
+        // follow their point instead. Not for a body that starts asleep or disabled: a velocity
+        // would wake it (Box3D), so its `v` only takes effect once something wakes it.
         const bool hasVel = st.lin[0] != 0.0f || st.lin[1] != 0.0f || st.lin[2] != 0.0f ||
                             st.ang[0] != 0.0f || st.ang[1] != 0.0f || st.ang[2] != 0.0f;
-        if (hasVel && b.type != b3dop::BodySettings::Type::Static && !animated)
+        if (hasVel && b.type != b3dop::BodySettings::Type::Static && !animated && world.isAwakeByHandle(h))
             world.setVelocityByHandle(h, st.lin, st.ang);
     }
-    if (p.ignored)
-        world.setEnabledByHandle(h, false);     // bullet_ignore
     return h;
 }
 
@@ -1552,18 +1549,18 @@ applyPropChanges(b3dop::Box3DWorld &world, Box3DBodyMirror &e, const Box3DBodyPr
         world.setContactRecyclingByHandle(h, p.contactRecycling);
         changed |= kPropsChanged;
     }
-    if (p.sleepOk != o.sleepOk)
+    if (p.enableSleep != o.enableSleep)
     {
-        world.setSleepEnabledByHandle(h, p.sleepOk);
+        world.setSleepEnabledByHandle(h, p.enableSleep);
         changed |= kPropsChanged;
     }
-    if (p.ignored != o.ignored)
+    if (p.enabled != o.enabled)
     {
-        world.setEnabledByHandle(h, !p.ignored);
+        world.setEnabledByHandle(h, p.enabled);
+        if (p.enabled)
+            e.awake = true;             // Box3D enables a body awake; the awake check after this applies a 0
         changed |= kPropsChanged;
     }
-    if (p.minActivationImpulse != o.minActivationImpulse)
-        changed |= kPropsChanged;       // read after the step; nothing to push
     e.props = p;
     return changed;
 }
@@ -1613,7 +1610,7 @@ nodeSettingsHash(const b3dop::BodySettings &n, bool addImpact)
 {
     const float v[] = { n.mass, n.friction, n.restitution, n.linearDamping, n.angularDamping, n.gravityScale,
                         n.density, n.computeMass ? 1.0f : 0.0f, n.sleepThreshold, n.isBullet ? 1.0f : 0.0f,
-                        n.contactRecycling ? 1.0f : 0.0f, n.ccdThreshold };
+                        n.contactRecycling ? 1.0f : 0.0f, n.ccdThreshold, n.enableSleep ? 1.0f : 0.0f };
     return b3dop::mixHash(b3dop::hashFloats(v, sizeof(v) / sizeof(v[0])), addImpact ? 1 : 2);
 }
 
@@ -1634,8 +1631,6 @@ updateExistingBody(ScanContext &ctx, Box3DSharedState &st, Box3DPointSlot &s, Bo
     if (rebuild || checkProps)
     {
         Box3DBodyProps p = ctx.props(off);
-        if (!a.wantDeactivate.isValid())
-            p.sleepOk = entry.props.sleepOk;        // enablesleep is creation only
         bool shapesRebuilt = false;
         if (rebuild)
         {
@@ -1656,11 +1651,19 @@ updateExistingBody(ScanContext &ctx, Box3DSharedState &st, Box3DPointSlot &s, Bo
             ++c.updated;
         if (p.computeMass && (shapesRebuilt || (changed & kMassChanged)))
             writes |= Box3DPointWrite::kMass;
-        // A user-written bullet_sleeping = 0 wakes the body.
-        if (entry.sleeping && a.sleeping.isValid() && a.sleeping.get(off) == 0)
+        // `awake` written since the solver last read or wrote it: 1 wakes the body, 0 puts it to sleep
+        // (with whatever touches it). A disabled body is skipped until it is enabled.
+        if (a.awake.isValid() && p.enabled)
         {
-            world.wakeByHandle(entry.handle);
-            entry.sleeping = false;
+            const bool want = a.awake.get(off) != 0;
+            if (want != entry.awake)
+            {
+                if (want)
+                    world.wakeByHandle(entry.handle);
+                else
+                    world.sleepByHandle(entry.handle);
+                entry.awake = want;
+            }
         }
     }
 
@@ -1774,7 +1777,6 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c, StepProgr
     StringAttr         names;
     names.bind(nameH);
     const bool         keepNames = st.wantNames && names.valid();
-    os.activation.clear();
 
     // ---- pass 1 (parallel): read every point ---------------------------------
     // Offsets first (serial); a slot forgets its cached entry when its offset or key changed.
@@ -1967,7 +1969,6 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c, StepProgr
             static_cast<Box3DBodyPose &>(*entry) = s.cur;
             entry->type     = wantedType(node, s.active, animated, entry->shapeless);
             entry->handle   = handle;
-            entry->sleeping = false;
             entry->driven   = false;
             if (p.computeMass)
                 writes |= Box3DPointWrite::kMass;
@@ -1997,8 +1998,6 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c, StepProgr
             if (!n.empty())
                 os.byName.emplace(std::move(n), entry);     // the first point of a name wins
         }
-        if (!s.active && entry->props.minActivationImpulse > 0.0f)
-            os.activation.push_back(entry);
     }
 
     // Problems (retried and reported every step), deforming and driven bodies keep it scanning.
@@ -2293,43 +2292,7 @@ recordImpacts(Box3DSharedState &st, SIM_ObjectArray &objects, const SIM_Time &no
     st.impactObjects.swap(wrote);
 }
 
-// An inactive body hit with at least min_activation_impulse turns dynamic now and moves from the next step (Box3D reports impulses
-// after the step; Bullet can activate within it). Its `active` is set to 1.
-void
-activateByImpact(Box3DSharedState &st)
-{
-    for (auto &kv : st.objectSync)
-    {
-        const Box3DObjectSync &os = kv.second;
-        if (os.visited != st.syncStamp)
-            continue;
-        for (Box3DBodyMirror *e : os.activation)
-        {
-            if (!e->handle || e->dynamic() || e->props.minActivationImpulse <= 0.0f)
-                continue;
-            st.world.getContactsByHandle(e->handle, st.contacts);
-            bool hit = false;
-            for (const b3dop::ContactPoint &cp : st.contacts)
-            {
-                if (cp.impulse < e->props.minActivationImpulse)
-                    continue;
-                hit = true;
-                break;
-            }
-            if (!hit)
-                continue;
-            st.world.setTypeByHandle(e->handle, b3dop::BodySettings::Type::Dynamic);
-            e->type     = b3dop::BodySettings::Type::Dynamic;
-            e->animated = false;
-            e->driven   = false;
-            applyBodyMass(st.world, e->handle, e->props, e->volume);
-            st.world.wakeByHandle(e->handle);
-            queuePointWrite(st, *e, Box3DPointWrite::kActivate);
-        }
-    }
-}
-
-// The queued point writes: bullet_autofit_valid = 1, the computed `mass`, `active` = 1. A point
+// The queued point writes: bullet_autofit_valid = 1 and the computed `mass`. A point
 // that cannot be found keeps its value (a missed bullet_autofit_valid just refits again).
 void
 writePointAttrs(Box3DSharedState &st, SIM_ObjectArray &objects)
@@ -2357,7 +2320,6 @@ writePointAttrs(Box3DSharedState &st, SIM_ObjectArray &objects)
                 gdp->addFloatTuple(GA_ATTRIB_POINT, "mass", 1);
             GA_RWHandleI valid(gdp, GA_ATTRIB_POINT, "bullet_autofit_valid");
             GA_RWHandleF mass(gdp, GA_ATTRIB_POINT, "mass");
-            GA_RWHandleI act(gdp, GA_ATTRIB_POINT, "active");
             const PointAttrs a(gdp);
             resolvePointOffsets(gdp, a, items, begin, end);
             for (size_t k = begin; k < end; ++k)
@@ -2375,20 +2337,12 @@ writePointAttrs(Box3DSharedState &st, SIM_ObjectArray &objects)
                     mass.set(w.off, w.mass);
                     wrote |= Box3DPointWrite::kMass;
                 }
-                if ((w.flags & Box3DPointWrite::kActivate) && act.isValid())
-                {
-                    act.set(w.off, 1);
-                    wrote |= Box3DPointWrite::kActivate;
-                }
             }
             if (wrote & Box3DPointWrite::kAutofitValid) valid.getAttribute()->bumpDataId();
             if (wrote & Box3DPointWrite::kMass)         mass.getAttribute()->bumpDataId();
-            if (wrote & Box3DPointWrite::kActivate)     act.getAttribute()->bumpDataId();
         }
         if (wrote)
             recordFingerprintAfterWrite(st, *obj);
-        if (wrote & Box3DPointWrite::kActivate)
-            forceScan(st, obj->getObjectId());      // so the scan keeps the body dynamic
     });
     items.clear();
 }
@@ -2620,7 +2574,7 @@ applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects, bool wake)
 
         for (Box3DBodyMirror *e : os.bodies)
         {
-            if (!e->handle || !e->dynamic() || e->props.ignored)
+            if (!e->handle || !e->dynamic() || !e->props.enabled)
                 continue;
             if (!wake && !world.isAwakeByHandle(e->handle))
                 continue;                       // Box3D would ignore the force anyway
@@ -3080,7 +3034,6 @@ SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
         B3D_LOG("  joints: %d broke", broke);
     // Contacts are read before the queued point writes, aging and deletions.
     recordImpacts(*st, objects, engine.getSimulationTime());
-    activateByImpact(*st);
     writePointAttrs(*st, objects);
     if (getEnableAging())
         ageObjects(*st, objects, float(dt));
@@ -3313,11 +3266,12 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
             w.packedIdx = int(packedWrites.size());
             packedWrites.emplace_back();
         }
-        // bullet_sleeping: only changes are written.
-        if (mv.fellAsleep != entry->sleeping)
+        // `awake`: only changes are written (and only if the attribute exists).
+        const bool nowAwake = !mv.fellAsleep;
+        if (nowAwake != entry->awake)
         {
-            w.sleepState    = mv.fellAsleep ? 1 : 0;
-            entry->sleeping = mv.fellAsleep;
+            w.awakeState = nowAwake ? 1 : 0;
+            entry->awake = nowAwake;
         }
     }
     if (items.empty())
@@ -3378,11 +3332,11 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
 
         // ---- pass 2 (parallel): write attributes, one task per body ------------
         GA_RWHandleV3 pOut(gdp, GA_ATTRIB_POINT, "P");
-        GA_RWHandleI  sleepOut(gdp, GA_ATTRIB_POINT, "bullet_sleeping");      // only if it exists
-        bool anySleepWrite = false;
-        if (sleepOut.isValid())
-            for (size_t k = begin; k < end && !anySleepWrite; ++k)
-                anySleepWrite = items[k].sleepState >= 0 && items[k].off != GA_INVALID_OFFSET;
+        GA_RWHandleI  awakeOut(gdp, GA_ATTRIB_POINT, "awake");      // only if it exists
+        bool anyAwakeWrite = false;
+        if (awakeOut.isValid())
+            for (size_t k = begin; k < end && !anyAwakeWrite; ++k)
+                anyAwakeWrite = items[k].awakeState >= 0 && items[k].off != GA_INVALID_OFFSET;
 #ifdef BOX3DDOP_DEBUG
         const bool verifyReadback = B3D_ENV_INT("BOX3DDOP_VERIFY_READBACK", 0) != 0;
 #endif
@@ -3393,7 +3347,7 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
                                  qOut.isValid() ? qOut.getAttribute() : nullptr,
                                  vOut.isValid() ? vOut.getAttribute() : nullptr,
                                  wOut.isValid() ? wOut.getAttribute() : nullptr,
-                                 anySleepWrite ? sleepOut.getAttribute() : nullptr });
+                                 anyAwakeWrite ? awakeOut.getAttribute() : nullptr });
 
         parallelForEach(end - begin, [&](size_t j) {
             Box3DWriteItem &w = items[begin + j];
@@ -3406,7 +3360,7 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
             if (qOut.isValid()) qOut.set(off, UT_QuaternionF(mv.rot[0], mv.rot[1], mv.rot[2], mv.rot[3]));
             if (vOut.isValid()) vOut.set(off, UT_Vector3(w.lin[0], w.lin[1], w.lin[2]));
             if (wOut.isValid()) wOut.set(off, UT_Vector3(w.ang[0], w.ang[1], w.ang[2]));
-            if (anySleepWrite && w.sleepState >= 0) sleepOut.set(off, int(w.sleepState));
+            if (anyAwakeWrite && w.awakeState >= 0) awakeOut.set(off, int(w.awakeState));
 
             // Packed: the new 3x3 (the scale the sync read, the new rotation) is computed here and
             // written in pass 3, to the primitive the last sync stored.
@@ -3468,7 +3422,7 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
                                     qOut.isValid() ? qOut.getAttribute() : nullptr,
                                     vOut.isValid() ? vOut.getAttribute() : nullptr,
                                     wOut.isValid() ? wOut.getAttribute() : nullptr,
-                                    anySleepWrite ? sleepOut.getAttribute() : nullptr })
+                                    anyAwakeWrite ? awakeOut.getAttribute() : nullptr })
             if (attr)
                 attr->bumpDataId();
 

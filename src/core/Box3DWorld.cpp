@@ -582,6 +582,8 @@ Box3DWorld::createBody(const BodySettings &body, const double position[3], const
     def.angularDamping = body.angularDamping;
     def.gravityScale   = body.gravityScale;
     def.enableSleep    = body.enableSleep;      // Box3D applies the world switch on top
+    def.isAwake        = body.startAwake;       // Box3D: a body that cannot sleep starts awake anyway
+    def.isEnabled      = body.startEnabled;
     def.isBullet       = body.isBullet;
     def.allowFastRotation = body.fastRotation;
     def.enableContactRecycling = body.contactRecycling;
@@ -1089,6 +1091,17 @@ Box3DWorld::wakeByHandle(BodyHandle h)
     const b3BodyId id = unpackBody(h);
     if (b3Body_GetType(id) != b3_staticBody)
         b3Body_SetAwake(id, true);
+}
+
+void
+Box3DWorld::sleepByHandle(BodyHandle h)
+{
+    if (!h || !myImpl->settings.enableSleep)
+        return;
+    const b3BodyId id = unpackBody(h);
+    if (b3Body_GetType(id) == b3_staticBody || !b3Body_IsEnabled(id) || !b3Body_IsSleepEnabled(id))
+        return;
+    b3Body_SetAwake(id, false);
 }
 
 bool
