@@ -262,14 +262,21 @@ at body/world creation; a rebuild (Reset Simulation or thread-count change) re-r
 
 ### Skipping the sync scan
 
+(Per object, a skipped step also avoids `SIM_Box3DData::toBodySettings()`: only the body type is read for the fingerprint;
+the full settings are built when a scan runs. `currentWorkerCount()` is what the per-step world-usable check reads, not the
+whole `currentWorldSettings()`.)
+
 Passes 1 and 2 read and compare every point, including sleeping ones. For an object that nobody touched they find nothing,
 so each object keeps a `Box3DObjectSync` record in `Box3DSharedState::objectSync` with a `Box3DSyncFingerprint`: point
 count, size of the point offset range, the data ids of `P`, `orient`, `v`, `w`, `id`, `active` (absent = its own value), and
 the Box3D Data body type (a change retypes existing bodies, which the scan applies). A GA data id changes whenever the
 attribute is written, which is what makes it a change marker.
 
-* Recorded at the end of a full scan, and again by `writeResultsBack` after it bumps the ids of what it wrote (otherwise our
-  own write would defeat the skip every step).
+* Recorded at the end of a full scan, and again at the end of `writeResultsBack`: after it bumped the ids of what it wrote
+  AND after every write lock is released (releasing a write lock may bump ids again), from a read of the geometry as the
+  next step will see it. Otherwise our own write would defeat the skip every step. If a debug log shows
+  `full scan, changed: P <old>-><new>, ...` every step, the ids are being changed by something after the solver returns
+  (the line lists every marker that differs).
 * Next step, equal fingerprint -> `syncObject` counts the object's entries (`entryCount`) into `stampedCount` and returns the
   stored `hasDynamic`. Nothing per point runs; the mirror entries are untouched.
 * Because entries are not re-stamped, the stamp check is per object: each record has `liveStamp` (what its entries carry
@@ -384,7 +391,9 @@ compiled against the HDK; compare a rotated `bullet_primR` box against a Bullet 
    velocity for it). Bodies moved by the caller never appear. Each event's user data is the
    body's mirror entry, which knows its point; velocity is fetched by handle (events carry none).
    Static / kinematic entries are skipped. Items are grouped per object (stable sort only when
-   there is more than one object).
+   there is more than one object and they are not already in order). Velocities are then fetched in a threaded pass
+   (>= 1024 items): Box3D has no bulk getter (two API calls per body), and its FAQ allows read-only calls from several
+   threads. Objects are found by binary search over `objects` (sorted by id), with no per-step map.
 1. Per object: `getOrMakeWritableGeometry`: `SIM_DATA_GET<SIM_GeometryCopy>`; if the object's
    Geometry is a different `SIM_Geometry` subclass (e.g. from RBD Packed Object), replace with a
    `SIM_GeometryCopy` using `SIM_DATA_RETURN_EXISTING | SIM_DATA_ADOPT_EXISTING_ON_DELETE`.
@@ -395,8 +404,8 @@ compiled against the HDK; compare a rotated `bullet_primR` box against a Bullet 
 3. Pass 1 (serial): `resolvePointOffsets`: the entry's stored point offset is verified against the
    write geometry (in range, `id` / point index still matches) and looked up again by point id if
    it is stale. Unresolvable bodies are counted and skipped (one warning).
-4. Pass 2 (parallel): `hardenAllPages()` on `P/orient/v/w` first (copy-on-write pages would
-   race), write attributes, compute the new packed matrix (not written yet), then store in the (distinct)
+4. Pass 2 (parallel): `hardenAllPages()` on `P/orient/v/w` first when the pass really runs in parallel (copy-on-write
+   pages would race; a serial pass unshares only the pages it writes), write attributes, compute the new packed matrix (not written yet), then store in the (distinct)
    mirror entry what the geometry now holds, WITHOUT reading it back. The mirror must equal what `readPointState`
    returns or our own write looks like an external edit next step: `P` = `b3dop::storedPosition` (double -> float ->
    double; a non-finite result keeps Box3D's value, as the read path treats it as absent), `v`/`w` unchanged (floats),

@@ -594,21 +594,30 @@ makeFingerprint(const GU_Detail *gdp, const PointAttrs &a, int nodeType)
     return fp;
 }
 
-// Which marker differs, for the debug log.
-const char *
-describeFingerprintDifference(const Box3DSyncFingerprint &a, const Box3DSyncFingerprint &b)
+#ifdef BOX3DDOP_DEBUG
+// Every marker that differs, with old -> new values, for the debug log.
+std::string
+describeFingerprintDifference(const Box3DSyncFingerprint &was, const Box3DSyncFingerprint &now)
 {
-    if (a.numPoints != b.numPoints)   return "point count";
-    if (a.numOffsets != b.numOffsets) return "point offset range";
-    if (a.pId != b.pId)               return "P";
-    if (a.orientId != b.orientId)     return "orient";
-    if (a.vId != b.vId)               return "v";
-    if (a.wId != b.wId)               return "w";
-    if (a.idId != b.idId)             return "id";
-    if (a.activeId != b.activeId)     return "active";
-    if (a.nodeType != b.nodeType)     return "Box3D Data body type";
-    return nullptr;
+    std::string out;
+    auto add = [&](const char *name, long long a, long long b) {
+        if (a == b) return;
+        char buf[96];
+        std::snprintf(buf, sizeof(buf), "%s%s %lld->%lld", out.empty() ? "" : ", ", name, a, b);
+        out += buf;
+    };
+    add("point count",  was.numPoints,  now.numPoints);
+    add("offset range", was.numOffsets, now.numOffsets);
+    add("P",       (long long)was.pId,      (long long)now.pId);
+    add("orient",  (long long)was.orientId, (long long)now.orientId);
+    add("v",       (long long)was.vId,      (long long)now.vId);
+    add("w",       (long long)was.wId,      (long long)now.wId);
+    add("id",      (long long)was.idId,     (long long)now.idId);
+    add("active",  (long long)was.activeId, (long long)now.activeId);
+    add("body type", was.nodeType, now.nodeType);
+    return out;
 }
+#endif
 
 // ---------------------------------------------------------------------------
 // Building the Box3D shapes for one point
@@ -997,8 +1006,17 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
     const int  objectId = obj.getObjectId();
     // Default settings for all points of an object (the Box3D Data DOP node), or
     // built-in defaults if the object has none.
+    // The full settings (a dozen option reads) are only needed by a scan, so they are built
+    // after the skip check; the skip check itself only needs the body type.
     const SIM_Box3DData *dataNode = SIM_DATA_GETCONST(obj, kDataName, SIM_Box3DData);
-    const b3dop::BodySettings node = dataNode ? dataNode->toBodySettings() : b3dop::BodySettings();
+    int nodeType = int(b3dop::BodySettings().type);
+    if (dataNode)
+    {
+        const int bt = int(dataNode->getBodyType());       // same mapping as toBodySettings()
+        nodeType = int(bt == 0 ? b3dop::BodySettings::Type::Static
+                     : bt == 1 ? b3dop::BodySettings::Type::Kinematic
+                               : b3dop::BodySettings::Type::Dynamic);
+    }
     b3dop::Box3DWorld &world = st.world;
     bool hasDynamic = false;
 
@@ -1013,7 +1031,7 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
     // or another marked attribute is not noticed on a skipped step.
     Box3DObjectSync &os = st.objectSync[objectId];
     os.visited = st.syncStamp;
-    const Box3DSyncFingerprint fpNow = makeFingerprint(gdp, a, int(node.type));
+    const Box3DSyncFingerprint fpNow = makeFingerprint(gdp, a, nodeType);
     if (os.canSkip && fpNow == os.fp)
     {
         ++c.skipped;
@@ -1022,9 +1040,10 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
     }
 #ifdef BOX3DDOP_DEBUG
     if (os.canSkip)
-        B3D_LOG("  object id=%d: full scan, %s changed", objectId,
-                describeFingerprintDifference(fpNow, os.fp));
+        B3D_LOG("  object id=%d: full scan, changed: %s", objectId,
+                describeFingerprintDifference(os.fp, fpNow).c_str());
 #endif
+    const b3dop::BodySettings node = dataNode ? dataNode->toBodySettings() : b3dop::BodySettings();
     os.canSkip   = false;
     os.liveStamp = st.syncStamp;        // entries stamped below are current under this
     size_t stamped = 0;                 // entries stamped by this scan
@@ -1365,6 +1384,17 @@ SIM_SolverBox3D::getRequestedCacheSubclass() const
     return value;
 }
 
+int
+SIM_SolverBox3D::currentWorkerCount() const
+{
+    // Box3D runs its own thread pool (not Houdini's). "Use All Threads" means every
+    // logical core; otherwise use the Threads parm. Read once per step, so the core
+    // count is looked up once.
+    static const int cores = int(std::thread::hardware_concurrency());
+    int n = getAutoThreads() ? cores : int(getThreads());
+    return n < 1 ? 1 : (n > 32 ? 32 : n);       // Box3D's maximum is 32
+}
+
 b3dop::WorldSettings
 SIM_SolverBox3D::currentWorldSettings() const
 {
@@ -1374,14 +1404,7 @@ SIM_SolverBox3D::currentWorldSettings() const
     s.gravity[1]  = g.y();
     s.gravity[2]  = g.z();
     s.subSteps    = static_cast<int>(getSubSteps());
-    {
-        // Box3D runs its own thread pool (not Houdini's). "Use All Threads"
-        // means every logical core; otherwise use the Threads parm.
-        int n = static_cast<int>(getThreads());
-        if (getAutoThreads())
-            n = static_cast<int>(std::thread::hardware_concurrency());
-        s.workerCount = n < 1 ? 1 : (n > 32 ? 32 : n);      // Box3D's maximum is 32
-    }
+    s.workerCount = currentWorkerCount();
     s.enableSleep = getEnableSleep();
     return s;
 }
@@ -1424,7 +1447,7 @@ SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
         else
         {
             std::lock_guard<std::mutex> lock(st->mutex);
-            if (st->world.settings().workerCount != currentWorldSettings().workerCount)
+            if (st->world.settings().workerCount != currentWorkerCount())
             {
                 // Box3D sizes its thread pool when the world is created, so a
                 // new thread count means a new world. The DOP objects hold the
@@ -1626,34 +1649,56 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
         }
         if (!lastOs || lastOs->visited != st->syncStamp || entry->stamp != lastOs->liveStamp)
             continue;                       // not seen by this step's sync
+        if (!entry->handle)
+        {
+            ++missing;                      // leave the point alone; next sync re-snapshots it
+            continue;
+        }
         items.emplace_back();
         Box3DWriteItem &w = items.back();
         w.entry    = entry;
         w.objectId = entry->objectId;
         for (int i = 0; i < 3; ++i) w.s.pos[i] = mv.pos[i];
         for (int i = 0; i < 4; ++i) w.s.rot[i] = mv.rot[i];
-        if (!world.getVelocityByHandle(mv.handle, w.s.lin, w.s.ang))
-        {
-            ++missing;                      // leave the point alone; next sync re-snapshots it
-            items.pop_back();
-        }
     }
     if (items.empty())
         return;
+
+    // Move events carry no velocity, and Box3D has no bulk getter: two API calls per body.
+    // The step is over, and Box3D allows read-only calls from several threads, so the
+    // fetch is threaded when there are many bodies. Each task writes only its own item.
+    parallelForEach(items.size(), [&](size_t i) {
+        Box3DWriteItem &w = items[i];
+        world.getVelocityByHandle(w.entry->handle, w.s.lin, w.s.ang);
+    }, kMinParallelWrite);
 
     // One run of items per object, so each object's geometry is locked once. A
     // single object (the usual case) needs no sort.
     bool oneObject = true;
     for (const Box3DWriteItem &w : items)
         if (w.objectId != items.front().objectId) { oneObject = false; break; }
-    if (!oneObject)
-        std::stable_sort(items.begin(), items.end(),
-                         [](const Box3DWriteItem &x, const Box3DWriteItem &y) { return x.objectId < y.objectId; });
+    const auto byObject = [](const Box3DWriteItem &x, const Box3DWriteItem &y) { return x.objectId < y.objectId; };
+    if (!oneObject && !std::is_sorted(items.begin(), items.end(), byObject))    // sorting allocates; often not needed
+        std::stable_sort(items.begin(), items.end(), byObject);
 
-    std::unordered_map<int, exint> objectIndex;
-    for (exint i = 0; i < objects.entries(); ++i)
-        objectIndex[objects(i)->getObjectId()] = i;
+    // `objects` is sorted by object id, so an object is found by binary search; no map to
+    // build every step. (A linear scan is the fallback should that ever not hold.)
+    auto findObject = [&](int id) -> SIM_Object * {
+        exint lo = 0, hi = objects.entries();
+        while (lo < hi)
+        {
+            const exint mid = lo + (hi - lo) / 2;
+            const int   mid_id = objects(mid)->getObjectId();
+            if (mid_id == id) return objects(mid);
+            if (mid_id < id) lo = mid + 1; else hi = mid;
+        }
+        for (exint i = 0; i < objects.entries(); ++i)
+            if (objects(i)->getObjectId() == id)
+                return objects(i);
+        return nullptr;
+    };
 
+    std::vector<SIM_Object *> refresh;      // objects whose geometry we wrote (see the end)
     for (size_t runBegin = 0; runBegin < items.size();)
     {
         size_t runEnd = runBegin;
@@ -1662,10 +1707,9 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
         const size_t begin = runBegin, end = runEnd;
         runBegin = runEnd;
 
-        const auto oi = objectIndex.find(items[begin].objectId);
-        if (oi == objectIndex.end())
+        SIM_Object *obj = findObject(items[begin].objectId);
+        if (!obj)
             continue;
-        SIM_Object *obj = objects(oi->second);
 
         SIM_GeometryCopy *geo = getOrMakeWritableGeometry(*obj);
         if (!geo)
@@ -1682,6 +1726,7 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
         GU_Detail *gdp = gdpPtr(lock.getGdp());
         if (!gdp)
             continue;
+        refresh.push_back(obj);     // fingerprint is re-recorded after the lock is released (below)
 
         const bool createdOrient = ensureResultAttribs(gdp);
 
@@ -1715,12 +1760,16 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
 #ifdef BOX3DDOP_DEBUG
         const bool verifyReadback = B3D_ENV_INT("BOX3DDOP_VERIFY_READBACK", 0) != 0;
 #endif
-        for (GA_Attribute *attr : { pOut.isValid() ? pOut.getAttribute() : nullptr,
-                                    qOut.isValid() ? qOut.getAttribute() : nullptr,
-                                    vOut.isValid() ? vOut.getAttribute() : nullptr,
-                                    wOut.isValid() ? wOut.getAttribute() : nullptr })
-            if (attr)
-                attr->hardenAllPages();
+        // Hardening copies every shared page of the attribute, however few points are
+        // written. A serial pass does not need it (set() unshares the pages it touches), so
+        // only a pass that will really run in parallel pays for it.
+        if (end - begin >= kMinParallelWrite)
+            for (GA_Attribute *attr : { pOut.isValid() ? pOut.getAttribute() : nullptr,
+                                        qOut.isValid() ? qOut.getAttribute() : nullptr,
+                                        vOut.isValid() ? vOut.getAttribute() : nullptr,
+                                        wOut.isValid() ? wOut.getAttribute() : nullptr })
+                if (attr)
+                    attr->hardenAllPages();
 
         parallelForEach(end - begin, [&](size_t j) {
             Box3DWriteItem      &w   = items[begin + j];
@@ -1819,14 +1868,6 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
             if (attr)
                 attr->bumpDataId();
 
-        // The ids just changed because of OUR write; record them so next step's skip check
-        // does not read them as an external edit.
-        {
-            const auto f = st->objectSync.find(items[begin].objectId);
-            if (f != st->objectSync.end() && f->second.canSkip)
-                f->second.fp = makeFingerprint(gdp, a, f->second.fp.nodeType);
-        }
-
         // ---- pass 3 (serial): packed primitive rotation ----------------------
         // setLocalTransform + transformDirty stay serial: the HDK pages do not
         // say whether they touch shared state.
@@ -1844,6 +1885,25 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
             }
             setLocal3(*static_cast<GU_PrimPacked *>(gdp->getPrimitive(w.primOff)), w.newM3);
         }
+    }
+
+    // The ids changed because of OUR write (and releasing a write lock may bump them again
+    // too), so record them now that every lock is released, from a read of the geometry as
+    // the next step will see it. Otherwise our own write would defeat the sync skip.
+    for (SIM_Object *obj : refresh)
+    {
+        const auto f = st->objectSync.find(obj->getObjectId());
+        if (f == st->objectSync.end() || !f->second.canSkip)
+            continue;
+        const SIM_Geometry *geo = SIM_DATA_GETCONST(*obj, SIM_GEOMETRY_DATANAME, SIM_Geometry);
+        if (!geo)
+            continue;
+        SIM_GeometryAutoReadLock rlock(geo);
+        const GU_Detail *gdp = gdpPtr(rlock.getGdp());
+        if (!gdp)
+            continue;
+        const PointAttrs a(gdp);
+        f->second.fp = makeFingerprint(gdp, a, f->second.fp.nodeType);
     }
 
     if (missing)

@@ -46,6 +46,7 @@ protected:
 
 private:
     b3dop::WorldSettings currentWorldSettings() const;
+    int                  currentWorkerCount() const;    // what currentWorldSettings().workerCount would be, without reading the rest
 
     // Find the world data on any of the objects, or create it on the lowest-id
     // object. Uses the non-const accessor only on the object that carries it.

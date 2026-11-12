@@ -668,11 +668,16 @@ Box3DWorld::getMoveEvent(int index, BodyMove &out) const
 int
 Box3DWorld::getMoveEvents(std::vector<BodyMove> &out) const
 {
-    out.clear();
     if (!isValid())
+    {
+        out.clear();
         return 0;
+    }
     const b3BodyEvents ev = b3World_GetBodyEvents(myImpl->worldId);
-    out.resize(size_t(ev.moveCount));
+    // Every element is overwritten below, so only a size change needs the vector to
+    // construct anything (clear() + resize() would zero the whole array every step).
+    if (out.size() != size_t(ev.moveCount))
+        out.resize(size_t(ev.moveCount));
     for (int i = 0; i < ev.moveCount; ++i)
     {
         const b3BodyMoveEvent &e = ev.moveEvents[i];
