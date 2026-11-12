@@ -28,6 +28,13 @@ not notice: how the solver does something, Box3D internals and terms (density, r
 performance mechanics, unverified HDK details. Those belong here. When a change adds a feature, add one line or table
 row to the README if users need it, and put the explanation here.
 
+README rules (hard limits, not suggestions):
+- Never add more than one or two sentences, or one table row, per change. Do not grow a section to explain a feature.
+- No implementation details: no function, class or HDK names, locks, fingerprints, step ordering, clearing or caching
+  behaviour. If a sentence says how the code works, it goes in this file.
+- Do not rewrite or expand existing README text while making an unrelated change. Trim, don't pad.
+- Before finishing a task, re-read any README edit and cut it down.
+
 ## Layout
 
 ```
@@ -546,3 +553,10 @@ convention, and Bullet's `bullet_primR` order and `bullet_length` meaning (Bulle
 * Sanitize every new input path: Box3D asserts on non-unit quaternions and negative material values.
 * Row-vector matrices on the Houdini side; never mix with column-vector math.
 * Style: Allman braces, return type on its own line (HDK sample style), 4-space indent, aligned declarations.
+
+## Force and torque point attributes
+
+`applyExternalForces` also reads per-point `force` / `torque` (V3) attributes from each object's geometry, adds them to
+the Force DOP result for the same body, applies the sum, then zeroes the attributes it read (a write lock, followed by
+`recordFingerprintAfterWrite`, so the next sync does not see the clear as an external edit). Zeroing is needed because
+nothing else clears `force` without a POP Solver. The POP Force node must run before this solver.

@@ -16,7 +16,7 @@ I reused design decisions where possible from the RBD Bullet Solver, so it shoul
 You need CMake, a C++17 compiler, git, and a Houdini install (for the HDK). Clone with submodules so Box3D is included:
 
 ```
-git clone --recurse-submodules <this repo>
+git clone --recurse-submodules https://github.com/MysteryPancake/Houdini-Box3D
 ```
 
 ### Windows
@@ -125,24 +125,19 @@ The **Box3D Solver** also has **Time Scale** (slow or fast motion), **Enable Agi
 
 ### Forces
 
-The solver applies the **Force DOPs** connected to an object, the same way Houdini's own solvers do: Gravity Force, Wind Force, Fan Force, POP Force, Orbit Force and any custom `SIM_Force`. Connect the force node to the object the same way you would for any other solver. Per-point `force` and `torque` attributes (written by POP Force or any SOP/POP node before the solver) are applied too, in addition to the force DOPs; the solver zeroes them after reading, so they act for one step only.
+Force DOPs connected to an object (Gravity, Wind, Fan, POP Force, Orbit, custom) are applied, as are per-point `force` and `torque` attributes.
 
-Each force is evaluated once per step at every dynamic body's **centre of mass**, with the body's mass, linear velocity and angular velocity, and the sum of the forces and torques goes into Box3D for that step. Box3D integrates them in every substep, so a constant force gives the same result as the same acceleration from **Gravity**. Static and kinematic bodies, `bullet_ignore` bodies and bodies that are asleep (see below) take no force.
-
-- **Use Force DOPs** (on by default) turns this off if you only want the solver's own **Gravity**.
-- **Gravity adds to a Gravity Force.** The solver's **Gravity** parameter defaults to (0, -9.80665, 0). If you also wire a Gravity Force into the object, bodies fall twice as fast. Set **Gravity** to 0 when you use a Gravity Force.
-- **Forces Wake Bodies** (off by default). Off, a sleeping body ignores forces until something else wakes it, so a constant force such as gravity doesn't keep resting bodies awake. Turn it on for wind or a fan that should blow resting pieces away; every body with a non-zero force then stays awake.
-- Forces act at the centre of mass, so a force only spins a body if the Force DOP returns a torque. Per-body `gravityscale` only scales the solver's own Gravity, not a Gravity Force.
-- A force that returns NaN or infinity for a body is skipped for that body, with a warning on the node.
+- **Use Force DOPs** turns this off.
+- **Gravity adds to a Gravity Force.** Set the solver's **Gravity** to 0 when you use one, or bodies fall twice as fast.
+- **Forces Wake Bodies** (off by default) lets forces wake sleeping bodies. Turn it on for wind or fans.
+- Strong drag or wind can make bodies jitter or explode; lower the strength or raise Substeps.
 
 ### Contact recycling
 
-To save time, Box3D reuses a touching pair's contact points for the next step when the pair has barely moved: less than the solver's **Contact Recycle Distance** (default 0.05) and turned under about 10 degrees since the points were last computed. The reused points are slightly less exact, which very occasionally shows up as a ghost collision on a thin, fast or character-like body.
+Reuses contacts between barely-moving pairs to save time. Very occasionally this causes ghost collisions on thin or fast bodies.
 
-- **Contact Recycle Distance** (solver, 0.05) is one value for the whole world. Set it to 0 to turn recycling off everywhere; raise it for more speed and less accuracy. It can be animated.
-- **Contact Recycling** (Box3D Data, on) or the `contactrecycling` point attribute turns it off for individual bodies. A pair is recycled only if both bodies allow it, so switching it off on one body is enough.
-- Changing it on a body that already exists reaches the contacts it already has if the body is awake and dynamic (they are dropped and rebuilt on the next step, keeping its velocity). A sleeping, static or kinematic body only affects contacts made from then on.
-- Speculative Contacts off also turns recycling off.
+- **Contact Recycle Distance** (solver, 0.05): set to 0 to turn recycling off, raise it for more speed.
+- **Contact Recycling** (Box3D Data) or the `contactrecycling` attribute turns it off per body.
 
 ### Changing attributes during the simulation
 
@@ -180,29 +175,20 @@ Convex and concave shapes need **packed primitives** (one point plus one packed 
 
 ### Static Objects and collision relationships
 
-An object the solver does not solve, such as a **Static Object** DOP, collides with the solved objects when a collision relationship links them (an affector relationship, as with the Bullet solver). The solver reads these affectors every step and turns each one's **polygons** into a static Box3D triangle mesh, placed by the object's Houdini transform.
+A **Static Object** DOP collides with solved objects when a collision relationship links them, as with the Bullet solver. Only its polygons are used, not its SDF. Height fields aren't supported.
 
-- Only polygons are used (primitives that aren't polygons are ignored); polygons are fan-triangulated. A Static Object's collision volume / SDF is not used.
-- Triangle meshes are **one-sided**: Houdini's front faces (clockwise) are solid. If bodies fall through from the side that should be solid, turn on **Flip Static Mesh Winding** on a Box3D Data node attached to the affector. The same node's Friction and Bounce set the surface material (otherwise the defaults).
-- A Static Object whose transform is animated is moved each step (rigid motion only). Moving it does not push bodies or wake sleeping ones. For something that pushes, use a kinematic point (`active = 0`, `animated = 1`).
-- Scaled or sheared transforms are baked into the mesh, which is rebuilt whenever the transform changes.
-- The mesh is rebuilt when `P`, the polygons, the material or the winding setting change.
-- An object that is also being solved by the Box3D Solver is simulated from its points, never as an affector.
-- Height fields are not supported.
+- Meshes are one-sided. If bodies fall through, turn on **Flip Static Mesh Winding** on a Box3D Data node attached to the affector. Its Friction and Bounce set the surface material.
+- An animated Static Object doesn't push bodies. For something that pushes, use a kinematic point (`active = 0`, `animated = 1`).
 
 ### Things to know
 
-- Bullet's collision padding attributes (`bullet_collision_margin`, `bullet_adjust_geometry`, `bullet_shrink_amount`) are ignored. Box3D collides the exact shapes and doesn't need padding.
-- Bullet's solver settings (ERP, CFM, split impulse, iterations) have no equivalent; use Substeps and the contact settings above.
-- `concave` / `compound` are currently built as several convex hulls. Triangle meshes are used for affector (Static Object) geometry only (see above); a `concave` point is not yet turned into a mesh.
-- Negative `friction`, `bounce` and damping values are treated as 0.
-- Unlike Bullet, auto-fitted sizes are not written back to the `bullet_prim*`, `bullet_radius` and `bullet_length` attributes.
-- An inactive body hit hard enough starts moving on the step after the hit.
-- Use `id` if you delete points with `dead`. Without it, every later point counts as a new body.
+- Bullet's collision padding attributes and solver settings (ERP, CFM, iterations) are ignored. Use Substeps and the contact settings.
+- `concave` / `compound` are built as several convex hulls.
+- Auto-fitted sizes aren't written back to `bullet_prim*`, `bullet_radius` or `bullet_length`.
+- Use `id` if you delete points with `dead`, otherwise every later point counts as a new body.
 - Patterns don't match DOP groups yet.
-- Joints and constraints are not supported yet.
-- Force DOPs act on the centre of mass only (`getForce`); Houdini's area and volume force variants (`getForceOnSphere` and others) are not used.
-- Escape cancels a step, under Houdini's usual "Stepping simulation" progress bar. Escape is checked while bodies are being built (the slow part of the first frame) and just before Box3D steps, not during Box3D's own step. A cancelled step isn't cached; the next one rebuilds the Box3D world from the geometry.
+- Joints and constraints aren't supported yet.
+- Escape cancels a step.
 
 ## Troubleshooting
 
