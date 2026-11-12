@@ -1,6 +1,6 @@
 # Houdini Box3D
 
-Houdini DOP wrapper for [Box3D](https://github.com/erincatto/box3d), currently one of the fastest rigid body solvers.
+Houdini DOP wrapper for [Box3D](https://github.com/erincatto/box3d), one of the fastest rigid body solvers currently available.
 
 My goal with this project is to maintain Box3D's great performance inside Houdini.
 
