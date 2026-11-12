@@ -1,9 +1,13 @@
 # Houdini Box3D
 
-A Houdini DOP solver built on [Box3D](https://github.com/erincatto/box3d), one of the fastest rigid body engines available. The goal of this project is to keep as much of Box3D's performance as possible inside Houdini.
+A Houdini DOP solver built on [Box3D](https://github.com/erincatto/box3d), one of the fastest rigid body engines available.
+
+The goal of this project is to keep Box3D's great performance preserved inside Houdini.
 
 > [!CAUTION]
-> This is heavily vibe coded, as I'm still learning the HDK! This isn't normally how I develop software.
+> This is heavily vibe coded, as it was made for fun! This isn't normally how I develop software.
+> 
+> I've made many design and optimization decisions based on my own knowledge, but I'm still learning the HDK.
 
 ## Building
 
