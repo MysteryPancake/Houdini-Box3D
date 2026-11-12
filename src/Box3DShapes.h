@@ -5,7 +5,8 @@
 // in tests/core_physics.cpp without Houdini.
 //
 // The solver reads attributes off the points in the object's Geometry and
-// calls these. See README.md for the attribute table.
+// calls these. See README.md for the attribute table and AGENTS.md for how
+// they are used.
 #pragma once
 
 #include <cmath>

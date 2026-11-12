@@ -12,8 +12,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Box3D half works before involving the HDK.
 option(BOX3DDOP_CORE_ONLY "Build only the Houdini-free core and smoke test" OFF)
 
-# Debug logging in the Houdini plugin (see src/Box3DDebug.h). Turn OFF once the
-# copy-timing / defaults / requested-cache questions are answered.
+# Debug logging in the Houdini plugin (see src/Box3DDebug.h). On by default;
+# turn OFF for a quiet build.
 option(BOX3DDOP_DEBUG "Compile debug logging into the Houdini plugin" ON)
 
 # Where the Box3D source tree lives (the folder containing its CMakeLists.txt,

@@ -76,8 +76,9 @@ struct PointAttrs
     GA_ROHandleV3 v;           // vector linear velocity
     GA_ROHandleV3 w;           // vector angular velocity, radians / second
     GA_ROHandleQ  orient;      // quat   rotation
-    GA_ROHandleS  georep;      // string bullet_georep: convexhull, concave, box, capsule, cylinder,
-                               //        compound, sphere, none (cylinder / plane are not supported by Box3D)
+    GA_ROHandleS  georep;      // string bullet_georep: convexhull, concave, compound, box, sphere,
+                               //        capsule, none (see b3dop::parseShapeType; other values,
+                               //        e.g. cylinder / plane, use the node's Default Shape)
 
     explicit PointAttrs(const GU_Detail *gdp)
         : id(gdp, GA_ATTRIB_POINT, "id"),
@@ -125,8 +126,8 @@ sanitizeQuat(float q[4])
 // Everything that touches GU_PrimPacked is in this section, and the calls
 // whose exact HDK signature could not be checked without a Houdini build are
 // written so a different signature does not break the build (see the
-// *Packed* helpers below); the fallback is logged once and described in the
-// README.
+// *Packed* helpers below); the fallback is described in AGENTS.md ("Pieces and
+// packed geometry").
 // ---------------------------------------------------------------------------
 
 struct PackedInfo
@@ -688,7 +689,7 @@ pieceFromPoints(b3dop::Box3DWorld &world, const std::vector<float> &pts, Piece &
     return false;
 }
 
-// Decide what shapes a point's body gets. See README, "Convex and concave".
+// Decide what shapes a point's body gets. See AGENTS.md, "Pieces and packed geometry".
 //
 //  box / sphere : plain point  -> unit shape scaled by pscale * scale
 //                 packed point -> fitted to the packed geometry's bounds

@@ -3,7 +3,7 @@
 // Box3D Data: default Box3D settings for every point of a DOP object (like
 // Bullet Data). Attach to a DOP object (the registered DOP node does this).
 //
-// Per-point attributes (shape, friction, bounce, mass, active, ...) override
+// Per-point attributes (bullet_georep, friction, bounce, mass, active, ...) override
 // these; this node is only the fallback for points that do not have them.
 //
 // Mirrors b3dop::BodySettings, which mirrors the relevant parts of b3BodyDef

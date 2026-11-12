@@ -1,7 +1,7 @@
 // Box3DDebug.h
 //
 // Debug logging for the DOP plugin. Compiled in only when BOX3DDOP_DEBUG is
-// defined (CMake option BOX3DDOP_DEBUG, ON by default while bringing this up).
+// defined (CMake option BOX3DDOP_DEBUG, ON by default; pass OFF for a quiet build).
 //
 // Output goes to stderr (shown in Houdini's console window).
 //
@@ -24,14 +24,7 @@ namespace b3dop_dbg {
 
 struct Counters
 {
-    std::atomic<int> worldLive{0};        // SIM_Box3DWorld objects alive now
-    std::atomic<int> worldCreated{0};     // constructor calls
-    std::atomic<int> worldInitialized{0}; // initializeSubclass calls
-    std::atomic<int> worldCopied{0};      // makeEqualSubclass calls
-    std::atomic<int> worldDestroyed{0};   // destructor calls
-    std::atomic<int> stepsSolved{0};      // solveObjectsSubclass calls
     std::atomic<int> rebuilds{0};         // full world rebuilds
-    std::atomic<int> continues{0};        // steps that reused the live world
 };
 
 inline Counters &counters() { static Counters c; return c; }

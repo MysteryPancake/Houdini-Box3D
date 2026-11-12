@@ -54,7 +54,7 @@ struct BodySettings
     bool  enableSleep    = true;
     bool  isBullet       = false;
 
-    // Used when a point has no (or an unknown) `shape` attribute.
+    // Used when a point has no (or an unknown) `bullet_georep` attribute.
     ShapeType defaultShape = ShapeType::Box;
 
     // Convex shapes only: make one hull per set of connected primitives (a
