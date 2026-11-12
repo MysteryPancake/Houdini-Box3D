@@ -2362,14 +2362,21 @@ SIM_SolverBox3D::getDescription()
     static PRM_Default theSpeculativeDefault(1);
 
     static PRM_Template theTemplates[] = {
-        PRM_Template(PRM_FLT_J,  3, &theGravityName,  theGravityDefault),
-        PRM_Template(PRM_INT_J,  1, &theSubStepsName, &theSubStepsDefault, 0, &theSubStepsRange),
-        PRM_Template(PRM_TOGGLE, 1, &theAutoThreadsName, &theAutoThreadsDefault),
+        PRM_Template(PRM_FLT_J,  3, &theGravityName,  theGravityDefault, 0, 0, 0, 0, 1,
+                     "Acceleration applied to every dynamic body, in units per second squared. "
+                     "Scale it per body with Gravity Scale on Box3D Data."),
+        PRM_Template(PRM_INT_J,  1, &theSubStepsName, &theSubStepsDefault, 0, &theSubStepsRange, 0, 0, 1,
+                     "Solver passes per time step. More substeps make stacks and fast collisions more stable "
+                     "but take longer."),
+        PRM_Template(PRM_TOGGLE, 1, &theAutoThreadsName, &theAutoThreadsDefault, 0, 0, 0, 0, 1,
+                     "Use one Box3D worker thread per CPU core (up to 32). Turn off to set Threads yourself."),
         PRM_Template(PRM_INT_J,  1, &theThreadsName,  &theThreadsDefault, 0, &theThreadsRange,
                      0, 0, 1,
                      "Number of Box3D worker threads. Only used when Use All Threads is off.",
                      &theThreadsDisable),
-        PRM_Template(PRM_TOGGLE, 1, &theSleepName,    &theSleepDefault),
+        PRM_Template(PRM_TOGGLE, 1, &theSleepName,    &theSleepDefault, 0, 0, 0, 0, 1,
+                     "Let bodies that have come to rest stop simulating until something touches them. "
+                     "Turning this off keeps every body awake, whatever each body's own setting."),
         PRM_Template(PRM_FLT_J,  1, &theTimeScaleName, &theTimeScaleDefault, 0, &theTimeScaleRange, 0, 0, 1,
                      "Multiplies the time step: below 1 is slow motion, above 1 fast motion."),
         PRM_Template(PRM_FLT_J,  1, &thePushSpeedName, &thePushSpeedDefault, 0, &thePushSpeedRange, 0, 0, 1,

@@ -30,7 +30,7 @@ cmake --build build --config Release
 
 Always build **Release** or **RelWithDebInfo**, not Debug. The DLL is copied to `Documents\houdiniX.Y\dso` and the node icons to `Documents\houdiniX.Y\config\Icons`. Close Houdini before rebuilding.
 
-`build.bat` does the same thing in one step, but you need to edit the Houdini path at the top of the file first.
+`build.bat` does the same thing in one step and finds Houdini for you: it uses `%HFS%` if set, otherwise the install the Houdini installer recorded in the registry, otherwise the newest `Houdini X.Y.Z` folder under `Program Files\Side Effects Software`.
 
 ### Linux
 

@@ -60,7 +60,11 @@ endif()
 # HFS is set (Windows: "Houdini Command Line Tools"; Linux: source houdini_setup),
 # or pass -DCMAKE_PREFIX_PATH=<HFS>/toolkit/cmake
 # ---------------------------------------------------------------------------
-list(APPEND CMAKE_PREFIX_PATH "$ENV{HFS}/toolkit/cmake")
+# You can also skip HFS and pass -DHoudini_ROOT=<HFS>/toolkit/cmake: find_package
+# checks <Package>_ROOT on its own (policy CMP0074, CMake 3.12+).
+if(DEFINED ENV{HFS})
+    list(APPEND CMAKE_PREFIX_PATH "$ENV{HFS}/toolkit/cmake")
+endif()
 find_package(Houdini REQUIRED)
 
 add_library(Box3DDOP SHARED

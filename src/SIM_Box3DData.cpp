@@ -98,26 +98,53 @@ SIM_Box3DData::getDescription()
     static PRM_Default theAutoFitDefault(1);
 
     static PRM_Template theTemplates[] = {
-        PRM_Template(PRM_ORD,    1, &theShapeName,       &theShapeDefault, &theShapeMenu),
-        PRM_Template(PRM_TOGGLE, 1, &theAutoFitName,     &theAutoFitDefault),
-        PRM_Template(PRM_TOGGLE, 1, &theHullPerConnectedName, &theHullPerConnectedDefault),
-        PRM_Template(PRM_ORD,    1, &theBodyTypeName,    &theBodyTypeDefault, &theBodyTypeMenu),
-        PRM_Template(PRM_TOGGLE, 1, &theComputeMassName, &theComputeMassDefault),
+        PRM_Template(PRM_ORD,    1, &theShapeName,       &theShapeDefault, &theShapeMenu, 0, 0, 0, 1,
+                     "Collision shape for points without a bullet_georep attribute. "
+                     "Concave / Compound builds one convex hull per piece; None makes a static body with no collision."),
+        PRM_Template(PRM_TOGGLE, 1, &theAutoFitName,     &theAutoFitDefault, 0, 0, 0, 0, 1,
+                     "Size and place Box, Sphere and Capsule shapes to fit each piece's packed geometry. "
+                     "When off, they come from pscale / scale and the bullet_primS, bullet_primR, bullet_primT, "
+                     "bullet_radius and bullet_length attributes. Overridden by the bullet_autofit point attribute."),
+        PRM_Template(PRM_TOGGLE, 1, &theHullPerConnectedName, &theHullPerConnectedDefault, 0, 0, 0, 0, 1,
+                     "For Convex Hull shapes, build a separate hull for each set of connected primitives in a piece "
+                     "instead of one hull around the whole piece."),
+        PRM_Template(PRM_ORD,    1, &theBodyTypeName,    &theBodyTypeDefault, &theBodyTypeMenu, 0, 0, 0, 1,
+                     "How active pieces move. Static never moves, Kinematic follows its animation and pushes "
+                     "dynamic bodies without being pushed back, Dynamic is fully simulated. Inactive pieces "
+                     "(active = 0) are static, or kinematic if their animated attribute is 1."),
+        PRM_Template(PRM_TOGGLE, 1, &theComputeMassName, &theComputeMassDefault, 0, 0, 0, 0, 1,
+                     "Work out each body's mass from its Density and collision shape volume, instead of using Mass. "
+                     "Overridden by the computemass point attribute."),
         PRM_Template(PRM_FLT_J,  1, &theMassName, &theMassDefault, 0, &theMassRange, 0, 0, 1,
-                     "Mass of each body (used when Compute Mass is off).", &theMassDisable),
+                     "Mass of each body (used when Compute Mass is off). Overridden by the mass point attribute.",
+                     &theMassDisable),
         PRM_Template(PRM_FLT_J,  1, &theDensityName, &theDensityDefault, 0, &theDensityRange, 0, 0, 1,
-                     "Mass per unit volume (used when Compute Mass is on).", &theDensityDisable),
-        PRM_Template(PRM_FLT_J,  1, &theFrictionName, &theFrictionDefault, 0, &theFrictionRange),
-        PRM_Template(PRM_FLT_J,  1, &theBounceName, &theBounceDefault, 0, &theBounceRange),
-        PRM_Template(PRM_FLT_J,  1, &theLinDampName, &theLinDampDefault, 0, &theDampingRange),
-        PRM_Template(PRM_FLT_J,  1, &theAngDampName, &theAngDampDefault, 0, &theDampingRange),
-        PRM_Template(PRM_FLT_J,  1, &theGravScaleName,   &theGravScaleDefault),
-        PRM_Template(PRM_TOGGLE, 1, &theSleepName,       &theSleepDefault),
+                     "Mass per unit volume (used when Compute Mass is on). 1000 is roughly water. "
+                     "Overridden by the density point attribute.", &theDensityDisable),
+        PRM_Template(PRM_FLT_J,  1, &theFrictionName, &theFrictionDefault, 0, &theFrictionRange, 0, 0, 1,
+                     "How much surfaces resist sliding against each other. 0 is ice-slick. "
+                     "Overridden by the friction point attribute."),
+        PRM_Template(PRM_FLT_J,  1, &theBounceName, &theBounceDefault, 0, &theBounceRange, 0, 0, 1,
+                     "How much speed is kept after a collision: 0 doesn't bounce, 1 bounces back at full speed. "
+                     "Overridden by the bounce point attribute."),
+        PRM_Template(PRM_FLT_J,  1, &theLinDampName, &theLinDampDefault, 0, &theDampingRange, 0, 0, 1,
+                     "Slows movement over time, like air drag. 0 is no drag. "
+                     "Overridden by the lineardamping point attribute."),
+        PRM_Template(PRM_FLT_J,  1, &theAngDampName, &theAngDampDefault, 0, &theDampingRange, 0, 0, 1,
+                     "Slows spinning over time. 0 is no drag. Overridden by the angulardamping point attribute."),
+        PRM_Template(PRM_FLT_J,  1, &theGravScaleName,   &theGravScaleDefault, 0, 0, 0, 0, 1,
+                     "Multiplies the solver's Gravity for these bodies: 0 floats, negative falls upward. "
+                     "Overridden by the gravityscale point attribute."),
+        PRM_Template(PRM_TOGGLE, 1, &theSleepName,       &theSleepDefault, 0, 0, 0, 0, 1,
+                     "Let bodies that have come to rest stop simulating until something touches them. "
+                     "Only applies if the solver's Allow Sleeping is also on. Read when a body is created; "
+                     "overridden by the enablesleep and bullet_want_deactivate point attributes."),
         PRM_Template(PRM_FLT_J,  1, &theSleepThresholdName, &theSleepThresholdDefault, 0, &theSleepThresholdRange, 0, 0, 1,
-                     "A body may fall asleep once its speed has stayed below this for half a second."),
+                     "A body may fall asleep once its speed has stayed below this for half a second. "
+                     "Overridden by the sleepthreshold point attribute."),
         PRM_Template(PRM_TOGGLE, 1, &theFastObjectName,  &theFastObjectDefault, 0, 0, 0, 0, 1,
                      "Continuous collision against other moving bodies too, so a fast body cannot pass through them. "
-                     "Every body already has it against static ones."),
+                     "Every body already has it against static ones. Overridden by the fastobject point attribute."),
         PRM_Template(PRM_TOGGLE, 1, &theAddImpactName,   &theAddImpactDefault, 0, 0, 0, 0, 1,
                      "When turned on, any impacts that occur during the simulation are recorded in the "
                      "Impacts data on the DOP object. Turning this on may increase simulation time and memory use."),

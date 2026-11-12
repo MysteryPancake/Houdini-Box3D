@@ -70,8 +70,9 @@ Layering (keep it):
 * `-DBOX3D_DOUBLE_PRECISION=ON` works: positions cross the boundary as `double[3]` and `Box3DWorld.cpp` converts through
   `decltype(b3Pos::x)`.
 * Release or RelWithDebInfo only.
-* `build.sh` wipes `build/` if the repo moved (`build/.configured_from`). `build.bat` hardcodes an `HFS` path and the
-  VS 2022 generator; edit when upgrading.
+* `build.sh` wipes `build/` if the repo moved (`build/.configured_from`). `build.bat` finds `HFS` itself (env var, then
+  registry `HKLM\SOFTWARE\Side Effects Software` ActiveVersion -> `Houdini <ver>\InstallPath`, then the newest
+  `Program Files\Side Effects Software\Houdini X.Y.Z`). It still names the VS 2022 generator.
 
 ## Core layer: `b3dop::Box3DWorld`
 
