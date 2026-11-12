@@ -41,6 +41,8 @@ struct Box3DBodyProps
     float mass           = 1.0f;      // `mass`; Box3D gets density = mass / shape volume
     float friction       = 0.6f;      // `friction`
     float restitution    = 0.0f;      // `bounce`
+    float rollingResistance = 0.0f;   // `rollingresistance`
+    float tangentVelocity[3] = { 0, 0, 0 };   // `tangentvelocity`
     float linearDamping  = 0.0f;      // `lineardamping`
     float angularDamping = 0.0f;      // `angulardamping`
     float gravityScale   = 1.0f;      // `gravityscale`
@@ -171,7 +173,7 @@ struct Box3DSyncFingerprint
 
     // Prop markers (kPropAttribNames in SIM_SolverBox3D.cpp, primsId, nodeHash): when any
     // changed, the scan also compares every body's settings. The .cpp static_asserts the count.
-    static constexpr int kNumPropIds = 29;
+    static constexpr int kNumPropIds = 31;
     using PropIds = std::array<GA_DataId, kNumPropIds>;
 
     int64_t   numPoints  = -1;      // -1 with primitives: packed topology is assumed fixed
@@ -238,6 +240,8 @@ struct Box3DAffectorBody
     double            pos[3]    = { 0, 0, 0 };      // the body's pose as last given to Box3D
     float             rot[4]    = { 0, 0, 0, 1 };
     float             scale[3]  = { 1, 1, 1 };      // the mesh shape's scale as last given to Box3D
+    float             rolling   = 0.0f;             // rolling resistance / conveyor velocity as last given to Box3D
+    float             tangent[3] = { 0, 0, 0 };     // (not in the signature: animating them must not rebuild the mesh)
     bool              poseKnown = false;
 };
 

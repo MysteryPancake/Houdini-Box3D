@@ -1,6 +1,6 @@
 # Houdini Box3D
 
-Houdini DOP wrapper for [Box3D](https://github.com/erincatto/box3d), one of the fastest rigid body solvers currently available.
+Houdini DOP wrapper for [Box3D](https://github.com/erincatto/box3d), currently one of the fastest rigid body solvers.
 
 My goal with this project is to maintain Box3D's great performance inside Houdini.
 
@@ -92,6 +92,8 @@ All attributes are optional except `P`. If one is missing, the value from the Bo
 | `inertialtensorstiffness` | float | Scales how hard the body is to spin |
 | `friction` | float | Surface friction |
 | `bounce` | float | Bounciness |
+| `rollingresistance` | float | How much the body resists rolling, 0 to 1 (default 0, the Box3D Data setting). Mostly for spheres and capsules; boxes and other hulls get a little. A ball with 0.3 stops rolling quickly |
+| `tangentvelocity` | vector | Makes the body's surface a conveyor belt: whatever touches it is dragged along this velocity, in the body's own axes (so turning the belt turns its direction). The belt needs friction above 0. Works on static bodies, which makes it the usual way to build a conveyor |
 | `lineardamping` | float | Linear damping (0 or more) |
 | `angulardamping` | float | Angular damping (0 or more) |
 | `gravityscale` | float | Multiplies gravity for this body; negative floats upward |
@@ -154,9 +156,15 @@ Reuses contacts between barely-moving pairs to save time. Very occasionally this
 - **Contact Recycle Distance** (solver, 0.05): set to 0 to turn recycling off, raise it for more speed.
 - **Contact Recycling** (Box3D Data) or the `contactrecycling` attribute turns it off per body.
 
+### Conveyor belts and rolling resistance
+
+- Set **Conveyor Velocity** on a Box3D Data node (or the `tangentvelocity` attribute) on a static body, or on a Static Object that bodies collide with, to move whatever sits on it. It is in the belt's own axes and along its surface, so a belt turned 90° carries in the turned direction. Higher friction grips better; with Friction Mixing set to Minimum, a slippery object barely moves.
+- You can animate the velocity. Changing it drops and rebuilds the belt's contacts and wakes whatever touches it, so sleeping or resting bodies pick up the new speed at once. A body that has fallen asleep on a belt that is switched on later is woken the same way.
+- **Rolling Resistance** (Box3D Data or `rollingresistance`) slows round bodies rolling on a surface. When two shapes touch, the larger of their values is used.
+
 ### Changing attributes during the simulation
 
-Like Houdini's Bullet solver, most attributes can be changed mid-simulation (with a Geometry Wrangle DOP, a SOP Solver, or by animating the Box3D Data node) and take effect on the next step. That covers position, rotation, velocity, `active`, `animated`, the mass, friction, bounce, damping, gravity, sleep and collision attributes above, `enabled` and `dead`.
+Like Houdini's Bullet solver, most attributes can be changed mid-simulation (with a Geometry Wrangle DOP, a SOP Solver, or by animating the Box3D Data node) and take effect on the next step. That covers position, rotation, velocity, `active`, `animated`, the mass, friction, bounce, rolling resistance, conveyor velocity, damping, gravity, sleep and collision attributes above, `enabled` and `dead`.
 
 Collision shapes are kept once built. To rebuild one, set `bullet_autofit_valid = 0` (rebuilds once) or `deforming = 1` (rebuilds every step). This is how changes to `bullet_georep`, `bullet_autofit`, the `bullet_prim*` attributes, `bullet_radius`, `bullet_length` and the size of a box, sphere or capsule take effect. Convex and concave shapes follow scale changes on their own.
 

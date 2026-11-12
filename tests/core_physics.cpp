@@ -1443,6 +1443,137 @@ int main()
         std::printf("contact recycling checks done\n");
     }
 
+    // ---- surface material: rolling resistance and conveyor (tangent) velocity ------------
+    {
+        using namespace b3dop;
+        const float qid[4] = { 0, 0, 0, 1 };
+        const float dt = 1.0f / 60.0f;
+        WorldSettings ws;  ws.enableSleep = false;
+
+        ShapeSpec slab;  slab.halfExtents[0] = 40;  slab.halfExtents[1] = 0.5f;  slab.halfExtents[2] = 40;
+        ShapeSpec cube;
+        ShapeSpec ball;  ball.type = ShapeType::Sphere;  ball.radius = 0.5f;
+        BodySettings stat;  stat.type = BodySettings::Type::Static;
+        const double gp[3] = { 0, -0.5, 0 };
+        const float  noTangent[3] = { 0, 0, 0 };
+
+        // A ball rolling at 5 m/s: rolling resistance slows it, none does not (much).
+        float speedAfter[2] = { 0, 0 };
+        double xAfter[2]    = { 0, 0 };
+        for (int k = 0; k < 2; ++k)
+        {
+            KeyedWorld rw;
+            BodySettings ballBody;  ballBody.friction = 0.6f;
+            ballBody.rollingResistance = k == 0 ? 0.0f : 0.3f;
+            CHECK(rw.create(ws));
+            const BodyHandle g = rw.createBody(stat, gp, qid);
+            const double bp[3] = { 0, 0.5, 0 };
+            const BodyHandle s = rw.createBody(ballBody, bp, qid);
+            CHECK(g && s && rw.createShape(g, stat, slab) && rw.createShape(s, ballBody, ball));
+            const float lin[3] = { 5, 0, 0 }, ang[3] = { 0, 0, -10 };     // rolling without slipping: w = v / r
+            CHECK(rw.setVelocityByHandle(s, lin, ang));
+            float rolling = 0, tv[3];
+            CHECK(rw.getSurfaceByHandle(s, rolling, tv));
+            CHECK(rolling == ballBody.rollingResistance);
+            for (int i = 0; i < 180; ++i) rw.step(dt);
+            float l2[3], a2[3];  double p2[3];  float q2[4];
+            CHECK(rw.getVelocityByHandle(s, l2, a2) && rw.getTransformByHandle(s, p2, q2));
+            speedAfter[k] = l2[0];
+            xAfter[k] = p2[0];
+        }
+        std::printf("rolling resistance: free v=%.3f x=%.2f, 0.3 v=%.3f x=%.2f\n", speedAfter[0], xAfter[0], speedAfter[1], xAfter[1]);
+        CHECK(speedAfter[0] > 4.0f);                    // barely slowed without it
+        CHECK(speedAfter[1] < 0.5f * speedAfter[0]);    // clearly slowed with it
+        CHECK(xAfter[1] < xAfter[0]);
+
+        // Cleaned input: negative / non-finite values become 0 instead of tripping Box3D's asserts.
+        {
+            KeyedWorld cw;
+            BodySettings bad = stat;
+            bad.rollingResistance = -1.0f;
+            bad.tangentVelocity[0] = std::nanf("");
+            CHECK(cw.create(ws));
+            const BodyHandle h = cw.createBody(bad, gp, qid);
+            CHECK(h && cw.createShape(h, bad, slab));
+            float rr = 1, tv[3] = { 1, 1, 1 };
+            CHECK(cw.getSurfaceByHandle(h, rr, tv));
+            CHECK(rr == 0.0f && tv[0] == 0.0f && tv[1] == 0.0f && tv[2] == 0.0f);
+            const float good[3] = { 1, 2, 3 };
+            cw.setSurfaceByHandle(h, 0.25f, good);
+            CHECK(cw.getSurfaceByHandle(h, rr, tv));
+            CHECK(rr == 0.25f && tv[0] == 1.0f && tv[1] == 2.0f && tv[2] == 3.0f);
+            const float nan3[3] = { 1, std::nanf(""), 3 };
+            cw.setSurfaceByHandle(h, std::nanf(""), nan3);
+            CHECK(cw.getSurfaceByHandle(h, rr, tv));
+            CHECK(rr == 0.0f && tv[0] == 0.0f && tv[1] == 0.0f && tv[2] == 0.0f);
+            cw.setSurfaceByHandle(0, 1.0f, good);               // null handle: nothing
+            CHECK(!cw.getSurfaceByHandle(0, rr, tv));
+        }
+
+        // A conveyor: a static slab with a tangent velocity carries a box resting on it.
+        auto beltRun = [&](const float beltRot[4], const float tangent[3], int steps, float lin[3]) {
+            KeyedWorld cw;
+            BodySettings belt = stat;
+            for (int i = 0; i < 3; ++i) belt.tangentVelocity[i] = tangent[i];
+            CHECK(cw.create(ws));
+            const BodyHandle g = cw.createBody(belt, gp, beltRot);
+            const double bp[3] = { 0, 0.5, 0 };
+            BodySettings boxBody;
+            const BodyHandle b = cw.createBody(boxBody, bp, qid);
+            CHECK(g && b && cw.createShape(g, belt, slab) && cw.createShape(b, boxBody, cube));
+            for (int i = 0; i < steps; ++i) cw.step(dt);
+            float ang[3];
+            CHECK(cw.getVelocityByHandle(b, lin, ang));
+        };
+        {
+            float lin[3];
+            const float along[3] = { 2, 0, 0 };
+            beltRun(qid, along, 120, lin);
+            std::printf("belt +x: box v=(%.3f, %.3f, %.3f)\n", lin[0], lin[1], lin[2]);
+            CHECK(std::fabs(lin[0] - 2.0f) < 0.2f);     // carried at belt speed
+            CHECK(std::fabs(lin[2]) < 0.1f);
+            beltRun(qid, noTangent, 120, lin);
+            CHECK(std::fabs(lin[0]) < 0.05f && std::fabs(lin[2]) < 0.05f);   // a plain slab carries nothing
+
+            // The velocity is local to the belt: turned 90 degrees about Y, local +x is world -z.
+            const float s = std::sqrt(0.5f);
+            const float turned[4] = { 0, s, 0, s };
+            beltRun(turned, along, 120, lin);
+            std::printf("belt turned: box v=(%.3f, %.3f, %.3f)\n", lin[0], lin[1], lin[2]);
+            CHECK(std::fabs(lin[0]) < 0.1f);
+            CHECK(std::fabs(std::fabs(lin[2]) - 2.0f) < 0.2f);
+        }
+
+        // Switched on mid-simulation while the box sleeps on it (recycled contact, sleeping body): the
+        // change wakes it and the box is carried.
+        {
+            WorldSettings sleepy;                       // sleeping on
+            KeyedWorld cw;
+            CHECK(cw.create(sleepy));
+            const BodyHandle g = cw.createBody(stat, gp, qid);
+            const double bp[3] = { 0, 0.5, 0 };
+            BodySettings boxBody;
+            const BodyHandle b = cw.createBody(boxBody, bp, qid);
+            CHECK(g && b && cw.createShape(g, stat, slab) && cw.createShape(b, boxBody, cube));
+            for (int i = 0; i < 400 && cw.isAwakeByHandle(b); ++i) cw.step(dt);
+            CHECK(!cw.isAwakeByHandle(b));
+            const float along[3] = { 2, 0, 0 };
+            cw.setSurfaceByHandle(g, 0.0f, along);
+            CHECK(cw.isAwakeByHandle(b));
+            for (int i = 0; i < 120; ++i) cw.step(dt);
+            float lin[3], ang[3];
+            CHECK(cw.getVelocityByHandle(b, lin, ang));
+            std::printf("belt switched on mid-sim: box v=(%.3f, %.3f, %.3f)\n", lin[0], lin[1], lin[2]);
+            CHECK(std::fabs(lin[0] - 2.0f) < 0.2f);
+            // and off again: it is no longer carried (friction brings it to rest)
+            cw.setSurfaceByHandle(g, 0.0f, noTangent);
+            for (int i = 0; i < 240; ++i) cw.step(dt);
+            CHECK(cw.getVelocityByHandle(b, lin, ang));
+            CHECK(std::fabs(lin[0]) < 0.1f);
+        }
+        std::printf("surface material checks done\n");
+    }
+
     w.destroy();
     CHECK(!w.isValid());
     std::printf(fails ? "FAILED\n" : "OK\n");

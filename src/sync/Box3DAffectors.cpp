@@ -193,6 +193,18 @@ syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects, Box3DAffector
         {
             // Same shape. A moved (animated) object only needs a new pose and / or mesh scale; a
             // failed build (handle 0) stays failed until the signature changes.
+            if (ab.handle)
+            {
+                // Rolling resistance and conveyor velocity are not in the signature: a change (an animated
+                // belt speed) updates the shapes instead of rebuilding the mesh.
+                if (ab.rolling != body.rollingResistance ||
+                    !std::equal(ab.tangent, ab.tangent + 3, body.tangentVelocity))
+                {
+                    st.world.setSurfaceByHandle(ab.handle, body.rollingResistance, body.tangentVelocity);
+                    ab.rolling = body.rollingResistance;
+                    for (int i = 0; i < 3; ++i) ab.tangent[i] = body.tangentVelocity[i];
+                }
+            }
             if (ab.handle && rigid)
             {
                 const bool samePose = std::fabs(ab.pos[0] - pos[0]) < 1e-9 && std::fabs(ab.pos[1] - pos[1]) < 1e-9 &&
@@ -277,6 +289,8 @@ syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects, Box3DAffector
             continue;
         }
         ab.handle = h;
+        ab.rolling = body.rollingResistance;
+        for (int i = 0; i < 3; ++i) ab.tangent[i] = body.tangentVelocity[i];
         for (int i = 0; i < 3; ++i) ab.pos[i] = bodyPos[i];
         for (int i = 0; i < 4; ++i) ab.rot[i] = bodyRot[i];
         for (int i = 0; i < 3; ++i) ab.scale[i] = bodyScale[i];

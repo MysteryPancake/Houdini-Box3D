@@ -147,6 +147,8 @@ struct BodySettings
     bool  computeMass    = false;   // solver only: mass = density * volume instead
     float friction       = 0.6f;
     float restitution    = 0.0f;
+    float rollingResistance = 0.0f;           // `rollingresistance`: 0 .. 1, slows rolling (see b3SurfaceMaterial)
+    float tangentVelocity[3] = { 0, 0, 0 };   // `tangentvelocity`: conveyor belt speed, in the body's local space
     float linearDamping  = 0.0f;
     float angularDamping = 0.0f;
     float gravityScale   = 1.0f;
@@ -219,6 +221,11 @@ public:
     // ---- changes to existing bodies (handle API) --------------------------------
     // Take effect from the next step. Only Box3D's own rules wake a body (disabling sleep does).
     void  setMaterialByHandle(BodyHandle h, float friction, float restitution);   // every shape; contacts follow
+    // Rolling resistance (negative / non-finite -> 0) and conveyor velocity (non-finite -> 0), every shape.
+    // Box3D skips the material of a recycled contact and a sleeping body does not update its contacts, so
+    // on a change an enabled body's contacts are dropped and rebuilt (disable + enable: touching bodies wake,
+    // velocity kept), except a sleeping dynamic body, which takes the change when it wakes.
+    void  setSurfaceByHandle(BodyHandle h, float rollingResistance, const float tangentVelocity[3]);
     void  setDampingByHandle(BodyHandle h, float linear, float angular);
     void  setGravityScaleByHandle(BodyHandle h, float gravityScale);
     void  setSleepEnabledByHandle(BodyHandle h, bool enableSleep);   // the world switch applies on top
@@ -317,6 +324,7 @@ public:
 
     // Read back (tests, debugging). Material is the first shape's; 0 / false if unknown.
     bool  getMaterialByHandle(BodyHandle h, float &friction, float &restitution) const;
+    bool  getSurfaceByHandle(BodyHandle h, float &rollingResistance, float tangentVelocity[3]) const;
     bool  getDampingByHandle(BodyHandle h, float &linear, float &angular) const;
     float gravityScaleByHandle(BodyHandle h) const;
     bool  contactRecyclingByHandle(BodyHandle h) const;

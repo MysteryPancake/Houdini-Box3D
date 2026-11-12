@@ -126,6 +126,8 @@ struct PointAttrs
     GA_ROHandleF  mass;
     GA_ROHandleF  friction;
     GA_ROHandleF  bounce;      // Box3D restitution
+    GA_ROHandleF  rollingResistance;   // rollingresistance
+    GA_ROHandleV3 tangentVelocity;     // tangentvelocity
     GA_ROHandleF  lineardamping;
     GA_ROHandleF  angulardamping;
     GA_ROHandleF  gravityscale;
@@ -178,6 +180,8 @@ struct PointAttrs
         mass           = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "mass");
         friction       = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "friction");
         bounce         = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "bounce");
+        rollingResistance = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "rollingresistance");
+        tangentVelocity   = GA_ROHandleV3(gdp, GA_ATTRIB_POINT, "tangentvelocity");
         lineardamping  = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "lineardamping");
         angulardamping = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "angulardamping");
         gravityscale   = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "gravityscale");
@@ -224,6 +228,7 @@ const char *const kPropAttribNames[] = {
     "inertialtensorstiffness", "sleepthreshold", "ccdthreshold", "fastobject",
     "collision_group", "dead",
     "contactrecycling", "lock_linear", "lock_angular", "fastrotation",
+    "rollingresistance", "tangentvelocity",
     "name",                 // joint anchors find bodies by it
 };
 static_assert(std::size(kPropAttribNames) == Box3DSyncFingerprint::kNumPropIds,
@@ -1035,6 +1040,17 @@ readDynamicProps(const b3dop::BodySettings &node, const PointAttrs &a, GA_Offset
     }
     p.friction       = a.friction.isValid()       ? nonNegative(a.friction.get(off),       node.friction)       : node.friction;
     p.restitution    = a.bounce.isValid()         ? nonNegative(a.bounce.get(off),         node.restitution)    : node.restitution;
+    p.rollingResistance = a.rollingResistance.isValid() ? nonNegative(a.rollingResistance.get(off), node.rollingResistance)
+                                                        : node.rollingResistance;
+    for (int i = 0; i < 3; ++i)
+        p.tangentVelocity[i] = node.tangentVelocity[i];
+    if (a.tangentVelocity.isValid())
+    {
+        const UT_Vector3 t = a.tangentVelocity.get(off);
+        if (std::isfinite(t.x()) && std::isfinite(t.y()) && std::isfinite(t.z()))
+            for (int i = 0; i < 3; ++i)
+                p.tangentVelocity[i] = float(t(i));
+    }
     p.linearDamping  = a.lineardamping.isValid()  ? nonNegative(a.lineardamping.get(off),  node.linearDamping)  : node.linearDamping;
     p.angularDamping = a.angulardamping.isValid() ? nonNegative(a.angulardamping.get(off), node.angularDamping) : node.angularDamping;
     p.gravityScale   = node.gravityScale;
@@ -1186,6 +1202,9 @@ settingsFor(const b3dop::BodySettings &node, const Box3DBodyProps &p, b3dop::Bod
     b.type           = type;
     b.friction       = p.friction;
     b.restitution    = p.restitution;
+    b.rollingResistance = p.rollingResistance;
+    for (int i = 0; i < 3; ++i)
+        b.tangentVelocity[i] = p.tangentVelocity[i];
     b.linearDamping  = p.linearDamping;
     b.angularDamping = p.angularDamping;
     b.gravityScale   = p.gravityScale;
@@ -1539,6 +1558,11 @@ applyPropChanges(b3dop::Box3DWorld &world, Box3DBodyMirror &e, const Box3DBodyPr
         world.setBulletByHandle(h, p.fastObject);
         changed |= kPropsChanged;
     }
+    if (p.rollingResistance != o.rollingResistance || !std::equal(p.tangentVelocity, p.tangentVelocity + 3, o.tangentVelocity))
+    {
+        world.setSurfaceByHandle(h, p.rollingResistance, p.tangentVelocity);
+        changed |= kPropsChanged;
+    }
     if (p.locks != o.locks)
     {
         world.setMotionLocksByHandle(h, p.locks);
@@ -1610,7 +1634,8 @@ nodeSettingsHash(const b3dop::BodySettings &n, bool addImpact)
 {
     const float v[] = { n.mass, n.friction, n.restitution, n.linearDamping, n.angularDamping, n.gravityScale,
                         n.density, n.computeMass ? 1.0f : 0.0f, n.sleepThreshold, n.isBullet ? 1.0f : 0.0f,
-                        n.contactRecycling ? 1.0f : 0.0f, n.ccdThreshold, n.enableSleep ? 1.0f : 0.0f };
+                        n.contactRecycling ? 1.0f : 0.0f, n.ccdThreshold, n.enableSleep ? 1.0f : 0.0f,
+                        n.rollingResistance, n.tangentVelocity[0], n.tangentVelocity[1], n.tangentVelocity[2] };
     return b3dop::mixHash(b3dop::hashFloats(v, sizeof(v) / sizeof(v[0])), addImpact ? 1 : 2);
 }
 

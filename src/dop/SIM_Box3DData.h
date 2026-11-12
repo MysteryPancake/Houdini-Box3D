@@ -22,6 +22,8 @@ public:
     GETSET_DATA_FUNCS_F("density",        Density);
     GETSET_DATA_FUNCS_F("friction",       Friction);
     GETSET_DATA_FUNCS_F("bounce",         Bounce);          // Box3D restitution
+    GETSET_DATA_FUNCS_F("rollingresistance", RollingResistance);   // 0 .. 1
+    GETSET_DATA_FUNCS_V3("tangentvelocity", TangentVelocity);      // conveyor belt speed, local to the body
     GETSET_DATA_FUNCS_F("lineardamping",  LinearDamping);
     GETSET_DATA_FUNCS_F("angulardamping", AngularDamping);
     GETSET_DATA_FUNCS_F("gravityscale",   GravityScale);

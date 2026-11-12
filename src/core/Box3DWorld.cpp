@@ -381,14 +381,33 @@ toB3Filter(const CollisionFilter &f)
     return out;
 }
 
+// Box3D asserts on a negative or non-finite rolling resistance and tangent velocity: clean them.
+float
+cleanRolling(float v)
+{
+    return (std::isfinite(v) && v > 0.0f) ? v : 0.0f;
+}
+
+void
+cleanTangent(const float in[3], float out[3])
+{
+    const bool ok = std::isfinite(in[0]) && std::isfinite(in[1]) && std::isfinite(in[2]);
+    for (int i = 0; i < 3; ++i)
+        out[i] = ok ? in[i] : 0.0f;
+}
+
 b3ShapeDef
 shapeDefFor(const BodySettings &b, bool updateMass)
 {
+    float tangent[3];
     b3ShapeDef def = b3DefaultShapeDef();
     def.updateBodyMass          = updateMass;     // false: the caller applies the mass afterwards
     def.density                 = b.density;
     def.baseMaterial.friction    = b.friction;
     def.baseMaterial.restitution = b.restitution;
+    def.baseMaterial.rollingResistance = cleanRolling(b.rollingResistance);
+    cleanTangent(b.tangentVelocity, tangent);
+    def.baseMaterial.tangentVelocity   = makeVec3(tangent);
     def.filter                  = toB3Filter(b.filter);
     def.enableHitEvents         = true;     // for the Impacts speed filter; costs nothing without a threshold
     return def;
@@ -989,6 +1008,27 @@ Box3DWorld::motionLocksByHandle(BodyHandle h) const
     return out;
 }
 
+namespace {
+
+// Drops a body's contacts so the next step rebuilds them (disable + enable). Disabling wakes the
+// bodies touching it and zeroes the body's velocity, which is restored. Static bodies have none.
+void
+rebuildContacts(b3BodyId id)
+{
+    const bool isStatic = b3Body_GetType(id) == b3_staticBody;
+    const b3Vec3 linear  = isStatic ? b3Vec3_zero : b3Body_GetLinearVelocity(id);
+    const b3Vec3 angular = isStatic ? b3Vec3_zero : b3Body_GetAngularVelocity(id);
+    b3Body_Disable(id);
+    b3Body_Enable(id);
+    if (!isStatic)
+    {
+        b3Body_SetLinearVelocity(id, linear);
+        b3Body_SetAngularVelocity(id, angular);
+    }
+}
+
+} // namespace
+
 void
 Box3DWorld::setContactRecyclingByHandle(BodyHandle h, bool flag)
 {
@@ -1000,14 +1040,42 @@ Box3DWorld::setContactRecyclingByHandle(BodyHandle h, bool flag)
     b3Body_EnableContactRecycling(id, flag);
     if (b3Body_GetType(id) != b3_dynamicBody || !b3Body_IsEnabled(id) || !b3Body_IsAwake(id))
         return;
-    // Existing contacts keep the flag they were made with. Disabling a body destroys its contacts
-    // (they are rebuilt, with the new flag, on the next step) but also zeroes its velocity: restore it.
-    const b3Vec3 linear  = b3Body_GetLinearVelocity(id);
-    const b3Vec3 angular = b3Body_GetAngularVelocity(id);
-    b3Body_Disable(id);
-    b3Body_Enable(id);
-    b3Body_SetLinearVelocity(id, linear);
-    b3Body_SetAngularVelocity(id, angular);
+    // Existing contacts keep the flag they were made with: rebuild them with the new one.
+    rebuildContacts(id);
+}
+
+void
+Box3DWorld::setSurfaceByHandle(BodyHandle h, float rollingResistance, const float tangentVelocity[3])
+{
+    if (!h)
+        return;
+    const b3BodyId id = unpackBody(h);
+    const float rolling = cleanRolling(rollingResistance);
+    float tangent[3];
+    cleanTangent(tangentVelocity, tangent);
+    const b3Vec3 tv = makeVec3(tangent);
+
+    bool changed = false;
+    const int n = bodyShapes(id, tShapes);
+    for (int i = 0; i < n; ++i)
+    {
+        const b3ShapeId s = tShapes[size_t(i)];
+        if (b3Shape_GetType(s) == b3_compoundShape)
+            continue;                   // never made here; Box3D asserts on it
+        b3SurfaceMaterial m = b3Shape_GetSurfaceMaterial(s);
+        if (m.rollingResistance == rolling && m.tangentVelocity.x == tv.x && m.tangentVelocity.y == tv.y &&
+            m.tangentVelocity.z == tv.z)
+            continue;
+        m.rollingResistance = rolling;
+        m.tangentVelocity   = tv;
+        b3Shape_SetSurfaceMaterial(s, m);
+        changed = true;
+    }
+    if (!changed || !b3Body_IsEnabled(id))
+        return;
+    if (b3Body_GetType(id) == b3_dynamicBody && !b3Body_IsAwake(id))
+        return;                         // a cycle would wake it
+    rebuildContacts(id);
 }
 
 void
@@ -1367,6 +1435,23 @@ Box3DWorld::getMaterialByHandle(BodyHandle h, float &friction, float &restitutio
         return false;
     friction    = b3Shape_GetFriction(tShapes[0]);
     restitution = b3Shape_GetRestitution(tShapes[0]);
+    return true;
+}
+
+bool
+Box3DWorld::getSurfaceByHandle(BodyHandle h, float &rollingResistance, float tangentVelocity[3]) const
+{
+    rollingResistance = 0.0f;
+    tangentVelocity[0] = tangentVelocity[1] = tangentVelocity[2] = 0.0f;
+    if (!h)
+        return false;
+    if (bodyShapes(unpackBody(h), tShapes) <= 0)
+        return false;
+    const b3SurfaceMaterial m = b3Shape_GetSurfaceMaterial(tShapes[0]);
+    rollingResistance = m.rollingResistance;
+    tangentVelocity[0] = m.tangentVelocity.x;
+    tangentVelocity[1] = m.tangentVelocity.y;
+    tangentVelocity[2] = m.tangentVelocity.z;
     return true;
 }
 

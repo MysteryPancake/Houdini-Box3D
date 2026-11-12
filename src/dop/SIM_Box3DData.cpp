@@ -52,6 +52,13 @@ SIM_Box3DData::getDescription()
     static PRM_Name    theBounceName("bounce", "Bounce");
     static PRM_Default theBounceDefault(0.0);
 
+    static PRM_Name    theRollingName("rollingresistance", "Rolling Resistance");
+    static PRM_Default theRollingDefault(0.0);
+    static PRM_Range   theRollingRange(PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 1);
+
+    static PRM_Name    theTangentName("tangentvelocity", "Conveyor Velocity");
+    static PRM_Default theTangentDefaults[] = { PRM_Default(0), PRM_Default(0), PRM_Default(0) };
+
     static PRM_Name    theLinDampName("lineardamping", "Linear Damping");
     static PRM_Default theLinDampDefault(0.0);
 
@@ -152,6 +159,13 @@ SIM_Box3DData::getDescription()
         PRM_Template(PRM_FLT_J,  1, &theBounceName, &theBounceDefault, 0, &theBounceRange, 0, 0, 1,
                      "How much speed is kept after a collision: 0 doesn't bounce, 1 bounces back at full speed. "
                      "Overridden by the bounce point attribute."),
+        PRM_Template(PRM_FLT_J,  1, &theRollingName, &theRollingDefault, 0, &theRollingRange, 0, 0, 1,
+                     "How much round bodies (spheres, capsules, and hulls to a lesser degree) resist rolling on a surface. "
+                     "0 rolls freely. Overridden by the rollingresistance point attribute."),
+        PRM_Template(PRM_XYZ_J,  3, &theTangentName, theTangentDefaults, 0, 0, 0, 0, 1,
+                     "Makes this body's surface a conveyor belt: bodies touching it are dragged along this velocity, in "
+                     "this body's own axes, along the contact surface. It needs friction above 0 to grip. Changing it "
+                     "wakes the bodies resting on it. Overridden by the tangentvelocity point attribute."),
         PRM_Template(PRM_FLT_J,  1, &theLinDampName, &theLinDampDefault, 0, &theDampingRange, 0, 0, 1,
                      "Slows movement over time, like air drag. 0 is no drag. "
                      "Overridden by the lineardamping point attribute."),
@@ -220,6 +234,12 @@ SIM_Box3DData::toBodySettings() const
     s.density        = static_cast<float>(getDensity());
     s.friction       = static_cast<float>(getFriction());
     s.restitution    = static_cast<float>(getBounce());
+    s.rollingResistance = static_cast<float>(getRollingResistance());
+    {
+        const UT_Vector3 t = getTangentVelocity();
+        for (int i = 0; i < 3; ++i)
+            s.tangentVelocity[i] = static_cast<float>(t(i));
+    }
     s.linearDamping  = static_cast<float>(getLinearDamping());
     s.angularDamping = static_cast<float>(getAngularDamping());
     s.gravityScale   = static_cast<float>(getGravityScale());

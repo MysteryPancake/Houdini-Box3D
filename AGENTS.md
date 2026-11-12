@@ -268,7 +268,7 @@ Data names: `"Box3DWorld"`, `kBox3DDataName` (`"Box3DData"`, SIM_Box3DData.h), `
 
 `Box3DObjectSync::fp` (`Box3DSyncFingerprint`): point count and offset range (plain points only; packed topology is
 assumed fixed, a new instance gets a new `id`), data ids of `P`, `orient`, `v`, `w`, `id`, `active`, the node body type,
-and the **prop markers**: data ids of `kPropAttribNames` (26 attributes that change settings, ask for rebuilds or rename pieces, looked
+and the **prop markers**: data ids of `kPropAttribNames` (31 attributes that change settings, ask for rebuilds or rename pieces, looked
 up by name), the primitive list's data id (`primitiveListDataId`: packed transforms are intrinsics; bumping it is up to
 whoever edits a primitive, so an edit that does not is picked up on the next scan) and `nodeHash`. Equal fingerprint ->
 skip.
@@ -398,6 +398,24 @@ equal to what its body was built with.
   static and kinematic bodies are not cycled (a cycle would wake them): they take it for new contacts only. A point-attribute
   or node change goes through the usual prop path (`kPropAttribNames`, `nodeHash`, `applyPropChanges`).
   `Box3DWorld::recycledContactCount()` (`b3World_GetCounters`) feeds the tests and a verbose log line.
+* **Rolling resistance and conveyor velocity** (`rollingresistance` float, `tangentvelocity` vector; Box3D Data
+  `rollingresistance` / `tangentvelocity`): Box3D's `b3SurfaceMaterial::rollingResistance` and `tangentVelocity`, set in
+  `shapeDefFor` (`BodySettings::rollingResistance`, `tangentVelocity[3]`; negative or non-finite values become 0, since
+  Box3D asserts on them). Rolling resistance is the larger of the two shapes' values times the larger radius (hulls use
+  `0.25 * innerRadius`, `contact.c`), capped by the normal impulse. Tangent velocity is local to the shape, rotated by the
+  body each step and projected onto the contact surface; the friction row drives the relative tangent velocity to it
+  (the body on the belt moves with `+tangentVelocity`), so friction must be above 0. Meshes use material 0 (the wrapper
+  builds them without per-triangle materials). Live changes: `setSurfaceByHandle` read-modify-writes
+  `b3Shape_SetSurfaceMaterial` on every non-compound shape (friction and bounce are untouched). That alone is not
+  enough: Box3D skips the material update for a *recycled* contact (`physics_world.c`, "skips updating ... material
+  parameters") and a sleeping body does not update its contacts, so a resting box on a belt that is switched on would stay
+  put. On a real change `setSurfaceByHandle` therefore calls `rebuildContacts` (`b3Body_Disable` + `Enable`, which
+  destroys the body's contacts, wakes everything touching it and re-creates its pairs with `forcePairCreation`; works for
+  static bodies; velocity restored for the others, shared with `setContactRecyclingByHandle`). A sleeping dynamic body is
+  not cycled; it takes the change when it wakes. Affector (Static Object) meshes read the values from their Box3D Data
+  node but keep them out of the shape signature, so an animated belt speed updates the shapes
+  (`Box3DAffectorBody::rolling` / `tangent`) instead of rebuilding the mesh. Point path: `kPropAttribNames`,
+  `nodeSettingsHash`, `readDynamicProps`, `applyPropChanges`. Tests: "surface material" block in `core_physics.cpp`.
 * **Impacts** (node `addimpact`, Add Impact Data; no attribute): `recordImpacts` walks this step's awake bodies (the
   move events), reads each one's contacts once and records them for both bodies whose object has the option: the awake
   body itself, and the other one when it is not awake (an awake one records its own) and not an asleep dynamic body. So
