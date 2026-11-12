@@ -106,19 +106,14 @@ SIM_Box3DData::getDescription()
 
     static PRM_Template theTemplates[] = {
         PRM_Template(PRM_ORD,    1, &theShapeName,       &theShapeDefault, &theShapeMenu, 0, 0, 0, 1,
-                     "Collision shape for points without a bullet_georep attribute. "
-                     "Concave / Compound builds one convex hull per piece; None makes a static body with no collision."),
+                     "Collision shape for points without a bullet_georep attribute. Concave / Compound builds one convex hull per piece."),
         PRM_Template(PRM_TOGGLE, 1, &theAutoFitName,     &theAutoFitDefault, 0, 0, 0, 0, 1,
-                     "Size and place Box, Sphere and Capsule shapes to fit each piece's packed geometry. "
-                     "When off, they come from pscale / scale and the bullet_primS, bullet_primR, bullet_primT, "
-                     "bullet_radius and bullet_length attributes. Overridden by the bullet_autofit point attribute."),
+                     "Fit Box, Sphere and Capsule shapes to each piece's geometry. When off, they come from pscale / scale and the bullet_prim* attributes."),
         PRM_Template(PRM_TOGGLE, 1, &theHullPerConnectedName, &theHullPerConnectedDefault, 0, 0, 0, 0, 1,
                      "For Convex Hull shapes, build a separate hull for each set of connected primitives in a piece "
                      "instead of one hull around the whole piece."),
         PRM_Template(PRM_ORD,    1, &theBodyTypeName,    &theBodyTypeDefault, &theBodyTypeMenu, 0, 0, 0, 1,
-                     "How active pieces move. Static never moves, Kinematic follows its animation and pushes "
-                     "dynamic bodies without being pushed back, Dynamic is fully simulated. Inactive pieces "
-                     "(active = 0) are static, or kinematic if their animated attribute is 1."),
+                     "Static never moves, Kinematic follows its animation, Dynamic is fully simulated. Inactive points (active = 0) are static."),
         PRM_Template(PRM_TOGGLE, 1, &theComputeMassName, &theComputeMassDefault, 0, 0, 0, 0, 1,
                      "Work out each body's mass from its Density and collision shape volume, instead of using Mass. "
                      "Overridden by the computemass point attribute."),
@@ -143,27 +138,18 @@ SIM_Box3DData::getDescription()
                      "Multiplies the solver's Gravity for these bodies: 0 floats, negative falls upward. "
                      "Overridden by the gravityscale point attribute."),
         PRM_Template(PRM_TOGGLE, 1, &theSleepName,       &theSleepDefault, 0, 0, 0, 0, 1,
-                     "Let bodies that have come to rest stop simulating until something touches them. "
-                     "Only applies if the solver's Allow Sleeping is also on. Read when a body is created; "
-                     "overridden by the enablesleep and bullet_want_deactivate point attributes."),
+                     "Let resting bodies stop simulating until touched. Needs the solver's Allow Sleeping on."),
         PRM_Template(PRM_FLT_J,  1, &theSleepThresholdName, &theSleepThresholdDefault, 0, &theSleepThresholdRange, 0, 0, 1,
                      "A body may fall asleep once its speed has stayed below this for half a second. "
                      "Overridden by the sleepthreshold point attribute."),
         PRM_Template(PRM_TOGGLE, 1, &theFastObjectName,  &theFastObjectDefault, 0, 0, 0, 0, 1,
-                     "Continuous collision against other moving bodies too, so a fast body cannot pass through them. "
-                     "Every body already has it against static ones. Overridden by the fastobject point attribute."),
+                     "Continuous collision against moving bodies too, so a fast body can't pass through them."),
         PRM_Template(PRM_TOGGLE, 1, &theRecyclingName,   &theRecyclingDefault, 0, 0, 0, 0, 1,
-                     "Let this body's contacts be reused between steps while it barely moves, which is faster. "
-                     "Turn it off for bodies where you see ghost collisions (for example a character or a very "
-                     "thin or fast piece). A pair is recycled only if both bodies allow it. Does nothing when the "
-                     "solver's Contact Recycle Distance is 0. Overridden by the contactrecycling point attribute."),
+                     "Reuse this body's contacts between steps, which is faster. Turn off if you see ghost collisions on thin or fast bodies."),
         PRM_Template(PRM_TOGGLE, 1, &theFlipWindingName, &theFlipWindingDefault, 0, 0, 0, 0, 1,
-                     "For a Static Object (or any object that collides with the solver without being solved by it): "
-                     "its polygons become a one-sided collision mesh, so bodies fall through it from the back. "
-                     "Turn this on if they fall through from the side you expect to be solid."),
+                     "Static meshes are one-sided. Turn on if bodies fall through from the side you expect to be solid."),
         PRM_Template(PRM_TOGGLE, 1, &theAddImpactName,   &theAddImpactDefault, 0, 0, 0, 0, 1,
-                     "When turned on, any impacts that occur during the simulation are recorded in the "
-                     "Impacts data on the DOP object. Turning this on may increase simulation time and memory use."),
+                     "Record impacts in Impacts data on the DOP object. Can increase simulation time and memory use."),
         PRM_Template()
     };
 

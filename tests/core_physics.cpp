@@ -1324,5 +1324,76 @@ int main()
     w.destroy();
     CHECK(!w.isValid());
     std::printf(fails ? "FAILED\n" : "OK\n");
+    // ---- world settings: mixing rules, hit events, warm starting, restitution ------------
+    {
+        using namespace b3dop;
+        const float qid2[4] = { 0, 0, 0, 1 };
+        const double gpos[3] = { 0, -0.5, 0 };
+        const double spos[3] = { 0, 2.0, 0 };
+        const float  gh2[3]  = { 10, 0.5f, 10 };
+        // A ball with bounce 0.9 on a ground with bounce 0: Maximum bounces, Minimum does not.
+        float peak[2] = { 0, 0 };
+        for (int mode = 0; mode < 2; ++mode)
+        {
+            WorldSettings ws;
+            ws.restitutionMixing = mode;            // 0 max, 1 min
+            ws.warmStarting = (mode == 0);          // also runs with warm starting off
+            ws.restitutionIterations = 4;
+            ws.restitutionPropagation = true;
+            ws.isotropicInertiaTolerance = 0.5f;
+            Box3DWorld sw;
+            CHECK(sw.create(ws));
+            BodySettings g;  g.type = BodySettings::Type::Static;  g.restitution = 0.0f;
+            BodySettings ball;  ball.restitution = 0.9f;
+            CHECK(sw.addBody(1, g, gpos, qid2));
+            CHECK(sw.addBoxShape(1, gh2));
+            CHECK(sw.addBody(2, ball, spos, qid2));
+            CHECK(sw.addSphereShape(2, 0.5f));
+            bool hit = false;
+            for (int i = 0; i < 180; ++i)
+            {
+                sw.step(1.0f / 60.0f);
+                double bp[3]; float bq[4];
+                if (sw.getTransform(2, bp, bq) && hit)
+                    peak[mode] = std::max(peak[mode], float(bp[1]));
+                float bl[3], ba[3];
+                if (sw.getVelocity(2, bl, ba) && bl[1] > 1.0f)
+                    hit = true;
+            }
+        }
+        std::printf("mixing: bounce peak max=%.3f min=%.3f\n", peak[0], peak[1]);
+        CHECK(peak[0] > peak[1] + 0.3f);
+
+        // live tuning of the new settings, and hit events with a speed threshold
+        WorldSettings ws;
+        ws.impactMinSpeed = 3.0f;
+        Box3DWorld hw;
+        CHECK(hw.create(ws));
+        BodySettings g;  g.type = BodySettings::Type::Static;
+        BodySettings ball;
+        CHECK(hw.addBody(1, g, gpos, qid2));
+        CHECK(hw.addBoxShape(1, gh2));
+        CHECK(hw.addBody(2, ball, spos, qid2));
+        CHECK(hw.addSphereShape(2, 0.5f));
+        const BodyHandle hb = hw.bodyHandle(2), hg = hw.bodyHandle(1);
+        bool sawHit = false;
+        for (int i = 0; i < 120; ++i)
+        {
+            hw.step(1.0f / 60.0f);
+            hw.updateHitEvents();
+            if (hw.hadHitEvent(hb, hg) && hw.hadHitEvent(hg, hb))
+                sawHit = true;
+        }
+        CHECK(sawHit);                      // fell ~1.5 m: about 5 m/s, above the 3 m/s threshold
+        WorldSettings t2 = ws;
+        t2.impactMinSpeed = 0.0f;  t2.frictionMixing = 3;  t2.restitutionMixing = 2;
+        t2.warmStarting = false;  t2.restitutionIterations = 8;
+        t2.restitutionPropagation = true;  t2.isotropicInertiaTolerance = 0.1f;
+        hw.applyTuning(t2);
+        CHECK(hw.settings().frictionMixing == 3 && !hw.settings().warmStarting);
+        hw.step(1.0f / 60.0f);
+        std::printf("world settings checks done\n");
+    }
+
     return fails ? 1 : 0;
 }

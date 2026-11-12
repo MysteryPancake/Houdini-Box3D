@@ -121,7 +121,7 @@ Every step the solver writes `P`, `orient`, `v` and `w` back to the dynamic poin
 
 Turn on **Add Impact Data** on the Box3D Data node to record the object's impacts in its **Impacts** data, which shows in the details view on steps that have at least one impact. This can increase simulation time and memory use.
 
-The **Box3D Solver** also has **Time Scale** (slow or fast motion), **Enable Aging**, and Box3D's own tuning: **Contact Stiffness** and **Contact Damping Ratio** (how firmly contacts resolve overlap), **Overlap Push Speed** (lower it if pieces that start out overlapping fly apart), **Bounce Threshold**, **Contact Recycle Distance**, **Max Linear Speed**, **Continuous Collision** and **Speculative Contacts**. All solver parameters except the thread count can be animated.
+The **Box3D Solver** also has **Time Scale** (slow or fast motion), **Enable Aging**, and Box3D's own tuning: **Contact Stiffness** and **Contact Damping Ratio** (how firmly contacts resolve overlap), **Overlap Push Speed** (lower it if pieces that start out overlapping fly apart), **Bounce Threshold**, **Contact Recycle Distance**, **Max Linear Speed**, **Continuous Collision**, **Speculative Contacts**, **Bounce Iterations** and **Bounce Propagation**, **Isotropic Inertia Tolerance** (stops near-spherical bodies spinning oddly), **Warm Starting** (leave on), **Impact Min Speed** (hides slow impacts from Impact Data) and **Friction Mixing** / **Bounce Mixing** (how two materials combine). All solver parameters except the thread count can be animated.
 
 ### Forces
 

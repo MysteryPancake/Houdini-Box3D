@@ -2095,6 +2095,9 @@ recordImpacts(Box3DSharedState &st, SIM_ObjectArray &objects, const SIM_Time &no
     struct Hit { const DopBodyState *self; b3dop::ContactPoint cp; };
     std::vector<Hit> hits;
     std::vector<int> wrote;
+    const bool speedFilter = st.world.settings().impactMinSpeed > 0.0f;
+    if (speedFilter)
+        st.world.updateHitEvents();
     for (auto &kv : st.objectSync)
     {
         const Box3DObjectSync &os = kv.second;
@@ -2110,7 +2113,8 @@ recordImpacts(Box3DSharedState &st, SIM_ObjectArray &objects, const SIM_Time &no
                 continue;                       // asleep
             st.world.getContactsByHandle(e->handle, st.contacts);
             for (const b3dop::ContactPoint &cp : st.contacts)
-                if (selfAwake || st.world.isAwakeByHandle(cp.other))
+                if ((selfAwake || st.world.isAwakeByHandle(cp.other)) &&
+                    (!speedFilter || st.world.hadHitEvent(e->handle, cp.other)))
                     hits.push_back({ e, cp });
         }
         if (hits.empty())
@@ -2642,18 +2646,42 @@ SIM_SolverBox3D::getDescription()
     static PRM_Name    theSpeculativeName("enablespeculative", "Speculative Contacts");
     static PRM_Default theSpeculativeDefault(1);
 
+    static PRM_Name    theRestIterName("restitutioniterations", "Bounce Iterations");
+    static PRM_Default theRestIterDefault(2);
+    static PRM_Range   theRestIterRange(PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 10);
+    static PRM_Name    theRestPropName("restitutionpropagation", "Bounce Propagation");
+    static PRM_Default theRestPropDefault(0);
+    static PRM_Name    theIsoName("isotropicinertia", "Isotropic Inertia Tolerance");
+    static PRM_Default theIsoDefault(0.2);
+    static PRM_Range   theIsoRange(PRM_RANGE_RESTRICTED, 0, PRM_RANGE_RESTRICTED, 1);
+    static PRM_Name    theWarmName("enablewarmstarting", "Warm Starting");
+    static PRM_Default theWarmDefault(1);
+    static PRM_Name    theImpactSpeedName("impactminspeed", "Impact Min Speed");
+    static PRM_Default theImpactSpeedDefault(0.0);
+    static PRM_Range   theImpactSpeedRange(PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 10);
+    static PRM_Name    theFrictionMixName("frictionmixing", "Friction Mixing");
+    static PRM_Name    theFrictionMixChoices[] = {
+        PRM_Name("0", "Geometric Mean"), PRM_Name("1", "Minimum"), PRM_Name("2", "Maximum"),
+        PRM_Name("3", "Average"), PRM_Name("4", "Multiply"), PRM_Name(0)
+    };
+    static PRM_ChoiceList theFrictionMixMenu(PRM_CHOICELIST_SINGLE, theFrictionMixChoices);
+    static PRM_Default theFrictionMixDefault(0);
+    static PRM_Name    theRestMixName("restitutionmixing", "Bounce Mixing");
+    static PRM_Name    theRestMixChoices[] = {
+        PRM_Name("0", "Maximum"), PRM_Name("1", "Minimum"), PRM_Name("2", "Average"),
+        PRM_Name("3", "Multiply"), PRM_Name("4", "Geometric Mean"), PRM_Name(0)
+    };
+    static PRM_ChoiceList theRestMixMenu(PRM_CHOICELIST_SINGLE, theRestMixChoices);
+    static PRM_Default theRestMixDefault(0);
+
     static PRM_Template theTemplates[] = {
         PRM_Template(PRM_FLT_J,  3, &theGravityName,  theGravityDefault, 0, 0, 0, 0, 1,
                      "Acceleration applied to every dynamic body, in units per second squared. "
                      "Scale it per body with Gravity Scale on Box3D Data."),
         PRM_Template(PRM_TOGGLE, 1, &theUseForcesName, &theUseForcesDefault, 0, 0, 0, 0, 1,
-                     "Apply the forces from Force DOPs connected to the objects (Gravity Force, Wind Force, "
-                     "Fan Force, POP Force and custom forces), evaluated at each dynamic body's centre of mass. "
-                     "They add to Gravity above: set Gravity to 0 when you use a Gravity Force."),
+                     "Apply Force DOPs connected to the objects (Gravity, Wind, Fan, POP Force). Set Gravity above to 0 when using a Gravity Force."),
         PRM_Template(PRM_TOGGLE, 1, &theForcesWakeName, &theForcesWakeDefault, 0, 0, 0, 0, 1,
-                     "Let a force wake a sleeping body. Off, sleeping bodies ignore forces until something else "
-                     "wakes them, so a constant force such as gravity does not keep resting bodies awake. "
-                     "Turn it on for wind or fans that should blow resting pieces away.",
+                     "Let forces wake sleeping bodies. Turn on for wind or fans that should blow resting pieces away.",
                      &theForcesWakeDisable),
         PRM_Template(PRM_INT_J,  1, &theSubStepsName, &theSubStepsDefault, 0, &theSubStepsRange, 0, 0, 1,
                      "Solver passes per time step. More substeps make stacks and fast collisions more stable "
@@ -2665,8 +2693,7 @@ SIM_SolverBox3D::getDescription()
                      "Number of Box3D worker threads. Only used when Use All Threads is off.",
                      &theThreadsDisable),
         PRM_Template(PRM_TOGGLE, 1, &theSleepName,    &theSleepDefault, 0, 0, 0, 0, 1,
-                     "Let bodies that have come to rest stop simulating until something touches them. "
-                     "Turning this off keeps every body awake, whatever each body's own setting."),
+                     "Let resting bodies stop simulating until touched. Off keeps every body awake."),
         PRM_Template(PRM_FLT_J,  1, &theTimeScaleName, &theTimeScaleDefault, 0, &theTimeScaleRange, 0, 0, 1,
                      "Multiplies the time step: below 1 is slow motion, above 1 fast motion."),
         PRM_Template(PRM_FLT_J,  1, &thePushSpeedName, &thePushSpeedDefault, 0, &thePushSpeedRange, 0, 0, 1,
@@ -2680,16 +2707,27 @@ SIM_SolverBox3D::getDescription()
         PRM_Template(PRM_FLT_J,  1, &theBounceThresholdName, &theBounceThresholdDefault, 0, &theBounceThresholdRange, 0, 0, 1,
                      "Collisions slower than this speed don't bounce, so resting pieces settle instead of jittering."),
         PRM_Template(PRM_FLT_J,  1, &theRecycleName, &theRecycleDefault, 0, &theRecycleRange, 0, 0, 1,
-                     "A touching pair that has moved less than this distance (and turned under about 10 degrees) "
-                     "since its contact points were last computed keeps them for the next step, which is faster "
-                     "but slightly less exact. 0 turns recycling off for every body. Individual bodies can opt "
-                     "out with Contact Recycling on Box3D Data or the contactrecycling point attribute."),
+                     "Reuse contacts for pairs that barely moved, which is faster but slightly less exact. 0 turns it off for every body."),
         PRM_Template(PRM_FLT_J,  1, &theMaxSpeedName, &theMaxSpeedDefault, 0, &theMaxSpeedRange, 0, 0, 1,
                      "No body moves faster than this."),
         PRM_Template(PRM_TOGGLE, 1, &theContinuousName, &theContinuousDefault, 0, 0, 0, 0, 1,
                      "Stop fast bodies passing through static ones (and, for Fast Object bodies, moving ones)."),
         PRM_Template(PRM_TOGGLE, 1, &theSpeculativeName, &theSpeculativeDefault, 0, 0, 0, 0, 1,
                      "Create contacts just before shapes touch. Leave on unless you see bodies catch on invisible edges."),
+        PRM_Template(PRM_INT_J,  1, &theRestIterName, &theRestIterDefault, 0, &theRestIterRange, 0, 0, 1,
+                     "Extra solver passes that compute bounce. More passes give better bounce on stacked pieces."),
+        PRM_Template(PRM_TOGGLE, 1, &theRestPropName, &theRestPropDefault, 0, 0, 0, 0, 1,
+                     "Pass bounce on through stacks of touching pieces."),
+        PRM_Template(PRM_FLT_J,  1, &theIsoName, &theIsoDefault, 0, &theIsoRange, 0, 0, 1,
+                     "Stops nearly spherical bodies spinning oddly. 0 is a sphere, 0.5 a 1x1x2 box; only affects new bodies or mass changes."),
+        PRM_Template(PRM_TOGGLE, 1, &theWarmName, &theWarmDefault, 0, 0, 0, 0, 1,
+                     "Advanced: reuse last step's contact forces. Leave on; turning it off makes stacks less stable."),
+        PRM_Template(PRM_FLT_J,  1, &theImpactSpeedName, &theImpactSpeedDefault, 0, &theImpactSpeedRange, 0, 0, 1,
+                     "Impact Data only includes pairs that collide faster than this. 0 includes every contact."),
+        PRM_Template(PRM_ORD,    1, &theFrictionMixName, &theFrictionMixDefault, &theFrictionMixMenu, 0, 0, 0, 1,
+                     "How the friction of two touching bodies is combined."),
+        PRM_Template(PRM_ORD,    1, &theRestMixName, &theRestMixDefault, &theRestMixMenu, 0, 0, 0, 1,
+                     "How the bounce of two touching bodies is combined."),
         PRM_Template()
     };
 
@@ -2742,6 +2780,13 @@ SIM_SolverBox3D::currentWorldSettings() const
     s.maxLinearSpeed   = float(getMaxLinearSpeed());
     s.enableContinuous = getEnableContinuous();
     s.enableSpeculative = getEnableSpeculative();
+    s.restitutionIterations  = int(getRestitutionIterations());
+    s.restitutionPropagation = getRestitutionPropagation();
+    s.isotropicInertiaTolerance = float(getIsotropicInertia());
+    s.warmStarting     = getEnableWarmStarting();
+    s.impactMinSpeed   = float(getImpactMinSpeed());
+    s.frictionMixing   = int(getFrictionMixing());
+    s.restitutionMixing = int(getRestitutionMixing());
     return s;
 }
 

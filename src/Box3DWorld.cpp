@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <mutex>
+#include <set>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -22,6 +23,7 @@ struct Box3DWorld::Impl
     std::shared_ptr<TaskRunner>           tasks;              // host threads (null: Box3D's own pool); outlives worldId
     CollisionFilterTable                  filters;
     int                                   liveBodies = 0;     // every live body, keyed or handle-made
+    std::set<std::pair<BodyHandle, BodyHandle>> hitPairs;    // updateHitEvents()
 
     // Keyed API only (the keyed shape calls take no BodySettings, so they are kept here).
     std::unordered_map<uint64_t, BodyHandle>   bodies;
@@ -226,8 +228,46 @@ shapeDefFor(const BodySettings &b, bool updateMass)
     // Custom filtering on for every shape (Box3D cannot turn it on later), with the body's
     // profile + 1 in the user data (0 = none).
     def.enableCustomFiltering   = true;
+    def.enableHitEvents         = true;     // for the Impacts speed filter; costs nothing without a threshold
     def.userData                = reinterpret_cast<void *>(intptr_t(b.filterProfile + 1));
     return def;
+}
+
+// Mixing rules for two touching materials. The callbacks get no context, so each rule is its own function.
+float frictionMin(float a, uint64_t, float b, uint64_t) { return std::min(a, b); }
+float frictionMax(float a, uint64_t, float b, uint64_t) { return std::max(a, b); }
+float frictionAvg(float a, uint64_t, float b, uint64_t) { return 0.5f * (a + b); }
+float frictionMul(float a, uint64_t, float b, uint64_t) { return a * b; }
+float restitutionMin(float a, uint64_t, float b, uint64_t) { return std::min(a, b); }
+float restitutionAvg(float a, uint64_t, float b, uint64_t) { return 0.5f * (a + b); }
+float restitutionMul(float a, uint64_t, float b, uint64_t) { return a * b; }
+float restitutionGeo(float a, uint64_t, float b, uint64_t) { return std::sqrt(std::max(0.0f, a * b)); }
+
+// nullptr is Box3D's own rule (geometric mean for friction, maximum for restitution).
+b3FrictionCallback *
+frictionRule(int mode)
+{
+    switch (mode)
+    {
+        case 1: return &frictionMin;
+        case 2: return &frictionMax;
+        case 3: return &frictionAvg;
+        case 4: return &frictionMul;
+        default: return nullptr;
+    }
+}
+
+b3RestitutionCallback *
+restitutionRule(int mode)
+{
+    switch (mode)
+    {
+        case 1: return &restitutionMin;
+        case 2: return &restitutionAvg;
+        case 3: return &restitutionMul;
+        case 4: return &restitutionGeo;
+        default: return nullptr;
+    }
 }
 
 int
@@ -291,6 +331,13 @@ Box3DWorld::create(const WorldSettings &s, std::shared_ptr<TaskRunner> tasks)
     def.contactSpeed         = std::max(0.0f, s.contactPushSpeed);
     def.restitutionThreshold = std::max(0.0f, s.restitutionThreshold);
     def.maximumLinearSpeed   = std::max(0.0f, s.maxLinearSpeed);
+    def.restitutionIterations = std::clamp(s.restitutionIterations, 0, B3_MAX_RESTITUTION_ITERATIONS);
+    def.enableRestitutionPropagation = s.restitutionPropagation;
+    def.isotropicInertiaTolerance = std::clamp(s.isotropicInertiaTolerance, 0.0f, 1.0f);
+    if (s.impactMinSpeed > 0.0f)
+        def.hitEventThreshold = s.impactMinSpeed;
+    def.frictionCallback    = frictionRule(s.frictionMixing);
+    def.restitutionCallback = restitutionRule(s.restitutionMixing);
     def.workerCount = static_cast<uint32_t>(std::max(1, s.workerCount));
     if (tasks && def.workerCount > 1)
     {
@@ -329,6 +376,8 @@ Box3DWorld::create(const WorldSettings &s, std::shared_ptr<TaskRunner> tasks)
         myImpl->settings.contactRecycleDistance = WorldSettings().contactRecycleDistance;
     b3World_SetCustomFilterCallback(myImpl->worldId, &filterCallback, &myImpl->filters);
     b3World_EnableSpeculative(myImpl->worldId, s.enableSpeculative);
+    b3World_EnableWarmStarting(myImpl->worldId, s.warmStarting);
+    myImpl->hitPairs.clear();
     return true;
 }
 
@@ -1191,6 +1240,20 @@ Box3DWorld::applyTuning(const WorldSettings &s)
         b3World_SetRestitutionThreshold(w, std::max(0.0f, s.restitutionThreshold));
     if (s.maxLinearSpeed != cur.maxLinearSpeed)
         b3World_SetMaximumLinearSpeed(w, std::max(0.0f, s.maxLinearSpeed));
+    if (s.restitutionIterations != cur.restitutionIterations)
+        b3World_SetRestitutionIterations(w, std::clamp(s.restitutionIterations, 0, B3_MAX_RESTITUTION_ITERATIONS));
+    if (s.restitutionPropagation != cur.restitutionPropagation)
+        b3World_EnableRestitutionPropagation(w, s.restitutionPropagation);
+    if (s.isotropicInertiaTolerance != cur.isotropicInertiaTolerance)
+        b3World_SetIsotropicInertiaTolerance(w, std::clamp(s.isotropicInertiaTolerance, 0.0f, 1.0f));
+    if (s.warmStarting != cur.warmStarting)
+        b3World_EnableWarmStarting(w, s.warmStarting);
+    if (s.impactMinSpeed != cur.impactMinSpeed)
+        b3World_SetHitEventThreshold(w, s.impactMinSpeed > 0.0f ? s.impactMinSpeed : b3DefaultWorldDef().hitEventThreshold);
+    if (s.frictionMixing != cur.frictionMixing)
+        b3World_SetFrictionCallback(w, frictionRule(s.frictionMixing));
+    if (s.restitutionMixing != cur.restitutionMixing)
+        b3World_SetRestitutionCallback(w, restitutionRule(s.restitutionMixing));
     // Like gravity, a non-finite recycle distance is ignored and the previous one kept.
     const bool recycleOk = std::isfinite(s.contactRecycleDistance);
     if (recycleOk && s.contactRecycleDistance != cur.contactRecycleDistance)
@@ -1205,6 +1268,27 @@ Box3DWorld::applyTuning(const WorldSettings &s)
         for (int k = 0; k < 3; ++k)
             cur.gravity[k] = keptGravity[k];
     cur.workerCount = workers;          // fixed for the life of the world
+}
+
+void
+Box3DWorld::updateHitEvents()
+{
+    myImpl->hitPairs.clear();
+    if (!isValid())
+        return;
+    const b3ContactEvents ev = b3World_GetContactEvents(myImpl->worldId);
+    for (int i = 0; i < ev.hitCount; ++i)
+    {
+        const BodyHandle a = packBody(b3Shape_GetBody(ev.hitEvents[i].shapeIdA));
+        const BodyHandle b = packBody(b3Shape_GetBody(ev.hitEvents[i].shapeIdB));
+        myImpl->hitPairs.insert({ std::min(a, b), std::max(a, b) });
+    }
+}
+
+bool
+Box3DWorld::hadHitEvent(BodyHandle a, BodyHandle b) const
+{
+    return myImpl->hitPairs.count({ std::min(a, b), std::max(a, b) }) > 0;
 }
 
 bool

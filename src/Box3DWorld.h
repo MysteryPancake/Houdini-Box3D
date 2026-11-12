@@ -78,6 +78,14 @@ struct WorldSettings
     // Box3D's default is 10 * linear slop = 0.05 at its default length units (1 unit = 1 metre).
     // Per body: BodySettings::contactRecycling.
     float contactRecycleDistance = 0.05f;
+
+    int   restitutionIterations = 2;          // extra solver passes for bounce (0-63)
+    bool  restitutionPropagation = false;     // bounce passes on through stacks
+    float isotropicInertiaTolerance = 0.2f;   // 0-1; near-spherical bodies lose gyroscopic torque. New bodies / mass changes only
+    bool  warmStarting = true;                // off only for comparing against the reference solver
+    float impactMinSpeed = 0.0f;              // Box3D hit event threshold (m/s): Impacts only for pairs that hit this fast. 0 = every contact
+    int   frictionMixing = 0;                 // 0 geometric mean (Box3D default), 1 min, 2 max, 3 average, 4 multiply
+    int   restitutionMixing = 0;              // 0 max (Box3D default), 1 min, 2 average, 3 multiply, 4 geometric mean
 };
 
 // One contact point of a body after a step (getContactsByHandle).
@@ -206,6 +214,10 @@ public:
 
     // Touching contact points that carried impulse in the last step. `out` is cleared first.
     int   getContactsByHandle(BodyHandle h, std::vector<ContactPoint> &out) const;
+
+    // Hit events of the last step (pairs that approached faster than impactMinSpeed).
+    void  updateHitEvents();
+    bool  hadHitEvent(BodyHandle a, BodyHandle b) const;
 
     // ---- collision filtering ---------------------------------------------------
     // A profile names a body (group, object name, object id) and its ignore patterns

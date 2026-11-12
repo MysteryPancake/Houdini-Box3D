@@ -37,6 +37,13 @@ public:
     GETSET_DATA_FUNCS_F("maxlinearspeed",   MaxLinearSpeed);
     GETSET_DATA_FUNCS_B("enablecontinuous", EnableContinuous);
     GETSET_DATA_FUNCS_B("enablespeculative", EnableSpeculative);
+    GETSET_DATA_FUNCS_I("restitutioniterations", RestitutionIterations);
+    GETSET_DATA_FUNCS_B("restitutionpropagation", RestitutionPropagation);
+    GETSET_DATA_FUNCS_F("isotropicinertia", IsotropicInertia);
+    GETSET_DATA_FUNCS_B("enablewarmstarting", EnableWarmStarting);
+    GETSET_DATA_FUNCS_F("impactminspeed",   ImpactMinSpeed);
+    GETSET_DATA_FUNCS_I("frictionmixing",   FrictionMixing);        // 0 geometric mean, 1 min, 2 max, 3 average, 4 multiply
+    GETSET_DATA_FUNCS_I("restitutionmixing", RestitutionMixing);    // 0 max, 1 min, 2 average, 3 multiply, 4 geometric mean
     GETSET_DATA_FUNCS_B("enableaging",  EnableAging);   // age += dt; dead = 1 once age > life
 
 protected:

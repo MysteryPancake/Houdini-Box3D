@@ -35,6 +35,10 @@ README rules (hard limits, not suggestions):
 - Do not rewrite or expand existing README text while making an unrelated change. Trim, don't pad.
 - Before finishing a task, re-read any README edit and cut it down.
 
+UI tooltips (the help text on parameters) follow the same rule: one or two short sentences, under about 150
+characters. Say what the control does and, if needed, when to change it. No implementation detail, no lists of point
+attributes, no restating how the sibling controls work.
+
 ## Layout
 
 ```
@@ -560,3 +564,13 @@ convention, and Bullet's `bullet_primR` order and `bullet_length` meaning (Bulle
 the Force DOP result for the same body, applies the sum, then zeroes the attributes it read (a write lock, followed by
 `recordFingerprintAfterWrite`, so the next sync does not see the clear as an external edit). Zeroing is needed because
 nothing else clears `force` without a POP Solver. The POP Force node must run before this solver.
+
+## World settings added from the Box3D world API
+
+Bounce iterations / propagation, isotropic inertia tolerance, warm starting, hit event threshold and the friction /
+restitution mixing rules are `WorldSettings` fields, passed to `b3WorldDef` at creation and changed live in
+`applyTuning`. Isotropic tolerance only affects new bodies or bodies whose mass changes (Box3D's rule). The mixing
+callbacks get no context, so each rule is its own plain function chosen by `frictionRule` / `restitutionRule`;
+0 passes nullptr (Box3D's own rule). Shapes are always made with hit events on. With `impactMinSpeed > 0`,
+`recordImpacts` keeps only contact points whose body pair appears in the step's hit events (`updateHitEvents`,
+`hadHitEvent`); 0 keeps every contact. `tests/core_physics.cpp` covers the core side.
