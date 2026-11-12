@@ -76,7 +76,12 @@ Layering (keep it):
   `reportWorldCreationFailure` names the limit when it is the cause.
 * `-DBOX3D_DOUBLE_PRECISION=ON` works: positions cross the boundary as `double[3]` and `Box3DWorld.cpp` converts through
   `decltype(b3Pos::x)`.
-* Release or RelWithDebInfo only.
+* Release or RelWithDebInfo only. RelWithDebInfo turns on `B3_ENABLE_ASSERT`. Box3D's default assert handler breaks
+  to the debugger (kills Houdini without one), so `Box3DWorld::create` installs `assertHandler` once
+  (`b3SetAssertFcn`): logs to stderr (first 20), counts, returns 0 (no break). Box3D then carries on past the failed
+  check, so results after an assert may be wrong, but Houdini survives.
+* Inputs Box3D asserts on are guarded in the core too: velocities (`finiteVec3`: non-finite components -> 0) and
+  gravity (`create`: non-finite components -> 0; `applyTuning`: non-finite gravity ignored, previous kept).
 * `build.sh` wipes `build/` if the repo moved (`build/.configured_from`). `build.bat` finds `HFS` itself (env var, then
   registry `HKLM\SOFTWARE\Side Effects Software` ActiveVersion -> `Houdini <ver>\InstallPath`, then the newest
   `Program Files\Side Effects Software\Houdini X.Y.Z`). It still names the VS 2022 generator.
@@ -405,7 +410,10 @@ Written: `P`, `orient`, `v`, `w` and packed transforms (awake dynamic bodies), `
 ## Warnings surfaced on the node
 
 One `UT_ERROR_WARNING` per kind per step with a count: shape fallbacks (on the step a shape is built), points that could
-not become a body, duplicate `id`, non-finite `P`, Geometry not writable, bodies not matched to a point at write-back.
+not become a body, duplicate `id`, non-finite `P`, non-finite `v` / `w` (read as zero; `readPointState`'s
+`badVelocity`), Geometry not writable, bodies not matched to a point at write-back. Also: non-finite solver Gravity
+(ignored, previous kept), and Box3D assertions that failed during the step (`Box3DWorld::assertCount()` delta,
+reported by a scope guard in `solveObjectsSubclass`).
 
 ## Debug logging (`Box3DDebug.h`)
 

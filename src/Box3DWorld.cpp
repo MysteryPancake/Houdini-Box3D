@@ -4,7 +4,10 @@
 #include <box3d/box3d.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <cstdio>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -59,6 +62,50 @@ struct Box3DWorld::Impl
 };
 
 namespace {
+
+// ---- Box3D assertion handler ------------------------------------------------
+// Box3D's default handler breaks to the debugger, which kills the host (Houdini) when none is
+// attached. Asserts are compiled in only with NDEBUG unset or B3_ENABLE_ASSERT (RelWithDebInfo).
+// Ours logs to stderr (Houdini's console), capped, and returns 0: no break, Box3D carries on.
+std::atomic<int> gAssertCount{0};
+constexpr int    kMaxAssertLogs = 20;
+
+int
+assertHandler(const char *condition, const char *fileName, int lineNumber)
+{
+    const int n = gAssertCount.fetch_add(1) + 1;
+    if (n <= kMaxAssertLogs)
+        std::fprintf(stderr, "Box3D assertion failed (ignored, simulation continues): %s, %s, line %d\n",
+                     condition ? condition : "?", fileName ? fileName : "?", lineNumber);
+    if (n == kMaxAssertLogs)
+        std::fprintf(stderr, "Box3D: further assertion messages are not printed\n");
+    return 0;
+}
+
+void
+installAssertHandler()
+{
+    static std::once_flag once;
+    std::call_once(once, [] { b3SetAssertFcn(&assertHandler); });
+}
+
+bool
+finite3(const float v[3])
+{
+    return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
+}
+
+// Non-finite components become 0 (Box3D asserts on them, and a NaN velocity spreads to the
+// body's position and its broad-phase bounds).
+b3Vec3
+finiteVec3(const float v[3])
+{
+    b3Vec3 out;
+    out.x = std::isfinite(v[0]) ? v[0] : 0.0f;
+    out.y = std::isfinite(v[1]) ? v[1] : 0.0f;
+    out.z = std::isfinite(v[2]) ? v[2] : 0.0f;
+    return out;
+}
 
 // b3BodyId {int32 index1, uint16 world0, uint16 generation} packed into a BodyHandle.
 // index1 >= 1 for a live body, so a valid handle is never 0.
@@ -177,11 +224,10 @@ bool
 Box3DWorld::create(const WorldSettings &s)
 {
     destroy();
+    installAssertHandler();
 
     b3WorldDef def = b3DefaultWorldDef();
-    def.gravity.x = s.gravity[0];
-    def.gravity.y = s.gravity[1];
-    def.gravity.z = s.gravity[2];
+    def.gravity = finiteVec3(s.gravity);       // non-finite components: 0
     def.enableSleep      = s.enableSleep;
     def.enableContinuous = s.enableContinuous;
     def.contactHertz         = std::max(0.0f, s.contactHertz);
@@ -198,6 +244,9 @@ Box3DWorld::create(const WorldSettings &s)
         return false;
 
     myImpl->settings = s;
+    myImpl->settings.gravity[0] = def.gravity.x;    // as applied (finite)
+    myImpl->settings.gravity[1] = def.gravity.y;
+    myImpl->settings.gravity[2] = def.gravity.z;
     myImpl->filters  = CollisionFilterTable();
     myImpl->worldId  = b3CreateWorld(&def);
     if (!b3World_IsValid(myImpl->worldId))
@@ -928,7 +977,10 @@ Box3DWorld::applyTuning(const WorldSettings &s)
         return;
     WorldSettings &cur = myImpl->settings;
     const b3WorldId w = myImpl->worldId;
-    if (s.gravity[0] != cur.gravity[0] || s.gravity[1] != cur.gravity[1] || s.gravity[2] != cur.gravity[2])
+    // Non-finite gravity is ignored: the world keeps what it has (cur is not updated either).
+    const bool gravityOk = finite3(s.gravity);
+    if (gravityOk &&
+        (s.gravity[0] != cur.gravity[0] || s.gravity[1] != cur.gravity[1] || s.gravity[2] != cur.gravity[2]))
     {
         b3Vec3 g;
         g.x = s.gravity[0];  g.y = s.gravity[1];  g.z = s.gravity[2];
@@ -949,7 +1001,11 @@ Box3DWorld::applyTuning(const WorldSettings &s)
     if (s.maxLinearSpeed != cur.maxLinearSpeed)
         b3World_SetMaximumLinearSpeed(w, std::max(0.0f, s.maxLinearSpeed));
     const int workers = cur.workerCount;
+    const float keptGravity[3] = { cur.gravity[0], cur.gravity[1], cur.gravity[2] };
     cur = s;
+    if (!gravityOk)
+        for (int k = 0; k < 3; ++k)
+            cur.gravity[k] = keptGravity[k];
     cur.workerCount = workers;          // fixed for the life of the world
 }
 
@@ -1086,8 +1142,8 @@ Box3DWorld::setVelocity(uint64_t id, const float linear[3], const float angular[
     if (it == myImpl->bodies.end())
         return false;
 
-    b3Body_SetLinearVelocity(unpackBody(it->second), makeVec3(linear));
-    b3Body_SetAngularVelocity(unpackBody(it->second), makeVec3(angular));
+    b3Body_SetLinearVelocity(unpackBody(it->second), finiteVec3(linear));
+    b3Body_SetAngularVelocity(unpackBody(it->second), finiteVec3(angular));
     return true;
 }
 
@@ -1146,8 +1202,8 @@ Box3DWorld::setVelocityByHandle(BodyHandle h, const float linear[3], const float
     if (!h)
         return false;
     const b3BodyId id = unpackBody(h);
-    b3Body_SetLinearVelocity(id, makeVec3(linear));
-    b3Body_SetAngularVelocity(id, makeVec3(angular));
+    b3Body_SetLinearVelocity(id, finiteVec3(linear));
+    b3Body_SetAngularVelocity(id, finiteVec3(angular));
     return true;
 }
 
@@ -1234,6 +1290,12 @@ Box3DWorld::version(int &major, int &minor, int &revision)
     major    = v.major;
     minor    = v.minor;
     revision = v.revision;
+}
+
+int
+Box3DWorld::assertCount()
+{
+    return gAssertCount.load();
 }
 
 int

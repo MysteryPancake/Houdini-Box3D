@@ -568,11 +568,14 @@ struct ShapeSources
 // ---------------------------------------------------------------------------
 
 // P / rotation / v / w of one point (a packed point's rotation from its primitive). False if
-// P is not finite.
+// P is not finite. A non-finite v or w is read as zero (Box3D asserts on it, and a NaN
+// velocity would spread to the body's position); *badVelocity says so.
 bool
 readPointState(const GU_Detail *gdp, const PointAttrs &a, GA_Offset off,
-               const PackedInfo &pk, Box3DBodyPose &out)
+               const PackedInfo &pk, Box3DBodyPose &out, bool *badVelocity = nullptr)
 {
+    if (badVelocity)
+        *badVelocity = false;
     const UT_Vector3 p = gdp->getPos3(off);
     out.pos[0] = p.x();  out.pos[1] = p.y();  out.pos[2] = p.z();
     if (!std::isfinite(out.pos[0]) || !std::isfinite(out.pos[1]) || !std::isfinite(out.pos[2]))
@@ -593,15 +596,28 @@ readPointState(const GU_Detail *gdp, const PointAttrs &a, GA_Offset off,
 
     out.lin[0] = out.lin[1] = out.lin[2] = 0.0f;
     out.ang[0] = out.ang[1] = out.ang[2] = 0.0f;
+    auto finite3 = [](const UT_Vector3 &v) {
+        return std::isfinite(v.x()) && std::isfinite(v.y()) && std::isfinite(v.z());
+    };
     if (a.v.isValid())
     {
         const UT_Vector3 v = a.v.get(off);
-        out.lin[0] = v.x();  out.lin[1] = v.y();  out.lin[2] = v.z();
+        if (finite3(v))
+        {
+            out.lin[0] = v.x();  out.lin[1] = v.y();  out.lin[2] = v.z();
+        }
+        else if (badVelocity)
+            *badVelocity = true;
     }
     if (a.w.isValid())
     {
         const UT_Vector3 w = a.w.get(off);
-        out.ang[0] = w.x();  out.ang[1] = w.y();  out.ang[2] = w.z();
+        if (finite3(w))
+        {
+            out.ang[0] = w.x();  out.ang[1] = w.y();  out.ang[2] = w.z();
+        }
+        else if (badVelocity)
+            *badVelocity = true;
     }
     return true;
 }
@@ -1458,6 +1474,7 @@ struct SyncCounts
     int added = 0, edited = 0, retyped = 0, failed = 0, duplicates = 0, badP = 0;
     int rebuilt = 0;            // shapes replaced
     int dead = 0;               // `dead` points
+    int badVelocity = 0;        // non-finite v or w, read as zero
     int updated = 0;            // settings changed
     int skipped = 0;            // objects not scanned
     std::unordered_map<std::string, int> fallbacks;     // note -> count
@@ -1586,7 +1603,7 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c, StepProgr
             s.entry = nullptr;
         s.key = key;
         const PackedInfo pk = anyPrims ? getPackedInfo(gdp, s.off) : PackedInfo();
-        s.ok     = readPointState(gdp, a, s.off, pk, s.cur);
+        s.ok     = readPointState(gdp, a, s.off, pk, s.cur, &s.badVelocity);
         s.active = !a.active.isValid() || a.active.get(s.off) != 0;
         s.packed = pk.prim != nullptr;
         if (s.packed)
@@ -1658,6 +1675,8 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c, StepProgr
             ++c.badP;               // not stamped: the body (if any) is removed
             continue;
         }
+        if (s.badVelocity)
+            ++c.badVelocity;        // simulated, with the bad v / w read as zero
 
         // `dead`: deleted after the step. Not stamped, so its body goes with the gone points'.
         if (a.dead.isValid() && a.dead.get(off) != 0)
@@ -2495,6 +2514,22 @@ SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
     if (objects.entries() == 0)
         return SIM_SOLVER_SUCCESS;
 
+    // Box3D assertions logged during this solve (RelWithDebInfo builds; see Box3DWorld).
+    const int assertsBefore = b3dop::Box3DWorld::assertCount();
+    struct AssertReport
+    {
+        SIM_SolverBox3D &solver; SIM_ObjectArray &objects; int before;
+        ~AssertReport()
+        {
+            const int n = b3dop::Box3DWorld::assertCount() - before;
+            if (n > 0 && objects.entries() > 0)
+                solver.addError(objects(0), SIM_MESSAGE,
+                    ("Box3D: " + std::to_string(n) + " internal Box3D assertion(s) failed this step and were "
+                     "ignored (details in Houdini's console). Results may be wrong.").c_str(),
+                    UT_ERROR_WARNING);
+        }
+    } assertReport{ *this, objects, assertsBefore };
+
     // Escape (see StepProgress).
     StepProgress progress;
     progress.boss = UTgetInterrupt();
@@ -2555,7 +2590,11 @@ SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
     const double timeScale = std::max(0.0, double(getTimeScale()));
     st->stepDt = float(dt * timeScale);
     // Solver parameters may be animated; only the thread count needs a new world.
-    st->world.applyTuning(currentWorldSettings());
+    const b3dop::WorldSettings tuning = currentWorldSettings();
+    if (!std::isfinite(tuning.gravity[0]) || !std::isfinite(tuning.gravity[1]) || !std::isfinite(tuning.gravity[2]))
+        addError(objects(0), SIM_MESSAGE,
+                 "Box3D: Gravity is not a finite number; the previous gravity is kept", UT_ERROR_WARNING);
+    st->world.applyTuning(tuning);      // ignores non-finite gravity
 
     // Cancelled mid-sync, or before the (uninterruptible) Box3D step: the world may be half
     // updated, so no step may continue from it. Unstamped, the next solve that would have
@@ -2702,6 +2741,8 @@ SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
         warn("Box3D: " + std::to_string(counts.duplicates) + " point(s) share an `id` with another point; only the first of each is simulated");
     if (counts.badP)
         warn("Box3D: " + std::to_string(counts.badP) + " point(s) have a non-finite P and are skipped");
+    if (counts.badVelocity)
+        warn("Box3D: " + std::to_string(counts.badVelocity) + " point(s) have a non-finite v or w; it was treated as zero");
     if (counts.dead && !st->deletions.empty())
         B3D_LOG("  sync: %d dead point(s) removed", counts.dead);
 

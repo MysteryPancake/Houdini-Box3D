@@ -242,6 +242,9 @@ public:
     // ---- misc --------------------------------------------------------------
     static void version(int &major, int &minor, int &revision);
     static int  liveWorldCount();   // Box3D worlds alive in this process (all Box3DWorlds)
+    // Box3D assertions that failed so far in this process (always 0 when Box3D is built without
+    // asserts, e.g. Release). They are logged to stderr and ignored rather than breaking.
+    static int  assertCount();
     static int  maxWorldCount();    // B3_MAX_WORLDS: create() fails once liveWorldCount() reaches it
 
 private:

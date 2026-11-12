@@ -100,6 +100,7 @@ struct Box3DPointSlot
     Box3DBodyMirror  *entry  = nullptr;
     Box3DBodyPose     cur;
     bool              ok     = false;    // readPointState succeeded (P is finite)
+    bool              badVelocity = false;   // v or w was not finite (read as zero)
     bool              active = true;
     bool              packed = false;    // the point belongs to a packed primitive
     int64_t           index  = 0;        // point number
