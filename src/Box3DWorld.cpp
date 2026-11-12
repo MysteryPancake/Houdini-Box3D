@@ -17,15 +17,11 @@ struct Box3DWorld::Impl
     CollisionFilterTable                  filters;
     int                                   liveBodies = 0;     // every live body, keyed or handle-made
 
-    // Keyed API only (addBody / addShape / removeBody ...); the solver's handle path never
-    // touches these. Shape material/density comes from the body settings, remembered here
-    // because the keyed shape calls do not take them.
+    // Keyed API only (the keyed shape calls take no BodySettings, so they are kept here).
     std::unordered_map<uint64_t, BodyHandle>   bodies;
     std::unordered_map<uint64_t, BodySettings> bodySettings;
 
-    // Convex hull cache, keyed by a hash of the point data. We own these
-    // b3HullData (b3CreateHull allocates, b3DestroyHull frees); Box3D clones
-    // them into its own world database when a shape is made.
+    // Hull cache. We own the b3HullData; Box3D clones it when a shape is made.
     struct HullEntry
     {
         b3HullData *hull   = nullptr;
@@ -33,10 +29,9 @@ struct Box3DWorld::Impl
         int         refs   = 0;          // shapes created from it, across all bodies
     };
     std::unordered_map<HullId, HullEntry>              hulls;
-    // Hulls each body's shapes use, keyed by body handle. Only bodies with hull shapes
-    // appear (a plain box / sphere / capsule body adds nothing here).
+    // Hulls each body uses (only bodies with hull shapes appear).
     std::unordered_map<BodyHandle, std::vector<HullId>> bodyHulls;
-    size_t                                             bodyHullsReserve = 0;   // applied lazily, see noteHullUse
+    size_t                                             bodyHullsReserve = 0;   // applied at the first hull use
 
     void releaseHull(HullId h)
     {
@@ -46,8 +41,8 @@ struct Box3DWorld::Impl
     }
     void noteHullUse(BodyHandle body, HullId hull)
     {
-        if (bodyHullsReserve)           // first hull body of a reserve() hint: size the map now,
-        {                               // so a scene without hulls never pays for the buckets
+        if (bodyHullsReserve)           // a scene without hulls never pays for the buckets
+        {
             bodyHulls.reserve(bodyHullsReserve);
             bodyHullsReserve = 0;
         }
@@ -65,9 +60,8 @@ struct Box3DWorld::Impl
 
 namespace {
 
-// A b3BodyId packed into a BodyHandle. b3BodyId is {int32 index1, uint16
-// world0, uint16 generation}; index1 is >= 1 for a live body, so a packed
-// valid id is never 0.
+// b3BodyId {int32 index1, uint16 world0, uint16 generation} packed into a BodyHandle.
+// index1 >= 1 for a live body, so a valid handle is never 0.
 BodyHandle
 packBody(b3BodyId id)
 {
@@ -84,9 +78,7 @@ unpackBody(BodyHandle h)
     return id;
 }
 
-// b3Pos is float x/y/z normally and double x/y/z when Box3D is built with
-// BOX3D_DOUBLE_PRECISION. These helpers keep the double[3] boundary working in
-// both modes (this file is the only one that sees Box3D headers).
+// b3Pos is float, or double with BOX3D_DOUBLE_PRECISION; these work either way.
 b3Pos
 makePos(const double p[3])
 {
@@ -144,14 +136,12 @@ b3ShapeDef
 shapeDefFor(const BodySettings &b, bool updateMass)
 {
     b3ShapeDef def = b3DefaultShapeDef();
-    def.updateBodyMass          = updateMass;     // false: the caller applies the mass once at the end
+    def.updateBodyMass          = updateMass;     // false: the caller applies the mass afterwards
     def.density                 = b.density;
     def.baseMaterial.friction    = b.friction;
     def.baseMaterial.restitution = b.restitution;
-    // Every shape takes part in custom filtering and carries its body's profile (+1, so 0 is
-    // "none"): a profile can be given to a body later, and Box3D has no call to turn custom
-    // filtering on for an existing shape. With no ignore patterns anywhere the callback
-    // returns at once.
+    // Custom filtering on for every shape (Box3D cannot turn it on later), with the body's
+    // profile + 1 in the user data (0 = none).
     def.enableCustomFiltering   = true;
     def.userData                = reinterpret_cast<void *>(intptr_t(b.filterProfile + 1));
     return def;
@@ -163,7 +153,7 @@ shapeProfile(b3ShapeId id)
     return int(reinterpret_cast<intptr_t>(b3Shape_GetUserData(id))) - 1;
 }
 
-// Box3D's custom filter: called from pair finding, possibly on several threads. Reads only.
+// Box3D's custom filter. Runs during pair finding, possibly on several threads: read only.
 bool
 filterCallback(b3ShapeId a, b3ShapeId b, void *context)
 {
@@ -199,9 +189,7 @@ Box3DWorld::create(const WorldSettings &s)
     def.contactSpeed         = std::max(0.0f, s.contactPushSpeed);
     def.restitutionThreshold = std::max(0.0f, s.restitutionThreshold);
     def.maximumLinearSpeed   = std::max(0.0f, s.maxLinearSpeed);
-    // Box3D spins up its own thread pool when workerCount > 1 and no task
-    // callbacks are given (it does not use Houdini's task system). The pool is
-    // sized here; to change the count, create the world again.
+    // Box3D's own thread pool (not Houdini's), sized here for the life of the world.
     def.workerCount = static_cast<uint32_t>(std::max(1, s.workerCount));
 
     myImpl->settings = s;
@@ -248,8 +236,7 @@ Box3DWorld::step(float timeStep)
 void
 Box3DWorld::reserve(size_t bodyCount)
 {
-    // Only the hull bookkeeping is sized, and lazily (see Impl::noteHullUse). The keyed maps
-    // belong to the convenience API; the handle path never fills them.
+    // Only the hull bookkeeping, at its first use (see Impl::noteHullUse).
     myImpl->bodyHullsReserve = bodyCount;
 }
 
@@ -272,7 +259,7 @@ Box3DWorld::createBody(const BodySettings &body, const double position[3], const
     def.linearDamping  = body.linearDamping;
     def.angularDamping = body.angularDamping;
     def.gravityScale   = body.gravityScale;
-    def.enableSleep    = body.enableSleep;      // the world switch is applied on top by Box3D
+    def.enableSleep    = body.enableSleep;      // Box3D applies the world switch on top
     def.isBullet       = body.isBullet;
     if (body.sleepThreshold >= 0.0f && std::isfinite(body.sleepThreshold))
         def.sleepThreshold = body.sleepThreshold;
@@ -349,8 +336,7 @@ Box3DWorld::boxShape(BodyHandle h, const BodySettings &b, const float halfExtent
     if (!h)
         return false;
 
-    // A rotated box is the hull of its 8 rotated corners (Box3D has no rotated
-    // box helper). The hull cache keys it by content, so identical boxes share one.
+    // A rotated box is the hull of its 8 rotated corners (cached by content).
     if (!isIdentityRotation(rotationXYZW))
     {
         float pts[24];
@@ -369,7 +355,6 @@ Box3DWorld::boxShape(BodyHandle h, const BodySettings &b, const float halfExtent
         return hull && createHullShape(h, b, hull, updateMass);
     }
 
-    // The hull and shape def are cloned by Box3D, so the temporary is fine.
     const bool offset = center && (center[0] != 0.0f || center[1] != 0.0f || center[2] != 0.0f);
     const b3BoxHull hull = offset
         ? b3MakeOffsetBoxHull(halfExtents[0], halfExtents[1], halfExtents[2], makeVec3(center))
@@ -422,7 +407,7 @@ Box3DWorld::capsuleShape(BodyHandle h, const BodySettings &b, float radius, floa
     return !B3_IS_NULL(shape);
 }
 
-// ---- keyed API: a convenience layer over the handle API ----------------------
+// ---- keyed API (tests) ---------------------------------------------------------
 
 bool
 Box3DWorld::addBody(uint64_t id, const BodySettings &body, const double position[3], const float rotationXYZW[4])
@@ -550,12 +535,10 @@ Box3DWorld::createHullWithKey(HullId key, const float *xyz, int pointCount, floa
         pts[size_t(i)].z = xyz[3 * i + 2];
     }
 
-    // b3CreateHull returns NULL when the hull is degenerate (flat, collinear) or
-    // when the result would exceed B3_MAX_HULL_VERTICES / FACES / EDGES. A smaller
-    // vertex budget makes the builder keep fewer vertices, which is how a very
-    // detailed point cloud still ends up as a valid (slightly smaller) hull. A
-    // fully triangulated hull hits the 128-edge limit at about 44 vertices, hence
-    // the 44 rung.
+    // b3CreateHull fails for degenerate input or when the result would exceed Box3D's
+    // vertex / face / edge limits; a smaller vertex budget keeps fewer vertices, so dense
+    // input still gets a (slightly smaller) hull. A triangulated hull hits the 128-edge
+    // limit at about 44 vertices, hence that rung.
     b3HullData *hull = nullptr;
     for (int budget : { B3_MAX_HULL_VERTICES, 64, 44, 32, 16, 8 })
     {
@@ -634,11 +617,11 @@ Box3DWorld::setTypeByHandle(BodyHandle h, BodySettings::Type type)
     return true;
 }
 
-// ---- mid-simulation changes ---------------------------------------------------
+// ---- changes to existing bodies -------------------------------------------------
 
 namespace {
 
-// Every shape of a body, in a scratch vector the caller keeps (no allocation once warm).
+// Every shape of a body, into a reused scratch vector.
 int
 bodyShapes(b3BodyId id, std::vector<b3ShapeId> &out)
 {
@@ -660,7 +643,7 @@ Box3DWorld::setMaterialByHandle(BodyHandle h, float friction, float restitution)
     for (int i = 0; i < n; ++i)
     {
         if (b3Shape_GetType(tShapes[size_t(i)]) == b3_compoundShape)
-            continue;                   // never made by this wrapper; Box3D asserts on it
+            continue;                   // never made here; Box3D asserts on it
         b3Shape_SetFriction(tShapes[size_t(i)], friction);
         b3Shape_SetRestitution(tShapes[size_t(i)], restitution);
     }
@@ -738,7 +721,7 @@ Box3DWorld::destroyShapesByHandle(BodyHandle h)
     const b3BodyId id = unpackBody(h);
     const int n = bodyShapes(id, tShapes);
     for (int i = 0; i < n; ++i)
-        b3DestroyShape(tShapes[size_t(i)], false);      // the caller applies the mass after re-adding
+        b3DestroyShape(tShapes[size_t(i)], false);      // the caller applies the mass afterwards
 
     auto bh = myImpl->bodyHulls.find(h);
     if (bh != myImpl->bodyHulls.end())
@@ -777,7 +760,7 @@ Box3DWorld::applyMassByHandle(BodyHandle h, float density, bool comAtOrigin, flo
     const bool moveCenter = comAtOrigin &&
         (md.center.x != 0.0f || md.center.y != 0.0f || md.center.z != 0.0f);
     if (!moveCenter && !scale)
-        return;                         // already centred (a symmetric piece about its pivot)
+        return;                         // already centred
     if (moveCenter)
     {
         // Parallel axis: I_o = I_c + m (|d|^2 E - d d^T). b3Matrix3 is three columns.
@@ -860,7 +843,7 @@ Box3DWorld::getContactsByHandle(BodyHandle h, std::vector<ContactPoint> &out) co
         const b3BodyId b = b3Shape_GetBody(cd.shapeIdB);
         const bool thisIsA = sameBody(a, id);
         const b3BodyId other = thisIsA ? b : a;
-        const b3Pos centerA = b3Body_GetWorldCenter(a);     // manifold anchors are relative to A's centre of mass
+        const b3Pos centerA = b3Body_GetWorldCenter(a);     // anchors are relative to A's centre of mass
         for (int m = 0; m < cd.manifoldCount; ++m)
         {
             const b3Manifold &man = cd.manifolds[m];
@@ -923,9 +906,8 @@ Box3DWorld::setFilterProfileByHandle(BodyHandle h, int profile)
         if (shapeProfile(sid) == profile)
             continue;
         b3Shape_SetUserData(sid, reinterpret_cast<void *>(intptr_t(profile + 1)));
-        // The custom filter only runs when a pair is created, so drop this shape's contacts:
-        // b3Shape_SetFilter with invokeContacts resets the proxy, but returns early when the
-        // filter is unchanged. Change it without the reset, then set it back with one.
+        // The filter only runs on new pairs, so drop the shape's contacts. SetFilter(invoke)
+        // does that but returns early on an unchanged filter: change it, then set it back.
         const b3Filter f = b3Shape_GetFilter(sid);
         b3Filter tmp = f;
         tmp.groupIndex = f.groupIndex + 1;
@@ -1203,8 +1185,7 @@ Box3DWorld::getMoveEvents(std::vector<BodyMove> &out) const
         return 0;
     }
     const b3BodyEvents ev = b3World_GetBodyEvents(myImpl->worldId);
-    // Every element is overwritten below, so only a size change needs the vector to
-    // construct anything (clear() + resize() would zero the whole array every step).
+    // Every element is overwritten, so only resize (clear + resize would zero it every step).
     if (out.size() != size_t(ev.moveCount))
         out.resize(size_t(ev.moveCount));
     for (int i = 0; i < ev.moveCount; ++i)

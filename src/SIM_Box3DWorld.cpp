@@ -6,12 +6,6 @@
 #include <SIM/SIM_DopDescription.h>
 #include <SIM/SIM_Utils.h>
 
-#include <atomic>
-
-namespace {
-std::atomic<uint64_t> theNextGeneration{ 1 };
-}
-
 SIM_Box3DWorld::SIM_Box3DWorld(const SIM_DataFactory *factory)
     : BaseClass(factory)
 {
@@ -19,8 +13,7 @@ SIM_Box3DWorld::SIM_Box3DWorld(const SIM_DataFactory *factory)
 
 SIM_Box3DWorld::~SIM_Box3DWorld()
 {
-    // myState releases its reference; the Box3D world is destroyed when the
-    // last timestep copy that points at it goes away.
+    // The world goes when the last timestep copy sharing it does.
 }
 
 const SIM_DopDescription *
@@ -77,7 +70,6 @@ bool
 SIM_Box3DWorld::createWorld(const b3dop::WorldSettings &settings)
 {
     auto fresh = std::make_shared<Box3DSharedState>();
-    fresh->generation = theNextGeneration++;
     if (!fresh->world.create(settings))
     {
         B3D_LOG("World[%p] createWorld FAILED", (const void *)this);

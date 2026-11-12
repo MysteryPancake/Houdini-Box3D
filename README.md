@@ -164,7 +164,7 @@ Convex and concave shapes need **packed primitives** (one point plus one packed 
 - An inactive body hit hard enough starts moving on the step after the hit.
 - Use `id` if you delete points with `dead`. Without it, every later point counts as a new body.
 - Patterns don't match DOP groups yet.
-- Triangle-mesh colliders and joints/constraints are not supported yet.
+- Joints and constraints are not supported yet.
 
 ## Troubleshooting
 

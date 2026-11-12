@@ -1,12 +1,8 @@
 // Box3DShapes.h
 //
-// Houdini-free helpers that turn point-attribute values into Box3D shape
-// parameters. Header-only, no Box3D and no HDK includes, so it is unit-tested
-// in tests/core_physics.cpp without Houdini.
-//
-// The solver reads attributes off the points in the object's Geometry and
-// calls these. See README.md for the attribute table and AGENTS.md for how
-// they are used.
+// Houdini-free, header-only helpers: shape parameters from point attributes, packed-prim
+// matrix math, hashing, collision-group patterns. No Box3D or HDK includes, so
+// tests/core_physics.cpp covers them without Houdini.
 #pragma once
 
 #include <cmath>
@@ -28,11 +24,9 @@ enum class ShapeType : int
     None     = 5,   // no collision shape: a static body that nothing collides with
 };
 
-// A primitive shape (box, sphere or capsule) in body-local space. `center` is its offset
-// from the body origin: zero for point-attribute shapes, non-zero when a box or
-// sphere is fitted to packed geometry whose bounds are not centred on the pivot.
-// Convex / Concave are not described by a ShapeSpec: they need point data, see
-// Box3DWorld::createHull().
+// A box, sphere or capsule in body-local space. `center` is its offset from the body origin
+// (non-zero e.g. when fitted to packed geometry not centred on the pivot). Convex / concave
+// shapes are hulls instead (Box3DWorld::createHull).
 struct ShapeSpec
 {
     ShapeType type           = ShapeType::Box;
@@ -43,14 +37,9 @@ struct ShapeSpec
     float     rot[4]         = { 0.0f, 0.0f, 0.0f, 1.0f };   // x, y, z, w: orientation in body space. Box and capsule; a sphere ignores it
 };
 
-// Parse the value of the `bullet_georep` point attribute, using Houdini's own
-// names: convexhull, concave, box, capsule, compound, sphere, none. Exact,
-// case-sensitive compare: the names are lowercase only.
-// `compound` and `concave` both give ShapeType::Concave (several convex hulls on
-// one body).
-// `cylinder` and `plane` are Houdini values Box3D has no shape for: they are
-// not recognised, so like any unknown value they return false.
-// Returns false for null / empty / unknown strings (caller uses its default).
+// `bullet_georep` -> ShapeType, Houdini's lowercase names, exact match. `compound` and
+// `concave` are both Concave. False (out untouched) for null, empty or unknown values,
+// including `cylinder` and `plane`, which Box3D has no shape for.
 inline bool
 parseShapeType(const char *name, ShapeType &out)
 {
@@ -75,10 +64,7 @@ parseShapeType(const char *name, ShapeType &out)
     return false;
 }
 
-// parseShapeType with a memo, for loops that read the `bullet_georep` string of many points.
-// A scene has only a handful of distinct values (usually one), so remembering them by
-// content turns the per-point parse into one strcmp against the value seen last. Same
-// results as parseShapeType, including "unknown -> false and `out` untouched".
+// parseShapeType with a memo by string value (a scene has a handful, usually one).
 class ShapeTypeCache
 {
 public:
@@ -123,15 +109,9 @@ private:
     size_t             myLast = 0;
 };
 
-// Size convention: the shape fills a bounding box of size pscale * scale, which
-// is what Copy to Points does to a unit primitive. A unit box is 1x1x1, a unit
-// sphere has diameter 1. For a sphere the largest scale component is used,
-// since a sphere cannot be non-uniformly scaled. A capsule stands along Y:
-// radius = half the larger of x / z, total height = y, so a capsule no taller
-// than it is wide collapses to a sphere.
-//
-// Zero / negative / non-finite components are clamped to a tiny positive size
-// so Box3D never sees a degenerate shape.
+// The shape fills a box of size pscale * scale (Copy to Points on a unit primitive). Sphere:
+// diameter = largest component. Capsule along Y: radius = half the larger of x / z, total
+// height = y. Components are made positive and at least 1e-4.
 inline ShapeSpec
 makeShapeSpec(ShapeType type, float pscale, const float scale[3])
 {
@@ -146,8 +126,7 @@ makeShapeSpec(ShapeType type, float pscale, const float scale[3])
     const float sz = sane(pscale * scale[2]);
 
     ShapeSpec s;
-    // Convex / Concave have no size attributes of their own; this is only the
-    // box a caller falls back to when it has no geometry to hull.
+    // Convex / concave: the fallback box when there is no geometry to hull.
     s.type = (type == ShapeType::Sphere || type == ShapeType::Capsule) ? type : ShapeType::Box;
     if (type == ShapeType::Sphere)
     {
@@ -171,18 +150,12 @@ makeShapeSpec(ShapeType type, float pscale, const float scale[3])
 }
 
 // ---------------------------------------------------------------------------
-// Explicit primitive overrides: the bullet_primS / primR / primT / radius /
-// length point attributes (Houdini's Bullet Data with AutoFit off).
-//
-// Conventions (taken from the Bullet Data node where it says, otherwise assumed):
-//   bullet_primS   box HALF extents (the node documents Box Size as a half-size)
+// Explicit primitives (Bullet Data with AutoFit off). Each is optional:
+//   bullet_primS   box HALF extents (Bullet Data documents Box Size as a half-size)
 //   bullet_radius  sphere / capsule radius
-//   bullet_length  capsule straight section along Y, caps NOT included (assumed:
-//                  Bullet's own btCapsuleShape height)
-//   bullet_primT   shape offset from the body origin, body space
-//   bullet_primR   shape orientation, Euler angles in DEGREES, rotation order XYZ
-//                  (X first, then Y, then Z) (assumed: the units are not documented)
-// Each one is optional; a missing one keeps what the ShapeSpec already holds.
+//   bullet_length  capsule straight section along Y, caps not included (assumed)
+//   bullet_primT   offset from the body origin
+//   bullet_primR   Euler degrees, order XYZ (assumed; the solver builds the quaternion)
 // ---------------------------------------------------------------------------
 struct PrimOverrides
 {
@@ -195,16 +168,6 @@ struct PrimOverrides
 
     bool any() const { return hasSize || hasRot || hasPos || hasRadius || hasLength; }
 };
-
-// q = a * b (apply b first, then a), quaternions as x, y, z, w.
-inline void
-quatMul(const float a[4], const float b[4], float out[4])
-{
-    out[0] = a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1];
-    out[1] = a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0];
-    out[2] = a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3];
-    out[3] = a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2];
-}
 
 // Rotate v by the unit quaternion q.
 inline void
@@ -220,8 +183,7 @@ quatRotate(const float q[4], const float v[3], float out[3])
     out[2] = v[2] + qw * tz + (qx * ty - qy * tx);
 }
 
-// Apply explicit overrides to a box / sphere / capsule spec. A non-finite value is
-// ignored; sizes are clamped to a tiny positive minimum like makeShapeSpec does.
+// Non-finite values are ignored; sizes are clamped like makeShapeSpec.
 inline void
 applyPrimOverrides(ShapeSpec &s, const PrimOverrides &o)
 {
@@ -270,19 +232,7 @@ shapeVolume(const ShapeSpec &s)
     }
 }
 
-// Houdini's `mass` attribute -> Box3D density (mass / volume). Returns
-// fallback if mass or volume is not usable.
-inline float
-densityFromMass(float mass, const ShapeSpec &s, float fallback)
-{
-    const float vol = shapeVolume(s);
-    if (!(mass > 0.0f) || !std::isfinite(mass) || !(vol > 0.0f))
-        return fallback;
-    return mass / vol;
-}
-
-// One world-unique body id per point: the DOP object id in the high 32 bits
-// and the point's id (the `id` attribute, else its point number) in the low 32.
+// Object id in the high 32 bits, the point's `id` (else its number) in the low 32.
 inline uint64_t
 makeBodyKey(int objectId, int64_t pointId)
 {
@@ -292,10 +242,8 @@ makeBodyKey(int objectId, int64_t pointId)
 // ---------------------------------------------------------------------------
 // Packed primitives and hull point preparation
 //
-// Houdini matrices are ROW-vector: p' = p * M, and UT_Matrix4D stores the
-// translation in row 3. Everything below uses that layout (m3[row*3+col],
-// m4[row*4+col]) so the HDK side can copy a matrix straight in. Quaternions are
-// x, y, z, w and rotate vectors in the usual way (same as Box3D / UT_Quaternion).
+// Houdini matrices are row-vector (p' = p * M, translation in row 3); everything here uses
+// that layout (m3[row*3+col], m4[row*4+col]). Quaternions are x, y, z, w.
 // ---------------------------------------------------------------------------
 
 // Row-vector rotation matrix for unit quaternion q (x, y, z, w).
@@ -312,10 +260,8 @@ quatToMatrix3(const float q[4], double m[9])
     m[6] = r02; m[7] = r12; m[8] = r22;
 }
 
-// Split a row-vector matrix M = S * R (scale each row, then rotate) into the
-// per-row scale and a unit rotation quaternion. Returns false (identity,
-// scale 1) if the matrix is degenerate. Shear is dropped (rows are
-// orthonormalised), a mirrored matrix loses its mirror.
+// Split M = S * R into per-row scale and a unit quaternion. False (identity, scale 1) if
+// degenerate. Shear and mirroring are dropped.
 inline bool
 matrix3ToQuatScale(const double m[9], float outQ[4], double outScale[3])
 {
@@ -376,12 +322,8 @@ matrix3ToQuatScale(const double m[9], float outQ[4], double outScale[3])
     return true;
 }
 
-// A new local 3x3 for a packed primitive: keep the per-row scale of oldM3 and
-// replace its rotation with the unit quaternion q (x, y, z, w). Row-vector
-// layout, M = S * R, so row i of the result is scale[i] * row i of R. For a
-// uniform scale this is exact. If oldM3 is degenerate the scale is 1.
-// Uses only the DIY quatToMatrix3 / matrix3ToQuatScale pair, which are
-// unit-tested as inverses of each other.
+// oldM3's per-row scale with q's rotation (a packed primitive's new local 3x3). Uses the
+// quatToMatrix3 / matrix3ToQuatScale pair, tested as inverses.
 inline void
 composeLocal3(const float q[4], const double oldM3[9], double outM3[9])
 {
@@ -395,9 +337,8 @@ composeLocal3(const float q[4], const double oldM3[9], double outM3[9])
             outM3[row * 3 + col] = sc[row] * r[row * 3 + col];
 }
 
-// The per-axis scale that packedPointsToBodyLocal bakes into the points: the row
-// lengths of the 3x3 of m4, rounded to 5 significant digits so instances that
-// differ only by float noise agree. Returns false if the matrix is degenerate.
+// The scale packedPointsToBodyLocal bakes in: m4's row lengths, rounded to 5 significant
+// digits so instances differing by float noise share a hull. False if degenerate.
 inline bool
 packedScale(const double m4[16], double S[3])
 {
@@ -417,8 +358,7 @@ packedScale(const double m4[16], double S[3])
     return true;
 }
 
-// FNV-1a style hashing, used to key hulls. hashFloats hashes the raw bytes of a
-// point set (once per shared packed source); mixHash folds one more value in.
+// FNV-1a style hashing for hull keys and signatures.
 inline uint64_t
 hashFloats(const float *xyz, size_t floatCount)
 {
@@ -443,12 +383,9 @@ mixHash(uint64_t h, uint64_t v)
     return h;
 }
 
-// The cache key of a packed hull. Houdini says which prims share one source
-// (the same packed detail), so the source's points are hashed ONCE
-// (`sourceHash`) and an instance only adds what differs: the pivot and the
-// scale. `kind` separates one merged hull (convex) from per-piece hulls
-// (concave). Same inputs as packedPointsToBodyLocal, so the same key means the
-// same body-local points: the points need only be built on a cache miss.
+// A packed hull's cache key: the source's point hash plus what differs per instance (pivot,
+// scale). `kind`: 1 merged hull, 2 per piece. Same inputs as packedPointsToBodyLocal, so a
+// hit means the same body-local points.
 inline uint64_t
 packedHullKey(uint64_t sourceHash, const double pivot[3], const double S[3], uint32_t kind)
 {
@@ -464,10 +401,8 @@ packedHullKey(uint64_t sourceHash, const double pivot[3], const double S[3], uin
     return h ? h : 1ull;
 }
 
-// Group primitives into connected sets: two primitives are in the same set if
-// they share a point, directly or through other primitives. primPoints[i] holds
-// the point ids of primitive i. Returns the set of each primitive, numbered from
-// 0 in order of first appearance.
+// Connected sets of primitives (sharing points, directly or not). primPoints[i]: points of
+// primitive i. Returns each primitive's set, numbered in order of first appearance.
 template <class PointId>
 std::vector<int>
 connectedSets(const std::vector<std::vector<PointId>> &primPoints)
@@ -506,30 +441,10 @@ connectedSets(const std::vector<std::vector<PointId>> &primPoints)
     return sets;
 }
 
-// Bring the points of a packed primitive's inner geometry into BODY-LOCAL space.
-//
-//   m4     the primitive's full transform (inner space -> world), row-vector,
-//          i.e. GU_PrimPacked::getFullTransform4. Only its 3x3 (scale and
-//          rotation) is used; its translation row is NOT read.
-//   pivot  the primitive's pivot in inner space, i.e. GEO_PrimPacked::getPivot.
-//          It is the inner point that sits at the packed point's P, so it is
-//          the body origin.
-//
-// With M = S * R (scale, then rotate), the result is
-//
-//        (p - pivot) * S
-//
-// the points relative to the pivot, with the primitive's scale baked in and its
-// rotation removed (the body's rotation puts it back).
-//
-// Instancing: instances of one packed primitive share the same source points and
-// the same pivot, so the pivot is used exactly as stored. Only the scale is
-// derived from the matrix (row lengths), and a rotated instance's row lengths
-// carry float noise (1 vs 0.99999994), which would give each instance a
-// different hull key. So S is rounded to 5 significant digits; the output is
-// then identical across instances and they hit the hull cache. The cost is a
-// relative error of about 1e-5 in the scale.
-// If the matrix is degenerate the points are returned unchanged.
+// A packed primitive's inner points in body-local space: (p - pivot) * S, with m4 the full
+// transform (only its 3x3 is read, M = S * R) and pivot GEO_PrimPacked::getPivot (the inner
+// point at the packed point's P, i.e. the body origin and centre of mass). S is rounded
+// (packedScale) so rotated instances produce identical points. Degenerate m4: unchanged.
 inline void
 packedPointsToBodyLocal(const float *xyz, int count, const double m4[16],
                         const double pivotIn[3], std::vector<float> &out)
@@ -547,12 +462,8 @@ packedPointsToBodyLocal(const float *xyz, int count, const double m4[16],
             out[size_t(3 * i + j)] = float((double(xyz[3 * i + j]) - pivotIn[j]) * S[j]);
 }
 
-// A primitive fitted to a point set: the fallback when there are no hullable
-// points (fewer than 4, or flat), and the shape for `box` / `sphere` /
-// `capsule` on a packed primitive. The box is the bounds; the sphere is centred
-// on the bounds and sized to the largest extent, like the point-attribute
-// sphere; the capsule stands along Y inside the bounds.
-// Degenerate (zero) extents are clamped like makeShapeSpec does.
+// A box / sphere / capsule fitted to the points' bounds: auto-fit on packed geometry, and the
+// fallback when points cannot be hulled. Extents are clamped like makeShapeSpec.
 inline bool
 fitShapeToPoints(ShapeType type, const float *xyz, int count, ShapeSpec &out)
 {
@@ -602,16 +513,11 @@ fitShapeToPoints(ShapeType type, const float *xyz, int count, ShapeSpec &out)
 }
 
 // ---------------------------------------------------------------------------
-// What a point holds after the solver writes a body's result into it.
-//
-// The solver mirrors what the geometry stores so it can tell its own writes from
-// edits by other nodes. These two functions are the single definition of how a
-// value changes on its way into and out of the geometry, shared by the read path
-// (readPointState) and the write-back's prediction, so they cannot drift apart.
+// How values change on their way into and out of the geometry. Shared by the read path and
+// the write-back's prediction, so the solver can tell its own writes from other edits.
 // ---------------------------------------------------------------------------
 
-// Box3D asserts on non-unit quaternions. Houdini users hand us zeros (an
-// attribute that was created with default 0) or slightly off-unit values.
+// Box3D asserts on non-unit quaternions; attributes may hold zeros or off-unit values.
 inline void sanitizeQuat(float q[4])
 {
     double len2 = 0.0;
@@ -625,9 +531,7 @@ inline void sanitizeQuat(float q[4])
     for (int i = 0; i < 4; ++i) q[i] *= inv;
 }
 
-// P is written through UT_Vector3 (float) and read back through getPos3 (float),
-// so the geometry holds double -> float -> double. Returns false if the result is
-// not finite (the read path treats that point as absent).
+// P is stored as float: double -> float -> double. False if not finite.
 inline bool storedPosition(const double in[3], double out[3])
 {
     for (int i = 0; i < 3; ++i)
@@ -638,12 +542,11 @@ inline bool storedPosition(const double in[3], double out[3])
 // ---------------------------------------------------------------------------
 // Collision groups (`collisiongroup`, `collisionignore`, `activationignore`)
 //
-// Houdini patterns: space-separated globs (`*`, `?`, `[abc]`), read left to right; a
-// pattern starting with `^` removes what it matches. A name matches when the last
-// pattern that matches it is not a `^` one.
+// Houdini patterns: space-separated globs (`*`, `?`, `[abc]`) left to right; `^pat` removes
+// what it matches.
 // ---------------------------------------------------------------------------
 
-// One glob against one name. Case-sensitive, like Houdini's pattern matching.
+// One case-sensitive glob against one name.
 inline bool
 globMatch(const char *pat, const char *str)
 {
@@ -703,8 +606,7 @@ globMatch(const char *pat, const char *str)
     return *pat == 0;
 }
 
-// A space-separated pattern list against one name (see above). Empty patterns or an empty
-// name never match.
+// A pattern list against one name. Empty patterns or names never match.
 inline bool
 matchPatternList(const std::string &patterns, const std::string &name)
 {
@@ -732,8 +634,7 @@ matchPatternList(const std::string &patterns, const std::string &name)
     return matched;
 }
 
-// What a body is called for pattern matching, plus its own ignore patterns. Patterns match
-// the other body's collision group, its DOP object's name, or its DOP object's id.
+// A body's names for pattern matching (group, object name, object id) and its ignore patterns.
 struct FilterProfile
 {
     std::string group;          // `collisiongroup` (may be empty)
@@ -750,11 +651,9 @@ patternsMatchProfile(const std::string &patterns, const FilterProfile &who)
            matchPatternList(patterns, who.objectId);
 }
 
-// Every distinct profile in a world, and whether two of them collide (neither ignores the
-// other). Profiles are only ever added. finish() precomputes the answer table so that
-// shouldCollide can be called from several threads during a step (Box3D's pair finding is
-// threaded); past kMaxMatrix profiles it matches patterns on the fly instead (still
-// read-only, so still thread-safe).
+// Every distinct profile, and whether two collide (neither ignores the other). Profiles are
+// only added. finish() precomputes an answer table (past kMaxMatrix: matched on the fly), so
+// shouldCollide is read-only and safe from Box3D's worker threads during a step.
 class CollisionFilterTable
 {
 public:

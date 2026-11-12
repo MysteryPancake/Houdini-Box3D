@@ -1087,7 +1087,7 @@ int main()
         CHECK(mw.getMassDataByHandle(b, m, c, I) && std::fabs(m - 2.0f) < 1e-4f && std::fabs(c[0] - 1.0f) < 1e-4f);
         const float Ixx = I[0], Iyy = I[1];                 // cube: 2 * (1+1)/12 = 1/3 each
         CHECK(std::fabs(Ixx - 1.0f / 3.0f) < 1e-3f && std::fabs(Iyy - 1.0f / 3.0f) < 1e-3f);
-        mw.applyMassByHandle(b, 2.0f, true, 1.0f);          // computecom = 0: centre at the origin
+        mw.applyMassByHandle(b, 2.0f, true, 1.0f);          // centre moved to the origin
         CHECK(mw.getMassDataByHandle(b, m, c, I) && std::fabs(c[0]) < 1e-5f);
         CHECK(std::fabs(I[0] - Ixx) < 1e-4f && std::fabs(I[1] - (Iyy + 2.0f)) < 1e-3f);    // + m d^2 off the x axis
         mw.applyMassByHandle(b, 2.0f, false, 3.0f);         // inertialtensorstiffness 3

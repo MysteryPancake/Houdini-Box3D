@@ -1,20 +1,10 @@
 // Box3DDebug.h
 //
-// Debug logging for the DOP plugin. Compiled in only when BOX3DDOP_DEBUG is
-// defined (CMake option BOX3DDOP_DEBUG, ON by default; pass OFF for a quiet build).
-//
-// Output goes to stderr (shown in Houdini's console window).
-//
-// Other environment variable read (only in debug builds, read every step;
-// Houdini must be restarted for the environment itself to change):
-//
-//     BOX3DDOP_REQUESTED_CACHE=<int>  value getRequestedCacheSubclass() returns
-//     BOX3DDOP_VERBOSE=1              also log things that can happen EVERY step (sync skipped /
-//                                     full scan, edits detected, unmatched bodies). Off by default:
-//                                     a line per frame, flushed, slows Houdini down a lot.
-//     BOX3DDOP_VERIFY_READBACK=1      write-back also re-reads every point it wrote and logs
-//                                     "READBACK MISMATCH" if that differs (bit for bit) from the
-//                                     pose it predicted for the mirror. Slow; for checking only.
+// Debug logging to stderr (Houdini's console), compiled in with BOX3DDOP_DEBUG (CMake option,
+// on by default). Environment variables (debug builds only):
+//     BOX3DDOP_REQUESTED_CACHE=<int>  what getRequestedCacheSubclass() returns (read every step)
+//     BOX3DDOP_VERBOSE=1              also log what can happen every step (slow)
+//     BOX3DDOP_VERIFY_READBACK=1      re-read written points and log "READBACK MISMATCH" (slow)
 #pragma once
 
 #include <atomic>

@@ -28,23 +28,16 @@ SIM_Box3DData::getDescription()
     static PRM_ChoiceList theBodyTypeMenu(PRM_CHOICELIST_SINGLE, theBodyTypeChoices);
     static PRM_Default    theBodyTypeDefault(2);              // dynamic
 
-    // Box3D requires density, friction, restitution and damping to be >= 0
-    // (B3_ASSERT in body.c / shape.c). Hard minimum 0; the slider max is only
-    // a UI convenience, so larger values can still be typed in.
-    //
-    // Parameter names match the point attribute that overrides each one
-    // (mass, friction, bounce, lineardamping, ...), so the node and the
-    // attributes read the same.
+    // Box3D asserts on negatives: hard minimum 0 (larger values than the slider can be typed).
+    // Parameter names match the point attributes that override them.
     static PRM_Range theMassRange       (PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 10);
     static PRM_Range theFrictionRange   (PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 1);
     static PRM_Range theBounceRange     (PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 1);
     static PRM_Range theDampingRange    (PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 10);
 
-    // Mass of each body; the solver turns it into density = mass / shape volume.
     static PRM_Name    theMassName("mass", "Mass");
     static PRM_Default theMassDefault(1.0);
 
-    // Compute Mass on: mass = density * shape volume (point attributes: computemass, density).
     static PRM_Name    theComputeMassName("computemass", "Compute Mass");
     static PRM_Default theComputeMassDefault(0);
     static PRM_Conditional theMassDisable("{ computemass == 1 }", PRM_CONDTYPE_DISABLE);
@@ -71,11 +64,11 @@ SIM_Box3DData::getDescription()
     static PRM_Name    theSleepName("enablesleep", "Allow Sleeping");
     static PRM_Default theSleepDefault(1);
 
-    // Box3D's "bullet" flag, under a name that does not clash with Houdini's `isbullet`.
+    // Box3D's "bullet" flag (Houdini's `isbullet` means something else).
     static PRM_Name    theFastObjectName("fastobject", "Fast Object");
     static PRM_Default theFastObjectDefault(0);
 
-    // Box3D has one sleep threshold (speed) and a fixed time to sleep (half a second).
+    // Box3D: one threshold, fixed half second to sleep.
     static PRM_Name    theSleepThresholdName("sleepthreshold", "Sleep Threshold");
     static PRM_Default theSleepThresholdDefault(0.05);
     static PRM_Range   theSleepThresholdRange(PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 1);
@@ -100,11 +93,7 @@ SIM_Box3DData::getDescription()
                                                "Create Convex Hull per Set of Connected Primitives");
     static PRM_Default theHullPerConnectedDefault(0);
 
-    // On: a box / sphere / capsule on a packed point is fitted to the packed
-    // geometry's bounds. Off: it is built from the point attributes bullet_primS,
-    // bullet_radius, bullet_length, bullet_primT and bullet_primR instead (anything
-    // missing falls back to pscale / scale). The `bullet_autofit` point attribute
-    // overrides this per point.
+    // Off: box / sphere / capsule from bullet_primS / radius / length / primT / primR.
     static PRM_Name    theAutoFitName("autofit", "Auto Fit Box / Sphere / Capsule to Geometry");
     static PRM_Default theAutoFitDefault(1);
 

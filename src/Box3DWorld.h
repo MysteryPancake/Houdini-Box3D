@@ -1,18 +1,11 @@
 // Box3DWorld.h
 //
-// Houdini-free wrapper around a single Box3D world. The SIM_* classes own one
-// of these and talk to Box3D only through it.
+// Houdini-free wrapper around one Box3D world; the only interface the SIM_* code uses.
+// Box3D's headers are not included here (pimpl), so Houdini code never sees them.
 //
-// Box3D's headers are deliberately NOT included here (pimpl), so Houdini
-// translation units never see them.
-//
-// Conventions used at this boundary:
-//   * positions  : double[3]   (Box3D is single precision by default, but this
-//                               keeps the door open for BOX3D_DOUBLE_PRECISION)
-//   * quaternions: float[4] in x, y, z, w order (same as UT_QuaternionF).
-//                  Box3D's b3Quat is {v.x, v.y, v.z, s}, i.e. the same layout.
-//   * ids        : caller-supplied uint64_t. The DOP solver uses one body per
-//                  POINT, keyed by makeBodyKey(objectId, pointId).
+// Conventions: positions double[3] (works with BOX3D_DOUBLE_PRECISION too); quaternions
+// float[4] x, y, z, w (the layout of UT_QuaternionF and b3Quat); keyed-API ids are
+// caller-supplied uint64_t.
 #pragma once
 
 #include <cstdint>
@@ -26,16 +19,11 @@ namespace b3dop {
 // Handle to a convex hull owned by the world's hull cache. 0 is invalid.
 using HullId = uint64_t;
 
-// Opaque handle to a body, valid until that body is removed or the world is
-// destroyed. Looking a body up by key costs a hash lookup; a handle does not,
-// so callers that touch a body every step fetch it once (bodyHandle) and keep it.
-// 0 is invalid.
+// A body, valid until it is destroyed (or the world is). No hash lookup. 0 is invalid.
 using BodyHandle = uint64_t;
 
-// One entry of Box3D's body move events: a body that was simulated (awake) in the
-// last step, with its final transform. The events are Box3D's own contiguous array,
-// built during the step, so reading them needs no per-body lookup. Only awake bodies
-// appear; a body that fell asleep this step appears once more with fellAsleep set.
+// One of Box3D's body move events: an awake body after the last step and its final
+// transform. A body that fell asleep this step appears once more with fellAsleep set.
 // Bodies moved by the caller (setTransform...) do not appear.
 struct BodyMove
 {
@@ -46,31 +34,30 @@ struct BodyMove
     bool       fellAsleep = false;
 };
 
-// Everything but workerCount can be changed on a live world (applyTuning); the worker count
-// sizes Box3D's thread pool at creation. Defaults are Box3D's own (b3DefaultWorldDef), except
-// gravity (standard gravity instead of 10).
+// Everything but workerCount can change on a live world (applyTuning). Defaults are Box3D's,
+// except gravity (standard gravity instead of 10).
 struct WorldSettings
 {
     float gravity[3]    = { 0.0f, -9.80665f, 0.0f };
     int   subSteps      = 4;      // Box3D recommends ~4 per step
-    int   workerCount   = 1;      // > 1: Box3D's own thread pool, sized at creation (max 32)
+    int   workerCount   = 1;      // Box3D's own thread pool, sized at creation (max 32)
     bool  enableSleep   = true;
-    bool  enableContinuous = true;    // continuous collision against static bodies (and fast objects vs moving ones)
-    bool  enableSpeculative = true;   // speculative contacts; off only to reduce ghost collisions
+    bool  enableContinuous = true;    // continuous collision vs static bodies (fast objects: vs moving ones too)
+    bool  enableSpeculative = true;   // off only to reduce ghost collisions
     float contactHertz      = 30.0f;  // contact stiffness (cycles per second)
     float contactDampingRatio = 10.0f;    // contact damping (non-dimensional)
-    float contactPushSpeed  = 3.0f;   // the fastest overlapping shapes are pushed apart (m/s)
-    float restitutionThreshold = 1.0f;    // collisions slower than this do not bounce (m/s)
-    float maxLinearSpeed    = 400.0f; // speed cap (m/s)
+    float contactPushSpeed  = 3.0f;   // max speed overlapping shapes are pushed apart (m/s)
+    float restitutionThreshold = 1.0f;    // slower collisions do not bounce (m/s)
+    float maxLinearSpeed    = 400.0f; // m/s
 };
 
 // One contact point of a body after a step (getContactsByHandle).
 struct ContactPoint
 {
     BodyHandle other         = 0;
-    void      *otherUserData = nullptr;     // the other body's user data
+    void      *otherUserData = nullptr;
     double     pos[3]        = { 0, 0, 0 }; // world space
-    float      normal[3]     = { 0, 1, 0 }; // unit, pointing from this body into the other
+    float      normal[3]     = { 0, 1, 0 }; // from this body into the other
     float      impulse       = 0.0f;        // total normal impulse over the step (N*s), > 0
 };
 
@@ -79,37 +66,23 @@ struct BodySettings
     enum class Type { Static, Kinematic, Dynamic };
 
     Type  type           = Type::Dynamic;
-    // `mass` is what the Houdini solver reads (node default, overridden by the
-    // `mass` point attribute): it sets density = mass / total shape volume.
-    // Box3DWorld itself only reads `density`.
-    float mass           = 1.0f;
-    float density        = 1.0f;
-    bool  computeMass    = false;   // Houdini solver only: mass = density * volume instead of `mass`
+    float mass           = 1.0f;    // solver only: density = mass / shape volume
+    float density        = 1.0f;    // what Box3DWorld uses
+    bool  computeMass    = false;   // solver only: mass = density * volume instead
     float friction       = 0.6f;
     float restitution    = 0.0f;
     float linearDamping  = 0.0f;
     float angularDamping = 0.0f;
     float gravityScale   = 1.0f;
     bool  enableSleep    = true;
-    // Box3D's "bullet": continuous collision against other moving bodies too (normal dynamic
-    // bodies only get it against static ones). Houdini attribute: `fastobject`.
-    bool  isBullet       = false;
-    float sleepThreshold = 0.05f;   // speed (m/s) below which the body may fall asleep
-    // Collision filter profile (filterProfile()), -1 for none. Stored on every shape.
-    int   filterProfile  = -1;
+    bool  isBullet       = false;   // Box3D "bullet": continuous collision vs moving bodies too (`fastobject`)
+    float sleepThreshold = 0.05f;   // m/s
+    int   filterProfile  = -1;      // collision filter profile (filterProfile()), -1 = none
 
-    // Used when a point has no (or an unknown) `bullet_georep` attribute.
-    ShapeType defaultShape = ShapeType::Box;
-
-    // Box / sphere / capsule on a packed point: fit the shape to the packed
-    // geometry's bounds (true), or build it from the explicit size attributes
-    // (bullet_primS, bullet_radius, ...) (false). The `bullet_autofit` attribute
-    // overrides this per point. Read only by the Houdini solver.
-    bool      autoFit = true;
-
-    // Convex shapes only: make one hull per set of connected primitives (a
-    // compound) instead of one hull of everything.
-    bool      hullPerConnectedSet = false;
+    // Solver only:
+    ShapeType defaultShape = ShapeType::Box;     // when `bullet_georep` is missing or unknown
+    bool      autoFit = true;                    // box / sphere / capsule fit the packed geometry's bounds
+    bool      hullPerConnectedSet = false;       // convex: one hull per set of connected primitives
 };
 
 class Box3DWorld
@@ -130,21 +103,13 @@ public:
     // ---- stepping ----------------------------------------------------
     void step(float timeStep);
 
-    // ---- handle-based building (the fast path the solver uses) ----------------
-    // Creating a body this way touches no hash map: createBody returns the handle,
-    // and the shape calls take that handle plus the caller's BodySettings (which stay a
-    // local of the caller, so nothing per body is remembered here). Hulls a body uses
-    // are tracked per handle, so destroyBody releases them.
-    //
-    // Mass: every shape add recomputes the body's mass unless `updateMass` is false.
-    // For a body with several shapes pass false for all of them and call
-    // applyMassFromShapes ONCE afterwards (it is required before the next step).
-    // A single-shape body just leaves `updateMass` true.
-    //
-    // The keyed API below (addBody, addShape, removeBody ...) is a convenience layer
-    // over this one: it keeps key -> handle and key -> BodySettings maps, which the
-    // solver does not need.
-    void       reserve(size_t bodyCount);          // hint: about that many bodies are coming (sizes the hull bookkeeping)
+    // ---- handle API (what the solver uses) -------------------------------------
+    // No hash maps: createBody returns the handle and shape calls take the caller's
+    // BodySettings. Hulls are tracked per handle, so destroyBody releases them.
+    // A shape add recomputes the mass unless updateMass is false; after adding with false,
+    // call applyMassFromShapes or applyMassByHandle before the next step (the solver always
+    // does it that way). The keyed API further down is a convenience layer for the tests.
+    void       reserve(size_t bodyCount);          // hint: sizes the hull bookkeeping
     BodyHandle createBody(const BodySettings &body, const double position[3],
                           const float rotationXYZW[4], void *userData = nullptr);   // 0 on failure
     void       destroyBody(BodyHandle h);
@@ -155,71 +120,50 @@ public:
     void       applyMassFromShapes(BodyHandle h);
     bool       setTypeByHandle(BodyHandle h, BodySettings::Type type);   // static / kinematic / dynamic
 
-    // ---- mid-simulation changes (handle API) --------------------------------
-    // What the solver uses when a point attribute changes on an existing body. Each takes
-    // effect from the next step; none of them wakes a sleeping body unless it says so
-    // (Box3D's own rules: enabling "never sleep" wakes it).
-    //
-    // Friction / restitution go to every shape of the body. Box3D re-mixes a contact's
-    // friction and restitution from its shapes every step, so touching contacts follow too.
-    void  setMaterialByHandle(BodyHandle h, float friction, float restitution);
+    // ---- changes to existing bodies (handle API) --------------------------------
+    // Take effect from the next step. Only Box3D's own rules wake a body (disabling sleep does).
+    void  setMaterialByHandle(BodyHandle h, float friction, float restitution);   // every shape; contacts follow
     void  setDampingByHandle(BodyHandle h, float linear, float angular);
     void  setGravityScaleByHandle(BodyHandle h, float gravityScale);
-    // May the body sleep? The world's enableSleep switch is applied on top by Box3D.
-    void  setSleepEnabledByHandle(BodyHandle h, bool enableSleep);
+    void  setSleepEnabledByHandle(BodyHandle h, bool enableSleep);   // the world switch applies on top
     void  setBulletByHandle(BodyHandle h, bool flag);
-    // Density of every shape, then the mass is applied once. The solver keeps mass constant
-    // by passing mass / total shape volume, so this is "change the mass" and also what a
-    // fresh build with the same attributes would produce (inertia follows the shapes).
-    void  setDensityByHandle(BodyHandle h, float density);
-    // Take a body out of the simulation (no collisions, no motion) or put it back. A
-    // disabled body keeps its shapes and settings.
-    void  setEnabledByHandle(BodyHandle h, bool enabled);
+    void  setDensityByHandle(BodyHandle h, float density);           // every shape, then mass from shapes
+    void  setEnabledByHandle(BodyHandle h, bool enabled);            // disabled: no motion, no collisions
     bool  isEnabledByHandle(BodyHandle h) const;
-    // Remove every shape of the body (and release the hulls it used) so new ones can be
-    // added: destroyShapesByHandle, then createShape / createHullShape with updateMass =
-    // false, then applyMassFromShapes once. Contacts of the old shapes are dropped.
+    // Remove every shape (releasing its hulls, dropping its contacts) so new ones can be added
+    // with updateMass = false, followed by one mass update.
     void  destroyShapesByHandle(BodyHandle h);
     void  wakeByHandle(BodyHandle h);
 
-    // Mass from the shapes at `density` (required after shapes were added with updateMass =
-    // false), then optionally moved and scaled: comAtOrigin puts the centre of mass at the body
-    // origin (inertia shifted to it, parallel axis theorem), and inertiaScale multiplies the
-    // inertia tensor. The custom part only applies to dynamic bodies, and a later type change
-    // (setTypeByHandle) recomputes the mass from the shapes, so the caller re-applies it.
+    // Set every shape's density and apply the mass from the shapes; then, for dynamic bodies,
+    // comAtOrigin moves the centre of mass to the body origin (parallel axis theorem) and
+    // inertiaScale scales the inertia. setTypeByHandle recomputes from the shapes, so re-apply
+    // after a type change.
     void  applyMassByHandle(BodyHandle h, float density, bool comAtOrigin, float inertiaScale);
     bool  getMassDataByHandle(BodyHandle h, float &mass, float center[3], float inertiaDiag[3]) const;
 
-    // Box3D's sleep threshold: the body may sleep once |v| + |w| * extent stays below it (for
-    // Box3D's fixed time to sleep). Negative means Box3D's default.
+    // Box3D's single sleep threshold on |v| + |w| * extent. Negative = Box3D's default.
     void  setSleepThresholdByHandle(BodyHandle h, float threshold);
     float sleepThresholdByHandle(BodyHandle h) const;
 
-    // Kinematic bodies: move to this pose over the next step of `timeStep` seconds (Box3D
-    // gives the body the velocity that gets it there, so it pushes what it touches). The
-    // velocity stays afterwards; set it to zero when the target stops moving.
+    // Kinematic body: reach this pose in timeStep (Box3D sets the velocity, so it pushes what it
+    // touches). The velocity remains afterwards; zero it when the target stops.
     void  setTargetTransformByHandle(BodyHandle h, const double pos[3], const float rotXYZW[4], float timeStep);
 
-    // Every touching contact point of the body that carried impulse in the last step.
-    // `out` is reused (cleared first). Returns the count.
+    // Touching contact points that carried impulse in the last step. `out` is cleared first.
     int   getContactsByHandle(BodyHandle h, std::vector<ContactPoint> &out) const;
 
     // ---- collision filtering ---------------------------------------------------
-    // Profiles name a body (collision group, object name, object id) and say what it ignores
-    // (patterns, see CollisionFilterTable). Every shape stores its body's profile; a custom
-    // Box3D filter callback asks the table whether two shapes may collide. Call
-    // finishFilterProfiles() after adding profiles and before stepping.
+    // A profile names a body (group, object name, object id) and its ignore patterns
+    // (CollisionFilterTable). Shapes store their body's profile; a Box3D custom filter asks the
+    // table. Call finishFilterProfiles() after adding profiles, before stepping.
     int   filterProfile(const FilterProfile &p);
     void  finishFilterProfiles();
     bool  shouldCollide(int profileA, int profileB) const;
     const FilterProfile *filterProfileData(int profile) const;
-    // Give an existing body another profile. Its contacts are dropped and found again under
-    // the new rule (no effect when the profile is unchanged).
-    void  setFilterProfileByHandle(BodyHandle h, int profile);
+    void  setFilterProfileByHandle(BodyHandle h, int profile);       // also re-filters its contacts
 
-    // Apply changed world settings to the live world (gravity, substeps, sleep, continuous,
-    // speculative, contact stiffness / damping / push speed, bounce threshold, speed cap).
-    // workerCount is ignored: it needs a new world. Cheap when nothing changed.
+    // Push changed settings into the live world. workerCount is kept (it needs a new world).
     void  applyTuning(const WorldSettings &s);
 
     // Read back (tests, debugging). Material is the first shape's; 0 / false if unknown.
@@ -238,85 +182,58 @@ public:
     bool hasBody(uint64_t id) const;
     int  bodyCount() const;                      // all live bodies, keyed or handle-made
 
-    // Change an existing body between static / kinematic / dynamic.
     bool setBodyType(uint64_t id, BodySettings::Type type);
-    // Keyed API only: frees the settings kept for building the body's shapes (the shapes,
-    // density and type live in Box3D). Call once the body's shapes are all added;
-    // getBodyType and setBodyType keep working, but shapes added afterwards use default
-    // settings. (Bodies made with createBody never have any, so the solver does not call this.)
+    // Frees the settings kept for adding shapes; shapes added afterwards use defaults.
     void releaseBuildState(uint64_t id);
     bool getBodyType(uint64_t id, BodySettings::Type &out) const;
-
-    // Density used by shapes added to this body AFTER the call. The solver sets
-    // it once it knows the total shape volume (mass attribute -> density).
-    bool setBodyDensity(uint64_t id, float density);
+    bool setBodyDensity(uint64_t id, float density);     // for shapes added after the call
 
     // ---- shapes --------------------------------------------------------
-    // `center` is the shape's offset from the body origin (default: centred).
-    // `rotationXYZW` (optional, unit quaternion) turns the shape about its own
-    // centre; null or identity means unrotated. A rotated box is built as a hull.
+    // `center`: offset from the body origin. `rotationXYZW` (optional) turns the shape about
+    // its centre; a rotated box is built as a hull.
     bool addBoxShape(uint64_t bodyId, const float halfExtents[3], const float center[3] = nullptr,
                      const float rotationXYZW[4] = nullptr);
     bool addSphereShape(uint64_t bodyId, float radius, const float center[3] = nullptr);
-    // The capsule stands along Y (before `rotationXYZW`). halfLength: half the straight section.
+    // Along Y before rotation. halfLength: half the straight section.
     bool addCapsuleShape(uint64_t bodyId, float radius, float halfLength, const float center[3] = nullptr,
                          const float rotationXYZW[4] = nullptr);
     bool addShape(uint64_t bodyId, const ShapeSpec &shape);   // box, sphere or capsule, incl. shape.center / shape.rot
 
     // ---- convex hulls ----------------------------------------------------
-    // Hulls are built in two steps so the caller can learn the volume (to turn
-    // a mass into a density) before any shape exists:
-    //
-    //   1. createHull(points) -> HullId, plus the hull volume. Points are
-    //      body-local xyz triples. Hulls are cached by CONTENT, so a thousand
-    //      packed prims instancing one source cost one hull build. Fails (0) if
-    //      there are fewer than 4 usable points, a point is not finite, the
-    //      points are flat or collinear, or the hull is too big even after
-    //      reducing the vertex budget; the caller then falls back to a box.
-    //   2. addHullShape(bodyId, hullId), once per piece. Several hulls on one
-    //      body is a runtime compound: the right way to get a DYNAMIC concave
-    //      body in Box3D. Overlapping pieces count their overlap twice in the
-    //      mass.
-    //
-    // Box3D clones the hull into its own database when the shape is created,
-    // so the cache entry is only needed until then. Entries that no shape uses
-    // are released by pruneHulls().
+    // Two steps, so the volume is known (mass -> density) before a shape exists:
+    //   1. createHull(body-local xyz) -> HullId + volume. Cached by content. Returns 0 for
+    //      < 4 usable points, non-finite or flat input, or a hull too big even after
+    //      reducing the vertex budget (the caller falls back to a box).
+    //   2. addHullShape / createHullShape once per piece. Several hulls on one body make a
+    //      dynamic compound; overlapping pieces count their overlap twice in the mass.
+    // Box3D clones the hull on shape creation; pruneHulls() frees entries no shape uses.
     HullId createHull(const float *xyz, int pointCount, float *outVolume = nullptr);
 
-    // Same, but the caller supplies the cache key. For packed instances that
-    // Houdini says share one source: look the key up first (findHull) and only
-    // build the points on a miss. The caller promises that one key always means
-    // the same points. A 0 key is not allowed.
+    // Caller-supplied key (packed instances of one source): findHull first, build only on a
+    // miss. One key must always mean the same points; 0 is not allowed.
     HullId findHull(HullId key, float *outVolume = nullptr) const;
     HullId createHullWithKey(HullId key, const float *xyz, int pointCount, float *outVolume = nullptr);
     bool   addHullShape(uint64_t bodyId, HullId hull);
     void   pruneHulls();                // frees cache entries no body uses
     int    hullCacheSize() const;
     int    shapeCount(uint64_t bodyId) const;
-    float  bodyMass(uint64_t bodyId) const;      // Box3D's computed mass, 0 if unknown
-    // bool addMeshShape(...);   // static colliders only, probably
+    float  bodyMass(uint64_t bodyId) const;      // 0 if unknown
+    // Static triangle meshes are planned (AGENTS.md, "Not supported on purpose, and planned").
 
-    // ---- handle access -----------------------------------------------------
-    // The same operations as the keyed ones below, minus the hash lookup. A
-    // stale handle (body removed, world destroyed) must not be used.
+    // ---- handle access (never pass a stale handle) ---------------------------
     BodyHandle bodyHandle(uint64_t id) const;     // 0 if there is no such body
     bool getTransformByHandle(BodyHandle h, double outPos[3], float outRotXYZW[4]) const;
     bool getVelocityByHandle(BodyHandle h, float outLinear[3], float outAngular[3]) const;
     bool setVelocityByHandle(BodyHandle h, const float linear[3], const float angular[3]);
     bool setTransformByHandle(BodyHandle h, const double pos[3], const float rotXYZW[4]);
 
-    // ---- move events (valid until the next step or until a body is removed) ----
-    // Cleared at the start of every step, so after a step that did not run they are empty.
+    // ---- move events (valid until the next step or a body is removed) ----------
     int  moveEventCount() const;
     bool getMoveEvent(int index, BodyMove &out) const;
-    // All of them in one call: `out` is resized to the event count (its capacity is
-    // kept, so a reused vector allocates nothing in a steady state). Returns the count.
-    int  getMoveEvents(std::vector<BodyMove> &out) const;
-    // Stored in the Box3D body and returned in BodyMove::userData. The caller owns
-    // what it points at; it must stay valid while the body exists.
-    void setBodyUserData(BodyHandle h, void *userData);
+    int  getMoveEvents(std::vector<BodyMove> &out) const;   // resizes `out`; returns the count
+    void setBodyUserData(BodyHandle h, void *userData);     // returned in BodyMove / ContactPoint
 
-    // ---- read back / push in -------------------------------------------
+    // ---- keyed read back / push in ---------------------------------------
     bool getTransform(uint64_t id, double outPos[3], float outRotXYZW[4]) const;
     bool getVelocity(uint64_t id, float outLinear[3], float outAngular[3]) const;
     bool setVelocity(uint64_t id, const float linear[3], const float angular[3]);
@@ -326,8 +243,7 @@ public:
     static void version(int &major, int &minor, int &revision);
 
 private:
-    // The shape builders behind both APIs (handle + the body's settings + whether this add
-    // recomputes the body's mass).
+    // The shape builders behind both APIs.
     bool boxShape(BodyHandle h, const BodySettings &b, const float halfExtents[3], const float center[3],
                   const float rotationXYZW[4], bool updateMass);
     bool sphereShape(BodyHandle h, const BodySettings &b, float radius, const float center[3], bool updateMass);
