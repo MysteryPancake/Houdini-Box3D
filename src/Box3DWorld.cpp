@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <mutex>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace b3dop {
@@ -17,6 +18,7 @@ struct Box3DWorld::Impl
 {
     b3WorldId                             worldId = b3_nullWorldId;
     WorldSettings                         settings;
+    std::shared_ptr<TaskRunner>           tasks;              // host threads (null: Box3D's own pool); outlives worldId
     CollisionFilterTable                  filters;
     int                                   liveBodies = 0;     // every live body, keyed or handle-made
 
@@ -216,12 +218,32 @@ sameBody(b3BodyId a, b3BodyId b)
 
 } // namespace
 
+namespace {
+
+// Box3D's task hooks, forwarding to the world's TaskRunner (userContext).
+void *
+enqueueTask(b3TaskCallback *task, void *taskContext, void *userContext, const char * /*name*/)
+{
+    TaskRunner *runner = static_cast<TaskRunner *>(userContext);
+    // A non-null handle means "queued"; null tells Box3D the task already ran inline.
+    return runner->run(task, taskContext) ? userContext : nullptr;
+}
+
+void
+finishTask(void *userTask, void *userContext)
+{
+    if (userTask)
+        static_cast<TaskRunner *>(userContext)->wait();
+}
+
+} // namespace
+
 Box3DWorld::Box3DWorld() : myImpl(new Impl) {}
 
 Box3DWorld::~Box3DWorld() { destroy(); }
 
 bool
-Box3DWorld::create(const WorldSettings &s)
+Box3DWorld::create(const WorldSettings &s, std::shared_ptr<TaskRunner> tasks)
 {
     destroy();
     installAssertHandler();
@@ -235,8 +257,19 @@ Box3DWorld::create(const WorldSettings &s)
     def.contactSpeed         = std::max(0.0f, s.contactPushSpeed);
     def.restitutionThreshold = std::max(0.0f, s.restitutionThreshold);
     def.maximumLinearSpeed   = std::max(0.0f, s.maxLinearSpeed);
-    // Box3D's own thread pool (not Houdini's), sized here for the life of the world.
     def.workerCount = static_cast<uint32_t>(std::max(1, s.workerCount));
+    if (tasks && def.workerCount > 1)
+    {
+        // The host's threads: Box3D starts none. The runner must outlive the b3World (see destroy).
+        def.enqueueTask     = &enqueueTask;
+        def.finishTask      = &finishTask;
+        def.userTaskContext = tasks.get();
+    }
+    else
+    {
+        // No runner (or one worker): Box3D's own pool for workerCount > 1, serial otherwise.
+        tasks.reset();
+    }
 
     // At the limit b3CreateWorld asserts (a crash in builds with Box3D asserts on, such as
     // RelWithDebInfo) before failing, so fail here first.
@@ -248,9 +281,13 @@ Box3DWorld::create(const WorldSettings &s)
     myImpl->settings.gravity[1] = def.gravity.y;
     myImpl->settings.gravity[2] = def.gravity.z;
     myImpl->filters  = CollisionFilterTable();
+    myImpl->tasks    = std::move(tasks);
     myImpl->worldId  = b3CreateWorld(&def);
     if (!b3World_IsValid(myImpl->worldId))
+    {
+        myImpl->tasks.reset();
         return false;
+    }
     b3World_SetCustomFilterCallback(myImpl->worldId, &filterCallback, &myImpl->filters);
     b3World_EnableSpeculative(myImpl->worldId, s.enableSpeculative);
     return true;
@@ -262,6 +299,7 @@ Box3DWorld::destroy()
     if (b3World_IsValid(myImpl->worldId))
         b3DestroyWorld(myImpl->worldId);   // destroys all bodies/shapes/joints
 
+    myImpl->tasks.reset();          // after the world: Box3D may call the runner until it is gone
     myImpl->worldId = b3_nullWorldId;
     myImpl->liveBodies = 0;
     myImpl->bodies.clear();
@@ -284,6 +322,15 @@ Box3DWorld::step(float timeStep)
 {
     if (!isValid())
         return;
+    if (myImpl->tasks)
+    {
+        struct Args { b3WorldId id; float dt; int subSteps; } args{ myImpl->worldId, timeStep, myImpl->settings.subSteps };
+        myImpl->tasks->isolate([](void *p) {
+            const Args *a = static_cast<const Args *>(p);
+            b3World_Step(a->id, a->dt, a->subSteps);
+        }, &args);
+        return;
+    }
     b3World_Step(myImpl->worldId, timeStep, myImpl->settings.subSteps);
 }
 

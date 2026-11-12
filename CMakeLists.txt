@@ -57,6 +57,11 @@ target_link_libraries(b3dop_core_physics PRIVATE b3dop_core)
 add_executable(b3dop_core_threads tests/core_threads.cpp)
 target_link_libraries(b3dop_core_threads PRIVATE b3dop_core)
 
+add_executable(b3dop_core_taskrunner tests/core_taskrunner.cpp)
+target_link_libraries(b3dop_core_taskrunner PRIVATE b3dop_core)
+find_package(Threads REQUIRED)
+target_link_libraries(b3dop_core_taskrunner PRIVATE Threads::Threads)
+
 if(BOX3DDOP_CORE_ONLY)
     return()
 endif()
@@ -82,6 +87,7 @@ add_library(Box3DDOP SHARED
     src/SIM_SolverBox3D.cpp
     src/SIM_Box3DRegister.cpp
     src/Box3DDebug.h
+    src/Box3DHoudiniTasks.h
 )
 target_link_libraries(Box3DDOP PRIVATE Houdini b3dop_core)
 if(BOX3DDOP_DEBUG)

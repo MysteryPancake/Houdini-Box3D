@@ -34,13 +34,36 @@ struct BodyMove
     bool       fellAsleep = false;
 };
 
+// Lets the host supply the threads Box3D's parallel work runs on, so worlds do not each start an
+// OS thread pool of their own (Box3D's built-in scheduler keeps workerCount - 1 threads alive for
+// the life of every world). Houdini-free: the plugin implements it on Houdini's TBB pool
+// (Box3DHoudiniTasks.h). Without one, Box3DWorld uses Box3D's own pool (the tests do).
+//
+// A runner belongs to one world and is used from one stepping thread at a time.
+class TaskRunner
+{
+public:
+    virtual ~TaskRunner() = default;
+
+    // Run fn(ctx) exactly once. Returns true if it was queued, in which case wait() must be called
+    // before the data it uses goes away; false if it already ran before returning.
+    virtual bool run(void (*fn)(void *), void *ctx) = 0;
+
+    // Block until every task queued by run() has finished. The calling thread may run tasks.
+    virtual void wait() = 0;
+
+    // Run fn(ctx) around a whole step (a place to isolate task stealing). Default: just call it.
+    virtual void isolate(void (*fn)(void *), void *ctx) { fn(ctx); }
+};
+
 // Everything but workerCount can change on a live world (applyTuning). Defaults are Box3D's,
 // except gravity (standard gravity instead of 10).
 struct WorldSettings
 {
     float gravity[3]    = { 0.0f, -9.80665f, 0.0f };
     int   subSteps      = 4;      // Box3D recommends ~4 per step
-    int   workerCount   = 1;      // Box3D's own thread pool, sized at creation (max 32)
+    int   workerCount   = 1;      // parallel tasks per step, fixed at creation (max 32). With a TaskRunner these
+                                  // run on the host's pool; without one, on threads Box3D starts for this world
     bool  enableSleep   = true;
     bool  enableContinuous = true;    // continuous collision vs static bodies (fast objects: vs moving ones too)
     bool  enableSpeculative = true;   // off only to reduce ghost collisions
@@ -95,7 +118,9 @@ public:
     Box3DWorld &operator=(const Box3DWorld &) = delete;
 
     // ---- lifetime ----------------------------------------------------
-    bool create(const WorldSettings &settings);   // creates the b3World
+    // Creates the b3World. `tasks` (optional) is kept for the life of the world and used for every
+    // step; with workerCount <= 1 it is not used.
+    bool create(const WorldSettings &settings, std::shared_ptr<TaskRunner> tasks = nullptr);
     void destroy();                                // safe to call repeatedly
     bool isValid() const;
     const WorldSettings &settings() const;

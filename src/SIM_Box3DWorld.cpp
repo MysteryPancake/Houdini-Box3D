@@ -1,6 +1,7 @@
 // SIM_Box3DWorld.cpp
 #include "SIM_Box3DWorld.h"
 #include "Box3DDebug.h"
+#include "Box3DHoudiniTasks.h"
 
 #include <PRM/PRM_Include.h>
 #include <SIM/SIM_DopDescription.h>
@@ -70,7 +71,8 @@ bool
 SIM_Box3DWorld::createWorld(const b3dop::WorldSettings &settings)
 {
     auto fresh = std::make_shared<Box3DSharedState>();
-    if (!fresh->world.create(settings))
+    // One runner per world: the world's parallel work goes to Houdini's TBB pool, no threads of its own.
+    if (!fresh->world.create(settings, std::make_shared<Box3DHoudiniTasks>()))
     {
         B3D_LOG("World[%p] createWorld FAILED", (const void *)this);
         return false;

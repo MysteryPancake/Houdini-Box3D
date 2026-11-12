@@ -37,7 +37,8 @@ extern/box3d/         Box3D submodule (never edit; static lib, EXCLUDE_FROM_ALL)
 icons/box3d.svg     Node icon; the build copies it to config/Icons as DOP_box3d_solver.svg and DOP_box3d_data.svg
 src/
   Box3DShapes.h       Houdini-free, header-only: shape math, packed-prim matrices, hashing, collision-group patterns
-  Box3DWorld.h/.cpp   Houdini-free pimpl wrapper over one b3World. The ONLY file that includes Box3D headers
+  Box3DWorld.h/.cpp   Houdini-free pimpl wrapper over one b3World. The ONLY file that includes Box3D headers; defines TaskRunner
+  Box3DHoudiniTasks.h TaskRunner on Houdini's TBB pool (UT_TaskGroup). Only SIM_Box3DWorld.cpp includes it
   Box3DDebug.h        B3D_LOG / counters, compiled out unless BOX3DDOP_DEBUG
   SIM_Box3DWorld.*    SIM_Data owning the shared world state (the rebuildable cache)
   SIM_Box3DData.*     Default-settings DOP node
@@ -47,6 +48,7 @@ tests/
   core_smoke.cpp      Version print + world create/destroy
   core_physics.cpp    Unit + physics checks (CHECK macro, nonzero exit on failure)
   core_threads.cpp    1 worker vs N workers: timing + determinism
+  core_taskrunner.cpp Host-supplied TaskRunner shared by 40+ worlds: no extra threads, same results as 1 worker
   box3d_test.hiplc    Houdini scene for manual testing (tests/backup/ holds older saves)
 ```
 
@@ -117,7 +119,7 @@ accepts all of them on a disabled body (proxies are only touched when they exist
 `enableSleep`, `enableContinuous`, `enableSpeculative`, `contactHertz`, `contactDampingRatio`, `contactPushSpeed`,
 `restitutionThreshold`, `maxLinearSpeed`. `applyTuning` pushes changes into the live world (`b3World_SetGravity`,
 `EnableSleeping`, `EnableContinuous`, `EnableSpeculative`, `SetContactTuning`, `SetRestitutionThreshold`,
-`SetMaximumLinearSpeed`); `workerCount` sizes Box3D's own thread pool at creation and needs a new world.
+`SetMaximumLinearSpeed`); `workerCount` (parallel tasks per step) is fixed at creation and needs a new world.
 
 **Collision filtering.** `CollisionFilterTable` (`Box3DShapes.h`) holds every distinct `FilterProfile` (group, object
 name, object id as text, ignore patterns) and answers `shouldCollide(a, b)`: neither profile's ignore patterns match the
@@ -363,7 +365,7 @@ Only dynamic bodies are written; of several points sharing an `id`, only the fir
 
 ### Threading
 
-Box3D's pool is its own (`autothreads` = all cores, else `threads`, 1..32; a change rebuilds the world). The plugin's
+Box3D starts no threads of its own in the plugin. `SIM_Box3DWorld::createWorld` gives every world a `Box3DHoudiniTasks` (`src/Box3DHoudiniTasks.h`, a `b3dop::TaskRunner` over `UT_TaskGroup`), wired to Box3D's `enqueueTask` / `finishTask` hooks in `Box3DWorld::create`, so all worlds share Houdini's TBB pool. Box3D's built-in scheduler keeps `workerCount - 1` OS threads per world until it is destroyed, which piled up across the old worlds that cached frames keep alive. `autothreads` = `UT_Thread::getNumProcessors()` (honours `HOUDINI_MAXTHREADS`), else `threads`, 1..32, never above Houdini's count; a change still rebuilds the world. Safe with Box3D's solver because tasks carry their own worker index, the stepping thread always runs solver worker 0 (which can finish the solve alone, so a busy pool cannot deadlock), and `step` runs inside `tbb::this_task_arena::isolate`. `UT_TaskGroup` does not carry `UT_TaskScope`, so the runner wraps each task in one. Without a runner (the tests) `Box3DWorld` falls back to Box3D's own pool. Not compiled against the HDK when written: check it builds on your Houdini. The plugin's
 loops use `UTparallelFor` with untuned thresholds; parallel lambdas only read shared data or write their own element.
 The Box3D world and mirror are touched in serial passes (the write-back's parallel pass writes only its own entry). The
 shared-state mutex is held for the whole step.
@@ -430,6 +432,7 @@ Built in both configurations (`-DBOX3DDOP_CORE_ONLY=ON` builds only these):
 |---|---|
 | `b3dop_core_smoke` | Box3D version, create / destroy; expects `OK` |
 | `b3dop_core_physics` | Keyed and handle APIs, shape mapping, explicit primitives, mass, body types, resting heights, hulls (limits, caching, instancing), packed matrix math, `sanitizeQuat` / `storedPosition`, setters on existing bodies (material, damping, gravity, sleep, density, enable, shape replacement), live tuning, patterns and collision groups (incl. re-filtering), contacts, mass centring / inertia scaling, sleep threshold, kinematic targets |
+| `b3dop_core_taskrunner [workers]` | Worlds on one shared host pool: tasks run, results match 1 worker |
 | `b3dop_core_threads [workers] [side] [steps]` | 1 vs N workers: speedup, fails if positions differ by > 1e-4 |
 
 The `SIM_*` code has no automated tests and has not been compiled here against a real HDK; `tests/box3d_test.hiplc`

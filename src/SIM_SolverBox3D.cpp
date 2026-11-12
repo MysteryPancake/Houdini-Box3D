@@ -50,7 +50,7 @@
 #include <map>
 #include <mutex>
 #include <string>
-#include <thread>
+#include <UT/UT_Thread.h>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
@@ -2469,9 +2469,11 @@ SIM_SolverBox3D::getRequestedCacheSubclass() const
 int
 SIM_SolverBox3D::currentWorkerCount() const
 {
-    // Box3D's own thread pool: every logical core, or the Threads parm.
-    static const int cores = int(std::thread::hardware_concurrency());
-    int n = getAutoThreads() ? cores : int(getThreads());
+    // Parallel tasks per step, run on Houdini's TBB pool: all Houdini threads (honours
+    // HOUDINI_MAXTHREADS), or the Threads parm, never more than Houdini allows.
+    const int houdini = std::max(1, int(UT_Thread::getNumProcessors()));
+    int n = getAutoThreads() ? houdini : int(getThreads());
+    n = std::min(n, houdini);
     return n < 1 ? 1 : (n > 32 ? 32 : n);       // Box3D's maximum is 32
 }
 
