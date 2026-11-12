@@ -31,6 +31,7 @@
 #include <UT/UT_ParallelUtil.h>
 #include <UT/UT_Matrix4.h>
 #include <UT/UT_Quaternion.h>
+#include <UT/UT_XformOrder.h>
 #include <UT/UT_Vector3.h>
 
 #include <algorithm>
@@ -86,6 +87,14 @@ struct PointAttrs
     GA_ROHandleS  georep;      // string bullet_georep: convexhull, concave, compound, box, sphere,
                                //        capsule, none (see b3dop::parseShapeType; other values,
                                //        e.g. cylinder / plane, use the node's Default Shape)
+    // Explicit box / sphere / capsule shape (Houdini's Bullet Data with AutoFit off).
+    // See b3dop::PrimOverrides for the conventions.
+    GA_ROHandleI  autofit;     // int    bullet_autofit: 1 = fit to the packed geometry's bounds
+    GA_ROHandleV3 primS;       // vector bullet_primS: box half extents
+    GA_ROHandleV3 primR;       // vector bullet_primR: shape rotation, Euler degrees XYZ
+    GA_ROHandleV3 primT;       // vector bullet_primT: shape offset from the body origin
+    GA_ROHandleF  radius;      // float  bullet_radius: sphere / capsule radius
+    GA_ROHandleF  length;      // float  bullet_length: capsule straight section along Y
 
     explicit PointAttrs(const GU_Detail *gdp)
         : id(gdp, GA_ATTRIB_POINT, "id"),
@@ -103,7 +112,13 @@ struct PointAttrs
           v(gdp, GA_ATTRIB_POINT, "v"),
           w(gdp, GA_ATTRIB_POINT, "w"),
           orient(gdp, GA_ATTRIB_POINT, "orient"),
-          georep(gdp, GA_ATTRIB_POINT, "bullet_georep")
+          georep(gdp, GA_ATTRIB_POINT, "bullet_georep"),
+          autofit(gdp, GA_ATTRIB_POINT, "bullet_autofit"),
+          primS(gdp, GA_ATTRIB_POINT, "bullet_primS"),
+          primR(gdp, GA_ATTRIB_POINT, "bullet_primR"),
+          primT(gdp, GA_ATTRIB_POINT, "bullet_primT"),
+          radius(gdp, GA_ATTRIB_POINT, "bullet_radius"),
+          length(gdp, GA_ATTRIB_POINT, "bullet_length")
     {
     }
 };
@@ -612,8 +627,11 @@ pieceFromPoints(b3dop::Box3DWorld &world, const std::vector<float> &pts, Piece &
 
 // Decide what shapes a point's body gets. See AGENTS.md, "Pieces and packed geometry".
 //
-//  box / sphere : plain point  -> unit shape scaled by pscale * scale
-//                 packed point -> fitted to the packed geometry's bounds
+//  box / sphere
+//  / capsule    : packed point with autofit -> fitted to the packed geometry's bounds
+//                 otherwise (plain point, or autofit off) -> the unit shape scaled by
+//                 pscale * scale, then any explicit bullet_primS / radius / length /
+//                 primT / primR overrides (b3dop::PrimOverrides)
 //  convex       : ONE hull of the packed geometry, or with hullPerConnected one
 //                 hull per set of connected primitives (several shapes on one body)
 //  concave      : one hull PER PIECE of the packed geometry (pieces grouped by
@@ -625,20 +643,24 @@ pieceFromPoints(b3dop::Box3DWorld &world, const std::vector<float> &pts, Piece &
 // exists.
 BuiltShapes
 buildShapes(b3dop::Box3DWorld &world, ShapeSources &src, b3dop::ShapeType type,
-            bool hullPerConnected, float pscale, const float scale[3], const PackedInfo &pk)
+            bool hullPerConnected, float pscale, const float scale[3], const PackedInfo &pk,
+            bool autofit, const b3dop::PrimOverrides &ov)
 {
     using namespace b3dop;
     BuiltShapes out;
 
-    // Convex / concave are built from point data (hulls); box / sphere from size attributes.
+    // Convex / concave are built from point data (hulls); box / sphere / capsule from
+    // the packed geometry's bounds (autofit) or from size attributes.
     const bool wantGeometry = (type == ShapeType::Convex || type == ShapeType::Concave);
 
     // 1. The source: the packed primitive's own geometry (any shape type on a
     //    packed point). A plain point has none.
     //    Convex with hullPerConnected splits it into connected sets of primitives.
     const bool        mergeAll = (type == ShapeType::Convex) && !hullPerConnected;
-    const PieceGroup *group    = pk.prim ? src.innerPieces(*pk.prim, type == ShapeType::Convex && hullPerConnected)
-                                         : nullptr;
+    //    Box / sphere / capsule only need it when they autofit to it.
+    const PieceGroup *group    = (pk.prim && (wantGeometry || autofit))
+                                     ? src.innerPieces(*pk.prim, type == ShapeType::Convex && hullPerConnected)
+                                     : nullptr;
 
     // 1b. Convex / concave on a packed point: the hull of each instance of one
     //     source is a function of (source, pivot, scale), so look it up by that
@@ -765,6 +787,8 @@ buildShapes(b3dop::Box3DWorld &world, ShapeSources &src, b3dop::ShapeType type,
                                : "convex / concave needs a packed primitive; used a box";
         Piece pc;
         pc.spec   = makeShapeSpec(wantGeometry ? ShapeType::Box : type, pscale, scale);
+        if (!wantGeometry)
+            applyPrimOverrides(pc.spec, ov);    // explicit size / offset / rotation, if given
         pc.volume = shapeVolume(pc.spec);
         out.totalVolume = pc.volume;
         out.pieces.push_back(pc);
@@ -822,7 +846,39 @@ addPointBody(b3dop::Box3DWorld &world, ShapeSources &src, const b3dop::BodySetti
         sc[0] = s.x();  sc[1] = s.y();  sc[2] = s.z();
     }
 
-    const BuiltShapes shapes = buildShapes(world, src, type, node.hullPerConnectedSet, ps, sc, pk);
+    // AutoFit: the packed geometry's bounds decide the box / sphere / capsule. The
+    // attribute overrides the node's setting; without a packed primitive there is
+    // no geometry to fit, so the explicit attributes (or pscale / scale) apply.
+    const bool autofit = a.autofit.isValid() ? (a.autofit.get(off) != 0) : node.autoFit;
+    b3dop::PrimOverrides ov;
+    if (a.primS.isValid())
+    {
+        const UT_Vector3 v = a.primS.get(off);
+        ov.hasSize = true;  ov.size[0] = v.x();  ov.size[1] = v.y();  ov.size[2] = v.z();
+    }
+    if (a.primR.isValid())
+    {
+        const UT_Vector3 v = a.primR.get(off);
+        // Euler degrees -> radians; Houdini's own XYZ rotate order builds the quaternion.
+        // A non-finite angle leaves the override off (the shape keeps its rotation).
+        if (SYSisFinite(v.x()) && SYSisFinite(v.y()) && SYSisFinite(v.z()))
+        {
+            const UT_Vector3F rad(SYSdegToRad(v.x()), SYSdegToRad(v.y()), SYSdegToRad(v.z()));
+            const UT_QuaternionF q(rad, UT_XformOrder(UT_XformOrder::TRS, UT_XformOrder::XYZ));
+            ov.hasRot = true;
+            ov.rot[0] = q.x();  ov.rot[1] = q.y();  ov.rot[2] = q.z();  ov.rot[3] = q.w();
+        }
+    }
+    if (a.primT.isValid())
+    {
+        const UT_Vector3 v = a.primT.get(off);
+        ov.hasPos = true;  ov.pos[0] = v.x();  ov.pos[1] = v.y();  ov.pos[2] = v.z();
+    }
+    if (a.radius.isValid())  { ov.hasRadius = true;  ov.radius = a.radius.get(off); }
+    if (a.length.isValid())  { ov.hasLength = true;  ov.length = a.length.get(off); }
+
+    const BuiltShapes shapes = buildShapes(world, src, type, node.hullPerConnectedSet, ps, sc, pk,
+                                           autofit, ov);
     (void)bodyId;                   // only used by the debug log
     if (shapes.note)
     {

@@ -216,7 +216,8 @@ Data names: world is attached as `"Box3DWorld"`, defaults as `"Box3DData"`; geom
 
 1. Gets `SIM_Geometry` (const) under `SIM_GeometryAutoReadLock`; skips objects with none.
 2. Resolves `PointAttrs` (read handles for `id, active, mass, friction, bounce, pscale,
-   scale, v, w, orient, bullet_georep`; any may be invalid = default).
+   scale, v, w, orient, bullet_georep, bullet_autofit, bullet_primS/R/T, bullet_radius,
+   bullet_length` and the body-setting attributes; any may be invalid = default).
 3. Reads `SIM_Box3DData` fallback settings if attached.
 4. **Pass 1 (parallel when >= 2048 points, `UTparallelFor`)**: per point compute body id
    (`id` attr else point number, which equals the index in a full point-range walk), key,
@@ -228,7 +229,8 @@ Data names: world is attached as `"Box3DWorld"`, defaults as `"Box3DData"`; geom
    mirror with eps 1e-5, q and -q treated equal -> push `setTransformByHandle` +
    `setVelocityByHandle`, refresh mirror).
 
-Edits that are **not** picked up on an existing body: `bullet_georep`, `pscale`, `scale`,
+Edits that are **not** picked up on an existing body: `bullet_georep`, `bullet_autofit`,
+`bullet_prim*`, `bullet_radius`, `bullet_length`, `pscale`, `scale`,
 `mass`, `friction`, `bounce`, the damping / gravity scale / bullet / sleep attributes, Box3D
 Data node settings (mass, default shape...), and solver gravity/substeps/sleep. These are applied
 at body/world creation; a rebuild (Reset Simulation or thread-count change) re-reads them.
@@ -252,10 +254,14 @@ at body/world creation; a rebuild (Reset Simulation or thread-count change) re-r
      (kind 1); otherwise one hull per piece (kind 2).
   3. Non-keyed path (`sets`): body-local point sets per piece -> `pieceFromPoints`
      (hull or bounds-fitted box with a note).
-  4. Box/Sphere/Capsule on a packed point: fit to bounds of the packed geometry.
-  5. Nothing usable: `makeShapeSpec(...)` box/sphere/capsule from `pscale*scale`.
-     Convex/concave falls back to a box and sets a note ("needs a packed primitive" or
-     "packed geometry is empty").
+  4. Box/Sphere/Capsule on a packed point **with autofit**: fit to bounds of the packed
+     geometry (explicit prim attributes are ignored). Without autofit the packed source is
+     not even collected (step 1 skips it).
+  5. Nothing usable (plain point, autofit off, or empty packed geometry):
+     `makeShapeSpec(...)` box/sphere/capsule from `pscale*scale`, then `applyPrimOverrides`
+     with whatever `bullet_prim*` / `bullet_radius` / `bullet_length` attributes exist.
+     Convex/concave falls back to a box (no overrides) and sets a note ("needs a packed
+     primitive" or "packed geometry is empty").
 * Notes are logged and aggregated by text into `SyncCounts::fallbacks`, then surfaced as
   one warning per kind with a count on the first frame the body is created.
 * Mass: `density = mass / totalVolume`, where `mass` is the point attribute if valid, positive
@@ -263,6 +269,33 @@ at body/world creation; a rebuild (Reset Simulation or thread-count change) re-r
   `BodySettings::density` keeps its default (1).
 * After `addBody`, shapes are added; if none could be added the body is removed again
   (never leave a shapeless body). Initial `v`/`w` are applied last (no-op for static).
+
+### Explicit primitives (`bullet_autofit`, `bullet_primS/R/T`, `bullet_radius`, `bullet_length`)
+
+Mirrors Houdini's Bullet Data "AutoFit" off. Applies to `box`, `sphere`, `capsule` only
+(convex / concave / none ignore them). `autofit` = `bullet_autofit` attribute if present, else
+the Box3D Data `autofit` toggle (default on = the old behaviour). Autofit fits a packed
+point's shape to its geometry bounds; with it off, or on a plain point (no geometry to fit),
+the shape is `makeShapeSpec(pscale * scale)` plus the overrides below. Each attribute is
+optional; a missing one keeps the `pscale * scale` value. Logic is `b3dop::PrimOverrides` /
+`applyPrimOverrides` in `Box3DShapes.h`, tested in `core_physics`.
+
+| Attribute | Effect | Convention |
+|---|---|---|
+| `bullet_primS` (vector) | box half extents | HALF size: Bullet Data documents Box Size as a half-size |
+| `bullet_radius` (float) | sphere / capsule radius | |
+| `bullet_length` (float) | capsule straight section along Y | ASSUMED: caps not included (Bullet's btCapsuleShape height); the Houdini docs do not say |
+| `bullet_primT` (vector) | shape offset from the body origin | body space |
+| `bullet_primR` (vector) | shape orientation | ASSUMED: Euler degrees, order XYZ (X first); the Houdini docs do not state units |
+
+`ShapeSpec::rot` carries the rotation to `Box3DWorld::addShape`: a capsule's axis is its Y
+turned by `rot`; a rotated box is built as an 8-corner hull (Box3D has no rotated box
+helper; the content-keyed hull cache shares identical ones); a sphere ignores rotation.
+`PrimOverrides` carries a ready-made quaternion: the solver converts the degrees to radians and
+builds it with the HDK, `UT_QuaternionF(rad, UT_XformOrder(TRS, XYZ))`, so Houdini decides what
+"XYZ" means. If the assumed units/lengths turn out wrong, only that conversion in
+`SIM_SolverBox3D.cpp` and the `hasLength` line of `applyPrimOverrides` change. UNVERIFIED: not
+compiled against the HDK; compare a rotated `bullet_primR` box against a Bullet Data node.
 
 ### Pieces and packed geometry
 
@@ -330,7 +363,7 @@ Solver (`SIM_SolverBox3D`, all read when the world is created): `gravity` (v3, d
 
 Box3D Data (`SIM_Box3DData`, per object, read when a body is created):
 `defaultshape` (0 box, 1 sphere, 2 convex hull, 3 concave/compound, 4 capsule, 5 none),
-`hullperconnected`, `bodytype` (0 static, 1 kinematic, 2 dynamic), `mass` (1, per body:
+`hullperconnected`, `autofit` (on; point attr `bullet_autofit`), `bodytype` (0 static, 1 kinematic, 2 dynamic), `mass` (1, per body:
 density = mass / shape volume), `friction` (0.6), `bounce` (0, = Box3D restitution),
 `lineardamping`, `angulardamping`, `gravityscale` (1), `enablesleep`, `isbullet`. Parameter
 names match the point attributes that override them. Box3D asserts on negative
@@ -343,7 +376,9 @@ The Box3D Data node's data name on the object is `Box3DData`.
 `P` required. `orient` (quat, ignored on input for packed points), `v`, `w` (rad/s), `mass`
 (density = mass/volume), `friction`, `bounce` (restitution), `lineardamping`, `angulardamping`,
 `gravityscale` (floats), `enablesleep`, `isbullet` (ints, 0 = off), `active` (0 static, else
-dynamic), `bullet_georep` (shape string), `pscale`, `scale`, `id`. Each of `mass`, `friction`,
+dynamic), `bullet_georep` (shape string), `bullet_autofit` (int), `bullet_primS`,
+`bullet_primR`, `bullet_primT` (vectors), `bullet_radius`, `bullet_length` (floats; see
+"Explicit primitives"), `pscale`, `scale`, `id`. Each of `mass`, `friction`,
 `bounce`, `lineardamping`, `angulardamping`, `gravityscale`, `enablesleep`, `isbullet`
 overrides the Box3D Data parameter of the same name; negative / non-finite values are
 clamped to 0 / ignored (gravityscale may be negative). Identity is
@@ -371,7 +406,7 @@ Build with `-DBOX3DDOP_CORE_ONLY=ON` (or as part of the normal build; all three 
 | Target | Checks |
 |---|---|
 | `b3dop_core_smoke` | Prints Box3D version, create/destroy; expects `OK` |
-| `b3dop_core_physics` | World/body API, handle API equivalence, attribute->shape mapping, mass->density, body type switching, capsule/sphere/box resting heights, hull creation/limits/caching/instancing, packed-matrix math (quaternion<->matrix round trips, `composeLocal3`, row-vector convention), offset hulls, compounds under real physics |
+| `b3dop_core_physics` | World/body API, handle API equivalence, attribute->shape mapping, explicit primitive overrides (Euler order, rotated capsule / box resting heights), mass->density, body type switching, capsule/sphere/box resting heights, hull creation/limits/caching/instancing, packed-matrix math (quaternion<->matrix round trips, `composeLocal3`, row-vector convention), offset hulls, compounds under real physics |
 | `b3dop_core_threads [workers=4] [side=12] [steps=120]` | Same scene on 1 vs N workers, reports speedup, fails if positions differ by > 1e-4 |
 
 Houdini-side code (`SIM_*`) has no automated tests; `tests/box3d_test.hiplc` is a manual scene.
@@ -399,8 +434,8 @@ behaviour problem is most likely after an HDK upgrade:
 ## Known gaps / TODO
 
 * Triangle-mesh (static) and height-field shapes; automatic convex decomposition.
-* `bullet_primR` / `bullet_primS` / `bullet_radius` / `bullet_length` overrides (primitives are
-  always auto-fitted for packed points).
+* `cylinder` / `plane` primitives (Box3D has no shape for them), and Houdini's `bullet_primR`
+  units / `bullet_length` meaning are assumed, not verified (see "Explicit primitives").
 * Kinematic bodies for animated passive points (`active = 0` is static for now; kinematic only
   arises from the Box3D Data body type and is not written back).
 * Live changes to shape/material/size/mass attributes and packed-geometry changes on a live body.

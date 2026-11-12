@@ -39,6 +39,7 @@ struct ShapeSpec
     float     radius         = 0.5f;                   // Sphere, Capsule
     float     halfLength     = 0.5f;                   // Capsule: half the straight section, along Y
     float     center[3]      = { 0.0f, 0.0f, 0.0f };   // every primitive
+    float     rot[4]         = { 0.0f, 0.0f, 0.0f, 1.0f };   // x, y, z, w: orientation in body space. Box and capsule; a sphere ignores it
 };
 
 // Parse the value of the `bullet_georep` point attribute, using Houdini's own
@@ -118,6 +119,90 @@ makeShapeSpec(ShapeType type, float pscale, const float scale[3])
         s.halfExtents[2] = 0.5f * sz;
     }
     return s;
+}
+
+// ---------------------------------------------------------------------------
+// Explicit primitive overrides: the bullet_primS / primR / primT / radius /
+// length point attributes (Houdini's Bullet Data with AutoFit off).
+//
+// Conventions (taken from the Bullet Data node where it says, otherwise assumed):
+//   bullet_primS   box HALF extents (the node documents Box Size as a half-size)
+//   bullet_radius  sphere / capsule radius
+//   bullet_length  capsule straight section along Y, caps NOT included (assumed:
+//                  Bullet's own btCapsuleShape height)
+//   bullet_primT   shape offset from the body origin, body space
+//   bullet_primR   shape orientation, Euler angles in DEGREES, rotation order XYZ
+//                  (X first, then Y, then Z) (assumed: the units are not documented)
+// Each one is optional; a missing one keeps what the ShapeSpec already holds.
+// ---------------------------------------------------------------------------
+struct PrimOverrides
+{
+    bool  hasSize = false, hasRot = false, hasPos = false, hasRadius = false, hasLength = false;
+    float size[3]   = { 1.0f, 1.0f, 1.0f };
+    float rot[4]    = { 0.0f, 0.0f, 0.0f, 1.0f };   // unit quaternion x, y, z, w (the solver builds it with the HDK)
+    float pos[3]    = { 0.0f, 0.0f, 0.0f };
+    float radius    = 0.5f;
+    float length    = 1.0f;
+
+    bool any() const { return hasSize || hasRot || hasPos || hasRadius || hasLength; }
+};
+
+// q = a * b (apply b first, then a), quaternions as x, y, z, w.
+inline void
+quatMul(const float a[4], const float b[4], float out[4])
+{
+    out[0] = a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1];
+    out[1] = a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0];
+    out[2] = a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3];
+    out[3] = a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2];
+}
+
+// Rotate v by the unit quaternion q.
+inline void
+quatRotate(const float q[4], const float v[3], float out[3])
+{
+    const float qx = q[0], qy = q[1], qz = q[2], qw = q[3];
+    // t = 2 * cross(q.xyz, v);  v' = v + w * t + cross(q.xyz, t)
+    const float tx = 2.0f * (qy * v[2] - qz * v[1]);
+    const float ty = 2.0f * (qz * v[0] - qx * v[2]);
+    const float tz = 2.0f * (qx * v[1] - qy * v[0]);
+    out[0] = v[0] + qw * tx + (qy * tz - qz * ty);
+    out[1] = v[1] + qw * ty + (qz * tx - qx * tz);
+    out[2] = v[2] + qw * tz + (qx * ty - qy * tx);
+}
+
+// Apply explicit overrides to a box / sphere / capsule spec. A non-finite value is
+// ignored; sizes are clamped to a tiny positive minimum like makeShapeSpec does.
+inline void
+applyPrimOverrides(ShapeSpec &s, const PrimOverrides &o)
+{
+    const float kMin = 1e-4f;
+    auto sane = [&](float v) {
+        v = std::fabs(v);
+        return v > kMin ? v : kMin;
+    };
+    auto finite3 = [](const float v[3]) {
+        return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
+    };
+
+    if (o.hasSize && s.type == ShapeType::Box && finite3(o.size))
+        for (int i = 0; i < 3; ++i)
+            s.halfExtents[i] = sane(o.size[i]);
+
+    if (o.hasRadius && std::isfinite(o.radius) && (s.type == ShapeType::Sphere || s.type == ShapeType::Capsule))
+        s.radius = sane(o.radius);
+
+    if (o.hasLength && std::isfinite(o.length) && s.type == ShapeType::Capsule)
+        s.halfLength = o.length > 0.0f ? 0.5f * o.length : 0.0f;
+
+    if (o.hasPos && finite3(o.pos))
+        for (int i = 0; i < 3; ++i)
+            s.center[i] = o.pos[i];
+
+    if (o.hasRot && std::isfinite(o.rot[0]) && std::isfinite(o.rot[1]) &&
+        std::isfinite(o.rot[2]) && std::isfinite(o.rot[3]))
+        for (int i = 0; i < 4; ++i)
+            s.rot[i] = o.rot[i];
 }
 
 inline float

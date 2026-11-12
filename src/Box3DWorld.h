@@ -61,6 +61,12 @@ struct BodySettings
     // Used when a point has no (or an unknown) `bullet_georep` attribute.
     ShapeType defaultShape = ShapeType::Box;
 
+    // Box / sphere / capsule on a packed point: fit the shape to the packed
+    // geometry's bounds (true), or build it from the explicit size attributes
+    // (bullet_primS, bullet_radius, ...) (false). The `bullet_autofit` attribute
+    // overrides this per point. Read only by the Houdini solver.
+    bool      autoFit = true;
+
     // Convex shapes only: make one hull per set of connected primitives (a
     // compound) instead of one hull of everything.
     bool      hullPerConnectedSet = false;
@@ -101,11 +107,15 @@ public:
 
     // ---- shapes --------------------------------------------------------
     // `center` is the shape's offset from the body origin (default: centred).
-    bool addBoxShape(uint64_t bodyId, const float halfExtents[3], const float center[3] = nullptr);
+    // `rotationXYZW` (optional, unit quaternion) turns the shape about its own
+    // centre; null or identity means unrotated. A rotated box is built as a hull.
+    bool addBoxShape(uint64_t bodyId, const float halfExtents[3], const float center[3] = nullptr,
+                     const float rotationXYZW[4] = nullptr);
     bool addSphereShape(uint64_t bodyId, float radius, const float center[3] = nullptr);
-    // The capsule stands along Y. halfLength: half the straight section.
-    bool addCapsuleShape(uint64_t bodyId, float radius, float halfLength, const float center[3] = nullptr);
-    bool addShape(uint64_t bodyId, const ShapeSpec &shape);   // box, sphere or capsule, incl. shape.center
+    // The capsule stands along Y (before `rotationXYZW`). halfLength: half the straight section.
+    bool addCapsuleShape(uint64_t bodyId, float radius, float halfLength, const float center[3] = nullptr,
+                         const float rotationXYZW[4] = nullptr);
+    bool addShape(uint64_t bodyId, const ShapeSpec &shape);   // box, sphere or capsule, incl. shape.center / shape.rot
 
     // ---- convex hulls ----------------------------------------------------
     // Hulls are built in two steps so the caller can learn the volume (to turn

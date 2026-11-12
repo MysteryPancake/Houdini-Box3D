@@ -117,6 +117,13 @@ hashPoints(const float *xyz, int count)
     return h ? h : 1ull;
 }
 
+// Null, or a rotation within float noise of identity (qx, qy, qz ~ 0, w ~ +-1).
+bool
+isIdentityRotation(const float q[4])
+{
+    return !q || (std::fabs(q[0]) < 1e-6f && std::fabs(q[1]) < 1e-6f && std::fabs(q[2]) < 1e-6f);
+}
+
 b3ShapeDef
 shapeDefFor(const BodySettings &b)
 {
@@ -255,11 +262,32 @@ Box3DWorld::setBodyDensity(uint64_t id, float density)
 }
 
 bool
-Box3DWorld::addBoxShape(uint64_t bodyId, const float halfExtents[3], const float center[3])
+Box3DWorld::addBoxShape(uint64_t bodyId, const float halfExtents[3], const float center[3],
+                        const float rotationXYZW[4])
 {
     auto it = myImpl->bodies.find(bodyId);
     if (it == myImpl->bodies.end())
         return false;
+
+    // A rotated box is the hull of its 8 rotated corners (Box3D has no rotated
+    // box helper). The hull cache keys it by content, so identical boxes share one.
+    if (!isIdentityRotation(rotationXYZW))
+    {
+        float pts[24];
+        int   n = 0;
+        for (int sx = -1; sx <= 1; sx += 2)
+            for (int sy = -1; sy <= 1; sy += 2)
+                for (int sz = -1; sz <= 1; sz += 2)
+                {
+                    const float corner[3] = { sx * halfExtents[0], sy * halfExtents[1], sz * halfExtents[2] };
+                    float r[3];
+                    quatRotate(rotationXYZW, corner, r);
+                    for (int j = 0; j < 3; ++j)
+                        pts[n++] = r[j] + (center ? center[j] : 0.0f);
+                }
+        const HullId h = createHull(pts, 8, nullptr);
+        return h && addHullShape(bodyId, h);
+    }
 
     // The hull and shape def are cloned by Box3D, so the temporary is fine.
     const bool offset = center && (center[0] != 0.0f || center[1] != 0.0f || center[2] != 0.0f);
@@ -287,16 +315,28 @@ Box3DWorld::addSphereShape(uint64_t bodyId, float radius, const float center[3])
 }
 
 bool
-Box3DWorld::addCapsuleShape(uint64_t bodyId, float radius, float halfLength, const float center[3])
+Box3DWorld::addCapsuleShape(uint64_t bodyId, float radius, float halfLength, const float center[3],
+                            const float rotationXYZW[4])
 {
     auto it = myImpl->bodies.find(bodyId);
     if (it == myImpl->bodies.end())
         return false;
 
     const float c[3] = { center ? center[0] : 0.0f, center ? center[1] : 0.0f, center ? center[2] : 0.0f };
+    // The axis is the shape's Y, turned by the shape rotation.
+    float axis[3] = { 0.0f, 1.0f, 0.0f };
+    if (!isIdentityRotation(rotationXYZW))
+    {
+        const float up[3] = { 0.0f, 1.0f, 0.0f };
+        quatRotate(rotationXYZW, up, axis);
+    }
     b3Capsule capsule;
-    capsule.center1.x = c[0];  capsule.center1.y = c[1] - halfLength;  capsule.center1.z = c[2];
-    capsule.center2.x = c[0];  capsule.center2.y = c[1] + halfLength;  capsule.center2.z = c[2];
+    capsule.center1.x = c[0] - halfLength * axis[0];
+    capsule.center1.y = c[1] - halfLength * axis[1];
+    capsule.center1.z = c[2] - halfLength * axis[2];
+    capsule.center2.x = c[0] + halfLength * axis[0];
+    capsule.center2.y = c[1] + halfLength * axis[1];
+    capsule.center2.z = c[2] + halfLength * axis[2];
     capsule.radius    = radius;
     // Box3D turns a capsule that is too short into a sphere by itself.
     const b3ShapeDef def = shapeDefFor(myImpl->bodySettings[bodyId]);
@@ -310,8 +350,8 @@ Box3DWorld::addShape(uint64_t bodyId, const ShapeSpec &shape)
     switch (shape.type)
     {
         case ShapeType::Sphere:   return addSphereShape(bodyId, shape.radius, shape.center);
-        case ShapeType::Capsule:  return addCapsuleShape(bodyId, shape.radius, shape.halfLength, shape.center);
-        default:                  return addBoxShape(bodyId, shape.halfExtents, shape.center);
+        case ShapeType::Capsule:  return addCapsuleShape(bodyId, shape.radius, shape.halfLength, shape.center, shape.rot);
+        default:                  return addBoxShape(bodyId, shape.halfExtents, shape.center, shape.rot);
     }
 }
 

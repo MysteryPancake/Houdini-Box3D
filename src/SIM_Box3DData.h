@@ -4,7 +4,7 @@
 // Bullet Data). Attach to a DOP object (the registered DOP node does this).
 //
 // Per-point attributes (bullet_georep, mass, friction, bounce, lineardamping,
-// angulardamping, gravityscale, enablesleep, isbullet, active, ...) override
+// angulardamping, gravityscale, enablesleep, isbullet, bullet_autofit, active, ...) override
 // these; this node is only the fallback for points that do not have them.
 // The parameter names here match those attribute names.
 //
@@ -34,6 +34,7 @@ public:
     GETSET_DATA_FUNCS_B("isbullet",       IsBullet);
     GETSET_DATA_FUNCS_I("defaultshape",   DefaultShape);    // 0 box, 1 sphere, 2 convexhull, 3 concave/compound, 4 capsule, 5 none
     GETSET_DATA_FUNCS_B("hullperconnected", HullPerConnected); // convex: one hull per set of connected prims
+    GETSET_DATA_FUNCS_B("autofit",        AutoFit);         // box / sphere / capsule fit to the packed geometry (point attr: bullet_autofit)
 
     // Convenience: pack the options into the Houdini-free struct.
     b3dop::BodySettings toBodySettings() const;

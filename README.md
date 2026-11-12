@@ -87,6 +87,12 @@ All attributes are optional except `P`. If one is missing, the value from the Bo
 | `isbullet` | int | Nonzero = continuous collision for fast bodies |
 | `active` | int | `0` = static, anything else = dynamic |
 | `bullet_georep` | string | Collision shape (see below) |
+| `bullet_autofit` | int | `1` = fit a box, sphere or capsule to the packed geometry's bounds, `0` = use the attributes below (default: the Box3D Data node's Auto Fit, on) |
+| `bullet_primS` | vector | Box half extents (autofit off, or no packed geometry) |
+| `bullet_radius` | float | Sphere / capsule radius |
+| `bullet_length` | float | Capsule length along Y, straight section only (caps not included) |
+| `bullet_primT` | vector | Shape offset from the body origin |
+| `bullet_primR` | vector | Shape rotation, Euler degrees (X, then Y, then Z) |
 | `pscale` / `scale` | float / vector | Size of the shape |
 | `id` | int | Stable point id; use it if points can be deleted or reordered |
 
@@ -105,12 +111,23 @@ Set the `bullet_georep` string attribute using the same names Houdini's RBD tool
 
 Anything else, including `cylinder` and `plane`, uses the Default Shape from the Box3D Data node.
 
+#### Setting a box, sphere or capsule by hand
+
+By default a box, sphere or capsule on a packed point is fitted to the packed geometry's bounds (Auto Fit on). Turn Auto Fit off on the Box3D Data node, or set `bullet_autofit = 0` on a point, to build the shape from attributes instead:
+
+- **Box**: `bullet_primS` (half extents)
+- **Sphere**: `bullet_radius`
+- **Capsule**: `bullet_radius` and `bullet_length` (it stands along Y)
+- **Any of them**: `bullet_primT` moves the shape off the body origin, and `bullet_primR` turns it (Euler degrees, XYZ). A sphere ignores the rotation.
+
+Every attribute is optional. Anything you leave out falls back to the `pscale` / `scale` size. Plain points have no geometry to fit, so these attributes apply to them whatever Auto Fit says. They are ignored for `convexhull`, `concave`, `compound` and `none`.
+
 Convex and concave shapes need **packed primitives** (one point plus one packed primitive per body, for example from the Pack SOP or RBD Packed Objects). Pack a simplified proxy for best performance. Pieces are split by the primitive `name` attribute. If a shape can't be built (flat, too few points, empty), the solver falls back to a box and shows a warning on the node.
 
 ### Things to know
 
 - Negative `friction`, `bounce` and damping values are clamped to 0 (Box3D does not accept them).
-- Changes to shape, size, or any of the material and body attributes above (`mass`, `friction`, `bounce`, damping, `gravityscale`, `enablesleep`, `isbullet`) on a point that already exists are not picked up until the simulation is reset. Position, rotation, velocity and `active` changes are.
+- Changes to shape, size, `bullet_autofit` and the other `bullet_*` shape attributes, or any of the material and body attributes above (`mass`, `friction`, `bounce`, damping, `gravityscale`, `enablesleep`, `isbullet`) on a point that already exists are not picked up until the simulation is reset. Position, rotation, velocity and `active` changes are.
 - Triangle-mesh colliders, joints/constraints and collision events are not supported yet.
 
 ## Troubleshooting

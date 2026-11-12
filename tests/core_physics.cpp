@@ -522,6 +522,125 @@ int main()
         std::printf("convex-shape checks done\n");
     }
 
+    // ---- explicit primitive overrides (bullet_primS / primR / primT / radius / length) ----
+    {
+        using namespace b3dop;
+        auto near3 = [](const float a[3], float x, float y, float z) {
+            return std::fabs(a[0] - x) < 1e-5f && std::fabs(a[1] - y) < 1e-5f && std::fabs(a[2] - z) < 1e-5f;
+        };
+
+        // quatRotate: 90 degrees about X turns Y into Z (the Euler -> quaternion step is
+        // the HDK's now, so only the rotation itself is checked here).
+        {
+            const float h = 0.70710678f;
+            const float qx90[4] = { h, 0, 0, h };
+            const float up[3] = { 0, 1, 0 };
+            float r[3];
+            quatRotate(qx90, up, r);
+            CHECK(near3(r, 0, 0, 1));
+        }
+
+        // applyPrimOverrides
+        {
+            const float one[3] = { 1, 1, 1 };
+            PrimOverrides o;
+            CHECK(!o.any());
+            ShapeSpec box = makeShapeSpec(ShapeType::Box, 1.0f, one);
+            o.hasSize = true;  o.size[0] = 2;  o.size[1] = 0.5f;  o.size[2] = 1;       // HALF extents
+            o.hasPos  = true;  o.pos[0] = 3;
+            applyPrimOverrides(box, o);
+            CHECK(near3(box.halfExtents, 2, 0.5f, 1) && box.center[0] == 3.0f);
+            CHECK(std::fabs(shapeVolume(box) - 8.0f * 2 * 0.5f * 1) < 1e-5f);
+
+            ShapeSpec cap = makeShapeSpec(ShapeType::Capsule, 1.0f, one);
+            PrimOverrides oc;
+            oc.hasRadius = true;  oc.radius = 0.25f;
+            oc.hasLength = true;  oc.length = 3.0f;                                      // straight section
+            applyPrimOverrides(cap, oc);
+            CHECK(std::fabs(cap.radius - 0.25f) < 1e-6f && std::fabs(cap.halfLength - 1.5f) < 1e-6f);
+
+            // size does not touch a sphere, radius does; only what is given changes
+            ShapeSpec sph = makeShapeSpec(ShapeType::Sphere, 1.0f, one);
+            applyPrimOverrides(sph, o);
+            CHECK(std::fabs(sph.radius - 0.5f) < 1e-6f && sph.center[0] == 3.0f);
+            applyPrimOverrides(sph, oc);
+            CHECK(std::fabs(sph.radius - 0.25f) < 1e-6f);
+
+            // a rotation override is carried through; a non-finite one is ignored
+            ShapeSpec rb = makeShapeSpec(ShapeType::Box, 1.0f, one);
+            PrimOverrides orr;
+            orr.hasRot = true;  orr.rot[2] = 0.70710678f;  orr.rot[3] = 0.70710678f;
+            applyPrimOverrides(rb, orr);
+            CHECK(std::fabs(rb.rot[2] - 0.70710678f) < 1e-6f && std::fabs(rb.rot[3] - 0.70710678f) < 1e-6f);
+            orr.rot[0] = NAN;
+            ShapeSpec rb2 = makeShapeSpec(ShapeType::Box, 1.0f, one);
+            applyPrimOverrides(rb2, orr);
+            CHECK(rb2.rot[3] == 1.0f);
+
+            // bad values are ignored / clamped
+            ShapeSpec bad = makeShapeSpec(ShapeType::Box, 1.0f, one);
+            PrimOverrides ob;
+            ob.hasSize = true;  ob.size[0] = NAN;  ob.size[1] = 1;  ob.size[2] = 1;
+            applyPrimOverrides(bad, ob);
+            CHECK(near3(bad.halfExtents, 0.5f, 0.5f, 0.5f));
+            ob.size[0] = 0;
+            applyPrimOverrides(bad, ob);
+            CHECK(bad.halfExtents[0] > 0.0f);
+            ShapeSpec flat = makeShapeSpec(ShapeType::Capsule, 1.0f, one);
+            PrimOverrides ol;  ol.hasLength = true;  ol.length = -2.0f;
+            applyPrimOverrides(flat, ol);
+            CHECK(flat.halfLength == 0.0f);
+        }
+
+        // Rotated shapes under real physics, resting on a ground plane (top at y = 0).
+        {
+            Box3DWorld rw;
+            CHECK(rw.create(WorldSettings()));
+            const float qid[4] = { 0, 0, 0, 1 };
+            BodySettings st;  st.type = BodySettings::Type::Static;
+            BodySettings dyn;
+            const double g[3] = { 0, -0.5, 0 };
+            CHECK(rw.addBody(1, st, g, qid));
+            const float gh[3] = { 20, 0.5f, 20 };
+            CHECK(rw.addBoxShape(1, gh));
+
+            // capsule radius 0.5, straight section 2, lying on its side (turned 90 about Z):
+            // rests at y = radius.
+            const float rz90[4] = { 0, 0, 0.70710678f, 0.70710678f };   // 90 degrees about Z
+            ShapeSpec cap;  cap.type = ShapeType::Capsule;  cap.radius = 0.5f;  cap.halfLength = 1.0f;
+            for (int i = 0; i < 4; ++i) cap.rot[i] = rz90[i];
+            const double cp[3] = { 0, 3, 0 };
+            CHECK(rw.addBody(2, dyn, cp, qid));
+            CHECK(rw.addShape(2, cap));
+
+            // box 4 x 1 x 1 turned 90 about Z: stands 4 tall, rests at y = 2.
+            ShapeSpec box;  box.type = ShapeType::Box;  box.halfExtents[0] = 2.0f;
+            box.halfExtents[1] = 0.5f;  box.halfExtents[2] = 0.5f;
+            for (int i = 0; i < 4; ++i) box.rot[i] = rz90[i];
+            const double bp[3] = { 8, 4, 0 };
+            CHECK(rw.addBody(3, dyn, bp, qid));
+            CHECK(rw.addShape(3, box));
+            CHECK(rw.shapeCount(3) == 1);
+            CHECK(std::fabs(rw.bodyMass(3) - shapeVolume(box)) < 0.05f);   // density 1: mass = volume
+
+            // an unrotated box with the same offset, placed 3 to the side, keeps its body origin
+            ShapeSpec off;  off.type = ShapeType::Box;  off.center[0] = 3.0f;
+            const double op[3] = { -8, 3, 0 };
+            CHECK(rw.addBody(4, dyn, op, qid));
+            CHECK(rw.addShape(4, off));
+
+            for (int i = 0; i < 420; ++i) rw.step(1.0f / 60.0f);
+            double p[3];  float q[4];
+            CHECK(rw.getTransform(2, p, q));
+            std::printf("rotated capsule rest y=%.4f\n", p[1]);
+            CHECK(std::fabs(p[1] - 0.5) < 0.06);
+            CHECK(rw.getTransform(3, p, q));
+            std::printf("rotated box     rest y=%.4f\n", p[1]);
+            CHECK(std::fabs(p[1] - 2.0) < 0.08);
+        }
+        std::printf("primitive-override checks done\n");
+    }
+
     w.destroy();
     CHECK(!w.isValid());
     std::printf(fails ? "FAILED\n" : "OK\n");

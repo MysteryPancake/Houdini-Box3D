@@ -81,8 +81,17 @@ SIM_Box3DData::getDescription()
                                                "Create Convex Hull per Set of Connected Primitives");
     static PRM_Default theHullPerConnectedDefault(0);
 
+    // On: a box / sphere / capsule on a packed point is fitted to the packed
+    // geometry's bounds. Off: it is built from the point attributes bullet_primS,
+    // bullet_radius, bullet_length, bullet_primT and bullet_primR instead (anything
+    // missing falls back to pscale / scale). The `bullet_autofit` point attribute
+    // overrides this per point.
+    static PRM_Name    theAutoFitName("autofit", "Auto Fit Box / Sphere / Capsule to Geometry");
+    static PRM_Default theAutoFitDefault(1);
+
     static PRM_Template theTemplates[] = {
         PRM_Template(PRM_ORD,    1, &theShapeName,       &theShapeDefault, &theShapeMenu),
+        PRM_Template(PRM_TOGGLE, 1, &theAutoFitName,     &theAutoFitDefault),
         PRM_Template(PRM_TOGGLE, 1, &theHullPerConnectedName, &theHullPerConnectedDefault),
         PRM_Template(PRM_ORD,    1, &theBodyTypeName,    &theBodyTypeDefault, &theBodyTypeMenu),
         PRM_Template(PRM_FLT_J,  1, &theMassName, &theMassDefault, 0, &theMassRange),
@@ -128,6 +137,7 @@ SIM_Box3DData::toBodySettings() const
     s.enableSleep    = getEnableSleep();
     s.isBullet       = getIsBullet();
     s.hullPerConnectedSet = getHullPerConnected();
+    s.autoFit        = getAutoFit();
     switch (getDefaultShape())
     {
         case 1:  s.defaultShape = b3dop::ShapeType::Sphere;  break;
