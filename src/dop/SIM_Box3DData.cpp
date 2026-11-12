@@ -72,6 +72,9 @@ SIM_Box3DData::getDescription()
     static PRM_Default theRecyclingDefault(1);
 
     // Box3D: one threshold, fixed half second to sleep.
+    static PRM_Name    theCcdThresholdName("ccdthreshold", "CCD Threshold");
+    static PRM_Default theCcdThresholdDefault(0.5);
+    static PRM_Range   theCcdThresholdRange(PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 1);
     static PRM_Name    theSleepThresholdName("sleepthreshold", "Sleep Threshold");
     static PRM_Default theSleepThresholdDefault(0.05);
     static PRM_Range   theSleepThresholdRange(PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 1);
@@ -157,6 +160,11 @@ SIM_Box3DData::getDescription()
         PRM_Template(PRM_FLT_J,  1, &theSleepThresholdName, &theSleepThresholdDefault, 0, &theSleepThresholdRange, 0, 0, 1,
                      "A body may fall asleep once its speed has stayed below this for half a second. "
                      "Overridden by the sleepthreshold point attribute."),
+        PRM_Template(PRM_FLT_J,  1, &theCcdThresholdName, &theCcdThresholdDefault, 0, &theCcdThresholdRange, 0, 0, 1,
+                     "How far a body must move in one step, as a fraction of its thinnest size, before continuous "
+                     "collision sweeps it so it can't pass through things. Lower catches more tunnelling on thin, "
+                     "fast pieces but costs more. Needs the solver's Continuous Collision on. "
+                     "Overridden by the ccdthreshold point attribute."),
         PRM_Template(PRM_TOGGLE, 1, &theFastObjectName,  &theFastObjectDefault, 0, 0, 0, 0, 1,
                      "Continuous collision against moving bodies too, so a fast body can't pass through them."),
         PRM_Template(PRM_TOGGLE, 1, &theRecyclingName,   &theRecyclingDefault, 0, 0, 0, 0, 1,
@@ -212,6 +220,7 @@ SIM_Box3DData::toBodySettings() const
     s.isBullet       = getFastObject();
     s.contactRecycling = getContactRecycling();
     s.sleepThreshold = static_cast<float>(getSleepThreshold());
+    s.ccdThreshold   = static_cast<float>(getCcdThreshold());
     s.hullPerConnectedSet = getHullPerConnected();
     s.autoFit        = getAutoFit();
     s.flipMeshWinding = getFlipWinding();

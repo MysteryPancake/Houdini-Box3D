@@ -96,6 +96,7 @@ All attributes are optional except `P`. If one is missing, the value from the Bo
 | `enablesleep` | int | `0` = this body never sleeps |
 | `bullet_want_deactivate` | int | `1` = may sleep, `0` = kept awake (overrides `enablesleep`) |
 | `sleepthreshold` | float | Speed below which the body may fall asleep (after half a second) |
+| `ccdthreshold` | float | Continuous collision sweeps the body once it moves more than this fraction of its thinnest size in one step (default 0.5, the Box3D Data node's CCD Threshold). Lower it, e.g. to 0.1, on thin fast pieces that pass through things. Needs Continuous Collision on |
 | `bullet_sleeping` | int | Written by the solver: `1` while asleep. Set it to `0` to wake the body |
 | `fastobject` | int | Nonzero = a fast body can't pass through other moving bodies (it never passes through static ones) |
 | `fastrotation` | int | Nonzero = no spin speed limit (normally 45° of rotation per step, about 180 rpm at 24 fps). Only for round pieces like wheels and balls: other shapes can miss collisions when spinning that fast |

@@ -134,6 +134,7 @@ struct PointAttrs
     GA_ROHandleI  fastRotation;    // fastrotation
     GA_ROHandleI  contactRecycling;    // contactrecycling
     GA_ROHandleF  sleepThreshold;  // sleepthreshold
+    GA_ROHandleF  ccdThreshold;    // ccdthreshold
     GA_ROHandleF  pscale;
     GA_ROHandleV3 scale;
     GA_ROHandleV3 v;
@@ -187,6 +188,7 @@ struct PointAttrs
         fastRotation   = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "fastrotation");
         contactRecycling = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "contactrecycling");
         sleepThreshold = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "sleepthreshold");
+        ccdThreshold   = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "ccdthreshold");
         pscale         = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "pscale");
         scale          = GA_ROHandleV3(gdp, GA_ATTRIB_POINT, "scale");
         georep         = GA_ROHandleS(gdp, GA_ATTRIB_POINT, "bullet_georep");
@@ -223,7 +225,7 @@ const char *const kPropAttribNames[] = {
     "bullet_want_deactivate", "bullet_ignore", "deforming", "bullet_autofit_valid",
     "pscale", "scale",      // a plain point's convex / concave fallback box
     "collision_category", "collision_mask", "animated", "density", "computemass",
-    "inertialtensorstiffness", "sleepthreshold", "fastobject",
+    "inertialtensorstiffness", "sleepthreshold", "ccdthreshold", "fastobject",
     "min_activation_impulse", "collision_group", "dead", "bullet_sleeping",
     "contactrecycling", "lock_linear", "lock_angular", "fastrotation",
     "name",                 // joint anchors find bodies by it
@@ -1075,6 +1077,12 @@ readDynamicProps(const b3dop::BodySettings &node, const PointAttrs &a, GA_Offset
         const float t = threshold(a.sleepThreshold);
         if (t >= 0.0f) p.sleepThreshold = t;
     }
+    p.ccdThreshold = node.ccdThreshold;
+    if (a.ccdThreshold.isValid())
+    {
+        const float t = threshold(a.ccdThreshold);
+        if (t >= 0.0f) p.ccdThreshold = t;
+    }
     p.fastObject = a.fastObject.isValid() ? a.fastObject.get(off) != 0 : node.isBullet;
     p.fastRotation = a.fastRotation.isValid() && a.fastRotation.get(off) != 0;
     p.contactRecycling = a.contactRecycling.isValid() ? a.contactRecycling.get(off) != 0 : node.contactRecycling;
@@ -1190,6 +1198,7 @@ settingsFor(const b3dop::BodySettings &node, const Box3DBodyProps &p, b3dop::Bod
     b.filter         = p.filter;
     b.locks          = p.locks;
     b.sleepThreshold = p.sleepThreshold;
+    b.ccdThreshold   = p.ccdThreshold;
     b.isBullet       = p.fastObject;
     b.fastRotation   = p.fastRotation;
     b.contactRecycling = p.contactRecycling;
@@ -1513,6 +1522,11 @@ applyPropChanges(b3dop::Box3DWorld &world, Box3DBodyMirror &e, const Box3DBodyPr
         world.setGravityScaleByHandle(h, p.gravityScale);
         changed |= kPropsChanged;
     }
+    if (p.ccdThreshold != o.ccdThreshold)
+    {
+        world.setCcdThresholdByHandle(h, p.ccdThreshold);
+        changed |= kPropsChanged;
+    }
     if (p.sleepThreshold != o.sleepThreshold)
     {
         world.setSleepThresholdByHandle(h, p.sleepThreshold);
@@ -1599,7 +1613,7 @@ nodeSettingsHash(const b3dop::BodySettings &n, bool addImpact)
 {
     const float v[] = { n.mass, n.friction, n.restitution, n.linearDamping, n.angularDamping, n.gravityScale,
                         n.density, n.computeMass ? 1.0f : 0.0f, n.sleepThreshold, n.isBullet ? 1.0f : 0.0f,
-                        n.contactRecycling ? 1.0f : 0.0f };
+                        n.contactRecycling ? 1.0f : 0.0f, n.ccdThreshold };
     return b3dop::mixHash(b3dop::hashFloats(v, sizeof(v) / sizeof(v[0])), addImpact ? 1 : 2);
 }
 

@@ -156,6 +156,8 @@ struct BodySettings
     bool  isBullet       = false;   // Box3D "bullet": continuous collision vs moving bodies too (`fastobject`)
     bool  fastRotation   = false;   // `fastrotation`: no angular speed cap (B3_MAX_ROTATION per step); round bodies only
     float sleepThreshold = 0.05f;   // m/s
+    float ccdThreshold   = 0.5f;    // `ccdthreshold` (Box3D safetyFactor): continuous collision once a step's motion
+                                    // exceeds this times the body's thinnest extent. Box3D recommends 0.01 .. 0.5
     CollisionFilter filter;         // `collision_category` / `collision_mask` / `collision_group`
     MotionLocks     locks;          // `lock_linear` / `lock_angular`
 
@@ -258,6 +260,8 @@ public:
     // Box3D's single sleep threshold on |v| + |w| * extent. Negative = Box3D's default.
     void  setSleepThresholdByHandle(BodyHandle h, float threshold);
     float sleepThresholdByHandle(BodyHandle h) const;
+    void  setCcdThresholdByHandle(BodyHandle h, float threshold);   // negative / non-finite: Box3D's default
+    float ccdThresholdByHandle(BodyHandle h) const;
 
     // Kinematic body: reach this pose in timeStep (Box3D sets the velocity, so it pushes what it
     // touches). The velocity remains afterwards; zero it when the target stops.

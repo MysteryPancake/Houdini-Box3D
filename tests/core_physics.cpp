@@ -1033,6 +1033,54 @@ int main()
         std::printf("fast rotation checks done\n");
     }
 
+    // ---- CCD threshold (Box3D safetyFactor) --------------------------------------
+    {
+        using namespace b3dop;
+        CHECK(BodySettings().ccdThreshold == 0.5f);         // Box3D's default
+        // a fast cube at a thin static wall: swept (default) it stops; with a huge threshold it is
+        // never "fast", so it tunnels straight through
+        auto run = [&](float threshold, bool liveSet) {
+            KeyedWorld cw;
+            CHECK(cw.create(WorldSettings()));
+            const float qid[4] = { 0, 0, 0, 1 };
+            BodySettings wall;  wall.type = BodySettings::Type::Static;
+            ShapeSpec ws;  ws.halfExtents[0] = 0.05f;  ws.halfExtents[1] = ws.halfExtents[2] = 5.0f;
+            const double wp[3] = { 0, 0, 0 };
+            CHECK(cw.createShape(cw.createBody(wall, wp, qid), wall, ws));
+            BodySettings fast;  fast.gravityScale = 0.0f;
+            if (!liveSet) fast.ccdThreshold = threshold;
+            ShapeSpec cube;  cube.halfExtents[0] = cube.halfExtents[1] = cube.halfExtents[2] = 0.1f;
+            const double cp[3] = { -2, 0, 0 };
+            const BodyHandle c = cw.createBody(fast, cp, qid);
+            CHECK(cw.createShape(c, fast, cube));
+            if (liveSet) cw.setCcdThresholdByHandle(c, threshold);
+            CHECK(std::fabs(cw.ccdThresholdByHandle(c) - threshold) < 1e-6f);
+            const float v[3] = { 300, 0, 0 }, w[3] = { 0, 0, 0 };     // 5 m per 1/60 step
+            CHECK(cw.setVelocityByHandle(c, v, w));
+            for (int i = 0; i < 3; ++i) cw.step(1.0f / 60.0f);
+            double p[3];  float q[4];
+            CHECK(cw.getTransformByHandle(c, p, q));
+            return p[0];
+        };
+        CHECK(run(0.5f, false) < 0.0);          // stopped by the wall
+        CHECK(run(1000.0f, false) > 1.0);       // tunnelled
+        CHECK(run(1000.0f, true) > 1.0);        // the same, set on the live body
+        {
+            KeyedWorld cw;
+            CHECK(cw.create(WorldSettings()));
+            const float qid[4] = { 0, 0, 0, 1 };
+            const double p0[3] = { 0, 0, 0 };
+            BodySettings b;  b.ccdThreshold = -1.0f;            // invalid: Box3D's default, no assert
+            const BodyHandle h = cw.createBody(b, p0, qid);
+            CHECK(std::fabs(cw.ccdThresholdByHandle(h) - 0.5f) < 1e-6f);
+            cw.setCcdThresholdByHandle(h, 0.1f);
+            CHECK(std::fabs(cw.ccdThresholdByHandle(h) - 0.1f) < 1e-6f);
+            cw.setCcdThresholdByHandle(h, std::nanf(""));
+            CHECK(std::fabs(cw.ccdThresholdByHandle(h) - 0.5f) < 1e-6f);
+        }
+        std::printf("ccd threshold checks done\n");
+    }
+
     // ---- collision filtering (Box3D's b3Filter) ---------------------------------
     {
         using namespace b3dop;

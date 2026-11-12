@@ -588,6 +588,8 @@ Box3DWorld::createBody(const BodySettings &body, const double position[3], const
     def.motionLocks = toB3Locks(body.locks);
     if (body.sleepThreshold >= 0.0f && std::isfinite(body.sleepThreshold))
         def.sleepThreshold = body.sleepThreshold;
+    if (body.ccdThreshold >= 0.0f && std::isfinite(body.ccdThreshold))      // Box3D asserts on negatives
+        def.safetyFactor = body.ccdThreshold;
     def.userData       = userData;
 
     const b3BodyId bodyId = b3CreateBody(myImpl->worldId, &def);
@@ -1170,6 +1172,21 @@ Box3DWorld::getMassDataByHandle(BodyHandle h, float &mass, float center[3], floa
     storeVec3(md.center, center);
     inertiaDiag[0] = md.inertia.cx.x;  inertiaDiag[1] = md.inertia.cy.y;  inertiaDiag[2] = md.inertia.cz.z;
     return true;
+}
+
+void
+Box3DWorld::setCcdThresholdByHandle(BodyHandle h, float threshold)
+{
+    if (!h)
+        return;
+    const float t = (threshold >= 0.0f && std::isfinite(threshold)) ? threshold : b3DefaultBodyDef().safetyFactor;
+    b3Body_SetSafetyFactor(unpackBody(h), t);
+}
+
+float
+Box3DWorld::ccdThresholdByHandle(BodyHandle h) const
+{
+    return h ? b3Body_GetSafetyFactor(unpackBody(h)) : 0.0f;
 }
 
 void

@@ -50,6 +50,7 @@ struct Box3DBodyProps
     float density        = 1000.0f;   // `density`
     float inertiaScale   = 1.0f;      // `inertialtensorstiffness`
     float sleepThreshold = 0.05f;     // `sleepthreshold`
+    float ccdThreshold   = 0.5f;      // `ccdthreshold`
     bool  fastObject     = false;     // `fastobject`
     bool  fastRotation   = false;     // `fastrotation`
     bool  contactRecycling = true;    // `contactrecycling`
@@ -171,7 +172,7 @@ struct Box3DSyncFingerprint
 
     // Prop markers (kPropAttribNames in SIM_SolverBox3D.cpp, primsId, nodeHash): when any
     // changed, the scan also compares every body's settings. The .cpp static_asserts the count.
-    static constexpr int kNumPropIds = 29;
+    static constexpr int kNumPropIds = 30;
     using PropIds = std::array<GA_DataId, kNumPropIds>;
 
     int64_t   numPoints  = -1;      // -1 with primitives: packed topology is assumed fixed
