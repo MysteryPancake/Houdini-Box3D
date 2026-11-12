@@ -4,8 +4,8 @@
 // Box3D's headers are not included here (pimpl), so Houdini code never sees them.
 //
 // Conventions: positions double[3] (works with BOX3D_DOUBLE_PRECISION too); quaternions
-// float[4] x, y, z, w (the layout of UT_QuaternionF and b3Quat); keyed-API ids are
-// caller-supplied uint64_t.
+// float[4] x, y, z, w (the layout of UT_QuaternionF and b3Quat). Bodies are addressed by
+// BodyHandle only (tests/KeyedWorld.h adds caller-chosen ids on top, for the tests).
 #pragma once
 
 #include <cstdint>
@@ -144,13 +144,12 @@ public:
     // ---- stepping ----------------------------------------------------
     void step(float timeStep);
 
-    // ---- handle API (what the solver uses) -------------------------------------
+    // ---- bodies and shapes ---------------------------------------------------
     // No hash maps: createBody returns the handle and shape calls take the caller's
     // BodySettings. Hulls are tracked per handle, so destroyBody releases them.
     // A shape add recomputes the mass unless updateMass is false; after adding with false,
     // call applyMassFromShapes or applyMassByHandle before the next step (the solver always
-    // does it that way). The keyed API further down is a convenience layer for the tests.
-    void       reserve(size_t bodyCount);          // hint: sizes the hull bookkeeping
+    // does it that way).
     BodyHandle createBody(const BodySettings &body, const double position[3],
                           const float rotationXYZW[4], void *userData = nullptr);   // 0 on failure
     void       destroyBody(BodyHandle h);
@@ -166,6 +165,7 @@ public:
                                const int32_t *triangles, int triangleCount, float weldTolerance = 0.0f);
     void       applyMassFromShapes(BodyHandle h);
     bool       setTypeByHandle(BodyHandle h, BodySettings::Type type);   // static / kinematic / dynamic
+    BodySettings::Type typeByHandle(BodyHandle h) const;                 // Dynamic for a null handle
 
     // ---- changes to existing bodies (handle API) --------------------------------
     // Take effect from the next step. Only Box3D's own rules wake a body (disabling sleep does).
@@ -243,36 +243,14 @@ public:
     float massByHandle(BodyHandle h) const;
     int   shapeCountByHandle(BodyHandle h) const;
 
-    // ---- bodies --------------------------------------------------------
-    bool addBody(uint64_t id, const BodySettings &body,
-                 const double position[3], const float rotationXYZW[4]);
-    void removeBody(uint64_t id);
-    bool hasBody(uint64_t id) const;
-    int  bodyCount() const;                      // all live bodies, keyed or handle-made
-
-    bool setBodyType(uint64_t id, BodySettings::Type type);
-    // Frees the settings kept for adding shapes; shapes added afterwards use defaults.
-    void releaseBuildState(uint64_t id);
-    bool getBodyType(uint64_t id, BodySettings::Type &out) const;
-    bool setBodyDensity(uint64_t id, float density);     // for shapes added after the call
-
-    // ---- shapes --------------------------------------------------------
-    // `center`: offset from the body origin. `rotationXYZW` (optional) turns the shape about
-    // its centre; a rotated box is built as a hull.
-    bool addBoxShape(uint64_t bodyId, const float halfExtents[3], const float center[3] = nullptr,
-                     const float rotationXYZW[4] = nullptr);
-    bool addSphereShape(uint64_t bodyId, float radius, const float center[3] = nullptr);
-    // Along Y before rotation. halfLength: half the straight section.
-    bool addCapsuleShape(uint64_t bodyId, float radius, float halfLength, const float center[3] = nullptr,
-                         const float rotationXYZW[4] = nullptr);
-    bool addShape(uint64_t bodyId, const ShapeSpec &shape);   // box, sphere or capsule, incl. shape.center / shape.rot
+    int  bodyCount() const;                      // all live bodies
 
     // ---- convex hulls ----------------------------------------------------
     // Two steps, so the volume is known (mass -> density) before a shape exists:
     //   1. createHull(body-local xyz) -> HullId + volume. Cached by content. Returns 0 for
     //      < 4 usable points, non-finite or flat input, or a hull too big even after
     //      reducing the vertex budget (the caller falls back to a box).
-    //   2. addHullShape / createHullShape once per piece. Several hulls on one body make a
+    //   2. createHullShape once per piece. Several hulls on one body make a
     //      dynamic compound; overlapping pieces count their overlap twice in the mass.
     // Box3D clones the hull on shape creation; pruneHulls() frees entries no shape uses.
     HullId createHull(const float *xyz, int pointCount, float *outVolume = nullptr);
@@ -281,14 +259,10 @@ public:
     // miss. One key must always mean the same points; 0 is not allowed.
     HullId findHull(HullId key, float *outVolume = nullptr) const;
     HullId createHullWithKey(HullId key, const float *xyz, int pointCount, float *outVolume = nullptr);
-    bool   addHullShape(uint64_t bodyId, HullId hull);
     void   pruneHulls();                // frees cache entries no body uses
     int    hullCacheSize() const;
-    int    shapeCount(uint64_t bodyId) const;
-    float  bodyMass(uint64_t bodyId) const;      // 0 if unknown
 
-    // ---- handle access (never pass a stale handle) ---------------------------
-    BodyHandle bodyHandle(uint64_t id) const;     // 0 if there is no such body
+    // ---- pose and velocity (never pass a stale handle) -------------------------
     bool getTransformByHandle(BodyHandle h, double outPos[3], float outRotXYZW[4]) const;
     bool getVelocityByHandle(BodyHandle h, float outLinear[3], float outAngular[3]) const;
     bool setVelocityByHandle(BodyHandle h, const float linear[3], const float angular[3]);
@@ -300,12 +274,6 @@ public:
     int  getMoveEvents(std::vector<BodyMove> &out) const;   // resizes `out`; returns the count
     void setBodyUserData(BodyHandle h, void *userData);     // returned in BodyMove / ContactPoint
 
-    // ---- keyed read back / push in ---------------------------------------
-    bool getTransform(uint64_t id, double outPos[3], float outRotXYZW[4]) const;
-    bool getVelocity(uint64_t id, float outLinear[3], float outAngular[3]) const;
-    bool setVelocity(uint64_t id, const float linear[3], const float angular[3]);
-    bool setTransform(uint64_t id, const double pos[3], const float rotXYZW[4]);
-
     // ---- misc --------------------------------------------------------------
     static void version(int &major, int &minor, int &revision);
     static int  liveWorldCount();   // Box3D worlds alive in this process (all Box3DWorlds)
@@ -315,7 +283,7 @@ public:
     static int  maxWorldCount();    // B3_MAX_WORLDS: create() fails once liveWorldCount() reaches it
 
 private:
-    // The shape builders behind both APIs.
+    // The shape builders behind createShape.
     bool boxShape(BodyHandle h, const BodySettings &b, const float halfExtents[3], const float center[3],
                   const float rotationXYZW[4], bool updateMass);
     bool sphereShape(BodyHandle h, const BodySettings &b, float radius, const float center[3], bool updateMass);

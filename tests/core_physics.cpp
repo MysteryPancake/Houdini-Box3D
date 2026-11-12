@@ -1,7 +1,7 @@
 // Exercises the real Box3D calls in the wrapper: a box falls onto a static
 // ground box, comes to rest, and velocities/transforms round-trip.
 #include "Box3DShapes.h"
-#include "Box3DWorld.h"
+#include "KeyedWorld.h"
 #include <cmath>
 #include <cstdio>
 #include <vector>
@@ -21,7 +21,7 @@ quatToMatrix3(const float q[4], double m[9])
 
 int main()
 {
-    b3dop::Box3DWorld w;
+    b3dop::KeyedWorld w;
     CHECK(w.create(b3dop::WorldSettings()));
 
     const float qid[4] = { 0, 0, 0, 1 };
@@ -120,7 +120,7 @@ int main()
 
         // Two "points" with different mass, dropped from the same height, plus
         // a static ground point: mass -> density -> real Box3D mass.
-        Box3DWorld pw;
+        KeyedWorld pw;
         CHECK(pw.create(WorldSettings()));
         BodySettings stat; stat.type = BodySettings::Type::Static;
         const double gp[3] = { 0, -0.5, 0 };
@@ -177,7 +177,7 @@ int main()
 
         // a capsule placed off-centre via ShapeSpec::center moves the shape, not the body
         {
-            Box3DWorld w3;
+            KeyedWorld w3;
             CHECK(w3.create(WorldSettings()));
             const double o[3] = { 0, 0, 0 };
             CHECK(w3.addBody(makeBodyKey(1, 1), dyn, o, qid));
@@ -267,7 +267,7 @@ int main()
         // Same source, 3 different rotations / positions (float noise in m4 and P):
         // the body-local points must come out byte-identical so the hull cache hits.
         {
-            Box3DWorld iw;
+            KeyedWorld iw;
             CHECK(iw.create(WorldSettings()));
             std::vector<float> src;                                   // an off-centre cube around the pivot
             for (int i = 0; i < 8; ++i)
@@ -307,7 +307,7 @@ int main()
         // hashed once and an instance only adds pivot + scale. Same source at 3
         // rotations -> one key, built once, and the points are only needed on a miss.
         {
-            Box3DWorld kw;
+            KeyedWorld kw;
             CHECK(kw.create(WorldSettings()));
             std::vector<float> src;
             for (int i = 0; i < 8; ++i)
@@ -389,7 +389,7 @@ int main()
         CHECK(makeShapeSpec(ShapeType::Capsule, 1.0f, oneS).halfLength == 0.0f);          // unit capsule is a sphere
 
         // ---- hulls ------------------------------------------------------------
-        Box3DWorld hw;
+        KeyedWorld hw;
         CHECK(hw.create(WorldSettings()));
         auto cube = [](float cx, float cy, float cz, float h) {
             std::vector<float> v;
@@ -563,7 +563,7 @@ int main()
 
         // Rotated shapes under real physics, resting on a ground plane (top at y = 0).
         {
-            Box3DWorld rw;
+            KeyedWorld rw;
             CHECK(rw.create(WorldSettings()));
             const float qid[4] = { 0, 0, 0, 1 };
             BodySettings st;  st.type = BodySettings::Type::Static;
@@ -612,7 +612,7 @@ int main()
 
     // ---- move events: only awake bodies, with the transform, user data and sleep flag ----
     {
-        b3dop::Box3DWorld ew;
+        b3dop::KeyedWorld ew;
         b3dop::WorldSettings ws;
         CHECK(ew.create(ws));
         const float q0[4] = { 0, 0, 0, 1 };
@@ -648,7 +648,6 @@ int main()
         // releasing the build settings keeps type queries and changes working (Box3D answers)
         b3dop::BodySettings::Type ty;
         CHECK(ew.getBodyType(2, ty) && ty == b3dop::BodySettings::Type::Dynamic);
-        ew.releaseBuildState(2);
         CHECK(ew.getBodyType(2, ty) && ty == b3dop::BodySettings::Type::Dynamic);
         CHECK(ew.setBodyType(2, b3dop::BodySettings::Type::Kinematic));
         CHECK(ew.getBodyType(2, ty) && ty == b3dop::BodySettings::Type::Kinematic);
@@ -708,28 +707,25 @@ int main()
     {
         using namespace b3dop;
 
-        // ShapeTypeCache gives parseShapeType's answers, and leaves `out` alone on a miss
+        // parseShapeType: exact lowercase names, `out` untouched on a miss
         {
-            ShapeTypeCache cache;
             const char *names[] = { "box", "sphere", "convexhull", "concave", "compound", "capsule", "none",
-                                    "cylinder", "", nullptr, "Box", "box", "box", "sphere", "box" };
-            for (const char *n : names)
+                                    "cylinder", "", nullptr, "Box" };
+            const bool ok[]     = { true, true, true, true, true, true, true, false, false, false, false };
+            for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
             {
-                ShapeType a = ShapeType::Capsule, b = ShapeType::Capsule;    // sentinel: unchanged on failure
-                const bool ra = parseShapeType(n, a);
-                const bool rb = cache.parse(n, b);
-                CHECK(ra == rb && a == b);
+                ShapeType a = ShapeType::Capsule;    // sentinel: unchanged on failure
+                CHECK(parseShapeType(names[i], a) == ok[i]);
+                if (!ok[i]) CHECK(a == ShapeType::Capsule);
             }
-            CHECK(cache.size() == 9);        // distinct non-empty strings seen (case-sensitive)
         }
 
     }
 
     {
         using namespace b3dop;
-        Box3DWorld hw;
+        KeyedWorld hw;
         CHECK(hw.create(WorldSettings()));
-        hw.reserve(100);                         // a hint only
 
         BodySettings stat; stat.type = BodySettings::Type::Static;
         const double gp[3] = { 0, -0.5, 0 };
@@ -836,7 +832,7 @@ int main()
     // ---- mid-simulation changes (what the solver does when an attribute changes) ----
     {
         using namespace b3dop;
-        Box3DWorld dw;
+        KeyedWorld dw;
         CHECK(dw.create(WorldSettings()));
         const float qid[4] = { 0, 0, 0, 1 };
         BodySettings stat;  stat.type = BodySettings::Type::Static;
@@ -938,7 +934,7 @@ int main()
         CHECK(!dw.isEnabledByHandle(0) && dw.massByHandle(0) == 0.0f && dw.shapeCountByHandle(0) == 0);
 
         // the world's sleep switch wins: with sleep off in the world a body never sleeps
-        Box3DWorld nw;
+        KeyedWorld nw;
         WorldSettings noSleep;  noSleep.enableSleep = false;
         CHECK(nw.create(noSleep));
         const BodyHandle nb = nw.createBody(dyn, p0, qid);
@@ -985,7 +981,7 @@ int main()
         CHECK(!t.shouldCollide(bi, g) && t.shouldCollide(bi, d));
 
         // In a world: two debris boxes dropped on each other fall through, a third collides
-        Box3DWorld fw;
+        KeyedWorld fw;
         CHECK(fw.create(WorldSettings()));
         const float qid[4] = { 0, 0, 0, 1 };
         const int pg = fw.filterProfile(ground), pd = fw.filterProfile(debris);
@@ -1041,7 +1037,7 @@ int main()
     // ---- mass properties, sleep thresholds, kinematic targets ----------------------
     {
         using namespace b3dop;
-        Box3DWorld mw;
+        KeyedWorld mw;
         CHECK(mw.create(WorldSettings()));
         const float qid[4] = { 0, 0, 0, 1 };
         BodySettings dyn;
@@ -1092,7 +1088,7 @@ int main()
     {
         using namespace b3dop;
         WorldSettings zg;  zg.gravity[1] = 0.0f;       // no gravity: only our forces move things
-        Box3DWorld fw;
+        KeyedWorld fw;
         CHECK(fw.create(zg));
         const float qid[4] = { 0, 0, 0, 1 };
         ShapeSpec cube;                                 // unit cube
@@ -1192,7 +1188,7 @@ int main()
 
         // gravity as a force (m * g) falls like the world's own gravity
         WorldSettings g1;                               // standard gravity
-        Box3DWorld gw, fw2;
+        KeyedWorld gw, fw2;
         CHECK(gw.create(g1));
         CHECK(fw2.create(zg));
         const double gp0[3] = { 0, 50, 0 };
@@ -1227,16 +1223,16 @@ int main()
         BodySettings dyn;
 
         // A world with a floor and one resting box; returns the box.
-        auto setup = [&](Box3DWorld &rw, const BodySettings &boxBody, BodyHandle &boxOut) {
+        auto setup = [&](KeyedWorld &rw, const BodySettings &boxBody, BodyHandle &boxOut) {
             const double gp[3] = { 0, -0.5, 0 }, bp[3] = { 0, 0.5, 0 };
             const BodyHandle g = rw.createBody(stat, gp, qid);
             boxOut = rw.createBody(boxBody, bp, qid);
             return g && boxOut && rw.createShape(g, stat, slab) && rw.createShape(boxOut, boxBody, cube);
         };
-        auto settle = [&](Box3DWorld &rw, int steps) { for (int i = 0; i < steps; ++i) rw.step(dt); };
+        auto settle = [&](KeyedWorld &rw, int steps) { for (int i = 0; i < steps; ++i) rw.step(dt); };
 
         // default: a resting box has its contact recycled
-        Box3DWorld rw;
+        KeyedWorld rw;
         BodyHandle box = 0;
         CHECK(rw.create(ws) && setup(rw, dyn, box));
         CHECK(rw.contactRecyclingByHandle(box));
@@ -1265,7 +1261,7 @@ int main()
         CHECK(rw.recycledContactCount() == 0);
 
         // per body: off at creation means this body's contacts are never recycled ...
-        Box3DWorld pw;
+        KeyedWorld pw;
         BodyHandle pbox = 0;
         BodySettings noRec = dyn;  noRec.contactRecycling = false;
         CHECK(pw.create(ws) && setup(pw, noRec, pbox));
@@ -1292,7 +1288,7 @@ int main()
 
         // changing it leaves the body's velocity and awake state alone
         WorldSettings zg = ws;  zg.gravity[1] = 0.0f;
-        Box3DWorld vw;
+        KeyedWorld vw;
         CHECK(vw.create(zg));
         const double vp[3] = { 0, 5, 0 };
         const BodyHandle vb = vw.createBody(dyn, vp, qid);
@@ -1309,7 +1305,7 @@ int main()
 
         // a sleeping body is not woken by the change, and static bodies and handle 0 are harmless
         WorldSettings sleepy;                           // sleeping allowed
-        Box3DWorld sw;
+        KeyedWorld sw;
         BodyHandle sbox = 0;
         CHECK(sw.create(sleepy) && setup(sw, dyn, sbox));
         for (int i = 0; i < 400 && sw.isAwakeByHandle(sbox); ++i) sw.step(dt);
@@ -1341,7 +1337,7 @@ int main()
             ws.restitutionIterations = 4;
             ws.restitutionPropagation = true;
             ws.isotropicInertiaTolerance = 0.5f;
-            Box3DWorld sw;
+            KeyedWorld sw;
             CHECK(sw.create(ws));
             BodySettings g;  g.type = BodySettings::Type::Static;  g.restitution = 0.0f;
             BodySettings ball;  ball.restitution = 0.9f;
@@ -1367,7 +1363,7 @@ int main()
         // live tuning of the new settings, and hit events with a speed threshold
         WorldSettings ws;
         ws.impactMinSpeed = 3.0f;
-        Box3DWorld hw;
+        KeyedWorld hw;
         CHECK(hw.create(ws));
         BodySettings g;  g.type = BodySettings::Type::Static;
         BodySettings ball;

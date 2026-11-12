@@ -14,6 +14,7 @@
 
 #include <GA/GA_Types.h>
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -58,8 +59,6 @@ struct Box3DBodyProps
 
 struct Box3DBodyMirror : Box3DBodyPose
 {
-    bool   dynamic = false;           // Dynamic type: written back
-
     // What the body was built with, so a scan can tell what changed.
     Box3DBodyProps props;
     float    volume    = 0.0f;        // total shape volume
@@ -89,6 +88,8 @@ struct Box3DBodyMirror : Box3DBodyPose
     // The body's handle and the type the solver last set.
     b3dop::BodyHandle        handle = 0;
     b3dop::BodySettings::Type type  = b3dop::BodySettings::Type::Dynamic;
+
+    bool dynamic() const { return type == b3dop::BodySettings::Type::Dynamic; }   // written back
 };
 
 // One point as syncObject() reads it. Kept between steps; `entry` caches the mirror entry
@@ -155,30 +156,28 @@ struct Box3DSyncFingerprint
     static constexpr GA_DataId kNoId = GA_DataId(-1);   // attribute absent
 
     // Prop markers (kPropAttribNames in SIM_SolverBox3D.cpp, primsId, nodeHash): when any
-    // changed, the scan also compares every body's settings.
+    // changed, the scan also compares every body's settings. The .cpp static_asserts the count.
     static constexpr int kNumPropIds = 25;
+    using PropIds = std::array<GA_DataId, kNumPropIds>;
 
     int64_t   numPoints  = -1;      // -1 with primitives: packed topology is assumed fixed
     int64_t   numOffsets = -1;
     GA_DataId pId = kNoId, orientId = kNoId, vId = kNoId, wId = kNoId;
     GA_DataId idId = kNoId, activeId = kNoId;
     int       nodeType = -1;        // Box3D Data body type
-    GA_DataId propIds[kNumPropIds];
+    PropIds   propIds  = filledPropIds();
     GA_DataId primsId  = kNoId;     // primitive list (packed transforms)
     uint64_t  nodeHash = 0;         // Box3D Data values that change existing bodies
 
-    Box3DSyncFingerprint()
+    static PropIds filledPropIds()
     {
-        for (GA_DataId &d : propIds)
-            d = kNoId;
+        PropIds ids;
+        ids.fill(kNoId);
+        return ids;
     }
-
     bool samePropMarkers(const Box3DSyncFingerprint &o) const
     {
-        for (int i = 0; i < kNumPropIds; ++i)
-            if (propIds[i] != o.propIds[i])
-                return false;
-        return primsId == o.primsId && nodeHash == o.nodeHash;
+        return propIds == o.propIds && primsId == o.primsId && nodeHash == o.nodeHash;
     }
     bool operator==(const Box3DSyncFingerprint &o) const
     {
@@ -187,7 +186,6 @@ struct Box3DSyncFingerprint
                idId == o.idId && activeId == o.activeId && nodeType == o.nodeType &&
                samePropMarkers(o);
     }
-    bool operator!=(const Box3DSyncFingerprint &o) const { return !(*this == o); }
 };
 
 // Per object. A skipped sync leaves its entries untouched, so "current" is the object's
@@ -244,8 +242,6 @@ struct Box3DSharedState
     std::vector<int>                            impactObjects;      // objects with Impacts data from last step (sorted)
 
     float stepDt = 0.0f;                        // this step's Box3D time step (DOP step * Time Scale)
-
-    b3dop::ShapeTypeCache                       shapeTypes;     // `bullet_georep` strings parsed so far
 
     double stampTime  = 0.0;                    // SIM_Engine::getSimulationTime() at the last solve
     bool   stamped    = false;

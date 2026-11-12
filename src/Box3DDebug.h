@@ -71,9 +71,13 @@ inline bool verbose()
 
 #else // !BOX3DDOP_DEBUG
 
-#define B3D_LOG(...)             ((void)0)
-#define B3D_LOG_VERBOSE(...)     ((void)0)
-#define B3D_LOG_IF(cond, ...)    ((void)0)
+#include <cstdio>
+
+// Compiled out: never evaluated, but the arguments are still type-checked against the format and
+// count as used, so variables that only feed a log line need no (void) casts.
+#define B3D_LOG(...)             do { if (false) std::printf(__VA_ARGS__); } while (0)
+#define B3D_LOG_VERBOSE(...)     B3D_LOG(__VA_ARGS__)
+#define B3D_LOG_IF(cond, ...)    do { if (false) { (void)(cond); std::printf(__VA_ARGS__); } } while (0)
 #define B3D_COUNT(field)         ((void)0)
 #define B3D_UNCOUNT(field)       ((void)0)
 #define B3D_COUNTER(field)       (0)

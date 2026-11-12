@@ -112,11 +112,16 @@ houdini_configure_target(Box3DDOP)
 # Node icons: Houdini picks up config/Icons/DOP_<node name>.svg for each node type.
 # houdini_configure_target builds the plugin straight into houdiniX.Y/dso, so the
 # icons go next to it in houdiniX.Y/config/Icons.
+set(BOX3DDOP_NODES box3d_solver box3d_data)       # internal node names
 set(BOX3DDOP_ICON_DIR "$<TARGET_FILE_DIR:Box3DDOP>/../config/Icons")
+set(BOX3DDOP_ICON_COPIES "")
+foreach(node IN LISTS BOX3DDOP_NODES)
+    list(APPEND BOX3DDOP_ICON_COPIES
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/icons/box3d.svg" "${BOX3DDOP_ICON_DIR}/DOP_${node}.svg")
+endforeach()
 add_custom_command(TARGET Box3DDOP POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "${BOX3DDOP_ICON_DIR}"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/icons/box3d.svg" "${BOX3DDOP_ICON_DIR}/DOP_box3d_solver.svg"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/icons/box3d.svg" "${BOX3DDOP_ICON_DIR}/DOP_box3d_data.svg"
+    ${BOX3DDOP_ICON_COPIES}
     VERBATIM)
 
 # ---------------------------------------------------------------------------
@@ -136,8 +141,9 @@ endif()
 configure_file(package/Box3D.json.in "${CMAKE_BINARY_DIR}/package/Box3D.json" @ONLY)
 
 install(TARGETS Box3DDOP RUNTIME DESTINATION Box3D/dso LIBRARY DESTINATION Box3D/dso)
-install(FILES icons/box3d.svg DESTINATION Box3D/config/Icons RENAME DOP_box3d_solver.svg)
-install(FILES icons/box3d.svg DESTINATION Box3D/config/Icons RENAME DOP_box3d_data.svg)
+foreach(node IN LISTS BOX3DDOP_NODES)
+    install(FILES icons/box3d.svg DESTINATION Box3D/config/Icons RENAME DOP_${node}.svg)
+endforeach()
 install(FILES "${CMAKE_BINARY_DIR}/package/Box3D.json" DESTINATION .)
 
 set(CPACK_GENERATOR ZIP)

@@ -1,7 +1,7 @@
 // Runs the same scene with 1 worker and with N workers (Box3D's own thread
 // pool): reports step time and checks the results are identical.
 // usage: b3dop_core_threads [workers=4] [boxes per side=12] [steps=120]
-#include "Box3DWorld.h"
+#include "KeyedWorld.h"
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -14,7 +14,7 @@ static bool run(int workers, int side, int steps, Result &r)
 {
     b3dop::WorldSettings ws;
     ws.workerCount = workers;
-    b3dop::Box3DWorld w;
+    b3dop::KeyedWorld w;
     if (!w.create(ws))
         return false;
 

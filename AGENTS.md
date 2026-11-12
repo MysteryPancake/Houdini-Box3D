@@ -50,12 +50,13 @@ src/
   Box3DShapes.h       Houdini-free, header-only: shape math, packed-prim matrices, hashing, collision-group patterns
   Box3DWorld.h/.cpp   Houdini-free pimpl wrapper over one b3World. The ONLY file that includes Box3D headers; defines TaskRunner
   Box3DHoudiniTasks.h TaskRunner on Houdini's TBB pool (UT_TaskGroup). Only SIM_Box3DWorld.cpp includes it
-  Box3DDebug.h        B3D_LOG / counters, compiled out unless BOX3DDOP_DEBUG
+  Box3DDebug.h        B3D_LOG / counters, compiled out unless BOX3DDOP_DEBUG (args still type-checked, never evaluated)
   SIM_Box3DWorld.*    SIM_Data owning the shared world state (the rebuildable cache)
   SIM_Box3DData.*     Default-settings DOP node
   SIM_SolverBox3D.*   The solver: sync, step, write-back, post-step passes (the bulk of the plugin)
   SIM_Box3DRegister.cpp  initializeSIM(); includes UT_DSOVersion.h (exactly once, keep it here)
 tests/
+  KeyedWorld.h        Test-only Box3DWorld subclass: bodies by caller-chosen id, over the handle API
   core_smoke.cpp      Version print + world create/destroy
   core_physics.cpp    Unit + physics checks (CHECK macro, nonzero exit on failure)
   core_threads.cpp    1 worker vs N workers: timing + determinism
@@ -105,9 +106,9 @@ Layering (keep it):
 velocities `float[3]`. `BodyHandle` = a `b3BodyId` packed into `uint64_t` (never 0 when valid). Never use a stale
 handle; the solver keeps handles in the mirror and erases entries with their bodies.
 
-**Two APIs.** The handle API (`createBody`, `createShape` / `createHullShape` taking the caller's `BodySettings`,
-`destroyBody`, `setTypeByHandle`, `*ByHandle`) touches no hash map and is what the solver uses. The keyed API (`addBody`,
-`addShape`, `removeBody`, ...) is a convenience layer for the tests; bodies made with `createBody` are invisible to it.
+**Handles only.** `createBody`, `createShape` / `createHullShape` (taking the caller's `BodySettings`), `destroyBody`,
+`setTypeByHandle` / `typeByHandle` and the `*ByHandle` calls touch no hash map. Caller-chosen ids (`addBody`,
+`addShape`, `removeBody`, ...) live in `tests/KeyedWorld.h`, a test-only subclass built on the public handle API.
 
 **Mass.** A shape add recomputes the mass unless `updateMass` is false. The solver always passes false and then calls
 `applyMassByHandle` once (required before the next step): it sets every shape's density, applies the mass from the
@@ -145,15 +146,16 @@ so a temporary `groupIndex` is set first.
 
 **Shapes and hull cache.** A box is a Box3D hull (`b3MakeBoxHull` / `b3MakeOffsetBoxHull`; a rotated box is the hull of
 its 8 corners); sphere and capsule (along Y; Box3D turns a too-short one into a sphere) are native. `createHull` keys by
-content (FNV-1a of the points); packed instances pass their own key (`findHull` first, build on a miss). Builds try
+content (`hashFloats`, FNV-1a, of the points); packed instances pass their own key (`findHull` first, build on a miss). Builds try
 vertex budgets `{B3_MAX_HULL_VERTICES, 64, 44, 32, 16, 8}` (a triangulated hull hits the 128-edge limit at ~44
 vertices); flat or non-finite results are rejected and the caller falls back to a box. We own the `b3HullData` (Box3D
 clones it per shape); `refs` count shapes, hull use is tracked per handle, and `pruneHulls()` frees unused entries.
 Several hulls on one body make a dynamic compound; overlapping pieces count their overlap twice in the mass.
 
-**`Box3DShapes.h`** (all unit-tested): `parseShapeType` / `ShapeTypeCache` (exact lowercase Houdini names; `compound`
-= `concave`; unknown values, including `cylinder` and `plane`, return false); `makeShapeSpec` (`pscale * scale` as a
-bounding box, components made positive and >= 1e-4; sphere diameter = largest component; capsule radius = half of
+**`Box3DShapes.h`** (all unit-tested): `parseShapeType` (exact lowercase Houdini names; `compound`
+= `concave`; unknown values, including `cylinder` and `plane`, return false; the solver memoises per shared-string handle
+in `GeorepLookup`); `makeShapeSpec` (`pscale * scale` as a bounding box, components made positive and >= `kMinExtent`
+= 1e-4 by `clampExtent`; sphere diameter = largest component; capsule radius = half of
 max(x, z)); `PrimOverrides` / `applyPrimOverrides`; `matrixRowLengths`; `packedPointsToBodyLocal` (`(p - pivot) * S`);
 `packedScale` (row lengths rounded to 5 significant digits, so rotated instances share a hull; ~1e-5 scale error);
 `packedHullKey` (kind 1 merged, 2 per piece); `connectedSets` (union-find); `fitShapeToPoints`; `sanitizeQuat` /
@@ -175,7 +177,7 @@ The Box3D world is a **rebuildable cache**; the DOP objects' point attributes ar
 * Because a rebuild has only the geometry, the write-back always writes `P`, `orient`, `v`, `w` and packed transforms.
 
 `Box3DBodyMirror` (per body): the last pose / velocity given to or read from Box3D (to detect edits by other nodes),
-`dynamic`, `type`, `handle`, the point (`pointOff`, `pointId`, `pointIndex`, `objectId`), `stamp`, the packed primitive
+`type` (`dynamic()` derives from it), `handle`, the point (`pointOff`, `pointId`, `pointIndex`, `objectId`), `stamp`, the packed primitive
 and its 3x3, and what the body was built from (`props`, `volume`, `shapeSig`, `shapeless`, `autoScale`, `sizeKey`,
 `animated`, `driven`, `sleeping`). Box3D's body user data points at the entry, so entries live in an `unordered_map`
 (stable nodes) and are erased only with their body.
@@ -195,7 +197,7 @@ lock st->mutex
 stepDt = dt * timescale; world.applyTuning(currentWorldSettings())
 syncFromGeometry   per object syncObject(); finishFilterProfiles; remove gone bodies; pruneHulls; warnings
 applyExternalForces  Use Force DOPs: SIM_Force data per object -> getForce at each dynamic body's centre of mass -> applyForceByHandle
-stepWorld          b3World_Step(stepDt, subSteps)
+world.step         b3World_Step(stepDt, subSteps)
 writeResultsBack   awake dynamic bodies (move events): P / orient / v / w / packed transform / bullet_sleeping
 recordImpacts      Add Impact Data -> SIM_Impacts (only on steps with an impact)
 activateByImpact   min_activation_impulse
@@ -210,26 +212,28 @@ own (SideFX's `SIM_VolumetricConnectedComponentBuilder` does the same), so Houdi
 and bar are left alone. SIM_Engine discards and re-cooks an interrupted step itself (`setSimulationTime`,
 `myLastCookInterrupted`); the stamp check makes that re-cook rebuild the world. `check()` is called at the
 start of the solve, before each object, every `kProgressEvery` (64) points in `syncObject` pass 2 (serial, between
-points, so no half-built body), and once before `stepWorld`. A cancel latches. Cancelled after the sync began:
+points, so no half-built body), and once before the step. A cancel latches. Cancelled after the sync began:
 `st->stamped = false` (the half-synced world can never be continued; the next solve that would continue it rebuilds),
 a `UT_ERROR_MESSAGE` "Box3D: step cancelled", and `SIM_SOLVER_FAIL`. `b3World_Step` itself is not interruptible, and
 once it has run the step always finishes (write-back etc. are quick), so a cached step is always whole.
 `StepProgress` is at file scope (the header forward-declares it), not in the anonymous namespace.
 
-Data names: `"Box3DWorld"`, `"Box3DData"`, `SIM_GEOMETRY_DATANAME`.
+Data names: `"Box3DWorld"`, `kBox3DDataName` (`"Box3DData"`, SIM_Box3DData.h), `SIM_GEOMETRY_DATANAME`.
 
 ### syncObject (per object)
 
 1. Read-locks the `SIM_Geometry` (objects without one are skipped). `PointAttrs` binds `id, active, v, w, orient`.
 2. Box3D Data: body type and `nodeHash` (its values that change existing bodies, Add Impact Data included).
 3. **Skip check** (see below). On a skip, the object's entries are counted and nothing per point runs.
-4. Otherwise binds the remaining attributes, reads the full node settings and registers the object's filter profile.
+4. Otherwise binds the remaining attributes and builds the `ScanContext` (world, geometry, attributes, node settings,
+   shape sources, georep lookup, the object's filter profile) that the per-point helpers take.
 5. **Pass 1** (parallel above 8192 points, 2048 with primitives): per point body id (`id`, else the point number = its
    position in the walk), key, `getPackedInfo`, `readPointState`, `active`.
 6. **Pass 2** (serial, point order): duplicate `id` -> counted, first wins; non-finite `P` -> counted, its body removed;
-   `dead` -> queued for deletion, its body removed; unknown key -> `addPointBody`; known key -> mid-simulation updates
-   (shape rebuild, then settings), type change (`wantedType`), then the animated target or an external edit
-   (`describeStateDifference`, eps 1e-5, q and -q equal -> `setTransformByHandle` + `setVelocityByHandle`).
+   `dead` -> queued for deletion, its body removed; unknown key -> `addPointBody`; known key -> `updateExistingBody`:
+   mid-simulation updates (shape rebuild, then settings), type change (`wantedType`), then the animated target or an
+   external edit (`poseDiffers`, eps 1e-5, q and -q equal -> `setTransformByHandle` + `setVelocityByHandle`). Both
+   paths then share one tail: point bookkeeping and stamp, queued point writes, impact / activation lists.
 7. Records the fingerprint; problems (failed bodies, duplicate ids, bad P), deforming bodies and driven animated bodies
    keep the object scanning.
 
@@ -237,7 +241,7 @@ Data names: `"Box3DWorld"`, `"Box3DData"`, `SIM_GEOMETRY_DATANAME`.
 
 `Box3DObjectSync::fp` (`Box3DSyncFingerprint`): point count and offset range (plain points only; packed topology is
 assumed fixed, a new instance gets a new `id`), data ids of `P`, `orient`, `v`, `w`, `id`, `active`, the node body type,
-and the **prop markers**: data ids of `kPropAttribNames` (24 attributes that change settings or ask for rebuilds, looked
+and the **prop markers**: data ids of `kPropAttribNames` (25 attributes that change settings or ask for rebuilds, looked
 up by name), the primitive list's data id (`primitiveListDataId`: packed transforms are intrinsics; bumping it is up to
 whoever edits a primitive, so an edit that does not is picked up on the next scan) and `nodeHash`. Equal fingerprint ->
 skip.
@@ -252,13 +256,13 @@ skip.
 
 ### External forces (`applyExternalForces`)
 
-Runs after `syncFromGeometry` and the last cancel check, before `stepWorld`, when `useforces` is on. Same lookup as
+Runs after `syncFromGeometry` and the last cancel check, before the step, when `useforces` is on. Same lookup as
 Houdini's `SIM_SolverHair`: `obj->forEachConstSubData(collector, SIM_DataFilterByType("SIM_Force"), SIM_FORCES_DATANAME,
 SIM_DataFilterNone())` with a `SIM_EachDataCallback` (`ForceCollector`) that casts each sub-data to `SIM_Force`. Objects
 without force data get no entry, and with no forces anywhere the function returns before touching a body.
 
 Then one pass over `st.mirror` (order does not matter: a force depends only on its own body's state): skip bodies that
-are not `dynamic`, are `props.ignored`, are not live (`isLive`, object not seen by this sync), have no force data on their
+are not `dynamic()`, are `props.ignored`, are not live (`isLive`, object not seen by this sync), have no force data on their
 object, or are asleep while `forceswake` is off. For each remaining body: mass (`massByHandle`), world centre of mass
 (`getCenterOfMassByHandle`) and `v` / `w` (`getVelocityByHandle`) go into `SIM_Force::getForce(object, pos, vel, angvel,
 mass, force, torque)` for every force on the object, summed, and the sum goes in through `applyForceByHandle`
@@ -369,11 +373,11 @@ equal to what its body was built with.
 * `buildShapes`:
   1. Packed point: its geometry into `PieceGroup`s via `ShapeSources` (cached per source detail, and per
      `(source, first primitive)` for packed fragments, for one `syncObject`).
-  2. Packed convex / concave: `packedHullKey`, `findHull` first, body-local points only on a miss. Convex merges all
-     pieces (kind 1) unless hull-per-connected; concave is one hull per piece (kind 2).
-  3. Otherwise body-local point sets -> `pieceFromPoints` (hull, or a fitted box with a note).
-  4. Box / sphere / capsule on a packed point with autofit: fitted to the bounds.
-  5. Nothing usable (plain point, autofit off, empty geometry): `makeShapeSpec(pscale * scale)` plus
+  2. Packed convex / concave: `pieceFromPoints` with a `packedHullKey` (by content if the transform is degenerate):
+     `findHull` first, body-local points only on a miss, else a fitted box with a note. Convex merges all pieces
+     (kind 1) unless hull-per-connected; concave is one hull per piece (kind 2).
+  3. Box / sphere / capsule on a packed point with autofit: fitted to the bounds.
+  4. Nothing usable (plain point, autofit off, empty geometry): `makeShapeSpec(pscale * scale)` plus
      `applyPrimOverrides`; convex / concave fall back to a box with a note.
 * Notes are aggregated into one node warning per kind, on the step a shape is built.
 
@@ -385,7 +389,8 @@ for `box`, `sphere`, `capsule` only. `bullet_primS` = box HALF extents (Bullet D
 assumptions are wrong, only that conversion and the `hasLength` line of `applyPrimOverrides` change.
 
 **Pieces and packed geometry.** Pieces are grouped by the primitive `name` attribute (unnamed share one; no primitives:
-one piece). `hullperconnected` (convex only): one hull per connected set, ignoring `name`. Packed fragments
+one piece). Collectors gather point offsets; `finishPieces` sorts and dedupes them, reads the positions (offset order)
+and hashes each piece and the group. `hullperconnected` (convex only): one hull per connected set, ignoring `name`. Packed fragments
 (`GU_PackedFragment`, Pack SOP with `name`) share one source detail, read with `GU_PackedFragment::detailPtr()`
 (not `getPackedDetail()`, which is a different detail from the one `getPrimitiveRange()` indexes: using it gave
 fragments wrong or empty pieces, the empty ones falling back to a pscale-sized box); a fragment's points are one piece, keyed by
@@ -509,11 +514,12 @@ Built in both configurations (`-DBOX3DDOP_CORE_ONLY=ON` builds only these):
 | Target | Checks |
 |---|---|
 | `b3dop_core_smoke` | Box3D version, create / destroy; expects `OK` |
-| `b3dop_core_physics` | Keyed and handle APIs, shape mapping, explicit primitives, mass, body types, resting heights, hulls (limits, caching, instancing), packed matrix math, `sanitizeQuat` / `storedPosition`, setters on existing bodies (material, damping, gravity, sleep, density, enable, shape replacement), live tuning, patterns and collision groups (incl. re-filtering), contacts, mass centring / inertia scaling, sleep threshold, kinematic targets, external forces (force / torque per step, summing, non-finite input, static / kinematic / sleeping bodies, gravity as a force), contact recycling (world distance live, per-body flag at creation and on existing bodies, velocity kept, sleepers not woken) |
+| `b3dop_core_physics` | Handle API (and the test-side `KeyedWorld`), shape mapping, explicit primitives, mass, body types, resting heights, hulls (limits, caching, instancing), packed matrix math, `sanitizeQuat` / `storedPosition`, setters on existing bodies (material, damping, gravity, sleep, density, enable, shape replacement), live tuning, patterns and collision groups (incl. re-filtering), contacts, mass centring / inertia scaling, sleep threshold, kinematic targets, external forces (force / torque per step, summing, non-finite input, static / kinematic / sleeping bodies, gravity as a force), contact recycling (world distance live, per-body flag at creation and on existing bodies, velocity kept, sleepers not woken) |
 | `b3dop_core_taskrunner [workers]` | Worlds on one shared host pool: tasks run, results match 1 worker |
 | `b3dop_core_threads [workers] [side] [steps]` | 1 vs N workers: speedup, fails if positions differ by > 1e-4 |
 
-The `SIM_*` code has no automated tests and has not been compiled here against a real HDK; `tests/box3d_test.hiplc`
+The `SIM_*` code has no automated tests and has not been compiled here against a real HDK (only syntax-checked against
+a minimal stand-in); `tests/box3d_test.hiplc`
 is a manual scene. No CI.
 
 ## HDK calls

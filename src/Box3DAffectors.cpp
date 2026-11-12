@@ -20,7 +20,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <cstring>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -30,7 +29,6 @@ namespace {
 // The relationship type name SIM_Object::getConstAffectors() matches (it is the data type name:
 // SideFX's own hair solver passes "SIM_RelationshipSource" the same way).
 const char *const kCollideRelationship = "SIM_RelationshipCollide";
-const char *const kDataName            = "Box3DData";      // same as SIM_SolverBox3D.cpp
 
 // Triangles from the object's polygons (fan-triangulated; open curves, packed primitives and the
 // like are ignored). Vertices are the object's points, in point order of first use.
@@ -82,19 +80,6 @@ buildMesh(const GU_Detail *gdp, bool houdiniWinding, TriMesh &out)
             out.tris.push_back(houdiniWinding ? b : c);
         }
     }
-}
-
-uint64_t
-hashDoubles(uint64_t h, const double *v, int n)
-{
-    for (int i = 0; i < n; ++i)
-    {
-        const double d = v[i] + 0.0;            // -0 and +0 hash alike
-        uint64_t u;
-        std::memcpy(&u, &d, sizeof u);
-        h = b3dop::mixHash(h, u);
-    }
-    return h;
 }
 
 void
@@ -179,14 +164,14 @@ syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects, Box3DAffector
 
         // Material: a Box3D Data node on the affector sets friction and bounce (bodies are always static).
         b3dop::BodySettings body;
-        if (const SIM_Box3DData *node = SIM_DATA_GETCONST(*obj, kDataName, SIM_Box3DData))
+        if (const SIM_Box3DData *node = SIM_DATA_GETCONST(*obj, kBox3DDataName, SIM_Box3DData))
             body = node->toBodySettings();
         body.type = b3dop::BodySettings::Type::Static;
 
         // What the shape depends on: the points and polygons, the material, and (when not rigid)
         // the whole matrix, which is baked into the vertices.
         const GA_Attribute *P = gdp->getP();
-        uint64_t sig = 1469598103934665603ull;
+        uint64_t sig = b3dop::kHashSeed;
         sig = b3dop::mixHash(sig, P ? uint64_t(P->getDataId()) : 0);
         sig = b3dop::mixHash(sig, gdp->getNumPrimitives() > 0 ? uint64_t(gdp->getPrimitiveList().getDataId()) : 0);
         sig = b3dop::mixHash(sig, uint64_t(gdp->getNumPoints()));
@@ -195,7 +180,8 @@ syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects, Box3DAffector
         sig = b3dop::mixHash(sig, b3dop::hashFloats(mat, 3));
         sig = b3dop::mixHash(sig, rigid ? 1 : 2);
         if (!rigid)
-            sig = hashDoubles(sig, m, 16);
+            for (double d : m)
+                sig = b3dop::mixDouble(sig, d);
 
         const bool unchanged = ab.poseKnown && ab.signature == sig;
         if (unchanged)

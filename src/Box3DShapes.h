@@ -5,6 +5,7 @@
 // tests/core_physics.cpp covers them without Houdini.
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -64,50 +65,22 @@ parseShapeType(const char *name, ShapeType &out)
     return false;
 }
 
-// parseShapeType with a memo by string value (a scene has a handful, usually one).
-class ShapeTypeCache
-{
-public:
-    bool parse(const char *name, ShapeType &out)
-    {
-        if (!name || !*name)
-            return false;
-        if (myLast < myEntries.size() && myEntries[myLast].text == name)
-            return apply(myEntries[myLast], out);
-        for (size_t i = 0; i < myEntries.size(); ++i)
-            if (myEntries[i].text == name)
-            {
-                myLast = i;
-                return apply(myEntries[i], out);
-            }
-        Entry e;
-        e.text = name;
-        e.ok   = parseShapeType(name, e.type);
-        if (myEntries.size() >= kMaxEntries)     // pathological: every point has its own string
-            myEntries.clear();
-        myEntries.push_back(e);
-        myLast = myEntries.size() - 1;
-        return apply(e, out);
-    }
-    size_t size() const { return myEntries.size(); }
+// Smallest box half-size component / sphere / capsule size a shape may have.
+constexpr float kMinExtent = 1e-4f;
 
-private:
-    struct Entry
-    {
-        std::string text;
-        ShapeType   type = ShapeType::Box;
-        bool        ok   = false;
-    };
-    static constexpr size_t kMaxEntries = 32;
-    static bool apply(const Entry &e, ShapeType &out)
-    {
-        if (e.ok)
-            out = e.type;
-        return e.ok;
-    }
-    std::vector<Entry> myEntries;
-    size_t             myLast = 0;
-};
+// |v|, at least kMinExtent; non-finite -> kMinExtent.
+inline float
+clampExtent(float v)
+{
+    v = std::fabs(v);
+    return (std::isfinite(v) && v > kMinExtent) ? v : kMinExtent;
+}
+
+inline bool
+finite3(const float v[3])
+{
+    return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
+}
 
 // The shape fills a box of size pscale * scale (Copy to Points on a unit primitive). Sphere:
 // diameter = largest component. Capsule along Y: radius = half the larger of x / z, total
@@ -115,30 +88,19 @@ private:
 inline ShapeSpec
 makeShapeSpec(ShapeType type, float pscale, const float scale[3])
 {
-    const float kMin = 1e-4f;
-    auto sane = [&](float v) {
-        v = std::fabs(v);
-        return (std::isfinite(v) && v > kMin) ? v : kMin;
-    };
-
-    const float sx = sane(pscale * scale[0]);
-    const float sy = sane(pscale * scale[1]);
-    const float sz = sane(pscale * scale[2]);
+    const float sx = clampExtent(pscale * scale[0]);
+    const float sy = clampExtent(pscale * scale[1]);
+    const float sz = clampExtent(pscale * scale[2]);
 
     ShapeSpec s;
     // Convex / concave: the fallback box when there is no geometry to hull.
     s.type = (type == ShapeType::Sphere || type == ShapeType::Capsule) ? type : ShapeType::Box;
     if (type == ShapeType::Sphere)
-    {
-        float m = sx > sy ? sx : sy;
-        m = m > sz ? m : sz;
-        s.radius = 0.5f * m;
-    }
+        s.radius = 0.5f * std::max({ sx, sy, sz });
     else if (type == ShapeType::Capsule)
     {
-        const float r = 0.5f * (sx > sz ? sx : sz);
-        s.radius     = r;
-        s.halfLength = (0.5f * sy - r) > 0.0f ? (0.5f * sy - r) : 0.0f;
+        s.radius     = 0.5f * std::max(sx, sz);
+        s.halfLength = std::max(0.5f * sy - s.radius, 0.0f);
     }
     else
     {
@@ -187,31 +149,21 @@ quatRotate(const float q[4], const float v[3], float out[3])
 inline void
 applyPrimOverrides(ShapeSpec &s, const PrimOverrides &o)
 {
-    const float kMin = 1e-4f;
-    auto sane = [&](float v) {
-        v = std::fabs(v);
-        return v > kMin ? v : kMin;
-    };
-    auto finite3 = [](const float v[3]) {
-        return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
-    };
-
     if (o.hasSize && s.type == ShapeType::Box && finite3(o.size))
         for (int i = 0; i < 3; ++i)
-            s.halfExtents[i] = sane(o.size[i]);
+            s.halfExtents[i] = clampExtent(o.size[i]);
 
     if (o.hasRadius && std::isfinite(o.radius) && (s.type == ShapeType::Sphere || s.type == ShapeType::Capsule))
-        s.radius = sane(o.radius);
+        s.radius = clampExtent(o.radius);
 
     if (o.hasLength && std::isfinite(o.length) && s.type == ShapeType::Capsule)
-        s.halfLength = o.length > 0.0f ? 0.5f * o.length : 0.0f;
+        s.halfLength = std::max(0.5f * o.length, 0.0f);
 
     if (o.hasPos && finite3(o.pos))
         for (int i = 0; i < 3; ++i)
             s.center[i] = o.pos[i];
 
-    if (o.hasRot && std::isfinite(o.rot[0]) && std::isfinite(o.rot[1]) &&
-        std::isfinite(o.rot[2]) && std::isfinite(o.rot[3]))
+    if (o.hasRot && finite3(o.rot) && std::isfinite(o.rot[3]))
         for (int i = 0; i < 4; ++i)
             s.rot[i] = o.rot[i];
 }
@@ -246,6 +198,15 @@ makeBodyKey(int objectId, int64_t pointId)
 // that layout (m3[row*3+col], m4[row*4+col]). Quaternions are x, y, z, w.
 // ---------------------------------------------------------------------------
 
+// The upper-left 3x3 of a 4x4 (both row-major).
+inline void
+upper3x3(const double m4[16], double m3[9])
+{
+    for (int r = 0; r < 3; ++r)
+        for (int c = 0; c < 3; ++c)
+            m3[r * 3 + c] = m4[r * 4 + c];
+}
+
 // A 3x3's row lengths (the per-row scale of M = S * R). False if a row is zero or non-finite.
 // The plugin splits rotations with the HDK (UT_Matrix3D::extractScales); this Houdini-free
 // version is only for scale keys.
@@ -269,7 +230,8 @@ matrixRowLengths(const double m[9], double out[3])
 inline bool
 packedScale(const double m4[16], double S[3])
 {
-    const double m3[9] = { m4[0], m4[1], m4[2],  m4[4], m4[5], m4[6],  m4[8], m4[9], m4[10] };
+    double m3[9];
+    upper3x3(m4, m3);
     if (!matrixRowLengths(m3, S))
         return false;
     // Round to 5 significant digits.
@@ -285,45 +247,59 @@ packedScale(const double m4[16], double S[3])
 }
 
 // FNV-1a style hashing for hull keys and signatures.
+constexpr uint64_t kHashSeed  = 1469598103934665603ull;
+constexpr uint64_t kHashPrime = 1099511628211ull;
+
 inline uint64_t
-hashFloats(const float *xyz, size_t floatCount)
+hashBytes(uint64_t h, const void *data, size_t byteCount)
 {
-    uint64_t h = 1469598103934665603ull ^ uint64_t(floatCount);
-    const unsigned char *b = reinterpret_cast<const unsigned char *>(xyz);
-    for (size_t i = 0, n = floatCount * sizeof(float); i < n; ++i)
+    const unsigned char *b = static_cast<const unsigned char *>(data);
+    for (size_t i = 0; i < byteCount; ++i)
     {
         h ^= b[i];
-        h *= 1099511628211ull;
+        h *= kHashPrime;
     }
     return h;
 }
 
+// The raw bytes of `floatCount` floats, with the count mixed in.
+inline uint64_t
+hashFloats(const float *xyz, size_t floatCount)
+{
+    return hashBytes(kHashSeed ^ uint64_t(floatCount), xyz, floatCount * sizeof(float));
+}
+
+// Mixes v in byte by byte, low byte first (the same on any byte order).
 inline uint64_t
 mixHash(uint64_t h, uint64_t v)
 {
     for (int i = 0; i < 8; ++i)
     {
         h ^= (v >> (8 * i)) & 0xffull;
-        h *= 1099511628211ull;
+        h *= kHashPrime;
     }
     return h;
 }
 
+// A double's bits; -0 and +0 hash alike.
+inline uint64_t
+mixDouble(uint64_t h, double d)
+{
+    d += 0.0;
+    uint64_t u;
+    std::memcpy(&u, &d, sizeof u);
+    return mixHash(h, u);
+}
+
 // A packed hull's cache key: the source's point hash plus what differs per instance (pivot,
 // scale). `kind`: 1 merged hull, 2 per piece. Same inputs as packedPointsToBodyLocal, so a
-// hit means the same body-local points.
+// hit means the same body-local points. Never 0.
 inline uint64_t
 packedHullKey(uint64_t sourceHash, const double pivot[3], const double S[3], uint32_t kind)
 {
     uint64_t h = mixHash(sourceHash, kind);
     for (int j = 0; j < 3; ++j)
-    {
-        const double pv = pivot[j] + 0.0, sv = S[j] + 0.0;      // +0.0: -0 and +0 hash alike
-        uint64_t a, b;
-        std::memcpy(&a, &pv, sizeof a);
-        std::memcpy(&b, &sv, sizeof b);
-        h = mixHash(mixHash(h, a), b);
-    }
+        h = mixDouble(mixDouble(h, pivot[j]), S[j]);
     return h ? h : 1ull;
 }
 
@@ -406,29 +382,26 @@ fitShapeToPoints(ShapeType type, const float *xyz, int count, ShapeSpec &out)
             if (v > hi[j]) hi[j] = v;
         }
 
-    const float kMin = 1e-4f;
     float half[3], mid[3];
     for (int j = 0; j < 3; ++j)
     {
         mid[j]  = 0.5f * (lo[j] + hi[j]);
-        half[j] = 0.5f * (hi[j] - lo[j]);
-        if (!(half[j] > 0.5f * kMin)) half[j] = 0.5f * kMin;
+        half[j] = 0.5f * clampExtent(hi[j] - lo[j]);
     }
 
     out = ShapeSpec();
     for (int j = 0; j < 3; ++j) out.center[j] = mid[j];
     if (type == ShapeType::Sphere)
     {
-        out.type = ShapeType::Sphere;
-        float m = half[0] > half[1] ? half[0] : half[1];
-        out.radius = m > half[2] ? m : half[2];
+        out.type   = ShapeType::Sphere;
+        out.radius = std::max({ half[0], half[1], half[2] });
     }
     else if (type == ShapeType::Capsule)
     {
         // Y axis; radius covers the wider of x / z; the caps sit inside the bounds.
         out.type       = ShapeType::Capsule;
-        out.radius     = half[0] > half[2] ? half[0] : half[2];
-        out.halfLength = (half[1] - out.radius) > 0.0f ? (half[1] - out.radius) : 0.0f;
+        out.radius     = std::max(half[0], half[2]);
+        out.halfLength = std::max(half[1] - out.radius, 0.0f);
     }
     else
     {

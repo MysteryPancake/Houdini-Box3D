@@ -2,7 +2,7 @@
 // runs through it, that the world starts no threads of its own, and that results match 1 worker.
 // Uses std::thread here only because this test has no Houdini; the plugin never does.
 // usage: b3dop_core_taskrunner [workers=4]
-#include "Box3DWorld.h"
+#include "KeyedWorld.h"
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -73,7 +73,7 @@ static bool run(int workers, Pool *pool, std::vector<double> &out)
 {
     b3dop::WorldSettings ws;
     ws.workerCount = workers;
-    b3dop::Box3DWorld w;
+    b3dop::KeyedWorld w;
     if (!w.create(ws, pool ? std::make_shared<PoolRunner>(*pool) : nullptr))
         return false;
     const float qid[4] = { 0, 0, 0, 1 };

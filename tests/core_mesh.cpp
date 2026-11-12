@@ -1,7 +1,7 @@
 // Static triangle-mesh colliders (what Static Object / affector geometry becomes): a dynamic box
 // and sphere land on a two-triangle floor, and bad input is refused.
 #include "Box3DAffectorMath.h"
-#include "Box3DWorld.h"
+#include "KeyedWorld.h"
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -12,7 +12,7 @@ static int fails = 0;
 int main()
 {
     using namespace b3dop;
-    Box3DWorld w;
+    KeyedWorld w;
     CHECK(w.create(WorldSettings()));
 
     const float qid[4] = { 0, 0, 0, 1 };

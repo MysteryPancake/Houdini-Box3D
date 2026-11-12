@@ -76,8 +76,6 @@ private:
     bool syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects,
                           StepProgress &progress);
 
-    void stepWorld(SIM_Box3DWorld &worldData, float timestep);
-
     // P, orient, v, w (and packed transforms) of the awake dynamic bodies. A rebuild only has
     // the geometry to work from.
     void writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects);

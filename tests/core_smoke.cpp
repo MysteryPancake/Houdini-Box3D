@@ -1,6 +1,6 @@
 // Proves Box3D builds, links, and a world can be created/destroyed.
 // Run this first, before touching Houdini.
-#include "Box3DWorld.h"
+#include "KeyedWorld.h"
 #include <cstdio>
 
 int main()
@@ -9,7 +9,7 @@ int main()
     b3dop::Box3DWorld::version(maj, min, rev);
     std::printf("Box3D version %d.%d.%d\n", maj, min, rev);
 
-    b3dop::Box3DWorld world;
+    b3dop::KeyedWorld world;
     if (!world.create(b3dop::WorldSettings()))
     {
         std::printf("FAIL: could not create world\n");

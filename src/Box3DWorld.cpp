@@ -22,12 +22,8 @@ struct Box3DWorld::Impl
     WorldSettings                         settings;
     std::shared_ptr<TaskRunner>           tasks;              // host threads (null: Box3D's own pool); outlives worldId
     CollisionFilterTable                  filters;
-    int                                   liveBodies = 0;     // every live body, keyed or handle-made
+    int                                   liveBodies = 0;     // every live body
     std::set<std::pair<BodyHandle, BodyHandle>> hitPairs;    // updateHitEvents()
-
-    // Keyed API only (the keyed shape calls take no BodySettings, so they are kept here).
-    std::unordered_map<uint64_t, BodyHandle>   bodies;
-    std::unordered_map<uint64_t, BodySettings> bodySettings;
 
     // Hull cache. We own the b3HullData; Box3D clones it when a shape is made.
     struct HullEntry
@@ -39,35 +35,33 @@ struct Box3DWorld::Impl
     std::unordered_map<HullId, HullEntry>              hulls;
     // Hulls each body uses (only bodies with hull shapes appear).
     std::unordered_map<BodyHandle, std::vector<HullId>> bodyHulls;
-    size_t                                             bodyHullsReserve = 0;   // applied at the first hull use
 
-    void releaseHull(HullId h)
-    {
-        auto it = hulls.find(h);
-        if (it != hulls.end() && it->second.refs > 0)
-            --it->second.refs;
-    }
-    void noteHullUse(BodyHandle body, HullId hull)
-    {
-        if (bodyHullsReserve)           // a scene without hulls never pays for the buckets
-        {
-            bodyHulls.reserve(bodyHullsReserve);
-            bodyHullsReserve = 0;
-        }
-        bodyHulls[body].push_back(hull);
-    }
     // Triangle meshes for static colliders. Box3D keeps a pointer to the b3MeshData (it does not
     // clone it), so we own it: freed after its body is destroyed, or after the world.
     std::unordered_map<BodyHandle, std::vector<b3MeshData *>> bodyMeshes;
 
-    void freeBodyMeshes(BodyHandle body)
+    // What the world keeps for a body's shapes (its meshes, its hull references). Call after the
+    // body or its shapes are destroyed.
+    void releaseBodyResources(BodyHandle body)
     {
-        auto it = bodyMeshes.find(body);
-        if (it == bodyMeshes.end())
-            return;
-        for (b3MeshData *m : it->second)
-            b3DestroyMesh(m);
-        bodyMeshes.erase(it);
+        auto mit = bodyMeshes.find(body);
+        if (mit != bodyMeshes.end())
+        {
+            for (b3MeshData *m : mit->second)
+                b3DestroyMesh(m);
+            bodyMeshes.erase(mit);
+        }
+        auto hit = bodyHulls.find(body);
+        if (hit != bodyHulls.end())
+        {
+            for (HullId h : hit->second)
+            {
+                auto it = hulls.find(h);
+                if (it != hulls.end() && it->second.refs > 0)
+                    --it->second.refs;
+            }
+            bodyHulls.erase(hit);
+        }
     }
     void destroyAllMeshes()
     {
@@ -101,7 +95,6 @@ int
 assertHandler(const char *condition, const char *fileName, int lineNumber)
 {
     const int n = gAssertCount.fetch_add(1) + 1;
-    (void)condition; (void)fileName; (void)lineNumber;
     if (n <= kMaxAssertLogs)
         B3D_LOG("Box3D assertion failed (ignored, simulation continues): %s, %s, line %d",
                 condition ? condition : "?", fileName ? fileName : "?", lineNumber);
@@ -113,7 +106,6 @@ assertHandler(const char *condition, const char *fileName, int lineNumber)
 void
 logHandler(const char *message)
 {
-    (void)message;
     B3D_LOG("Box3D: %s", message ? message : "?");
 }
 
@@ -125,12 +117,6 @@ installAssertHandler()
         b3SetAssertFcn(&assertHandler);
         b3SetLogFcn(&logHandler);
     });
-}
-
-bool
-finite3(const float v[3])
-{
-    return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
 }
 
 // Non-finite components become 0 (Box3D asserts on them, and a NaN velocity spreads to the
@@ -195,18 +181,52 @@ makeVec3(const float *v)       // null -> origin
     return r;
 }
 
-// FNV-1a over the raw bytes of the points, with the count mixed in. Never 0.
+void
+storePos(const b3Pos &p, double out[3])
+{
+    out[0] = static_cast<double>(p.x);
+    out[1] = static_cast<double>(p.y);
+    out[2] = static_cast<double>(p.z);
+}
+
+void
+storeQuat(const b3Quat &q, float out[4])
+{
+    out[0] = q.v.x;  out[1] = q.v.y;  out[2] = q.v.z;  out[3] = q.s;
+}
+
+void
+storeVec3(const b3Vec3 &v, float out[3])
+{
+    out[0] = v.x;  out[1] = v.y;  out[2] = v.z;
+}
+
+void
+toBodyMove(const b3BodyMoveEvent &e, BodyMove &out)
+{
+    out.userData   = e.userData;
+    out.handle     = packBody(e.bodyId);
+    storePos(e.transform.p, out.pos);
+    storeQuat(e.transform.q, out.rot);
+    out.fellAsleep = e.fellAsleep;
+}
+
+b3BodyType
+toB3Type(BodySettings::Type t)
+{
+    switch (t)
+    {
+        case BodySettings::Type::Static:    return b3_staticBody;
+        case BodySettings::Type::Kinematic: return b3_kinematicBody;
+        default:                            return b3_dynamicBody;
+    }
+}
+
+// A content key for body-local points. Never 0.
 HullId
 hashPoints(const float *xyz, int count)
 {
-    uint64_t h = 1469598103934665603ull ^ uint64_t(uint32_t(count));
-    const unsigned char *bytes = reinterpret_cast<const unsigned char *>(xyz);
-    const size_t n = size_t(count) * 3 * sizeof(float);
-    for (size_t i = 0; i < n; ++i)
-    {
-        h ^= bytes[i];
-        h *= 1099511628211ull;
-    }
+    const uint64_t h = hashFloats(xyz, size_t(count) * 3);
     return h ? h : 1ull;
 }
 
@@ -390,8 +410,6 @@ Box3DWorld::destroy()
     myImpl->tasks.reset();          // after the world: Box3D may call the runner until it is gone
     myImpl->worldId = b3_nullWorldId;
     myImpl->liveBodies = 0;
-    myImpl->bodies.clear();
-    myImpl->bodySettings.clear();
     myImpl->destroyAllHulls();      // after the world: Box3D holds its own clones
     myImpl->destroyAllMeshes();     // after the world: its shapes pointed at these
 }
@@ -423,13 +441,6 @@ Box3DWorld::step(float timeStep)
     b3World_Step(myImpl->worldId, timeStep, myImpl->settings.subSteps);
 }
 
-void
-Box3DWorld::reserve(size_t bodyCount)
-{
-    // Only the hull bookkeeping, at its first use (see Impl::noteHullUse).
-    myImpl->bodyHullsReserve = bodyCount;
-}
-
 BodyHandle
 Box3DWorld::createBody(const BodySettings &body, const double position[3], const float rotationXYZW[4],
                        void *userData)
@@ -438,12 +449,7 @@ Box3DWorld::createBody(const BodySettings &body, const double position[3], const
         return 0;
 
     b3BodyDef def = b3DefaultBodyDef();
-    switch (body.type)
-    {
-        case BodySettings::Type::Static:    def.type = b3_staticBody;    break;
-        case BodySettings::Type::Kinematic: def.type = b3_kinematicBody; break;
-        default:                            def.type = b3_dynamicBody;   break;
-    }
+    def.type           = toB3Type(body.type);
     def.position       = makePos(position);
     def.rotation       = makeQuat(rotationXYZW);
     def.linearDamping  = body.linearDamping;
@@ -474,15 +480,7 @@ Box3DWorld::destroyBody(BodyHandle h)
         b3DestroyBody(id);
         --myImpl->liveBodies;
     }
-    myImpl->freeBodyMeshes(h);          // after the body: its shapes pointed at them
-
-    auto bh = myImpl->bodyHulls.find(h);
-    if (bh != myImpl->bodyHulls.end())
-    {
-        for (HullId hull : bh->second)
-            myImpl->releaseHull(hull);
-        myImpl->bodyHulls.erase(bh);
-    }
+    myImpl->releaseBodyResources(h);    // after the body: its shapes pointed at the meshes
 }
 
 bool
@@ -510,7 +508,7 @@ Box3DWorld::createHullShape(BodyHandle h, const BodySettings &body, HullId hullI
         return false;
 
     ++hit->second.refs;
-    myImpl->noteHullUse(h, hullId);
+    myImpl->bodyHulls[h].push_back(hullId);
     return true;
 }
 
@@ -650,84 +648,8 @@ Box3DWorld::capsuleShape(BodyHandle h, const BodySettings &b, float radius, floa
     return !B3_IS_NULL(shape);
 }
 
-// ---- keyed API (tests) ---------------------------------------------------------
-
-bool
-Box3DWorld::addBody(uint64_t id, const BodySettings &body, const double position[3], const float rotationXYZW[4])
-{
-    if (!isValid() || hasBody(id))
-        return false;
-    const BodyHandle h = createBody(body, position, rotationXYZW);
-    if (!h)
-        return false;
-    myImpl->bodies[id]       = h;
-    myImpl->bodySettings[id] = body;
-    return true;
-}
-
-void
-Box3DWorld::removeBody(uint64_t id)
-{
-    auto it = myImpl->bodies.find(id);
-    if (it == myImpl->bodies.end())
-        return;
-    destroyBody(it->second);
-    myImpl->bodies.erase(it);
-    myImpl->bodySettings.erase(id);
-}
-
-bool
-Box3DWorld::hasBody(uint64_t id) const
-{
-    return myImpl->bodies.find(id) != myImpl->bodies.end();
-}
-
 int
 Box3DWorld::bodyCount() const { return myImpl->liveBodies; }
-
-bool
-Box3DWorld::setBodyDensity(uint64_t id, float density)
-{
-    auto it = myImpl->bodySettings.find(id);
-    if (it == myImpl->bodySettings.end())
-        return false;
-    it->second.density = density;
-    return true;
-}
-
-bool
-Box3DWorld::addBoxShape(uint64_t bodyId, const float halfExtents[3], const float center[3],
-                        const float rotationXYZW[4])
-{
-    auto it = myImpl->bodies.find(bodyId);
-    return it != myImpl->bodies.end() &&
-           boxShape(it->second, myImpl->bodySettings[bodyId], halfExtents, center, rotationXYZW, true);
-}
-
-bool
-Box3DWorld::addSphereShape(uint64_t bodyId, float radius, const float center[3])
-{
-    auto it = myImpl->bodies.find(bodyId);
-    return it != myImpl->bodies.end() &&
-           sphereShape(it->second, myImpl->bodySettings[bodyId], radius, center, true);
-}
-
-bool
-Box3DWorld::addCapsuleShape(uint64_t bodyId, float radius, float halfLength, const float center[3],
-                            const float rotationXYZW[4])
-{
-    auto it = myImpl->bodies.find(bodyId);
-    return it != myImpl->bodies.end() &&
-           capsuleShape(it->second, myImpl->bodySettings[bodyId], radius, halfLength, center, rotationXYZW, true);
-}
-
-bool
-Box3DWorld::addShape(uint64_t bodyId, const ShapeSpec &shape)
-{
-    auto it = myImpl->bodies.find(bodyId);
-    return it != myImpl->bodies.end() &&
-           createShape(it->second, myImpl->bodySettings[bodyId], shape, true);
-}
 
 // ---------------------------------------------------------------------------
 // Convex hulls
@@ -807,14 +729,6 @@ Box3DWorld::createHullWithKey(HullId key, const float *xyz, int pointCount, floa
     return key;
 }
 
-bool
-Box3DWorld::addHullShape(uint64_t bodyId, HullId hullId)
-{
-    auto bit = myImpl->bodies.find(bodyId);
-    return bit != myImpl->bodies.end() &&
-           createHullShape(bit->second, myImpl->bodySettings[bodyId], hullId, true);
-}
-
 void
 Box3DWorld::pruneHulls()
 {
@@ -834,30 +748,24 @@ Box3DWorld::pruneHulls()
 int
 Box3DWorld::hullCacheSize() const { return static_cast<int>(myImpl->hulls.size()); }
 
-int
-Box3DWorld::shapeCount(uint64_t bodyId) const
-{
-    auto it = myImpl->bodies.find(bodyId);
-    return it == myImpl->bodies.end() ? 0 : b3Body_GetShapeCount(unpackBody(it->second));
-}
-
-float
-Box3DWorld::bodyMass(uint64_t bodyId) const
-{
-    auto it = myImpl->bodies.find(bodyId);
-    return it == myImpl->bodies.end() ? 0.0f : b3Body_GetMass(unpackBody(it->second));
-}
-
 bool
 Box3DWorld::setTypeByHandle(BodyHandle h, BodySettings::Type type)
 {
     if (!h)
         return false;
-    b3BodyType t = b3_dynamicBody;
-    if (type == BodySettings::Type::Static)         t = b3_staticBody;
-    else if (type == BodySettings::Type::Kinematic) t = b3_kinematicBody;
-    b3Body_SetType(unpackBody(h), t);
+    b3Body_SetType(unpackBody(h), toB3Type(type));
     return true;
+}
+
+BodySettings::Type
+Box3DWorld::typeByHandle(BodyHandle h) const
+{
+    switch (h ? b3Body_GetType(unpackBody(h)) : b3_dynamicBody)
+    {
+        case b3_staticBody:    return BodySettings::Type::Static;
+        case b3_kinematicBody: return BodySettings::Type::Kinematic;
+        default:               return BodySettings::Type::Dynamic;
+    }
 }
 
 // ---- changes to existing bodies -------------------------------------------------
@@ -986,15 +894,7 @@ Box3DWorld::destroyShapesByHandle(BodyHandle h)
     const int n = bodyShapes(id, tShapes);
     for (int i = 0; i < n; ++i)
         b3DestroyShape(tShapes[size_t(i)], false);      // the caller applies the mass afterwards
-    myImpl->freeBodyMeshes(h);
-
-    auto bh = myImpl->bodyHulls.find(h);
-    if (bh != myImpl->bodyHulls.end())
-    {
-        for (HullId hull : bh->second)
-            myImpl->releaseHull(hull);
-        myImpl->bodyHulls.erase(bh);
-    }
+    myImpl->releaseBodyResources(h);
 }
 
 void
@@ -1012,10 +912,7 @@ Box3DWorld::getCenterOfMassByHandle(BodyHandle h, double outPos[3]) const
 {
     if (!h)
         return false;
-    const b3Pos c = b3Body_GetWorldCenter(unpackBody(h));
-    outPos[0] = static_cast<double>(c.x);
-    outPos[1] = static_cast<double>(c.y);
-    outPos[2] = static_cast<double>(c.z);
+    storePos(b3Body_GetWorldCenter(unpackBody(h)), outPos);
     return true;
 }
 
@@ -1086,7 +983,7 @@ Box3DWorld::getMassDataByHandle(BodyHandle h, float &mass, float center[3], floa
         return false;
     const b3MassData md = b3Body_GetMassData(unpackBody(h));
     mass = md.mass;
-    center[0] = md.center.x;  center[1] = md.center.y;  center[2] = md.center.z;
+    storeVec3(md.center, center);
     inertiaDiag[0] = md.inertia.cx.x;  inertiaDiag[1] = md.inertia.cy.y;  inertiaDiag[2] = md.inertia.cz.z;
     return true;
 }
@@ -1217,57 +1114,50 @@ Box3DWorld::applyTuning(const WorldSettings &s)
         return;
     WorldSettings &cur = myImpl->settings;
     const b3WorldId w = myImpl->worldId;
-    // Non-finite gravity is ignored: the world keeps what it has (cur is not updated either).
-    const bool gravityOk = finite3(s.gravity);
-    if (gravityOk &&
-        (s.gravity[0] != cur.gravity[0] || s.gravity[1] != cur.gravity[1] || s.gravity[2] != cur.gravity[2]))
-    {
-        b3Vec3 g;
-        g.x = s.gravity[0];  g.y = s.gravity[1];  g.z = s.gravity[2];
-        b3World_SetGravity(w, g);
-    }
-    if (s.enableSleep != cur.enableSleep)
-        b3World_EnableSleeping(w, s.enableSleep);
-    if (s.enableContinuous != cur.enableContinuous)
-        b3World_EnableContinuous(w, s.enableContinuous);
-    if (s.enableSpeculative != cur.enableSpeculative)
-        b3World_EnableSpeculative(w, s.enableSpeculative);
-    if (s.contactHertz != cur.contactHertz || s.contactDampingRatio != cur.contactDampingRatio ||
-        s.contactPushSpeed != cur.contactPushSpeed)
-        b3World_SetContactTuning(w, std::max(0.0f, s.contactHertz), std::max(0.0f, s.contactDampingRatio),
-                                 std::max(0.0f, s.contactPushSpeed));
-    if (s.restitutionThreshold != cur.restitutionThreshold)
-        b3World_SetRestitutionThreshold(w, std::max(0.0f, s.restitutionThreshold));
-    if (s.maxLinearSpeed != cur.maxLinearSpeed)
-        b3World_SetMaximumLinearSpeed(w, std::max(0.0f, s.maxLinearSpeed));
-    if (s.restitutionIterations != cur.restitutionIterations)
-        b3World_SetRestitutionIterations(w, std::clamp(s.restitutionIterations, 0, B3_MAX_RESTITUTION_ITERATIONS));
-    if (s.restitutionPropagation != cur.restitutionPropagation)
-        b3World_EnableRestitutionPropagation(w, s.restitutionPropagation);
-    if (s.isotropicInertiaTolerance != cur.isotropicInertiaTolerance)
-        b3World_SetIsotropicInertiaTolerance(w, std::clamp(s.isotropicInertiaTolerance, 0.0f, 1.0f));
-    if (s.warmStarting != cur.warmStarting)
-        b3World_EnableWarmStarting(w, s.warmStarting);
-    if (s.impactMinSpeed != cur.impactMinSpeed)
-        b3World_SetHitEventThreshold(w, s.impactMinSpeed > 0.0f ? s.impactMinSpeed : b3DefaultWorldDef().hitEventThreshold);
-    if (s.frictionMixing != cur.frictionMixing)
-        b3World_SetFrictionCallback(w, frictionRule(s.frictionMixing));
-    if (s.restitutionMixing != cur.restitutionMixing)
-        b3World_SetRestitutionCallback(w, restitutionRule(s.restitutionMixing));
-    // Like gravity, a non-finite recycle distance is ignored and the previous one kept.
-    const bool recycleOk = std::isfinite(s.contactRecycleDistance);
-    if (recycleOk && s.contactRecycleDistance != cur.contactRecycleDistance)
-        b3World_SetContactRecycleDistance(w, std::max(0.0f, s.contactRecycleDistance));
-    const float keptRecycle = cur.contactRecycleDistance;
-    const int workers = cur.workerCount;
-    const float keptGravity[3] = { cur.gravity[0], cur.gravity[1], cur.gravity[2] };
-    cur = s;
-    if (!recycleOk)
-        cur.contactRecycleDistance = keptRecycle;
-    if (!gravityOk)
-        for (int k = 0; k < 3; ++k)
-            cur.gravity[k] = keptGravity[k];
-    cur.workerCount = workers;          // fixed for the life of the world
+
+    // What will be in force: non-finite gravity or recycle distance keep the previous value, and
+    // the worker count is fixed for the life of the world.
+    WorldSettings next = s;
+    next.workerCount = cur.workerCount;
+    if (!finite3(next.gravity))
+        std::copy(cur.gravity, cur.gravity + 3, next.gravity);
+    if (!std::isfinite(next.contactRecycleDistance))
+        next.contactRecycleDistance = cur.contactRecycleDistance;
+
+    if (!std::equal(next.gravity, next.gravity + 3, cur.gravity))
+        b3World_SetGravity(w, makeVec3(next.gravity));
+    if (next.enableSleep != cur.enableSleep)
+        b3World_EnableSleeping(w, next.enableSleep);
+    if (next.enableContinuous != cur.enableContinuous)
+        b3World_EnableContinuous(w, next.enableContinuous);
+    if (next.enableSpeculative != cur.enableSpeculative)
+        b3World_EnableSpeculative(w, next.enableSpeculative);
+    if (next.contactHertz != cur.contactHertz || next.contactDampingRatio != cur.contactDampingRatio ||
+        next.contactPushSpeed != cur.contactPushSpeed)
+        b3World_SetContactTuning(w, std::max(0.0f, next.contactHertz), std::max(0.0f, next.contactDampingRatio),
+                                 std::max(0.0f, next.contactPushSpeed));
+    if (next.restitutionThreshold != cur.restitutionThreshold)
+        b3World_SetRestitutionThreshold(w, std::max(0.0f, next.restitutionThreshold));
+    if (next.maxLinearSpeed != cur.maxLinearSpeed)
+        b3World_SetMaximumLinearSpeed(w, std::max(0.0f, next.maxLinearSpeed));
+    if (next.restitutionIterations != cur.restitutionIterations)
+        b3World_SetRestitutionIterations(w, std::clamp(next.restitutionIterations, 0, B3_MAX_RESTITUTION_ITERATIONS));
+    if (next.restitutionPropagation != cur.restitutionPropagation)
+        b3World_EnableRestitutionPropagation(w, next.restitutionPropagation);
+    if (next.isotropicInertiaTolerance != cur.isotropicInertiaTolerance)
+        b3World_SetIsotropicInertiaTolerance(w, std::clamp(next.isotropicInertiaTolerance, 0.0f, 1.0f));
+    if (next.warmStarting != cur.warmStarting)
+        b3World_EnableWarmStarting(w, next.warmStarting);
+    if (next.impactMinSpeed != cur.impactMinSpeed)
+        b3World_SetHitEventThreshold(w, next.impactMinSpeed > 0.0f ? next.impactMinSpeed
+                                                                   : b3DefaultWorldDef().hitEventThreshold);
+    if (next.frictionMixing != cur.frictionMixing)
+        b3World_SetFrictionCallback(w, frictionRule(next.frictionMixing));
+    if (next.restitutionMixing != cur.restitutionMixing)
+        b3World_SetRestitutionCallback(w, restitutionRule(next.restitutionMixing));
+    if (next.contactRecycleDistance != cur.contactRecycleDistance)
+        b3World_SetContactRecycleDistance(w, std::max(0.0f, next.contactRecycleDistance));
+    cur = next;
 }
 
 void
@@ -1358,122 +1248,13 @@ Box3DWorld::shapeCountByHandle(BodyHandle h) const
 }
 
 bool
-Box3DWorld::setBodyType(uint64_t id, BodySettings::Type type)
-{
-    auto it = myImpl->bodies.find(id);
-    if (it == myImpl->bodies.end() || !setTypeByHandle(it->second, type))
-        return false;
-    auto bs = myImpl->bodySettings.find(id);     // gone after releaseBuildState
-    if (bs != myImpl->bodySettings.end())
-        bs->second.type = type;
-    return true;
-}
-
-bool
-Box3DWorld::getBodyType(uint64_t id, BodySettings::Type &out) const
-{
-    auto it = myImpl->bodySettings.find(id);
-    if (it != myImpl->bodySettings.end())
-    {
-        out = it->second.type;
-        return true;
-    }
-    auto b = myImpl->bodies.find(id);           // settings released: ask Box3D
-    if (b == myImpl->bodies.end())
-        return false;
-    switch (b3Body_GetType(unpackBody(b->second)))
-    {
-        case b3_staticBody:    out = BodySettings::Type::Static;    break;
-        case b3_kinematicBody: out = BodySettings::Type::Kinematic; break;
-        default:               out = BodySettings::Type::Dynamic;   break;
-    }
-    return true;
-}
-
-void
-Box3DWorld::releaseBuildState(uint64_t id)
-{
-    myImpl->bodySettings.erase(id);
-}
-
-bool
-Box3DWorld::getTransform(uint64_t id, double outPos[3], float outRotXYZW[4]) const
-{
-    auto it = myImpl->bodies.find(id);
-    if (it == myImpl->bodies.end())
-        return false;
-
-    const b3Pos  p = b3Body_GetPosition(unpackBody(it->second));     // body origin
-    const b3Quat q = b3Body_GetRotation(unpackBody(it->second));
-    outPos[0] = static_cast<double>(p.x);
-    outPos[1] = static_cast<double>(p.y);
-    outPos[2] = static_cast<double>(p.z);
-    outRotXYZW[0] = q.v.x;
-    outRotXYZW[1] = q.v.y;
-    outRotXYZW[2] = q.v.z;
-    outRotXYZW[3] = q.s;
-    return true;
-}
-
-bool
-Box3DWorld::getVelocity(uint64_t id, float outLinear[3], float outAngular[3]) const
-{
-    auto it = myImpl->bodies.find(id);
-    if (it == myImpl->bodies.end())
-        return false;
-
-    const b3Vec3 v = b3Body_GetLinearVelocity(unpackBody(it->second));
-    const b3Vec3 w = b3Body_GetAngularVelocity(unpackBody(it->second));
-    outLinear[0]  = v.x;  outLinear[1]  = v.y;  outLinear[2]  = v.z;
-    outAngular[0] = w.x;  outAngular[1] = w.y;  outAngular[2] = w.z;
-    return true;
-}
-
-bool
-Box3DWorld::setVelocity(uint64_t id, const float linear[3], const float angular[3])
-{
-    auto it = myImpl->bodies.find(id);
-    if (it == myImpl->bodies.end())
-        return false;
-
-    b3Body_SetLinearVelocity(unpackBody(it->second), finiteVec3(linear));
-    b3Body_SetAngularVelocity(unpackBody(it->second), finiteVec3(angular));
-    return true;
-}
-
-bool
-Box3DWorld::setTransform(uint64_t id, const double pos[3], const float rotXYZW[4])
-{
-    auto it = myImpl->bodies.find(id);
-    if (it == myImpl->bodies.end())
-        return false;
-
-    b3Body_SetTransform(unpackBody(it->second), makePos(pos), makeQuat(rotXYZW));
-    return true;
-}
-
-BodyHandle
-Box3DWorld::bodyHandle(uint64_t id) const
-{
-    auto it = myImpl->bodies.find(id);
-    return it == myImpl->bodies.end() ? 0 : it->second;
-}
-
-bool
 Box3DWorld::getTransformByHandle(BodyHandle h, double outPos[3], float outRotXYZW[4]) const
 {
     if (!h)
         return false;
     const b3BodyId id = unpackBody(h);
-    const b3Pos    p  = b3Body_GetPosition(id);
-    const b3Quat   q  = b3Body_GetRotation(id);
-    outPos[0] = static_cast<double>(p.x);
-    outPos[1] = static_cast<double>(p.y);
-    outPos[2] = static_cast<double>(p.z);
-    outRotXYZW[0] = q.v.x;
-    outRotXYZW[1] = q.v.y;
-    outRotXYZW[2] = q.v.z;
-    outRotXYZW[3] = q.s;
+    storePos(b3Body_GetPosition(id), outPos);       // body origin
+    storeQuat(b3Body_GetRotation(id), outRotXYZW);
     return true;
 }
 
@@ -1483,10 +1264,8 @@ Box3DWorld::getVelocityByHandle(BodyHandle h, float outLinear[3], float outAngul
     if (!h)
         return false;
     const b3BodyId id = unpackBody(h);
-    const b3Vec3   v  = b3Body_GetLinearVelocity(id);
-    const b3Vec3   w  = b3Body_GetAngularVelocity(id);
-    outLinear[0]  = v.x;  outLinear[1]  = v.y;  outLinear[2]  = v.z;
-    outAngular[0] = w.x;  outAngular[1] = w.y;  outAngular[2] = w.z;
+    storeVec3(b3Body_GetLinearVelocity(id), outLinear);
+    storeVec3(b3Body_GetAngularVelocity(id), outAngular);
     return true;
 }
 
@@ -1517,17 +1296,7 @@ Box3DWorld::getMoveEvent(int index, BodyMove &out) const
     const b3BodyEvents ev = b3World_GetBodyEvents(myImpl->worldId);
     if (index < 0 || index >= ev.moveCount)
         return false;
-    const b3BodyMoveEvent &e = ev.moveEvents[index];
-    out.userData = e.userData;
-    out.handle   = packBody(e.bodyId);
-    out.pos[0] = static_cast<double>(e.transform.p.x);
-    out.pos[1] = static_cast<double>(e.transform.p.y);
-    out.pos[2] = static_cast<double>(e.transform.p.z);
-    out.rot[0] = e.transform.q.v.x;
-    out.rot[1] = e.transform.q.v.y;
-    out.rot[2] = e.transform.q.v.z;
-    out.rot[3] = e.transform.q.s;
-    out.fellAsleep = e.fellAsleep;
+    toBodyMove(ev.moveEvents[index], out);
     return true;
 }
 
@@ -1544,20 +1313,7 @@ Box3DWorld::getMoveEvents(std::vector<BodyMove> &out) const
     if (out.size() != size_t(ev.moveCount))
         out.resize(size_t(ev.moveCount));
     for (int i = 0; i < ev.moveCount; ++i)
-    {
-        const b3BodyMoveEvent &e = ev.moveEvents[i];
-        BodyMove &o = out[size_t(i)];
-        o.userData = e.userData;
-        o.handle   = packBody(e.bodyId);
-        o.pos[0] = static_cast<double>(e.transform.p.x);
-        o.pos[1] = static_cast<double>(e.transform.p.y);
-        o.pos[2] = static_cast<double>(e.transform.p.z);
-        o.rot[0] = e.transform.q.v.x;
-        o.rot[1] = e.transform.q.v.y;
-        o.rot[2] = e.transform.q.v.z;
-        o.rot[3] = e.transform.q.s;
-        o.fellAsleep = e.fellAsleep;
-    }
+        toBodyMove(ev.moveEvents[i], out[size_t(i)]);
     return ev.moveCount;
 }
 

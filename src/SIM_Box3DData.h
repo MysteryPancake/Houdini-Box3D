@@ -10,6 +10,9 @@
 
 #include "Box3DWorld.h"
 
+// The name Box3D Data is attached under on a DOP object.
+inline constexpr const char *kBox3DDataName = "Box3DData";
+
 class SIM_Box3DData : public SIM_Data, public SIM_OptionsUser
 {
 public:
