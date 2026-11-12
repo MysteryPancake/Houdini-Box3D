@@ -28,7 +28,7 @@ cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release
 ```
 
-Always build **Release** or **RelWithDebInfo**, not Debug. Use Release for production: RelWithDebInfo also compiles in Box3D's internal checks, which are slower; any that fail are printed to Houdini's console and reported on the node rather than stopping Houdini. The DLL is copied to `Documents\houdiniX.Y\dso` and the node icons to `Documents\houdiniX.Y\config\Icons`. Close Houdini before rebuilding.
+Always build **Release** or **RelWithDebInfo**, not Debug. Use Release for production: RelWithDebInfo also compiles in Box3D's internal checks, which are slower; any that fail are counted and reported on the node rather than stopping Houdini (they are printed to Houdini's console only in debug-logging builds). The DLL is copied to `Documents\houdiniX.Y\dso` and the node icons to `Documents\houdiniX.Y\config\Icons`. Close Houdini before rebuilding.
 
 `build.bat` does the same thing in one step and finds Houdini for you: it uses `%HFS%` if set, otherwise the install the Houdini installer recorded in the registry, otherwise the newest `Houdini X.Y.Z` folder under `Program Files\Side Effects Software`.
 

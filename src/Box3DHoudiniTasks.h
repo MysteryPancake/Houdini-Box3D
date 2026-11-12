@@ -30,7 +30,13 @@
 class Box3DHoudiniTasks final : public b3dop::TaskRunner
 {
 public:
-    ~Box3DHoudiniTasks() override { (void)myGroup.wait(); }    // a task_group must be waited
+    // noexcept to match ~TaskRunner: UT_TaskGroup's destructor (tbb::task_group's) is noexcept(false),
+    // which would otherwise make this one less strict than the base's and fail to compile on MSVC.
+    // A task_group must be waited before it is destroyed.
+    ~Box3DHoudiniTasks() noexcept override
+    {
+        try { (void)myGroup.wait(); } catch (...) {}
+    }
 
     bool run(void (*fn)(void *), void *ctx) override
     {

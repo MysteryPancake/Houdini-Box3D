@@ -1,5 +1,6 @@
 // Box3DWorld.cpp
 #include "Box3DWorld.h"
+#include "Box3DDebug.h"
 
 #include <box3d/box3d.h>
 
@@ -65,10 +66,12 @@ struct Box3DWorld::Impl
 
 namespace {
 
-// ---- Box3D assertion handler ------------------------------------------------
-// Box3D's default handler breaks to the debugger, which kills the host (Houdini) when none is
-// attached. Asserts are compiled in only with NDEBUG unset or B3_ENABLE_ASSERT (RelWithDebInfo).
-// Ours logs to stderr (Houdini's console), capped, and returns 0: no break, Box3D carries on.
+// ---- Box3D assertion and log handlers ---------------------------------------
+// Box3D's default assert handler breaks to the debugger, which kills the host (Houdini) when none
+// is attached, and its default log handler printf()s. Asserts are compiled in only with NDEBUG
+// unset or B3_ENABLE_ASSERT (RelWithDebInfo). Ours count the assert and carry on (no break), and
+// both print only in BOX3DDOP_DEBUG builds (stderr, Houdini's console; see Box3DDebug.h), so a
+// normal build never writes to the console, which on Windows opens a console window.
 std::atomic<int> gAssertCount{0};
 constexpr int    kMaxAssertLogs = 20;
 
@@ -76,19 +79,30 @@ int
 assertHandler(const char *condition, const char *fileName, int lineNumber)
 {
     const int n = gAssertCount.fetch_add(1) + 1;
+    (void)condition; (void)fileName; (void)lineNumber;
     if (n <= kMaxAssertLogs)
-        std::fprintf(stderr, "Box3D assertion failed (ignored, simulation continues): %s, %s, line %d\n",
-                     condition ? condition : "?", fileName ? fileName : "?", lineNumber);
+        B3D_LOG("Box3D assertion failed (ignored, simulation continues): %s, %s, line %d",
+                condition ? condition : "?", fileName ? fileName : "?", lineNumber);
     if (n == kMaxAssertLogs)
-        std::fprintf(stderr, "Box3D: further assertion messages are not printed\n");
+        B3D_LOG("Box3D: further assertion messages are not printed");
     return 0;
+}
+
+void
+logHandler(const char *message)
+{
+    (void)message;
+    B3D_LOG("Box3D: %s", message ? message : "?");
 }
 
 void
 installAssertHandler()
 {
     static std::once_flag once;
-    std::call_once(once, [] { b3SetAssertFcn(&assertHandler); });
+    std::call_once(once, [] {
+        b3SetAssertFcn(&assertHandler);
+        b3SetLogFcn(&logHandler);
+    });
 }
 
 bool

@@ -27,11 +27,14 @@ if [ -f "$MARKER" ] && [ "$(cat "$MARKER")" != "$PWD" ]; then
     rm -rf build
 fi
 
-# --- Configure (first time, or after the build folder was reset) ---
-if [ ! -f build/CMakeCache.txt ]; then
-    cmake -S . -B build -DCMAKE_BUILD_TYPE="${BUILD_TYPE:-Release}"
-    echo "$PWD" > "$MARKER"
-fi
+# --- Debug logging (prints to Houdini's console): off unless you run "./build.sh debug" ---
+DBG=OFF
+if [ "${1:-}" = "debug" ]; then DBG=ON; fi
+echo "Debug logging: $DBG"
+
+# --- Configure (every build, so BOX3DDOP_DEBUG never keeps a stale cached value) ---
+cmake -S . -B build -DCMAKE_BUILD_TYPE="${BUILD_TYPE:-Release}" -DBOX3DDOP_DEBUG="$DBG"
+echo "$PWD" > "$MARKER"
 
 # --- Build ---
 cmake --build build -j "$(nproc)"

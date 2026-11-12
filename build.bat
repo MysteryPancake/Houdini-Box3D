@@ -32,6 +32,11 @@ echo Using Houdini: !HFS!
 
 cd /d "%~dp0"
 
+rem --- Debug logging (prints to Houdini's console): off unless you run "build debug" ---
+set "DBG=OFF"
+if /i "%~1"=="debug" set "DBG=ON"
+echo Debug logging: !DBG!
+
 rem --- Make sure the Box3D submodule is present ----------------------------
 if not exist "extern\box3d\CMakeLists.txt" (
     echo Fetching Box3D submodule...
@@ -49,13 +54,18 @@ if exist "%MARKER%" (
     )
 )
 
-rem --- Configure (first time, or after the build folder was reset) ---------
-if not exist build\CMakeCache.txt (
-    cmake -S . -B build -G "Visual Studio 17 2022" -A x64
-    if not "%errorlevel%"=="0" goto :fail
-    >"%MARKER%" echo %CD%
-)
+rem --- Configure (every build, so BOX3DDOP_DEBUG never keeps a stale cached value) ---
+if exist build\CMakeCache.txt goto :reconfigure
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DBOX3DDOP_DEBUG=!DBG!
+if not "%errorlevel%"=="0" goto :fail
+>"%MARKER%" echo %CD%
+goto :build
 
+:reconfigure
+cmake -S . -B build -DBOX3DDOP_DEBUG=!DBG!
+if not "%errorlevel%"=="0" goto :fail
+
+:build
 rem --- Build ---------------------------------------------------------------
 cmake --build build --config Release
 if not "%errorlevel%"=="0" goto :fail

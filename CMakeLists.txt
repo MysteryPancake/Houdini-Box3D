@@ -47,6 +47,11 @@ target_include_directories(b3dop_core PUBLIC src)
 # units. It's a static lib, so CMake still links it into anything using b3dop_core.
 target_link_libraries(b3dop_core PRIVATE box3d::box3d)
 set_target_properties(b3dop_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# The core's own console output (Box3D asserts and log messages) is compiled in only with the debug
+# option; otherwise nothing is ever printed (on Windows that would open a console window).
+if(BOX3DDOP_DEBUG)
+    target_compile_definitions(b3dop_core PRIVATE BOX3DDOP_DEBUG=1)
+endif()
 
 add_executable(b3dop_core_smoke tests/core_smoke.cpp)
 target_link_libraries(b3dop_core_smoke PRIVATE b3dop_core)

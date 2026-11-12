@@ -67,7 +67,7 @@ Layering (keep it):
 * A post-build step copies `icons/box3d.svg` to `<dso>/../config/Icons/DOP_<node name>.svg` (Houdini's default icon
   name for a node type is `<TABLE>_<name>`; the HDK alternative, `OP_Operator::setIconName`, needs the operator, which
   the automatic DOPs don't expose to us). Renaming a node's internal name means renaming its icon.
-* `BOX3DDOP_DEBUG` (default OFF) defines `BOX3DDOP_DEBUG=1` for the plugin target only.
+* `BOX3DDOP_DEBUG` (default OFF) defines `BOX3DDOP_DEBUG=1` for the plugin and `b3dop_core` (not Box3D). With it OFF nothing writes to stdout/stderr: `Box3DWorld` replaces Box3D's printf log handler and its own assert handler with `B3D_LOG`. The option is cached in `build/`, so a stale ON survives `build.bat`; reconfigure with `-DBOX3DDOP_DEBUG=OFF` or delete `build/`.
 * `BOX3D_DIR` (default `extern/box3d`) must point at Box3D's own `CMakeLists.txt`.
 * `BOX3DDOP_MAX_WORLDS` (default 1024; Box3D's own default is 128) is passed to the `box3d` target as PUBLIC
   `B3_MAX_WORLDS` (Box3D wraps it in `#ifndef`). Each slot is a ~5 KB static `b3World` (5008 bytes measured).
