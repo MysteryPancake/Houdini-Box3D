@@ -358,6 +358,19 @@ isIdentityRotation(const float q[4])
     return !q || (std::fabs(q[0]) < 1e-6f && std::fabs(q[1]) < 1e-6f && std::fabs(q[2]) < 1e-6f);
 }
 
+b3MotionLocks
+toB3Locks(const MotionLocks &l)
+{
+    b3MotionLocks out = {};
+    out.linearX  = l.linear[0];
+    out.linearY  = l.linear[1];
+    out.linearZ  = l.linear[2];
+    out.angularX = l.angular[0];
+    out.angularY = l.angular[1];
+    out.angularZ = l.angular[2];
+    return out;
+}
+
 b3Filter
 toB3Filter(const CollisionFilter &f)
 {
@@ -571,6 +584,7 @@ Box3DWorld::createBody(const BodySettings &body, const double position[3], const
     def.enableSleep    = body.enableSleep;      // Box3D applies the world switch on top
     def.isBullet       = body.isBullet;
     def.enableContactRecycling = body.contactRecycling;
+    def.motionLocks = toB3Locks(body.locks);
     if (body.sleepThreshold >= 0.0f && std::isfinite(body.sleepThreshold))
         def.sleepThreshold = body.sleepThreshold;
     def.userData       = userData;
@@ -950,6 +964,25 @@ Box3DWorld::setGravityScaleByHandle(BodyHandle h, float gravityScale)
 {
     if (h)
         b3Body_SetGravityScale(unpackBody(h), gravityScale);
+}
+
+void
+Box3DWorld::setMotionLocksByHandle(BodyHandle h, const MotionLocks &locks)
+{
+    if (h)
+        b3Body_SetMotionLocks(unpackBody(h), toB3Locks(locks));     // no-op when unchanged
+}
+
+MotionLocks
+Box3DWorld::motionLocksByHandle(BodyHandle h) const
+{
+    MotionLocks out;
+    if (!h)
+        return out;
+    const b3MotionLocks l = b3Body_GetMotionLocks(unpackBody(h));
+    out.linear[0]  = l.linearX;   out.linear[1]  = l.linearY;   out.linear[2]  = l.linearZ;
+    out.angular[0] = l.angularX;  out.angular[1] = l.angularY;  out.angular[2] = l.angularZ;
+    return out;
 }
 
 void

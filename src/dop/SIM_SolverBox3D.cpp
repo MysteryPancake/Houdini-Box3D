@@ -152,6 +152,8 @@ struct PointAttrs
     GA_ROHandleID collisionCategory;   // b3Filter: read as 64-bit (a 32-bit -1 is every bit)
     GA_ROHandleID collisionMask;
     GA_ROHandleI  collisionGroup;
+    GA_ROHandleV3 lockLinear;          // lock_linear / lock_angular: per world axis, nonzero = locked
+    GA_ROHandleV3 lockAngular;
     GA_ROHandleI  animated;
     GA_ROHandleF  density;
     GA_ROHandleI  computeMass;
@@ -199,6 +201,8 @@ struct PointAttrs
         collisionCategory = GA_ROHandleID(gdp, GA_ATTRIB_POINT, "collision_category");
         collisionMask  = GA_ROHandleID(gdp, GA_ATTRIB_POINT, "collision_mask");
         collisionGroup = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "collision_group");
+        lockLinear     = GA_ROHandleV3(gdp, GA_ATTRIB_POINT, "lock_linear");
+        lockAngular    = GA_ROHandleV3(gdp, GA_ATTRIB_POINT, "lock_angular");
         animated       = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "animated");
         density        = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "density");
         computeMass    = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "computemass");
@@ -219,7 +223,7 @@ const char *const kPropAttribNames[] = {
     "collision_category", "collision_mask", "animated", "density", "computemass",
     "inertialtensorstiffness", "sleepthreshold", "fastobject",
     "min_activation_impulse", "collision_group", "dead", "bullet_sleeping",
-    "contactrecycling",
+    "contactrecycling", "lock_linear", "lock_angular",
     "name",                 // joint anchors find bodies by it
 };
 static_assert(std::size(kPropAttribNames) == Box3DSyncFingerprint::kNumPropIds,
@@ -1083,6 +1087,16 @@ readDynamicProps(const b3dop::BodySettings &node, const PointAttrs &a, GA_Offset
         p.filter.mask = uint64_t(a.collisionMask.get(off));
     if (a.collisionGroup.isValid())
         p.filter.group = a.collisionGroup.get(off);
+    if (a.lockLinear.isValid())
+    {
+        const UT_Vector3 l = a.lockLinear.get(off);
+        for (int i = 0; i < 3; ++i) p.locks.linear[i] = l(i) != 0.0f;
+    }
+    if (a.lockAngular.isValid())
+    {
+        const UT_Vector3 l = a.lockAngular.get(off);
+        for (int i = 0; i < 3; ++i) p.locks.angular[i] = l(i) != 0.0f;
+    }
     return p;
 }
 
@@ -1171,6 +1185,7 @@ settingsFor(const b3dop::BodySettings &node, const Box3DBodyProps &p, b3dop::Bod
     b.gravityScale   = p.gravityScale;
     b.enableSleep    = p.sleepOk;
     b.filter         = p.filter;
+    b.locks          = p.locks;
     b.sleepThreshold = p.sleepThreshold;
     b.isBullet       = p.fastObject;
     b.contactRecycling = p.contactRecycling;
@@ -1502,6 +1517,11 @@ applyPropChanges(b3dop::Box3DWorld &world, Box3DBodyMirror &e, const Box3DBodyPr
     if (p.fastObject != o.fastObject)
     {
         world.setBulletByHandle(h, p.fastObject);
+        changed |= kPropsChanged;
+    }
+    if (p.locks != o.locks)
+    {
+        world.setMotionLocksByHandle(h, p.locks);
         changed |= kPropsChanged;
     }
     if (p.contactRecycling != o.contactRecycling)

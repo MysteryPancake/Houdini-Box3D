@@ -961,6 +961,49 @@ int main()
         std::printf("mid-sim update checks done\n");
     }
 
+    // ---- motion locks (Box3D's b3MotionLocks, world axes) -----------------------
+    {
+        using namespace b3dop;
+        KeyedWorld lw;
+        CHECK(lw.create(WorldSettings()));
+        const float qid[4] = { 0, 0, 0, 1 };
+        ShapeSpec cube;
+        // linear Y locked: gravity doesn't move it; X still moves
+        BodySettings ly;  ly.locks.linear[1] = true;
+        const double p0[3] = { 0, 5, 0 };
+        const BodyHandle a = lw.createBody(ly, p0, qid);
+        CHECK(lw.createShape(a, ly, cube));
+        CHECK(lw.motionLocksByHandle(a) == ly.locks);
+        const float vx[3] = { 2, 0, 0 }, w0[3] = { 0, 0, 0 };
+        CHECK(lw.setVelocityByHandle(a, vx, w0));
+        // angular X and Z locked, spun about all three: only Y rotation survives
+        BodySettings az;  az.locks.angular[0] = az.locks.angular[2] = true;  az.gravityScale = 0.0f;
+        const double p1[3] = { 10, 5, 0 };
+        const BodyHandle b = lw.createBody(az, p1, qid);
+        CHECK(lw.createShape(b, az, cube));
+        const float v0[3] = { 0, 0, 0 }, spin[3] = { 3, 3, 3 };
+        CHECK(lw.setVelocityByHandle(b, v0, spin));
+        for (int i = 0; i < 60; ++i) lw.step(1.0f / 60.0f);
+        double p[3];  float q[4], lin[3], ang[3];
+        CHECK(lw.getTransformByHandle(a, p, q) && std::fabs(p[1] - 5.0) < 1e-4 && p[0] > 1.5);
+        CHECK(lw.getVelocityByHandle(b, lin, ang) && ang[0] == 0.0f && ang[2] == 0.0f && std::fabs(ang[1]) > 1.0f);
+        CHECK(lw.getTransformByHandle(b, p, q) && std::fabs(q[0]) < 1e-4 && std::fabs(q[2]) < 1e-4);   // rotated about Y only
+        // unlock mid-sim: it falls; lock again: the locked velocity is zeroed and it stops
+        lw.setMotionLocksByHandle(a, MotionLocks());
+        for (int i = 0; i < 30; ++i) lw.step(1.0f / 60.0f);
+        CHECK(lw.getTransformByHandle(a, p, q) && p[1] < 4.5);
+        MotionLocks all;
+        for (int i = 0; i < 3; ++i) all.linear[i] = all.angular[i] = true;
+        lw.setMotionLocksByHandle(a, all);
+        CHECK(lw.motionLocksByHandle(a) == all);
+        CHECK(lw.getVelocityByHandle(a, lin, ang) && lin[0] == 0.0f && lin[1] == 0.0f && lin[2] == 0.0f);
+        double before[3];
+        lw.getTransformByHandle(a, before, q);
+        for (int i = 0; i < 30; ++i) lw.step(1.0f / 60.0f);
+        CHECK(lw.getTransformByHandle(a, p, q) && std::fabs(p[0] - before[0]) < 1e-5 && std::fabs(p[1] - before[1]) < 1e-5);
+        std::printf("motion lock checks done\n");
+    }
+
     // ---- collision filtering (Box3D's b3Filter) ---------------------------------
     {
         using namespace b3dop;

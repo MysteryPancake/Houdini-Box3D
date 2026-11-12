@@ -102,6 +102,8 @@ All attributes are optional except `P`. If one is missing, the value from the Bo
 | `active` | int | `0` = static, anything else = dynamic |
 | `animated` | int | With `active` = 0: the body follows its animated point and pushes what it touches |
 | `min_activation_impulse` | float | An inactive body hit at least this hard becomes active |
+| `lock_linear` | vector | Per world axis, nonzero = no movement along that axis (e.g. `{0,0,1}` keeps it at its starting Z) |
+| `lock_angular` | vector | Per world axis, nonzero = no rotation about that axis (e.g. `{1,0,1}` = it only turns about Y) |
 | `collision_category` | int | Bits for the layers this body is on (default: every bit) |
 | `collision_mask` | int | Bits for the layers this body collides with (default: every bit) |
 | `collision_group` | int | Bodies with the same non-zero group: positive = always collide, negative = never collide |

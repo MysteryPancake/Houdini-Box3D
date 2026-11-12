@@ -121,6 +121,23 @@ struct CollisionFilter
     bool operator!=(const CollisionFilter &o) const { return !(*this == o); }
 };
 
+// Box3D's b3MotionLocks: stop translation along / rotation about individual WORLD axes (Box3D
+// zeroes those velocity components every solver iteration). Index 0 / 1 / 2 = X / Y / Z.
+struct MotionLocks
+{
+    bool linear[3]  = { false, false, false };
+    bool angular[3] = { false, false, false };
+
+    bool operator==(const MotionLocks &o) const
+    {
+        for (int i = 0; i < 3; ++i)
+            if (linear[i] != o.linear[i] || angular[i] != o.angular[i])
+                return false;
+        return true;
+    }
+    bool operator!=(const MotionLocks &o) const { return !(*this == o); }
+};
+
 struct BodySettings
 {
     enum class Type { Static, Kinematic, Dynamic };
@@ -139,6 +156,7 @@ struct BodySettings
     bool  isBullet       = false;   // Box3D "bullet": continuous collision vs moving bodies too (`fastobject`)
     float sleepThreshold = 0.05f;   // m/s
     CollisionFilter filter;         // `collision_category` / `collision_mask` / `collision_group`
+    MotionLocks     locks;          // `lock_linear` / `lock_angular`
 
     // Solver only:
     ShapeType defaultShape = ShapeType::Box;     // when `bullet_georep` is missing or unknown
@@ -206,6 +224,8 @@ public:
     // too (disable + enable, velocity kept) so they are rebuilt with the new setting. A sleeping,
     // static or kinematic body only affects contacts made from now on.
     void  setContactRecyclingByHandle(BodyHandle h, bool flag);
+    void  setMotionLocksByHandle(BodyHandle h, const MotionLocks &locks);   // zeroes newly locked velocity
+    MotionLocks motionLocksByHandle(BodyHandle h) const;
     void  setDensityByHandle(BodyHandle h, float density);           // every shape, then mass from shapes
     void  setEnabledByHandle(BodyHandle h, bool enabled);            // disabled: no motion, no collisions
     bool  isEnabledByHandle(BodyHandle h) const;
