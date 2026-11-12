@@ -203,8 +203,7 @@ constexpr size_t kMinParallelPoints = 2048;
 
 // Runs f(i) for i in [0, n), threaded on Houdini's TBB pool when n is large.
 // f must only read shared data, or write to element i of its own output; the
-// serial passes around each call are where the Box3D world, the mirror and the
-// `seen` set are touched.
+// serial passes around each call are where the Box3D world and the mirror are touched.
 template <class F>
 void
 parallelForEach(size_t n, const F &f)
@@ -514,7 +513,7 @@ struct ShapeSources
 // For a packed point the rotation comes from the primitive, not `orient`.
 bool
 readPointState(const GU_Detail *gdp, const PointAttrs &a, GA_Offset off,
-               const PackedInfo &pk, DopBodyState &out)
+               const PackedInfo &pk, Box3DBodyPose &out)
 {
     const UT_Vector3 p = gdp->getPos3(off);
     out.pos[0] = p.x();  out.pos[1] = p.y();  out.pos[2] = p.z();
@@ -551,7 +550,7 @@ readPointState(const GU_Detail *gdp, const PointAttrs &a, GA_Offset off,
 
 // Returns a short description of what differs, or nullptr if the same.
 const char *
-describeStateDifference(const DopBodyState &a, const DopBodyState &b)
+describeStateDifference(const Box3DBodyPose &a, const Box3DBodyPose &b)
 {
     const double eps = 1e-5;
     for (int i = 0; i < 3; ++i)
@@ -800,7 +799,7 @@ buildShapes(b3dop::Box3DWorld &world, ShapeSources &src, b3dop::ShapeType type,
 bool
 addPointBody(b3dop::Box3DWorld &world, ShapeSources &src, const b3dop::BodySettings &node,
              const PointAttrs &a, GA_Offset off, int64_t bodyId, uint64_t key,
-             const PackedInfo &pk, const DopBodyState &st, bool active,
+             const PackedInfo &pk, const Box3DBodyPose &st, bool active,
              std::string *fallbackNote = nullptr)
 {
     b3dop::BodySettings b = node;
@@ -915,30 +914,6 @@ addPointBody(b3dop::Box3DWorld &world, ShapeSources &src, const b3dop::BodySetti
     return true;
 }
 
-// One point's result on its way from Box3D to the geometry (writeResultsBack).
-struct WriteItem
-{
-    GA_Offset     off   = GA_INVALID_OFFSET;
-    DopBodyState *entry = nullptr;          // this point's mirror entry
-    DopBodyState  s;                        // what Box3D reports now
-    DopBodyState  stored;                   // what the geometry holds after the write
-    bool          storedOk = false;
-    bool          hasM3    = false;         // packed rotation to write in the serial pass
-    GA_Offset     primOff  = GA_INVALID_OFFSET;
-    double        newM3[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
-};
-
-// One point as read by the parallel pass of syncObject().
-struct PointSnap
-{
-    GA_Offset    off    = GA_INVALID_OFFSET;
-    int64_t      bid    = 0;
-    uint64_t     key    = 0;
-    DopBodyState cur;
-    bool         ok     = false;    // readPointState succeeded (P is finite)
-    bool         active = true;
-};
-
 struct SyncCounts
 {
     int added = 0, edited = 0, retyped = 0, failed = 0, duplicates = 0, badP = 0;
@@ -948,8 +923,7 @@ struct SyncCounts
 // Sync one object's points into the world. Returns true if any of its points
 // is a body we will write back (dynamic).
 bool
-syncObject(Box3DSharedState &st, const SIM_Object &obj,
-           std::unordered_set<uint64_t> &seen, SyncCounts &c)
+syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
 {
     const SIM_Geometry *geo = SIM_DATA_GETCONST(obj, SIM_GEOMETRY_DATANAME, SIM_Geometry);
     if (!geo)
@@ -973,41 +947,62 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj,
     ShapeSources sources;       // packed geometry, collected lazily per distinct source
 
     // ---- pass 1 (parallel): read every point's attributes -----------------
-    // Reads only. Offsets are gathered serially first (cheap), so pass 1 can
-    // index by position. When there is no `id` attribute the body id is the
-    // point number, which equals the position in a full point-range walk; it
-    // is filled here so the parallel pass never calls pointIndex().
-    std::vector<PointSnap> snaps;
-    snaps.reserve(size_t(gdp->getNumPoints()));
-    for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it)
+    // Reads only. The slots persist between steps (no allocation in a steady
+    // state) and each caches its mirror entry. Offsets are gathered serially first
+    // (cheap), so pass 1 can index by position; a cached entry is dropped when
+    // its slot's offset or key changed. When there is no `id` attribute the body
+    // id is the point number, which equals the position in a full point-range
+    // walk; it is filled here so the parallel pass never calls pointIndex().
+    const int objectId = obj.getObjectId();
+    std::vector<Box3DPointSlot> &snaps = st.slots[objectId];
     {
-        PointSnap s;
-        s.off = *it;
-        s.bid = int64_t(snaps.size());
-        snaps.push_back(s);
+        size_t n = 0;
+        for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it, ++n)
+        {
+            if (n == snaps.size())
+                snaps.emplace_back();
+            Box3DPointSlot &s = snaps[n];
+            if (s.off != *it)
+                s.entry = nullptr;
+            s.off = *it;
+            s.bid = int64_t(n);
+        }
+        snaps.resize(n);
     }
 
-    const int objectId = obj.getObjectId();
     parallelForEach(snaps.size(), [&](size_t i) {
-        PointSnap &s = snaps[i];
+        Box3DPointSlot &s = snaps[i];
         if (a.id.isValid())
             s.bid = int64_t(a.id.get(s.off));
-        s.key = b3dop::makeBodyKey(objectId, s.bid);
+        const uint64_t key = b3dop::makeBodyKey(objectId, s.bid);
+        if (key != s.key)
+            s.entry = nullptr;
+        s.key = key;
         const PackedInfo pk = getPackedInfo(gdp, s.off);
         s.ok     = readPointState(gdp, a, s.off, pk, s.cur);
         s.active = !a.active.isValid() || a.active.get(s.off) != 0;
     });
 
-    // ---- pass 2 (serial): apply to Box3D, the mirror and `seen` -------------
-    // Runs in point order, so "first duplicate id wins" holds.
-    for (PointSnap &s : snaps)
+    // ---- pass 2 (serial): apply to Box3D and the mirror -------------------
+    // Runs in point order, so "first duplicate id wins" holds. An entry whose
+    // stamp is already the current one was claimed by an earlier point this step.
+    for (Box3DPointSlot &s : snaps)
     {
         const GA_Offset off = s.off;
         const int64_t   bid = s.bid;
         const uint64_t  key = s.key;
-        DopBodyState   &cur = s.cur;
+        Box3DBodyPose  &cur = s.cur;
 
-        if (!seen.insert(key).second)
+        DopBodyState *entry = s.entry;
+        if (!entry)
+        {
+            auto mit = st.mirror.find(key);
+            if (mit != st.mirror.end())
+                entry = &mit->second;
+            s.entry = entry;
+        }
+
+        if (entry && entry->stamp == st.syncStamp)
         {
             ++c.duplicates;         // two points with the same `id`: first wins
             continue;
@@ -1015,8 +1010,7 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj,
 
         if (!s.ok)
         {
-            ++c.badP;
-            seen.erase(key);        // treated as absent: body (if any) is removed
+            ++c.badP;               // not stamped: the body (if any) is removed
             continue;
         }
 
@@ -1024,8 +1018,7 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj,
         const b3dop::BodySettings::Type wantType =
             active ? node.type : b3dop::BodySettings::Type::Static;
 
-        auto mit = st.mirror.find(key);
-        if (mit == st.mirror.end())
+        if (!entry)
         {
             PackedInfo pk = getPackedInfo(gdp, off);    // only new bodies need it again
             readPackedPivot(pk);        // the hull is built from it
@@ -1037,37 +1030,48 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj,
             }
             if (!fallbackNote.empty())
                 ++c.fallbacks[fallbackNote];
-            cur.dynamic = (wantType == b3dop::BodySettings::Type::Dynamic);
-            cur.type    = wantType;
-            cur.handle  = world.bodyHandle(key);
-            st.mirror[key] = cur;
+            DopBodyState &m = st.mirror[key];       // node address is stable from here on
+            static_cast<Box3DBodyPose &>(m) = cur;
+            m.dynamic  = (wantType == b3dop::BodySettings::Type::Dynamic);
+            m.type     = wantType;
+            m.handle   = world.bodyHandle(key);
+            m.pointOff = off;
+            m.pointId  = bid;
+            m.objectId = objectId;
+            m.stamp    = st.syncStamp;
+            ++st.stampedCount;
+            world.setBodyUserData(m.handle, &m);    // lets write-back map a move event to this entry
+            s.entry = &m;
             ++c.added;
-            hasDynamic = hasDynamic || cur.dynamic;
+            hasDynamic = hasDynamic || m.dynamic;
             continue;
         }
 
-        // Existing body. Did `active` flip?
-        if (mit->second.type != wantType)
+        // Existing body.
+        entry->pointOff = off;
+        entry->pointId  = bid;
+        entry->objectId = objectId;
+        entry->stamp    = st.syncStamp;
+        ++st.stampedCount;
+
+        // Did `active` flip?
+        if (entry->type != wantType)
         {
             world.setBodyType(key, wantType);
-            mit->second.type    = wantType;
-            mit->second.dynamic = (wantType == b3dop::BodySettings::Type::Dynamic);
+            entry->type    = wantType;
+            entry->dynamic = (wantType == b3dop::BodySettings::Type::Dynamic);
             ++c.retyped;
         }
 
         // Did something else edit P / orient / v / w since we wrote it?
-        if (describeStateDifference(cur, mit->second))
+        if (describeStateDifference(cur, *entry))
         {
-            const b3dop::BodyHandle h = mit->second.handle;
-            world.setTransformByHandle(h, cur.pos, cur.rot);
-            world.setVelocityByHandle(h, cur.lin, cur.ang);
-            cur.dynamic = mit->second.dynamic;
-            cur.type    = mit->second.type;
-            cur.handle  = h;
-            mit->second = cur;
+            world.setTransformByHandle(entry->handle, cur.pos, cur.rot);
+            world.setVelocityByHandle(entry->handle, cur.lin, cur.ang);
+            static_cast<Box3DBodyPose &>(*entry) = cur;
             ++c.edited;
         }
-        hasDynamic = hasDynamic || mit->second.dynamic;
+        hasDynamic = hasDynamic || entry->dynamic;
     }
     return hasDynamic;
 }
@@ -1099,6 +1103,56 @@ ensureResultAttribs(GU_Detail *gdp)
         createdOrient = true;
     }
     return createdOrient;
+}
+
+// Sets each item's point offset in the geometry that is about to be written. The
+// sync pass stored an offset in every mirror entry, and the writable geometry is
+// normally an exact copy of what was read, so the stored offset still names the same
+// point. That is checked (offset in range, and the point's id still matches) because
+// a copy that renumbered points would otherwise write results to the wrong ones. A
+// stale offset is looked up again by the body's point id. An item whose point cannot
+// be found gets GA_INVALID_OFFSET and is skipped.
+void
+resolvePointOffsets(const GU_Detail *gdp, const PointAttrs &a,
+                    std::vector<Box3DWriteItem> &items, size_t begin, size_t end)
+{
+    std::unordered_map<int64_t, GA_Offset> byId;     // built only if an `id` lookup is needed
+    bool builtById = false;
+
+    for (size_t k = begin; k < end; ++k)
+    {
+        Box3DWriteItem        &w = items[k];
+        const Box3DBodyMirror &m = *w.entry;
+        const GA_Offset        stored = GA_Offset(m.pointOff);
+
+        bool ok = stored >= 0 && stored < gdp->getNumPointOffsets() &&
+                  !gdp->getPointMap().isOffsetVacant(stored);
+        if (ok)
+            ok = a.id.isValid() ? int64_t(a.id.get(stored)) == m.pointId
+                                : int64_t(gdp->pointIndex(stored)) == m.pointId;
+        if (ok)
+        {
+            w.off = stored;
+            continue;
+        }
+
+        w.off = GA_INVALID_OFFSET;
+        if (!a.id.isValid())
+        {
+            if (m.pointId >= 0 && m.pointId < int64_t(gdp->getNumPoints()))
+                w.off = gdp->pointOffset(GA_Index(m.pointId));
+            continue;
+        }
+        if (!builtById)
+        {
+            builtById = true;
+            for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it)
+                byId.emplace(int64_t(a.id.get(*it)), *it);     // first point of a duplicate id wins
+        }
+        const auto f = byId.find(m.pointId);
+        if (f != byId.end())
+            w.off = f->second;
+    }
 }
 
 // Returns a writable SIM_GeometryCopy for the object's "Geometry" data.
@@ -1348,25 +1402,32 @@ SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
     // world has no per-body "skip this step"; decide how to treat them (e.g.
     // step them as kinematic for one step).
 
-    std::unordered_set<uint64_t> seen;
     SyncCounts                   counts;
     objectHasDynamic.assign(size_t(objects.entries()), 0);
 
+    ++st->syncStamp;            // entries synced below carry this stamp
+    st->stampedCount = 0;
     for (exint i = 0; i < objects.entries(); ++i)
-        objectHasDynamic[size_t(i)] = syncObject(*st, *objects(i), seen, counts) ? 1 : 0;
+        objectHasDynamic[size_t(i)] = syncObject(*st, *objects(i), counts) ? 1 : 0;
 
-    // Bodies whose point (or whole object) is gone.
+    // Bodies whose point (or whole object) is gone: the entries nobody stamped.
+    // When every entry was stamped there is nothing to scan for.
     int removed = 0;
-    for (auto it = st->mirror.begin(); it != st->mirror.end();)
+    if (st->stampedCount != st->mirror.size())
     {
-        if (!seen.count(it->first))
+        for (auto it = st->mirror.begin(); it != st->mirror.end();)
         {
-            st->world.removeBody(it->first);
-            it = st->mirror.erase(it);
-            ++removed;
+            if (it->second.stamp != st->syncStamp)
+            {
+                st->world.removeBody(it->first);
+                it = st->mirror.erase(it);
+                ++removed;
+            }
+            else
+                ++it;
         }
-        else
-            ++it;
+        // The slots cache pointers to entries; some of them may just have died.
+        st->slots.clear();
     }
 
     // Hulls built for bodies that were then removed (or never created) are
@@ -1407,18 +1468,75 @@ SIM_SolverBox3D::stepWorld(SIM_Box3DWorld &worldData, float timestep)
 
 void
 SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects,
-                                  const std::vector<char> &objectHasDynamic)
+                                  const std::vector<char> & /*objectHasDynamic*/)
 {
     Box3DSharedState *st = worldData.state();
+    b3dop::Box3DWorld &world = st->world;
 
-    for (exint i = 0; i < objects.entries(); ++i)
+    // ---- pass 0 (serial): collect the bodies that moved ----------------------
+    // Box3D's body move events are one contiguous array holding every awake body
+    // and its final transform; sleeping bodies are absent, and their points already
+    // hold the values written when they fell asleep (that last event is included).
+    // Each body's user data is its mirror entry, which knows its point. The events
+    // are cleared at the start of every step, so after a step that did not run this
+    // is empty.
+    const int moveCount = world.moveEventCount();
+    if (moveCount == 0)
+        return;
+
+    std::vector<Box3DWriteItem> &items = st->writeItems;       // reused between steps
+    items.clear();
+    items.reserve(size_t(moveCount));
+    int missing = 0;
+    for (int e = 0; e < moveCount; ++e)
     {
-        // Objects with only static points: nothing to write, and asking for
-        // the non-const geometry would copy it for no reason.
-        if (!objectHasDynamic[size_t(i)])
+        b3dop::BodyMove mv;
+        if (!world.getMoveEvent(e, mv) || !mv.userData)
             continue;
+        DopBodyState *entry = static_cast<DopBodyState *>(mv.userData);
+        if (!entry->dynamic || entry->stamp != st->syncStamp)
+            continue;                       // static / kinematic: nothing to write
+        items.emplace_back();
+        Box3DWriteItem &w = items.back();
+        w.entry    = entry;
+        w.objectId = entry->objectId;
+        for (int i = 0; i < 3; ++i) w.s.pos[i] = mv.pos[i];
+        for (int i = 0; i < 4; ++i) w.s.rot[i] = mv.rot[i];
+        if (!world.getVelocityByHandle(mv.handle, w.s.lin, w.s.ang))
+        {
+            ++missing;                      // leave the point alone; next sync re-snapshots it
+            items.pop_back();
+        }
+    }
+    if (items.empty())
+        return;
 
-        SIM_Object *obj = objects(i);
+    // One run of items per object, so each object's geometry is locked once. A
+    // single object (the usual case) needs no sort.
+    bool oneObject = true;
+    for (const Box3DWriteItem &w : items)
+        if (w.objectId != items.front().objectId) { oneObject = false; break; }
+    if (!oneObject)
+        std::stable_sort(items.begin(), items.end(),
+                         [](const Box3DWriteItem &x, const Box3DWriteItem &y) { return x.objectId < y.objectId; });
+
+    std::unordered_map<int, exint> objectIndex;
+    for (exint i = 0; i < objects.entries(); ++i)
+        objectIndex[objects(i)->getObjectId()] = i;
+
+    for (size_t runBegin = 0; runBegin < items.size();)
+    {
+        size_t runEnd = runBegin;
+        while (runEnd < items.size() && items[runEnd].objectId == items[runBegin].objectId)
+            ++runEnd;
+        const size_t begin = runBegin, end = runEnd;
+        runBegin = runEnd;
+
+        const auto oi = objectIndex.find(items[begin].objectId);
+        if (oi == objectIndex.end())
+            continue;
+        SIM_Object *obj = objects(oi->second);
+
         SIM_GeometryCopy *geo = getOrMakeWritableGeometry(*obj);
         if (!geo)
         {
@@ -1450,39 +1568,18 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
                 qOut.set(*it, UT_QuaternionF(0.0f, 0.0f, 0.0f, 1.0f));
         }
 
-        // ---- pass 1 (serial): pull results out of Box3D ---------------------
-        // The mirror and the Box3D world are shared state, so they are only
-        // touched here and in pass 4.
-        std::vector<WriteItem> items;
-        int missing = 0;
-        for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it)
-        {
-            const GA_Offset off = *it;
-            // The point's id: the `id` attribute, else the point number.
-            const int64_t   pid = a.id.isValid() ? int64_t(a.id.get(off)) : int64_t(gdp->pointIndex(off));
-            const uint64_t  key = b3dop::makeBodyKey(obj->getObjectId(), pid);
-
-            auto mit = st->mirror.find(key);
-            if (mit == st->mirror.end() || !mit->second.dynamic)
-                continue;
-
-            WriteItem w;
-            w.off   = off;
-            w.entry = &mit->second;     // stable: nothing is inserted or erased below
-            w.s     = mit->second;      // keeps handle and type
-            if (!st->world.getTransformByHandle(w.s.handle, w.s.pos, w.s.rot) ||
-                !st->world.getVelocityByHandle(w.s.handle, w.s.lin, w.s.ang))
-            {
-                ++missing;      // leave the point alone; next sync re-snapshots it
-                continue;
-            }
-            items.push_back(w);
-        }
+        // ---- pass 1 (serial): find each body's point in the geometry --------
+        resolvePointOffsets(gdp, a, items, begin, end);
+        int unresolved = 0;
+        for (size_t k = begin; k < end; ++k)
+            if (items[k].off == GA_INVALID_OFFSET)
+                ++unresolved;
+        missing += unresolved;
 
         // ---- pass 2 (parallel): write attributes, one task per point ---------
-        // Every item is a distinct point, so no two tasks write the same
-        // element. Pages must be hardened first, or the writes would race on
-        // copy-on-write pages that are still shared.
+        // Every item is a distinct body, so no two tasks write the same point or
+        // the same mirror entry. Pages must be hardened first, or the writes would
+        // race on copy-on-write pages that are still shared.
         GA_RWHandleV3 pOut(gdp, GA_ATTRIB_POINT, "P");
         for (GA_Attribute *attr : { pOut.isValid() ? pOut.getAttribute() : nullptr,
                                     qOut.isValid() ? qOut.getAttribute() : nullptr,
@@ -1491,10 +1588,12 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
             if (attr)
                 attr->hardenAllPages();
 
-        parallelForEach(items.size(), [&](size_t i) {
-            WriteItem       &w   = items[i];
-            const GA_Offset  off = w.off;
-            const DopBodyState &s = w.s;
+        parallelForEach(end - begin, [&](size_t j) {
+            Box3DWriteItem      &w   = items[begin + j];
+            if (w.off == GA_INVALID_OFFSET)
+                return;
+            const GA_Offset      off = w.off;
+            const Box3DBodyPose &s   = w.s;
 
             if (pOut.isValid()) pOut.set(off, UT_Vector3(float(s.pos[0]), float(s.pos[1]), float(s.pos[2])));
             if (qOut.isValid()) qOut.set(off, UT_QuaternionF(s.rot[0], s.rot[1], s.rot[2], s.rot[3]));
@@ -1521,9 +1620,12 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
             }
 
             // Re-read what the points actually hold (P may be stored in lower
-            // precision than Box3D's), so next step's edit detection compares
-            // like with like and does not report our own write as an edit.
-            w.storedOk = readPointState(gdp, a, off, pk, w.stored);
+            // precision than Box3D's) and keep that in the mirror, so next step's
+            // edit detection compares like with like and does not report our own
+            // write as an edit.
+            Box3DBodyPose stored;
+            const bool storedOk = readPointState(gdp, a, off, pk, stored);
+            static_cast<Box3DBodyPose &>(*w.entry) = storedOk ? stored : s;
         });
 
         for (GA_Attribute *attr : { pOut.isValid() ? pOut.getAttribute() : nullptr,
@@ -1536,35 +1638,22 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
         // ---- pass 3 (serial): packed primitive rotation ----------------------
         // setLocalTransform + transformDirty stay serial: the HDK pages do not
         // say whether they touch shared state.
-        for (const WriteItem &w : items)
+        for (size_t k = begin; k < end; ++k)
         {
+            const Box3DWriteItem &w = items[k];
             if (!w.hasM3)
                 continue;
             GU_PrimPacked *prim = static_cast<GU_PrimPacked *>(gdp->getPrimitive(w.primOff));
             setLocal3(*prim, w.newM3);
         }
+    }
 
-        // ---- pass 4 (serial): update the mirror --------------------------------
-        for (WriteItem &w : items)
-        {
-            if (w.storedOk)
-            {
-                w.stored.dynamic = true;
-                w.stored.type    = w.entry->type;
-                w.stored.handle  = w.entry->handle;
-                *w.entry = w.stored;
-            }
-            else
-                *w.entry = w.s;     // w.s was copied from the entry: keeps handle and type
-        }
-
-        if (missing)
-        {
-            B3D_LOG("  writeBack: object id=%d: %d points have no Box3D body", obj->getObjectId(), missing);
-            addError(obj, SIM_MESSAGE,
-                     ("Box3D: " + std::to_string(missing) + " point(s) have no Box3D body; their results were not written back").c_str(),
-                     UT_ERROR_WARNING);
-        }
+    if (missing)
+    {
+        B3D_LOG("  writeBack: %d moved bodies had no readable state or no point to write to", missing);
+        addError(objects(0), SIM_MESSAGE,
+                 ("Box3D: " + std::to_string(missing) + " body(ies) could not be matched to a point; their results were not written back").c_str(),
+                 UT_ERROR_WARNING);
     }
 }
 

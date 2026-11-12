@@ -25,23 +25,40 @@
 #include <SIM/SIM_Data.h>
 #include <SIM/SIM_DataUtils.h>
 
+#include <GA/GA_Types.h>
+
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 
 #include "Box3DWorld.h"
 
 // What we last handed to / read back from Box3D for one body (one POINT of a
 // DOP object), in DOP terms. Compared against the point's current values each
 // step to detect edits made by other nodes (the stamp alone cannot see those).
-struct Box3DBodyMirror
+struct Box3DBodyPose
 {
     double pos[3] = { 0, 0, 0 };
     float  rot[4] = { 0, 0, 0, 1 };   // x, y, z, w
     float  lin[3] = { 0, 0, 0 };
     float  ang[3] = { 0, 0, 0 };      // radians per second
+};
+
+struct Box3DBodyMirror : Box3DBodyPose
+{
     bool   dynamic = false;           // a body the solver writes back (not static)
+
+    // Where this body's point is, refreshed by every sync. The write-back reads
+    // Box3D's move events (one per awake body) and finds the point from here, so
+    // it needs no lookup by key. Box3D's body user data points at this entry,
+    // which is why entries must not move: they live in an unordered_map (nodes
+    // are stable across inserts) and are only erased together with their body.
+    int64_t  pointOff = -1;           // GA_Offset of the point in the object's geometry
+    int64_t  pointId  = 0;            // the `id` attribute, else the point number
+    int      objectId = 0;
+    uint64_t stamp    = 0;            // Box3DSharedState::syncStamp of the last sync that saw it
 
     // Cached so the per-step loops need no hash lookups into the Box3D world:
     // the body's handle, and the body type the solver last set (the same value
@@ -51,12 +68,50 @@ struct Box3DBodyMirror
     b3dop::BodySettings::Type type  = b3dop::BodySettings::Type::Dynamic;
 };
 
+// One point of an object's geometry as syncObject() reads it. The vector of
+// these is kept between steps (Box3DSharedState::slots) so a step allocates
+// nothing, and `entry` caches the point's mirror entry so a steady-state step does
+// no hash lookups. A cached entry is only trusted while the point's offset and
+// body key are unchanged; the slots are all dropped whenever an entry is erased.
+struct Box3DPointSlot
+{
+    GA_Offset         off    = GA_INVALID_OFFSET;
+    int64_t           bid    = 0;
+    uint64_t          key    = 0;
+    Box3DBodyMirror  *entry  = nullptr;
+    Box3DBodyPose     cur;
+    bool              ok     = false;    // readPointState succeeded (P is finite)
+    bool              active = true;
+};
+
+// One awake body's result on its way from Box3D to the geometry (writeResultsBack).
+struct Box3DWriteItem
+{
+    GA_Offset         off      = GA_INVALID_OFFSET;
+    Box3DBodyMirror  *entry    = nullptr;       // not copied
+    Box3DBodyPose     s;                        // what Box3D reports now
+    int               objectId = 0;
+    bool              hasM3    = false;         // packed rotation to write in the serial pass
+    GA_Offset         primOff  = GA_INVALID_OFFSET;
+    double            newM3[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+};
+
 // Everything that is shared between timestep copies.
 struct Box3DSharedState
 {
     b3dop::Box3DWorld                           world;
     std::unordered_map<uint64_t, Box3DBodyMirror> mirror; // key: b3dop::makeBodyKey(object id, point id)
     uint64_t                                    generation = 0;  // for logs
+
+    // Bumped once per sync. An entry whose stamp is not the current one was not
+    // seen this step (its point is gone); stampedCount says how many were seen,
+    // so "nothing to remove" is one comparison instead of a scan.
+    uint64_t                                    syncStamp    = 0;
+    size_t                                      stampedCount = 0;
+
+    // Scratch reused every step (see Box3DPointSlot / Box3DWriteItem).
+    std::unordered_map<int, std::vector<Box3DPointSlot>> slots;     // key: object id
+    std::vector<Box3DWriteItem>                 writeItems;
 
     // The sim time reading (SIM_Engine::getSimulationTime()) at the last
     // solve, and whether there has been one.

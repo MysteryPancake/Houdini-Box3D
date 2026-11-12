@@ -616,6 +616,43 @@ Box3DWorld::setVelocityByHandle(BodyHandle h, const float linear[3], const float
     return true;
 }
 
+int
+Box3DWorld::moveEventCount() const
+{
+    if (!isValid())
+        return 0;
+    return b3World_GetBodyEvents(myImpl->worldId).moveCount;
+}
+
+bool
+Box3DWorld::getMoveEvent(int index, BodyMove &out) const
+{
+    if (!isValid())
+        return false;
+    const b3BodyEvents ev = b3World_GetBodyEvents(myImpl->worldId);
+    if (index < 0 || index >= ev.moveCount)
+        return false;
+    const b3BodyMoveEvent &e = ev.moveEvents[index];
+    out.userData = e.userData;
+    out.handle   = packBody(e.bodyId);
+    out.pos[0] = static_cast<double>(e.transform.p.x);
+    out.pos[1] = static_cast<double>(e.transform.p.y);
+    out.pos[2] = static_cast<double>(e.transform.p.z);
+    out.rot[0] = e.transform.q.v.x;
+    out.rot[1] = e.transform.q.v.y;
+    out.rot[2] = e.transform.q.v.z;
+    out.rot[3] = e.transform.q.s;
+    out.fellAsleep = e.fellAsleep;
+    return true;
+}
+
+void
+Box3DWorld::setBodyUserData(BodyHandle h, void *userData)
+{
+    if (h)
+        b3Body_SetUserData(unpackBody(h), userData);
+}
+
 bool
 Box3DWorld::setTransformByHandle(BodyHandle h, const double pos[3], const float rotXYZW[4])
 {

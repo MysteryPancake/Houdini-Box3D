@@ -31,6 +31,20 @@ using HullId = uint64_t;
 // 0 is invalid.
 using BodyHandle = uint64_t;
 
+// One entry of Box3D's body move events: a body that was simulated (awake) in the
+// last step, with its final transform. The events are Box3D's own contiguous array,
+// built during the step, so reading them needs no per-body lookup. Only awake bodies
+// appear; a body that fell asleep this step appears once more with fellAsleep set.
+// Bodies moved by the caller (setTransform...) do not appear.
+struct BodyMove
+{
+    void      *userData = nullptr;      // whatever setBodyUserData stored
+    BodyHandle handle   = 0;
+    double     pos[3]   = { 0, 0, 0 };
+    float      rot[4]   = { 0, 0, 0, 1 };
+    bool       fellAsleep = false;
+};
+
 struct WorldSettings
 {
     float gravity[3]    = { 0.0f, -9.80665f, 0.0f };
@@ -158,6 +172,14 @@ public:
     bool getVelocityByHandle(BodyHandle h, float outLinear[3], float outAngular[3]) const;
     bool setVelocityByHandle(BodyHandle h, const float linear[3], const float angular[3]);
     bool setTransformByHandle(BodyHandle h, const double pos[3], const float rotXYZW[4]);
+
+    // ---- move events (valid until the next step or until a body is removed) ----
+    // Cleared at the start of every step, so after a step that did not run they are empty.
+    int  moveEventCount() const;
+    bool getMoveEvent(int index, BodyMove &out) const;
+    // Stored in the Box3D body and returned in BodyMove::userData. The caller owns
+    // what it points at; it must stay valid while the body exists.
+    void setBodyUserData(BodyHandle h, void *userData);
 
     // ---- read back / push in -------------------------------------------
     bool getTransform(uint64_t id, double outPos[3], float outRotXYZW[4]) const;

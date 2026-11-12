@@ -641,6 +641,55 @@ int main()
         std::printf("primitive-override checks done\n");
     }
 
+    // ---- move events: only awake bodies, with the transform, user data and sleep flag ----
+    {
+        b3dop::Box3DWorld ew;
+        b3dop::WorldSettings ws;
+        CHECK(ew.create(ws));
+        const float q0[4] = { 0, 0, 0, 1 };
+        b3dop::BodySettings st;  st.type = b3dop::BodySettings::Type::Static;
+        const double gp[3] = { 0, -0.5, 0 };
+        const float  gh[3] = { 20, 0.5f, 20 };
+        CHECK(ew.addBody(1, st, gp, q0));
+        CHECK(ew.addBoxShape(1, gh));
+        const double bp[3] = { 0, 0.5, 0 };
+        CHECK(ew.addBody(2, b3dop::BodySettings(), bp, q0));
+        const float bh[3] = { 0.5f, 0.5f, 0.5f };
+        CHECK(ew.addBoxShape(2, bh));
+        int tag = 7;
+        ew.setBodyUserData(ew.bodyHandle(2), &tag);
+
+        CHECK(ew.moveEventCount() == 0);                    // nothing stepped yet
+        ew.step(1.0f / 60.0f);
+        CHECK(ew.moveEventCount() == 1);                    // the static ground never moves
+        b3dop::BodyMove mv;
+        CHECK(ew.getMoveEvent(0, mv));
+        CHECK(mv.userData == &tag && mv.handle == ew.bodyHandle(2));
+        double p[3];  float q[4];
+        CHECK(ew.getTransformByHandle(mv.handle, p, q));
+        CHECK(mv.pos[0] == p[0] && mv.pos[1] == p[1] && mv.pos[2] == p[2]);
+        CHECK(mv.rot[0] == q[0] && mv.rot[3] == q[3]);
+        CHECK(!ew.getMoveEvent(1, mv) && !ew.getMoveEvent(-1, mv));
+
+        // resting on the ground, it falls asleep: one last event with the flag, then none
+        bool sawSleep = false;
+        int  lastCount = 1;
+        for (int i = 0; i < 600 && lastCount > 0; ++i)
+        {
+            ew.step(1.0f / 60.0f);
+            lastCount = ew.moveEventCount();
+            if (lastCount && ew.getMoveEvent(0, mv) && mv.fellAsleep)
+                sawSleep = true;
+        }
+        CHECK(sawSleep);
+        CHECK(ew.moveEventCount() == 0);
+        // a transform set by the caller is not a move event
+        const double np[3] = { 5, 0.5, 0 };
+        CHECK(ew.setTransformByHandle(ew.bodyHandle(2), np, q0));
+        CHECK(ew.moveEventCount() == 0);
+        std::printf("move-event checks done\n");
+    }
+
     w.destroy();
     CHECK(!w.isValid());
     std::printf(fails ? "FAILED\n" : "OK\n");

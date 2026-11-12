@@ -192,8 +192,18 @@ write everything needed to reconstruct bodies: `P`, `orient`, `v`, `w`, and for 
 prims the primitive transform.
 
 `Box3DBodyMirror` (per body, per world): last `pos/rot/lin/ang` handed to or read back
-from Box3D (in DOP terms), `dynamic`, cached `handle`, cached `type`. It exists to
-(a) detect edits by other nodes and (b) avoid hash lookups in the per-step loops.
+from Box3D (in DOP terms), `dynamic`, cached `handle`, cached `type`, plus the body's point
+(`pointOff`, `pointId`, `objectId`) and a `stamp`. It exists to (a) detect edits by other nodes
+and (b) avoid hash lookups in the per-step loops. Box3D's body user data points at the entry
+(`setBodyUserData`), so entries must not move: they live in an `unordered_map` (node-stable) and
+are only erased together with their body.
+
+Per-step scratch lives in `Box3DSharedState` and is reused: `slots` (per object id, a
+`vector<Box3DPointSlot>`: the point's offset, key, cached mirror entry and freshly read state)
+and `writeItems`. A slot's cached entry is trusted only while its offset and key still match, so
+a steady-state step does no hash lookups; every slot is dropped whenever an entry is erased.
+`syncStamp` / `stampedCount` replace the old `seen` set: an entry whose stamp is not the current
+sync's was not seen, and equal counts mean there is nothing to remove.
 
 ## Solver step (`SIM_SolverBox3D::solveObjectsSubclass`)
 
@@ -204,7 +214,7 @@ decide reason to rebuild (invalid / thread count changed / stamp mismatch) -> cr
 lock st->mutex
 syncFromGeometry   -> per object syncObject(); remove bodies whose point is gone; pruneHulls; emit warnings
 stepWorld          -> b3World_Step(dt, subSteps)
-writeResultsBack   -> only for objects that have >=1 dynamic point
+writeResultsBack   -> only for bodies in Box3D's move events (awake ones), grouped per object
 st->stamp = now
 publishEvents      -> TODO stub
 ```
@@ -221,8 +231,9 @@ Data names: world is attached as `"Box3DWorld"`, defaults as `"Box3DData"`; geom
 3. Reads `SIM_Box3DData` fallback settings if attached.
 4. **Pass 1 (parallel when >= 2048 points, `UTparallelFor`)**: per point compute body id
    (`id` attr else point number, which equals the index in a full point-range walk), key,
-   `getPackedInfo`, `readPointState`, and `active`. Reads only.
-5. **Pass 2 (serial, point order)**: duplicate `id` -> counted, first wins; non-finite `P`
+   `getPackedInfo`, `readPointState`, and `active`, into the persistent slot. Reads only (a slot
+   whose offset or key changed forgets its cached mirror entry).
+5. **Pass 2 (serial, point order)**: duplicate `id` (entry already has the current stamp) -> counted, first wins; non-finite `P`
    -> counted and treated as absent (existing body is removed later); unknown key ->
    `addPointBody` (also `readPackedPivot`); known key -> handle `active` flips
    (`setBodyType`) and external edits (`describeStateDifference` on pos/orient/lin/ang vs
@@ -322,28 +333,37 @@ compiled against the HDK; compare a rotated `bullet_primR` box against a Bullet 
   is transposed), so the two directions are guaranteed consistent without depending on the HDK's
   undocumented matrix convention.
 
-### writeResultsBack (per object with a dynamic point)
+### writeResultsBack (per object with a moved body)
 
-1. `getOrMakeWritableGeometry`: `SIM_DATA_GET<SIM_GeometryCopy>`; if the object's Geometry is
-   a different `SIM_Geometry` subclass (e.g. from RBD Packed Object), replace with a
+0. Pass 0 (serial): read Box3D's body move events (`moveEventCount` / `getMoveEvent`): one
+   contiguous array holding every AWAKE body with its final transform, cleared at the start of
+   every step. Sleeping bodies are absent: their points already hold what was written when they
+   fell asleep (that body's last event, `fellAsleep`, is still included, and Box3D reports zero
+   velocity for it). Bodies moved by the caller never appear. Each event's user data is the
+   body's mirror entry, which knows its point; velocity is fetched by handle (events carry none).
+   Static / kinematic entries are skipped. Items are grouped per object (stable sort only when
+   there is more than one object).
+1. Per object: `getOrMakeWritableGeometry`: `SIM_DATA_GET<SIM_GeometryCopy>`; if the object's
+   Geometry is a different `SIM_Geometry` subclass (e.g. from RBD Packed Object), replace with a
    `SIM_GeometryCopy` using `SIM_DATA_RETURN_EXISTING | SIM_DATA_ADOPT_EXISTING_ON_DELETE`.
    Fails with a warning if there is no Geometry.
 2. `ensureResultAttribs` creates `v`, `w` (float3, vector type) and `orient` (float4,
    quaternion type) if missing. A freshly created `orient` is initialised to identity for
    all points (default 0,0,0,0 is not a rotation).
-3. Pass 1 (serial): for each point with a dynamic mirror entry, fetch transform/velocity by
-   handle. A missing body is counted and skipped.
+3. Pass 1 (serial): `resolvePointOffsets`: the entry's stored point offset is verified against the
+   write geometry (in range, `id` / point index still matches) and looked up again by point id if
+   it is stale. Unresolvable bodies are counted and skipped (one warning).
 4. Pass 2 (parallel): `hardenAllPages()` on `P/orient/v/w` first (copy-on-write pages would
    race), write attributes, compute the new packed matrix (not written yet), then re-read the
-   point state so the mirror records what the geometry actually holds (P may be stored at lower
-   precision than Box3D; without this, our own write would look like an external edit next step).
-   `bumpDataId()` afterwards.
+   point state and store it in the (distinct) mirror entry, so the mirror records what the geometry
+   actually holds (P may be stored at lower precision than Box3D; without this, our own write would
+   look like an external edit next step). `bumpDataId()` afterwards.
 5. Pass 3 (serial): packed `setLocalTransform` + `transformDirty` (kept serial because the HDK
    does not document thread-safety).
-6. Pass 4 (serial): update the mirror.
 
 Static points are never written. Kinematic bodies are also not written back (the mirror's
-`dynamic` flag is true only for `Type::Dynamic`).
+`dynamic` flag is true only for `Type::Dynamic`). Of several points sharing an `id`, only the first
+(the one that owns the body) receives results.
 
 ### Threading
 
@@ -351,8 +371,8 @@ Static points are never written. Kinematic bodies are also not written back (the
   else the `threads` parm (1..32). Changing the count forces a world rebuild.
 * The plugin's own parallel loops use TBB through `UTparallelFor` with a 2048-point threshold
   (`kMinParallelPoints`). Rule of thumb in the code: parallel lambdas only read shared data or
-  write element `i` of their own output; the Box3D world, the mirror and `seen` are only touched
-  in serial passes.
+  write element `i` of their own output; the Box3D world and the mirror are only touched
+  in serial passes (the write-back's parallel pass also updates the mirror entry of its own body).
 * The shared-state mutex is held for the whole sync/step/write-back.
 
 ## Parameters
