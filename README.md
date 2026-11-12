@@ -62,8 +62,8 @@ Run `b3dop_core_smoke` from the build folder. It should print the Box3D version 
 
 In a DOP network, press **TAB** and add:
 
-- **Box3D Solver**: runs the simulation (gravity, substeps, threads, sleeping).
-- **Box3D Data**: default material and shape settings for an object (mass, friction, bounce, damping, gravity scale, default shape, and so on). Its parameters have the same names as the point attributes below, and a point attribute overrides the parameter of the same name.
+- **Box3D Solver**: runs the simulation.
+- **Box3D Data**: default material and shape settings for an object.
 
 Like Houdini's RBD solvers, the solver works on **points**: every point in an object's Geometry is one rigid body. Wire the object into the solver as you would with any other DOP solver.
 
