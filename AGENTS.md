@@ -309,7 +309,9 @@ assumptions are wrong, only that conversion and the `hasLength` line of `applyPr
 
 **Pieces and packed geometry.** Pieces are grouped by the primitive `name` attribute (unnamed share one; no primitives:
 one piece). `hullperconnected` (convex only): one hull per connected set, ignoring `name`. Packed fragments
-(`GU_PackedFragment`, Pack SOP with `name`) share one source detail; a fragment's points are one piece, keyed by
+(`GU_PackedFragment`, Pack SOP with `name`) share one source detail, read with `GU_PackedFragment::detailPtr()`
+(not `getPackedDetail()`, which is a different detail from the one `getPrimitiveRange()` indexes: using it gave
+fragments wrong or empty pieces, the empty ones falling back to a pscale-sized box); a fragment's points are one piece, keyed by
 its first primitive (GU_PackedFragment does not expose its attribute value; no two fragments share a primitive),
 pivot and scale. The pivot is `GEO_PrimPacked::getPivot`; the body origin is the point's `P`.
 Packed rotation is read from `getFullTransform4` (not `orient`) and written with `setLocalTransform`;
@@ -409,7 +411,7 @@ is a manual scene. No CI.
 ## HDK calls
 
 Checked against the HDK reference: `GU_PrimPacked::isPackedPrimitive`, `getPackedDetail`, `sharedImplementation`,
-`getFullTransform4`, `setLocalTransform`, `getPivot`, `transformDirty`; `GU_PackedFragment::getPrimitiveRange`;
+`getFullTransform4`, `setLocalTransform`, `getPivot`, `transformDirty`; `GU_PackedFragment::getPrimitiveRange`, `detailPtr`;
 `GU_DetailHandleAutoReadLock` / `SIM_GeometryAutoReadLock::getGdp` (const pointer), `SIM_GeometryAutoWriteLock::getGdp`
 (reference); `GA_Detail::getPrimitiveList()` / `GA_PrimitiveList::getDataId()` / `bumpDataId()`,
 `findPointAttribute` (const), `getP`, `getNumPointOffsets`, `getNumPrimitiveOffsets`, `pointVertex`,

@@ -481,15 +481,17 @@ struct ShapeSources
     // The primitive's pieces (by `name`, or connected sets), or null.
     const PieceGroup *innerPieces(const GU_PrimPacked &prim, bool connected)
     {
-        GU_ConstDetailHandle handle = prim.getPackedDetail();
+        // A packed fragment: read the WHOLE source detail (detailPtr), shared by every fragment
+        // of it, and only this fragment's own primitives in it. Not getPackedDetail(): for a
+        // fragment that is a different detail from the one getPrimitiveRange() indexes, so the
+        // range's offsets picked the wrong primitives or none (none: the pscale * scale box).
+        const GU_PackedFragment *frag = asFragment(prim);
+        GU_ConstDetailHandle handle = frag ? frag->detailPtr() : prim.getPackedDetail();
         GU_DetailHandleAutoReadLock lock(handle);
         const GU_Detail *gdp = lock.getGdp();
         if (!gdp)
             return nullptr;
 
-        // A packed fragment: the detail is the WHOLE source, shared by every
-        // fragment of it, so only this fragment's own primitives are used.
-        const GU_PackedFragment *frag = asFragment(prim);
         InnerEntry              *entry = nullptr;
         if (frag)
         {
