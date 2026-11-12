@@ -12,6 +12,7 @@
 #include <GU/GU_PackedFragment.h>
 #include <GU/GU_PackedImpl.h>
 #include <GU/GU_PrimPacked.h>
+#include <PRM/PRM_Conditional.h>   // PRM_Template.h only forward-declares PRM_Conditional
 #include <PRM/PRM_Include.h>
 #include <SIM/SIM_CacheOptions.h>
 #include <SIM/SIM_Data.h>
@@ -32,6 +33,7 @@
 #include <UT/UT_Quaternion.h>
 #include <UT/UT_Vector3.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -71,6 +73,11 @@ struct PointAttrs
     GA_ROHandleF  mass;        // float  -> density = mass / shape volume
     GA_ROHandleF  friction;    // float
     GA_ROHandleF  bounce;      // float  -> Box3D restitution
+    GA_ROHandleF  lineardamping;   // float
+    GA_ROHandleF  angulardamping;  // float
+    GA_ROHandleF  gravityscale;    // float
+    GA_ROHandleI  enablesleep;     // int    0 = never sleeps, else may sleep
+    GA_ROHandleI  isbullet;        // int    nonzero = continuous collision for fast bodies
     GA_ROHandleF  pscale;      // float  uniform size (default 1)
     GA_ROHandleV3 scale;       // vector non-uniform size (default 1 1 1)
     GA_ROHandleV3 v;           // vector linear velocity
@@ -86,6 +93,11 @@ struct PointAttrs
           mass(gdp, GA_ATTRIB_POINT, "mass"),
           friction(gdp, GA_ATTRIB_POINT, "friction"),
           bounce(gdp, GA_ATTRIB_POINT, "bounce"),
+          lineardamping(gdp, GA_ATTRIB_POINT, "lineardamping"),
+          angulardamping(gdp, GA_ATTRIB_POINT, "angulardamping"),
+          gravityscale(gdp, GA_ATTRIB_POINT, "gravityscale"),
+          enablesleep(gdp, GA_ATTRIB_POINT, "enablesleep"),
+          isbullet(gdp, GA_ATTRIB_POINT, "isbullet"),
           pscale(gdp, GA_ATTRIB_POINT, "pscale"),
           scale(gdp, GA_ATTRIB_POINT, "scale"),
           v(gdp, GA_ATTRIB_POINT, "v"),
@@ -769,8 +781,23 @@ addPointBody(b3dop::Box3DWorld &world, ShapeSources &src, const b3dop::BodySetti
 {
     b3dop::BodySettings b = node;
     b.type = active ? node.type : b3dop::BodySettings::Type::Static;     // `active` = 0 makes a point static
-    if (a.friction.isValid()) b.friction    = a.friction.get(off);
-    if (a.bounce.isValid())   b.restitution = a.bounce.get(off);
+    // Per-point overrides of the node's values. Box3D asserts on negative
+    // friction / restitution / damping, so clamp attribute values at 0 and
+    // ignore non-finite ones.
+    auto nonNegative = [](float v, float fallback) {
+        return std::isfinite(v) ? std::max(v, 0.0f) : fallback;
+    };
+    if (a.friction.isValid())       b.friction       = nonNegative(a.friction.get(off),       b.friction);
+    if (a.bounce.isValid())         b.restitution    = nonNegative(a.bounce.get(off),         b.restitution);
+    if (a.lineardamping.isValid())  b.linearDamping  = nonNegative(a.lineardamping.get(off),  b.linearDamping);
+    if (a.angulardamping.isValid()) b.angularDamping = nonNegative(a.angulardamping.get(off), b.angularDamping);
+    if (a.gravityscale.isValid())
+    {
+        const float g = a.gravityscale.get(off);
+        if (std::isfinite(g)) b.gravityScale = g;      // may be negative (floats upward)
+    }
+    if (a.enablesleep.isValid())    b.enableSleep    = a.enablesleep.get(off) != 0;
+    if (a.isbullet.isValid())       b.isBullet       = a.isbullet.get(off) != 0;
 
     // Shape: `bullet_georep` string attribute, else the node's default.
     b3dop::ShapeType type = node.defaultShape;
@@ -805,13 +832,17 @@ addPointBody(b3dop::Box3DWorld &world, ShapeSources &src, const b3dop::BodySetti
     }
 
     // mass -> density (Box3D computes mass from density * volume; for a
-    // compound the volume is the sum of the pieces).
+    // compound the volume is the sum of the pieces). The node's `mass` is the
+    // default for every body; the `mass` point attribute overrides it.
+    float mass = node.mass;
     if (a.mass.isValid())
     {
-        const float mass = float(a.mass.get(off));
-        if (mass > 0.0f && std::isfinite(mass) && shapes.totalVolume > 0.0f)
-            b.density = mass / shapes.totalVolume;
+        const float m = float(a.mass.get(off));
+        if (m > 0.0f && std::isfinite(m))
+            mass = m;
     }
+    if (mass > 0.0f && std::isfinite(mass) && shapes.totalVolume > 0.0f)
+        b.density = mass / shapes.totalVolume;
 
     if (!world.addBody(key, b, st.pos, st.rot))
         return false;

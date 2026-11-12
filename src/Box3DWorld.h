@@ -45,6 +45,10 @@ struct BodySettings
     enum class Type { Static, Kinematic, Dynamic };
 
     Type  type           = Type::Dynamic;
+    // `mass` is what the Houdini solver reads (node default, overridden by the
+    // `mass` point attribute): it sets density = mass / total shape volume.
+    // Box3DWorld itself only reads `density`.
+    float mass           = 1.0f;
     float density        = 1.0f;
     float friction       = 0.6f;
     float restitution    = 0.0f;

@@ -30,19 +30,24 @@ SIM_Box3DData::getDescription()
     // Box3D requires density, friction, restitution and damping to be >= 0
     // (B3_ASSERT in body.c / shape.c). Hard minimum 0; the slider max is only
     // a UI convenience, so larger values can still be typed in.
-    static PRM_Range theDensityRange    (PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 10);
+    //
+    // Parameter names match the point attribute that overrides each one
+    // (mass, friction, bounce, lineardamping, ...), so the node and the
+    // attributes read the same.
+    static PRM_Range theMassRange       (PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 10);
     static PRM_Range theFrictionRange   (PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 1);
-    static PRM_Range theRestitutionRange(PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 1);
+    static PRM_Range theBounceRange     (PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 1);
     static PRM_Range theDampingRange    (PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 10);
 
-    static PRM_Name    theDensityName("density", "Density");
-    static PRM_Default theDensityDefault(1.0);
+    // Mass of each body; the solver turns it into density = mass / shape volume.
+    static PRM_Name    theMassName("mass", "Mass");
+    static PRM_Default theMassDefault(1.0);
 
     static PRM_Name    theFrictionName("friction", "Friction");
     static PRM_Default theFrictionDefault(0.6);
 
-    static PRM_Name    theRestitutionName("restitution", "Restitution");
-    static PRM_Default theRestitutionDefault(0.0);
+    static PRM_Name    theBounceName("bounce", "Bounce");
+    static PRM_Default theBounceDefault(0.0);
 
     static PRM_Name    theLinDampName("lineardamping", "Linear Damping");
     static PRM_Default theLinDampDefault(0.0);
@@ -80,9 +85,9 @@ SIM_Box3DData::getDescription()
         PRM_Template(PRM_ORD,    1, &theShapeName,       &theShapeDefault, &theShapeMenu),
         PRM_Template(PRM_TOGGLE, 1, &theHullPerConnectedName, &theHullPerConnectedDefault),
         PRM_Template(PRM_ORD,    1, &theBodyTypeName,    &theBodyTypeDefault, &theBodyTypeMenu),
-        PRM_Template(PRM_FLT_J,  1, &theDensityName, &theDensityDefault, 0, &theDensityRange),
+        PRM_Template(PRM_FLT_J,  1, &theMassName, &theMassDefault, 0, &theMassRange),
         PRM_Template(PRM_FLT_J,  1, &theFrictionName, &theFrictionDefault, 0, &theFrictionRange),
-        PRM_Template(PRM_FLT_J,  1, &theRestitutionName, &theRestitutionDefault, 0, &theRestitutionRange),
+        PRM_Template(PRM_FLT_J,  1, &theBounceName, &theBounceDefault, 0, &theBounceRange),
         PRM_Template(PRM_FLT_J,  1, &theLinDampName, &theLinDampDefault, 0, &theDampingRange),
         PRM_Template(PRM_FLT_J,  1, &theAngDampName, &theAngDampDefault, 0, &theDampingRange),
         PRM_Template(PRM_FLT_J,  1, &theGravScaleName,   &theGravScaleDefault),
@@ -114,9 +119,9 @@ SIM_Box3DData::toBodySettings() const
         default: s.type = b3dop::BodySettings::Type::Dynamic;   break;
     }
 
-    s.density        = static_cast<float>(getDensity());
+    s.mass           = static_cast<float>(getMass());
     s.friction       = static_cast<float>(getFriction());
-    s.restitution    = static_cast<float>(getRestitution());
+    s.restitution    = static_cast<float>(getBounce());
     s.linearDamping  = static_cast<float>(getLinearDamping());
     s.angularDamping = static_cast<float>(getAngularDamping());
     s.gravityScale   = static_cast<float>(getGravityScale());

@@ -3,8 +3,10 @@
 // Box3D Data: default Box3D settings for every point of a DOP object (like
 // Bullet Data). Attach to a DOP object (the registered DOP node does this).
 //
-// Per-point attributes (bullet_georep, friction, bounce, mass, active, ...) override
+// Per-point attributes (bullet_georep, mass, friction, bounce, lineardamping,
+// angulardamping, gravityscale, enablesleep, isbullet, active, ...) override
 // these; this node is only the fallback for points that do not have them.
+// The parameter names here match those attribute names.
 //
 // Mirrors b3dop::BodySettings, which mirrors the relevant parts of b3BodyDef
 // and b3ShapeDef.
@@ -21,9 +23,10 @@ class SIM_Box3DData : public SIM_Data, public SIM_OptionsUser
 public:
     // Generates getXxx()/setXxx() backed by the option names.
     GETSET_DATA_FUNCS_I("bodytype",       BodyType);        // 0 static, 1 kinematic, 2 dynamic
-    GETSET_DATA_FUNCS_F("density",        Density);
+    // Option names match the point attributes that override them.
+    GETSET_DATA_FUNCS_F("mass",           Mass);            // per body; density = mass / shape volume
     GETSET_DATA_FUNCS_F("friction",       Friction);
-    GETSET_DATA_FUNCS_F("restitution",    Restitution);
+    GETSET_DATA_FUNCS_F("bounce",         Bounce);          // Box3D restitution
     GETSET_DATA_FUNCS_F("lineardamping",  LinearDamping);
     GETSET_DATA_FUNCS_F("angulardamping", AngularDamping);
     GETSET_DATA_FUNCS_F("gravityscale",   GravityScale);

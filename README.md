@@ -1,13 +1,9 @@
 # Houdini Box3D
 
-A Houdini DOP solver built on [Box3D](https://github.com/erincatto/box3d), one of the fastest rigid body engines available.
-
-The goal of this project is to keep Box3D's great performance preserved inside Houdini.
+A Houdini DOP solver built on [Box3D](https://github.com/erincatto/box3d), one of the fastest rigid body engines available. The goal of this project is to keep as much of Box3D's performance as possible inside Houdini.
 
 > [!CAUTION]
-> This is heavily vibe coded, as it was made for fun! This isn't normally how I develop software.
-> 
-> I've made many design and optimization decisions based on my own knowledge, but I'm still learning the HDK.
+> This is heavily vibe coded, as I'm still learning the HDK! This isn't normally how I develop software.
 
 ## Building
 
@@ -63,7 +59,7 @@ Run `b3dop_core_smoke` from the build folder. It should print the Box3D version 
 In a DOP network, press **TAB** and add:
 
 - **Box3D Solver**: runs the simulation (gravity, substeps, threads, sleeping).
-- **Box3D Data**: default material and shape settings for an object (friction, density, damping, default shape, and so on).
+- **Box3D Data**: default material and shape settings for an object (mass, friction, bounce, damping, gravity scale, default shape, and so on). Its parameters have the same names as the point attributes below, and a point attribute overrides the parameter of the same name.
 
 Like Houdini's RBD solvers, the solver works on **points**: every point in an object's Geometry is one rigid body. Wire the object into the solver as you would with any other DOP solver.
 
@@ -77,9 +73,14 @@ All attributes are optional except `P`. If one is missing, the value from the Bo
 | `orient` | quaternion | Rotation |
 | `v` | vector | Linear velocity |
 | `w` | vector | Angular velocity (radians/s) |
-| `mass` | float | Mass of the body |
+| `mass` | float | Mass of the body (the solver derives density from it and the shape volume) |
 | `friction` | float | Surface friction |
-| `bounce` | float | Bounciness |
+| `bounce` | float | Bounciness (Box3D restitution) |
+| `lineardamping` | float | Linear damping (0 or more) |
+| `angulardamping` | float | Angular damping (0 or more) |
+| `gravityscale` | float | Multiplies gravity for this body; negative floats upward |
+| `enablesleep` | int | `0` = this body never sleeps |
+| `isbullet` | int | Nonzero = continuous collision for fast bodies |
 | `active` | int | `0` = static, anything else = dynamic |
 | `bullet_georep` | string | Collision shape (see below) |
 | `pscale` / `scale` | float / vector | Size of the shape |
@@ -104,7 +105,8 @@ Convex and concave shapes need **packed primitives** (one point plus one packed 
 
 ### Things to know
 
-- Changes to shape, size, mass, friction or bounce on a point that already exists are not picked up until the simulation is reset. Position, rotation, velocity and `active` changes are.
+- Negative `friction`, `bounce` and damping values are clamped to 0 (Box3D does not accept them).
+- Changes to shape, size, or any of the material and body attributes above (`mass`, `friction`, `bounce`, damping, `gravityscale`, `enablesleep`, `isbullet`) on a point that already exists are not picked up until the simulation is reset. Position, rotation, velocity and `active` changes are.
 - Triangle-mesh colliders, joints/constraints and collision events are not supported yet.
 
 ## Troubleshooting

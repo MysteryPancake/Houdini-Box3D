@@ -99,8 +99,9 @@ body and need density/friction/restitution), the hull cache, and `bodyHulls`
 pool, sized at creation, max 32; it does not use Houdini's TBB), `enableSleep`,
 `enableContinuous`.
 
-`BodySettings`: type (Static/Kinematic/Dynamic), density, friction, restitution,
-linear/angular damping, gravity scale, enableSleep, isBullet, `defaultShape`,
+`BodySettings`: type (Static/Kinematic/Dynamic), mass (read by the Houdini solver only: it
+becomes `density = mass / volume`), density (what Box3DWorld uses), friction, restitution
+(the `bounce` attribute / node parameter), linear/angular damping, gravity scale, enableSleep, isBullet, `defaultShape`,
 `hullPerConnectedSet`. A body's effective `enableSleep` is `body && world`.
 
 Shapes:
@@ -228,15 +229,16 @@ Data names: world is attached as `"Box3DWorld"`, defaults as `"Box3DData"`; geom
    `setVelocityByHandle`, refresh mirror).
 
 Edits that are **not** picked up on an existing body: `bullet_georep`, `pscale`, `scale`,
-`mass`, `friction`, `bounce`, Box3D Data node settings (damping, gravity scale, bullet,
-sleep, default shape, density...), and solver gravity/substeps/sleep. These are applied
+`mass`, `friction`, `bounce`, the damping / gravity scale / bullet / sleep attributes, Box3D
+Data node settings (mass, default shape...), and solver gravity/substeps/sleep. These are applied
 at body/world creation; a rebuild (Reset Simulation or thread-count change) re-reads them.
 (`WorldSettings` is stored at creation and `step` uses the stored `subSteps`.)
 
 ### addPointBody / buildShapes
 
 * Body type = node type, forced to Static if `active == 0`.
-* `friction` / `bounce` attributes override node values. Shape type = `bullet_georep` string
+* `mass`, `friction`, `bounce`, `lineardamping`, `angulardamping`, `gravityscale`,
+  `enablesleep`, `isbullet` attributes override node values. Shape type = `bullet_georep` string
   via `parseShapeType`, else node `defaultShape`.
 * `none` -> static body with no shapes (the only legal shapeless body).
 * Size from `pscale` (default 1) and `scale` (default 1,1,1).
@@ -256,8 +258,9 @@ at body/world creation; a rebuild (Reset Simulation or thread-count change) re-r
      "packed geometry is empty").
 * Notes are logged and aggregated by text into `SyncCounts::fallbacks`, then surfaced as
   one warning per kind with a count on the first frame the body is created.
-* Mass: `density = mass / totalVolume` when `mass` is valid, positive and finite; otherwise
-  the node density.
+* Mass: `density = mass / totalVolume`, where `mass` is the point attribute if valid, positive
+  and finite, otherwise the Box3D Data node's `mass`. If neither is usable (or the volume is 0)
+  `BodySettings::density` keeps its default (1).
 * After `addBody`, shapes are added; if none could be added the body is removed again
   (never leave a shapeless body). Initial `v`/`w` are applied last (no-op for static).
 
@@ -327,17 +330,23 @@ Solver (`SIM_SolverBox3D`, all read when the world is created): `gravity` (v3, d
 
 Box3D Data (`SIM_Box3DData`, per object, read when a body is created):
 `defaultshape` (0 box, 1 sphere, 2 convex hull, 3 concave/compound, 4 capsule, 5 none),
-`hullperconnected`, `bodytype` (0 static, 1 kinematic, 2 dynamic), `density` (1),
-`friction` (0.6), `restitution` (0), `lineardamping`, `angulardamping`, `gravityscale` (1),
-`enablesleep`, `isbullet`. Box3D asserts on negative density/friction/restitution/damping, so
-these have hard minimum 0. `SIM_Box3DData::toBodySettings()` maps to `b3dop::BodySettings`.
+`hullperconnected`, `bodytype` (0 static, 1 kinematic, 2 dynamic), `mass` (1, per body:
+density = mass / shape volume), `friction` (0.6), `bounce` (0, = Box3D restitution),
+`lineardamping`, `angulardamping`, `gravityscale` (1), `enablesleep`, `isbullet`. Parameter
+names match the point attributes that override them. Box3D asserts on negative
+mass/friction/bounce/damping, so these have hard minimum 0.
+`SIM_Box3DData::toBodySettings()` maps to `b3dop::BodySettings` (`mass`, `restitution`, ...).
 The Box3D Data node's data name on the object is `Box3DData`.
 
 ## Point attributes consumed (names follow Houdini RBD)
 
 `P` required. `orient` (quat, ignored on input for packed points), `v`, `w` (rad/s), `mass`
-(density = mass/volume), `friction`, `bounce` (restitution), `active` (0 static, else
-dynamic), `bullet_georep` (shape string), `pscale`, `scale`, `id`. Identity is
+(density = mass/volume), `friction`, `bounce` (restitution), `lineardamping`, `angulardamping`,
+`gravityscale` (floats), `enablesleep`, `isbullet` (ints, 0 = off), `active` (0 static, else
+dynamic), `bullet_georep` (shape string), `pscale`, `scale`, `id`. Each of `mass`, `friction`,
+`bounce`, `lineardamping`, `angulardamping`, `gravityscale`, `enablesleep`, `isbullet`
+overrides the Box3D Data parameter of the same name; negative / non-finite values are
+clamped to 0 / ignored (gravityscale may be negative). Identity is
 `(object id, id attribute or point number)`; use `id` if points can be deleted/reordered.
 Written back: `P`, `orient`, `v`, `w` on dynamic points (and packed primitive transform).
 
