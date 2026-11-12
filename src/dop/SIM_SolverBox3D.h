@@ -36,7 +36,6 @@ public:
     GETSET_DATA_FUNCS_F("contactrecycledistance", ContactRecycleDistance);  // 0 = no contact recycling
     GETSET_DATA_FUNCS_F("maxlinearspeed",   MaxLinearSpeed);
     GETSET_DATA_FUNCS_B("enablecontinuous", EnableContinuous);
-    GETSET_DATA_FUNCS_B("enablespeculative", EnableSpeculative);
     GETSET_DATA_FUNCS_I("restitutioniterations", RestitutionIterations);
     GETSET_DATA_FUNCS_B("restitutionpropagation", RestitutionPropagation);
     GETSET_DATA_FUNCS_F("isotropicinertia", IsotropicInertia);

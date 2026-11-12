@@ -73,7 +73,6 @@ struct WorldSettings
                                   // run on the host's pool; without one, on threads Box3D starts for this world
     bool  enableSleep   = true;
     bool  enableContinuous = true;    // continuous collision vs static bodies (fast objects: vs moving ones too)
-    bool  enableSpeculative = true;   // off only to reduce ghost collisions
     float contactStiffness  = 30.0f;  // contact stiffness in Hz (cycles per second)
     float contactDampingRatio = 10.0f;    // contact damping (non-dimensional)
     float contactPushSpeed  = 3.0f;   // max speed overlapping shapes are pushed apart (m/s)

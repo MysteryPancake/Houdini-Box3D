@@ -139,9 +139,9 @@ point from this body into the other). They share a `thread_local` shape-id scrat
 accepts all of them on a disabled body (proxies are only touched when they exist).
 
 **World settings.** `WorldSettings` (Box3D's defaults, except standard gravity): gravity, `subSteps`, `workerCount`,
-`enableSleep`, `enableContinuous`, `enableSpeculative`, `contactStiffness` (Hz), `contactDampingRatio`, `contactPushSpeed`,
+`enableSleep`, `enableContinuous`, `contactStiffness` (Hz), `contactDampingRatio`, `contactPushSpeed`,
 `restitutionThreshold`, `maxLinearSpeed`. `applyTuning` pushes changes into the live world (`b3World_SetGravity`,
-`EnableSleeping`, `EnableContinuous`, `EnableSpeculative`, `SetContactTuning`, `SetRestitutionThreshold`,
+`EnableSleeping`, `EnableContinuous`, `SetContactTuning`, `SetRestitutionThreshold`,
 `SetMaximumLinearSpeed`); `workerCount` (parallel tasks per step) is fixed at creation and needs a new world.
 
 **Collision filtering.** Box3D's own `b3Filter`, nothing custom. `CollisionFilter` (`Box3DWorld.h`: category, mask,
@@ -390,7 +390,7 @@ equal to what its body was built with.
   `WorldSettings::contactRecycleDistance` (solver `contactrecycledistance`, default 0.05 = Box3D's `10 * B3_LINEAR_SLOP`
   at its default length units; 0 = off). It is not in `b3WorldDef`, so `create` sets it after `b3CreateWorld`, and
   `applyTuning` pushes changes through `b3World_SetContactRecycleDistance` (non-finite: ignored, previous kept, like
-  gravity; negative acts as 0). A pair recycles only if both bodies have the flag and speculative contacts are on
+  gravity; negative acts as 0). A pair recycles only if both bodies have the flag (and both shapes keep Box3D's speculative flag, always on here)
   (`contact.c`). Box3D copies the body flag into each contact's `b3_contactRecycleFlag` when the contact is created, and
   `b3Body_EnableContactRecycling` only changes the body, so existing contacts keep the old behaviour.
   `setContactRecyclingByHandle` therefore also rebuilds them for an awake dynamic body: `b3Body_Disable` + `b3Body_Enable`
@@ -536,7 +536,7 @@ Solver (read every step; only the thread count rebuilds the world): `gravity` (0
 default 4), `autothreads` (off), `threads` (1..32, default 8 = `b3dop::kDefaultWorkerCount`, also `WorldSettings`'
 default), `enablesleep`, `timescale` (1), `enableaging` (off), and
 Box3D's tuning with Box3D's defaults: `contactstiffness` (30 Hz), `contactdamping` (10), `contactpushspeed` (3),
-`bouncethreshold` (1), `contactrecycledistance` (0.05), `maxlinearspeed` (400), `enablecontinuous` (on), `enablespeculative` (on). Force DOPs:
+`bouncethreshold` (1), `contactrecycledistance` (0.05), `maxlinearspeed` (400), `enablecontinuous` (on). Force DOPs:
 `useforces` (on), `forceswake` (off, disabled while `useforces` is off).
 
 Box3D Data (per object): `defaultshape` (0 box, 1 sphere, 2 convex hull, 3 concave, 4 capsule, 5 none), `autofit` (on),

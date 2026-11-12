@@ -520,7 +520,6 @@ Box3DWorld::create(const WorldSettings &s, std::shared_ptr<TaskRunner> tasks)
         b3World_SetContactRecycleDistance(myImpl->worldId, std::max(0.0f, s.contactRecycleDistance));
     else
         myImpl->settings.contactRecycleDistance = WorldSettings().contactRecycleDistance;
-    b3World_EnableSpeculative(myImpl->worldId, s.enableSpeculative);
     b3World_EnableWarmStarting(myImpl->worldId, s.warmStarting);
     myImpl->hitPairs.clear();
     return true;
@@ -1309,8 +1308,6 @@ Box3DWorld::applyTuning(const WorldSettings &s)
         b3World_EnableSleeping(w, next.enableSleep);
     if (next.enableContinuous != cur.enableContinuous)
         b3World_EnableContinuous(w, next.enableContinuous);
-    if (next.enableSpeculative != cur.enableSpeculative)
-        b3World_EnableSpeculative(w, next.enableSpeculative);
     if (next.contactStiffness != cur.contactStiffness || next.contactDampingRatio != cur.contactDampingRatio ||
         next.contactPushSpeed != cur.contactPushSpeed)
         b3World_SetContactTuning(w, std::max(0.0f, next.contactStiffness), std::max(0.0f, next.contactDampingRatio),

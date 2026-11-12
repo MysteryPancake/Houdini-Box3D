@@ -2738,8 +2738,6 @@ SIM_SolverBox3D::getDescription()
     static PRM_Range   theMaxSpeedRange(PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 1000);
     static PRM_Name    theContinuousName("enablecontinuous", "Continuous Collision");
     static PRM_Default theContinuousDefault(1);
-    static PRM_Name    theSpeculativeName("enablespeculative", "Speculative Contacts");
-    static PRM_Default theSpeculativeDefault(1);
 
     static PRM_Name    theRestIterName("restitutioniterations", "Bounce Iterations");
     static PRM_Default theRestIterDefault(2);
@@ -2819,8 +2817,6 @@ SIM_SolverBox3D::getDescription()
                      "How fast overlapping pieces are pushed apart. Lower it if pieces that start out overlapping fly apart."),
         PRM_Template(PRM_TOGGLE, 1, &theContinuousName, &theContinuousDefault, 0, 0, 0, 0, 1,
                      "Stop fast bodies passing through static ones (and, for Fast Object bodies, moving ones)."),
-        PRM_Template(PRM_TOGGLE, 1, &theSpeculativeName, &theSpeculativeDefault, 0, 0, 0, 0, 1,
-                     "Create contacts just before shapes touch. Leave on unless you see bodies catch on invisible edges."),
         // --- Bounce & Friction ---
         PRM_Template(PRM_FLT_J,  1, &theBounceThresholdName, &theBounceThresholdDefault, 0, &theBounceThresholdRange, 0, 0, 1,
                      "Collisions slower than this speed don't bounce, so resting pieces settle instead of jittering."),
@@ -2890,7 +2886,6 @@ SIM_SolverBox3D::currentWorldSettings() const
     s.contactRecycleDistance = float(getContactRecycleDistance());
     s.maxLinearSpeed   = float(getMaxLinearSpeed());
     s.enableContinuous = getEnableContinuous();
-    s.enableSpeculative = getEnableSpeculative();
     s.restitutionIterations  = int(getRestitutionIterations());
     s.restitutionPropagation = getRestitutionPropagation();
     s.isotropicInertiaTolerance = float(getIsotropicInertia());
