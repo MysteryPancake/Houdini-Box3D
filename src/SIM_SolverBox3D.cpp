@@ -3,6 +3,7 @@
 #include "SIM_Box3DWorld.h"
 #include "SIM_Box3DData.h"
 #include "Box3DDebug.h"
+#include "Box3DAffectors.h"
 
 #include <initializer_list>
 #include <vector>
@@ -2409,7 +2410,60 @@ applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects, bool wake)
         of.object = obj;
         forcesOf.emplace(obj->getObjectId(), std::move(of));
     }
-    if (forcesOf.empty())
+
+    // `force` / `torque` point attributes (what POP Force and other POP / SOP nodes write): read
+    // per point, applied like a force DOP's result, then cleared so they do not pile up.
+    // Indexed by point offset; objects with no non-zero value have no entry.
+    struct PointForces
+    {
+        std::vector<UT_Vector3> force, torque;
+        bool                    any = false;
+    };
+    std::unordered_map<int, PointForces> popOf;
+    for (exint i = 0; i < objects.entries(); ++i)
+    {
+        const SIM_Object   *obj = objects(i);
+        const SIM_Geometry *geo = SIM_DATA_GETCONST(*obj, SIM_GEOMETRY_DATANAME, SIM_Geometry);
+        if (!geo)
+            continue;
+        SIM_GeometryAutoReadLock lock(geo);
+        const GU_Detail *gdp = lock.getGdp();
+        if (!gdp)
+            continue;
+        const GA_ROHandleV3 fh(gdp, GA_ATTRIB_POINT, "force");
+        const GA_ROHandleV3 th(gdp, GA_ATTRIB_POINT, "torque");
+        if (!fh.isValid() && !th.isValid())
+            continue;
+        PointForces pf;
+        const size_t n = size_t(gdp->getNumPointOffsets());
+        pf.force.assign(fh.isValid() ? n : 0, UT_Vector3(0.0f, 0.0f, 0.0f));
+        pf.torque.assign(th.isValid() ? n : 0, UT_Vector3(0.0f, 0.0f, 0.0f));
+        for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it)
+        {
+            const GA_Offset off = *it;
+            if (fh.isValid())
+            {
+                const UT_Vector3 v = fh.get(off);
+                if (v.x() != 0.0f || v.y() != 0.0f || v.z() != 0.0f)
+                {
+                    pf.force[size_t(off)] = v;
+                    pf.any = true;
+                }
+            }
+            if (th.isValid())
+            {
+                const UT_Vector3 v = th.get(off);
+                if (v.x() != 0.0f || v.y() != 0.0f || v.z() != 0.0f)
+                {
+                    pf.torque[size_t(off)] = v;
+                    pf.any = true;
+                }
+            }
+        }
+        if (pf.any)
+            popOf.emplace(obj->getObjectId(), std::move(pf));
+    }
+    if (forcesOf.empty() && popOf.empty())
         return stats;
 
     b3dop::Box3DWorld &world = st.world;
@@ -2421,7 +2475,8 @@ applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects, bool wake)
         if (!e.handle || !e.dynamic || e.props.ignored)
             continue;
         const auto of = forcesOf.find(e.objectId);
-        if (of == forcesOf.end() || !st.isLive(e))
+        const auto pp = popOf.find(e.objectId);
+        if ((of == forcesOf.end() && pp == popOf.end()) || !st.isLive(e))
             continue;
         if (!wake && !world.isAwakeByHandle(e.handle))
             continue;                       // Box3D would ignore the force anyway
@@ -2441,13 +2496,22 @@ applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects, bool wake)
 
         UT_Vector3 force(0.0f, 0.0f, 0.0f);
         UT_Vector3 torque(0.0f, 0.0f, 0.0f);
-        for (const SIM_Force *sf : of->second.forces)
+        if (of != forcesOf.end())
+            for (const SIM_Force *sf : of->second.forces)
+            {
+                UT_Vector3 f(0.0f, 0.0f, 0.0f);
+                UT_Vector3 t(0.0f, 0.0f, 0.0f);
+                sf->getForce(*of->second.object, pos, vel, angvel, mass, f, t);
+                force  += f;
+                torque += t;
+            }
+        if (pp != popOf.end() && e.pointOff >= 0)
         {
-            UT_Vector3 f(0.0f, 0.0f, 0.0f);
-            UT_Vector3 t(0.0f, 0.0f, 0.0f);
-            sf->getForce(*of->second.object, pos, vel, angvel, mass, f, t);
-            force  += f;
-            torque += t;
+            const size_t po = size_t(e.pointOff);
+            if (po < pp->second.force.size())
+                force += pp->second.force[po];
+            if (po < pp->second.torque.size())
+                torque += pp->second.torque[po];
         }
 
         const float fv[3] = { float(force.x()),  float(force.y()),  float(force.z()) };
@@ -2465,6 +2529,40 @@ applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects, bool wake)
         world.applyForceByHandle(e.handle, fv, tv, wake);
         ++stats.bodies;
     }
+
+    // Clear what was read (every body, applied or not), or a POP Force that only adds to `force`
+    // would pile up from step to step. Locks are released before the fingerprints are redone.
+    std::vector<const SIM_Object *> cleared;
+    for (auto &kv : popOf)
+    {
+        SIM_Object *obj = findObjectById(objects, kv.first);
+        if (!obj)
+            continue;
+        SIM_GeometryCopy *geo = getOrMakeWritableGeometry(*obj);
+        if (!geo)
+            continue;
+        {
+            SIM_GeometryAutoWriteLock lock(geo);
+            GU_Detail *gdp = &lock.getGdp();
+            if (!gdp)
+                continue;
+            GA_RWHandleV3 fh(gdp, GA_ATTRIB_POINT, "force");
+            GA_RWHandleV3 th(gdp, GA_ATTRIB_POINT, "torque");
+            const PointForces &pf = kv.second;
+            const GA_Offset    nOff = gdp->getNumPointOffsets();
+            for (size_t i = 0; i < pf.force.size() && GA_Offset(i) < nOff; ++i)
+                if (fh.isValid() && (pf.force[i].x() != 0.0f || pf.force[i].y() != 0.0f || pf.force[i].z() != 0.0f))
+                    fh.set(GA_Offset(i), UT_Vector3(0.0f, 0.0f, 0.0f));
+            for (size_t i = 0; i < pf.torque.size() && GA_Offset(i) < nOff; ++i)
+                if (th.isValid() && (pf.torque[i].x() != 0.0f || pf.torque[i].y() != 0.0f || pf.torque[i].z() != 0.0f))
+                    th.set(GA_Offset(i), UT_Vector3(0.0f, 0.0f, 0.0f));
+            if (fh.isValid()) fh.getAttribute()->bumpDataId();
+            if (th.isValid()) th.getAttribute()->bumpDataId();
+        }
+        cleared.push_back(obj);
+    }
+    for (const SIM_Object *obj : cleared)
+        recordFingerprintAfterWrite(st, *obj);
     return stats;
 }
 } // namespace
@@ -2768,7 +2866,6 @@ SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
             addError(objects(0), SIM_MESSAGE,
                      ("Box3D: " + std::to_string(fs.nonFinite) + " body(ies) got a non-finite force or torque "
                       "from a Force DOP; it was ignored").c_str(), UT_ERROR_WARNING);
-        B3D_LOG_VERBOSE("  forces: %d bodies pushed", fs.bodies);
     }
 
     // From here the step runs to the end (the write-back is quick), so the cached result is
@@ -2864,6 +2961,19 @@ SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
             return false;       // half synced: the caller discards the world
     }
     st->world.finishFilterProfiles();       // before the step
+
+    // Static colliders from affector objects (Static Object DOP etc. with a collision relationship).
+    Box3DAffectorCounts affectorCounts;
+    syncAffectorBodies(*st, objects, affectorCounts);
+    if (affectorCounts.failed || affectorCounts.noGeo)
+        addError(objects(0), SIM_MESSAGE,
+                 ("Box3D: " + std::to_string(affectorCounts.failed + affectorCounts.noGeo) +
+                  " affector object(s) have no usable collision geometry (they need polygons) and are ignored")
+                     .c_str(),
+                 UT_ERROR_WARNING);
+    if (affectorCounts.added || affectorCounts.removed || affectorCounts.moved)
+        B3D_LOG("  affectors: %d, +%d built, %d moved, -%d removed, %d baked", affectorCounts.total,
+                affectorCounts.added, affectorCounts.moved, affectorCounts.removed, affectorCounts.baked);
 
     // Remove bodies whose point (or object) is gone: the unstamped entries.
     int removed = 0;

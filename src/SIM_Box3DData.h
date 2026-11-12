@@ -30,6 +30,7 @@ public:
     GETSET_DATA_FUNCS_I("defaultshape",   DefaultShape);    // 0 box, 1 sphere, 2 convexhull, 3 concave/compound, 4 capsule, 5 none
     GETSET_DATA_FUNCS_B("hullperconnected", HullPerConnected);
     GETSET_DATA_FUNCS_B("autofit",        AutoFit);         // point attribute: bullet_autofit
+    GETSET_DATA_FUNCS_B("flipwinding",    FlipWinding);     // affector (Static Object) meshes only
 
     b3dop::BodySettings toBodySettings() const;
 

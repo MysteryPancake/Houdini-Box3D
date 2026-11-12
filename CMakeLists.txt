@@ -59,6 +59,9 @@ target_link_libraries(b3dop_core_smoke PRIVATE b3dop_core)
 add_executable(b3dop_core_physics tests/core_physics.cpp)
 target_link_libraries(b3dop_core_physics PRIVATE b3dop_core)
 
+add_executable(b3dop_core_mesh tests/core_mesh.cpp)
+target_link_libraries(b3dop_core_mesh PRIVATE b3dop_core)
+
 add_executable(b3dop_core_threads tests/core_threads.cpp)
 target_link_libraries(b3dop_core_threads PRIVATE b3dop_core)
 
@@ -90,6 +93,9 @@ add_library(Box3DDOP SHARED
     src/SIM_Box3DData.cpp
     src/SIM_SolverBox3D.h
     src/SIM_SolverBox3D.cpp
+    src/Box3DAffectors.h
+    src/Box3DAffectors.cpp
+    src/Box3DAffectorMath.h
     src/SIM_Box3DRegister.cpp
     src/Box3DDebug.h
     src/Box3DHoudiniTasks.h

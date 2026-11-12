@@ -54,6 +54,26 @@ struct Box3DWorld::Impl
         }
         bodyHulls[body].push_back(hull);
     }
+    // Triangle meshes for static colliders. Box3D keeps a pointer to the b3MeshData (it does not
+    // clone it), so we own it: freed after its body is destroyed, or after the world.
+    std::unordered_map<BodyHandle, std::vector<b3MeshData *>> bodyMeshes;
+
+    void freeBodyMeshes(BodyHandle body)
+    {
+        auto it = bodyMeshes.find(body);
+        if (it == bodyMeshes.end())
+            return;
+        for (b3MeshData *m : it->second)
+            b3DestroyMesh(m);
+        bodyMeshes.erase(it);
+    }
+    void destroyAllMeshes()
+    {
+        for (auto &kv : bodyMeshes)
+            for (b3MeshData *m : kv.second)
+                b3DestroyMesh(m);
+        bodyMeshes.clear();
+    }
     void destroyAllHulls()
     {
         for (auto &kv : hulls)
@@ -324,6 +344,7 @@ Box3DWorld::destroy()
     myImpl->bodies.clear();
     myImpl->bodySettings.clear();
     myImpl->destroyAllHulls();      // after the world: Box3D holds its own clones
+    myImpl->destroyAllMeshes();     // after the world: its shapes pointed at these
 }
 
 bool
@@ -404,6 +425,7 @@ Box3DWorld::destroyBody(BodyHandle h)
         b3DestroyBody(id);
         --myImpl->liveBodies;
     }
+    myImpl->freeBodyMeshes(h);          // after the body: its shapes pointed at them
 
     auto bh = myImpl->bodyHulls.find(h);
     if (bh != myImpl->bodyHulls.end())
@@ -440,6 +462,57 @@ Box3DWorld::createHullShape(BodyHandle h, const BodySettings &body, HullId hullI
 
     ++hit->second.refs;
     myImpl->noteHullUse(h, hullId);
+    return true;
+}
+
+bool
+Box3DWorld::createMeshShape(BodyHandle h, const BodySettings &body, const float *xyz, int vertexCount,
+                            const int32_t *triangles, int triangleCount, float weldTolerance)
+{
+    if (!h || !xyz || !triangles || vertexCount < 3 || triangleCount < 1)
+        return false;
+    // Static bodies only (a triangle mesh has no volume or mass): refuse anything else.
+    if (b3Body_GetType(unpackBody(h)) != b3_staticBody)
+        return false;
+
+    // Reject bad input here: Box3D asserts on non-finite vertices or out-of-range indices.
+    std::vector<b3Vec3> verts;
+    verts.resize(size_t(vertexCount));
+    for (int i = 0; i < vertexCount; ++i)
+    {
+        if (!finite3(xyz + 3 * i))
+            return false;
+        verts[size_t(i)] = makeVec3(xyz + 3 * i);
+    }
+    std::vector<int32_t> idx;
+    idx.assign(triangles, triangles + 3 * size_t(triangleCount));
+    for (int32_t v : idx)
+        if (v < 0 || v >= vertexCount)
+            return false;
+
+    b3MeshDef def = {};
+    def.vertices      = verts.data();
+    def.stride        = 0;
+    def.indices       = idx.data();
+    def.materialIndices = nullptr;
+    def.vertexCount   = vertexCount;
+    def.triangleCount = triangleCount;
+    def.weldVertices  = weldTolerance > 0.0f;
+    def.weldTolerance = weldTolerance > 0.0f ? weldTolerance : 0.0f;
+    def.identifyEdges = true;           // smooth rolling over triangle edges (less ghost collisions)
+
+    b3MeshData *mesh = b3CreateMesh(&def, nullptr, 0);
+    if (!mesh)
+        return false;
+
+    const b3ShapeDef sdef = shapeDefFor(body, false);
+    const b3ShapeId shape = b3CreateMeshShape(unpackBody(h), &sdef, mesh, b3Vec3_one);
+    if (B3_IS_NULL(shape))
+    {
+        b3DestroyMesh(mesh);
+        return false;
+    }
+    myImpl->bodyMeshes[h].push_back(mesh);
     return true;
 }
 
@@ -864,6 +937,7 @@ Box3DWorld::destroyShapesByHandle(BodyHandle h)
     const int n = bodyShapes(id, tShapes);
     for (int i = 0; i < n; ++i)
         b3DestroyShape(tShapes[size_t(i)], false);      // the caller applies the mass afterwards
+    myImpl->freeBodyMeshes(h);
 
     auto bh = myImpl->bodyHulls.find(h);
     if (bh != myImpl->bodyHulls.end())

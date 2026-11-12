@@ -113,6 +113,7 @@ struct BodySettings
     ShapeType defaultShape = ShapeType::Box;     // when `bullet_georep` is missing or unknown
     bool      autoFit = true;                    // box / sphere / capsule fit the packed geometry's bounds
     bool      hullPerConnectedSet = false;       // convex: one hull per set of connected primitives
+    bool      flipMeshWinding = false;           // affector (Static Object) meshes: use the opposite triangle winding
 };
 
 class Box3DWorld
@@ -149,6 +150,12 @@ public:
                            bool updateMass = true);
     bool       createHullShape(BodyHandle h, const BodySettings &body, HullId hull,
                                bool updateMass = true);
+    // A static triangle mesh (xyz: body-local vertices, triangles: 3 indices each, CCW). Static bodies
+    // only; false for a non-static body, fewer than 3 vertices or 1 triangle, non-finite vertices or
+    // out-of-range indices. weldTolerance > 0 welds nearby vertices. The mesh belongs to the body: it is
+    // freed with the body or by destroyShapesByHandle. Triangle meshes are single-sided and have no mass.
+    bool       createMeshShape(BodyHandle h, const BodySettings &body, const float *xyz, int vertexCount,
+                               const int32_t *triangles, int triangleCount, float weldTolerance = 0.0f);
     void       applyMassFromShapes(BodyHandle h);
     bool       setTypeByHandle(BodyHandle h, BodySettings::Type type);   // static / kinematic / dynamic
 
@@ -267,7 +274,6 @@ public:
     int    hullCacheSize() const;
     int    shapeCount(uint64_t bodyId) const;
     float  bodyMass(uint64_t bodyId) const;      // 0 if unknown
-    // Static triangle meshes are planned (AGENTS.md, "Not supported on purpose, and planned").
 
     // ---- handle access (never pass a stale handle) ---------------------------
     BodyHandle bodyHandle(uint64_t id) const;     // 0 if there is no such body

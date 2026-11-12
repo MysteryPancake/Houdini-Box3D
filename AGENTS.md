@@ -410,6 +410,32 @@ loops use `UTparallelFor` with untuned thresholds; parallel lambdas only read sh
 The Box3D world and mirror are touched in serial passes (the write-back's parallel pass writes only its own entry). The
 shared-state mutex is held for the whole step.
 
+## Affector static colliders
+
+`Box3DAffectors.cpp` (`syncAffectorBodies`, called from `syncFromGeometry` after `finishFilterProfiles`, mutex held).
+Objects that the solver is not given but that affect a solved object through a collision relationship
+(`SIM_Object::getConstAffectors(arr, "SIM_RelationshipCollide")`) become static Box3D bodies, one triangle mesh each.
+
+* Gather: affectors of every solved object, deduplicated; objects that are themselves solved are skipped.
+* State: `Box3DSharedState::affectors` (object id -> `Box3DAffectorBody`: handle, stamp, signature, last pose). It lives
+  in the shared state, so a world rebuild starts empty. Affectors not seen this sync are destroyed.
+* Mesh: polygons only, fan-triangulated, point order of first use. Box3D meshes are one-sided and want CCW front faces;
+  Houdini front faces are assumed clockwise, so triangles are flipped unless `Box3DData::flipwinding` (on the affector).
+* Pose: `SIMgetGeometryTransform`. A rigid matrix (`decomposeRigid`, Box3DAffectorMath.h, tested in tests/core_mesh.cpp)
+  is the body pose; anything else is baked into the vertices (body at the origin, winding fixed for mirrors).
+* Signature: P and primitive-list data ids, counts, friction / bounce / flip, and the matrix when baked. Same signature:
+  only the pose is updated (`setTransformByHandle`, which neither pushes nor wakes). A failed build keeps handle 0 and is
+  not retried until the signature changes (counted as failed, one warning per step).
+* Core: `Box3DWorld::createMeshShape` (static bodies only; validates indices and finiteness). Box3D keeps a pointer to the
+  `b3MeshData`, so `Impl::bodyMeshes` owns it: freed after `destroyBody` / `destroyShapesByHandle`, and after the world.
+* Material: an optional `Box3DData` on the affector (friction, bounce); the body type is always static.
+* Not done: SDF / volume collision of Static Objects, height fields, mesh sharing between identical affectors,
+  `getCollider`-style per-pair collider selection, affectors with `SIM_ColliderInfo` options.
+* Verified against the HDK docs: `void SIMgetGeometryTransform(UT_DMatrix4 &result, const SIM_Object &)` (SIM_Utils.h;
+  geometry local space to world space) and `void SIM_Object::getConstAffectors(SIM_ConstObjectArray &, const char *relationshiptype) const`.
+* UNVERIFIED (check first when building): the relationship type string `"SIM_RelationshipCollide"` and Houdini's
+  polygon winding (`Flip Static Mesh Winding` exists in case it is wrong).
+
 ## Not supported on purpose, and planned
 
 * Bullet's collision padding (`bullet_collision_margin`, `bullet_adjust_geometry`, `bullet_shrink_amount`) is ignored:
@@ -417,7 +443,7 @@ shared-state mutex is held for the whole step.
 * Bullet's solver tuning (ERP, CFM, split impulse, iterations, solve tolerance, randomized order) is not mapped; Box3D's
   own settings are offered.
 * Bullet's two sleep thresholds, Sleeping Time and `deactivation_time` are replaced by Box3D's one threshold.
-* PLANNED (not started): static triangle-mesh colliders for the concave case. Box3D meshes (`b3CreateMeshShape`) and
+* PLANNED (not started): static triangle-mesh colliders for the concave *point* case (affector meshes exist, see "Affector static colliders"). Box3D meshes (`b3CreateMeshShape`) and
   height fields only collide as static, which is why `concave` / `compound` are one hull per piece (Bullet's concave
   is a triangle mesh and may move). Intended split: a static (inactive, non-animated) `concave` point becomes a Box3D
   mesh of its packed geometry; a dynamic one keeps the compound. Mind the mesh's own memory (not the hull cache),
@@ -505,7 +531,7 @@ convention, and Bullet's `bullet_primR` order and `bullet_length` meaning (Bulle
 
 * Constraints / joints (constraint networks); Box3D has the joints.
 * Force DOPs: only `getForce` at the centre of mass (no `getForceOnSphere` / area variants, no per-substep re-evaluation).
-* Static triangle-mesh and height-field colliders (see "planned"); `cylinder` / `plane` (no Box3D shape; hull or big
+* Static triangle-mesh colliders for `concave` points and height-field colliders (see "planned"); `cylinder` / `plane` (no Box3D shape; hull or big
   box approximations possible).
 * `newobjects` are solved on their first step instead of keeping their initial state (TODO in `syncFromGeometry`).
 * DOP groups in collision / activation patterns.

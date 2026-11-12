@@ -125,7 +125,7 @@ The **Box3D Solver** also has **Time Scale** (slow or fast motion), **Enable Agi
 
 ### Forces
 
-The solver applies the **Force DOPs** connected to an object, the same way Houdini's own solvers do: Gravity Force, Wind Force, Fan Force, POP Force, Orbit Force and any custom `SIM_Force`. Connect the force node to the object the same way you would for any other solver.
+The solver applies the **Force DOPs** connected to an object, the same way Houdini's own solvers do: Gravity Force, Wind Force, Fan Force, POP Force, Orbit Force and any custom `SIM_Force`. Connect the force node to the object the same way you would for any other solver. Per-point `force` and `torque` attributes (written by POP Force or any SOP/POP node before the solver) are applied too, in addition to the force DOPs; the solver zeroes them after reading, so they act for one step only.
 
 Each force is evaluated once per step at every dynamic body's **centre of mass**, with the body's mass, linear velocity and angular velocity, and the sum of the forces and torques goes into Box3D for that step. Box3D integrates them in every substep, so a constant force gives the same result as the same acceleration from **Gravity**. Static and kinematic bodies, `bullet_ignore` bodies and bodies that are asleep (see below) take no force.
 
@@ -178,11 +178,23 @@ Every attribute is optional. Anything you leave out falls back to the `pscale` /
 
 Convex and concave shapes need **packed primitives** (one point plus one packed primitive per body, for example from the Pack SOP or RBD Packed Objects). Pack a simplified proxy for best performance. Pieces are split by the primitive `name` attribute. If a shape can't be built (flat, too few points, empty), the solver falls back to a box and shows a warning on the node.
 
+### Static Objects and collision relationships
+
+An object the solver does not solve, such as a **Static Object** DOP, collides with the solved objects when a collision relationship links them (an affector relationship, as with the Bullet solver). The solver reads these affectors every step and turns each one's **polygons** into a static Box3D triangle mesh, placed by the object's Houdini transform.
+
+- Only polygons are used (primitives that aren't polygons are ignored); polygons are fan-triangulated. A Static Object's collision volume / SDF is not used.
+- Triangle meshes are **one-sided**: Houdini's front faces (clockwise) are solid. If bodies fall through from the side that should be solid, turn on **Flip Static Mesh Winding** on a Box3D Data node attached to the affector. The same node's Friction and Bounce set the surface material (otherwise the defaults).
+- A Static Object whose transform is animated is moved each step (rigid motion only). Moving it does not push bodies or wake sleeping ones. For something that pushes, use a kinematic point (`active = 0`, `animated = 1`).
+- Scaled or sheared transforms are baked into the mesh, which is rebuilt whenever the transform changes.
+- The mesh is rebuilt when `P`, the polygons, the material or the winding setting change.
+- An object that is also being solved by the Box3D Solver is simulated from its points, never as an affector.
+- Height fields are not supported.
+
 ### Things to know
 
 - Bullet's collision padding attributes (`bullet_collision_margin`, `bullet_adjust_geometry`, `bullet_shrink_amount`) are ignored. Box3D collides the exact shapes and doesn't need padding.
 - Bullet's solver settings (ERP, CFM, split impulse, iterations) have no equivalent; use Substeps and the contact settings above.
-- `concave` / `compound` are currently built as several convex hulls. Static triangle-mesh colliders for the concave case are planned.
+- `concave` / `compound` are currently built as several convex hulls. Triangle meshes are used for affector (Static Object) geometry only (see above); a `concave` point is not yet turned into a mesh.
 - Negative `friction`, `bounce` and damping values are treated as 0.
 - Unlike Bullet, auto-fitted sizes are not written back to the `bullet_prim*`, `bullet_radius` and `bullet_length` attributes.
 - An inactive body hit hard enough starts moving on the step after the hit.

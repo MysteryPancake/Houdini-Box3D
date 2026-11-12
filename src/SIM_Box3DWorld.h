@@ -207,6 +207,18 @@ struct Box3DObjectSync
     Box3DSyncFingerprint fp;
 };
 
+// A static collider made from an affector object (an object that is not solved by us but affects
+// our objects through a collision relationship, e.g. a Static Object DOP). One body, one triangle mesh.
+struct Box3DAffectorBody
+{
+    b3dop::BodyHandle handle    = 0;        // 0: the last build failed (not retried until the signature changes)
+    uint64_t          stamp     = 0;        // syncStamp that last saw the object as an affector
+    uint64_t          signature = 0;        // geometry + material + baked transform the shape was built from
+    double            pos[3]    = { 0, 0, 0 };      // the body's pose as last given to Box3D
+    float             rot[4]    = { 0, 0, 0, 1 };
+    bool              poseKnown = false;
+};
+
 // Everything shared between timestep copies.
 struct Box3DSharedState
 {
@@ -218,6 +230,7 @@ struct Box3DSharedState
     size_t                                      stampedCount = 0;
 
     std::unordered_map<int, Box3DObjectSync>    objectSync;     // per object seen by the last sync
+    std::unordered_map<int, Box3DAffectorBody>  affectors;      // key: object id of the affector
 
     // Scratch reused every step.
     std::unordered_map<int, std::vector<Box3DPointSlot>> slots;     // key: object id

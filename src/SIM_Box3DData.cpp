@@ -100,6 +100,10 @@ SIM_Box3DData::getDescription()
     static PRM_Name    theAutoFitName("autofit", "Auto Fit Box / Sphere / Capsule to Geometry");
     static PRM_Default theAutoFitDefault(1);
 
+    // Only read when this node sits on an affector object (a Static Object DOP) that collides with the solver.
+    static PRM_Name    theFlipWindingName("flipwinding", "Flip Static Mesh Winding");
+    static PRM_Default theFlipWindingDefault(0);
+
     static PRM_Template theTemplates[] = {
         PRM_Template(PRM_ORD,    1, &theShapeName,       &theShapeDefault, &theShapeMenu, 0, 0, 0, 1,
                      "Collision shape for points without a bullet_georep attribute. "
@@ -153,6 +157,10 @@ SIM_Box3DData::getDescription()
                      "Turn it off for bodies where you see ghost collisions (for example a character or a very "
                      "thin or fast piece). A pair is recycled only if both bodies allow it. Does nothing when the "
                      "solver's Contact Recycle Distance is 0. Overridden by the contactrecycling point attribute."),
+        PRM_Template(PRM_TOGGLE, 1, &theFlipWindingName, &theFlipWindingDefault, 0, 0, 0, 0, 1,
+                     "For a Static Object (or any object that collides with the solver without being solved by it): "
+                     "its polygons become a one-sided collision mesh, so bodies fall through it from the back. "
+                     "Turn this on if they fall through from the side you expect to be solid."),
         PRM_Template(PRM_TOGGLE, 1, &theAddImpactName,   &theAddImpactDefault, 0, 0, 0, 0, 1,
                      "When turned on, any impacts that occur during the simulation are recorded in the "
                      "Impacts data on the DOP object. Turning this on may increase simulation time and memory use."),
@@ -196,6 +204,7 @@ SIM_Box3DData::toBodySettings() const
     s.sleepThreshold = static_cast<float>(getSleepThreshold());
     s.hullPerConnectedSet = getHullPerConnected();
     s.autoFit        = getAutoFit();
+    s.flipMeshWinding = getFlipWinding();
     switch (getDefaultShape())
     {
         case 1:  s.defaultShape = b3dop::ShapeType::Sphere;  break;
