@@ -246,20 +246,34 @@ packedScale(const double m4[16], double S[3])
     return true;
 }
 
-// FNV-1a style hashing for hull keys and signatures.
+// Hashing for hull keys and signatures: 8 bytes per round (a multiply and a shift), the tail
+// byte by byte. Keys only live for the process, so the exact function may change freely.
 constexpr uint64_t kHashSeed  = 1469598103934665603ull;
-constexpr uint64_t kHashPrime = 1099511628211ull;
+constexpr uint64_t kHashMul   = 0xff51afd7ed558ccdull;
+
+// Mixes one 64-bit value in (by value, so the same on any byte order).
+inline uint64_t
+mixHash(uint64_t h, uint64_t v)
+{
+    h = (h ^ v) * kHashMul;
+    return h ^ (h >> 32);
+}
 
 inline uint64_t
 hashBytes(uint64_t h, const void *data, size_t byteCount)
 {
     const unsigned char *b = static_cast<const unsigned char *>(data);
-    for (size_t i = 0; i < byteCount; ++i)
+    size_t i = 0;
+    for (; i + 8 <= byteCount; i += 8)
     {
-        h ^= b[i];
-        h *= kHashPrime;
+        uint64_t w;
+        std::memcpy(&w, b + i, 8);
+        h = mixHash(h, w);
     }
-    return h;
+    uint64_t tail = 0;
+    for (size_t k = 0; i < byteCount; ++i, ++k)
+        tail |= uint64_t(b[i]) << (8 * k);
+    return mixHash(h, tail ^ (uint64_t(byteCount) << 56));
 }
 
 // The raw bytes of `floatCount` floats, with the count mixed in.
@@ -267,18 +281,6 @@ inline uint64_t
 hashFloats(const float *xyz, size_t floatCount)
 {
     return hashBytes(kHashSeed ^ uint64_t(floatCount), xyz, floatCount * sizeof(float));
-}
-
-// Mixes v in byte by byte, low byte first (the same on any byte order).
-inline uint64_t
-mixHash(uint64_t h, uint64_t v)
-{
-    for (int i = 0; i < 8; ++i)
-    {
-        h ^= (v >> (8 * i)) & 0xffull;
-        h *= kHashPrime;
-    }
-    return h;
 }
 
 // A double's bits; -0 and +0 hash alike.
@@ -587,6 +589,8 @@ public:
         return idx;
     }
 
+    // Profiles are only ever added, so earlier answers stay valid: only pairs involving a profile
+    // added since the last call are matched. Rows are stored with a stride that grows by doubling.
     void finish()
     {
         if (!myDirty)
@@ -596,15 +600,25 @@ public:
         if (!myAnyIgnore || n > kMaxMatrix)
         {
             myMatrix.clear();
-            myMatrixN = 0;
+            myMatrixN = myStride = 0;
             return;
         }
-        myMatrix.assign(n * n, 1);
+        const size_t done = myMatrixN;
+        if (n > myStride)
+        {
+            const size_t stride = std::max(n, std::min(kMaxMatrix, std::max<size_t>(64, myStride * 2)));
+            std::vector<uint8_t> grown(stride * stride, 1);
+            for (size_t a = 0; a < done; ++a)
+                std::copy(myMatrix.begin() + a * myStride, myMatrix.begin() + a * myStride + done,
+                          grown.begin() + a * stride);
+            myMatrix.swap(grown);
+            myStride = stride;
+        }
         for (size_t a = 0; a < n; ++a)
-            for (size_t b = a; b < n; ++b)
+            for (size_t b = std::max(a, done); b < n; ++b)
             {
-                const bool c = computeCollide(int(a), int(b));
-                myMatrix[a * n + b] = myMatrix[b * n + a] = c ? 1 : 0;
+                const uint8_t c = computeCollide(int(a), int(b)) ? 1 : 0;
+                myMatrix[a * myStride + b] = myMatrix[b * myStride + a] = c;
             }
         myMatrixN = n;
     }
@@ -615,7 +629,7 @@ public:
         if (!myAnyIgnore || a < 0 || b < 0 || size_t(a) >= myProfiles.size() || size_t(b) >= myProfiles.size())
             return true;
         if (size_t(a) < myMatrixN && size_t(b) < myMatrixN)
-            return myMatrix[size_t(a) * myMatrixN + size_t(b)] != 0;
+            return myMatrix[size_t(a) * myStride + size_t(b)] != 0;
         return computeCollide(a, b);
     }
 
@@ -634,8 +648,9 @@ private:
 
     std::vector<FilterProfile>           myProfiles;
     std::unordered_map<std::string, int> myIndex;
-    std::vector<uint8_t>                 myMatrix;
+    std::vector<uint8_t>                 myMatrix;    // myStride x myStride, first myMatrixN rows / cols valid
     size_t                               myMatrixN   = 0;
+    size_t                               myStride    = 0;
     bool                                 myAnyIgnore = false;
     bool                                 myDirty     = false;
 };

@@ -20,7 +20,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -43,19 +42,18 @@ buildMesh(const GU_Detail *gdp, bool houdiniWinding, TriMesh &out)
 {
     out.xyz.clear();
     out.tris.clear();
-    std::unordered_map<GA_Offset, int32_t> remap;
-    remap.reserve(size_t(gdp->getNumPoints()));
+    std::vector<int32_t> remap(size_t(gdp->getNumPointOffsets()), -1);     // point offset -> vertex
 
     auto vertexOf = [&](GA_Offset pt) -> int32_t {
-        auto it = remap.find(pt);
-        if (it != remap.end())
-            return it->second;
-        const UT_Vector3 p = gdp->getPos3(pt);
-        const int32_t idx = int32_t(out.xyz.size() / 3);
-        out.xyz.push_back(p.x());
-        out.xyz.push_back(p.y());
-        out.xyz.push_back(p.z());
-        remap.emplace(pt, idx);
+        int32_t &idx = remap[size_t(pt)];
+        if (idx < 0)
+        {
+            const UT_Vector3 p = gdp->getPos3(pt);
+            idx = int32_t(out.xyz.size() / 3);
+            out.xyz.push_back(p.x());
+            out.xyz.push_back(p.y());
+            out.xyz.push_back(p.z());
+        }
         return idx;
     };
 
@@ -158,9 +156,11 @@ syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects, Box3DAffector
             continue;
         }
 
+        // Rotation + per-axis scale + translation: the body takes the pose and the mesh shape the
+        // scale, so an animated transform never rebuilds the mesh. Shear or mirroring: baked.
         double pos[3];
-        float  rot[4];
-        const bool rigid = b3dop::decomposeRigid(m, pos, rot);
+        float  rot[4], scale[3];
+        const bool rigid = b3dop::decomposeScaledRigid(m, pos, rot, scale);
 
         // Material: a Box3D Data node on the affector sets friction and bounce (bodies are always static).
         b3dop::BodySettings body;
@@ -168,8 +168,8 @@ syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects, Box3DAffector
             body = node->toBodySettings();
         body.type = b3dop::BodySettings::Type::Static;
 
-        // What the shape depends on: the points and polygons, the material, and (when not rigid)
-        // the whole matrix, which is baked into the vertices.
+        // What the shape depends on: the points and polygons, the material, and (when it cannot
+        // be split into pose and scale) the whole matrix, which is baked into the vertices.
         const GA_Attribute *P = gdp->getP();
         uint64_t sig = b3dop::kHashSeed;
         sig = b3dop::mixHash(sig, P ? uint64_t(P->getDataId()) : 0);
@@ -186,21 +186,28 @@ syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects, Box3DAffector
         const bool unchanged = ab.poseKnown && ab.signature == sig;
         if (unchanged)
         {
-            // Same shape. A moved (animated) rigid object only needs a new pose; a failed build
-            // (handle 0) stays failed until the signature changes.
+            // Same shape. A moved (animated) object only needs a new pose and / or mesh scale; a
+            // failed build (handle 0) stays failed until the signature changes.
             if (ab.handle && rigid)
             {
                 const bool samePose = std::fabs(ab.pos[0] - pos[0]) < 1e-9 && std::fabs(ab.pos[1] - pos[1]) < 1e-9 &&
                                       std::fabs(ab.pos[2] - pos[2]) < 1e-9 && std::fabs(ab.rot[0] - rot[0]) < 1e-7f &&
                                       std::fabs(ab.rot[1] - rot[1]) < 1e-7f && std::fabs(ab.rot[2] - rot[2]) < 1e-7f &&
                                       std::fabs(ab.rot[3] - rot[3]) < 1e-7f;
+                const bool sameScale = ab.scale[0] == scale[0] && ab.scale[1] == scale[1] && ab.scale[2] == scale[2];
                 if (!samePose)
                 {
                     st.world.setTransformByHandle(ab.handle, pos, rot);
                     for (int i = 0; i < 3; ++i) ab.pos[i] = pos[i];
                     for (int i = 0; i < 4; ++i) ab.rot[i] = rot[i];
-                    ++counts.moved;
                 }
+                if (!sameScale)
+                {
+                    st.world.setMeshScaleByHandle(ab.handle, scale);
+                    for (int i = 0; i < 3; ++i) ab.scale[i] = scale[i];
+                }
+                if (!samePose || !sameScale)
+                    ++counts.moved;
             }
             else if (!ab.handle)
                 ++counts.failed;
@@ -219,16 +226,18 @@ syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects, Box3DAffector
             continue;
         }
         const float *verts = mesh.xyz.data();
-        double bodyPos[3] = { 0, 0, 0 };
-        float  bodyRot[4] = { 0, 0, 0, 1 };
+        double bodyPos[3]   = { 0, 0, 0 };
+        float  bodyRot[4]   = { 0, 0, 0, 1 };
+        float  bodyScale[3] = { 1, 1, 1 };
         if (rigid)
         {
             for (int i = 0; i < 3; ++i) bodyPos[i] = pos[i];
             for (int i = 0; i < 4; ++i) bodyRot[i] = rot[i];
+            for (int i = 0; i < 3; ++i) bodyScale[i] = scale[i];
         }
         else
         {
-            // Scale / shear cannot be a body transform: bake the matrix into the vertices and keep the body at
+            // Shear or mirroring cannot be a body transform plus mesh scale: bake the matrix into the vertices and keep the body at
             // the origin. (Mirroring flips the winding, so flip the triangles back.)
             const size_t n = mesh.xyz.size() / 3;
             baked.resize(mesh.xyz.size());
@@ -256,7 +265,7 @@ syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects, Box3DAffector
             continue;
         }
         if (!st.world.createMeshShape(h, body, verts, int(mesh.xyz.size() / 3), mesh.tris.data(),
-                                      int(mesh.tris.size() / 3)))
+                                      int(mesh.tris.size() / 3), 0.0f, bodyScale))
         {
             st.world.destroyBody(h);
             ++counts.failed;
@@ -265,6 +274,7 @@ syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects, Box3DAffector
         ab.handle = h;
         for (int i = 0; i < 3; ++i) ab.pos[i] = bodyPos[i];
         for (int i = 0; i < 4; ++i) ab.rot[i] = bodyRot[i];
+        for (int i = 0; i < 3; ++i) ab.scale[i] = bodyScale[i];
         ++counts.added;
         B3D_LOG("  affector id=%d: static mesh built, %d triangle(s)%s", objectId, int(mesh.tris.size() / 3),
                 rigid ? "" : " (transform baked)");

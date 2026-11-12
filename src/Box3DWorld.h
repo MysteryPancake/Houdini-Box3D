@@ -16,8 +16,11 @@
 
 namespace b3dop {
 
-// Handle to a convex hull owned by the world's hull cache. 0 is invalid.
+// A convex hull in the process-wide hull cache (its content or caller-supplied key). 0 is invalid.
 using HullId = uint64_t;
+
+// Box3D worker tasks per step when nothing else is asked for (the solver's Threads default too).
+constexpr int kDefaultWorkerCount = 8;
 
 // A body, valid until it is destroyed (or the world is). No hash lookup. 0 is invalid.
 using BodyHandle = uint64_t;
@@ -62,7 +65,7 @@ struct WorldSettings
 {
     float gravity[3]    = { 0.0f, -9.80665f, 0.0f };
     int   subSteps      = 4;      // Box3D recommends ~4 per step
-    int   workerCount   = 1;      // parallel tasks per step, fixed at creation (max 32). With a TaskRunner these
+    int   workerCount   = kDefaultWorkerCount;   // parallel tasks per step, fixed at creation (max 32). With a TaskRunner these
                                   // run on the host's pool; without one, on threads Box3D starts for this world
     bool  enableSleep   = true;
     bool  enableContinuous = true;    // continuous collision vs static bodies (fast objects: vs moving ones too)
@@ -161,8 +164,12 @@ public:
     // only; false for a non-static body, fewer than 3 vertices or 1 triangle, non-finite vertices or
     // out-of-range indices. weldTolerance > 0 welds nearby vertices. The mesh belongs to the body: it is
     // freed with the body or by destroyShapesByHandle. Triangle meshes are single-sided and have no mass.
+    // `scale` (optional, per axis, positive) scales the vertices in body space without rebuilding the
+    // mesh; setMeshScaleByHandle changes it later.
     bool       createMeshShape(BodyHandle h, const BodySettings &body, const float *xyz, int vertexCount,
-                               const int32_t *triangles, int triangleCount, float weldTolerance = 0.0f);
+                               const int32_t *triangles, int triangleCount, float weldTolerance = 0.0f,
+                               const float scale[3] = nullptr);
+    void       setMeshScaleByHandle(BodyHandle h, const float scale[3]);     // every mesh shape of the body
     void       applyMassFromShapes(BodyHandle h);
     bool       setTypeByHandle(BodyHandle h, BodySettings::Type type);   // static / kinematic / dynamic
     BodySettings::Type typeByHandle(BodyHandle h) const;                 // Dynamic for a null handle
@@ -197,11 +204,12 @@ public:
     void  applyForceByHandle(BodyHandle h, const float force[3], const float torque[3], bool wake);
 
 
-    // Set every shape's density and apply the mass from the shapes; then, for dynamic bodies,
-    // comAtOrigin moves the centre of mass to the body origin (parallel axis theorem) and
-    // inertiaScale scales the inertia. setTypeByHandle recomputes from the shapes, so re-apply
-    // after a type change.
-    void  applyMassByHandle(BodyHandle h, float density, bool comAtOrigin, float inertiaScale);
+    // Set every shape's density (skipped with setShapeDensity = false, for shapes just created with
+    // it) and apply the mass from the shapes; then, for dynamic bodies, comAtOrigin moves the centre
+    // of mass to the body origin (parallel axis theorem) and inertiaScale scales the inertia.
+    // setTypeByHandle recomputes from the shapes, so re-apply after a type change.
+    void  applyMassByHandle(BodyHandle h, float density, bool comAtOrigin, float inertiaScale,
+                            bool setShapeDensity = true);
     bool  getMassDataByHandle(BodyHandle h, float &mass, float center[3], float inertiaDiag[3]) const;
 
     // Box3D's single sleep threshold on |v| + |w| * extent. Negative = Box3D's default.
@@ -250,17 +258,32 @@ public:
     //   1. createHull(body-local xyz) -> HullId + volume. Cached by content. Returns 0 for
     //      < 4 usable points, non-finite or flat input, or a hull too big even after
     //      reducing the vertex budget (the caller falls back to a box).
-    //   2. createHullShape once per piece. Several hulls on one body make a
-    //      dynamic compound; overlapping pieces count their overlap twice in the mass.
-    // Box3D clones the hull on shape creation; pruneHulls() frees entries no shape uses.
+    //   2. createHullShape once per piece. Several hulls on one body make a dynamic compound;
+    //      overlapping pieces count their overlap twice in the mass.
+    // Hulls live in one cache shared by every world in the process, so a rebuilt world finds the
+    // hulls its predecessor built. Box3D copies a hull into its world when a shape is made, so the
+    // cache is free to evict; a world holds the hulls it found or built (findHull, createHull*)
+    // until pruneHulls(), so a returned HullId stays usable for createHullShape until then.
+    // findHull, createHull and createHullWithKey may be called from several threads at once.
     HullId createHull(const float *xyz, int pointCount, float *outVolume = nullptr);
 
     // Caller-supplied key (packed instances of one source): findHull first, build only on a
-    // miss. One key must always mean the same points; 0 is not allowed.
+    // miss. One key must always mean the same points; 0 is not allowed. `budgetGroup` (optional,
+    // e.g. the source's hash) remembers which vertex budget worked, so the next hull of the
+    // group skips the attempts that are bound to fail.
     HullId findHull(HullId key, float *outVolume = nullptr) const;
-    HullId createHullWithKey(HullId key, const float *xyz, int pointCount, float *outVolume = nullptr);
-    void   pruneHulls();                // frees cache entries no body uses
-    int    hullCacheSize() const;
+    HullId createHullWithKey(HullId key, const float *xyz, int pointCount, float *outVolume = nullptr,
+                             uint64_t budgetGroup = 0);
+    void   pruneHulls();                // lets go of the hulls this world holds (the shared cache keeps them)
+    int    hullCacheSize() const;       // hulls this world holds
+
+    // The shared cache: entries, bytes, and the byte budget past which the least recently used
+    // entries are evicted (default 256 MB). Builds / attempts count b3CreateHull calls (tests).
+    static int    sharedHullCount();
+    static size_t sharedHullBytes();
+    static void   setSharedHullBudget(size_t bytes);
+    static int    hullBuildCount();
+    static int    hullBuildAttempts();
 
     // ---- pose and velocity (never pass a stale handle) -------------------------
     bool getTransformByHandle(BodyHandle h, double outPos[3], float outRotXYZW[4]) const;

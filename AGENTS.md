@@ -137,7 +137,9 @@ accepts all of them on a disabled body (proxies are only touched when they exist
 name, object id as text, ignore patterns) and answers `shouldCollide(a, b)`: neither profile's ignore patterns match the
 other's names. Patterns are matched by `patternMatcher()`: in Houdini `UT_String::multiMatch` (installed in
 `initializeSIM`; globs separated by spaces or commas, `^pat` removes), in the tests the Houdini-free stand-in
-`matchPatternList` / `globMatch`. `finish()` precomputes an N x N table (N <= 2048, else matched on the fly), so lookups are
+`matchPatternList` / `globMatch`. `finish()` precomputes an N x N table (N <= 2048, else matched on the fly). Profiles are
+only ever added, so `finish()` matches only the pairs involving profiles added since the last call (rows are stored with a
+stride that doubles as it grows); a test checks it against matching every pair afresh. Lookups are
 read-only and safe from Box3D's threaded pair finding; the table is only changed during the sync. Every shape is created
 with `enableCustomFiltering = true` (Box3D cannot turn it on later) and its body's profile + 1 in its user data; the
 world registers `b3World_SetCustomFilterCallback`. The filter only runs on new pairs, so `setFilterProfileByHandle` also
@@ -146,11 +148,27 @@ so a temporary `groupIndex` is set first.
 
 **Shapes and hull cache.** A box is a Box3D hull (`b3MakeBoxHull` / `b3MakeOffsetBoxHull`; a rotated box is the hull of
 its 8 corners); sphere and capsule (along Y; Box3D turns a too-short one into a sphere) are native. `createHull` keys by
-content (`hashFloats`, FNV-1a, of the points); packed instances pass their own key (`findHull` first, build on a miss). Builds try
-vertex budgets `{B3_MAX_HULL_VERTICES, 64, 44, 32, 16, 8}` (a triangulated hull hits the 128-edge limit at ~44
-vertices); flat or non-finite results are rejected and the caller falls back to a box. We own the `b3HullData` (Box3D
-clones it per shape); `refs` count shapes, hull use is tracked per handle, and `pruneHulls()` frees unused entries.
-Several hulls on one body make a dynamic compound; overlapping pieces count their overlap twice in the mass.
+content (`hashFloats` of the points; hashing mixes 8 bytes per round); packed instances pass their own key (`findHull`
+first, build on a miss). Builds try vertex budgets `{B3_MAX_HULL_VERTICES, 44, 32, 16, 8}`: a triangulated hull hits the
+256 half-edge limit at ~44 vertices, so a 64 rung fails whenever the maximum did (measured: on dense round input ~75% of
+hull time went to the two failing attempts). `createHullWithKey`'s `budgetGroup` (the solver passes the source hash and
+kind) remembers the budget that worked, so later hulls of the group start there. Flat or non-finite results are rejected
+and the caller falls back to a box. Several hulls on one body make a dynamic compound; overlapping pieces count their
+overlap twice in the mass.
+
+The hull cache is **process-wide** (`HullLibrary` in Box3DWorld.cpp, mutex-protected): Box3D copies a hull into the
+world's own database (`b3AddHullToDatabase`) when a shape is made, so our entries are only needed until then and can be
+shared by every world. A rebuilt world (scrub, re-solve, thread change) therefore finds every hull its predecessor built.
+Entries are `shared_ptr`s; a world holds the ones it found or built (`Impl::held`) until `pruneHulls()`, which the solver
+calls at the end of each sync, so eviction never frees a hull between `findHull` and `createHullShape`. Past the byte
+budget (`setSharedHullBudget`, default 256 MB) the least recently used entries are evicted down to 3/4 of it.
+`findHull`, `createHull` and `createHullWithKey` are thread-safe (the solver's shape pre-pass); nothing else is.
+`hullCacheSize()` is the hulls a world holds; `sharedHullCount/Bytes`, `hullBuildCount/Attempts` report on the cache.
+
+Packed sources also get a **source summary** (`SourceSummaryCache` in SIM_SolverBox3D.cpp, process-wide): the group and
+piece hashes, keyed by the source detail's identity (`getUniqueId`, `P` and primitive-list data ids, counts, fragment,
+connected or not). `buildShapes` tries it first for packed convex / concave points: when every hull key it gives is still
+cached, the source geometry is not read or hashed at all. This relies on whoever edits a source bumping its data ids.
 
 **`Box3DShapes.h`** (all unit-tested): `parseShapeType` (exact lowercase Houdini names; `compound`
 = `concave`; unknown values, including `cylinder` and `plane`, return false; the solver memoises per shared-string handle
@@ -182,10 +200,12 @@ and its 3x3, and what the body was built from (`props`, `volume`, `shapeSig`, `s
 `animated`, `driven`, `sleeping`). Box3D's body user data points at the entry, so entries live in an `unordered_map`
 (stable nodes) and are erased only with their body.
 
-Scratch reused every step: `slots` (per object: offset, key, cached entry and freshly read state per point; a cached
-entry is trusted while offset and key match; all slots are dropped when an entry is erased), `writeItems`,
+Scratch reused every step: `slots` (per object: offset, key, cached entry, freshly read state and this scan's shape
+decisions per point; a cached entry is trusted while offset and key match; when entries are erased, only the slots of the
+objects that lost them forget their cached entries), `writeItems`,
 `packedWrites`, `moves`, `contacts`. `syncStamp` / `stampedCount`: equal counts mean nothing to remove.
-`isLive(entry)` = its object was visited by this sync and the entry carries the object's `liveStamp`.
+`isLive(entry)` = its object was visited by this sync and the entry carries the object's `liveStamp`; the entry keeps a
+pointer to its object's record (`sync`), valid because records are erased only after their unvisited bodies are removed.
 
 ## Solver step (`solveObjectsSubclass`)
 
@@ -197,7 +217,7 @@ lock st->mutex
 stepDt = dt * timescale; world.applyTuning(currentWorldSettings())
 syncFromGeometry   per object syncObject(); finishFilterProfiles; remove gone bodies; pruneHulls; warnings
 applyExternalForces  Use Force DOPs: SIM_Force data per object -> getForce at each dynamic body's centre of mass -> applyForceByHandle
-world.step         b3World_Step(stepDt, subSteps)
+world.step         b3World_Step(stepDt, subSteps); then the move events are read once into st.moves
 writeResultsBack   awake dynamic bodies (move events): P / orient / v / w / packed transform / bullet_sleeping
 recordImpacts      Add Impact Data -> SIM_Impacts (only on steps with an impact)
 activateByImpact   min_activation_impulse
@@ -228,7 +248,12 @@ Data names: `"Box3DWorld"`, `kBox3DDataName` (`"Box3DData"`, SIM_Box3DData.h), `
 4. Otherwise binds the remaining attributes and builds the `ScanContext` (world, geometry, attributes, node settings,
    shape sources, georep lookup, the object's filter profile) that the per-point helpers take.
 5. **Pass 1** (parallel above 8192 points, 2048 with primitives): per point body id (`id`, else the point number = its
-   position in the walk), key, `getPackedInfo`, `readPointState`, `active`.
+   position in the walk), key, `getPackedInfo` (with the 3x3's row scale, kept for the write-back), `readPointState`,
+   `active`, the mirror entry (read only), and whether it needs shapes built: new body, or a rebuild (`deforming`,
+   `bullet_autofit_valid == 0`, convex / concave scale change).
+   **Pass 1b** (parallel, chunks of 256 with an Escape check between): `planShapes` for those points, into a per-scan
+   plan list (`Box3DPointSlot::plan`). Hull building, the slow part of a rebuild, happens here; `ShapeSources`,
+   `GeorepLookup` (mutexes) and Box3DWorld's hull calls are thread-safe. Pass 2 takes the plans (`takePlan`).
 6. **Pass 2** (serial, point order): duplicate `id` -> counted, first wins; non-finite `P` -> counted, its body removed;
    `dead` -> queued for deletion, its body removed; unknown key -> `addPointBody`; known key -> `updateExistingBody`:
    mid-simulation updates (shape rebuild, then settings), type change (`wantedType`), then the animated target or an
@@ -258,12 +283,11 @@ skip.
 
 Runs after `syncFromGeometry` and the last cancel check, before the step, when `useforces` is on. Same lookup as
 Houdini's `SIM_SolverHair`: `obj->forEachConstSubData(collector, SIM_DataFilterByType("SIM_Force"), SIM_FORCES_DATANAME,
-SIM_DataFilterNone())` with a `SIM_EachDataCallback` (`ForceCollector`) that casts each sub-data to `SIM_Force`. Objects
-without force data get no entry, and with no forces anywhere the function returns before touching a body.
+SIM_DataFilterNone())` with a `SIM_EachDataCallback` (`ForceCollector`) that casts each sub-data to `SIM_Force`.
 
-Then one pass over `st.mirror` (order does not matter: a force depends only on its own body's state): skip bodies that
-are not `dynamic()`, are `props.ignored`, are not live (`isLive`, object not seen by this sync), have no force data on their
-object, or are asleep while `forceswake` is off. For each remaining body: mass (`massByHandle`), world centre of mass
+Only objects with force DOPs or non-zero point forces are visited, and only their own bodies
+(`Box3DObjectSync::bodies`, rebuilt by each full scan and kept while the object is skipped): skip bodies that are not
+`dynamic()`, are `props.ignored`, or are asleep while `forceswake` is off. For each remaining body: mass (`massByHandle`), world centre of mass
 (`getCenterOfMassByHandle`) and `v` / `w` (`getVelocityByHandle`) go into `SIM_Force::getForce(object, pos, vel, angvel,
 mass, force, torque)` for every force on the object, summed, and the sum goes in through `applyForceByHandle`
 (`b3Body_ApplyForceToCenter` + `b3Body_ApplyTorque`).
@@ -340,11 +364,12 @@ equal to what its body was built with.
   static and kinematic bodies are not cycled (a cycle would wake them): they take it for new contacts only. A point-attribute
   or node change goes through the usual prop path (`kPropAttribNames`, `nodeHash`, `applyPropChanges`).
   `Box3DWorld::recycledContactCount()` (`b3World_GetCounters`) feeds the tests and a verbose log line.
-* **Impacts** (node `addimpact`, Add Impact Data; no attribute): with it on, a scan lists every body in
-  `Box3DObjectSync::impacts`. `recordImpacts` gathers their contact points, skipping asleep dynamic bodies and contacts
-  where neither body is awake. Only when there is at least one does it create a fresh `SIM_Impacts`
+* **Impacts** (node `addimpact`, Add Impact Data; no attribute): `recordImpacts` walks this step's awake bodies (the
+  move events), reads each one's contacts once and records them for both bodies whose object has the option: the awake
+  body itself, and the other one when it is not awake (an awake one records its own) and not an asleep dynamic body. So
+  sleeping bodies cost nothing and contacts where neither body is awake are skipped. Only when there is at least one does it create a fresh `SIM_Impacts`
   (`SIM_DATA_CREATE` with flags 0 replaces existing data) and call `addPointImpact(pos, normal, impulse, ptnum, otherobjid, otherptnum, -1, 0, 0,
-  0, time, 0)` per point (normal of the surface hit, pointing at this body; ptnum = `entry->pointIndex`). An object
+  0, time, 0)` per point (normal of the surface hit, pointing at the body that gets the impact; ptnum = its `pointIndex`). An object
   with Impacts last step and none now loses the data (`removeNamedSubData`, `impactObjects`). No Feedback data (that is
   for mutual interaction with other solvers). UNVERIFIED: Houdini's impact normal convention.
 * **Activation by impact** (`min_activation_impulse`, `activationignore`): inactive bodies with a threshold are listed
@@ -355,7 +380,8 @@ equal to what its body was built with.
   before deleting any (`destroyPrimitive(prim, true)` for packed, else `destroyPointOffset(off,
   GA_DESTROY_DEGENERATE)`), then `bumpAllDataIds()` and `forceScan`. Without `id`, later points become new bodies.
 * **Aging** (solver Enable Aging): `age += dt` (DOP step, not time-scaled) on every point, `dead = 1` past a positive
-  `life` (attributes created if missing). Writes every point every step while on.
+  `life` (attributes created if missing). Writes every point every step while on; in parallel past 2048 points, with
+  `age` / `dead` pages hardened first.
 * **Time Scale**: Box3D steps by `stepDt = dt * timescale`; animated targets use it; `canContinue` uses the DOP step.
 
 **Point writes after the step** (`Box3DPointWrite`: `kAutofitValid`, `kMass`, `kActivate`): grouped per object
@@ -403,17 +429,20 @@ packed rotations follow Houdini's own quaternion convention.
 
 ### writeResultsBack
 
-0. Move events (`getMoveEvents`): every awake body and its transform (a body falling asleep appears once more). Only
-   live dynamic entries become items; `bullet_sleeping` changes are noted. Velocities are fetched in a threaded pass
+0. Move events (read once into `st.moves` right after the step; impacts use them too): every awake body and its
+   transform (a body falling asleep appears once more). Only live dynamic entries become items, which point at their
+   move event rather than copying it; `bullet_sleeping` changes are noted. Velocities are fetched in a threaded pass
    (Box3D allows read-only calls from several threads). Items are grouped per object.
 1. `getOrMakeWritableGeometry`: a plain `SIM_Geometry` (RBD Packed Object) is replaced once by a `SIM_GeometryCopy`
    (`SIM_DATA_RETURN_EXISTING | SIM_DATA_ADOPT_EXISTING_ON_DELETE`).
 2. `ensureResultAttribs` creates `v`, `w`, `orient` (a new `orient` is set to identity).
 3. `resolvePointOffsets`: the stored offset if it still names the point (in range, same id / number), else by id.
 4. Parallel pass: `hardenWrittenPages` first when parallel (offset ranges bucketed by 1024; one full call when nearly all
-   buckets are hit), then write, compute the new packed 3x3, and store in the mirror what the geometry now holds
-   without reading it back (`storedPosition`, `sanitizeQuat`; must match `readPointState`, or our write looks like an
-   external edit). `BOX3DDOP_VERIFY_READBACK=1` re-reads and logs `READBACK MISMATCH`.
+   buckets are hit), then write, compute the new packed 3x3 (the row scale the sync stored, the new rotation: no matrix
+   decomposition), and store in the mirror what the geometry now holds without reading it back (`storedPosition`,
+   `sanitizeQuat` of the written rotation). It must agree with `readPointState` within `poseDiffers`' tolerances (1e-5;
+   q and -q equal), or our write looks like an external edit; a packed transform's float round trip stays well inside
+   them. `BOX3DDOP_VERIFY_READBACK=1` re-reads and logs `READBACK MISMATCH` when `poseDiffers` would see a difference.
 5. Serial pass: `setLocalTransform` + `transformDirty`, then one `getPrimitiveList().bumpDataId()` (the HDK leaves
    marking intrinsics dirty to the caller). A point no longer on a packed primitive is counted as unmatched.
 
@@ -421,7 +450,8 @@ Only dynamic bodies are written; of several points sharing an `id`, only the fir
 
 ### Threading
 
-Box3D starts no threads of its own in the plugin. `SIM_Box3DWorld::createWorld` gives every world a `Box3DHoudiniTasks` (`src/Box3DHoudiniTasks.h`, a `b3dop::TaskRunner` over `UT_TaskGroup`), wired to Box3D's `enqueueTask` / `finishTask` hooks in `Box3DWorld::create`, so all worlds share Houdini's TBB pool. Box3D's built-in scheduler keeps `workerCount - 1` OS threads per world until it is destroyed, which piled up across the old worlds that cached frames keep alive. `autothreads` = `UT_Thread::getNumProcessors()` (honours `HOUDINI_MAXTHREADS`), else `threads`, 1..32, never above Houdini's count; a change still rebuilds the world. Safe with Box3D's solver because tasks carry their own worker index, the stepping thread always runs solver worker 0 (which can finish the solve alone, so a busy pool cannot deadlock), and `step` runs inside `tbb::this_task_arena::isolate`. `UT_TaskGroup` does not carry `UT_TaskScope`, so the runner wraps each task in one. Without a runner (the tests) `Box3DWorld` falls back to Box3D's own pool. Not compiled against the HDK when written: check it builds on your Houdini. The plugin's
+Box3D starts no threads of its own in the plugin. `SIM_Box3DWorld::createWorld` gives every world a `Box3DHoudiniTasks` (`src/Box3DHoudiniTasks.h`, a `b3dop::TaskRunner` over `UT_TaskGroup`), wired to Box3D's `enqueueTask` / `finishTask` hooks in `Box3DWorld::create`, so all worlds share Houdini's TBB pool. Box3D's built-in scheduler keeps `workerCount - 1` OS threads per world until it is destroyed, which piled up across the old worlds that cached frames keep alive. `autothreads` (off by default: Box3D's solver workers spin-wait between stages, so many workers rarely pay off below very
+large scenes) = `UT_Thread::getNumProcessors()` (honours `HOUDINI_MAXTHREADS`), else `threads` (default 8), 1..32, never above Houdini's count; a change still rebuilds the world. Safe with Box3D's solver because tasks carry their own worker index, the stepping thread always runs solver worker 0 (which can finish the solve alone, so a busy pool cannot deadlock), and `step` runs inside `tbb::this_task_arena::isolate`. `UT_TaskGroup` does not carry `UT_TaskScope`, so the runner wraps each task in one. Without a runner (the tests) `Box3DWorld` falls back to Box3D's own pool. Not compiled against the HDK when written: check it builds on your Houdini. The plugin's
 loops use `UTparallelFor` with untuned thresholds; parallel lambdas only read shared data or write their own element.
 The Box3D world and mirror are touched in serial passes (the write-back's parallel pass writes only its own entry). The
 shared-state mutex is held for the whole step.
@@ -437,10 +467,14 @@ Objects that the solver is not given but that affect a solved object through a c
   in the shared state, so a world rebuild starts empty. Affectors not seen this sync are destroyed.
 * Mesh: polygons only, fan-triangulated, point order of first use. Box3D meshes are one-sided and want CCW front faces;
   Houdini front faces are assumed clockwise, so triangles are flipped unless `Box3DData::flipwinding` (on the affector).
-* Pose: `SIMgetGeometryTransform`. A rigid matrix (`decomposeRigid`, Box3DAffectorMath.h, tested in tests/core_mesh.cpp)
-  is the body pose; anything else is baked into the vertices (body at the origin, winding fixed for mirrors).
+* Pose: `SIMgetGeometryTransform`. Rotation + positive per-axis scale + translation (`decomposeScaledRigid`,
+  Box3DAffectorMath.h, tested in tests/core_mesh.cpp): the body takes the pose and the mesh shape the scale
+  (`createMeshShape(..., scale)`, later `setMeshScaleByHandle` -> `b3Shape_SetMesh`, which keeps the mesh and wakes what
+  touches it), so an animated transform never rebuilds the mesh. Shear or a mirror is baked into the vertices (body at the
+  origin, winding fixed for mirrors).
 * Signature: P and primitive-list data ids, counts, friction / bounce / flip, and the matrix when baked. Same signature:
-  only the pose is updated (`setTransformByHandle`, which neither pushes nor wakes). A failed build keeps handle 0 and is
+  only the pose (`setTransformByHandle`, which neither pushes nor wakes) and the mesh scale are updated. The mesh's
+  point remap is a vector indexed by offset. A failed build keeps handle 0 and is
   not retried until the signature changes (counted as failed, one warning per step).
 * Core: `Box3DWorld::createMeshShape` (static bodies only; validates indices and finiteness). Box3D keeps a pointer to the
   `b3MeshData`, so `Impl::bodyMeshes` owns it: freed after `destroyBody` / `destroyShapesByHandle`, and after the world.
@@ -468,7 +502,8 @@ Objects that the solver is not given but that affect a solved object through a c
 ## Parameters
 
 Solver (read every step; only the thread count rebuilds the world): `gravity` (0,-9.80665,0), `substeps` (min 1,
-default 4), `autothreads` (on), `threads` (1..32, default 8), `enablesleep`, `timescale` (1), `enableaging` (off), and
+default 4), `autothreads` (off), `threads` (1..32, default 8 = `b3dop::kDefaultWorkerCount`, also `WorldSettings`'
+default), `enablesleep`, `timescale` (1), `enableaging` (off), and
 Box3D's tuning with Box3D's defaults: `contactstiffness` (30 Hz), `contactdamping` (10), `contactpushspeed` (3),
 `bouncethreshold` (1), `contactrecycledistance` (0.05), `maxlinearspeed` (400), `enablecontinuous` (on), `enablespeculative` (on). Force DOPs:
 `useforces` (on), `forceswake` (off, disabled while `useforces` is off).
@@ -566,10 +601,13 @@ convention, and Bullet's `bullet_primR` order and `bullet_length` meaning (Bulle
 
 ## Force and torque point attributes
 
-`applyExternalForces` also reads per-point `force` / `torque` (V3) attributes from each object's geometry, adds them to
-the Force DOP result for the same body, applies the sum, then zeroes the attributes it read (a write lock, followed by
+`applyExternalForces` also reads per-point `force` / `torque` (V3) attributes from each object's geometry into a short
+list of the non-zero ones (by offset; a body finds its point by binary search), adds them to the Force DOP result for the
+same body, applies the sum, then zeroes the ones it read (a write lock, followed by
 `recordFingerprintAfterWrite`, so the next sync does not see the clear as an external edit). Zeroing is needed because
-nothing else clears `force` without a POP Solver. The POP Force node must run before this solver.
+nothing else clears `force` without a POP Solver. The POP Force node must run before this solver. The attributes' data
+ids right after the clear (or after a read found them all zero) are kept in `Box3DObjectSync::forceId / torqueId`; while
+they are unchanged nothing new was written and the read is skipped.
 
 ## World settings added from the Box3D world API
 

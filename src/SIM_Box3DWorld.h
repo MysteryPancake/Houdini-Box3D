@@ -54,8 +54,10 @@ struct Box3DBodyProps
     bool  contactRecycling = true;    // `contactrecycling`
     int   filterProfile  = -1;        // collisiongroup / collisionignore / object
     float minActivationImpulse = 0.0f;    // `min_activation_impulse`
-    std::string activationIgnore;     // `activationignore`
+    int   activationIgnore = -1;      // `activationignore`: index into Box3DSharedState::strings, -1 = none
 };
+
+struct Box3DObjectSync;
 
 struct Box3DBodyMirror : Box3DBodyPose
 {
@@ -79,11 +81,14 @@ struct Box3DBodyMirror : Box3DBodyPose
     int64_t  pointId  = 0;            // the `id` attribute, else the point number
     int      objectId = 0;
     uint64_t stamp    = 0;            // syncStamp of the last sync that saw it
+    Box3DObjectSync *sync = nullptr;  // its object's record (stable: objectSync is node-based)
 
-    // The point's packed primitive and its 3x3 as the last sync read it (reused by the write-back).
+    // The point's packed primitive and its 3x3 as the last sync read it (reused by the write-back),
+    // with the 3x3's per-row scale, which the write-back keeps.
     bool     packed   = false;
     int64_t  primOff  = -1;           // GA_Offset of the primitive
     double   m3[9]    = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+    double   rowScale[3] = { 1, 1, 1 };
 
     // The body's handle and the type the solver last set.
     b3dop::BodyHandle        handle = 0;
@@ -108,15 +113,23 @@ struct Box3DPointSlot
     int64_t           index  = 0;        // point number
     int64_t           primOff = -1;
     double            m3[9]  = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+    double            rowScale[3] = { 1, 1, 1 };    // m3's per-row scale
+    // This scan's shape decisions (pass 1) and pre-built shape plan (-1: none).
+    bool              deforming   = false;  // `deforming`
+    bool              refitWanted = false;  // bullet_autofit_valid == 0
+    bool              rebuild     = false;  // an existing body whose shapes are rebuilt
+    int32_t           plan        = -1;
 };
 
-// One awake body's result on its way to the geometry. Packed matrices live in a side array
-// (Box3DPackedWrite) to keep this small.
+// One awake body's result on its way to the geometry. Its pose is the move event
+// (Box3DSharedState::moves[move]); packed matrices live in a side array (Box3DPackedWrite).
 struct Box3DWriteItem
 {
     GA_Offset         off      = GA_INVALID_OFFSET;
     Box3DBodyMirror  *entry    = nullptr;
-    Box3DBodyPose     s;                        // what Box3D reports
+    int               move     = 0;             // index into Box3DSharedState::moves
+    float             lin[3]   = { 0, 0, 0 };   // velocities (not in move events)
+    float             ang[3]   = { 0, 0, 0 };
     int               objectId = 0;
     int               packedIdx = -1;           // index into Box3DSharedState::packedWrites, or -1
     int8_t            sleepState = -1;          // bullet_sleeping to write: -1 none, 0 awake, 1 asleep
@@ -200,8 +213,12 @@ struct Box3DObjectSync
     bool     anyDeforming = false;  // deforming bodies: never skip
     bool     anyDriven    = false;  // a moved animated body (velocity to clear): never skip
     bool     addImpact    = false;  // Box3D Data "Add Impact Data"
-    std::vector<Box3DBodyMirror *> impacts;     // with addImpact: every body (rebuilt by each full scan)
+    std::vector<Box3DBodyMirror *> bodies;      // every body of the object (rebuilt by each full scan)
     std::vector<Box3DBodyMirror *> activation;  // inactive bodies with min_activation_impulse > 0
+    // `force` / `torque` data ids right after the solver last zeroed them (or found them all
+    // zero): unchanged ids mean nothing new to apply.
+    GA_DataId forceId  = GA_DataId(-1);
+    GA_DataId torqueId = GA_DataId(-1);
     Box3DSyncFingerprint fp;
 };
 
@@ -214,6 +231,7 @@ struct Box3DAffectorBody
     uint64_t          signature = 0;        // geometry + material + baked transform the shape was built from
     double            pos[3]    = { 0, 0, 0 };      // the body's pose as last given to Box3D
     float             rot[4]    = { 0, 0, 0, 1 };
+    float             scale[3]  = { 1, 1, 1 };      // the mesh shape's scale as last given to Box3D
     bool              poseKnown = false;
 };
 
@@ -234,7 +252,7 @@ struct Box3DSharedState
     std::unordered_map<int, std::vector<Box3DPointSlot>> slots;     // key: object id
     std::vector<Box3DWriteItem>                 writeItems;
     std::vector<Box3DPackedWrite>               packedWrites;
-    std::vector<b3dop::BodyMove>                moves;
+    std::vector<b3dop::BodyMove>                moves;          // this step's move events (read once after the step)
     std::vector<b3dop::ContactPoint>            contacts;
     // Filled by the sync (in object order), used after the step:
     std::vector<Box3DPointWrite>                pointWrites;
@@ -243,17 +261,27 @@ struct Box3DSharedState
 
     float stepDt = 0.0f;                        // this step's Box3D time step (DOP step * Time Scale)
 
+    // Interned strings (activationignore patterns): bodies store an index.
+    std::vector<std::string>                    strings;
+    std::unordered_map<std::string, int>        stringIds;
+    int intern(const std::string &str)
+    {
+        auto ins = stringIds.try_emplace(str, int(strings.size()));
+        if (ins.second)
+            strings.push_back(str);
+        return ins.first->second;
+    }
+
     double stampTime  = 0.0;                    // SIM_Engine::getSimulationTime() at the last solve
     bool   stamped    = false;
 
     std::mutex                                  mutex;
 
     // Current: its object was visited by the latest sync and it carries the object's liveStamp.
+    // (m.sync is valid here: records are only erased after their unvisited bodies are removed.)
     bool isLive(const Box3DBodyMirror &m) const
     {
-        const auto it = objectSync.find(m.objectId);
-        return it != objectSync.end() && it->second.visited == syncStamp &&
-               m.stamp == it->second.liveStamp;
+        return m.sync && m.sync->visited == syncStamp && m.stamp == m.sync->liveStamp;
     }
 
     // Last stepped exactly one timestep before `now` (as a difference, so it does not matter

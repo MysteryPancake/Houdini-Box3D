@@ -16,6 +16,138 @@
 
 namespace b3dop {
 
+namespace {
+
+// ---- the process-wide hull cache --------------------------------------------------------------
+// Box3D copies a hull into the world's own database when a shape is made, so entries here are
+// only needed until then: they can be shared by every world (a rebuilt world finds what its
+// predecessor built) and evicted at any time. Worlds hold the entries they use in a step
+// (Box3DWorld::Impl::held) so eviction never frees one between findHull and createHullShape.
+struct SharedHull
+{
+    b3HullData *hull   = nullptr;
+    float       volume = 0.0f;
+    size_t      bytes  = 0;
+    ~SharedHull() { if (hull) b3DestroyHull(hull); }
+};
+using HullRef = std::shared_ptr<const SharedHull>;
+
+size_t
+hullBytes(const b3HullData *h)
+{
+    return sizeof(b3HullData) + size_t(h->vertexCount) * (sizeof(b3HullVertex) + sizeof(b3Vec3)) +
+           size_t(h->edgeCount) * sizeof(b3HullHalfEdge) +
+           size_t(h->faceCount) * (sizeof(b3Plane) + sizeof(b3HullFace));
+}
+
+class HullLibrary
+{
+public:
+    static HullLibrary &instance()
+    {
+        static HullLibrary lib;
+        return lib;
+    }
+
+    HullRef find(HullId key)
+    {
+        std::lock_guard<std::mutex> lock(myMutex);
+        auto it = myEntries.find(key);
+        if (it == myEntries.end())
+            return nullptr;
+        it->second.lastUse = ++myTick;
+        return it->second.ref;
+    }
+
+    // Takes `hull`; returns the cached entry (an earlier insert of the same key wins).
+    HullRef insert(HullId key, b3HullData *hull)
+    {
+        auto fresh    = std::make_shared<SharedHull>();
+        fresh->hull   = hull;
+        fresh->volume = hull->volume;
+        fresh->bytes  = hullBytes(hull);
+        std::lock_guard<std::mutex> lock(myMutex);
+        auto ins = myEntries.try_emplace(key);
+        if (ins.second)
+        {
+            ins.first->second.ref = fresh;
+            myBytes += fresh->bytes;
+        }
+        ins.first->second.lastUse = ++myTick;
+        HullRef out = ins.first->second.ref;
+        if (myBytes > myBudget)
+            evictLocked();
+        return out;
+    }
+
+    // The vertex budget that last worked for a group (0: none yet).
+    int budgetHint(uint64_t group)
+    {
+        if (!group)
+            return 0;
+        std::lock_guard<std::mutex> lock(myMutex);
+        auto it = myHints.find(group);
+        return it == myHints.end() ? 0 : it->second;
+    }
+    void setBudgetHint(uint64_t group, int budget)
+    {
+        if (!group)
+            return;
+        std::lock_guard<std::mutex> lock(myMutex);
+        if (myHints.size() > 65536)
+            myHints.clear();
+        myHints[group] = budget;
+    }
+
+    int    count()       { std::lock_guard<std::mutex> lock(myMutex); return int(myEntries.size()); }
+    size_t bytes()       { std::lock_guard<std::mutex> lock(myMutex); return myBytes; }
+    void   setBudget(size_t b)
+    {
+        std::lock_guard<std::mutex> lock(myMutex);
+        myBudget = b;
+        if (myBytes > myBudget)
+            evictLocked();
+    }
+
+    std::atomic<int> builds{0}, attempts{0};
+
+private:
+    struct Entry
+    {
+        HullRef  ref;
+        uint64_t lastUse = 0;
+    };
+
+    // Least recently used first, down to 3/4 of the budget. Held entries stay alive through
+    // their HullRef; they just stop being found.
+    void evictLocked()
+    {
+        std::vector<std::pair<uint64_t, HullId>> order;
+        order.reserve(myEntries.size());
+        for (const auto &kv : myEntries)
+            order.emplace_back(kv.second.lastUse, kv.first);
+        std::sort(order.begin(), order.end());
+        const size_t target = myBudget / 4 * 3;
+        for (const auto &o : order)
+        {
+            if (myBytes <= target)
+                break;
+            auto it = myEntries.find(o.second);
+            myBytes -= it->second.ref->bytes;
+            myEntries.erase(it);
+        }
+    }
+
+    std::mutex                          myMutex;
+    std::unordered_map<HullId, Entry>   myEntries;
+    std::unordered_map<uint64_t, int>   myHints;
+    size_t                              myBytes  = 0;
+    size_t                              myBudget = size_t(256) << 20;
+    uint64_t                            myTick   = 0;
+};
+
+} // namespace
+
 struct Box3DWorld::Impl
 {
     b3WorldId                             worldId = b3_nullWorldId;
@@ -25,43 +157,36 @@ struct Box3DWorld::Impl
     int                                   liveBodies = 0;     // every live body
     std::set<std::pair<BodyHandle, BodyHandle>> hitPairs;    // updateHitEvents()
 
-    // Hull cache. We own the b3HullData; Box3D clones it when a shape is made.
-    struct HullEntry
+    // Shared hulls this world found or built since the last pruneHulls() (findHull may run on
+    // several threads, hence the lock).
+    std::mutex                                held_mutex;
+    std::unordered_map<HullId, HullRef>       held;
+
+    HullRef heldHull(HullId id)
     {
-        b3HullData *hull   = nullptr;
-        float       volume = 0.0f;
-        int         refs   = 0;          // shapes created from it, across all bodies
-    };
-    std::unordered_map<HullId, HullEntry>              hulls;
-    // Hulls each body uses (only bodies with hull shapes appear).
-    std::unordered_map<BodyHandle, std::vector<HullId>> bodyHulls;
+        std::lock_guard<std::mutex> lock(held_mutex);
+        auto it = held.find(id);
+        return it == held.end() ? nullptr : it->second;
+    }
+    void hold(HullId id, const HullRef &ref)
+    {
+        std::lock_guard<std::mutex> lock(held_mutex);
+        held.emplace(id, ref);
+    }
 
     // Triangle meshes for static colliders. Box3D keeps a pointer to the b3MeshData (it does not
     // clone it), so we own it: freed after its body is destroyed, or after the world.
     std::unordered_map<BodyHandle, std::vector<b3MeshData *>> bodyMeshes;
 
-    // What the world keeps for a body's shapes (its meshes, its hull references). Call after the
-    // body or its shapes are destroyed.
+    // The meshes a body's shapes used. Call after the body or its shapes are destroyed.
     void releaseBodyResources(BodyHandle body)
     {
         auto mit = bodyMeshes.find(body);
-        if (mit != bodyMeshes.end())
-        {
-            for (b3MeshData *m : mit->second)
-                b3DestroyMesh(m);
-            bodyMeshes.erase(mit);
-        }
-        auto hit = bodyHulls.find(body);
-        if (hit != bodyHulls.end())
-        {
-            for (HullId h : hit->second)
-            {
-                auto it = hulls.find(h);
-                if (it != hulls.end() && it->second.refs > 0)
-                    --it->second.refs;
-            }
-            bodyHulls.erase(hit);
-        }
+        if (mit == bodyMeshes.end())
+            return;
+        for (b3MeshData *m : mit->second)
+            b3DestroyMesh(m);
+        bodyMeshes.erase(mit);
     }
     void destroyAllMeshes()
     {
@@ -69,14 +194,6 @@ struct Box3DWorld::Impl
             for (b3MeshData *m : kv.second)
                 b3DestroyMesh(m);
         bodyMeshes.clear();
-    }
-    void destroyAllHulls()
-    {
-        for (auto &kv : hulls)
-            if (kv.second.hull)
-                b3DestroyHull(kv.second.hull);
-        hulls.clear();
-        bodyHulls.clear();
     }
 };
 
@@ -410,7 +527,7 @@ Box3DWorld::destroy()
     myImpl->tasks.reset();          // after the world: Box3D may call the runner until it is gone
     myImpl->worldId = b3_nullWorldId;
     myImpl->liveBodies = 0;
-    myImpl->destroyAllHulls();      // after the world: Box3D holds its own clones
+    myImpl->held.clear();           // the shared cache keeps the hulls
     myImpl->destroyAllMeshes();     // after the world: its shapes pointed at these
 }
 
@@ -498,23 +615,17 @@ Box3DWorld::createShape(BodyHandle h, const BodySettings &body, const ShapeSpec 
 bool
 Box3DWorld::createHullShape(BodyHandle h, const BodySettings &body, HullId hullId, bool updateMass)
 {
-    auto hit = myImpl->hulls.find(hullId);
-    if (!h || hit == myImpl->hulls.end())
+    const HullRef hull = h ? myImpl->heldHull(hullId) : nullptr;
+    if (!hull)
         return false;
-
     const b3ShapeDef def = shapeDefFor(body, updateMass);
-    const b3ShapeId shape = b3CreateHullShape(unpackBody(h), &def, hit->second.hull);
-    if (B3_IS_NULL(shape))
-        return false;
-
-    ++hit->second.refs;
-    myImpl->bodyHulls[h].push_back(hullId);
-    return true;
+    return !B3_IS_NULL(b3CreateHullShape(unpackBody(h), &def, hull->hull));     // Box3D copies it
 }
 
 bool
 Box3DWorld::createMeshShape(BodyHandle h, const BodySettings &body, const float *xyz, int vertexCount,
-                            const int32_t *triangles, int triangleCount, float weldTolerance)
+                            const int32_t *triangles, int triangleCount, float weldTolerance,
+                            const float scale[3])
 {
     if (!h || !xyz || !triangles || vertexCount < 3 || triangleCount < 1)
         return false;
@@ -553,7 +664,7 @@ Box3DWorld::createMeshShape(BodyHandle h, const BodySettings &body, const float 
         return false;
 
     const b3ShapeDef sdef = shapeDefFor(body, false);
-    const b3ShapeId shape = b3CreateMeshShape(unpackBody(h), &sdef, mesh, b3Vec3_one);
+    const b3ShapeId shape = b3CreateMeshShape(unpackBody(h), &sdef, mesh, scale ? makeVec3(scale) : b3Vec3_one);
     if (B3_IS_NULL(shape))
     {
         b3DestroyMesh(mesh);
@@ -661,11 +772,9 @@ Box3DWorld::createHull(const float *xyz, int pointCount, float *outVolume)
     if (outVolume) *outVolume = 0.0f;
     if (!xyz || pointCount < 4)
         return 0;
-
     for (int i = 0; i < pointCount * 3; ++i)
         if (!std::isfinite(xyz[i]))
             return 0;
-
     return createHullWithKey(hashPoints(xyz, pointCount), xyz, pointCount, outVolume);
 }
 
@@ -673,15 +782,23 @@ HullId
 Box3DWorld::findHull(HullId key, float *outVolume) const
 {
     if (outVolume) *outVolume = 0.0f;
-    auto cached = myImpl->hulls.find(key);
-    if (key == 0 || cached == myImpl->hulls.end())
+    if (key == 0)
         return 0;
-    if (outVolume) *outVolume = cached->second.volume;
+    HullRef ref = myImpl->heldHull(key);
+    if (!ref)
+    {
+        ref = HullLibrary::instance().find(key);
+        if (!ref)
+            return 0;
+        myImpl->hold(key, ref);
+    }
+    if (outVolume) *outVolume = ref->volume;
     return key;
 }
 
 HullId
-Box3DWorld::createHullWithKey(HullId key, const float *xyz, int pointCount, float *outVolume)
+Box3DWorld::createHullWithKey(HullId key, const float *xyz, int pointCount, float *outVolume,
+                              uint64_t budgetGroup)
 {
     if (outVolume) *outVolume = 0.0f;
     if (key == 0 || !xyz || pointCount < 4)
@@ -694,59 +811,63 @@ Box3DWorld::createHullWithKey(HullId key, const float *xyz, int pointCount, floa
 
     std::vector<b3Vec3> pts(static_cast<size_t>(pointCount));
     for (int i = 0; i < pointCount; ++i)
-    {
-        pts[size_t(i)].x = xyz[3 * i];
-        pts[size_t(i)].y = xyz[3 * i + 1];
-        pts[size_t(i)].z = xyz[3 * i + 2];
-    }
+        pts[size_t(i)] = makeVec3(xyz + 3 * i);
 
-    // b3CreateHull fails for degenerate input or when the result would exceed Box3D's
-    // vertex / face / edge limits; a smaller vertex budget keeps fewer vertices, so dense
-    // input still gets a (slightly smaller) hull. A triangulated hull hits the 128-edge
-    // limit at about 44 vertices, hence that rung.
+    // b3CreateHull fails for degenerate input or when the result would exceed Box3D's vertex /
+    // face / edge limits; a smaller vertex budget keeps fewer vertices, so dense input still gets
+    // a (slightly smaller) hull. A triangulated hull hits the 256 half-edge limit at about 44
+    // vertices, which is why there is no rung between the maximum and 44: a 64-vertex budget
+    // fails whenever the maximum did. The group's last working budget is tried first.
+    HullLibrary &lib = HullLibrary::instance();
+    const int   hint = lib.budgetHint(budgetGroup);
     b3HullData *hull = nullptr;
-    for (int budget : { B3_MAX_HULL_VERTICES, 64, 44, 32, 16, 8 })
+    for (int budget : { B3_MAX_HULL_VERTICES, 44, 32, 16, 8 })
     {
+        if (hint && budget > hint)
+            continue;
+        lib.attempts.fetch_add(1, std::memory_order_relaxed);
         hull = b3CreateHull(pts.data(), pointCount, budget);
         if (hull)
+        {
+            if (budget != hint)
+                lib.setBudgetHint(budgetGroup, budget);
             break;
+        }
     }
     if (!hull)
         return 0;
+    lib.builds.fetch_add(1, std::memory_order_relaxed);
 
-    const float volume = hull->volume;
-    if (!(volume > 1e-9f) || !std::isfinite(volume))
+    if (!(hull->volume > 1e-9f) || !std::isfinite(hull->volume))
     {
         b3DestroyHull(hull);        // flat: no mass, no stable contacts
         return 0;
     }
-
-    Impl::HullEntry e;
-    e.hull   = hull;
-    e.volume = volume;
-    myImpl->hulls[key] = e;
-    if (outVolume) *outVolume = volume;
+    const HullRef ref = lib.insert(key, hull);
+    myImpl->hold(key, ref);
+    if (outVolume) *outVolume = ref->volume;
     return key;
 }
 
 void
 Box3DWorld::pruneHulls()
 {
-    for (auto it = myImpl->hulls.begin(); it != myImpl->hulls.end();)
-    {
-        if (it->second.refs <= 0)
-        {
-            if (it->second.hull)
-                b3DestroyHull(it->second.hull);
-            it = myImpl->hulls.erase(it);
-        }
-        else
-            ++it;
-    }
+    std::lock_guard<std::mutex> lock(myImpl->held_mutex);
+    myImpl->held.clear();
 }
 
 int
-Box3DWorld::hullCacheSize() const { return static_cast<int>(myImpl->hulls.size()); }
+Box3DWorld::hullCacheSize() const
+{
+    std::lock_guard<std::mutex> lock(myImpl->held_mutex);
+    return static_cast<int>(myImpl->held.size());
+}
+
+int    Box3DWorld::sharedHullCount()               { return HullLibrary::instance().count(); }
+size_t Box3DWorld::sharedHullBytes()               { return HullLibrary::instance().bytes(); }
+void   Box3DWorld::setSharedHullBudget(size_t b)   { HullLibrary::instance().setBudget(b); }
+int    Box3DWorld::hullBuildCount()                { return HullLibrary::instance().builds.load(); }
+int    Box3DWorld::hullBuildAttempts()             { return HullLibrary::instance().attempts.load(); }
 
 bool
 Box3DWorld::setTypeByHandle(BodyHandle h, BodySettings::Type type)
@@ -784,6 +905,24 @@ bodyShapes(b3BodyId id, std::vector<b3ShapeId> &out)
 thread_local std::vector<b3ShapeId> tShapes;
 
 } // namespace
+
+void
+Box3DWorld::setMeshScaleByHandle(BodyHandle h, const float scale[3])
+{
+    if (!h || !scale || !finite3(scale))
+        return;
+    const b3Vec3 sc = makeVec3(scale);
+    const int n = bodyShapes(unpackBody(h), tShapes);
+    for (int i = 0; i < n; ++i)
+    {
+        const b3ShapeId sid = tShapes[size_t(i)];
+        if (b3Shape_GetType(sid) != b3_meshShape)
+            continue;
+        const b3Mesh mesh = b3Shape_GetMesh(sid);
+        if (mesh.scale.x != sc.x || mesh.scale.y != sc.y || mesh.scale.z != sc.z)
+            b3Shape_SetMesh(sid, mesh.data, sc);
+    }
+}
 
 void
 Box3DWorld::setMaterialByHandle(BodyHandle h, float friction, float restitution)
@@ -934,14 +1073,16 @@ Box3DWorld::applyForceByHandle(BodyHandle h, const float force[3], const float t
 }
 
 void
-Box3DWorld::applyMassByHandle(BodyHandle h, float density, bool comAtOrigin, float inertiaScale)
+Box3DWorld::applyMassByHandle(BodyHandle h, float density, bool comAtOrigin, float inertiaScale,
+                              bool setShapeDensity)
 {
     if (!h || !(density >= 0.0f) || !std::isfinite(density))
         return;
     const b3BodyId id = unpackBody(h);
-    const int n = bodyShapes(id, tShapes);
-    for (int i = 0; i < n; ++i)
-        b3Shape_SetDensity(tShapes[size_t(i)], density, false);
+    const int n = setShapeDensity ? bodyShapes(id, tShapes) : b3Body_GetShapeCount(id);
+    if (setShapeDensity)
+        for (int i = 0; i < n; ++i)
+            b3Shape_SetDensity(tShapes[size_t(i)], density, false);
     b3Body_ApplyMassFromShapes(id);
 
     const bool scale = inertiaScale > 0.0f && std::isfinite(inertiaScale) && inertiaScale != 1.0f;

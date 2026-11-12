@@ -42,6 +42,7 @@
 #include <UT/UT_XformOrder.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -104,13 +105,11 @@ splitPackedMatrix(const double m3[9], float q[4], double scale[3])
     return true;
 }
 
-// oldM3's per-row scale with q's rotation: a packed primitive's new local 3x3.
+// A per-row scale (splitPackedMatrix's, kept from the sync) with q's rotation: a packed
+// primitive's new local 3x3.
 void
-composePackedMatrix(const float q[4], const double oldM3[9], double out[9])
+composePackedMatrix(const float q[4], const double sc[3], double out[9])
 {
-    float  oq[4];
-    double sc[3];
-    splitPackedMatrix(oldM3, oq, sc);               // sc stays 1 if oldM3 is degenerate
     UT_DMatrix3 r;
     UT_QuaternionD(q[0], q[1], q[2], q[3]).getRotationMatrix(r);
     for (int row = 0; row < 3; ++row)
@@ -278,7 +277,7 @@ constexpr size_t kMinParallelWrite       = 1024;    // write-back
 // write element i of its own output.
 template <class F>
 void
-parallelForEach(size_t n, const F &f, size_t minParallel = kMinParallelPoints)
+parallelForEach(size_t n, const F &f, size_t minParallel = kMinParallelPoints, size_t grain = 1)
 {
     if (n < minParallel)
     {
@@ -286,7 +285,7 @@ parallelForEach(size_t n, const F &f, size_t minParallel = kMinParallelPoints)
             f(i);
         return;
     }
-    UTparallelFor(UT_BlockedRange<size_t>(0, n), [&f](const UT_BlockedRange<size_t> &r) {
+    UTparallelFor(UT_BlockedRange<size_t>(0, n, grain), [&f](const UT_BlockedRange<size_t> &r) {
         for (size_t i = r.begin(); i != r.end(); ++i)
             f(i);
     });
@@ -463,8 +462,70 @@ collectFragmentPiece(const GU_Detail *gdp, const GA_Range &range, const std::str
     finishPieces(gdp, out);
 }
 
+// What a source's pieces hash to, so a packed hull can be looked up without reading the source
+// geometry. Non-empty pieces only, in piece order.
+struct SourceSummary
+{
+    uint64_t              groupHash = 0;
+    std::vector<uint64_t> pieceHashes;
+};
+
+// Source summaries by the source detail's identity (unique id, P and primitive list data ids,
+// counts, fragment, connected sets or not). Process-wide, so a rebuilt world skips reading
+// sources whose hulls are still cached. Relies on whoever edits a source bumping its data ids,
+// as Houdini's own caches do.
+class SourceSummaryCache
+{
+public:
+    static SourceSummaryCache &instance()
+    {
+        static SourceSummaryCache c;
+        return c;
+    }
+    bool find(uint64_t key, SourceSummary &out)
+    {
+        std::lock_guard<std::mutex> lock(myMutex);
+        auto it = myMap.find(key);
+        if (it == myMap.end())
+            return false;
+        out = it->second;
+        return true;
+    }
+    void insert(uint64_t key, const PieceGroup &g)
+    {
+        SourceSummary sum;
+        sum.groupHash = g.hash;
+        for (const NamedPiece &np : g.pieces)
+            if (!np.xyz.empty())
+                sum.pieceHashes.push_back(np.hash);
+        std::lock_guard<std::mutex> lock(myMutex);
+        if (myMap.size() >= kMaxEntries)
+            myMap.clear();
+        myMap[key] = std::move(sum);
+    }
+
+private:
+    static constexpr size_t kMaxEntries = 65536;
+    std::mutex                                  myMutex;
+    std::unordered_map<uint64_t, SourceSummary> myMap;
+};
+
+// The identity SourceSummaryCache is keyed by.
+uint64_t
+sourceIdentity(const GU_Detail *gdp, GA_Offset fragmentFirst, bool connected)
+{
+    const GA_Attribute *P = gdp->getP();
+    uint64_t h = b3dop::mixHash(b3dop::kHashSeed, uint64_t(gdp->getUniqueId()));
+    h = b3dop::mixHash(h, P ? uint64_t(P->getDataId()) : 0);
+    h = b3dop::mixHash(h, uint64_t(gdp->getPrimitiveList().getDataId()));
+    h = b3dop::mixHash(h, uint64_t(gdp->getNumPoints()));
+    h = b3dop::mixHash(h, uint64_t(gdp->getNumPrimitives()));
+    h = b3dop::mixHash(h, uint64_t(int64_t(fragmentFirst)));
+    return b3dop::mixHash(h, connected ? 1 : 2);
+}
+
 // Collision source geometry (what is packed in each point's primitive), cached for one
-// syncObject() call.
+// syncObject() call. Thread-safe: the shape pre-pass plans points in parallel.
 struct ShapeSources
 {
     // Per distinct source detail; the handle keeps the detail (the key) alive.
@@ -475,40 +536,64 @@ struct ShapeSources
         PieceGroup           connected;          // one piece per set of connected primitives
         bool                 connectedBuilt = false;
     };
+    std::mutex                                        mutex;
     std::unordered_map<const GU_Detail *, InnerEntry> inner;
     // Fragments: (shared source detail, first primitive offset) -> that fragment's piece.
     std::map<std::pair<const GU_Detail *, GA_Offset>, InnerEntry> fragments;
 
-    // The primitive's pieces (by `name`, or connected sets), or null.
+    // The primitive's source detail. A packed fragment shares the WHOLE source detail
+    // (detailPtr) with every fragment of it and stands for its own primitives in it. Not
+    // getPackedDetail(): for a fragment that is a different detail from the one
+    // getPrimitiveRange() indexes, so the range's offsets picked the wrong primitives or none
+    // (none: the pscale * scale box).
+    static GU_ConstDetailHandle sourceHandle(const GU_PrimPacked &prim, const GU_PackedFragment *frag)
+    {
+        return frag ? frag->detailPtr() : prim.getPackedDetail();
+    }
+    // GU_PackedFragment does not expose its attribute value; its primitive range does identify
+    // it (no two fragments of one source share a primitive). GA_INVALID_OFFSET for a non-fragment.
+    static GA_Offset fragmentFirst(const GU_PackedFragment *frag)
+    {
+        if (!frag)
+            return GA_INVALID_OFFSET;
+        const GA_Iterator first(frag->getPrimitiveRange());
+        return first.atEnd() ? GA_INVALID_OFFSET : *first;
+    }
+
+    // The source's summary, if one was recorded for it (no geometry is read).
+    static bool summary(const GU_PrimPacked &prim, bool connected, SourceSummary &out)
+    {
+        const GU_PackedFragment *frag = asFragment(prim);
+        GU_DetailHandleAutoReadLock lock(sourceHandle(prim, frag));
+        const GU_Detail *gdp = lock.getGdp();
+        return gdp && SourceSummaryCache::instance().find(sourceIdentity(gdp, fragmentFirst(frag), connected), out);
+    }
+
+    // The primitive's pieces (by `name`, or connected sets), or null. Records the summary.
     const PieceGroup *innerPieces(const GU_PrimPacked &prim, bool connected)
     {
-        // A packed fragment: read the WHOLE source detail (detailPtr), shared by every fragment
-        // of it, and only this fragment's own primitives in it. Not getPackedDetail(): for a
-        // fragment that is a different detail from the one getPrimitiveRange() indexes, so the
-        // range's offsets picked the wrong primitives or none (none: the pscale * scale box).
         const GU_PackedFragment *frag = asFragment(prim);
-        GU_ConstDetailHandle handle = frag ? frag->detailPtr() : prim.getPackedDetail();
+        GU_ConstDetailHandle handle = sourceHandle(prim, frag);
         GU_DetailHandleAutoReadLock lock(handle);
         const GU_Detail *gdp = lock.getGdp();
         if (!gdp)
             return nullptr;
 
-        InnerEntry              *entry = nullptr;
+        std::lock_guard<std::mutex> guard(mutex);
+        const GA_Offset firstOff = fragmentFirst(frag);
+        InnerEntry *entry = nullptr;
+        bool        fresh = false;
         if (frag)
         {
-            // GU_PackedFragment does not expose its attribute value; its primitive range does
-            // identify it (no two fragments of one source share a primitive).
-            const GA_Range range = frag->getPrimitiveRange();
-            const GA_Iterator first(range);
-            const GA_Offset   firstOff = first.atEnd() ? GA_INVALID_OFFSET : *first;
             const auto key = std::make_pair(gdp, firstOff);
             auto fit = fragments.find(key);
             if (fit == fragments.end())
             {
                 InnerEntry e;
                 e.handle = handle;
-                collectFragmentPiece(gdp, range, std::to_string(int64_t(firstOff)), e.pieces);
-                fit = fragments.emplace(key, std::move(e)).first;
+                collectFragmentPiece(gdp, frag->getPrimitiveRange(), std::to_string(int64_t(firstOff)), e.pieces);
+                fit   = fragments.emplace(key, std::move(e)).first;
+                fresh = true;
             }
             entry = &fit->second;
         }
@@ -520,14 +605,19 @@ struct ShapeSources
                 InnerEntry e;
                 e.handle = handle;
                 collectPieces(gdp, e.pieces);
-                it = inner.emplace(gdp, std::move(e)).first;
+                it    = inner.emplace(gdp, std::move(e)).first;
+                fresh = true;
             }
             entry = &it->second;
         }
 
         if (!connected)
+        {
+            if (fresh)
+                SourceSummaryCache::instance().insert(sourceIdentity(gdp, firstOff, false), entry->pieces);
             return entry->pieces.pieces.empty() || entry->pieces.pieces[0].xyz.empty()
                        ? nullptr : &entry->pieces;
+        }
 
         if (!entry->connectedBuilt)
         {
@@ -540,6 +630,7 @@ struct ShapeSources
                     collectPieces(gdp, entry->connected);
             }
             entry->connectedBuilt = true;
+            SourceSummaryCache::instance().insert(sourceIdentity(gdp, firstOff, true), entry->connected);
         }
         return entry->connected.pieces.empty() ? nullptr : &entry->connected;
     }
@@ -716,11 +807,12 @@ const char *const kHullFallbackNote =
 
 // A hull of body-local points, cached under `key` (by content when 0), else a box fitted to the
 // points. fill(pts) produces the points; with a key it is only called when the hull is not cached
-// yet. False if there are no usable points.
+// yet. `budgetGroup`: hulls of one source share their vertex budget (Box3DWorld). False if there
+// are no usable points.
 template <class Fill>
 bool
-pieceFromPoints(b3dop::Box3DWorld &world, uint64_t key, const Fill &fill, std::vector<float> &pts,
-                Piece &out, const char *&note)
+pieceFromPoints(b3dop::Box3DWorld &world, uint64_t key, uint64_t budgetGroup, const Fill &fill,
+                std::vector<float> &pts, Piece &out, const char *&note)
 {
     float vol = 0.0f;
     b3dop::HullId h = key ? world.findHull(key, &vol) : 0;
@@ -728,7 +820,8 @@ pieceFromPoints(b3dop::Box3DWorld &world, uint64_t key, const Fill &fill, std::v
     {
         fill(pts);
         const int n = int(pts.size() / 3);
-        h = key ? world.createHullWithKey(key, pts.data(), n, &vol) : world.createHull(pts.data(), n, &vol);
+        h = key ? world.createHullWithKey(key, pts.data(), n, &vol, budgetGroup)
+                : world.createHull(pts.data(), n, &vol);
         if (!h)
         {
             // Fewer than 4 points, flat, or too complex to hull: fall back to the bounds.
@@ -766,13 +859,50 @@ buildShapes(b3dop::Box3DWorld &world, ShapeSources &src, b3dop::ShapeType type,
 
     const bool wantGeometry = (type == ShapeType::Convex || type == ShapeType::Concave);
     const bool mergeAll     = (type == ShapeType::Convex) && !hullPerConnected;
+    const bool connected    = (type == ShapeType::Convex) && hullPerConnected;
+
+    // Packed convex / concave hulls are keyed by (source, pivot, scale), so instances share them
+    // and the points are built only on a miss. A degenerate transform has no scale: by content.
+    double S[3];
+    const bool keyed = pk.prim && wantGeometry && packedScale(pk.m4, S);
+
+    // A source seen before (in any world): its summary gives the keys, and when every hull is
+    // still cached the source geometry is not read at all.
+    if (keyed)
+    {
+        SourceSummary sum;
+        if (ShapeSources::summary(*pk.prim, connected, sum) && !sum.pieceHashes.empty())
+        {
+            std::vector<Piece> found;
+            auto lookup = [&](uint64_t sourceHash, uint32_t kind) {
+                Piece pc;
+                pc.hull   = world.findHull(packedHullKey(sourceHash, pk.pivot, S, kind), &pc.volume);
+                pc.isHull = pc.hull != 0;
+                if (pc.isHull)
+                    found.push_back(pc);
+                return pc.isHull;
+            };
+            bool all = true;
+            if (mergeAll)
+                all = lookup(sum.groupHash, 1);
+            else
+                for (const uint64_t h : sum.pieceHashes)
+                    if (!(all = lookup(h, 2)))
+                        break;
+            if (all)
+            {
+                for (const Piece &pc : found)
+                    add(pc);
+                return out;
+            }
+        }
+    }
 
     // The packed geometry's non-empty pieces (none for a plain point; box / sphere / capsule only
     // need them to autofit). Connected sets for hullPerConnected.
     std::vector<const NamedPiece *> used;
-    const PieceGroup *group = (pk.prim && (wantGeometry || autofit))
-                                  ? src.innerPieces(*pk.prim, type == ShapeType::Convex && hullPerConnected)
-                                  : nullptr;
+    const PieceGroup *group = (pk.prim && (wantGeometry || autofit)) ? src.innerPieces(*pk.prim, connected)
+                                                                     : nullptr;
     if (group)
         for (const NamedPiece &np : group->pieces)
             if (!np.xyz.empty())
@@ -791,15 +921,11 @@ buildShapes(b3dop::Box3DWorld &world, ShapeSources &src, b3dop::ShapeType type,
 
     if (wantGeometry && !used.empty())
     {
-        // Packed hulls are keyed by (source, pivot, scale), so instances share them and the
-        // points are built only on a miss. A degenerate transform has no scale: keyed by content.
-        double S[3];
-        const bool keyed = packedScale(pk.m4, S);
         auto addHull = [&](uint64_t sourceHash, uint32_t kind, const std::vector<const NamedPiece *> &from) {
             const uint64_t key = keyed ? packedHullKey(sourceHash, pk.pivot, S, kind) : 0;
             Piece pc;
-            if (pieceFromPoints(world, key, [&](std::vector<float> &dst) { toBodyLocal(from, dst); }, pts, pc,
-                                out.note))
+            if (pieceFromPoints(world, key, b3dop::mixHash(sourceHash, kind),
+                                [&](std::vector<float> &dst) { toBodyLocal(from, dst); }, pts, pc, out.note))
                 add(pc);
         };
         if (mergeAll)
@@ -844,6 +970,7 @@ struct GeorepLookup
     const GA_Attribute            *attr = nullptr;
     const GA_AIFSharedStringTuple *aif  = nullptr;
     struct Parsed { bool ok = false; b3dop::ShapeType type = b3dop::ShapeType::Box; };
+    std::mutex                          mutex;      // get() runs in the parallel shape pre-pass
     std::unordered_map<int64_t, Parsed> byHandle;
 
     void bind(const PointAttrs &a)
@@ -862,6 +989,7 @@ struct GeorepLookup
         const GA_StringIndexType handle = aif->getHandle(attr, off, 0);
         if (handle == GA_INVALID_STRING_INDEX)
             return false;
+        std::lock_guard<std::mutex> lock(mutex);
         auto it = byHandle.find(int64_t(handle));
         if (it == byHandle.end())
         {
@@ -947,29 +1075,42 @@ readDynamicProps(const b3dop::BodySettings &node, const PointAttrs &a, GA_Offset
         const float m = a.minActivation.get(off);
         if (m > 0.0f && std::isfinite(m)) p.minActivationImpulse = m;
     }
-    p.activationIgnore.clear();
-    if (a.activationIgnore.isValid())
-        if (const char *s = a.activationIgnore.get(off))
-            p.activationIgnore = s;
-    return p;
+    return p;                   // filterProfile, activationIgnore: ScanContext::props
 }
 
-// The object's profile, or a point's own when it has collisiongroup / collisionignore.
-int
-pointFilterProfile(b3dop::Box3DWorld &world, const PointAttrs &a, GA_Offset off,
-                   const b3dop::FilterProfile &base, int baseIdx)
+// A string attribute read through its shared-string handles where it has them, so per-point work
+// can be memoised by handle (an int) rather than by string.
+struct StringAttr
 {
-    if (!a.collisionGroup.isValid() && !a.collisionIgnore.isValid())
-        return baseIdx;
-    b3dop::FilterProfile fp = base;
-    if (a.collisionGroup.isValid())
-        if (const char *g = a.collisionGroup.get(off))
-            fp.group = g;
-    if (a.collisionIgnore.isValid())
-        if (const char *ig = a.collisionIgnore.get(off))
-            fp.ignore = ig;
-    return world.filterProfile(fp);
-}
+    const GA_ROHandleS            *handle = nullptr;
+    const GA_Attribute            *attr   = nullptr;
+    const GA_AIFSharedStringTuple *aif    = nullptr;
+
+    void bind(const GA_ROHandleS &h)
+    {
+        handle = &h;
+        attr   = h.isValid() ? h.getAttribute() : nullptr;
+        aif    = attr ? attr->getAIFSharedStringTuple() : nullptr;
+    }
+    bool valid() const { return attr != nullptr; }
+    bool memoisable() const { return !attr || aif; }
+
+    // The point's string handle; -1 for none (empty, or no attribute). Only with memoisable().
+    int64_t id(GA_Offset off) const
+    {
+        if (!attr)
+            return -1;
+        const GA_StringIndexType h = aif->getHandle(attr, off, 0);
+        return h == GA_INVALID_STRING_INDEX ? -1 : int64_t(h);
+    }
+    std::string str(GA_Offset off) const
+    {
+        if (!attr)
+            return std::string();
+        const char *v = handle->get(off);
+        return v ? std::string(v) : std::string();
+    }
+};
 
 // Box3D density: computemass -> density; else mass / volume (density if unusable).
 float
@@ -1001,10 +1142,12 @@ wantedType(const b3dop::BodySettings &node, bool active, bool animated, bool sha
 // The body's mass after shapes are added / replaced or its type changes. As in Houdini RBD the
 // point (pivot) is the centre of mass, so the shapes' centroid is moved there; inertia is
 // scaled by inertialtensorstiffness. Static / kinematic bodies only get shape densities.
+// setShapeDensity = false for shapes just created with boxDensity(p, volume).
 void
-applyBodyMass(b3dop::Box3DWorld &world, b3dop::BodyHandle h, const Box3DBodyProps &p, float volume)
+applyBodyMass(b3dop::Box3DWorld &world, b3dop::BodyHandle h, const Box3DBodyProps &p, float volume,
+              bool setShapeDensity = true)
 {
-    world.applyMassByHandle(h, boxDensity(p, volume), true, p.inertiaScale);
+    world.applyMassByHandle(h, boxDensity(p, volume), true, p.inertiaScale, setShapeDensity);
 }
 
 // The node's settings with a point's values applied.
@@ -1066,6 +1209,7 @@ sizeKey(bool packed, const double m3[9], float ps, const float sc[3], double out
 // What every point of one syncObject() scan shares.
 struct ScanContext
 {
+    Box3DSharedState          &st;
     b3dop::Box3DWorld         &world;
     const GU_Detail           *gdp;
     const PointAttrs          &a;
@@ -1076,11 +1220,19 @@ struct ScanContext
     b3dop::FilterProfile       baseProfile;        // the object's collision names
     int                        baseProfileIdx = -1;
 
-    ScanContext(b3dop::Box3DWorld &w, const GU_Detail *g, const PointAttrs &attrs,
+    // Per-point strings, memoised by shared-string handle (props() runs serially).
+    StringAttr                        group, ignore, activationIgnore;
+    std::unordered_map<uint64_t, int> profileByHandles;     // (group, ignore) handles -> profile
+    std::unordered_map<int64_t, int>  activationByHandle;   // handle -> interned pattern
+
+    ScanContext(Box3DSharedState &state, const GU_Detail *g, const PointAttrs &attrs,
                 const b3dop::BodySettings &n, const SIM_Object &obj)
-        : world(w), gdp(g), a(attrs), node(n), anyPrims(g->getNumPrimitives() > 0)
+        : st(state), world(state.world), gdp(g), a(attrs), node(n), anyPrims(g->getNumPrimitives() > 0)
     {
         georep.bind(a);
+        group.bind(a.collisionGroup);
+        ignore.bind(a.collisionIgnore);
+        activationIgnore.bind(a.activationIgnore);
         const UT_String &nm = obj.getName();
         if (nm.isstring())
             baseProfile.objectName = nm.buffer();
@@ -1096,11 +1248,59 @@ struct ScanContext
         return pk;
     }
 
-    // The point's changeable settings, its collision profile included.
+    // The object's profile, or the point's own when it has collisiongroup / collisionignore.
+    int filterProfile(GA_Offset off)
+    {
+        if (!group.valid() && !ignore.valid())
+            return baseProfileIdx;
+        const bool memo = group.memoisable() && ignore.memoisable();
+        uint64_t key = 0;
+        if (memo)
+        {
+            key = (uint64_t(uint32_t(group.id(off) + 1)) << 32) | uint64_t(uint32_t(ignore.id(off) + 1));
+            const auto it = profileByHandles.find(key);
+            if (it != profileByHandles.end())
+                return it->second;
+        }
+        b3dop::FilterProfile fp = baseProfile;
+        if (group.valid())
+            fp.group = group.str(off);
+        if (ignore.valid())
+            fp.ignore = ignore.str(off);
+        const int idx = world.filterProfile(fp);
+        if (memo)
+            profileByHandles.emplace(key, idx);
+        return idx;
+    }
+
+    // The point's activationignore, interned (-1: none).
+    int activationPattern(GA_Offset off)
+    {
+        if (!activationIgnore.valid())
+            return -1;
+        int64_t h = 0;
+        if (activationIgnore.memoisable())
+        {
+            h = activationIgnore.id(off);
+            if (h < 0)
+                return -1;
+            const auto it = activationByHandle.find(h);
+            if (it != activationByHandle.end())
+                return it->second;
+        }
+        const std::string pattern = activationIgnore.str(off);
+        const int idx = pattern.empty() ? -1 : st.intern(pattern);
+        if (activationIgnore.memoisable())
+            activationByHandle.emplace(h, idx);
+        return idx;
+    }
+
+    // The point's changeable settings, its collision profile and activation pattern included.
     Box3DBodyProps props(GA_Offset off)
     {
         Box3DBodyProps p = readDynamicProps(node, a, off);
-        p.filterProfile = pointFilterProfile(world, a, off, baseProfile, baseProfileIdx);
+        p.filterProfile    = filterProfile(off);
+        p.activationIgnore = activationPattern(off);
         return p;
     }
 };
@@ -1225,15 +1425,23 @@ storePlan(Box3DBodyMirror &m, const ShapePlan &plan)
         m.sizeKey[i] = plan.sizeKey[i];
 }
 
+// The slot's plan from the parallel pre-pass (moved out), else made now.
+ShapePlan
+takePlan(ScanContext &ctx, const Box3DPointSlot &s, std::vector<ShapePlan> &plans)
+{
+    if (s.plan >= 0)
+        return std::move(plans[size_t(s.plan)]);
+    return planShapes(ctx, s.off, s.bid, ctx.packedInfo(s.off));
+}
+
 // Create the body for slot `s` (settings `p`), its shapes and initial velocity. `entry` becomes
 // the body's user data and records what it was built from. Returns 0 on failure.
 b3dop::BodyHandle
-addPointBody(ScanContext &ctx, const Box3DPointSlot &s, const PackedInfo &pk, bool animated,
+addPointBody(ScanContext &ctx, const Box3DPointSlot &s, const ShapePlan &plan, bool animated,
              const Box3DBodyProps &p, Box3DBodyMirror &entry, std::string &fallbackNote)
 {
     b3dop::Box3DWorld &world = ctx.world;
     const Box3DBodyPose &st  = s.cur;
-    const ShapePlan plan = planShapes(ctx, s.off, s.bid, pk);
     if (plan.shapes.note)
         fallbackNote = plan.shapes.note;
     entry.props     = p;
@@ -1254,7 +1462,7 @@ addPointBody(ScanContext &ctx, const Box3DPointSlot &s, const PackedInfo &pk, bo
             world.destroyBody(h);       // never a shapeless body, except `none`
             return 0;
         }
-        applyBodyMass(world, h, p, plan.shapes.totalVolume);
+        applyBodyMass(world, h, p, plan.shapes.totalVolume, false);
 
         // After the mass is final (a moving centre of mass shifts the velocity). Animated bodies
         // follow their point instead.
@@ -1272,12 +1480,11 @@ addPointBody(ScanContext &ctx, const Box3DPointSlot &s, const PackedInfo &pk, bo
 // convex / concave scale change), keeping the body. Identical shapes: nothing happens. Returns
 // true if replaced; `noShape` if none could be added (the body is then static).
 bool
-rebuildPointShapes(ScanContext &ctx, const Box3DPointSlot &s, const PackedInfo &pk,
+rebuildPointShapes(ScanContext &ctx, const Box3DPointSlot &s, const ShapePlan &plan,
                    const Box3DBodyProps &p, Box3DBodyMirror &entry, std::string &note, bool &noShape)
 {
     b3dop::Box3DWorld &world = ctx.world;
     noShape = false;
-    const ShapePlan plan = planShapes(ctx, s.off, s.bid, pk);
     if (plan.shapes.note)
         note = plan.shapes.note;
     if (plan.sig == entry.shapeSig)
@@ -1299,7 +1506,7 @@ rebuildPointShapes(ScanContext &ctx, const Box3DPointSlot &s, const PackedInfo &
         else
             noShape = true;
     }
-    applyBodyMass(world, h, p, plan.shapes.totalVolume);    // even with no shapes: clears Box3D's dirty mass
+    applyBodyMass(world, h, p, plan.shapes.totalVolume, false);    // even with no shapes: clears Box3D's dirty mass
     world.wakeByHandle(h);          // let it re-settle
     B3D_LOG_VERBOSE("  body id=%lld: collision shape rebuilt", (long long)s.bid);
     return true;
@@ -1397,8 +1604,10 @@ storePacked(Box3DBodyMirror &m, const Box3DPointSlot &s)
     m.packed  = s.packed;
     m.primOff = s.primOff;
     if (s.packed)
-        for (int i = 0; i < 9; ++i)
-            m.m3[i] = s.m3[i];
+    {
+        std::copy(s.m3, s.m3 + 9, m.m3);
+        std::copy(s.rowScale, s.rowScale + 3, m.rowScale);
+    }
 }
 
 struct SyncCounts
@@ -1413,6 +1622,7 @@ struct SyncCounts
 };
 
 constexpr size_t kProgressEvery = 64;       // points between Escape checks in the sync
+constexpr size_t kPlanChunk     = 256;      // shape plans between Escape checks in the pre-pass
 
 // Box3D Data values that change existing bodies (the fingerprint's nodeHash).
 uint64_t
@@ -1429,23 +1639,15 @@ nodeSettingsHash(const b3dop::BodySettings &n, bool addImpact)
 // Adds to `writes` the point attributes to write after the step.
 void
 updateExistingBody(ScanContext &ctx, Box3DSharedState &st, Box3DPointSlot &s, Box3DBodyMirror &entry,
-                   bool animated, bool deforming, bool refitWanted, bool checkProps, SyncCounts &c,
+                   bool animated, bool checkProps, std::vector<ShapePlan> &plans, SyncCounts &c,
                    unsigned &writes, bool &anyDriven)
 {
     b3dop::Box3DWorld &world = ctx.world;
     const PointAttrs  &a     = ctx.a;
     const GA_Offset    off   = s.off;
 
-    // Shape first (a shapeless body is static). Rebuilt only on deforming, bullet_autofit_valid
-    // = 0 or a convex / concave scale change, like Bullet.
-    bool rebuild = deforming || refitWanted;
-    if (!rebuild && entry.autoScale)
-    {
-        float  ps, sc[3];
-        double key[3];
-        readPscaleScale(a, off, ps, sc);
-        rebuild = sizeKey(s.packed, s.m3, ps, sc, key) && !sameSizeKey(key, entry.sizeKey);
-    }
+    // Shape first (a shapeless body is static); pass 1 decided whether to rebuild.
+    const bool rebuild = s.rebuild;
     if (rebuild || checkProps)
     {
         Box3DBodyProps p = ctx.props(off);
@@ -1456,7 +1658,7 @@ updateExistingBody(ScanContext &ctx, Box3DSharedState &st, Box3DPointSlot &s, Bo
         {
             std::string note;
             bool        noShape = false;
-            shapesRebuilt = rebuildPointShapes(ctx, s, ctx.packedInfo(off), p, entry, note, noShape);
+            shapesRebuilt = rebuildPointShapes(ctx, s, takePlan(ctx, s, plans), p, entry, note, noShape);
             if (shapesRebuilt)
             {
                 ++c.rebuilt;
@@ -1570,7 +1772,7 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c, StepProgr
     const int problems0 = c.failed + c.duplicates + c.badP;
 
     a.bindBuildAttrs(gdp);
-    ScanContext ctx(st.world, gdp, a, node, obj);
+    ScanContext ctx(st, gdp, a, node, obj);
     const bool anyPrims = ctx.anyPrims;
 
     // Settings are compared only when a prop marker changed (or deforming bodies need a rebuild
@@ -1581,7 +1783,7 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c, StepProgr
     bool       anyDriven    = false;
 
     // For the post-step passes; kept as they are while the object is skipped.
-    os.impacts.clear();
+    os.bodies.clear();
     os.activation.clear();
 
     // ---- pass 1 (parallel): read every point ---------------------------------
@@ -1620,8 +1822,61 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c, StepProgr
         {
             s.primOff = int64_t(pk.primOff);
             std::copy(pk.m3, pk.m3 + 9, s.m3);
+            std::copy(pk.scale, pk.scale + 3, s.rowScale);
+        }
+
+        // Does the point need shapes built: a new body, or a rebuild (deforming,
+        // bullet_autofit_valid = 0, or a convex / concave scale change, like Bullet)? The mirror
+        // is only read here (pass 2 changes it).
+        s.plan        = -1;
+        s.deforming   = a.deforming.isValid() && a.deforming.get(s.off) != 0;
+        s.refitWanted = a.autofitValid.isValid() && a.autofitValid.get(s.off) == 0;
+        s.rebuild     = false;
+        if (!s.ok || (a.dead.isValid() && a.dead.get(s.off) != 0))
+            return;
+        if (!s.entry)
+        {
+            const auto it = st.mirror.find(key);
+            if (it != st.mirror.end())
+                s.entry = &it->second;
+        }
+        if (const Box3DBodyMirror *e = s.entry)
+        {
+            s.rebuild = s.deforming || s.refitWanted;
+            if (!s.rebuild && e->autoScale)
+            {
+                float  ps, sc[3];
+                double sk[3];
+                readPscaleScale(a, s.off, ps, sc);
+                s.rebuild = sizeKey(s.packed, s.m3, ps, sc, sk) && !sameSizeKey(sk, e->sizeKey);
+            }
         }
     }, anyPrims ? kMinParallelReadPacked : kMinParallelReadPlain);
+
+    // ---- pass 1b (parallel): plan the shapes of new and rebuilt bodies -----------
+    // Building hulls is the slow part of a new world and of deforming bodies. Box3DWorld's hull
+    // calls, ShapeSources and GeorepLookup are thread-safe, so the plans are made here in
+    // parallel and pass 2 only creates bodies. Chunked, so Escape is checked in between.
+    std::vector<ShapePlan> plans;
+    {
+        std::vector<size_t> want;
+        for (size_t i = 0; i < snaps.size(); ++i)
+            if (snaps[i].ok && (!snaps[i].entry ? !(a.dead.isValid() && a.dead.get(snaps[i].off) != 0)
+                                                : snaps[i].rebuild))
+                want.push_back(i);
+        plans.resize(want.size());
+        for (size_t c0 = 0; c0 < want.size(); c0 += kPlanChunk)
+        {
+            if (progress.check())
+                return;
+            const size_t c1 = std::min(want.size(), c0 + kPlanChunk);
+            parallelForEach(c1 - c0, [&](size_t j) {
+                Box3DPointSlot &s = snaps[want[c0 + j]];
+                plans[c0 + j] = planShapes(ctx, s.off, s.bid, ctx.packedInfo(s.off));
+                s.plan = int32_t(c0 + j);
+            }, 2);
+        }
+    }
 
     // Many new bodies (a fresh world): size the mirror once.
     {
@@ -1634,7 +1889,7 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c, StepProgr
 
     // ---- pass 2 (serial, point order): apply to Box3D and the mirror ----------
     // An entry already carrying this step's stamp belongs to an earlier point (duplicate id).
-    // Escape is checked here, between points: building hulls for a new world is the slow part.
+    // Escape is checked here, between points (the hulls were built by the pre-pass).
     size_t pointIndex = 0;
     for (Box3DPointSlot &s : snaps)
     {
@@ -1701,17 +1956,15 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c, StepProgr
             continue;
         }
 
-        const bool animated    = !s.active && a.animated.isValid() && a.animated.get(off) != 0;
-        const bool deforming   = a.deforming.isValid() && a.deforming.get(off) != 0;
-        const bool refitWanted = a.autofitValid.isValid() && a.autofitValid.get(off) == 0;
-        anyDeforming = anyDeforming || deforming;
-        unsigned writes = refitWanted ? Box3DPointWrite::kAutofitValid : 0u;
+        const bool animated = !s.active && a.animated.isValid() && a.animated.get(off) != 0;
+        anyDeforming = anyDeforming || s.deforming;
+        unsigned writes = s.refitWanted ? Box3DPointWrite::kAutofitValid : 0u;
 
         if (freshEntry)
         {
             const Box3DBodyProps p = ctx.props(off);
             std::string fallbackNote;
-            const b3dop::BodyHandle handle = addPointBody(ctx, s, ctx.packedInfo(off), animated, p, *entry,
+            const b3dop::BodyHandle handle = addPointBody(ctx, s, takePlan(ctx, s, plans), animated, p, *entry,
                                                           fallbackNote);
             if (!handle)
             {
@@ -1737,18 +1990,17 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c, StepProgr
         entry->pointIndex = s.index;
         entry->objectId   = objectId;
         entry->stamp      = st.syncStamp;
+        entry->sync       = &os;
         storePacked(*entry, s);
         ++st.stampedCount;
         ++stamped;
 
         if (!freshEntry)
-            updateExistingBody(ctx, st, s, *entry, animated, deforming, refitWanted, checkProps, c, writes,
-                               anyDriven);
+            updateExistingBody(ctx, st, s, *entry, animated, checkProps, plans, c, writes, anyDriven);
 
         if (writes)
             queuePointWrite(st, *entry, writes, effectiveMass(entry->props, entry->volume));
-        if (os.addImpact)
-            os.impacts.push_back(entry);
+        os.bodies.push_back(entry);
         if (!s.active && entry->props.minActivationImpulse > 0.0f)
             os.activation.push_back(entry);
     }
@@ -1969,39 +2221,54 @@ forEachObjectRun(std::vector<Item> &items, const F &f)
 }
 
 // Add Impact Data: this step's contact points with impulse go into a fresh "Impacts" data
-// (SIM_Impacts), only on steps with at least one; otherwise the data is removed. Contacts where
-// neither body is awake are skipped. Normal: of the surface hit, pointing at this body. No
-// Feedback data (that is for interaction with other solvers).
+// (SIM_Impacts) on the objects with the option on, only on steps with at least one; otherwise the
+// data is removed. Contacts are read from the awake bodies (this step's move events, in
+// st.moves) and recorded for both bodies, so sleeping bodies cost nothing and each pair is read
+// once. Contacts where neither body is awake are skipped, as are asleep dynamic bodies. Normal:
+// of the surface hit, pointing at the body that gets the impact. No Feedback data (that is for
+// interaction with other solvers).
 void
 recordImpacts(Box3DSharedState &st, SIM_ObjectArray &objects, const SIM_Time &now)
 {
-    struct Hit { const Box3DBodyMirror *self; b3dop::ContactPoint cp; };
-    std::vector<Hit> hits;
-    std::vector<int> wrote;
-    const bool speedFilter = st.world.settings().impactMinSpeed > 0.0f;
-    if (speedFilter)
-        st.world.updateHitEvents();
-    for (auto &kv : st.objectSync)
+    // `fromOther`: cp was read from the other body's side.
+    struct Hit { const Box3DBodyMirror *self, *other; b3dop::ContactPoint cp; bool fromOther; };
+    std::unordered_map<int, std::vector<Hit>> hitsOf;
+
+    bool any = false;
+    for (const auto &kv : st.objectSync)
+        any = any || (kv.second.visited == st.syncStamp && kv.second.addImpact);
+    if (any)
     {
-        const Box3DObjectSync &os = kv.second;
-        if (os.visited != st.syncStamp || !os.addImpact || os.impacts.empty())
-            continue;
-        hits.clear();
-        for (const Box3DBodyMirror *e : os.impacts)
+        b3dop::Box3DWorld &world = st.world;
+        const bool speedFilter = world.settings().impactMinSpeed > 0.0f;
+        if (speedFilter)
+            world.updateHitEvents();
+        for (const b3dop::BodyMove &mv : st.moves)
         {
-            if (!e->handle)
+            const Box3DBodyMirror *e = static_cast<const Box3DBodyMirror *>(mv.userData);
+            if (!e || !e->handle || !st.isLive(*e) || !world.isAwakeByHandle(e->handle))
                 continue;
-            const bool selfAwake = st.world.isAwakeByHandle(e->handle);
-            if (e->dynamic() && !selfAwake)
-                continue;                       // asleep
-            st.world.getContactsByHandle(e->handle, st.contacts);
+            const bool selfWants = e->sync->addImpact;
+            world.getContactsByHandle(e->handle, st.contacts);
             for (const b3dop::ContactPoint &cp : st.contacts)
-                if ((selfAwake || st.world.isAwakeByHandle(cp.other)) &&
-                    (!speedFilter || st.world.hadHitEvent(e->handle, cp.other)))
-                    hits.push_back({ e, cp });
+            {
+                const Box3DBodyMirror *o = static_cast<const Box3DBodyMirror *>(cp.otherUserData);
+                // The other side, unless it is awake (it records its own) or an asleep dynamic body.
+                const bool otherWants = o && st.isLive(*o) && o->sync->addImpact && !o->dynamic() &&
+                                        !world.isAwakeByHandle(cp.other);
+                if ((!selfWants && !otherWants) || (speedFilter && !world.hadHitEvent(e->handle, cp.other)))
+                    continue;
+                if (selfWants)
+                    hitsOf[e->objectId].push_back({ e, o, cp, false });
+                if (otherWants)
+                    hitsOf[o->objectId].push_back({ o, e, cp, true });
+            }
         }
-        if (hits.empty())
-            continue;
+    }
+
+    std::vector<int> wrote;
+    for (const auto &kv : hitsOf)
+    {
         SIM_Object *obj = findObjectById(objects, kv.first);
         if (!obj)
             continue;
@@ -2009,14 +2276,15 @@ recordImpacts(Box3DSharedState &st, SIM_ObjectArray &objects, const SIM_Time &no
         if (!imp)
             continue;
         wrote.push_back(kv.first);
-        for (const Hit &h : hits)
+        for (const Hit &h : kv.second)
         {
+            // cp.normal points from the body it was read from into the other one.
             const b3dop::ContactPoint &cp = h.cp;
-            const Box3DBodyMirror *o = static_cast<const Box3DBodyMirror *>(cp.otherUserData);
+            const float sgn = h.fromOther ? 1.0f : -1.0f;
             imp->addPointImpact(UT_Vector3(float(cp.pos[0]), float(cp.pos[1]), float(cp.pos[2])),
-                                UT_Vector3(-cp.normal[0], -cp.normal[1], -cp.normal[2]),
+                                UT_Vector3(sgn * cp.normal[0], sgn * cp.normal[1], sgn * cp.normal[2]),
                                 cp.impulse, int(h.self->pointIndex),
-                                o ? o->objectId : -1, o ? int(o->pointIndex) : -1,
+                                h.other ? h.other->objectId : -1, h.other ? int(h.other->pointIndex) : -1,
                                 -1, 0.0, 0.0, 0.0, now, 0);
         }
     }
@@ -2051,9 +2319,9 @@ activateByImpact(Box3DSharedState &st)
                 if (cp.impulse < e->props.minActivationImpulse)
                     continue;
                 const Box3DBodyMirror *o = static_cast<const Box3DBodyMirror *>(cp.otherUserData);
-                if (o && !e->props.activationIgnore.empty())
+                if (o && e->props.activationIgnore >= 0)
                     if (const b3dop::FilterProfile *fp = st.world.filterProfileData(o->props.filterProfile))
-                        if (b3dop::patternsMatchProfile(e->props.activationIgnore, *fp))
+                        if (b3dop::patternsMatchProfile(st.strings[size_t(e->props.activationIgnore)], *fp))
                             continue;
                 hit = true;
                 break;
@@ -2163,21 +2431,34 @@ ageObjects(Box3DSharedState &st, SIM_ObjectArray &objects, float dt)
             GA_RWHandleI dead(gdp, GA_ATTRIB_POINT, "dead");
             if (!age.isValid())
                 continue;
+            std::vector<GA_Offset> offs;
+            offs.reserve(size_t(gdp->getNumPoints()));
             for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it)
+                offs.push_back(*it);
+            // Shared copy-on-write pages would race: harden what the parallel pass writes.
+            const bool killing = life.isValid() && dead.isValid();
+            if (offs.size() >= kMinParallelPoints)
             {
-                const GA_Offset off = *it;
+                age.getAttribute()->hardenAllPages();
+                if (killing)
+                    dead.getAttribute()->hardenAllPages();
+            }
+            std::atomic<bool> anyDead{ false };
+            parallelForEach(offs.size(), [&](size_t i) {
+                const GA_Offset off = offs[i];
                 const float a = age.get(off) + dt;
                 age.set(off, a);
-                if (life.isValid() && dead.isValid())
+                if (killing)
                 {
                     const float l = life.get(off);
                     if (l > 0.0f && a > l && dead.get(off) == 0)
                     {
                         dead.set(off, 1);
-                        markedDead = true;
+                        anyDead.store(true, std::memory_order_relaxed);
                     }
                 }
-            }
+            }, kMinParallelPoints, 1024);
+            markedDead = anyDead.load();
             age.getAttribute()->bumpDataId();
             if (markedDead)
                 dead.getAttribute()->bumpDataId();
@@ -2267,162 +2548,143 @@ struct ForceStats
     int nonFinite = 0;      // bodies whose force DOPs returned NaN / inf (those are skipped)
 };
 
+// The data ids of an object's `force` / `torque` attributes (kNoId when absent).
+void
+forceAttribIds(const GU_Detail *gdp, GA_DataId &forceId, GA_DataId &torqueId)
+{
+    const GA_Attribute *f = gdp->findPointAttribute("force");
+    const GA_Attribute *t = gdp->findPointAttribute("torque");
+    forceId  = f ? f->getDataId() : Box3DSyncFingerprint::kNoId;
+    torqueId = t ? t->getDataId() : Box3DSyncFingerprint::kNoId;
+}
+
 // Force DOPs: every dynamic body takes the sum of the SIM_Force data on its object, evaluated at
-// its centre of mass with its mass and velocities, the way Houdini's solvers do. The force and
-// torque go into Box3D for the coming step (it integrates them in every substep and clears them
-// afterwards), so this runs after the sync and right before the step. A Gravity Force DOP adds to
-// the solver's own Gravity: set that to 0 when using one.
+// its centre of mass with its mass and velocities, the way Houdini's solvers do, plus its point's
+// `force` / `torque` attributes. The force and torque go into Box3D for the coming step (it
+// integrates them in every substep and clears them afterwards), so this runs after the sync and
+// right before the step. A Gravity Force DOP adds to the solver's own Gravity: set that to 0 when
+// using one. Only the bodies of objects that have forces are visited (Box3DObjectSync::bodies).
 ForceStats
 applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects, bool wake)
 {
     ForceStats stats;
-
-    struct ObjectForces
-    {
-        const SIM_Object              *object = nullptr;
-        std::vector<const SIM_Force *> forces;
-    };
-    // Objects without force data (the common case) have no entry.
-    std::unordered_map<int, ObjectForces> forcesOf;
-    for (exint i = 0; i < objects.entries(); ++i)
-    {
-        const SIM_Object *obj = objects(i);
-        ObjectForces of;
-        ForceCollector collector(of.forces);
-        obj->forEachConstSubData(collector, SIM_DataFilterByType("SIM_Force"),
-                                 SIM_FORCES_DATANAME, SIM_DataFilterNone());
-        if (of.forces.empty())
-            continue;
-        of.object = obj;
-        forcesOf.emplace(obj->getObjectId(), std::move(of));
-    }
-
-    // `force` / `torque` point attributes (what POP Force and other POP / SOP nodes write): read
-    // per point, applied like a force DOP's result, then cleared so they do not pile up.
-    // Indexed by point offset; objects with no non-zero value have no entry.
-    struct PointForces
-    {
-        std::vector<UT_Vector3> force, torque;
-        bool                    any = false;
-    };
-    std::unordered_map<int, PointForces> popOf;
-    for (exint i = 0; i < objects.entries(); ++i)
-    {
-        const SIM_Object   *obj = objects(i);
-        const SIM_Geometry *geo = SIM_DATA_GETCONST(*obj, SIM_GEOMETRY_DATANAME, SIM_Geometry);
-        if (!geo)
-            continue;
-        SIM_GeometryAutoReadLock lock(geo);
-        const GU_Detail *gdp = lock.getGdp();
-        if (!gdp)
-            continue;
-        const GA_ROHandleV3 fh(gdp, GA_ATTRIB_POINT, "force");
-        const GA_ROHandleV3 th(gdp, GA_ATTRIB_POINT, "torque");
-        if (!fh.isValid() && !th.isValid())
-            continue;
-        PointForces pf;
-        const size_t n = size_t(gdp->getNumPointOffsets());
-        pf.force.assign(fh.isValid() ? n : 0, UT_Vector3(0.0f, 0.0f, 0.0f));
-        pf.torque.assign(th.isValid() ? n : 0, UT_Vector3(0.0f, 0.0f, 0.0f));
-        for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it)
-        {
-            const GA_Offset off = *it;
-            if (fh.isValid())
-            {
-                const UT_Vector3 v = fh.get(off);
-                if (v.x() != 0.0f || v.y() != 0.0f || v.z() != 0.0f)
-                {
-                    pf.force[size_t(off)] = v;
-                    pf.any = true;
-                }
-            }
-            if (th.isValid())
-            {
-                const UT_Vector3 v = th.get(off);
-                if (v.x() != 0.0f || v.y() != 0.0f || v.z() != 0.0f)
-                {
-                    pf.torque[size_t(off)] = v;
-                    pf.any = true;
-                }
-            }
-        }
-        if (pf.any)
-            popOf.emplace(obj->getObjectId(), std::move(pf));
-    }
-    if (forcesOf.empty() && popOf.empty())
-        return stats;
-
     b3dop::Box3DWorld &world = st.world;
-    // Bodies are independent (a force depends on the body's own state only), so the map's
-    // order does not matter.
-    for (auto &kv : st.mirror)
+
+    // A point's non-zero `force` / `torque` (what POP Force and other POP / SOP nodes write).
+    struct PointForce
     {
-        const Box3DBodyMirror &e = kv.second;
-        if (!e.handle || !e.dynamic() || e.props.ignored)
-            continue;
-        const auto of = forcesOf.find(e.objectId);
-        const auto pp = popOf.find(e.objectId);
-        if ((of == forcesOf.end() && pp == popOf.end()) || !st.isLive(e))
-            continue;
-        if (!wake && !world.isAwakeByHandle(e.handle))
-            continue;                       // Box3D would ignore the force anyway
+        GA_Offset  off;
+        UT_Vector3 force, torque;
+    };
+    std::vector<const SIM_Force *> forces;
+    std::vector<PointForce>        pointForces;    // sorted by offset
+    std::vector<SIM_Object *>      cleared;
 
-        const float mass = world.massByHandle(e.handle);
-        double com[3];
-        float  lin[3], ang[3];
-        if (!(mass > 0.0f) || !std::isfinite(mass) ||
-            !world.getCenterOfMassByHandle(e.handle, com) ||
-            !world.getVelocityByHandle(e.handle, lin, ang))
+    for (exint i = 0; i < objects.entries(); ++i)
+    {
+        SIM_Object *obj = objects(i);
+        const auto osIt = st.objectSync.find(obj->getObjectId());
+        if (osIt == st.objectSync.end() || osIt->second.visited != st.syncStamp || osIt->second.bodies.empty())
             continue;
+        Box3DObjectSync &os = osIt->second;
 
-        const UT_Vector3 pos(static_cast<float>(com[0]), static_cast<float>(com[1]),
-                             static_cast<float>(com[2]));
-        const UT_Vector3 vel(lin[0], lin[1], lin[2]);
-        const UT_Vector3 angvel(ang[0], ang[1], ang[2]);
+        forces.clear();
+        ForceCollector collector(forces);
+        obj->forEachConstSubData(collector, SIM_DataFilterByType("SIM_Force"), SIM_FORCES_DATANAME,
+                                 SIM_DataFilterNone());
 
-        UT_Vector3 force(0.0f, 0.0f, 0.0f);
-        UT_Vector3 torque(0.0f, 0.0f, 0.0f);
-        if (of != forcesOf.end())
-            for (const SIM_Force *sf : of->second.forces)
+        // Point forces. We clear them after applying them; while their data ids are still the ones
+        // we recorded then, nothing has written new ones and the read is skipped.
+        pointForces.clear();
+        if (const SIM_Geometry *geo = SIM_DATA_GETCONST(*obj, SIM_GEOMETRY_DATANAME, SIM_Geometry))
+        {
+            SIM_GeometryAutoReadLock lock(geo);
+            if (const GU_Detail *gdp = lock.getGdp())
             {
-                UT_Vector3 f(0.0f, 0.0f, 0.0f);
-                UT_Vector3 t(0.0f, 0.0f, 0.0f);
-                sf->getForce(*of->second.object, pos, vel, angvel, mass, f, t);
-                force  += f;
-                torque += t;
+                GA_DataId fId, tId;
+                forceAttribIds(gdp, fId, tId);
+                const bool any = fId != Box3DSyncFingerprint::kNoId || tId != Box3DSyncFingerprint::kNoId;
+                if (any && !(fId == os.forceId && tId == os.torqueId))
+                {
+                    const GA_ROHandleV3 fh(gdp, GA_ATTRIB_POINT, "force");
+                    const GA_ROHandleV3 th(gdp, GA_ATTRIB_POINT, "torque");
+                    const UT_Vector3    zero(0.0f, 0.0f, 0.0f);
+                    auto nonZero = [](const UT_Vector3 &v) { return v.x() != 0.0f || v.y() != 0.0f || v.z() != 0.0f; };
+                    for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it)
+                    {
+                        const UT_Vector3 f = fh.isValid() ? fh.get(*it) : zero;
+                        const UT_Vector3 t = th.isValid() ? th.get(*it) : zero;
+                        if (nonZero(f) || nonZero(t))
+                            pointForces.push_back({ *it, f, t });
+                    }
+                    if (pointForces.empty())        // all zero: no need to look again until they change
+                    {
+                        os.forceId  = fId;
+                        os.torqueId = tId;
+                    }
+                }
             }
-        if (pp != popOf.end() && e.pointOff >= 0)
+        }
+        if (forces.empty() && pointForces.empty())
+            continue;
+
+        for (Box3DBodyMirror *e : os.bodies)
         {
-            const size_t po = size_t(e.pointOff);
-            if (po < pp->second.force.size())
-                force += pp->second.force[po];
-            if (po < pp->second.torque.size())
-                torque += pp->second.torque[po];
+            if (!e->handle || !e->dynamic() || e->props.ignored)
+                continue;
+            if (!wake && !world.isAwakeByHandle(e->handle))
+                continue;                       // Box3D would ignore the force anyway
+
+            UT_Vector3 force(0.0f, 0.0f, 0.0f);
+            UT_Vector3 torque(0.0f, 0.0f, 0.0f);
+            if (!pointForces.empty())
+            {
+                const GA_Offset po = GA_Offset(e->pointOff);
+                const auto it = std::lower_bound(pointForces.begin(), pointForces.end(), po,
+                                                 [](const PointForce &pf, GA_Offset o) { return pf.off < o; });
+                if (it != pointForces.end() && it->off == po)
+                {
+                    force  += it->force;
+                    torque += it->torque;
+                }
+            }
+            if (!forces.empty())
+            {
+                const float mass = world.massByHandle(e->handle);
+                double com[3];
+                float  lin[3], ang[3];
+                if (mass > 0.0f && std::isfinite(mass) && world.getCenterOfMassByHandle(e->handle, com) &&
+                    world.getVelocityByHandle(e->handle, lin, ang))
+                {
+                    const UT_Vector3 pos(static_cast<float>(com[0]), static_cast<float>(com[1]), static_cast<float>(com[2]));
+                    const UT_Vector3 vel(lin[0], lin[1], lin[2]);
+                    const UT_Vector3 angvel(ang[0], ang[1], ang[2]);
+                    for (const SIM_Force *sf : forces)
+                    {
+                        UT_Vector3 f(0.0f, 0.0f, 0.0f), t(0.0f, 0.0f, 0.0f);
+                        sf->getForce(*obj, pos, vel, angvel, mass, f, t);
+                        force  += f;
+                        torque += t;
+                    }
+                }
+            }
+
+            const float fv[3] = { float(force.x()),  float(force.y()),  float(force.z()) };
+            const float tv[3] = { float(torque.x()), float(torque.y()), float(torque.z()) };
+            if (!b3dop::finite3(fv) || !b3dop::finite3(tv))
+            {
+                ++stats.nonFinite;
+                continue;
+            }
+            if (fv[0] == 0.0f && fv[1] == 0.0f && fv[2] == 0.0f && tv[0] == 0.0f && tv[1] == 0.0f && tv[2] == 0.0f)
+                continue;
+            world.applyForceByHandle(e->handle, fv, tv, wake);
+            ++stats.bodies;
         }
 
-        const float fv[3] = { float(force.x()),  float(force.y()),  float(force.z()) };
-        const float tv[3] = { float(torque.x()), float(torque.y()), float(torque.z()) };
-        const bool finite = std::isfinite(fv[0]) && std::isfinite(fv[1]) && std::isfinite(fv[2]) &&
-                            std::isfinite(tv[0]) && std::isfinite(tv[1]) && std::isfinite(tv[2]);
-        if (!finite)
-        {
-            ++stats.nonFinite;
-            continue;
-        }
-        if (fv[0] == 0.0f && fv[1] == 0.0f && fv[2] == 0.0f &&
-            tv[0] == 0.0f && tv[1] == 0.0f && tv[2] == 0.0f)
-            continue;
-        world.applyForceByHandle(e.handle, fv, tv, wake);
-        ++stats.bodies;
-    }
-
-    // Clear what was read (every body, applied or not), or a POP Force that only adds to `force`
-    // would pile up from step to step. Locks are released before the fingerprints are redone.
-    std::vector<const SIM_Object *> cleared;
-    for (auto &kv : popOf)
-    {
-        SIM_Object *obj = findObjectById(objects, kv.first);
-        if (!obj)
+        // Clear what was read (every body, applied or not), or a POP Force that only adds to
+        // `force` would pile up from step to step.
+        if (pointForces.empty())
             continue;
         SIM_GeometryCopy *geo = getOrMakeWritableGeometry(*obj);
         if (!geo)
@@ -2430,25 +2692,32 @@ applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects, bool wake)
         {
             SIM_GeometryAutoWriteLock lock(geo);
             GU_Detail *gdp = &lock.getGdp();
-            if (!gdp)
-                continue;
             GA_RWHandleV3 fh(gdp, GA_ATTRIB_POINT, "force");
             GA_RWHandleV3 th(gdp, GA_ATTRIB_POINT, "torque");
-            const PointForces &pf = kv.second;
-            const GA_Offset    nOff = gdp->getNumPointOffsets();
-            for (size_t i = 0; i < pf.force.size() && GA_Offset(i) < nOff; ++i)
-                if (fh.isValid() && (pf.force[i].x() != 0.0f || pf.force[i].y() != 0.0f || pf.force[i].z() != 0.0f))
-                    fh.set(GA_Offset(i), UT_Vector3(0.0f, 0.0f, 0.0f));
-            for (size_t i = 0; i < pf.torque.size() && GA_Offset(i) < nOff; ++i)
-                if (th.isValid() && (pf.torque[i].x() != 0.0f || pf.torque[i].y() != 0.0f || pf.torque[i].z() != 0.0f))
-                    th.set(GA_Offset(i), UT_Vector3(0.0f, 0.0f, 0.0f));
+            const UT_Vector3 zero(0.0f, 0.0f, 0.0f);
+            for (const PointForce &pf : pointForces)
+            {
+                if (fh.isValid()) fh.set(pf.off, zero);
+                if (th.isValid()) th.set(pf.off, zero);
+            }
             if (fh.isValid()) fh.getAttribute()->bumpDataId();
             if (th.isValid()) th.getAttribute()->bumpDataId();
         }
         cleared.push_back(obj);
     }
-    for (const SIM_Object *obj : cleared)
+
+    // With the locks released (releasing may bump ids): the cleared ids, and the fingerprints.
+    for (SIM_Object *obj : cleared)
+    {
         recordFingerprintAfterWrite(st, *obj);
+        const SIM_Geometry *geo = SIM_DATA_GETCONST(*obj, SIM_GEOMETRY_DATANAME, SIM_Geometry);
+        const auto osIt = st.objectSync.find(obj->getObjectId());
+        if (!geo || osIt == st.objectSync.end())
+            continue;
+        SIM_GeometryAutoReadLock lock(geo);
+        if (const GU_Detail *gdp = lock.getGdp())
+            forceAttribIds(gdp, osIt->second.forceId, osIt->second.torqueId);
+    }
     return stats;
 }
 } // namespace
@@ -2484,10 +2753,10 @@ SIM_SolverBox3D::getDescription()
     static PRM_Range   theSubStepsRange(PRM_RANGE_RESTRICTED, 1, PRM_RANGE_UI, 16);
 
     static PRM_Name    theAutoThreadsName("autothreads", "Use All Threads");
-    static PRM_Default theAutoThreadsDefault(1);
+    static PRM_Default theAutoThreadsDefault(0);
 
     static PRM_Name    theThreadsName("threads", "Threads");
-    static PRM_Default theThreadsDefault(8);
+    static PRM_Default theThreadsDefault(b3dop::kDefaultWorkerCount);
     // Box3D's limit is 32.
     static PRM_Range   theThreadsRange(PRM_RANGE_RESTRICTED, 1, PRM_RANGE_RESTRICTED, 32);
     // Greyed out while "Use All Threads" is ticked.
@@ -2588,10 +2857,10 @@ SIM_SolverBox3D::getDescription()
                      "No body moves faster than this."),
         // --- Performance ---
         PRM_Template(PRM_TOGGLE, 1, &theAutoThreadsName, &theAutoThreadsDefault, 0, 0, 0, 0, 1,
-                     "Use one Box3D worker thread per CPU core (up to 32). Turn off to set Threads yourself."),
+                     "Use one Box3D worker thread per CPU core (up to 32). Usually only faster for very large scenes."),
         PRM_Template(PRM_INT_J,  1, &theThreadsName,  &theThreadsDefault, 0, &theThreadsRange,
                      0, 0, 1,
-                     "Number of Box3D worker threads. Only used when Use All Threads is off.",
+                     "Number of Box3D worker threads. More helps large scenes; small ones can run faster with fewer.",
                      &theThreadsDisable),
         PRM_Template(PRM_TOGGLE, 1, &theSleepName,    &theSleepDefault, 0, 0, 0, 0, 1,
                      "Let resting bodies stop simulating until touched. Off keeps every body awake."),
@@ -2814,6 +3083,7 @@ SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
     // From here the step runs to the end (the write-back is quick), so the cached result is
     // always a whole step.
     st->world.step(st->stepDt);
+    st->world.getMoveEvents(st->moves);     // read once: the write-back and impacts use them
     B3D_LOG_VERBOSE("  step: %d contact(s) recycled", st->world.recycledContactCount());
     writeResultsBack(*worldData, objects);
     // Contacts are read before the queued point writes, aging and deletions.
@@ -2921,10 +3191,12 @@ SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
     int removed = 0;
     if (st->stampedCount != st->mirror.size())
     {
+        std::unordered_set<int> touched;        // objects that lost bodies
         for (auto it = st->mirror.begin(); it != st->mirror.end();)
         {
             if (!st->isLive(it->second))
             {
+                touched.insert(it->second.objectId);
                 st->world.destroyBody(it->second.handle);
                 it = st->mirror.erase(it);
                 ++removed;
@@ -2932,17 +3204,22 @@ SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
             else
                 ++it;
         }
-        // Slots may cache pointers to erased entries.
-        st->slots.clear();
+        // Those objects' slots may cache pointers to erased entries; other objects keep theirs.
+        for (const int id : touched)
+        {
+            const auto sl = st->slots.find(id);
+            if (sl != st->slots.end())
+                for (Box3DPointSlot &slot : sl->second)
+                    slot.entry = nullptr;
+        }
     }
 
     // Objects not seen lose their records (their bodies were just removed).
     for (auto it = st->objectSync.begin(); it != st->objectSync.end();)
         it = (it->second.visited == st->syncStamp) ? std::next(it) : st->objectSync.erase(it);
 
-    // Free hulls no body uses (only adding, rebuilding or removing bodies can leave some).
-    if (counts.added || counts.failed || counts.rebuilt || removed)
-        st->world.pruneHulls();
+    // The shapes are made: let go of the hulls this sync held (the shared cache keeps them).
+    st->world.pruneHulls();
 
     // Node warnings, one per kind with a count. Fallbacks only on the step a shape is built.
     auto warn = [&](const std::string &msg) {
@@ -2984,9 +3261,9 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
     b3dop::Box3DWorld &world = st->world;
 
     // ---- pass 0 (serial): the bodies that moved -----------------------------
-    // Box3D's move events: every awake body and its transform (a body falling asleep appears
-    // once more). Each body's user data is its mirror entry.
-    const int moveCount = world.getMoveEvents(st->moves);
+    // Box3D's move events (read into st->moves right after the step): every awake body and its
+    // transform (a body falling asleep appears once more). Each body's user data is its entry.
+    const int moveCount = int(st->moves.size());
     if (moveCount == 0)
         return;
 
@@ -2996,8 +3273,9 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
     std::vector<Box3DPackedWrite> &packedWrites = st->packedWrites;
     packedWrites.clear();
     int missing = 0;
-    for (const b3dop::BodyMove &mv : st->moves)
+    for (int mi = 0; mi < moveCount; ++mi)
     {
+        const b3dop::BodyMove &mv = st->moves[size_t(mi)];
         if (!mv.userData)
             continue;
         Box3DBodyMirror *entry = static_cast<Box3DBodyMirror *>(mv.userData);
@@ -3011,14 +3289,13 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
         items.emplace_back();
         Box3DWriteItem &w = items.back();
         w.entry    = entry;
+        w.move     = mi;
         w.objectId = entry->objectId;
         if (entry->packed)
         {
             w.packedIdx = int(packedWrites.size());
             packedWrites.emplace_back();
         }
-        for (int i = 0; i < 3; ++i) w.s.pos[i] = mv.pos[i];
-        for (int i = 0; i < 4; ++i) w.s.rot[i] = mv.rot[i];
         // bullet_sleeping: only changes are written.
         if (mv.fellAsleep != entry->sleeping)
         {
@@ -3032,7 +3309,7 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
     // Velocities (not in move events): Box3D allows read-only calls from several threads.
     parallelForEach(items.size(), [&](size_t i) {
         Box3DWriteItem &w = items[i];
-        world.getVelocityByHandle(w.entry->handle, w.s.lin, w.s.ang);
+        world.getVelocityByHandle(w.entry->handle, w.lin, w.ang);
     }, kMinParallelWrite);
 
     // Grouped by object, so each geometry is locked once.
@@ -3102,73 +3379,61 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
                                  anySleepWrite ? sleepOut.getAttribute() : nullptr });
 
         parallelForEach(end - begin, [&](size_t j) {
-            Box3DWriteItem      &w   = items[begin + j];
+            Box3DWriteItem &w = items[begin + j];
             if (w.off == GA_INVALID_OFFSET)
                 return;
-            const GA_Offset      off = w.off;
-            const Box3DBodyPose &s   = w.s;
+            const GA_Offset        off = w.off;
+            const b3dop::BodyMove &mv  = st->moves[size_t(w.move)];
 
-            if (pOut.isValid()) pOut.set(off, UT_Vector3(float(s.pos[0]), float(s.pos[1]), float(s.pos[2])));
-            if (qOut.isValid()) qOut.set(off, UT_QuaternionF(s.rot[0], s.rot[1], s.rot[2], s.rot[3]));
-            if (vOut.isValid()) vOut.set(off, UT_Vector3(s.lin[0], s.lin[1], s.lin[2]));
-            if (wOut.isValid()) wOut.set(off, UT_Vector3(s.ang[0], s.ang[1], s.ang[2]));
+            if (pOut.isValid()) pOut.set(off, UT_Vector3(float(mv.pos[0]), float(mv.pos[1]), float(mv.pos[2])));
+            if (qOut.isValid()) qOut.set(off, UT_QuaternionF(mv.rot[0], mv.rot[1], mv.rot[2], mv.rot[3]));
+            if (vOut.isValid()) vOut.set(off, UT_Vector3(w.lin[0], w.lin[1], w.lin[2]));
+            if (wOut.isValid()) wOut.set(off, UT_Vector3(w.ang[0], w.ang[1], w.ang[2]));
             if (anySleepWrite && w.sleepState >= 0) sleepOut.set(off, int(w.sleepState));
 
-            // Packed: the new 3x3 (old scale, new rotation) is computed here and written in
-            // pass 3, using the primitive and 3x3 the last sync stored.
+            // Packed: the new 3x3 (the scale the sync read, the new rotation) is computed here and
+            // written in pass 3, to the primitive the last sync stored.
             Box3DBodyMirror  &me     = *w.entry;
             Box3DPackedWrite *pw     = w.packedIdx >= 0 ? &packedWrites[size_t(w.packedIdx)] : nullptr;
             const bool        packed = anyPrims && me.packed && pw;
-            float             packedRot[4] = { 0, 0, 0, 1 };
             if (packed)
             {
-                composePackedMatrix(s.rot, me.m3, pw->newM3);
+                composePackedMatrix(mv.rot, me.rowScale, pw->newM3);
                 pw->primOff = GA_Offset(me.primOff);
                 pw->has     = true;
-                // What the primitive will hold; the entry's 3x3 follows (a skipped sync does
-                // not refresh it).
-                double sc[3];
-                splitPackedMatrix(pw->newM3, packedRot, sc);
-                for (int i = 0; i < 9; ++i) me.m3[i] = pw->newM3[i];
+                std::copy(pw->newM3, pw->newM3 + 9, me.m3);     // a skipped sync does not refresh it
             }
 
-            // Predict what readPointState will return (else our write looks like an external
-            // edit): P via float, rotations via sanitizeQuat. Non-finite P: keep Box3D's values.
+            // What the read path will see, so our own write does not look like an external edit:
+            // P through float; the rotation as written (poseDiffers allows for the float noise of
+            // a packed transform's round trip and for q vs -q). Non-finite P: Box3D's values.
             Box3DBodyPose &mirror = me;
-            double sp[3];
-            if (b3dop::storedPosition(s.pos, sp))
+            const bool hasRot = packed || qOut.isValid();       // else the read path sees identity
+            const float identity[4] = { 0, 0, 0, 1 };
+            std::copy(hasRot ? mv.rot : identity, (hasRot ? mv.rot : identity) + 4, mirror.rot);
+            b3dop::sanitizeQuat(mirror.rot);
+            for (int i = 0; i < 3; ++i)
             {
-                for (int i = 0; i < 3; ++i) mirror.pos[i] = sp[i];
-                // An unbound output was not written: the read path returns its default.
-                const float identity[4] = { 0, 0, 0, 1 };
-                const float *rot = packed ? packedRot : (qOut.isValid() ? s.rot : identity);
-                for (int i = 0; i < 4; ++i) mirror.rot[i] = rot[i];
-                b3dop::sanitizeQuat(mirror.rot);
-                for (int i = 0; i < 3; ++i)
-                {
-                    mirror.lin[i] = vOut.isValid() ? s.lin[i] : 0.0f;
-                    mirror.ang[i] = wOut.isValid() ? s.ang[i] : 0.0f;
-                }
+                mirror.lin[i] = vOut.isValid() ? w.lin[i] : 0.0f;
+                mirror.ang[i] = wOut.isValid() ? w.ang[i] : 0.0f;
             }
-            else
-                mirror = s;
+            if (!b3dop::storedPosition(mv.pos, mirror.pos))
+                std::copy(mv.pos, mv.pos + 3, mirror.pos);
 
 #ifdef BOX3DDOP_DEBUG
             if (verifyReadback)
             {
-                // BOX3DDOP_VERIFY_READBACK=1: read back and compare bit for bit.
+                // BOX3DDOP_VERIFY_READBACK=1: read back; a difference poseDiffers sees would make
+                // the next scan treat our own write as an external edit.
                 Box3DBodyPose stored;
                 PackedInfo pk;
                 if (packed)
                 {
                     pk.prim = static_cast<const GU_PrimPacked *>(gdp->getPrimitive(pw->primOff));
-                    for (int i = 0; i < 4; ++i) pk.rot[i] = packedRot[i];
+                    double sc[3];
+                    splitPackedMatrix(pw->newM3, pk.rot, sc);
                 }
-                if (readPointState(gdp, a, off, pk, stored) &&
-                    (std::memcmp(stored.pos, mirror.pos, sizeof(stored.pos)) != 0 ||
-                     std::memcmp(stored.rot, mirror.rot, sizeof(stored.rot)) != 0 ||
-                     std::memcmp(stored.lin, mirror.lin, sizeof(stored.lin)) != 0 ||
-                     std::memcmp(stored.ang, mirror.ang, sizeof(stored.ang)) != 0))
+                if (readPointState(gdp, a, off, pk, stored) && poseDiffers(stored, mirror))
                 {
                     B3D_LOG("  READBACK MISMATCH object=%d point=%lld: predicted pos=(%.9g %.9g %.9g) rot=(%.9g %.9g %.9g %.9g) "
                             "read pos=(%.9g %.9g %.9g) rot=(%.9g %.9g %.9g %.9g)",

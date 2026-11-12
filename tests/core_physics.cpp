@@ -460,8 +460,16 @@ int main()
             const double ip[3] = { -20.0 + i * 0.8, 3, 8 };
             CHECK(hw.addBody(100 + i, db, ip, qid) && hw.addHullShape(100 + i, hw.createHull(unitCube.data(), 8)));
         }
+        // pruneHulls lets go of what this world holds; the shared cache keeps the hulls, so asking
+        // again finds them without a build.
         hw.pruneHulls();
-        CHECK(hw.hullCacheSize() == 3);          // unit cube (also piece A), offset cube, piece B
+        CHECK(hw.hullCacheSize() == 0);
+        {
+            const int builds = Box3DWorld::hullBuildCount();
+            CHECK(hw.createHull(unitCube.data(), 8) == h1 && hw.createHull(pB.data(), 8) == hB);
+            CHECK(Box3DWorld::hullBuildCount() == builds);
+            hw.pruneHulls();
+        }
         for (int i = 0; i < 400; ++i) hw.step(1.0f / 60.0f);
 
         double hp[3];  float hq[4];
@@ -980,6 +988,37 @@ int main()
         t.finish();
         CHECK(!t.shouldCollide(bi, g) && t.shouldCollide(bi, d));
 
+        // Incremental finish(): profiles added in batches (growing past the first stride) give
+        // the same answers as matching every pair afresh.
+        {
+            CollisionFilterTable inc;
+            std::vector<FilterProfile> all;
+            for (int batch = 0; batch < 5; ++batch)
+            {
+                for (int k = 0; k < 40; ++k)
+                {
+                    const int i = batch * 40 + k;
+                    FilterProfile fp;
+                    fp.group      = "g" + std::to_string(i % 7);
+                    fp.objectName = "obj" + std::to_string(i);
+                    fp.objectId   = std::to_string(i);
+                    fp.ignore     = (i % 3 == 0) ? "g" + std::to_string((i + 1) % 7) : std::string();
+                    all.push_back(fp);
+                    inc.profile(fp);
+                }
+                inc.finish();
+            }
+            bool same = true;
+            for (size_t a = 0; a < all.size(); ++a)
+                for (size_t b = 0; b < all.size(); ++b)
+                {
+                    const bool brute = !patternsMatchProfile(all[a].ignore, all[b]) &&
+                                       !patternsMatchProfile(all[b].ignore, all[a]);
+                    same = same && inc.shouldCollide(int(a), int(b)) == brute;
+                }
+            CHECK(same);
+        }
+
         // In a world: two debris boxes dropped on each other fall through, a third collides
         KeyedWorld fw;
         CHECK(fw.create(WorldSettings()));
@@ -1389,6 +1428,60 @@ int main()
         CHECK(hw.settings().frictionMixing == 3 && !hw.settings().warmStarting);
         hw.step(1.0f / 60.0f);
         std::printf("world settings checks done\n");
+    }
+
+    // ---- the shared hull cache: across worlds, budget hints, eviction ----
+    {
+        using namespace b3dop;
+        std::vector<float> sphere;          // dense and round: the full vertex budget fails
+        for (int i = 0; i < 2000; ++i)
+        {
+            const float zz = 1.0f - 2.0f * (i + 0.5f) / 2000.0f, rr = std::sqrt(1.0f - zz * zz), a = 2.39996323f * i;
+            sphere.push_back(rr * std::cos(a));  sphere.push_back(rr * std::sin(a));  sphere.push_back(zz);
+        }
+        HullId first = 0;
+        {
+            KeyedWorld a;
+            CHECK(a.create(WorldSettings()));
+            const int builds = Box3DWorld::hullBuildCount();
+            first = a.createHull(sphere.data(), 2000);
+            CHECK(first != 0 && Box3DWorld::hullBuildCount() == builds + 1);
+        }                                   // world gone
+        {
+            KeyedWorld b;                   // a rebuilt world finds it without building
+            CHECK(b.create(WorldSettings()));
+            const int builds = Box3DWorld::hullBuildCount();
+            float vol = 0.0f;
+            CHECK(b.findHull(first, &vol) == first && vol > 3.0f);
+            CHECK(b.createHull(sphere.data(), 2000) == first && Box3DWorld::hullBuildCount() == builds);
+            const double p[3] = { 0, 2, 0 };
+            const float  q[4] = { 0, 0, 0, 1 };
+            CHECK(b.addBody(1, BodySettings(), p, q) && b.addHullShape(1, first));
+
+            // Budget hint: the first hull of a group tries the full budget and fails, the next
+            // one of the group starts at the budget that worked.
+            const uint64_t group = 0x5eed;
+            int att = Box3DWorld::hullBuildAttempts();
+            CHECK(b.createHullWithKey(0x1001, sphere.data(), 2000, nullptr, group) != 0);
+            const int firstAttempts = Box3DWorld::hullBuildAttempts() - att;
+            std::vector<float> scaled = sphere;
+            for (float &v : scaled) v *= 2.0f;
+            att = Box3DWorld::hullBuildAttempts();
+            CHECK(b.createHullWithKey(0x1002, scaled.data(), 2000, nullptr, group) != 0);
+            CHECK(firstAttempts >= 2 && Box3DWorld::hullBuildAttempts() - att == 1);
+
+            // Eviction: past the budget, least recently used entries go; held hulls stay usable.
+            const size_t oldBudget = size_t(256) << 20;
+            Box3DWorld::setSharedHullBudget(1);
+            CHECK(Box3DWorld::sharedHullBytes() <= 1);
+            const double p2[3] = { 3, 2, 0 };
+            CHECK(b.addBody(2, BodySettings(), p2, q) && b.addHullShape(2, first));   // still held by b
+            b.pruneHulls();
+            CHECK(!b.findHull(first));      // evicted and no longer held
+            Box3DWorld::setSharedHullBudget(oldBudget);
+            for (int i = 0; i < 10; ++i) b.step(1.0f / 60.0f);
+        }
+        std::printf("shared hull cache checks done\n");
     }
 
     return fails ? 1 : 0;

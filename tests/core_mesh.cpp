@@ -70,6 +70,47 @@ int main()
     CHECK(w.createMeshShape(f2, st, verts, 4, tris, 2, 0.001f));
     w.destroy();
 
+    // ---- mesh scale: a floor at y = 1 scaled by 2 in y sits at y = 2; rescaling moves it ----
+    {
+        KeyedWorld sw;
+        CHECK(sw.create(WorldSettings()));
+        const float raised[] = { -10, 1, -10,   10, 1, -10,   10, 1, 10,   -10, 1, 10 };
+        const float s2[3] = { 1, 2, 1 }, s1[3] = { 1, 1, 1 };
+        const BodyHandle fl = sw.createBody(st, origin, qid);
+        CHECK(sw.createMeshShape(fl, st, raised, 4, tris, 2, 0.0f, s2));
+        const double bp[3] = { 0, 4.0, 0 };
+        const BodyHandle bx = sw.createBody(dyn, bp, qid);
+        CHECK(sw.createShape(bx, dyn, bs));
+        for (int i = 0; i < 240; ++i) sw.step(1.0f / 60.0f);
+        CHECK(sw.getTransformByHandle(bx, p, q));
+        std::printf("box on scaled mesh   y=%.4f\n", p[1]);
+        CHECK(std::fabs(p[1] - 2.5) < 0.05);
+        sw.setMeshScaleByHandle(fl, s1);            // wakes what touches it
+        for (int i = 0; i < 240; ++i) sw.step(1.0f / 60.0f);
+        CHECK(sw.getTransformByHandle(bx, p, q));
+        std::printf("box on rescaled mesh y=%.4f\n", p[1]);
+        CHECK(std::fabs(p[1] - 1.5) < 0.05);
+    }
+
+    // ---- decomposeScaledRigid: S * R + T splits back; shear and mirror are refused ----
+    {
+        const double c = std::cos(0.6), sn = std::sin(0.6);
+        const double sx = 2, sy = 3, sz = 0.5;
+        // R about Z (row-vector rows), rows scaled.
+        const double m[16] = { sx * c, sx * sn, 0, 0,   -sy * sn, sy * c, 0, 0,   0, 0, sz, 0,   1, 2, 3, 1 };
+        double pos[3]; float quat[4], sc[3];
+        CHECK(decomposeScaledRigid(m, pos, quat, sc));
+        CHECK(std::fabs(sc[0] - 2) < 1e-5 && std::fabs(sc[1] - 3) < 1e-5 && std::fabs(sc[2] - 0.5) < 1e-5);
+        CHECK(pos[0] == 1 && pos[1] == 2 && pos[2] == 3);
+        CHECK(std::fabs(std::fabs(quat[2]) - std::sin(0.3)) < 1e-5 && std::fabs(quat[0]) < 1e-6);
+        double shear[16] = { 1, 0.5, 0, 0,   0, 1, 0, 0,   0, 0, 1, 0,   0, 0, 0, 1 };
+        CHECK(!decomposeScaledRigid(shear, pos, quat, sc));
+        double mirror[16] = { -2, 0, 0, 0,   0, 1, 0, 0,   0, 0, 1, 0,   0, 0, 0, 1 };
+        CHECK(!decomposeScaledRigid(mirror, pos, quat, sc));
+        double flat[16] = { 1, 0, 0, 0,   0, 0, 0, 0,   0, 0, 1, 0,   0, 0, 0, 1 };
+        CHECK(!decomposeScaledRigid(flat, pos, quat, sc));
+    }
+
     // ---- decomposeRigid: row-vector matrices round-trip a rotation + translation ----
     {
         // Rotation of 70 degrees about the axis (1, 2, 3) (row-vector layout, as UT_DMatrix4).

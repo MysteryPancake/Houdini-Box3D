@@ -76,6 +76,28 @@ decomposeRigid(const double m[16], double pos[3], float quat[4], double tol = 1e
     return true;
 }
 
+// A rotation, a positive scale per axis and a translation (M = S * R + T in row-vector terms: each
+// row of the 3x3 is a rotated axis times its scale). No shear, mirror or perspective. Fills `pos`,
+// `quat` and `scale` and returns true; false otherwise (the caller bakes the matrix).
+inline bool
+decomposeScaledRigid(const double m[16], double pos[3], float quat[4], float scale[3], double tol = 1e-4)
+{
+    double n[16];
+    for (int i = 0; i < 16; ++i)
+        n[i] = m[i];
+    for (int r = 0; r < 3; ++r)
+    {
+        double *row = n + 4 * r;
+        const double len = std::sqrt(row[0] * row[0] + row[1] * row[1] + row[2] * row[2]);
+        if (!(len > 1e-6) || !std::isfinite(len))
+            return false;
+        for (int c = 0; c < 3; ++c)
+            row[c] /= len;
+        scale[r] = float(len);
+    }
+    return decomposeRigid(n, pos, quat, tol);
+}
+
 // p * M for a point (row-vector convention), in double.
 inline void
 transformPoint(const double m[16], const double p[3], double out[3])
