@@ -49,6 +49,10 @@ source /opt/hfsX.Y.ZZZ/houdini_setup
 
 The plugin is copied to `~/houdiniX.Y/dso` and the node icons to `~/houdiniX.Y/config/Icons`. Close Houdini before rebuilding.
 
+### Installing as a package
+
+After building, run `cpack` in the build folder to make `Box3D-Houdini-<version>-<OS>.zip`. Extract it into your `houdiniX.Y/packages` folder (it contains `Box3D.json` and a `Box3D` folder). It only loads in the Houdini version it was built for, and you should remove any copy of the plugin left in `houdiniX.Y/dso` by a normal build.
+
 ### Checking Box3D without Houdini
 
 To confirm Box3D itself builds and runs on your machine, you can build just the core and its tests:

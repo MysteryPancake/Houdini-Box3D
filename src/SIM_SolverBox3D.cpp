@@ -2674,7 +2674,19 @@ SIM_SolverBox3D::getDescription()
     static PRM_ChoiceList theRestMixMenu(PRM_CHOICELIST_SINGLE, theRestMixChoices);
     static PRM_Default theRestMixDefault(0);
 
+    // Tabs: each PRM_Default is (number of parameters that follow, tab label).
+    static PRM_Name    theTabsName("b3dtabs");
+    static PRM_Default theTabsDefaults[] = {
+        PRM_Default(7, "Simulation"),
+        PRM_Default(4, "Performance"),
+        PRM_Default(5, "Contacts"),
+        PRM_Default(5, "Bounce & Friction"),
+        PRM_Default(3, "Advanced")
+    };
+
     static PRM_Template theTemplates[] = {
+        PRM_Template(PRM_SWITCHER, int(sizeof(theTabsDefaults) / sizeof(PRM_Default)), &theTabsName, theTabsDefaults),
+        // --- Simulation ---
         PRM_Template(PRM_FLT_J,  3, &theGravityName,  theGravityDefault, 0, 0, 0, 0, 1,
                      "Acceleration applied to every dynamic body, in units per second squared. "
                      "Scale it per body with Gravity Scale on Box3D Data."),
@@ -2686,6 +2698,13 @@ SIM_SolverBox3D::getDescription()
         PRM_Template(PRM_INT_J,  1, &theSubStepsName, &theSubStepsDefault, 0, &theSubStepsRange, 0, 0, 1,
                      "Solver passes per time step. More substeps make stacks and fast collisions more stable "
                      "but take longer."),
+        PRM_Template(PRM_FLT_J,  1, &theTimeScaleName, &theTimeScaleDefault, 0, &theTimeScaleRange, 0, 0, 1,
+                     "Multiplies the time step: below 1 is slow motion, above 1 fast motion."),
+        PRM_Template(PRM_TOGGLE, 1, &theAgingName,    &theAgingDefault, 0, 0, 0, 0, 1,
+                     "Add the time step to each point's age, and mark points dead once age exceeds life."),
+        PRM_Template(PRM_FLT_J,  1, &theMaxSpeedName, &theMaxSpeedDefault, 0, &theMaxSpeedRange, 0, 0, 1,
+                     "No body moves faster than this."),
+        // --- Performance ---
         PRM_Template(PRM_TOGGLE, 1, &theAutoThreadsName, &theAutoThreadsDefault, 0, 0, 0, 0, 1,
                      "Use one Box3D worker thread per CPU core (up to 32). Turn off to set Threads yourself."),
         PRM_Template(PRM_INT_J,  1, &theThreadsName,  &theThreadsDefault, 0, &theThreadsRange,
@@ -2694,40 +2713,37 @@ SIM_SolverBox3D::getDescription()
                      &theThreadsDisable),
         PRM_Template(PRM_TOGGLE, 1, &theSleepName,    &theSleepDefault, 0, 0, 0, 0, 1,
                      "Let resting bodies stop simulating until touched. Off keeps every body awake."),
-        PRM_Template(PRM_FLT_J,  1, &theTimeScaleName, &theTimeScaleDefault, 0, &theTimeScaleRange, 0, 0, 1,
-                     "Multiplies the time step: below 1 is slow motion, above 1 fast motion."),
-        PRM_Template(PRM_FLT_J,  1, &thePushSpeedName, &thePushSpeedDefault, 0, &thePushSpeedRange, 0, 0, 1,
-                     "How fast overlapping pieces are pushed apart. Lower it if pieces that start out overlapping fly apart."),
-        PRM_Template(PRM_TOGGLE, 1, &theAgingName,    &theAgingDefault, 0, 0, 0, 0, 1,
-                     "Add the time step to each point's age, and mark points dead once age exceeds life."),
+        PRM_Template(PRM_FLT_J,  1, &theRecycleName, &theRecycleDefault, 0, &theRecycleRange, 0, 0, 1,
+                     "Reuse contacts for pairs that barely moved, which is faster but slightly less exact. 0 turns it off for every body."),
+        // --- Contacts ---
         PRM_Template(PRM_FLT_J,  1, &theStiffnessName, &theStiffnessDefault, 0, &theStiffnessRange, 0, 0, 1,
                      "How stiff contacts are (cycles per second). Higher values recover from overlap faster but can jitter."),
         PRM_Template(PRM_FLT_J,  1, &theDampingName, &theDampingDefault, 0, &theDampingRange, 0, 0, 1,
                      "How much contacts damp overlap recovery. Lower values recover faster but more energetically."),
-        PRM_Template(PRM_FLT_J,  1, &theBounceThresholdName, &theBounceThresholdDefault, 0, &theBounceThresholdRange, 0, 0, 1,
-                     "Collisions slower than this speed don't bounce, so resting pieces settle instead of jittering."),
-        PRM_Template(PRM_FLT_J,  1, &theRecycleName, &theRecycleDefault, 0, &theRecycleRange, 0, 0, 1,
-                     "Reuse contacts for pairs that barely moved, which is faster but slightly less exact. 0 turns it off for every body."),
-        PRM_Template(PRM_FLT_J,  1, &theMaxSpeedName, &theMaxSpeedDefault, 0, &theMaxSpeedRange, 0, 0, 1,
-                     "No body moves faster than this."),
+        PRM_Template(PRM_FLT_J,  1, &thePushSpeedName, &thePushSpeedDefault, 0, &thePushSpeedRange, 0, 0, 1,
+                     "How fast overlapping pieces are pushed apart. Lower it if pieces that start out overlapping fly apart."),
         PRM_Template(PRM_TOGGLE, 1, &theContinuousName, &theContinuousDefault, 0, 0, 0, 0, 1,
                      "Stop fast bodies passing through static ones (and, for Fast Object bodies, moving ones)."),
         PRM_Template(PRM_TOGGLE, 1, &theSpeculativeName, &theSpeculativeDefault, 0, 0, 0, 0, 1,
                      "Create contacts just before shapes touch. Leave on unless you see bodies catch on invisible edges."),
+        // --- Bounce & Friction ---
+        PRM_Template(PRM_FLT_J,  1, &theBounceThresholdName, &theBounceThresholdDefault, 0, &theBounceThresholdRange, 0, 0, 1,
+                     "Collisions slower than this speed don't bounce, so resting pieces settle instead of jittering."),
         PRM_Template(PRM_INT_J,  1, &theRestIterName, &theRestIterDefault, 0, &theRestIterRange, 0, 0, 1,
                      "Extra solver passes that compute bounce. More passes give better bounce on stacked pieces."),
         PRM_Template(PRM_TOGGLE, 1, &theRestPropName, &theRestPropDefault, 0, 0, 0, 0, 1,
                      "Pass bounce on through stacks of touching pieces."),
+        PRM_Template(PRM_ORD,    1, &theFrictionMixName, &theFrictionMixDefault, &theFrictionMixMenu, 0, 0, 0, 1,
+                     "How the friction of two touching bodies is combined."),
+        PRM_Template(PRM_ORD,    1, &theRestMixName, &theRestMixDefault, &theRestMixMenu, 0, 0, 0, 1,
+                     "How the bounce of two touching bodies is combined."),
+        // --- Advanced ---
         PRM_Template(PRM_FLT_J,  1, &theIsoName, &theIsoDefault, 0, &theIsoRange, 0, 0, 1,
                      "Stops nearly spherical bodies spinning oddly. 0 is a sphere, 0.5 a 1x1x2 box; only affects new bodies or mass changes."),
         PRM_Template(PRM_TOGGLE, 1, &theWarmName, &theWarmDefault, 0, 0, 0, 0, 1,
                      "Advanced: reuse last step's contact forces. Leave on; turning it off makes stacks less stable."),
         PRM_Template(PRM_FLT_J,  1, &theImpactSpeedName, &theImpactSpeedDefault, 0, &theImpactSpeedRange, 0, 0, 1,
                      "Impact Data only includes pairs that collide faster than this. 0 includes every contact."),
-        PRM_Template(PRM_ORD,    1, &theFrictionMixName, &theFrictionMixDefault, &theFrictionMixMenu, 0, 0, 0, 1,
-                     "How the friction of two touching bodies is combined."),
-        PRM_Template(PRM_ORD,    1, &theRestMixName, &theRestMixDefault, &theRestMixMenu, 0, 0, 0, 1,
-                     "How the bounce of two touching bodies is combined."),
         PRM_Template()
     };
 

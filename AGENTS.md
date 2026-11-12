@@ -574,3 +574,16 @@ callbacks get no context, so each rule is its own plain function chosen by `fric
 0 passes nullptr (Box3D's own rule). Shapes are always made with hit events on. With `impactMinSpeed > 0`,
 `recordImpacts` keeps only contact points whose body pair appears in the step's hit events (`updateHitEvents`,
 `hadHitEvent`); 0 keeps every contact. `tests/core_physics.cpp` covers the core side.
+
+## Parameter tabs
+
+Both nodes group their parameters with a `PRM_SWITCHER` template first in the list. Each `PRM_Default(count, label)` is
+one tab and `count` must equal the number of templates listed under it, so keep the two in step when adding a
+parameter. The HDK documents this for ordinary nodes; it is untested here for the SIM data classes.
+
+## Package
+
+`CMakeLists.txt` has `install()` rules and CPack (zip) that lay out a Houdini package: `Box3D.json` (from
+`package/Box3D.json.in`, `hpath` is `$HOUDINI_USER_PREF_DIR/packages/Box3D`) and `Box3D/dso`, `Box3D/config/Icons`. The
+JSON is enabled only for the Houdini major.minor it was built with, taken from `Houdini_VERSION`; if that is not set
+it is always enabled. Checked with a stub project, not with a real Houdini build.

@@ -104,7 +104,19 @@ SIM_Box3DData::getDescription()
     static PRM_Name    theFlipWindingName("flipwinding", "Flip Static Mesh Winding");
     static PRM_Default theFlipWindingDefault(0);
 
+    // Tabs: each PRM_Default is (number of parameters that follow, tab label).
+    static PRM_Name    theTabsName("b3dtabs");
+    static PRM_Default theTabsDefaults[] = {
+        PRM_Default(3, "Shape"),
+        PRM_Default(5, "Body"),
+        PRM_Default(4, "Material"),
+        PRM_Default(4, "Sleep & Contacts"),
+        PRM_Default(2, "Output")
+    };
+
     static PRM_Template theTemplates[] = {
+        PRM_Template(PRM_SWITCHER, int(sizeof(theTabsDefaults) / sizeof(PRM_Default)), &theTabsName, theTabsDefaults),
+        // --- Shape ---
         PRM_Template(PRM_ORD,    1, &theShapeName,       &theShapeDefault, &theShapeMenu, 0, 0, 0, 1,
                      "Collision shape for points without a bullet_georep attribute. Concave / Compound builds one convex hull per piece."),
         PRM_Template(PRM_TOGGLE, 1, &theAutoFitName,     &theAutoFitDefault, 0, 0, 0, 0, 1,
@@ -112,6 +124,7 @@ SIM_Box3DData::getDescription()
         PRM_Template(PRM_TOGGLE, 1, &theHullPerConnectedName, &theHullPerConnectedDefault, 0, 0, 0, 0, 1,
                      "For Convex Hull shapes, build a separate hull for each set of connected primitives in a piece "
                      "instead of one hull around the whole piece."),
+        // --- Body ---
         PRM_Template(PRM_ORD,    1, &theBodyTypeName,    &theBodyTypeDefault, &theBodyTypeMenu, 0, 0, 0, 1,
                      "Static never moves, Kinematic follows its animation, Dynamic is fully simulated. Inactive points (active = 0) are static."),
         PRM_Template(PRM_TOGGLE, 1, &theComputeMassName, &theComputeMassDefault, 0, 0, 0, 0, 1,
@@ -123,6 +136,10 @@ SIM_Box3DData::getDescription()
         PRM_Template(PRM_FLT_J,  1, &theDensityName, &theDensityDefault, 0, &theDensityRange, 0, 0, 1,
                      "Mass per unit volume (used when Compute Mass is on). 1000 is roughly water. "
                      "Overridden by the density point attribute.", &theDensityDisable),
+        PRM_Template(PRM_FLT_J,  1, &theGravScaleName,   &theGravScaleDefault, 0, 0, 0, 0, 1,
+                     "Multiplies the solver's Gravity for these bodies: 0 floats, negative falls upward. "
+                     "Overridden by the gravityscale point attribute."),
+        // --- Material ---
         PRM_Template(PRM_FLT_J,  1, &theFrictionName, &theFrictionDefault, 0, &theFrictionRange, 0, 0, 1,
                      "How much surfaces resist sliding against each other. 0 is ice-slick. "
                      "Overridden by the friction point attribute."),
@@ -134,9 +151,7 @@ SIM_Box3DData::getDescription()
                      "Overridden by the lineardamping point attribute."),
         PRM_Template(PRM_FLT_J,  1, &theAngDampName, &theAngDampDefault, 0, &theDampingRange, 0, 0, 1,
                      "Slows spinning over time. 0 is no drag. Overridden by the angulardamping point attribute."),
-        PRM_Template(PRM_FLT_J,  1, &theGravScaleName,   &theGravScaleDefault, 0, 0, 0, 0, 1,
-                     "Multiplies the solver's Gravity for these bodies: 0 floats, negative falls upward. "
-                     "Overridden by the gravityscale point attribute."),
+        // --- Sleep & Contacts ---
         PRM_Template(PRM_TOGGLE, 1, &theSleepName,       &theSleepDefault, 0, 0, 0, 0, 1,
                      "Let resting bodies stop simulating until touched. Needs the solver's Allow Sleeping on."),
         PRM_Template(PRM_FLT_J,  1, &theSleepThresholdName, &theSleepThresholdDefault, 0, &theSleepThresholdRange, 0, 0, 1,
@@ -146,6 +161,7 @@ SIM_Box3DData::getDescription()
                      "Continuous collision against moving bodies too, so a fast body can't pass through them."),
         PRM_Template(PRM_TOGGLE, 1, &theRecyclingName,   &theRecyclingDefault, 0, 0, 0, 0, 1,
                      "Reuse this body's contacts between steps, which is faster. Turn off if you see ghost collisions on thin or fast bodies."),
+        // --- Output ---
         PRM_Template(PRM_TOGGLE, 1, &theFlipWindingName, &theFlipWindingDefault, 0, 0, 0, 0, 1,
                      "Static meshes are one-sided. Turn on if bodies fall through from the side you expect to be solid."),
         PRM_Template(PRM_TOGGLE, 1, &theAddImpactName,   &theAddImpactDefault, 0, 0, 0, 0, 1,

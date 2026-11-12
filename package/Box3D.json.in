@@ -1,0 +1,4 @@
+{
+    "enable": @BOX3DDOP_PKG_ENABLE@,
+    "hpath": "$HOUDINI_USER_PREF_DIR/packages/Box3D"
+}

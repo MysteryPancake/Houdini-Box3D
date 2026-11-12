@@ -118,3 +118,29 @@ add_custom_command(TARGET Box3DDOP POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/icons/box3d.svg" "${BOX3DDOP_ICON_DIR}/DOP_box3d_solver.svg"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/icons/box3d.svg" "${BOX3DDOP_ICON_DIR}/DOP_box3d_data.svg"
     VERBATIM)
+
+# ---------------------------------------------------------------------------
+# Houdini package. `cmake --build build --target package` (or `cpack -G ZIP` in the build folder)
+# makes a zip to extract into houdiniX.Y/packages: Box3D.json plus the Box3D/ folder with
+# dso/ and config/Icons/. The plugin only loads in the Houdini version it was built against,
+# so the JSON is enabled for that version only.
+# ---------------------------------------------------------------------------
+string(REGEX MATCH "^[0-9]+\\.[0-9]+" BOX3DDOP_HOUDINI_VERSION "${Houdini_VERSION}")
+if(NOT BOX3DDOP_HOUDINI_VERSION)
+    message(WARNING "Houdini version unknown: the package JSON will not be limited to one version")
+    set(BOX3DDOP_HOUDINI_VERSION "unknown")
+    set(BOX3DDOP_PKG_ENABLE "true")
+else()
+    set(BOX3DDOP_PKG_ENABLE "\"houdini_version == '${BOX3DDOP_HOUDINI_VERSION}'\"")
+endif()
+configure_file(package/Box3D.json.in "${CMAKE_BINARY_DIR}/package/Box3D.json" @ONLY)
+
+install(TARGETS Box3DDOP RUNTIME DESTINATION Box3D/dso LIBRARY DESTINATION Box3D/dso)
+install(FILES icons/box3d.svg DESTINATION Box3D/config/Icons RENAME DOP_box3d_solver.svg)
+install(FILES icons/box3d.svg DESTINATION Box3D/config/Icons RENAME DOP_box3d_data.svg)
+install(FILES "${CMAKE_BINARY_DIR}/package/Box3D.json" DESTINATION .)
+
+set(CPACK_GENERATOR ZIP)
+set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)
+set(CPACK_PACKAGE_FILE_NAME "Box3D-Houdini-${BOX3DDOP_HOUDINI_VERSION}-${CMAKE_SYSTEM_NAME}")
+include(CPack)
