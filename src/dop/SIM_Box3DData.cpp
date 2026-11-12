@@ -122,7 +122,7 @@ SIM_Box3DData::getDescription()
     static PRM_Default theTabsDefaults[] = {
         PRM_Default(3, "Shape"),
         PRM_Default(5, "Body"),
-        PRM_Default(4, "Material"),
+        PRM_Default(6, "Material"),
         PRM_Default(6, "Sleep & Contacts"),
         PRM_Default(2, "Output")
     };

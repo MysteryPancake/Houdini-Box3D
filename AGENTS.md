@@ -536,6 +536,10 @@ Objects that the solver is not given but that affect a solved object through a c
 
 ## Not supported on purpose, and planned
 
+* Box3D's mover and pogo joints (`b3CreateMoverJoint`, `b3CreatePogoJoint`) and character-mover queries are left out:
+  they are game character controller tools and have no place in a Houdini DOP workflow. Likewise Box3D's explosions
+  (`b3World_Explode`) and wind (`b3Shape_ApplyWind`): Houdini already has Force DOPs (Wind, Fan, POP Force, ...), which the
+  solver applies, so a second way to do the same thing would only add confusion.
 * Bullet's collision padding (`bullet_collision_margin`, `bullet_adjust_geometry`, `bullet_shrink_amount`) is ignored:
   Box3D collides the exact shapes with speculative contacts.
 * Bullet's solver tuning (ERP, CFM, split impulse, iterations, solve tolerance, randomized order) is not mapped; Box3D's

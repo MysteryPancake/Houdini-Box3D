@@ -2797,7 +2797,7 @@ SIM_SolverBox3D::getDescription()
     static PRM_Default theTabsDefaults[] = {
         PRM_Default(7, "Simulation"),
         PRM_Default(4, "Performance"),
-        PRM_Default(5, "Contacts"),
+        PRM_Default(4, "Contacts"),
         PRM_Default(5, "Bounce & Friction"),
         PRM_Default(3, "Advanced")
     };
