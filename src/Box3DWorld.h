@@ -46,13 +46,32 @@ struct BodyMove
     bool       fellAsleep = false;
 };
 
+// Everything but workerCount can be changed on a live world (applyTuning); the worker count
+// sizes Box3D's thread pool at creation. Defaults are Box3D's own (b3DefaultWorldDef), except
+// gravity (standard gravity instead of 10).
 struct WorldSettings
 {
     float gravity[3]    = { 0.0f, -9.80665f, 0.0f };
     int   subSteps      = 4;      // Box3D recommends ~4 per step
     int   workerCount   = 1;      // > 1: Box3D's own thread pool, sized at creation (max 32)
     bool  enableSleep   = true;
-    bool  enableContinuous = true;
+    bool  enableContinuous = true;    // continuous collision against static bodies (and fast objects vs moving ones)
+    bool  enableSpeculative = true;   // speculative contacts; off only to reduce ghost collisions
+    float contactHertz      = 30.0f;  // contact stiffness (cycles per second)
+    float contactDampingRatio = 10.0f;    // contact damping (non-dimensional)
+    float contactPushSpeed  = 3.0f;   // the fastest overlapping shapes are pushed apart (m/s)
+    float restitutionThreshold = 1.0f;    // collisions slower than this do not bounce (m/s)
+    float maxLinearSpeed    = 400.0f; // speed cap (m/s)
+};
+
+// One contact point of a body after a step (getContactsByHandle).
+struct ContactPoint
+{
+    BodyHandle other         = 0;
+    void      *otherUserData = nullptr;     // the other body's user data
+    double     pos[3]        = { 0, 0, 0 }; // world space
+    float      normal[3]     = { 0, 1, 0 }; // unit, pointing from this body into the other
+    float      impulse       = 0.0f;        // total normal impulse over the step (N*s), > 0
 };
 
 struct BodySettings
@@ -65,13 +84,19 @@ struct BodySettings
     // Box3DWorld itself only reads `density`.
     float mass           = 1.0f;
     float density        = 1.0f;
+    bool  computeMass    = false;   // Houdini solver only: mass = density * volume instead of `mass`
     float friction       = 0.6f;
     float restitution    = 0.0f;
     float linearDamping  = 0.0f;
     float angularDamping = 0.0f;
     float gravityScale   = 1.0f;
     bool  enableSleep    = true;
+    // Box3D's "bullet": continuous collision against other moving bodies too (normal dynamic
+    // bodies only get it against static ones). Houdini attribute: `fastobject`.
     bool  isBullet       = false;
+    float sleepThreshold = 0.05f;   // speed (m/s) below which the body may fall asleep
+    // Collision filter profile (filterProfile()), -1 for none. Stored on every shape.
+    int   filterProfile  = -1;
 
     // Used when a point has no (or an unknown) `bullet_georep` attribute.
     ShapeType defaultShape = ShapeType::Box;
@@ -140,8 +165,9 @@ public:
     void  setMaterialByHandle(BodyHandle h, float friction, float restitution);
     void  setDampingByHandle(BodyHandle h, float linear, float angular);
     void  setGravityScaleByHandle(BodyHandle h, float gravityScale);
-    // May the body sleep? ANDed with the world's enableSleep, like createBody does.
+    // May the body sleep? The world's enableSleep switch is applied on top by Box3D.
     void  setSleepEnabledByHandle(BodyHandle h, bool enableSleep);
+    void  setBulletByHandle(BodyHandle h, bool flag);
     // Density of every shape, then the mass is applied once. The solver keeps mass constant
     // by passing mass / total shape volume, so this is "change the mass" and also what a
     // fresh build with the same attributes would produce (inertia follows the shapes).
@@ -155,6 +181,46 @@ public:
     // false, then applyMassFromShapes once. Contacts of the old shapes are dropped.
     void  destroyShapesByHandle(BodyHandle h);
     void  wakeByHandle(BodyHandle h);
+
+    // Mass from the shapes at `density` (required after shapes were added with updateMass =
+    // false), then optionally moved and scaled: comAtOrigin puts the centre of mass at the body
+    // origin (inertia shifted to it, parallel axis theorem), and inertiaScale multiplies the
+    // inertia tensor. The custom part only applies to dynamic bodies, and a later type change
+    // (setTypeByHandle) recomputes the mass from the shapes, so the caller re-applies it.
+    void  applyMassByHandle(BodyHandle h, float density, bool comAtOrigin, float inertiaScale);
+    bool  getMassDataByHandle(BodyHandle h, float &mass, float center[3], float inertiaDiag[3]) const;
+
+    // Box3D's sleep threshold: the body may sleep once |v| + |w| * extent stays below it (for
+    // Box3D's fixed time to sleep). Negative means Box3D's default.
+    void  setSleepThresholdByHandle(BodyHandle h, float threshold);
+    float sleepThresholdByHandle(BodyHandle h) const;
+
+    // Kinematic bodies: move to this pose over the next step of `timeStep` seconds (Box3D
+    // gives the body the velocity that gets it there, so it pushes what it touches). The
+    // velocity stays afterwards; set it to zero when the target stops moving.
+    void  setTargetTransformByHandle(BodyHandle h, const double pos[3], const float rotXYZW[4], float timeStep);
+
+    // Every touching contact point of the body that carried impulse in the last step.
+    // `out` is reused (cleared first). Returns the count.
+    int   getContactsByHandle(BodyHandle h, std::vector<ContactPoint> &out) const;
+
+    // ---- collision filtering ---------------------------------------------------
+    // Profiles name a body (collision group, object name, object id) and say what it ignores
+    // (patterns, see CollisionFilterTable). Every shape stores its body's profile; a custom
+    // Box3D filter callback asks the table whether two shapes may collide. Call
+    // finishFilterProfiles() after adding profiles and before stepping.
+    int   filterProfile(const FilterProfile &p);
+    void  finishFilterProfiles();
+    bool  shouldCollide(int profileA, int profileB) const;
+    const FilterProfile *filterProfileData(int profile) const;
+    // Give an existing body another profile. Its contacts are dropped and found again under
+    // the new rule (no effect when the profile is unchanged).
+    void  setFilterProfileByHandle(BodyHandle h, int profile);
+
+    // Apply changed world settings to the live world (gravity, substeps, sleep, continuous,
+    // speculative, contact stiffness / damping / push speed, bounce threshold, speed cap).
+    // workerCount is ignored: it needs a new world. Cheap when nothing changed.
+    void  applyTuning(const WorldSettings &s);
 
     // Read back (tests, debugging). Material is the first shape's; 0 / false if unknown.
     bool  getMaterialByHandle(BodyHandle h, float &friction, float &restitution) const;

@@ -29,6 +29,15 @@ public:
     GETSET_DATA_FUNCS_B("autothreads",  AutoThreads);   // true: use every core, ignore "threads"
     GETSET_DATA_FUNCS_I("threads",      Threads);       // Box3D threads (1..32), used when autothreads is off
     GETSET_DATA_FUNCS_B("enablesleep",  EnableSleep);
+    GETSET_DATA_FUNCS_F("timescale",    TimeScale);     // multiplies the step (slow / fast motion)
+    GETSET_DATA_FUNCS_F("contactpushspeed", ContactPushSpeed);  // how fast overlapping shapes are pushed apart
+    GETSET_DATA_FUNCS_F("contactstiffness", ContactStiffness);  // Box3D contact hertz
+    GETSET_DATA_FUNCS_F("contactdamping",   ContactDamping);    // Box3D contact damping ratio
+    GETSET_DATA_FUNCS_F("bouncethreshold",  BounceThreshold);   // slower collisions do not bounce
+    GETSET_DATA_FUNCS_F("maxlinearspeed",   MaxLinearSpeed);
+    GETSET_DATA_FUNCS_B("enablecontinuous", EnableContinuous);
+    GETSET_DATA_FUNCS_B("enablespeculative", EnableSpeculative);
+    GETSET_DATA_FUNCS_B("enableaging",  EnableAging);   // age += dt; dead = 1 once age > life
 
 protected:
     explicit SIM_SolverBox3D(const SIM_DataFactory *factory);

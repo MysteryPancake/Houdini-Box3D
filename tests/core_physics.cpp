@@ -976,8 +976,148 @@ int main()
         const BodyHandle nb = nw.createBody(dyn, p0, qid);
         CHECK(nb && nw.createShape(nb, dyn, cube));
         nw.setSleepEnabledByHandle(nb, true);
-        CHECK(!nw.isSleepEnabledByHandle(nb));
+        const float zv[3] = { 0, 0, 0 };
+        nw.setVelocityByHandle(nb, zv, zv);
+        for (int i = 0; i < 120; ++i) nw.step(1.0f / 60.0f);
+        CHECK(nw.isAwakeByHandle(nb));                  // still falling, but more to the point: never sleeps
+        // tuning on the live world: turning sleep back on lets it sleep once it rests
+        WorldSettings on = noSleep;  on.enableSleep = true;  on.gravity[1] = 0.0f;
+        nw.applyTuning(on);
+        nw.setVelocityByHandle(nb, zv, zv);
+        for (int i = 0; i < 120; ++i) nw.step(1.0f / 60.0f);
+        CHECK(!nw.isAwakeByHandle(nb));
         std::printf("mid-sim update checks done\n");
+    }
+
+    // ---- Houdini patterns and collision groups ---------------------------------
+    {
+        using namespace b3dop;
+        CHECK(globMatch("*", "anything") && globMatch("debris*", "debris12") && !globMatch("debris*", "rock"));
+        CHECK(globMatch("pi?ce", "piece") && !globMatch("pi?ce", "pice"));
+        CHECK(globMatch("obj[0-3]", "obj2") && !globMatch("obj[0-3]", "obj7") && globMatch("[!a]x", "bx"));
+        CHECK(matchPatternList("rock* glass", "glass") && matchPatternList("rock* glass", "rock_3"));
+        CHECK(!matchPatternList("* ^ground", "ground") && matchPatternList("* ^ground", "wall"));
+        CHECK(!matchPatternList("", "x") && !matchPatternList("*", ""));
+
+        CollisionFilterTable t;
+        FilterProfile ground;  ground.objectName = "ground";  ground.objectId = "0";
+        FilterProfile debris;  debris.objectName = "rbd";  debris.objectId = "1";  debris.group = "debris";
+        debris.ignore = "debris";                                       // debris pieces pass through each other
+        FilterProfile ghost;   ghost.objectName = "rbd";  ghost.objectId = "1";  ghost.ignore = "*";
+        const int g = t.profile(ground), d = t.profile(debris), h = t.profile(ghost);
+        CHECK(t.profile(debris) == d && t.size() == 3);                 // deduplicated
+        t.finish();
+        CHECK(t.shouldCollide(g, d) && !t.shouldCollide(d, d));
+        CHECK(!t.shouldCollide(h, g) && !t.shouldCollide(g, h));        // ignore is symmetric
+        CHECK(t.shouldCollide(-1, d) && t.shouldCollide(g, g));
+        FilterProfile byId;  byId.objectName = "a";  byId.objectId = "7";  byId.ignore = "0";   // ignores object id 0
+        const int bi = t.profile(byId);
+        CHECK(!t.shouldCollide(bi, g));                                 // before finish: computed on the fly
+        t.finish();
+        CHECK(!t.shouldCollide(bi, g) && t.shouldCollide(bi, d));
+
+        // In a world: two debris boxes dropped on each other fall through, a third collides
+        Box3DWorld fw;
+        CHECK(fw.create(WorldSettings()));
+        const float qid[4] = { 0, 0, 0, 1 };
+        const int pg = fw.filterProfile(ground), pd = fw.filterProfile(debris);
+        FilterProfile solid;  solid.objectName = "rbd";  solid.objectId = "1";
+        const int ps = fw.filterProfile(solid);
+        fw.finishFilterProfiles();
+        CHECK(fw.shouldCollide(pg, pd) && !fw.shouldCollide(pd, pd) && fw.shouldCollide(ps, pd));
+        BodySettings st;  st.type = BodySettings::Type::Static;  st.filterProfile = pg;
+        const double gp[3] = { 0, -0.5, 0 };
+        ShapeSpec gs;  gs.halfExtents[0] = gs.halfExtents[2] = 50.0f;  gs.halfExtents[1] = 0.5f;
+        const BodyHandle gh = fw.createBody(st, gp, qid);
+        CHECK(fw.createShape(gh, st, gs));
+        ShapeSpec cube;
+        BodySettings dd;  dd.filterProfile = pd;
+        const double p1[3] = { 0, 0.5, 0 }, p2[3] = { 0, 3, 0 };
+        const BodyHandle d1 = fw.createBody(dd, p1, qid), d2 = fw.createBody(dd, p2, qid);
+        CHECK(fw.createShape(d1, dd, cube) && fw.createShape(d2, dd, cube));
+        for (int i = 0; i < 180; ++i) fw.step(1.0f / 60.0f);
+        double p[3];  float q[4];
+        CHECK(fw.getTransformByHandle(d2, p, q) && std::fabs(p[1] - 0.5) < 0.1);    // fell through d1 onto the ground
+        // give d2 the "solid" profile: it now collides with d1, so the two are pushed apart
+        // (they overlap exactly, so the direction is Box3D's choice)
+        fw.setFilterProfileByHandle(d2, ps);
+        for (int i = 0; i < 300; ++i) fw.step(1.0f / 60.0f);
+        double o[3];
+        CHECK(fw.getTransformByHandle(d2, p, q) && fw.getTransformByHandle(d1, o, q));
+        CHECK(std::fabs(p[0] - o[0]) > 0.9 || std::fabs(p[1] - o[1]) > 0.9 || std::fabs(p[2] - o[2]) > 0.9);
+
+        // contacts: d1 rests on the ground. Asked from the ground's side, the normal points from
+        // the ground up into d1, with positive impulse
+        std::vector<ContactPoint> cps;
+        CHECK(fw.getContactsByHandle(gh, cps) > 0);
+        bool sawD1 = false;
+        for (const ContactPoint &c : cps)
+            if (c.other == d1)
+            {
+                sawD1 = true;
+                CHECK(c.impulse > 0.0f && c.normal[1] > 0.9f);      // from the ground up into d1
+                CHECK(std::fabs(c.pos[1]) < 0.1);                   // at the ground's surface
+            }
+        CHECK(sawD1);
+
+        // live tuning is harmless and applied
+        WorldSettings tuned;  tuned.contactPushSpeed = 1.0f;  tuned.contactHertz = 60.0f;
+        tuned.contactDampingRatio = 5.0f;  tuned.restitutionThreshold = 2.0f;  tuned.maxLinearSpeed = 100.0f;
+        tuned.enableSpeculative = false;  tuned.enableContinuous = false;  tuned.subSteps = 8;
+        fw.applyTuning(tuned);
+        CHECK(fw.settings().subSteps == 8 && fw.settings().contactHertz == 60.0f);
+        fw.step(1.0f / 60.0f);
+        std::printf("collision group checks done\n");
+    }
+
+    // ---- mass properties, sleep thresholds, kinematic targets ----------------------
+    {
+        using namespace b3dop;
+        Box3DWorld mw;
+        CHECK(mw.create(WorldSettings()));
+        const float qid[4] = { 0, 0, 0, 1 };
+        BodySettings dyn;
+        const double p0[3] = { 0, 10, 0 };
+        // unit cube offset 1 along x: centre of mass at (1, 0, 0)
+        ShapeSpec off;  off.center[0] = 1.0f;
+        const BodyHandle b = mw.createBody(dyn, p0, qid);
+        CHECK(mw.createShape(b, dyn, off));
+        float m, c[3], I[3];
+        mw.applyMassByHandle(b, 2.0f, false, 1.0f);
+        CHECK(mw.getMassDataByHandle(b, m, c, I) && std::fabs(m - 2.0f) < 1e-4f && std::fabs(c[0] - 1.0f) < 1e-4f);
+        const float Ixx = I[0], Iyy = I[1];                 // cube: 2 * (1+1)/12 = 1/3 each
+        CHECK(std::fabs(Ixx - 1.0f / 3.0f) < 1e-3f && std::fabs(Iyy - 1.0f / 3.0f) < 1e-3f);
+        mw.applyMassByHandle(b, 2.0f, true, 1.0f);          // computecom = 0: centre at the origin
+        CHECK(mw.getMassDataByHandle(b, m, c, I) && std::fabs(c[0]) < 1e-5f);
+        CHECK(std::fabs(I[0] - Ixx) < 1e-4f && std::fabs(I[1] - (Iyy + 2.0f)) < 1e-3f);    // + m d^2 off the x axis
+        mw.applyMassByHandle(b, 2.0f, false, 3.0f);         // inertialtensorstiffness 3
+        CHECK(mw.getMassDataByHandle(b, m, c, I) && std::fabs(I[0] - 3.0f * Ixx) < 1e-3f && std::fabs(m - 2.0f) < 1e-4f);
+
+        // sleep threshold: set, back to Box3D's default, and from BodySettings at creation
+        const float def = mw.sleepThresholdByHandle(b);
+        mw.setSleepThresholdByHandle(b, 0.2f);
+        CHECK(std::fabs(mw.sleepThresholdByHandle(b) - 0.2f) < 1e-6f);
+        mw.setSleepThresholdByHandle(b, -1.0f);
+        CHECK(mw.sleepThresholdByHandle(b) == def);
+        BodySettings sleepy;  sleepy.sleepThreshold = 0.5f;
+        const double ps[3] = { -5, 10, 0 };
+        const BodyHandle sb = mw.createBody(sleepy, ps, qid);
+        CHECK(sb && std::fabs(mw.sleepThresholdByHandle(sb) - 0.5f) < 1e-6f);
+        mw.setBulletByHandle(sb, true);
+
+        // kinematic target: moves there in one step, then keeps the velocity until stopped
+        BodySettings kin;  kin.type = BodySettings::Type::Kinematic;
+        const double k0[3] = { 5, 0, 0 };
+        const BodyHandle k = mw.createBody(kin, k0, qid);
+        ShapeSpec cube;
+        CHECK(mw.createShape(k, kin, cube));
+        const double k1[3] = { 5, 1, 0 };
+        mw.setTargetTransformByHandle(k, k1, qid, 1.0f / 60.0f);
+        mw.step(1.0f / 60.0f);
+        double p[3];  float q[4], lin[3], ang[3];
+        CHECK(mw.getTransformByHandle(k, p, q) && std::fabs(p[1] - 1.0) < 1e-3);
+        CHECK(mw.getVelocityByHandle(k, lin, ang) && std::fabs(lin[1] - 60.0f) < 0.1f);
+        std::printf("mass / sleep / kinematic checks done\n");
     }
 
     w.destroy();

@@ -30,6 +30,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -60,6 +61,15 @@ struct Box3DBodyProps
     float gravityScale   = 1.0f;      // `gravityscale`
     bool  sleepOk        = true;      // creation: bullet_want_deactivate, else enablesleep; later: bullet_want_deactivate only
     bool  ignored        = false;     // `bullet_ignore`: body disabled in Box3D
+    // Mass properties (Houdini RBD names).
+    bool  computeMass    = false;     // `computemass`: mass = density * volume instead of `mass`
+    float density        = 1000.0f;   // `density`
+    float inertiaScale   = 1.0f;      // `inertialtensorstiffness`
+    float sleepThreshold = 0.05f;     // `sleepthreshold` (Box3D's single sleep speed)
+    bool  fastObject     = false;     // `fastobject`: continuous collision against moving bodies too
+    int   filterProfile  = -1;        // collision filter profile (collisiongroup / collisionignore / object)
+    float minActivationImpulse = 0.0f;    // `min_activation_impulse`: inactive body turns active above this
+    std::string activationIgnore;     // `activationignore` patterns
 };
 
 struct Box3DBodyMirror : Box3DBodyPose
@@ -75,6 +85,11 @@ struct Box3DBodyMirror : Box3DBodyPose
     // other shapes only rebuild on bullet_autofit_valid = 0 or deforming = 1.
     bool     autoScale = false;
     double   sizeKey[3] = { 1, 1, 1 };   // the scale the shapes were built at (packed scale, or pscale * scale)
+
+    bool     animated  = false;       // `animated` on an inactive point: kinematic, driven by its point
+    bool     driven    = false;       // a target transform was set last step (its velocity must be cleared)
+    bool     sleeping  = false;       // last value written to `bullet_sleeping`
+    int64_t  pointIndex = -1;         // the point's number at the last scan (Impacts data)
 
     // Where this body's point is, refreshed by every sync. The write-back reads
     // Box3D's move events (one per awake body) and finds the point from here, so
@@ -116,6 +131,7 @@ struct Box3DPointSlot
     bool              ok     = false;    // readPointState succeeded (P is finite)
     bool              active = true;
     bool              packed = false;    // the point belongs to a packed primitive
+    int64_t           index  = 0;        // point number
     int64_t           primOff = -1;
     double            m3[9]  = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
 };
@@ -131,6 +147,28 @@ struct Box3DWriteItem
     Box3DBodyPose     s;                        // what Box3D reports now
     int               objectId = 0;
     int               packedIdx = -1;           // index into Box3DSharedState::packedWrites, or -1
+    int8_t            sleepState = -1;          // bullet_sleeping to write: -1 none, 0 awake, 1 asleep
+};
+
+// A point attribute the solver writes after the step, outside the per-step result write-back
+// (which only covers awake bodies). Found again through its mirror entry (resolvePointOffsets).
+struct Box3DPointWrite
+{
+    enum : unsigned { kAutofitValid = 1, kMass = 2, kActivate = 4 };
+    GA_Offset         off      = GA_INVALID_OFFSET;
+    Box3DBodyMirror  *entry    = nullptr;
+    int               objectId = 0;
+    unsigned          flags    = 0;
+    float             mass     = 0.0f;      // kMass: computed mass (computemass)
+};
+
+// A point marked `dead`: its body is already gone; the point (and its packed primitive) is
+// deleted after the step. Identified like a body's point (offset, checked by id / number).
+struct Box3DDeletion
+{
+    int       objectId = 0;
+    GA_Offset off      = GA_INVALID_OFFSET;
+    int64_t   pointId  = 0;
 };
 
 // The packed rotation the write-back computes in its parallel pass and writes in its serial
@@ -156,7 +194,7 @@ struct Box3DSyncFingerprint
     // in SIM_SolverBox3D.cpp for the order). A change in any of them, in the node's values
     // (nodeHash) or in the primitive list (packed scale) makes the next scan compare every
     // body's settings; otherwise a scan only syncs position / rotation / velocity / active.
-    static constexpr int kNumPropIds = 12;
+    static constexpr int kNumPropIds = 24;
 
     int64_t   numPoints  = -1;      // -1 for geometry with primitives: packed instances are assumed
     int64_t   numOffsets = -1;      // to keep their topology (a new instance gets a new `id`)
@@ -164,8 +202,13 @@ struct Box3DSyncFingerprint
     GA_DataId idId = kNoId, activeId = kNoId;
     int       nodeType = -1;        // Box3D Data body type: a change retypes existing bodies
 
-    GA_DataId propIds[kNumPropIds] = { kNoId, kNoId, kNoId, kNoId, kNoId, kNoId,
-                                       kNoId, kNoId, kNoId, kNoId, kNoId, kNoId };
+    GA_DataId propIds[kNumPropIds];
+
+    Box3DSyncFingerprint()
+    {
+        for (GA_DataId &d : propIds)
+            d = kNoId;
+    }
     GA_DataId primsId  = kNoId;     // primitive list (packed transforms, i.e. packed scale)
     uint64_t  nodeHash = 0;         // Box3D Data node's mass / friction / bounce / damping / gravity scale
 
@@ -199,6 +242,10 @@ struct Box3DObjectSync
     bool     canSkip    = false;    // fp describes a clean, fully scanned object
     bool     propsKnown = false;    // a full scan recorded fp's prop markers (else every body's settings are compared)
     bool     anyDeforming = false;  // a point had `deforming` != 0: rebuilt every step, so never skipped
+    bool     anyDriven    = false;  // an animated body was moved: its velocity must be cleared next step, so never skipped
+    bool     addImpact    = false;  // Box3D Data "Add Impact Data" (read every step)
+    std::vector<Box3DBodyMirror *> impacts;     // with addImpact: every body of the object (rebuilt by each full scan)
+    std::vector<Box3DBodyMirror *> activation;  // inactive bodies with min_activation_impulse > 0
     Box3DSyncFingerprint fp;
 };
 
@@ -224,9 +271,15 @@ struct Box3DSharedState
     std::vector<Box3DWriteItem>                 writeItems;
     std::vector<Box3DPackedWrite>               packedWrites;   // side data of the items above
     std::vector<b3dop::BodyMove>                moves;          // this step's move events
-    // Points whose shape was (re)built because bullet_autofit_valid was 0: the solver sets
-    // the attribute back to 1 after the step, like Bullet. Filled by the sync in object order.
-    std::vector<Box3DWriteItem>                 validWrites;
+    // Filled by the sync (in object order), used after the step:
+    std::vector<Box3DPointWrite>                pointWrites;        // bullet_autofit_valid = 1, computed mass, active = 1
+    std::vector<Box3DDeletion>                  deletions;          // `dead` points to delete
+    std::vector<int>                            impactObjects;      // objects that have Impacts data from last step (sorted)
+    std::vector<b3dop::ContactPoint>            contacts;           // scratch
+
+    // This step's Box3D time step (the DOP step times Time Scale): animated bodies reach
+    // their target over it.
+    float stepDt = 0.0f;
 
     // `bullet_georep` strings already parsed. A shape type never changes once a body exists, and a
     // scene uses a handful of distinct strings, so this lives as long as the world: scans

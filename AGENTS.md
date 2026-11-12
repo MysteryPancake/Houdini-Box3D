@@ -114,10 +114,9 @@ State (`Impl`): the `b3WorldId`, `WorldSettings`, `liveBodies` (what `bodyCount(
 the hull cache, and `bodyHulls` (body HANDLE -> hulls its shapes use; only bodies with hull shapes appear).
 
 **Mass.** Every shape add recomputes the body's mass (`b3ShapeDef::updateBodyMass`, default true). `createShape` /
-`createHullShape` take `updateMass`; for a body with several pieces the solver passes false for all of them and
-calls `applyMassFromShapes` once (required before the next step). A single-shape body leaves it true. Measured
-gain is small (a 3-piece compound costs about the same either way in a microbenchmark); it is kept because it is
-free and scales with piece count.
+`createHullShape` take `updateMass`; the solver passes false for every shape and then calls `applyMassByHandle` once
+(required before the next step), which also moves the centre of mass to the point (see "The point is the centre of
+mass").
 
 **Mid-simulation setters** (handle API, used when an attribute changes on an existing body):
 `setMaterialByHandle` (friction + restitution on every shape; Box3D re-mixes contact friction / restitution from the
@@ -130,6 +129,34 @@ shapes every step, so touching contacts follow), `setDampingByHandle`, `setGravi
 `gravityScaleByHandle`, `isSleepEnabledByHandle`, `isAwakeByHandle`, `massByHandle`, `shapeCountByHandle`. They share
 one `thread_local` shape-id scratch vector; the solver calls them serially. Box3D accepts all of them on a disabled
 body (checked in its source: proxies are only touched when they exist).
+
+**More handle API** (Bullet-compatible extras, see "Bullet features beyond the basics"):
+`applyMassByHandle(h, density, comAtOrigin, inertiaScale)` (sets every shape's density and applies the mass from the
+shapes, which is required after shapes were added with `updateMass = false`; then, for dynamic bodies, optionally moves
+the centre to the body origin with the parallel axis theorem and scales the inertia, via `b3Body_SetMassData`, skipped
+when the centre is already at the origin and the scale is 1; a later `setTypeByHandle` recomputes from the shapes, so
+the caller re-applies), `setSleepThresholdByHandle(h, threshold)` (Box3D's single threshold on `|v| + |w * maxExtent|`,
+negative = Box3D's default; also `BodySettings::sleepThreshold` at creation), `setBulletByHandle` (Box3D "bullet" =
+continuous collision against moving bodies too), `setTargetTransformByHandle`
+(`b3Body_SetTargetTransform`: a kinematic body gets the velocity that reaches the pose in `timeStep`; the velocity stays
+until cleared), `getContactsByHandle` (`b3Body_GetContactData`; one `ContactPoint` per manifold point with
+`totalNormalImpulse > 0`; world position = A's world centre of mass + `anchorA`; normal flipped to point from this
+body into the other) and `applyTuning(WorldSettings)` (pushes changed world settings into the live world: gravity,
+substeps, sleep, continuous, speculative, contact hertz / damping ratio / push speed via `b3World_SetContactTuning`,
+restitution threshold, maximum linear speed; the worker count stays). Body sleep flags are no longer ANDed with the
+world's: Box3D applies the world switch itself, so `applyTuning` can turn sleeping back on.
+
+**Collision filtering.** `CollisionFilterTable` (`Box3DShapes.h`, Houdini-free) holds every distinct `FilterProfile`
+(collision group, object name, object id as text, ignore patterns) and answers `shouldCollide(a, b)` = neither ignores
+the other (`patternsMatchProfile`: ignore patterns vs group / object name / object id). Patterns are Houdini style
+(`matchPatternList` / `globMatch`: space-separated globs with `*`, `?`, `[...]`, later `^pat` removes). `finish()`
+precomputes an N x N byte matrix (N <= 2048, else matched on the fly); Box3D's pair finding runs on worker threads, so
+the table is only mutated during the sync. Box3DWorld registers `b3World_SetCustomFilterCallback` with the table;
+EVERY shape is created with `enableCustomFiltering = true` and its body's profile + 1 in its shape user data, because
+Box3D has no call to turn custom filtering on later. With no ignore patterns anywhere the callback returns true at once.
+The filter only runs when a pair is created, so `setFilterProfileByHandle` also drops the shape's contacts:
+`b3Shape_SetFilter(..., invokeContacts = true)` resets the proxy but returns early on an unchanged filter, so it sets a
+temporary `groupIndex` without the reset and then the real filter with it.
 
 `WorldSettings`: gravity, `subSteps` (default 4), `workerCount` (Box3D's own thread
 pool, sized at creation, max 32; it does not use Houdini's TBB), `enableSleep`,
@@ -269,8 +296,12 @@ decide reason to rebuild (invalid / thread count changed / stamp mismatch) -> cr
 lock st->mutex
 syncFromGeometry   -> per object syncObject(); remove bodies whose point is gone; pruneHulls; emit warnings
 stepWorld          -> b3World_Step(dt, subSteps)
-writeResultsBack   -> only for bodies in Box3D's move events (awake ones), grouped per object
-writeAutofitValid  -> bullet_autofit_valid = 1 on points whose shape was (re)built while it was 0
+writeResultsBack   -> only for bodies in Box3D's move events (awake ones), grouped per object (+ bullet_sleeping)
+recordImpacts      -> SIM_Impacts on objects with Add Impact Data on (only on steps with an impact)
+activateByImpact   -> min_activation_impulse: inactive bodies hit hard enough turn dynamic
+writePointAttrs    -> queued point writes: bullet_autofit_valid = 1, computed mass, active = 1
+ageObjects         -> Enable Aging: age += dt, dead = 1 past life
+deleteDeadPoints   -> destroy `dead` points (and their packed prims)
 st->stamp = now
 publishEvents      -> TODO stub
 ```
@@ -302,10 +333,80 @@ Data names: world is attached as `"Box3DWorld"`, defaults as `"Box3DData"`; geom
 
 Edits that are **not** picked up on an existing body (by design, matching Bullet): `bullet_georep`, `bullet_autofit`,
 `bullet_prim*`, `bullet_radius`, `bullet_length`, a box / sphere / capsule's `pscale` / `scale` / packed scale, unless
-`bullet_autofit_valid = 0` or `deforming = 1` asks for a rebuild; `enablesleep` and `isbullet` (creation only). Box3D
-Data `defaultshape` / `autofit` / `hullperconnected` likewise only apply at creation or rebuild, and solver
-gravity/substeps/sleep only when the world is created (`WorldSettings` is stored at creation and `step` uses the
-stored `subSteps`).
+`bullet_autofit_valid = 0` or `deforming = 1` asks for a rebuild; `enablesleep` (creation only). Box3D Data
+`defaultshape` / `autofit` / `hullperconnected` likewise only apply at creation or rebuild. Solver settings are applied
+to the live world every step (`Box3DWorld::applyTuning`, a no-op when unchanged), except the thread count, which
+rebuilds the world.
+
+### Bullet features beyond the basics
+
+All read in pass 2 through `readDynamicProps` (stored in `Box3DBodyProps`, compared by `applyPropChanges`), so they
+follow the mid-simulation rules below; their attributes are all prop markers (`kPropAttribNames`, 24 names).
+Impact data is the exception: it is a per-object checkbox, not an attribute.
+
+* **Collision groups** (`collisiongroup`, `collisionignore`): per scan the object's own profile (`obj.getName()`, id) is
+  registered once; a point with either attribute gets its own (`pointFilterProfile`). The profile goes into
+  `BodySettings::filterProfile` (so new and rebuilt shapes carry it) and changes go through
+  `setFilterProfileByHandle`. `syncFromGeometry` calls `finishFilterProfiles()` before the step. DOP groups are not
+  matched (Houdini's patterns can also name DOP groups).
+* **Animated** (`animated` with `active` = 0): `wantedType` gives Kinematic. Instead of teleporting on an external
+  pose edit, the body gets `setTargetTransformByHandle(cur, st->stepDt)` and `driven = true`; on a step with no edit a
+  driven body's velocity is zeroed. An object with a driven body never skips (`anyDriven`), since the zeroing needs a
+  scan. Kinematic bodies are not written back. `v` / `w` are not applied to animated bodies.
+* **The point is the centre of mass.** As in Houdini RBD, a body's anchor (the point; for a packed primitive its
+  pivot, which the body-local hull is built around) is its centre of mass. Shapes are always added with
+  `updateMass = false` and `applyBodyMass` then calls `applyMassByHandle(..., comAtOrigin = true, stiffness)`: Box3D's
+  shape centroid is moved to the body origin, inertia shifted to match. It runs after creation and rebuild (also with no
+  shapes, to settle Box3D's dirty-mass flag), after a retype to dynamic (`b3Body_SetType` recomputes from the shapes),
+  after activation by impact, and on a mass change. Velocities read and written are therefore the point's. There is no
+  `computecom` attribute: the SOP tools place the pivot (P = pivot) at the centroid when it is wanted; an off-centre
+  pivot makes the piece turn about it, like in Houdini.
+* **Mass properties** (`computemass`, `density`, `inertialtensorstiffness`; Box3D Data `computemass` / `density`):
+  `boxDensity` = density with computemass, else mass / volume. With computemass the mass is written back to `mass`
+  (`effectiveMass`, `kMass` point write, attribute created if missing) on creation, rebuild or mass change.
+* **Sleep** (`sleepthreshold`, Box3D Data Sleep Threshold, default 0.05): Box3D's single threshold and its fixed half
+  second to sleep (`B3_TIME_TO_SLEEP`, compile time), instead of Bullet's linear + angular thresholds and Sleeping Time.
+  Set at creation through `BodySettings::sleepThreshold`, changed with `setSleepThresholdByHandle`.
+* **Fast object** (`fastobject`, Box3D Data Fast Object): Box3D's `isBullet` (continuous collision against other moving
+  bodies too). Renamed from `isbullet`, which in Houdini means "treat as a Bullet object". Changes mid-simulation via
+  `setBulletByHandle`.
+  `bullet_sleeping`, if the attribute exists, is written in `writeResultsBack` when Box3D's move event says the body
+  fell asleep (1) or it moves again (0); only changes are written (`Box3DWriteItem::sleepState`, `entry->sleeping`). A
+  user-written 0 on a body we put to sleep wakes it (checked in `checkProps` scans). `deactivation_time` is not used.
+* **Impacts** (Box3D Data `addimpact`, "Add Impact Data", off; per object like Bullet's object parameter, not a
+  point attribute): read every step into `Box3DObjectSync::addImpact` and folded into `nodeHash`, so toggling it makes
+  the object scan. A scan with it on lists every body of the object in `Box3DObjectSync::impacts` (kept while
+  skipped). `recordImpacts` gathers each listed body's contact points (`getContactsByHandle`), skipping a dynamic body
+  that is asleep and any contact where neither body is awake, so a resting, sleeping pile records nothing. Only when
+  there is at least one hit does it create a fresh `SIM_Impacts` (`SIM_IMPACTS_DATANAME`, `SIM_DATA_CREATE` with flags
+  0) and call `addPointImpact(pos, normal, impulse, ptnum, otherobjid, otherptnum, -1, 0, 0, 0, time, 0)` per contact
+  point (normal = surface normal of what was hit, pointing at this body; ptnum = `entry->pointIndex`, the point number
+  at the last scan). An object that had Impacts last step and has none now (or turned the option off) loses the data
+  (`removeNamedSubData`, tracked in `impactObjects`), matching Houdini where the data only shows on steps with an
+  impact. No Feedback data: Houdini uses it to pass impacts between different solvers in mutual-interaction loops,
+  which this solver does not take part in. Awake resting contacts do count every step (they carry impulse), which is
+  the cost the parameter help warns about. UNVERIFIED: that `SIM_DATA_CREATE` without `SIM_DATA_RETURN_EXISTING`
+  replaces existing data, and Houdini's normal convention for Bullet impacts.
+* **Activation by impact** (`min_activation_impulse`, `activationignore`): inactive bodies with a threshold are listed in
+  `Box3DObjectSync::activation`. `activateByImpact` reads their contacts after the step; a contact at or above the
+  threshold whose other body's profile does not match `activationignore` makes the body dynamic right away (custom
+  mass re-applied, woken) and queues `active = 1` (`kActivate`), and the object is forced to scan next step. It moves
+  from the next step; Bullet can activate within the step.
+* **Point writes after the step** (`Box3DPointWrite`, `writePointAttrs`): flags `kAutofitValid`, `kMass`, `kActivate`,
+  grouped per object (`forEachObjectRun`), offsets via the templated `resolvePointOffsets`. The fingerprint is
+  re-recorded afterwards; `forceScan` keeps an object scanning when the next sync must act on what was written
+  (active, dead, deleted points).
+* **Dead** (`dead` != 0): pass 2 queues a `Box3DDeletion` and skips the point (its entry is not stamped, so the body is
+  removed with the gone points; a fresh placeholder entry is erased). `deleteDeadPoints` checks every queued point
+  (offset, `id` or point number) before deleting any, then `destroyPrimitive(prim, true)` for a packed point or
+  `destroyPointOffset(off, GA_DESTROY_DEGENERATE)`, `bumpAllDataIds()`, and forces a scan. Without `id`, later points
+  are renumbered and so become new bodies.
+* **Aging** (solver Enable Aging): `ageObjects` adds the DOP step (not time-scaled) to `age` (created if missing) on
+  every point of every object, and with a `life` attribute sets `dead` = 1 (created if missing) past a positive life.
+  Writes every point every step while on.
+* **Time Scale** / **Overlap Push Speed** (solver): `st->stepDt = dt * timescale` is what Box3D steps by and what
+  animated targets use; `canContinue` still uses the DOP step. Push speed is applied every step
+  (`setContactPushSpeed` is a no-op when unchanged) and at world creation (`WorldSettings::contactPushSpeed`).
 
 ### Mid-simulation updates
 
@@ -316,8 +417,8 @@ what its body was built with.
 * **Settings** (`readDynamicProps` -> `applyPropChanges`): effective `mass`, `friction`, `bounce`, `lineardamping`,
   `angulardamping`, `gravityscale` (point attribute if present and usable, else the Box3D Data value), sleep
   permission and `bullet_ignore`, compared with `entry->props`; only the setters for what differs are called.
-  * `mass` -> `setDensityByHandle(mass / entry->volume)`: same as a fresh build, inertia scales with the mass
-    (Houdini has `computemass` / `inertialtensorstiffness`; neither is supported here).
+  * `mass` (and `computemass`, `density`, `inertialtensorstiffness`) -> `applyBodyMass` with density = mass /
+    `entry->volume` (or the density with computemass): same as a fresh build, inertia scales with the mass.
   * Sleep: at creation `bullet_want_deactivate`, else `enablesleep`, else the node. Afterwards only
     `bullet_want_deactivate` (when it exists) changes it; `enablesleep` is creation-only, as in Bullet.
   * `bullet_ignore` != 0 -> `setEnabledByHandle(false)` (also at creation). A disabled body has no move events, so it
@@ -329,8 +430,8 @@ what its body was built with.
   `entry->autoScale` and the size key moved by more than 1e-4 relative (`sameSizeKey`). It calls `planShapes` (the
   same code that builds a new body: georep, autofit, prim overrides, pscale/scale, packed geometry) and compares its
   `shapeSignature` (hull ids + primitive numbers) with `entry->shapeSig`: equal -> nothing touched. Otherwise
-  `destroyShapesByHandle`, `addPlannedShapes` with density = mass / new volume (so mass is preserved and inertia
-  follows the new shape), `wakeByHandle`. The body (handle, pose, velocity, identity, mirror entry) stays. A plan of
+  `destroyShapesByHandle`, `addPlannedShapes` with density = mass / new volume and `applyBodyMass` (so mass is
+  preserved, the centre stays at the point and inertia follows the new shape), `wakeByHandle`. The body (handle, pose, velocity, identity, mirror entry) stays. A plan of
   `none`, or one whose shapes all fail, leaves the body `shapeless`, which forces it static until a later rebuild
   gives it shapes.
   * `autoScale` is set for convex / concave only (Houdini: dynamic scale works for convex hull and concave, not for
@@ -357,7 +458,8 @@ so each object keeps a `Box3DObjectSync` record in `Box3DSharedState::objectSync
 count, size of the point offset range, the data ids of `P`, `orient`, `v`, `w`, `id`, `active` (absent = its own value),
 the Box3D Data body type (a change retypes existing bodies, which the scan applies), and the prop markers for
 mid-simulation updates: data ids of `kPropAttribNames` (`mass, friction, bounce, lineardamping, angulardamping,
-gravityscale, bullet_want_deactivate, bullet_ignore, deforming, bullet_autofit_valid, pscale, scale`, looked up by name),
+gravityscale, bullet_want_deactivate, bullet_ignore, deforming, bullet_autofit_valid, pscale, scale` and the extras'
+attributes, 24 in all, looked up by name),
 the primitive list's data id (`primitiveListDataId`; `GA_PrimitiveList::getDataId()` is in the HDK reference, and the HDK
 leaves bumping it to whoever edits primitives or their intrinsics, so an edit that does not bump it is only noticed on
 the next scan) and `nodeHash` (the Box3D Data node's mass / friction / bounce / damping / gravity scale). A GA data id changes whenever the
@@ -392,8 +494,7 @@ attribute is written, which is what makes it a change marker.
 
 * Body type = node type, forced to Static if `active == 0`.
 * `readDynamicProps` + `settingsFor`: `mass`, `friction`, `bounce`, `lineardamping`, `angulardamping`, `gravityscale`,
-  `enablesleep` / `bullet_want_deactivate`, `bullet_ignore` override node values; `isbullet` is read in `addPointBody`
-  only. `planShapes`: shape type = `bullet_georep` string via `parseShapeType`, else node `defaultShape`, then
+  `enablesleep` / `bullet_want_deactivate`, `sleepthreshold`, `fastobject`, `bullet_ignore` override node values. `planShapes`: shape type = `bullet_georep` string via `parseShapeType`, else node `defaultShape`, then
   `buildShapes`, `shapeSignature`, `autoScale` / `sizeKey`. `addPlannedShapes` adds the pieces.
 * `none` -> static body with no shapes (the only legal shapeless body).
 * Size from `pscale` (default 1) and `scale` (default 1,1,1).
@@ -542,17 +643,36 @@ Static points are never written. Kinematic bodies are also not written back (the
   in serial passes (the write-back's parallel pass also updates the mirror entry of its own body).
 * The shared-state mutex is held for the whole sync/step/write-back.
 
+## Not supported on purpose, and planned
+
+* Bullet's collision padding (`bullet_collision_margin`, `bullet_adjust_geometry`, `bullet_shrink_amount`) is ignored:
+  Box3D uses speculative contacts on the exact shapes and needs no margin. Padding would only inflate shapes.
+* Bullet's solver tuning (ERP, CFM, split impulse, iterations, solve tolerance, randomized order) is not mapped; the
+  Box3D settings above are offered instead.
+* Bullet's two sleep thresholds and Sleeping Time / `deactivation_time` are replaced by Box3D's one threshold.
+* PLANNED (not started): static triangle-mesh colliders for the concave case. Box3D meshes
+  (`b3CreateMeshShape`) and height fields only collide as static bodies, which is why `concave` / `compound` are
+  currently one convex hull per piece on one body (Bullet's concave is a triangle mesh and may move). The intended
+  split: a static (inactive, non-animated) `concave` point becomes a Box3D mesh of its packed geometry; a dynamic one
+  keeps the hull-per-piece compound. Mind the mesh's own memory (not the hull cache), `deforming` rebuilds, and that a
+  mesh body can never be retyped to dynamic without rebuilding its shape.
+
 ## Parameters
 
-Solver (`SIM_SolverBox3D`, all read when the world is created): `gravity` (v3, default
+Solver (`SIM_SolverBox3D`, all read every step; only a thread-count change rebuilds the world): `gravity` (v3, default
 0,-9.80665,0), `substeps` (min 1, default 4, UI max 16), `autothreads` (default on),
-`threads` (1..32, default 8, disabled when autothreads is on), `enablesleep`.
+`threads` (1..32, default 8, disabled when autothreads is on), `enablesleep`, `timescale` (default 1), `enableaging`
+(default off), and Box3D's tuning with Box3D's defaults: `contactstiffness` (30, contact hertz), `contactdamping` (10,
+contact damping ratio), `contactpushspeed` (3, contact speed), `bouncethreshold` (1, restitution threshold),
+`maxlinearspeed` (400), `enablecontinuous` (on), `enablespeculative` (on). Bullet's ERP / CFM / split impulse /
+iterations are deliberately not offered: Box3D's soft-step solver with substeps has no equivalent.
 
 Box3D Data (`SIM_Box3DData`, per object, read when a body is created):
 `defaultshape` (0 box, 1 sphere, 2 convex hull, 3 concave/compound, 4 capsule, 5 none),
-`hullperconnected`, `autofit` (on; point attr `bullet_autofit`), `bodytype` (0 static, 1 kinematic, 2 dynamic), `mass` (1, per body:
-density = mass / shape volume), `friction` (0.6), `bounce` (0, = Box3D restitution),
-`lineardamping`, `angulardamping`, `gravityscale` (1), `enablesleep`, `isbullet`. Parameter
+`hullperconnected`, `autofit` (on; point attr `bullet_autofit`), `bodytype` (0 static, 1 kinematic, 2 dynamic), `computemass` (off), `mass` (1, per body:
+density = mass / shape volume; disabled with computemass), `density` (1000, used with computemass), `friction` (0.6), `bounce` (0, = Box3D restitution),
+`lineardamping`, `angulardamping`, `gravityscale` (1), `enablesleep`, `sleepthreshold` (0.05), `fastobject` (off),
+`addimpact` (off, no point attribute). Parameter
 names match the point attributes that override them. Box3D asserts on negative
 mass/friction/bounce/damping, so these have hard minimum 0.
 `SIM_Box3DData::toBodySettings()` maps to `b3dop::BodySettings` (`mass`, `restitution`, ...).
@@ -562,12 +682,15 @@ The Box3D Data node's data name on the object is `Box3DData`.
 
 `P` required. `orient` (quat, ignored on input for packed points), `v`, `w` (rad/s), `mass`
 (density = mass/volume), `friction`, `bounce` (restitution), `lineardamping`, `angulardamping`,
-`gravityscale` (floats), `enablesleep`, `isbullet` (ints, 0 = off), `active` (0 static, else
+`gravityscale`, `sleepthreshold` (floats), `enablesleep`, `fastobject` (ints, 0 = off), `active` (0 static, else
 dynamic), `bullet_want_deactivate` (int, 1 may sleep), `bullet_ignore` (int), `deforming` (int),
-`bullet_autofit_valid` (int, written back as 1), `bullet_georep` (shape string), `bullet_autofit` (int), `bullet_primS`,
+`bullet_autofit_valid` (int, written back as 1), and the extras in "Bullet features beyond the basics"
+(`collisiongroup`, `collisionignore`, `animated`, `computemass`, `density`, `inertialtensorstiffness`,
+`bullet_sleeping`, `min_activation_impulse`,
+`activationignore`, `dead`, `age`, `life`), `bullet_georep` (shape string), `bullet_autofit` (int), `bullet_primS`,
 `bullet_primR`, `bullet_primT` (vectors), `bullet_radius`, `bullet_length` (floats; see
 "Explicit primitives"), `pscale`, `scale`, `id`. Each of `mass`, `friction`,
-`bounce`, `lineardamping`, `angulardamping`, `gravityscale`, `enablesleep`, `isbullet`
+`bounce`, `lineardamping`, `angulardamping`, `gravityscale`, `enablesleep`, `sleepthreshold`, `fastobject`
 overrides the Box3D Data parameter of the same name; negative / non-finite values are
 clamped to 0 / ignored (gravityscale may be negative). Identity is
 `(object id, id attribute or point number)`; use `id` if points can be deleted/reordered.

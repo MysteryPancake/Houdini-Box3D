@@ -4,7 +4,7 @@
 // Bullet Data). Attach to a DOP object (the registered DOP node does this).
 //
 // Per-point attributes (bullet_georep, mass, friction, bounce, lineardamping,
-// angulardamping, gravityscale, enablesleep, isbullet, bullet_autofit, active, ...) override
+// angulardamping, gravityscale, enablesleep, fastobject, sleepthreshold, bullet_autofit, active, ...) override
 // these; this node is only the fallback for points that do not have them.
 // The parameter names here match those attribute names.
 //
@@ -25,13 +25,17 @@ public:
     GETSET_DATA_FUNCS_I("bodytype",       BodyType);        // 0 static, 1 kinematic, 2 dynamic
     // Option names match the point attributes that override them.
     GETSET_DATA_FUNCS_F("mass",           Mass);            // per body; density = mass / shape volume
+    GETSET_DATA_FUNCS_B("computemass",    ComputeMass);     // on: mass = density * shape volume
+    GETSET_DATA_FUNCS_F("density",        Density);
     GETSET_DATA_FUNCS_F("friction",       Friction);
     GETSET_DATA_FUNCS_F("bounce",         Bounce);          // Box3D restitution
     GETSET_DATA_FUNCS_F("lineardamping",  LinearDamping);
     GETSET_DATA_FUNCS_F("angulardamping", AngularDamping);
     GETSET_DATA_FUNCS_F("gravityscale",   GravityScale);
     GETSET_DATA_FUNCS_B("enablesleep",    EnableSleep);
-    GETSET_DATA_FUNCS_B("isbullet",       IsBullet);
+    GETSET_DATA_FUNCS_B("fastobject",     FastObject);      // continuous collision against moving bodies too
+    GETSET_DATA_FUNCS_F("sleepthreshold", SleepThreshold);  // speed below which a body may sleep
+    GETSET_DATA_FUNCS_B("addimpact",      AddImpact);       // record Impacts data for this object
     GETSET_DATA_FUNCS_I("defaultshape",   DefaultShape);    // 0 box, 1 sphere, 2 convexhull, 3 concave/compound, 4 capsule, 5 none
     GETSET_DATA_FUNCS_B("hullperconnected", HullPerConnected); // convex: one hull per set of connected prims
     GETSET_DATA_FUNCS_B("autofit",        AutoFit);         // box / sphere / capsule fit to the packed geometry (point attr: bullet_autofit)

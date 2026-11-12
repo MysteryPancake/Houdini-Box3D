@@ -635,4 +635,199 @@ inline bool storedPosition(const double in[3], double out[3])
     return std::isfinite(out[0]) && std::isfinite(out[1]) && std::isfinite(out[2]);
 }
 
+// ---------------------------------------------------------------------------
+// Collision groups (`collisiongroup`, `collisionignore`, `activationignore`)
+//
+// Houdini patterns: space-separated globs (`*`, `?`, `[abc]`), read left to right; a
+// pattern starting with `^` removes what it matches. A name matches when the last
+// pattern that matches it is not a `^` one.
+// ---------------------------------------------------------------------------
+
+// One glob against one name. Case-sensitive, like Houdini's pattern matching.
+inline bool
+globMatch(const char *pat, const char *str)
+{
+    const char *starPat = nullptr, *starStr = nullptr;
+    while (*str)
+    {
+        if (*pat == '[')
+        {
+            const char *q = pat + 1;
+            bool neg = (*q == '!' || *q == '^');
+            if (neg) ++q;
+            bool hit = false;
+            const char *close = q;
+            while (*close && *close != ']') ++close;
+            if (*close == ']')
+            {
+                for (const char *c = q; c < close; ++c)
+                {
+                    if (c + 2 < close && c[1] == '-')
+                    {
+                        hit = hit || (*str >= c[0] && *str <= c[2]);
+                        c += 2;
+                    }
+                    else
+                        hit = hit || (*str == *c);
+                }
+                if (hit != neg)
+                {
+                    pat = close + 1;
+                    ++str;
+                    continue;
+                }
+            }
+            else if (*str == '[')   // unterminated: a literal '['
+            {
+                ++pat; ++str;
+                continue;
+            }
+        }
+        else if (*pat == '?' || (*pat && *pat != '*' && *pat == *str))
+        {
+            ++pat; ++str;
+            continue;
+        }
+        if (*pat == '*')
+        {
+            starPat = ++pat;
+            starStr = str;
+            continue;
+        }
+        if (!starPat)
+            return false;
+        pat = starPat;
+        str = ++starStr;
+    }
+    while (*pat == '*') ++pat;
+    return *pat == 0;
+}
+
+// A space-separated pattern list against one name (see above). Empty patterns or an empty
+// name never match.
+inline bool
+matchPatternList(const std::string &patterns, const std::string &name)
+{
+    if (patterns.empty() || name.empty())
+        return false;
+    bool matched = false;
+    size_t i = 0;
+    std::string tok;
+    while (i < patterns.size())
+    {
+        while (i < patterns.size() && (patterns[i] == ' ' || patterns[i] == '\t' || patterns[i] == ','))
+            ++i;
+        size_t j = i;
+        while (j < patterns.size() && patterns[j] != ' ' && patterns[j] != '\t' && patterns[j] != ',')
+            ++j;
+        if (j > i)
+        {
+            const bool neg = patterns[i] == '^';
+            tok.assign(patterns, neg ? i + 1 : i, j - (neg ? i + 1 : i));
+            if (!tok.empty() && globMatch(tok.c_str(), name.c_str()))
+                matched = !neg;
+        }
+        i = j;
+    }
+    return matched;
+}
+
+// What a body is called for pattern matching, plus its own ignore patterns. Patterns match
+// the other body's collision group, its DOP object's name, or its DOP object's id.
+struct FilterProfile
+{
+    std::string group;          // `collisiongroup` (may be empty)
+    std::string objectName;     // the DOP object's name
+    std::string objectId;       // the DOP object's id, as text
+    std::string ignore;         // `collisionignore` patterns (may be empty)
+};
+
+// Does `patterns` match any name of `who`?
+inline bool
+patternsMatchProfile(const std::string &patterns, const FilterProfile &who)
+{
+    return matchPatternList(patterns, who.group) || matchPatternList(patterns, who.objectName) ||
+           matchPatternList(patterns, who.objectId);
+}
+
+// Every distinct profile in a world, and whether two of them collide (neither ignores the
+// other). Profiles are only ever added. finish() precomputes the answer table so that
+// shouldCollide can be called from several threads during a step (Box3D's pair finding is
+// threaded); past kMaxMatrix profiles it matches patterns on the fly instead (still
+// read-only, so still thread-safe).
+class CollisionFilterTable
+{
+public:
+    static constexpr size_t kMaxMatrix = 2048;
+
+    int profile(const FilterProfile &p)
+    {
+        std::string key;
+        key.reserve(p.group.size() + p.objectName.size() + p.objectId.size() + p.ignore.size() + 3);
+        key += p.group;  key += '\x1f';  key += p.objectName;  key += '\x1f';
+        key += p.objectId;  key += '\x1f';  key += p.ignore;
+        auto it = myIndex.find(key);
+        if (it != myIndex.end())
+            return it->second;
+        const int idx = int(myProfiles.size());
+        myProfiles.push_back(p);
+        myIndex.emplace(std::move(key), idx);
+        myAnyIgnore = myAnyIgnore || !p.ignore.empty();
+        myDirty = true;
+        return idx;
+    }
+
+    void finish()
+    {
+        if (!myDirty)
+            return;
+        myDirty = false;
+        const size_t n = myProfiles.size();
+        if (!myAnyIgnore || n > kMaxMatrix)
+        {
+            myMatrix.clear();
+            myMatrixN = 0;
+            return;
+        }
+        myMatrix.assign(n * n, 1);
+        for (size_t a = 0; a < n; ++a)
+            for (size_t b = a; b < n; ++b)
+            {
+                const bool c = computeCollide(int(a), int(b));
+                myMatrix[a * n + b] = myMatrix[b * n + a] = c ? 1 : 0;
+            }
+        myMatrixN = n;
+    }
+
+    // a / b: profile indices; a negative index (no profile) always collides.
+    bool shouldCollide(int a, int b) const
+    {
+        if (!myAnyIgnore || a < 0 || b < 0 || size_t(a) >= myProfiles.size() || size_t(b) >= myProfiles.size())
+            return true;
+        if (size_t(a) < myMatrixN && size_t(b) < myMatrixN)
+            return myMatrix[size_t(a) * myMatrixN + size_t(b)] != 0;
+        return computeCollide(a, b);
+    }
+
+    const FilterProfile *get(int i) const
+    {
+        return (i >= 0 && size_t(i) < myProfiles.size()) ? &myProfiles[size_t(i)] : nullptr;
+    }
+    size_t size() const { return myProfiles.size(); }
+
+private:
+    bool computeCollide(int a, int b) const
+    {
+        const FilterProfile &pa = myProfiles[size_t(a)], &pb = myProfiles[size_t(b)];
+        return !patternsMatchProfile(pa.ignore, pb) && !patternsMatchProfile(pb.ignore, pa);
+    }
+
+    std::vector<FilterProfile>           myProfiles;
+    std::unordered_map<std::string, int> myIndex;
+    std::vector<uint8_t>                 myMatrix;
+    size_t                               myMatrixN   = 0;
+    bool                                 myAnyIgnore = false;
+    bool                                 myDirty     = false;
+};
+
 } // namespace b3dop

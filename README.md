@@ -65,7 +65,7 @@ In a DOP network, press **TAB** and add:
 - **Box3D Solver**: runs the simulation.
 - **Box3D Data**: default material and shape settings for an object.
 
-Like Houdini's RBD solvers, the solver works on **points**: every point in an object's Geometry is one rigid body. Wire the object into the solver as you would with any other DOP solver.
+Like Houdini's RBD solvers, the solver works on **points**: every point in an object's Geometry is one rigid body, and the point is the body's **centre of mass**. For packed pieces, put the pivot at the centroid (the Pack SOP and RBD tools do this by default), or the piece will turn around an off-centre point. Wire the object into the solver as you would with any other DOP solver.
 
 ### Point attributes
 
@@ -77,7 +77,10 @@ All attributes are optional except `P`. If one is missing, the value from the Bo
 | `orient` | quaternion | Rotation |
 | `v` | vector | Linear velocity |
 | `w` | vector | Angular velocity (radians/s) |
-| `mass` | float | Mass of the body |
+| `mass` | float | Mass of the body (written by the solver when `computemass` is on) |
+| `computemass` | int | `1` = mass is `density` × shape volume |
+| `density` | float | Density used by `computemass` |
+| `inertialtensorstiffness` | float | Scales how hard the body is to spin |
 | `friction` | float | Surface friction |
 | `bounce` | float | Bounciness |
 | `lineardamping` | float | Linear damping (0 or more) |
@@ -85,8 +88,15 @@ All attributes are optional except `P`. If one is missing, the value from the Bo
 | `gravityscale` | float | Multiplies gravity for this body; negative floats upward |
 | `enablesleep` | int | `0` = this body never sleeps |
 | `bullet_want_deactivate` | int | `1` = may sleep, `0` = kept awake (overrides `enablesleep`) |
-| `isbullet` | int | Nonzero = continuous collision for fast bodies |
+| `sleepthreshold` | float | Speed below which the body may fall asleep (after half a second) |
+| `bullet_sleeping` | int | Written by the solver: `1` while asleep. Set it to `0` to wake the body |
+| `fastobject` | int | Nonzero = a fast body can't pass through other moving bodies (it never passes through static ones) |
 | `active` | int | `0` = static, anything else = dynamic |
+| `animated` | int | With `active` = 0: the body follows its animated point and pushes what it touches |
+| `min_activation_impulse` | float | An inactive body hit at least this hard becomes active |
+| `activationignore` | string | Patterns of bodies whose hits don't activate this one |
+| `collisiongroup` | string | A name that `collisionignore` and `activationignore` patterns can match |
+| `collisionignore` | string | Patterns of bodies this one doesn't collide with (`*` = nothing) |
 | `bullet_ignore` | int | Nonzero = the body is left out of the simulation |
 | `deforming` | int | Nonzero = rebuild the collision shape from the current geometry every step |
 | `bullet_autofit_valid` | int | `0` = rebuild the collision shape once (the solver sets it back to `1`) |
@@ -99,16 +109,24 @@ All attributes are optional except `P`. If one is missing, the value from the Bo
 | `bullet_primR` | vector | Shape rotation, Euler degrees (X, then Y, then Z) |
 | `pscale` / `scale` | float / vector | Size of the shape |
 | `id` | int | Stable point id; use it if points can be deleted or reordered |
+| `dead` | int | Nonzero = delete the point and its body |
+| `age` / `life` | float | With Enable Aging: `age` counts up and the point is marked `dead` once it passes `life` |
 
 Every step the solver writes `P`, `orient`, `v` and `w` back to the dynamic points.
 
+`collisionignore` and `activationignore` patterns match another body's `collisiongroup`, its DOP object's name, or its object id. Separate patterns with spaces, use `*` and `?` as wildcards, and start a pattern with `^` to exclude.
+
+Turn on **Add Impact Data** on the Box3D Data node to record the object's impacts in its **Impacts** data, which shows in the details view on steps that have at least one impact. This can increase simulation time and memory use.
+
+The **Box3D Solver** also has **Time Scale** (slow or fast motion), **Enable Aging**, and Box3D's own tuning: **Contact Stiffness** and **Contact Damping Ratio** (how firmly contacts resolve overlap), **Overlap Push Speed** (lower it if pieces that start out overlapping fly apart), **Bounce Threshold**, **Max Linear Speed**, **Continuous Collision** and **Speculative Contacts**. All solver parameters except the thread count can be animated.
+
 ### Changing attributes during the simulation
 
-Like Houdini's Bullet solver, most attributes can be changed mid-simulation (with a Geometry Wrangle DOP, a SOP Solver, or by animating the Box3D Data node) and take effect on the next step: `P`, `orient`, `v`, `w`, `active`, `mass`, `friction`, `bounce`, damping, `gravityscale`, `bullet_want_deactivate` and `bullet_ignore`.
+Like Houdini's Bullet solver, most attributes can be changed mid-simulation (with a Geometry Wrangle DOP, a SOP Solver, or by animating the Box3D Data node) and take effect on the next step. That covers position, rotation, velocity, `active`, `animated`, the mass, friction, bounce, damping, gravity, sleep and collision attributes above, `bullet_ignore` and `dead`.
 
 Collision shapes are kept once built. To rebuild one, set `bullet_autofit_valid = 0` (rebuilds once) or `deforming = 1` (rebuilds every step). This is how changes to `bullet_georep`, `bullet_autofit`, the `bullet_prim*` attributes, `bullet_radius`, `bullet_length` and the size of a box, sphere or capsule take effect. Convex and concave shapes follow scale changes on their own.
 
-`enablesleep` and `isbullet` only apply when a body is created. `id` has no special values: changing it turns the point into a new body.
+`enablesleep` only applies when a body is created; use `bullet_want_deactivate` to change sleeping later. `id` has no special values: changing it turns the point into a new body.
 
 ### Shapes
 
@@ -138,9 +156,15 @@ Convex and concave shapes need **packed primitives** (one point plus one packed 
 
 ### Things to know
 
+- Bullet's collision padding attributes (`bullet_collision_margin`, `bullet_adjust_geometry`, `bullet_shrink_amount`) are ignored. Box3D collides the exact shapes and doesn't need padding.
+- Bullet's solver settings (ERP, CFM, split impulse, iterations) have no equivalent; use Substeps and the contact settings above.
+- `concave` / `compound` are currently built as several convex hulls. Static triangle-mesh colliders for the concave case are planned.
 - Negative `friction`, `bounce` and damping values are treated as 0.
 - Unlike Bullet, auto-fitted sizes are not written back to the `bullet_prim*`, `bullet_radius` and `bullet_length` attributes.
-- Triangle-mesh colliders, joints/constraints and collision events are not supported yet.
+- An inactive body hit hard enough starts moving on the step after the hit.
+- Use `id` if you delete points with `dead`. Without it, every later point counts as a new body.
+- Patterns don't match DOP groups yet.
+- Triangle-mesh colliders and joints/constraints are not supported yet.
 
 ## Troubleshooting
 

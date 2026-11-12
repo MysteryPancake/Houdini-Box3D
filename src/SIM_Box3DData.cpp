@@ -1,6 +1,7 @@
 // SIM_Box3DData.cpp
 #include "SIM_Box3DData.h"
 
+#include <PRM/PRM_Conditional.h>   // PRM_Template.h only forward-declares PRM_Conditional
 #include <PRM/PRM_Include.h>
 #include <SIM/SIM_DopDescription.h>
 
@@ -43,6 +44,15 @@ SIM_Box3DData::getDescription()
     static PRM_Name    theMassName("mass", "Mass");
     static PRM_Default theMassDefault(1.0);
 
+    // Compute Mass on: mass = density * shape volume (point attributes: computemass, density).
+    static PRM_Name    theComputeMassName("computemass", "Compute Mass");
+    static PRM_Default theComputeMassDefault(0);
+    static PRM_Conditional theMassDisable("{ computemass == 1 }", PRM_CONDTYPE_DISABLE);
+    static PRM_Conditional theDensityDisable("{ computemass == 0 }", PRM_CONDTYPE_DISABLE);
+    static PRM_Name    theDensityName("density", "Density");
+    static PRM_Default theDensityDefault(1000.0);
+    static PRM_Range   theDensityRange(PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 2000);
+
     static PRM_Name    theFrictionName("friction", "Friction");
     static PRM_Default theFrictionDefault(0.6);
 
@@ -61,8 +71,17 @@ SIM_Box3DData::getDescription()
     static PRM_Name    theSleepName("enablesleep", "Allow Sleeping");
     static PRM_Default theSleepDefault(1);
 
-    static PRM_Name    theBulletName("isbullet", "Bullet (Fast Object CCD)");
-    static PRM_Default theBulletDefault(0);
+    // Box3D's "bullet" flag, under a name that does not clash with Houdini's `isbullet`.
+    static PRM_Name    theFastObjectName("fastobject", "Fast Object");
+    static PRM_Default theFastObjectDefault(0);
+
+    // Box3D has one sleep threshold (speed) and a fixed time to sleep (half a second).
+    static PRM_Name    theSleepThresholdName("sleepthreshold", "Sleep Threshold");
+    static PRM_Default theSleepThresholdDefault(0.05);
+    static PRM_Range   theSleepThresholdRange(PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 1);
+
+    static PRM_Name    theAddImpactName("addimpact", "Add Impact Data");
+    static PRM_Default theAddImpactDefault(0);
 
     static PRM_Name theShapeName("defaultshape", "Default Shape");
     static PRM_Name theShapeChoices[] = {
@@ -94,14 +113,25 @@ SIM_Box3DData::getDescription()
         PRM_Template(PRM_TOGGLE, 1, &theAutoFitName,     &theAutoFitDefault),
         PRM_Template(PRM_TOGGLE, 1, &theHullPerConnectedName, &theHullPerConnectedDefault),
         PRM_Template(PRM_ORD,    1, &theBodyTypeName,    &theBodyTypeDefault, &theBodyTypeMenu),
-        PRM_Template(PRM_FLT_J,  1, &theMassName, &theMassDefault, 0, &theMassRange),
+        PRM_Template(PRM_TOGGLE, 1, &theComputeMassName, &theComputeMassDefault),
+        PRM_Template(PRM_FLT_J,  1, &theMassName, &theMassDefault, 0, &theMassRange, 0, 0, 1,
+                     "Mass of each body (used when Compute Mass is off).", &theMassDisable),
+        PRM_Template(PRM_FLT_J,  1, &theDensityName, &theDensityDefault, 0, &theDensityRange, 0, 0, 1,
+                     "Mass per unit volume (used when Compute Mass is on).", &theDensityDisable),
         PRM_Template(PRM_FLT_J,  1, &theFrictionName, &theFrictionDefault, 0, &theFrictionRange),
         PRM_Template(PRM_FLT_J,  1, &theBounceName, &theBounceDefault, 0, &theBounceRange),
         PRM_Template(PRM_FLT_J,  1, &theLinDampName, &theLinDampDefault, 0, &theDampingRange),
         PRM_Template(PRM_FLT_J,  1, &theAngDampName, &theAngDampDefault, 0, &theDampingRange),
         PRM_Template(PRM_FLT_J,  1, &theGravScaleName,   &theGravScaleDefault),
         PRM_Template(PRM_TOGGLE, 1, &theSleepName,       &theSleepDefault),
-        PRM_Template(PRM_TOGGLE, 1, &theBulletName,      &theBulletDefault),
+        PRM_Template(PRM_FLT_J,  1, &theSleepThresholdName, &theSleepThresholdDefault, 0, &theSleepThresholdRange, 0, 0, 1,
+                     "A body may fall asleep once its speed has stayed below this for half a second."),
+        PRM_Template(PRM_TOGGLE, 1, &theFastObjectName,  &theFastObjectDefault, 0, 0, 0, 0, 1,
+                     "Continuous collision against other moving bodies too, so a fast body cannot pass through them. "
+                     "Every body already has it against static ones."),
+        PRM_Template(PRM_TOGGLE, 1, &theAddImpactName,   &theAddImpactDefault, 0, 0, 0, 0, 1,
+                     "When turned on, any impacts that occur during the simulation are recorded in the "
+                     "Impacts data on the DOP object. Turning this on may increase simulation time and memory use."),
         PRM_Template()
     };
 
@@ -129,13 +159,16 @@ SIM_Box3DData::toBodySettings() const
     }
 
     s.mass           = static_cast<float>(getMass());
+    s.computeMass    = getComputeMass();
+    s.density        = static_cast<float>(getDensity());
     s.friction       = static_cast<float>(getFriction());
     s.restitution    = static_cast<float>(getBounce());
     s.linearDamping  = static_cast<float>(getLinearDamping());
     s.angularDamping = static_cast<float>(getAngularDamping());
     s.gravityScale   = static_cast<float>(getGravityScale());
     s.enableSleep    = getEnableSleep();
-    s.isBullet       = getIsBullet();
+    s.isBullet       = getFastObject();
+    s.sleepThreshold = static_cast<float>(getSleepThreshold());
     s.hullPerConnectedSet = getHullPerConnected();
     s.autoFit        = getAutoFit();
     switch (getDefaultShape())

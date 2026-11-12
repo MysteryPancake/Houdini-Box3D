@@ -14,6 +14,7 @@ struct Box3DWorld::Impl
 {
     b3WorldId                             worldId = b3_nullWorldId;
     WorldSettings                         settings;
+    CollisionFilterTable                  filters;
     int                                   liveBodies = 0;     // every live body, keyed or handle-made
 
     // Keyed API only (addBody / addShape / removeBody ...); the solver's handle path never
@@ -147,7 +148,33 @@ shapeDefFor(const BodySettings &b, bool updateMass)
     def.density                 = b.density;
     def.baseMaterial.friction    = b.friction;
     def.baseMaterial.restitution = b.restitution;
+    // Every shape takes part in custom filtering and carries its body's profile (+1, so 0 is
+    // "none"): a profile can be given to a body later, and Box3D has no call to turn custom
+    // filtering on for an existing shape. With no ignore patterns anywhere the callback
+    // returns at once.
+    def.enableCustomFiltering   = true;
+    def.userData                = reinterpret_cast<void *>(intptr_t(b.filterProfile + 1));
     return def;
+}
+
+int
+shapeProfile(b3ShapeId id)
+{
+    return int(reinterpret_cast<intptr_t>(b3Shape_GetUserData(id))) - 1;
+}
+
+// Box3D's custom filter: called from pair finding, possibly on several threads. Reads only.
+bool
+filterCallback(b3ShapeId a, b3ShapeId b, void *context)
+{
+    const CollisionFilterTable *t = static_cast<const CollisionFilterTable *>(context);
+    return t->shouldCollide(shapeProfile(a), shapeProfile(b));
+}
+
+bool
+sameBody(b3BodyId a, b3BodyId b)
+{
+    return a.index1 == b.index1 && a.world0 == b.world0 && a.generation == b.generation;
 }
 
 } // namespace
@@ -167,14 +194,24 @@ Box3DWorld::create(const WorldSettings &s)
     def.gravity.z = s.gravity[2];
     def.enableSleep      = s.enableSleep;
     def.enableContinuous = s.enableContinuous;
+    def.contactHertz         = std::max(0.0f, s.contactHertz);
+    def.contactDampingRatio  = std::max(0.0f, s.contactDampingRatio);
+    def.contactSpeed         = std::max(0.0f, s.contactPushSpeed);
+    def.restitutionThreshold = std::max(0.0f, s.restitutionThreshold);
+    def.maximumLinearSpeed   = std::max(0.0f, s.maxLinearSpeed);
     // Box3D spins up its own thread pool when workerCount > 1 and no task
     // callbacks are given (it does not use Houdini's task system). The pool is
     // sized here; to change the count, create the world again.
     def.workerCount = static_cast<uint32_t>(std::max(1, s.workerCount));
 
     myImpl->settings = s;
+    myImpl->filters  = CollisionFilterTable();
     myImpl->worldId  = b3CreateWorld(&def);
-    return b3World_IsValid(myImpl->worldId);
+    if (!b3World_IsValid(myImpl->worldId))
+        return false;
+    b3World_SetCustomFilterCallback(myImpl->worldId, &filterCallback, &myImpl->filters);
+    b3World_EnableSpeculative(myImpl->worldId, s.enableSpeculative);
+    return true;
 }
 
 void
@@ -235,8 +272,10 @@ Box3DWorld::createBody(const BodySettings &body, const double position[3], const
     def.linearDamping  = body.linearDamping;
     def.angularDamping = body.angularDamping;
     def.gravityScale   = body.gravityScale;
-    def.enableSleep    = body.enableSleep && myImpl->settings.enableSleep;
+    def.enableSleep    = body.enableSleep;      // the world switch is applied on top by Box3D
     def.isBullet       = body.isBullet;
+    if (body.sleepThreshold >= 0.0f && std::isfinite(body.sleepThreshold))
+        def.sleepThreshold = body.sleepThreshold;
     def.userData       = userData;
 
     const b3BodyId bodyId = b3CreateBody(myImpl->worldId, &def);
@@ -648,7 +687,14 @@ void
 Box3DWorld::setSleepEnabledByHandle(BodyHandle h, bool enableSleep)
 {
     if (h)
-        b3Body_EnableSleep(unpackBody(h), enableSleep && myImpl->settings.enableSleep);
+        b3Body_EnableSleep(unpackBody(h), enableSleep);
+}
+
+void
+Box3DWorld::setBulletByHandle(BodyHandle h, bool flag)
+{
+    if (h)
+        b3Body_SetBullet(unpackBody(h), flag);
 }
 
 void
@@ -711,6 +757,213 @@ Box3DWorld::wakeByHandle(BodyHandle h)
     const b3BodyId id = unpackBody(h);
     if (b3Body_GetType(id) != b3_staticBody)
         b3Body_SetAwake(id, true);
+}
+
+void
+Box3DWorld::applyMassByHandle(BodyHandle h, float density, bool comAtOrigin, float inertiaScale)
+{
+    if (!h || !(density >= 0.0f) || !std::isfinite(density))
+        return;
+    const b3BodyId id = unpackBody(h);
+    const int n = bodyShapes(id, tShapes);
+    for (int i = 0; i < n; ++i)
+        b3Shape_SetDensity(tShapes[size_t(i)], density, false);
+    b3Body_ApplyMassFromShapes(id);
+
+    const bool scale = inertiaScale > 0.0f && std::isfinite(inertiaScale) && inertiaScale != 1.0f;
+    if (b3Body_GetType(id) != b3_dynamicBody || n == 0 || (!comAtOrigin && !scale))
+        return;
+    b3MassData md = b3Body_GetMassData(id);
+    const bool moveCenter = comAtOrigin &&
+        (md.center.x != 0.0f || md.center.y != 0.0f || md.center.z != 0.0f);
+    if (!moveCenter && !scale)
+        return;                         // already centred (a symmetric piece about its pivot)
+    if (moveCenter)
+    {
+        // Parallel axis: I_o = I_c + m (|d|^2 E - d d^T). b3Matrix3 is three columns.
+        const float d[3] = { md.center.x, md.center.y, md.center.z };
+        const float dd = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+        b3Vec3 *col[3] = { &md.inertia.cx, &md.inertia.cy, &md.inertia.cz };
+        for (int c = 0; c < 3; ++c)
+        {
+            auto shift = [&](int r) { return md.mass * ((r == c ? dd : 0.0f) - d[r] * d[c]); };
+            col[c]->x += shift(0);
+            col[c]->y += shift(1);
+            col[c]->z += shift(2);
+        }
+        md.center = b3Vec3_zero;
+    }
+    if (scale)
+    {
+        md.inertia.cx = b3MulSV(inertiaScale, md.inertia.cx);
+        md.inertia.cy = b3MulSV(inertiaScale, md.inertia.cy);
+        md.inertia.cz = b3MulSV(inertiaScale, md.inertia.cz);
+    }
+    b3Body_SetMassData(id, md);
+}
+
+bool
+Box3DWorld::getMassDataByHandle(BodyHandle h, float &mass, float center[3], float inertiaDiag[3]) const
+{
+    if (!h)
+        return false;
+    const b3MassData md = b3Body_GetMassData(unpackBody(h));
+    mass = md.mass;
+    center[0] = md.center.x;  center[1] = md.center.y;  center[2] = md.center.z;
+    inertiaDiag[0] = md.inertia.cx.x;  inertiaDiag[1] = md.inertia.cy.y;  inertiaDiag[2] = md.inertia.cz.z;
+    return true;
+}
+
+void
+Box3DWorld::setSleepThresholdByHandle(BodyHandle h, float threshold)
+{
+    if (!h)
+        return;
+    const float t = (threshold >= 0.0f && std::isfinite(threshold)) ? threshold : b3DefaultBodyDef().sleepThreshold;
+    b3Body_SetSleepThreshold(unpackBody(h), t);
+}
+
+float
+Box3DWorld::sleepThresholdByHandle(BodyHandle h) const
+{
+    return h ? b3Body_GetSleepThreshold(unpackBody(h)) : 0.0f;
+}
+
+void
+Box3DWorld::setTargetTransformByHandle(BodyHandle h, const double pos[3], const float rotXYZW[4], float timeStep)
+{
+    if (!h || !(timeStep > 0.0f))
+        return;
+    b3WorldTransform t;
+    t.p = makePos(pos);
+    t.q = makeQuat(rotXYZW);
+    b3Body_SetTargetTransform(unpackBody(h), t, timeStep, true);
+}
+
+int
+Box3DWorld::getContactsByHandle(BodyHandle h, std::vector<ContactPoint> &out) const
+{
+    out.clear();
+    if (!h)
+        return 0;
+    const b3BodyId id = unpackBody(h);
+    const int cap = b3Body_GetContactCapacity(id);
+    if (cap <= 0)
+        return 0;
+    thread_local std::vector<b3ContactData> data;
+    data.resize(size_t(cap));
+    const int n = b3Body_GetContactData(id, data.data(), cap);
+    for (int i = 0; i < n; ++i)
+    {
+        const b3ContactData &cd = data[size_t(i)];
+        const b3BodyId a = b3Shape_GetBody(cd.shapeIdA);
+        const b3BodyId b = b3Shape_GetBody(cd.shapeIdB);
+        const bool thisIsA = sameBody(a, id);
+        const b3BodyId other = thisIsA ? b : a;
+        const b3Pos centerA = b3Body_GetWorldCenter(a);     // manifold anchors are relative to A's centre of mass
+        for (int m = 0; m < cd.manifoldCount; ++m)
+        {
+            const b3Manifold &man = cd.manifolds[m];
+            for (int k = 0; k < man.pointCount; ++k)
+            {
+                const b3ManifoldPoint &mp = man.points[k];
+                if (!(mp.totalNormalImpulse > 0.0f))
+                    continue;
+                ContactPoint cp;
+                cp.other         = packBody(other);
+                cp.otherUserData = b3Body_GetUserData(other);
+                cp.pos[0] = double(centerA.x) + double(mp.anchorA.x);
+                cp.pos[1] = double(centerA.y) + double(mp.anchorA.y);
+                cp.pos[2] = double(centerA.z) + double(mp.anchorA.z);
+                const float sgn = thisIsA ? 1.0f : -1.0f;     // the manifold normal points from A to B
+                cp.normal[0] = sgn * man.normal.x;
+                cp.normal[1] = sgn * man.normal.y;
+                cp.normal[2] = sgn * man.normal.z;
+                cp.impulse = mp.totalNormalImpulse;
+                out.push_back(cp);
+            }
+        }
+    }
+    return int(out.size());
+}
+
+int
+Box3DWorld::filterProfile(const FilterProfile &p)
+{
+    return myImpl->filters.profile(p);
+}
+
+void
+Box3DWorld::finishFilterProfiles()
+{
+    myImpl->filters.finish();
+}
+
+bool
+Box3DWorld::shouldCollide(int a, int b) const
+{
+    return myImpl->filters.shouldCollide(a, b);
+}
+
+const FilterProfile *
+Box3DWorld::filterProfileData(int profile) const
+{
+    return myImpl->filters.get(profile);
+}
+
+void
+Box3DWorld::setFilterProfileByHandle(BodyHandle h, int profile)
+{
+    if (!h)
+        return;
+    const int n = bodyShapes(unpackBody(h), tShapes);
+    for (int i = 0; i < n; ++i)
+    {
+        const b3ShapeId sid = tShapes[size_t(i)];
+        if (shapeProfile(sid) == profile)
+            continue;
+        b3Shape_SetUserData(sid, reinterpret_cast<void *>(intptr_t(profile + 1)));
+        // The custom filter only runs when a pair is created, so drop this shape's contacts:
+        // b3Shape_SetFilter with invokeContacts resets the proxy, but returns early when the
+        // filter is unchanged. Change it without the reset, then set it back with one.
+        const b3Filter f = b3Shape_GetFilter(sid);
+        b3Filter tmp = f;
+        tmp.groupIndex = f.groupIndex + 1;
+        b3Shape_SetFilter(sid, tmp, false);
+        b3Shape_SetFilter(sid, f, true);
+    }
+}
+
+void
+Box3DWorld::applyTuning(const WorldSettings &s)
+{
+    if (!isValid())
+        return;
+    WorldSettings &cur = myImpl->settings;
+    const b3WorldId w = myImpl->worldId;
+    if (s.gravity[0] != cur.gravity[0] || s.gravity[1] != cur.gravity[1] || s.gravity[2] != cur.gravity[2])
+    {
+        b3Vec3 g;
+        g.x = s.gravity[0];  g.y = s.gravity[1];  g.z = s.gravity[2];
+        b3World_SetGravity(w, g);
+    }
+    if (s.enableSleep != cur.enableSleep)
+        b3World_EnableSleeping(w, s.enableSleep);
+    if (s.enableContinuous != cur.enableContinuous)
+        b3World_EnableContinuous(w, s.enableContinuous);
+    if (s.enableSpeculative != cur.enableSpeculative)
+        b3World_EnableSpeculative(w, s.enableSpeculative);
+    if (s.contactHertz != cur.contactHertz || s.contactDampingRatio != cur.contactDampingRatio ||
+        s.contactPushSpeed != cur.contactPushSpeed)
+        b3World_SetContactTuning(w, std::max(0.0f, s.contactHertz), std::max(0.0f, s.contactDampingRatio),
+                                 std::max(0.0f, s.contactPushSpeed));
+    if (s.restitutionThreshold != cur.restitutionThreshold)
+        b3World_SetRestitutionThreshold(w, std::max(0.0f, s.restitutionThreshold));
+    if (s.maxLinearSpeed != cur.maxLinearSpeed)
+        b3World_SetMaximumLinearSpeed(w, std::max(0.0f, s.maxLinearSpeed));
+    const int workers = cur.workerCount;
+    cur = s;
+    cur.workerCount = workers;          // fixed for the life of the world
 }
 
 bool
