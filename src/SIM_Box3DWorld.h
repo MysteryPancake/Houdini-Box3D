@@ -94,16 +94,27 @@ struct Box3DPointSlot
     double            m3[9]  = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
 };
 
-// One awake body's result on its way from Box3D to the geometry (writeResultsBack).
+// One awake body's result on its way from Box3D to the geometry (writeResultsBack). Kept
+// small on purpose: the packed-primitive matrix (72 bytes) lives in a side array
+// (Box3DPackedWrite) that only packed points use, so a plain-point scene moves and
+// scatters half as many bytes per body.
 struct Box3DWriteItem
 {
     GA_Offset         off      = GA_INVALID_OFFSET;
     Box3DBodyMirror  *entry    = nullptr;       // not copied
     Box3DBodyPose     s;                        // what Box3D reports now
     int               objectId = 0;
-    bool              hasM3    = false;         // packed rotation to write in the serial pass
-    GA_Offset         primOff  = GA_INVALID_OFFSET;
-    double            newM3[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+    int               packedIdx = -1;           // index into Box3DSharedState::packedWrites, or -1
+};
+
+// The packed rotation the write-back computes in its parallel pass and writes in its serial
+// pass. One per moved body whose point belongs to a packed primitive, in item-creation order
+// (an item's packedIdx stays valid when the items are sorted by object).
+struct Box3DPackedWrite
+{
+    bool      has      = false;                 // newM3 / primOff were filled in
+    GA_Offset primOff  = GA_INVALID_OFFSET;
+    double    newM3[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
 };
 
 // What an object's geometry looked like when the solver last finished with it. If the
@@ -163,6 +174,7 @@ struct Box3DSharedState
     // Scratch reused every step (see Box3DPointSlot / Box3DWriteItem).
     std::unordered_map<int, std::vector<Box3DPointSlot>> slots;     // key: object id
     std::vector<Box3DWriteItem>                 writeItems;
+    std::vector<Box3DPackedWrite>               packedWrites;   // side data of the items above
     std::vector<b3dop::BodyMove>                moves;          // this step's move events
 
     // The sim time reading (SIM_Engine::getSimulationTime()) at the last

@@ -14,9 +14,12 @@ struct Box3DWorld::Impl
 {
     b3WorldId                             worldId = b3_nullWorldId;
     WorldSettings                         settings;
-    std::unordered_map<uint64_t, b3BodyId> bodies;
-    // Shape material/density comes from the body settings, remembered here
-    // because shapes are added after the body exists.
+    int                                   liveBodies = 0;     // every live body, keyed or handle-made
+
+    // Keyed API only (addBody / addShape / removeBody ...); the solver's handle path never
+    // touches these. Shape material/density comes from the body settings, remembered here
+    // because the keyed shape calls do not take them.
+    std::unordered_map<uint64_t, BodyHandle>   bodies;
     std::unordered_map<uint64_t, BodySettings> bodySettings;
 
     // Convex hull cache, keyed by a hash of the point data. We own these
@@ -29,13 +32,25 @@ struct Box3DWorld::Impl
         int         refs   = 0;          // shapes created from it, across all bodies
     };
     std::unordered_map<HullId, HullEntry>              hulls;
-    std::unordered_map<uint64_t, std::vector<HullId>>  bodyHulls;   // hulls each body's shapes use
+    // Hulls each body's shapes use, keyed by body handle. Only bodies with hull shapes
+    // appear (a plain box / sphere / capsule body adds nothing here).
+    std::unordered_map<BodyHandle, std::vector<HullId>> bodyHulls;
+    size_t                                             bodyHullsReserve = 0;   // applied lazily, see noteHullUse
 
     void releaseHull(HullId h)
     {
         auto it = hulls.find(h);
         if (it != hulls.end() && it->second.refs > 0)
             --it->second.refs;
+    }
+    void noteHullUse(BodyHandle body, HullId hull)
+    {
+        if (bodyHullsReserve)           // first hull body of a reserve() hint: size the map now,
+        {                               // so a scene without hulls never pays for the buckets
+            bodyHulls.reserve(bodyHullsReserve);
+            bodyHullsReserve = 0;
+        }
+        bodyHulls[body].push_back(hull);
     }
     void destroyAllHulls()
     {
@@ -125,9 +140,10 @@ isIdentityRotation(const float q[4])
 }
 
 b3ShapeDef
-shapeDefFor(const BodySettings &b)
+shapeDefFor(const BodySettings &b, bool updateMass)
 {
     b3ShapeDef def = b3DefaultShapeDef();
+    def.updateBodyMass          = updateMass;     // false: the caller applies the mass once at the end
     def.density                 = b.density;
     def.baseMaterial.friction    = b.friction;
     def.baseMaterial.restitution = b.restitution;
@@ -168,6 +184,7 @@ Box3DWorld::destroy()
         b3DestroyWorld(myImpl->worldId);   // destroys all bodies/shapes/joints
 
     myImpl->worldId = b3_nullWorldId;
+    myImpl->liveBodies = 0;
     myImpl->bodies.clear();
     myImpl->bodySettings.clear();
     myImpl->destroyAllHulls();      // after the world: Box3D holds its own clones
@@ -191,12 +208,20 @@ Box3DWorld::step(float timeStep)
     b3World_Step(myImpl->worldId, timeStep, myImpl->settings.subSteps);
 }
 
-bool
-Box3DWorld::addBody(uint64_t id, const BodySettings &body,
-                    const double position[3], const float rotationXYZW[4])
+void
+Box3DWorld::reserve(size_t bodyCount)
 {
-    if (!isValid() || hasBody(id))
-        return false;
+    // Only the hull bookkeeping is sized, and lazily (see Impl::noteHullUse). The keyed maps
+    // belong to the convenience API; the handle path never fills them.
+    myImpl->bodyHullsReserve = bodyCount;
+}
+
+BodyHandle
+Box3DWorld::createBody(const BodySettings &body, const double position[3], const float rotationXYZW[4],
+                       void *userData)
+{
+    if (!isValid())
+        return 0;
 
     b3BodyDef def = b3DefaultBodyDef();
     switch (body.type)
@@ -212,61 +237,77 @@ Box3DWorld::addBody(uint64_t id, const BodySettings &body,
     def.gravityScale   = body.gravityScale;
     def.enableSleep    = body.enableSleep && myImpl->settings.enableSleep;
     def.isBullet       = body.isBullet;
+    def.userData       = userData;
 
     const b3BodyId bodyId = b3CreateBody(myImpl->worldId, &def);
     if (B3_IS_NULL(bodyId))
-        return false;
-
-    myImpl->bodies[id]       = bodyId;
-    myImpl->bodySettings[id] = body;
-    return true;
+        return 0;
+    ++myImpl->liveBodies;
+    return packBody(bodyId);
 }
 
 void
-Box3DWorld::removeBody(uint64_t id)
+Box3DWorld::destroyBody(BodyHandle h)
 {
-    auto it = myImpl->bodies.find(id);
-    if (it == myImpl->bodies.end())
+    if (!h)
         return;
-    if (b3Body_IsValid(it->second))
-        b3DestroyBody(it->second);
-    myImpl->bodies.erase(it);
-    myImpl->bodySettings.erase(id);
+    const b3BodyId id = unpackBody(h);
+    if (b3Body_IsValid(id))
+    {
+        b3DestroyBody(id);
+        --myImpl->liveBodies;
+    }
 
-    auto bh = myImpl->bodyHulls.find(id);
+    auto bh = myImpl->bodyHulls.find(h);
     if (bh != myImpl->bodyHulls.end())
     {
-        for (HullId h : bh->second)
-            myImpl->releaseHull(h);
+        for (HullId hull : bh->second)
+            myImpl->releaseHull(hull);
         myImpl->bodyHulls.erase(bh);
     }
 }
 
 bool
-Box3DWorld::hasBody(uint64_t id) const
+Box3DWorld::createShape(BodyHandle h, const BodySettings &body, const ShapeSpec &shape, bool updateMass)
 {
-    return myImpl->bodies.find(id) != myImpl->bodies.end();
+    switch (shape.type)
+    {
+        case ShapeType::Sphere:   return sphereShape(h, body, shape.radius, shape.center, updateMass);
+        case ShapeType::Capsule:  return capsuleShape(h, body, shape.radius, shape.halfLength, shape.center,
+                                                      shape.rot, updateMass);
+        default:                  return boxShape(h, body, shape.halfExtents, shape.center, shape.rot, updateMass);
+    }
 }
 
-int
-Box3DWorld::bodyCount() const { return static_cast<int>(myImpl->bodies.size()); }
-
 bool
-Box3DWorld::setBodyDensity(uint64_t id, float density)
+Box3DWorld::createHullShape(BodyHandle h, const BodySettings &body, HullId hullId, bool updateMass)
 {
-    auto it = myImpl->bodySettings.find(id);
-    if (it == myImpl->bodySettings.end())
+    auto hit = myImpl->hulls.find(hullId);
+    if (!h || hit == myImpl->hulls.end())
         return false;
-    it->second.density = density;
+
+    const b3ShapeDef def = shapeDefFor(body, updateMass);
+    const b3ShapeId shape = b3CreateHullShape(unpackBody(h), &def, hit->second.hull);
+    if (B3_IS_NULL(shape))
+        return false;
+
+    ++hit->second.refs;
+    myImpl->noteHullUse(h, hullId);
     return true;
 }
 
-bool
-Box3DWorld::addBoxShape(uint64_t bodyId, const float halfExtents[3], const float center[3],
-                        const float rotationXYZW[4])
+void
+Box3DWorld::applyMassFromShapes(BodyHandle h)
 {
-    auto it = myImpl->bodies.find(bodyId);
-    if (it == myImpl->bodies.end())
+    if (h)
+        b3Body_ApplyMassFromShapes(unpackBody(h));
+}
+
+bool
+Box3DWorld::boxShape(BodyHandle h, const BodySettings &b, const float halfExtents[3], const float center[3],
+                     const float rotationXYZW[4], bool updateMass)
+{
+    if (!h)
         return false;
 
     // A rotated box is the hull of its 8 rotated corners (Box3D has no rotated
@@ -285,8 +326,8 @@ Box3DWorld::addBoxShape(uint64_t bodyId, const float halfExtents[3], const float
                     for (int j = 0; j < 3; ++j)
                         pts[n++] = r[j] + (center ? center[j] : 0.0f);
                 }
-        const HullId h = createHull(pts, 8, nullptr);
-        return h && addHullShape(bodyId, h);
+        const HullId hull = createHull(pts, 8, nullptr);
+        return hull && createHullShape(h, b, hull, updateMass);
     }
 
     // The hull and shape def are cloned by Box3D, so the temporary is fine.
@@ -294,32 +335,30 @@ Box3DWorld::addBoxShape(uint64_t bodyId, const float halfExtents[3], const float
     const b3BoxHull hull = offset
         ? b3MakeOffsetBoxHull(halfExtents[0], halfExtents[1], halfExtents[2], makeVec3(center))
         : b3MakeBoxHull(halfExtents[0], halfExtents[1], halfExtents[2]);
-    const b3ShapeDef def = shapeDefFor(myImpl->bodySettings[bodyId]);
-    const b3ShapeId shape = b3CreateHullShape(it->second, &def, &hull.base);
+    const b3ShapeDef def = shapeDefFor(b, updateMass);
+    const b3ShapeId shape = b3CreateHullShape(unpackBody(h), &def, &hull.base);
     return !B3_IS_NULL(shape);
 }
 
 bool
-Box3DWorld::addSphereShape(uint64_t bodyId, float radius, const float center[3])
+Box3DWorld::sphereShape(BodyHandle h, const BodySettings &b, float radius, const float center[3], bool updateMass)
 {
-    auto it = myImpl->bodies.find(bodyId);
-    if (it == myImpl->bodies.end())
+    if (!h)
         return false;
 
     b3Sphere sphere;
     sphere.center = makeVec3(center);
     sphere.radius = radius;
-    const b3ShapeDef def = shapeDefFor(myImpl->bodySettings[bodyId]);
-    const b3ShapeId shape = b3CreateSphereShape(it->second, &def, &sphere);
+    const b3ShapeDef def = shapeDefFor(b, updateMass);
+    const b3ShapeId shape = b3CreateSphereShape(unpackBody(h), &def, &sphere);
     return !B3_IS_NULL(shape);
 }
 
 bool
-Box3DWorld::addCapsuleShape(uint64_t bodyId, float radius, float halfLength, const float center[3],
-                            const float rotationXYZW[4])
+Box3DWorld::capsuleShape(BodyHandle h, const BodySettings &b, float radius, float halfLength,
+                         const float center[3], const float rotationXYZW[4], bool updateMass)
 {
-    auto it = myImpl->bodies.find(bodyId);
-    if (it == myImpl->bodies.end())
+    if (!h)
         return false;
 
     const float c[3] = { center ? center[0] : 0.0f, center ? center[1] : 0.0f, center ? center[2] : 0.0f };
@@ -339,20 +378,88 @@ Box3DWorld::addCapsuleShape(uint64_t bodyId, float radius, float halfLength, con
     capsule.center2.z = c[2] + halfLength * axis[2];
     capsule.radius    = radius;
     // Box3D turns a capsule that is too short into a sphere by itself.
-    const b3ShapeDef def = shapeDefFor(myImpl->bodySettings[bodyId]);
-    const b3ShapeId shape = b3CreateCapsuleShape(it->second, &def, &capsule);
+    const b3ShapeDef def = shapeDefFor(b, updateMass);
+    const b3ShapeId shape = b3CreateCapsuleShape(unpackBody(h), &def, &capsule);
     return !B3_IS_NULL(shape);
+}
+
+// ---- keyed API: a convenience layer over the handle API ----------------------
+
+bool
+Box3DWorld::addBody(uint64_t id, const BodySettings &body, const double position[3], const float rotationXYZW[4])
+{
+    if (!isValid() || hasBody(id))
+        return false;
+    const BodyHandle h = createBody(body, position, rotationXYZW);
+    if (!h)
+        return false;
+    myImpl->bodies[id]       = h;
+    myImpl->bodySettings[id] = body;
+    return true;
+}
+
+void
+Box3DWorld::removeBody(uint64_t id)
+{
+    auto it = myImpl->bodies.find(id);
+    if (it == myImpl->bodies.end())
+        return;
+    destroyBody(it->second);
+    myImpl->bodies.erase(it);
+    myImpl->bodySettings.erase(id);
+}
+
+bool
+Box3DWorld::hasBody(uint64_t id) const
+{
+    return myImpl->bodies.find(id) != myImpl->bodies.end();
+}
+
+int
+Box3DWorld::bodyCount() const { return myImpl->liveBodies; }
+
+bool
+Box3DWorld::setBodyDensity(uint64_t id, float density)
+{
+    auto it = myImpl->bodySettings.find(id);
+    if (it == myImpl->bodySettings.end())
+        return false;
+    it->second.density = density;
+    return true;
+}
+
+bool
+Box3DWorld::addBoxShape(uint64_t bodyId, const float halfExtents[3], const float center[3],
+                        const float rotationXYZW[4])
+{
+    auto it = myImpl->bodies.find(bodyId);
+    return it != myImpl->bodies.end() &&
+           boxShape(it->second, myImpl->bodySettings[bodyId], halfExtents, center, rotationXYZW, true);
+}
+
+bool
+Box3DWorld::addSphereShape(uint64_t bodyId, float radius, const float center[3])
+{
+    auto it = myImpl->bodies.find(bodyId);
+    return it != myImpl->bodies.end() &&
+           sphereShape(it->second, myImpl->bodySettings[bodyId], radius, center, true);
+}
+
+bool
+Box3DWorld::addCapsuleShape(uint64_t bodyId, float radius, float halfLength, const float center[3],
+                            const float rotationXYZW[4])
+{
+    auto it = myImpl->bodies.find(bodyId);
+    return it != myImpl->bodies.end() &&
+           capsuleShape(it->second, myImpl->bodySettings[bodyId], radius, halfLength, center, rotationXYZW, true);
 }
 
 bool
 Box3DWorld::addShape(uint64_t bodyId, const ShapeSpec &shape)
 {
-    switch (shape.type)
-    {
-        case ShapeType::Sphere:   return addSphereShape(bodyId, shape.radius, shape.center);
-        case ShapeType::Capsule:  return addCapsuleShape(bodyId, shape.radius, shape.halfLength, shape.center, shape.rot);
-        default:                  return addBoxShape(bodyId, shape.halfExtents, shape.center, shape.rot);
-    }
+    auto it = myImpl->bodies.find(bodyId);
+    return it != myImpl->bodies.end() &&
+           createShape(it->second, myImpl->bodySettings[bodyId], shape, true);
 }
 
 // ---------------------------------------------------------------------------
@@ -439,18 +546,8 @@ bool
 Box3DWorld::addHullShape(uint64_t bodyId, HullId hullId)
 {
     auto bit = myImpl->bodies.find(bodyId);
-    auto hit = myImpl->hulls.find(hullId);
-    if (bit == myImpl->bodies.end() || hit == myImpl->hulls.end())
-        return false;
-
-    const b3ShapeDef def = shapeDefFor(myImpl->bodySettings[bodyId]);
-    const b3ShapeId shape = b3CreateHullShape(bit->second, &def, hit->second.hull);
-    if (B3_IS_NULL(shape))
-        return false;
-
-    ++hit->second.refs;
-    myImpl->bodyHulls[bodyId].push_back(hullId);
-    return true;
+    return bit != myImpl->bodies.end() &&
+           createHullShape(bit->second, myImpl->bodySettings[bodyId], hullId, true);
 }
 
 void
@@ -476,27 +573,34 @@ int
 Box3DWorld::shapeCount(uint64_t bodyId) const
 {
     auto it = myImpl->bodies.find(bodyId);
-    return it == myImpl->bodies.end() ? 0 : b3Body_GetShapeCount(it->second);
+    return it == myImpl->bodies.end() ? 0 : b3Body_GetShapeCount(unpackBody(it->second));
 }
 
 float
 Box3DWorld::bodyMass(uint64_t bodyId) const
 {
     auto it = myImpl->bodies.find(bodyId);
-    return it == myImpl->bodies.end() ? 0.0f : b3Body_GetMass(it->second);
+    return it == myImpl->bodies.end() ? 0.0f : b3Body_GetMass(unpackBody(it->second));
+}
+
+bool
+Box3DWorld::setTypeByHandle(BodyHandle h, BodySettings::Type type)
+{
+    if (!h)
+        return false;
+    b3BodyType t = b3_dynamicBody;
+    if (type == BodySettings::Type::Static)         t = b3_staticBody;
+    else if (type == BodySettings::Type::Kinematic) t = b3_kinematicBody;
+    b3Body_SetType(unpackBody(h), t);
+    return true;
 }
 
 bool
 Box3DWorld::setBodyType(uint64_t id, BodySettings::Type type)
 {
     auto it = myImpl->bodies.find(id);
-    if (it == myImpl->bodies.end())
+    if (it == myImpl->bodies.end() || !setTypeByHandle(it->second, type))
         return false;
-
-    b3BodyType t = b3_dynamicBody;
-    if (type == BodySettings::Type::Static)         t = b3_staticBody;
-    else if (type == BodySettings::Type::Kinematic) t = b3_kinematicBody;
-    b3Body_SetType(it->second, t);
     auto bs = myImpl->bodySettings.find(id);     // gone after releaseBuildState
     if (bs != myImpl->bodySettings.end())
         bs->second.type = type;
@@ -515,7 +619,7 @@ Box3DWorld::getBodyType(uint64_t id, BodySettings::Type &out) const
     auto b = myImpl->bodies.find(id);           // settings released: ask Box3D
     if (b == myImpl->bodies.end())
         return false;
-    switch (b3Body_GetType(b->second))
+    switch (b3Body_GetType(unpackBody(b->second)))
     {
         case b3_staticBody:    out = BodySettings::Type::Static;    break;
         case b3_kinematicBody: out = BodySettings::Type::Kinematic; break;
@@ -537,8 +641,8 @@ Box3DWorld::getTransform(uint64_t id, double outPos[3], float outRotXYZW[4]) con
     if (it == myImpl->bodies.end())
         return false;
 
-    const b3Pos  p = b3Body_GetPosition(it->second);     // body origin
-    const b3Quat q = b3Body_GetRotation(it->second);
+    const b3Pos  p = b3Body_GetPosition(unpackBody(it->second));     // body origin
+    const b3Quat q = b3Body_GetRotation(unpackBody(it->second));
     outPos[0] = static_cast<double>(p.x);
     outPos[1] = static_cast<double>(p.y);
     outPos[2] = static_cast<double>(p.z);
@@ -556,8 +660,8 @@ Box3DWorld::getVelocity(uint64_t id, float outLinear[3], float outAngular[3]) co
     if (it == myImpl->bodies.end())
         return false;
 
-    const b3Vec3 v = b3Body_GetLinearVelocity(it->second);
-    const b3Vec3 w = b3Body_GetAngularVelocity(it->second);
+    const b3Vec3 v = b3Body_GetLinearVelocity(unpackBody(it->second));
+    const b3Vec3 w = b3Body_GetAngularVelocity(unpackBody(it->second));
     outLinear[0]  = v.x;  outLinear[1]  = v.y;  outLinear[2]  = v.z;
     outAngular[0] = w.x;  outAngular[1] = w.y;  outAngular[2] = w.z;
     return true;
@@ -570,8 +674,8 @@ Box3DWorld::setVelocity(uint64_t id, const float linear[3], const float angular[
     if (it == myImpl->bodies.end())
         return false;
 
-    b3Body_SetLinearVelocity(it->second, makeVec3(linear));
-    b3Body_SetAngularVelocity(it->second, makeVec3(angular));
+    b3Body_SetLinearVelocity(unpackBody(it->second), makeVec3(linear));
+    b3Body_SetAngularVelocity(unpackBody(it->second), makeVec3(angular));
     return true;
 }
 
@@ -582,7 +686,7 @@ Box3DWorld::setTransform(uint64_t id, const double pos[3], const float rotXYZW[4
     if (it == myImpl->bodies.end())
         return false;
 
-    b3Body_SetTransform(it->second, makePos(pos), makeQuat(rotXYZW));
+    b3Body_SetTransform(unpackBody(it->second), makePos(pos), makeQuat(rotXYZW));
     return true;
 }
 
@@ -590,7 +694,7 @@ BodyHandle
 Box3DWorld::bodyHandle(uint64_t id) const
 {
     auto it = myImpl->bodies.find(id);
-    return it == myImpl->bodies.end() ? 0 : packBody(it->second);
+    return it == myImpl->bodies.end() ? 0 : it->second;
 }
 
 bool

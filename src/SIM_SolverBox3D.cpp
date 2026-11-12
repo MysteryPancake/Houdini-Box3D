@@ -4,6 +4,9 @@
 #include "SIM_Box3DData.h"
 #include "Box3DDebug.h"
 
+#include <initializer_list>
+#include <vector>
+
 #include <GA/GA_Handle.h>
 #include <GA/GA_Iterator.h>
 #include <GA/GA_Primitive.h>
@@ -848,11 +851,14 @@ buildShapes(b3dop::Box3DWorld &world, ShapeSources &src, b3dop::ShapeType type,
 
 // Create the body + shapes for one point and apply its initial velocity.
 bool
-addPointBody(b3dop::Box3DWorld &world, ShapeSources &src, const b3dop::BodySettings &node,
-             const PointAttrs &a, GA_Offset off, int64_t bodyId, uint64_t key,
+addPointBody(b3dop::Box3DWorld &world, ShapeSources &src, b3dop::ShapeTypeCache &shapeTypes,
+             const b3dop::BodySettings &node,
+             const PointAttrs &a, GA_Offset off, int64_t bodyId,
              const PackedInfo &pk, const Box3DBodyPose &st, bool active,
+             void *userData, b3dop::BodyHandle &outHandle,
              std::string *fallbackNote = nullptr)
 {
+    outHandle = 0;
     b3dop::BodySettings b = node;
     b.type = active ? node.type : b3dop::BodySettings::Type::Static;     // `active` = 0 makes a point static
     // Per-point overrides of the node's values. Box3D asserts on negative
@@ -876,14 +882,15 @@ addPointBody(b3dop::Box3DWorld &world, ShapeSources &src, const b3dop::BodySetti
     // Shape: `bullet_georep` string attribute, else the node's default.
     b3dop::ShapeType type = node.defaultShape;
     if (a.georep.isValid())
-        b3dop::parseShapeType(a.georep.get(off), type);  // unknown -> keep default
+        shapeTypes.parse(a.georep.get(off), type);  // unknown -> keep default (memoized by value)
 
     // `none`: a static body with no collision shape (like Bullet, where it still
     // exists for constraints). The one case where a body is allowed to be shapeless.
     if (type == b3dop::ShapeType::None)
     {
         b.type = b3dop::BodySettings::Type::Static;
-        return world.addBody(key, b, st.pos, st.rot);
+        outHandle = world.createBody(b, st.pos, st.rot, userData);
+        return outHandle != 0;
     }
 
     // pscale / scale size plain points. A packed point's size is its
@@ -950,18 +957,36 @@ addPointBody(b3dop::Box3DWorld &world, ShapeSources &src, const b3dop::BodySetti
     if (mass > 0.0f && std::isfinite(mass) && shapes.totalVolume > 0.0f)
         b.density = mass / shapes.totalVolume;
 
-    if (!world.addBody(key, b, st.pos, st.rot))
+    // The settings `b` stay a local: the handle API takes them per shape, so nothing about
+    // the body is remembered by the world.
+    const b3dop::BodyHandle h = world.createBody(b, st.pos, st.rot, userData);
+    if (!h)
         return false;
 
+    // A body with several pieces (concave, hull-per-connected-set) would recompute its mass
+    // once per piece. Add them all without the update and apply the mass once. A single
+    // shape just lets Box3D do it as part of the add.
+    const bool multi = shapes.pieces.size() > 1;
     int added = 0;
     for (const Piece &pc : shapes.pieces)
-        added += (pc.isHull ? world.addHullShape(key, pc.hull) : world.addShape(key, pc.spec)) ? 1 : 0;
+        added += (pc.isHull ? world.createHullShape(h, b, pc.hull, !multi)
+                            : world.createShape(h, b, pc.spec, !multi)) ? 1 : 0;
     if (added == 0)
     {
-        world.removeBody(key);      // never leave a shapeless body behind
+        world.destroyBody(h);       // never leave a shapeless body behind
         return false;
     }
-    world.setVelocity(key, st.lin, st.ang);     // no-op for static bodies
+    if (multi)
+        world.applyMassFromShapes(h);
+
+    // Initial velocity, set after the mass is final (Box3D shifts a body's velocity when its
+    // centre of mass moves, so this order keeps the values exactly as given). A fresh body
+    // already has zero velocity and a static one ignores it, so those skip the call.
+    const bool hasVel = st.lin[0] != 0.0f || st.lin[1] != 0.0f || st.lin[2] != 0.0f ||
+                        st.ang[0] != 0.0f || st.ang[1] != 0.0f || st.ang[2] != 0.0f;
+    if (hasVel && b.type != b3dop::BodySettings::Type::Static)
+        world.setVelocityByHandle(h, st.lin, st.ang);
+    outHandle = h;
     return true;
 }
 
@@ -1050,6 +1075,7 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
     const int problems0 = c.failed + c.duplicates + c.badP;
 
     ShapeSources sources;       // packed geometry, collected lazily per distinct source
+    b3dop::ShapeTypeCache shapeTypes;   // `bullet_georep` strings seen by this scan
 
     // ---- pass 1 (parallel): read every point's attributes -----------------
     // Reads only. The slots persist between steps (no allocation in a steady
@@ -1095,6 +1121,21 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
         }
     }, anyPrims ? kMinParallelReadPacked : kMinParallelReadPlain);
 
+    // A rebuild (fresh world, empty mirror) adds a body per point: size the mirror once instead
+    // of rehashing it as it grows. Only slots without a cached entry can be new bodies, so a
+    // steady-state scan (entries cached) asks for nothing; reserve() is a no-op when the
+    // buckets already suffice.
+    {
+        size_t fresh = 0;
+        for (const Box3DPointSlot &s : snaps)
+            fresh += s.entry ? 0 : 1;
+        if (fresh >= 64)
+        {
+            st.mirror.reserve(st.mirror.size() + fresh);
+            st.world.reserve(fresh);
+        }
+    }
+
     // ---- pass 2 (serial): apply to Box3D and the mirror -------------------
     // Runs in point order, so "first duplicate id wins" holds. An entry whose
     // stamp is already the current one was claimed by an earlier point this step.
@@ -1106,11 +1147,26 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
         Box3DBodyPose  &cur = s.cur;
 
         DopBodyState *entry = s.entry;
+        bool freshEntry = false;        // `entry` was just inserted for a body that does not exist yet
+        auto newIt = st.mirror.end();   // ... and this is its node, in case the body cannot be built
         if (!entry)
         {
-            auto mit = st.mirror.find(key);
-            if (mit != st.mirror.end())
-                entry = &mit->second;
+            if (s.ok)
+            {
+                // One hash lookup for both "known?" and "make room": a new node starts out
+                // unstamped (syncStamp is never 0), so the duplicate check below ignores it.
+                auto res   = st.mirror.try_emplace(key);
+                entry      = &res.first->second;
+                freshEntry = res.second;
+                if (freshEntry)
+                    newIt = res.first;
+            }
+            else
+            {
+                auto mit = st.mirror.find(key);     // a bad point never creates a body
+                if (mit != st.mirror.end())
+                    entry = &mit->second;
+            }
             s.entry = entry;
         }
 
@@ -1130,7 +1186,7 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
         const b3dop::BodySettings::Type wantType =
             active ? node.type : b3dop::BodySettings::Type::Static;
 
-        if (!entry)
+        if (freshEntry)
         {
             if (!buildAttrsBound)
             {
@@ -1140,18 +1196,24 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
             PackedInfo pk = anyPrims ? getPackedInfo(gdp, off) : PackedInfo();    // only new bodies need it again
             readPackedPivot(pk);        // the hull is built from it
             std::string fallbackNote;
-            if (!addPointBody(world, sources, node, a, off, bid, key, pk, cur, active, &fallbackNote))
+            // The entry's address is stable (unordered_map node), so it goes into the body's
+            // user data at creation: write-back maps a move event back to it from there.
+            b3dop::BodyHandle handle = 0;
+            if (!addPointBody(world, sources, shapeTypes, node, a, off, bid, pk, cur, active,
+                              entry, handle, &fallbackNote))
             {
                 ++c.failed;
+                st.mirror.erase(newIt);         // no body: drop the placeholder entry again
+                s.entry = nullptr;
                 continue;
             }
             if (!fallbackNote.empty())
                 ++c.fallbacks[fallbackNote];
-            DopBodyState &m = st.mirror[key];       // node address is stable from here on
+            DopBodyState &m = *entry;
             static_cast<Box3DBodyPose &>(m) = cur;
             m.dynamic  = (wantType == b3dop::BodySettings::Type::Dynamic);
             m.type     = wantType;
-            m.handle   = world.bodyHandle(key);
+            m.handle   = handle;
             m.pointOff = off;
             m.pointId  = bid;
             m.objectId = objectId;
@@ -1159,8 +1221,6 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
             storePacked(m, s);
             ++st.stampedCount;
             ++stamped;
-            world.releaseBuildState(key);           // shapes are all added
-            world.setBodyUserData(m.handle, &m);    // lets write-back map a move event to this entry
             s.entry = &m;
             ++c.added;
             hasDynamic = hasDynamic || m.dynamic;
@@ -1179,7 +1239,7 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
         // Did `active` flip?
         if (entry->type != wantType)
         {
-            world.setBodyType(key, wantType);
+            world.setTypeByHandle(entry->handle, wantType);
             entry->type    = wantType;
             entry->dynamic = (wantType == b3dop::BodySettings::Type::Dynamic);
             ++c.retyped;
@@ -1232,6 +1292,59 @@ ensureResultAttribs(GU_Detail *gdp)
         createdOrient = true;
     }
     return createdOrient;
+}
+
+// Harden only the parts of P / orient / v / w that the parallel write pass will touch.
+// The HDK has no single-page call; hardenAllPages takes an offset range (the same thing
+// GA_AutoHardenForThreading wraps), so the written offsets are grouped into buckets, runs of
+// neighbouring buckets become ranges, and each range is hardened. The bucket size is only a
+// grouping unit (the HDK widens a range to whole pages itself), so it need not equal the
+// real page size: too big hardens a little extra, too small just makes more calls. When
+// nearly every bucket is hit (awake bodies scattered over the whole geometry) one full
+// call is cheaper than many ranges. `end` is passed as the first offset after the last
+// bucket, which is correct whether the HDK reads it as exclusive or inclusive.
+void
+hardenWrittenPages(const GU_Detail *gdp, const std::vector<Box3DWriteItem> &items, size_t begin, size_t end,
+                   std::initializer_list<GA_Attribute *> attrs)
+{
+    constexpr int64_t kBucketBits = 10;                     // 1024 offsets
+    const int64_t numOffsets = int64_t(gdp->getNumPointOffsets());
+    const size_t  numBuckets = size_t((numOffsets >> kBucketBits) + 1);
+    std::vector<char> hit(numBuckets, 0);
+    size_t hitCount = 0;
+    for (size_t k = begin; k < end; ++k)
+    {
+        const GA_Offset off = items[k].off;
+        if (off == GA_INVALID_OFFSET || int64_t(off) < 0 || int64_t(off) >= numOffsets)
+            continue;
+        char &h = hit[size_t(int64_t(off) >> kBucketBits)];
+        hitCount += h ? 0 : 1;
+        h = 1;
+    }
+    if (hitCount == 0)
+        return;
+
+    const bool nearlyAll = hitCount * 10 >= numBuckets * 9;
+    for (GA_Attribute *attr : attrs)
+    {
+        if (!attr)
+            continue;
+        if (nearlyAll)
+        {
+            attr->hardenAllPages();
+            continue;
+        }
+        for (size_t b = 0; b < numBuckets;)
+        {
+            if (!hit[b]) { ++b; continue; }
+            size_t e = b;
+            while (e + 1 < numBuckets && hit[e + 1])
+                ++e;
+            attr->hardenAllPages(GA_Offset(int64_t(b) << kBucketBits),
+                                 GA_Offset(int64_t(e + 1) << kBucketBits));
+            b = e + 1;
+        }
+    }
 }
 
 // Sets each item's point offset in the geometry that is about to be written. The
@@ -1552,7 +1665,7 @@ SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
         {
             if (!st->isLive(it->second))
             {
-                st->world.removeBody(it->first);
+                st->world.destroyBody(it->second.handle);
                 it = st->mirror.erase(it);
                 ++removed;
             }
@@ -1632,6 +1745,8 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
     std::vector<Box3DWriteItem> &items = st->writeItems;       // reused between steps
     items.clear();
     items.reserve(size_t(moveCount));
+    std::vector<Box3DPackedWrite> &packedWrites = st->packedWrites;     // side data, only packed points
+    packedWrites.clear();
     int missing = 0;
     // "Seen by this step's sync" is per object now (a skipped object's entries keep the
     // stamp of its last scan). Moves of one object tend to be contiguous, so the record
@@ -1662,6 +1777,11 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
         Box3DWriteItem &w = items.back();
         w.entry    = entry;
         w.objectId = entry->objectId;
+        if (entry->packed)
+        {
+            w.packedIdx = int(packedWrites.size());
+            packedWrites.emplace_back();
+        }
         for (int i = 0; i < 3; ++i) w.s.pos[i] = mv.pos[i];
         for (int i = 0; i < 4; ++i) w.s.rot[i] = mv.rot[i];
     }
@@ -1764,16 +1884,17 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
 #ifdef BOX3DDOP_DEBUG
         const bool verifyReadback = B3D_ENV_INT("BOX3DDOP_VERIFY_READBACK", 0) != 0;
 #endif
-        // Hardening copies every shared page of the attribute, however few points are
-        // written. A serial pass does not need it (set() unshares the pages it touches), so
-        // only a pass that will really run in parallel pays for it.
+        // Copy-on-write pages that are still shared would race, so a pass that really runs in
+        // parallel hardens first. Only the offset ranges the awake bodies write are hardened
+        // (hardenWrittenPages), not every page of four attributes: on a mostly sleeping scene
+        // that is a small part of them. A serial pass does not need it (set() unshares the
+        // pages it touches).
         if (end - begin >= kMinParallelWrite)
-            for (GA_Attribute *attr : { pOut.isValid() ? pOut.getAttribute() : nullptr,
-                                        qOut.isValid() ? qOut.getAttribute() : nullptr,
-                                        vOut.isValid() ? vOut.getAttribute() : nullptr,
-                                        wOut.isValid() ? wOut.getAttribute() : nullptr })
-                if (attr)
-                    attr->hardenAllPages();
+            hardenWrittenPages(gdp, items, begin, end,
+                               { pOut.isValid() ? pOut.getAttribute() : nullptr,
+                                 qOut.isValid() ? qOut.getAttribute() : nullptr,
+                                 vOut.isValid() ? vOut.getAttribute() : nullptr,
+                                 wOut.isValid() ? wOut.getAttribute() : nullptr });
 
         parallelForEach(end - begin, [&](size_t j) {
             Box3DWriteItem      &w   = items[begin + j];
@@ -1793,20 +1914,21 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
             // rotation. Packed instances are assumed to keep their topology, so the
             // primitive offset and 3x3 the last sync stored in the entry are used as they
             // are (no vertex / primitive lookups here); pass 3 still checks the primitive.
-            Box3DBodyMirror &me     = *w.entry;
-            const bool       packed = anyPrims && me.packed;
-            float            packedRot[4] = { 0, 0, 0, 1 };
+            Box3DBodyMirror  &me     = *w.entry;
+            Box3DPackedWrite *pw     = w.packedIdx >= 0 ? &packedWrites[size_t(w.packedIdx)] : nullptr;
+            const bool        packed = anyPrims && me.packed && pw;
+            float             packedRot[4] = { 0, 0, 0, 1 };
             if (packed)
             {
-                b3dop::composeLocal3(s.rot, me.m3, w.newM3);
-                w.primOff = GA_Offset(me.primOff);
-                w.hasM3   = true;
+                b3dop::composeLocal3(s.rot, me.m3, pw->newM3);
+                pw->primOff = GA_Offset(me.primOff);
+                pw->has     = true;
                 // What the primitive will hold, without reading it back: the rotation of
                 // the matrix pass 3 writes. The entry's 3x3 follows it, because a skipped
                 // sync no longer refreshes it every step.
                 double sc[3];
-                b3dop::matrix3ToQuatScale(w.newM3, packedRot, sc);
-                for (int i = 0; i < 9; ++i) me.m3[i] = w.newM3[i];
+                b3dop::matrix3ToQuatScale(pw->newM3, packedRot, sc);
+                for (int i = 0; i < 9; ++i) me.m3[i] = pw->newM3[i];
             }
 
             // What the points now hold, without reading them back. This must equal what
@@ -1844,7 +1966,7 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
                 PackedInfo pk;
                 if (packed)
                 {
-                    pk.prim = static_cast<const GU_PrimPacked *>(gdp->getPrimitive(w.primOff));
+                    pk.prim = static_cast<const GU_PrimPacked *>(gdp->getPrimitive(pw->primOff));
                     for (int i = 0; i < 4; ++i) pk.rot[i] = packedRot[i];
                 }
                 if (readPointState(gdp, a, off, pk, stored) &&
@@ -1878,16 +2000,17 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
         for (size_t k = begin; k < end; ++k)
         {
             const Box3DWriteItem &w = items[k];
-            if (!w.hasM3)
+            if (w.packedIdx < 0 || !packedWrites[size_t(w.packedIdx)].has)
                 continue;
-            const GA_Primitive *raw = (w.primOff >= 0 && w.primOff < gdp->getNumPrimitiveOffsets())
-                                          ? gdp->getPrimitive(w.primOff) : nullptr;
+            const Box3DPackedWrite &pw = packedWrites[size_t(w.packedIdx)];
+            const GA_Primitive *raw = (pw.primOff >= 0 && pw.primOff < gdp->getNumPrimitiveOffsets())
+                                          ? gdp->getPrimitive(pw.primOff) : nullptr;
             if (!raw || !GU_PrimPacked::isPackedPrimitive(*raw))
             {
                 ++missing;          // topology changed without a new instance id: skip, do not crash
                 continue;
             }
-            setLocal3(*static_cast<GU_PrimPacked *>(gdp->getPrimitive(w.primOff)), w.newM3);
+            setLocal3(*static_cast<GU_PrimPacked *>(gdp->getPrimitive(pw.primOff)), pw.newM3);
         }
     }
 

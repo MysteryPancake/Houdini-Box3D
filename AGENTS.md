@@ -90,10 +90,24 @@ Conventions at the boundary:
   (body removed, world destroyed) must not be used; the solver stores handles in the mirror
   and erases entries when bodies are removed.
 
-State (`Impl`): the `b3WorldId`, `WorldSettings`, `bodies` (key -> `b3BodyId`),
-`bodySettings` (key -> `BodySettings`, remembered because shapes are added after the
-body and need density/friction/restitution), the hull cache, and `bodyHulls`
-(key -> hulls its shapes use).
+Two APIs sit side by side:
+
+* **Handle API (what the solver uses to build bodies)**: `createBody(settings, pos, rot, userData)` returns a
+  `BodyHandle`; `createShape` / `createHullShape(handle, settings, ...)` take the caller's `BodySettings` (a local
+  of the caller, never stored); `applyMassFromShapes(handle)`; `destroyBody(handle)`; `setTypeByHandle`.
+  No hash map is touched. `reserve(n)` is only a hint that sizes the hull bookkeeping lazily.
+* **Keyed API (`addBody(id, ...)`, `addShape(id, ...)`, `removeBody(id)` ...)**: a convenience layer over the handle
+  API, used by the tests. It fills `bodies` (key -> handle) and `bodySettings` (key -> `BodySettings`). Bodies made
+  with `createBody` are invisible to it (`hasBody` is false, `bodyHandle(key)` is 0).
+
+State (`Impl`): the `b3WorldId`, `WorldSettings`, `liveBodies` (what `bodyCount()` returns), the keyed maps above,
+the hull cache, and `bodyHulls` (body HANDLE -> hulls its shapes use; only bodies with hull shapes appear).
+
+**Mass.** Every shape add recomputes the body's mass (`b3ShapeDef::updateBodyMass`, default true). `createShape` /
+`createHullShape` take `updateMass`; for a body with several pieces the solver passes false for all of them and
+calls `applyMassFromShapes` once (required before the next step). A single-shape body leaves it true. Measured
+gain is small (a 3-piece compound costs about the same either way in a microbenchmark); it is kept because it is
+free and scales with piece count.
 
 `WorldSettings`: gravity, `subSteps` (default 4), `workerCount` (Box3D's own thread
 pool, sized at creation, max 32; it does not use Houdini's TBB), `enableSleep`,
@@ -126,7 +140,8 @@ Hull cache:
   or any non-finite coordinate also returns 0.
 * We own the `b3HullData`; Box3D clones it into its database on shape creation.
   `refs` counts shapes created from an entry; `removeBody` decrements; `pruneHulls()`
-  destroys entries with `refs <= 0`. The solver calls `pruneHulls()` once per sync.
+  destroys entries with `refs <= 0`. The solver calls `pruneHulls()` once per sync. Hull use is tracked per body
+  handle, so `destroyBody` releases a body's hulls.
   Entries are destroyed after the world in `destroy()`.
 * Several hull shapes on one body = Box3D "runtime compound"; this is the only way to
   get a dynamic concave body (triangle meshes only collide as static).
@@ -134,6 +149,8 @@ Hull cache:
 
 `Box3DShapes.h` highlights (all unit-tested):
 
+* `ShapeTypeCache`: `parseShapeType` with a memo by string value (one strcmp against the last value seen, usually a
+  hit). The solver keeps one per scan. Same answers as `parseShapeType`, including "unknown leaves `out` alone".
 * `parseShapeType(const char*)`: exact, case-sensitive. `convexhull`, `concave`,
   `compound` (== concave), `box`, `sphere`, `capsule`, `none`. Anything else
   (including Houdini's `cylinder`, `plane`) returns false so the caller uses the node default.
@@ -212,8 +229,7 @@ Smaller per-step savings: `PointAttrs` binds only `id, active, v, w, orient` per
 when the geometry has no primitives; the sync pass stores each packed point's primitive offset and
 3x3 in its mirror entry and write-back reuses them (after checking the point still belongs to that
 primitive) instead of re-reading the transform; `pruneHulls` only runs on steps that added, failed
-or removed a body; `Box3DWorld::releaseBuildState` drops a body's build-time `BodySettings` once its
-shapes exist (type queries then ask Box3D); move events come from one `getMoveEvents` call into a
+or removed a body; bodies are built through the handle API, so no per-body `BodySettings` is ever stored; move events come from one `getMoveEvents` call into a
 reused vector.
 
 ## Solver step (`SIM_SolverBox3D::solveObjectsSubclass`)
@@ -327,8 +343,14 @@ attribute is written, which is what makes it a change marker.
 * Mass: `density = mass / totalVolume`, where `mass` is the point attribute if valid, positive
   and finite, otherwise the Box3D Data node's `mass`. If neither is usable (or the volume is 0)
   `BodySettings::density` keeps its default (1).
-* After `addBody`, shapes are added; if none could be added the body is removed again
-  (never leave a shapeless body). Initial `v`/`w` are applied last (no-op for static).
+* `createBody` returns the handle and takes the mirror entry's address as Box3D user data (the entry is inserted
+  with `try_emplace` BEFORE the body exists, so a rebuild costs one mirror hash lookup per point; if the body
+  cannot be built the placeholder entry is erased again). Shapes follow with `updateMass = false` when there are
+  several pieces, then one `applyMassFromShapes`. If no shape could be added the body is destroyed (never leave a
+  shapeless body). Initial `v`/`w` are applied last, after the mass is final, through the handle, and only when
+  nonzero on a non-static body. They are NOT put in the body def: Box3D shifts a body's velocity when its centre
+  of mass moves during a mass update, which would change the values.
+* A scan that has >= 64 points without a cached mirror entry (a rebuild) reserves the mirror once.
 
 ### Explicit primitives (`bullet_autofit`, `bullet_primS/R/T`, `bullet_radius`, `bullet_length`)
 
@@ -404,8 +426,12 @@ compiled against the HDK; compare a rotated `bullet_primR` box against a Bullet 
 3. Pass 1 (serial): `resolvePointOffsets`: the entry's stored point offset is verified against the
    write geometry (in range, `id` / point index still matches) and looked up again by point id if
    it is stale. Unresolvable bodies are counted and skipped (one warning).
-4. Pass 2 (parallel): `hardenAllPages()` on `P/orient/v/w` first when the pass really runs in parallel (copy-on-write
-   pages would race; a serial pass unshares only the pages it writes), write attributes, compute the new packed matrix (not written yet), then store in the (distinct)
+4. Pass 2 (parallel): first, when the pass really runs in parallel (copy-on-write pages would race; a serial pass unshares
+   only the pages it writes), `hardenWrittenPages` hardens `P/orient/v/w` over just the offset ranges the awake bodies write
+   (HDK: `GA_Attribute::hardenAllPages(start, end)` takes an offset range; there is no documented single-page call.
+   Offsets are bucketed by 1024, runs of buckets become ranges, and when >= 90% of buckets are hit one full call is
+   made. UNVERIFIED in Houdini: that `end` is half-open; the code passes the first offset after the last bucket so either
+   reading is correct), write attributes, compute the new packed matrix (not written yet), then store in the (distinct)
    mirror entry what the geometry now holds, WITHOUT reading it back. The mirror must equal what `readPointState`
    returns or our own write looks like an external edit next step: `P` = `b3dop::storedPosition` (double -> float ->
    double; a non-finite result keeps Box3D's value, as the read path treats it as absent), `v`/`w` unchanged (floats),
@@ -418,6 +444,10 @@ compiled against the HDK; compare a rotated `bullet_primR` box against a Bullet 
    does not document thread-safety). Pass 2 no longer verifies the point still belongs to its primitive: topology is
    assumed fixed (see "Skipping the sync scan"); pass 3 only checks the offset is a packed primitive, and counts a
    body that fails it as unmatched instead of writing.
+
+The write items are small (about 88 bytes): the packed-primitive matrix and offset live in a side array
+(`Box3DSharedState::packedWrites`, `Box3DPackedWrite`), filled only for packed points; an item refers to its entry by
+`packedIdx`, which stays valid when the items are sorted by object.
 
 Static points are never written. Kinematic bodies are also not written back (the mirror's
 `dynamic` flag is true only for `Type::Dynamic`). Of several points sharing an `id`, only the first

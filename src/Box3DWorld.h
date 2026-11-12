@@ -105,18 +105,44 @@ public:
     // ---- stepping ----------------------------------------------------
     void step(float timeStep);
 
+    // ---- handle-based building (the fast path the solver uses) ----------------
+    // Creating a body this way touches no hash map: createBody returns the handle,
+    // and the shape calls take that handle plus the caller's BodySettings (which stay a
+    // local of the caller, so nothing per body is remembered here). Hulls a body uses
+    // are tracked per handle, so destroyBody releases them.
+    //
+    // Mass: every shape add recomputes the body's mass unless `updateMass` is false.
+    // For a body with several shapes pass false for all of them and call
+    // applyMassFromShapes ONCE afterwards (it is required before the next step).
+    // A single-shape body just leaves `updateMass` true.
+    //
+    // The keyed API below (addBody, addShape, removeBody ...) is a convenience layer
+    // over this one: it keeps key -> handle and key -> BodySettings maps, which the
+    // solver does not need.
+    void       reserve(size_t bodyCount);          // hint: about that many bodies are coming (sizes the hull bookkeeping)
+    BodyHandle createBody(const BodySettings &body, const double position[3],
+                          const float rotationXYZW[4], void *userData = nullptr);   // 0 on failure
+    void       destroyBody(BodyHandle h);
+    bool       createShape(BodyHandle h, const BodySettings &body, const ShapeSpec &shape,
+                           bool updateMass = true);
+    bool       createHullShape(BodyHandle h, const BodySettings &body, HullId hull,
+                               bool updateMass = true);
+    void       applyMassFromShapes(BodyHandle h);
+    bool       setTypeByHandle(BodyHandle h, BodySettings::Type type);   // static / kinematic / dynamic
+
     // ---- bodies --------------------------------------------------------
     bool addBody(uint64_t id, const BodySettings &body,
                  const double position[3], const float rotationXYZW[4]);
     void removeBody(uint64_t id);
     bool hasBody(uint64_t id) const;
-    int  bodyCount() const;
+    int  bodyCount() const;                      // all live bodies, keyed or handle-made
 
     // Change an existing body between static / kinematic / dynamic.
     bool setBodyType(uint64_t id, BodySettings::Type type);
-    // Frees the settings kept for building the body's shapes (the shapes, density and
-    // type live in Box3D). Call once the body's shapes are all added; getBodyType and
-    // setBodyType keep working, but shapes added afterwards use default settings.
+    // Keyed API only: frees the settings kept for building the body's shapes (the shapes,
+    // density and type live in Box3D). Call once the body's shapes are all added;
+    // getBodyType and setBodyType keep working, but shapes added afterwards use default
+    // settings. (Bodies made with createBody never have any, so the solver does not call this.)
     void releaseBuildState(uint64_t id);
     bool getBodyType(uint64_t id, BodySettings::Type &out) const;
 
@@ -199,6 +225,14 @@ public:
     static void version(int &major, int &minor, int &revision);
 
 private:
+    // The shape builders behind both APIs (handle + the body's settings + whether this add
+    // recomputes the body's mass).
+    bool boxShape(BodyHandle h, const BodySettings &b, const float halfExtents[3], const float center[3],
+                  const float rotationXYZW[4], bool updateMass);
+    bool sphereShape(BodyHandle h, const BodySettings &b, float radius, const float center[3], bool updateMass);
+    bool capsuleShape(BodyHandle h, const BodySettings &b, float radius, float halfLength,
+                      const float center[3], const float rotationXYZW[4], bool updateMass);
+
     struct Impl;
     std::unique_ptr<Impl> myImpl;
 };

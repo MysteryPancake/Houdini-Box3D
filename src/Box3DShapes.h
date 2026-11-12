@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -73,6 +74,54 @@ parseShapeType(const char *name, ShapeType &out)
         }
     return false;
 }
+
+// parseShapeType with a memo, for loops that read the `bullet_georep` string of many points.
+// A scene has only a handful of distinct values (usually one), so remembering them by
+// content turns the per-point parse into one strcmp against the value seen last. Same
+// results as parseShapeType, including "unknown -> false and `out` untouched".
+class ShapeTypeCache
+{
+public:
+    bool parse(const char *name, ShapeType &out)
+    {
+        if (!name || !*name)
+            return false;
+        if (myLast < myEntries.size() && myEntries[myLast].text == name)
+            return apply(myEntries[myLast], out);
+        for (size_t i = 0; i < myEntries.size(); ++i)
+            if (myEntries[i].text == name)
+            {
+                myLast = i;
+                return apply(myEntries[i], out);
+            }
+        Entry e;
+        e.text = name;
+        e.ok   = parseShapeType(name, e.type);
+        if (myEntries.size() >= kMaxEntries)     // pathological: every point has its own string
+            myEntries.clear();
+        myEntries.push_back(e);
+        myLast = myEntries.size() - 1;
+        return apply(e, out);
+    }
+    size_t size() const { return myEntries.size(); }
+
+private:
+    struct Entry
+    {
+        std::string text;
+        ShapeType   type = ShapeType::Box;
+        bool        ok   = false;
+    };
+    static constexpr size_t kMaxEntries = 32;
+    static bool apply(const Entry &e, ShapeType &out)
+    {
+        if (e.ok)
+            out = e.type;
+        return e.ok;
+    }
+    std::vector<Entry> myEntries;
+    size_t             myLast = 0;
+};
 
 // Size convention: the shape fills a bounding box of size pscale * scale, which
 // is what Copy to Points does to a unit primitive. A unit box is 1x1x1, a unit

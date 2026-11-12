@@ -736,6 +736,135 @@ int main()
         std::printf("stored-pose checks done\n");
     }
 
+    // ---- handle-based building: createBody / createShape / createHullShape / applyMassFromShapes ----
+    {
+        using namespace b3dop;
+
+        // ShapeTypeCache gives parseShapeType's answers, and leaves `out` alone on a miss
+        {
+            ShapeTypeCache cache;
+            const char *names[] = { "box", "sphere", "convexhull", "concave", "compound", "capsule", "none",
+                                    "cylinder", "", nullptr, "Box", "box", "box", "sphere", "box" };
+            for (const char *n : names)
+            {
+                ShapeType a = ShapeType::Capsule, b = ShapeType::Capsule;    // sentinel: unchanged on failure
+                const bool ra = parseShapeType(n, a);
+                const bool rb = cache.parse(n, b);
+                CHECK(ra == rb && a == b);
+            }
+            CHECK(cache.size() == 9);        // distinct non-empty strings seen (case-sensitive)
+        }
+
+    }
+
+    {
+        using namespace b3dop;
+        Box3DWorld hw;
+        CHECK(hw.create(WorldSettings()));
+        hw.reserve(100);                         // a hint only
+
+        BodySettings stat; stat.type = BodySettings::Type::Static;
+        const double gp[3] = { 0, -0.5, 0 };
+        const float  gh[3] = { 30, 0.5f, 30 };
+        ShapeSpec groundBox;  groundBox.type = ShapeType::Box;
+        groundBox.halfExtents[0] = gh[0];  groundBox.halfExtents[1] = gh[1];  groundBox.halfExtents[2] = gh[2];
+        const BodyHandle ground = hw.createBody(stat, gp, qid);
+        CHECK(ground != 0 && hw.createShape(ground, stat, groundBox));
+        CHECK(hw.bodyCount() == 1);
+
+        // user data comes back in the move events (the solver maps an event to its mirror entry with it)
+        int tag = 7;
+        BodySettings dyn;  dyn.density = 2.0f;
+        const double dp[3] = { 0, 3, 0 };
+        const BodyHandle falling = hw.createBody(dyn, dp, qid, &tag);
+        ShapeSpec cubeSpec;  cubeSpec.type = ShapeType::Box;
+        cubeSpec.halfExtents[0] = cubeSpec.halfExtents[1] = cubeSpec.halfExtents[2] = 0.5f;
+        CHECK(falling != 0 && hw.createShape(falling, dyn, cubeSpec));
+        CHECK(hw.bodyCount() == 2);
+        const float lin[3] = { 1, 0, 0 }, ang[3] = { 0, 0, 0 };
+        CHECK(hw.setVelocityByHandle(falling, lin, ang));
+        hw.step(1.0f / 60.0f);
+        bool sawTag = false;
+        BodyMove mv;
+        for (int i = 0; i < hw.moveEventCount(); ++i)
+            if (hw.getMoveEvent(i, mv) && mv.handle == falling && mv.userData == &tag)
+                sawTag = true;
+        CHECK(sawTag);
+
+        // a handle-made body is invisible to the keyed API (no maps are filled)
+        CHECK(!hw.hasBody(1) && hw.bodyHandle(1) == 0);
+
+        // Mass is the same whether it is recomputed per shape (keyed API) or applied once
+        // (handle API, updateMass = false): an L of two cubes at density 5, then three pieces.
+        auto cube = [](float cx, float cy, float cz, float h) {
+            std::vector<float> v;
+            for (int sx = -1; sx <= 1; sx += 2)
+                for (int sy = -1; sy <= 1; sy += 2)
+                    for (int sz = -1; sz <= 1; sz += 2)
+                    {
+                        v.push_back(cx + sx * h);  v.push_back(cy + sy * h);  v.push_back(cz + sz * h);
+                    }
+            return v;
+        };
+        const std::vector<float> pA = cube(0, 0, 0, 0.5f), pB = cube(1, 0, 0, 0.5f), pC = cube(0, 1, 0, 0.5f);
+        float vA = 0, vB = 0, vC = 0;
+        const HullId hA = hw.createHull(pA.data(), 8, &vA);
+        const HullId hB = hw.createHull(pB.data(), 8, &vB);
+        const HullId hC = hw.createHull(pC.data(), 8, &vC);
+        CHECK(hA && hB && hC);
+        BodySettings dense;  dense.density = 5.0f;
+        const double lp[3] = { 6, 3, 0 };
+
+        CHECK(hw.addBody(500, dense, lp, qid) && hw.addHullShape(500, hA) && hw.addHullShape(500, hB) &&
+              hw.addHullShape(500, hC));
+        const BodyHandle once = hw.createBody(dense, lp, qid);
+        CHECK(once != 0);
+        CHECK(hw.createHullShape(once, dense, hA, false) && hw.createHullShape(once, dense, hB, false) &&
+              hw.createHullShape(once, dense, hC, false));
+        hw.applyMassFromShapes(once);
+        CHECK(std::fabs(hw.bodyMass(500) - 5.0f * (vA + vB + vC)) < 1e-3f);
+
+        // run both for a while: identical behaviour (they sit apart, on the ground)
+        const double lp2[3] = { -6, 3, 0 };
+        const BodyHandle once2 = hw.createBody(dense, lp2, qid);    // same body, other place
+        CHECK(hw.createHullShape(once2, dense, hA, false) && hw.createHullShape(once2, dense, hB, false) &&
+              hw.createHullShape(once2, dense, hC, false));
+        hw.applyMassFromShapes(once2);
+        const double lp3[3] = { -6, 3, 20 };
+        CHECK(hw.addBody(501, dense, lp3, qid) && hw.addHullShape(501, hA) && hw.addHullShape(501, hB) &&
+              hw.addHullShape(501, hC));
+        for (int i = 0; i < 240; ++i) hw.step(1.0f / 60.0f);
+        double p1[3], p2[3];  float q1[4], q2[4];
+        CHECK(hw.getTransformByHandle(once2, p1, q1) && hw.getTransform(501, p2, q2));
+        CHECK(std::fabs(p1[1] - p2[1]) < 1e-3);                      // same resting height
+        for (int i = 0; i < 4; ++i) CHECK(std::fabs(q1[i] - q2[i]) < 1e-3f);
+
+        // setTypeByHandle: a dynamic body made static stops falling
+        const double fp[3] = { 20, 5, 0 };
+        const BodyHandle hover = hw.createBody(dyn, fp, qid);
+        CHECK(hover != 0 && hw.createShape(hover, dyn, cubeSpec));
+        CHECK(hw.setTypeByHandle(hover, BodySettings::Type::Static));
+        for (int i = 0; i < 30; ++i) hw.step(1.0f / 60.0f);
+        double hp[3];  float hq[4];
+        CHECK(hw.getTransformByHandle(hover, hp, hq) && std::fabs(hp[1] - 5.0) < 1e-6);
+
+        // destroyBody releases the hulls the body used; the count drops by one per body
+        const int before = hw.bodyCount();
+        hw.destroyBody(once);
+        hw.destroyBody(once2);
+        CHECK(hw.bodyCount() == before - 2);
+        hw.removeBody(500);
+        hw.removeBody(501);
+        hw.pruneHulls();
+        CHECK(hw.hullCacheSize() == 0);
+
+        // destroying a body twice (or handle 0) is harmless
+        hw.destroyBody(once);
+        hw.destroyBody(0);
+        CHECK(hw.bodyCount() == before - 4);
+        std::printf("handle-build checks done\n");
+    }
+
     w.destroy();
     CHECK(!w.isValid());
     std::printf(fails ? "FAILED\n" : "OK\n");
