@@ -4,6 +4,7 @@
 #include "SIM_Box3DData.h"
 #include "Box3DDebug.h"
 #include "Box3DAffectors.h"
+#include "Box3DJointSync.h"
 
 #include <GA/GA_AIFSharedStringTuple.h>
 #include <GA/GA_Handle.h>
@@ -219,6 +220,7 @@ const char *const kPropAttribNames[] = {
     "inertialtensorstiffness", "sleepthreshold", "fastobject",
     "min_activation_impulse", "activationignore", "dead", "bullet_sleeping",
     "contactrecycling",
+    "name",                 // joint anchors find bodies by it
 };
 static_assert(std::size(kPropAttribNames) == Box3DSyncFingerprint::kNumPropIds,
               "kPropAttribNames and Box3DSyncFingerprint::kNumPropIds must match");
@@ -1755,7 +1757,7 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c, StepProgr
     os.visited   = st.syncStamp;
     os.addImpact = addImpact;
     const Box3DSyncFingerprint fpNow = makeFingerprint(gdp, a, int(node.type), nodeSettingsHash(node, addImpact));
-    if (os.canSkip && fpNow == os.fp)
+    if (os.canSkip && fpNow == os.fp && (!st.wantNames || os.namesKnown))
     {
         ++c.skipped;
         st.stampedCount += os.entryCount;
@@ -1784,6 +1786,13 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c, StepProgr
 
     // For the post-step passes; kept as they are while the object is skipped.
     os.bodies.clear();
+    // Bodies by `name`, for joint anchors (only while some object has a joint network).
+    os.byName.clear();
+    os.namesKnown = st.wantNames;
+    const GA_ROHandleS nameH(gdp, GA_ATTRIB_POINT, "name");
+    StringAttr         names;
+    names.bind(nameH);
+    const bool         keepNames = st.wantNames && names.valid();
     os.activation.clear();
 
     // ---- pass 1 (parallel): read every point ---------------------------------
@@ -2001,6 +2010,12 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c, StepProgr
         if (writes)
             queuePointWrite(st, *entry, writes, effectiveMass(entry->props, entry->volume));
         os.bodies.push_back(entry);
+        if (keepNames)
+        {
+            std::string n = names.str(off);
+            if (!n.empty())
+                os.byName.emplace(std::move(n), entry);     // the first point of a name wins
+        }
         if (!s.active && entry->props.minActivationImpulse > 0.0f)
             os.activation.push_back(entry);
     }
@@ -2940,7 +2955,7 @@ SIM_SolverBox3D::currentWorldSettings() const
     s.workerCount = currentWorkerCount();
     s.enableSleep = getEnableSleep();
     s.contactPushSpeed = float(getContactPushSpeed());
-    s.contactHertz     = float(getContactStiffness());
+    s.contactStiffness = float(getContactStiffness());
     s.contactDampingRatio  = float(getContactDamping());
     s.restitutionThreshold = float(getBounceThreshold());
     s.contactRecycleDistance = float(getContactRecycleDistance());
@@ -3086,6 +3101,8 @@ SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
     st->world.getMoveEvents(st->moves);     // read once: the write-back and impacts use them
     B3D_LOG_VERBOSE("  step: %d contact(s) recycled", st->world.recycledContactCount());
     writeResultsBack(*worldData, objects);
+    if (const int broke = jointsAfterStep(*st, objects))
+        B3D_LOG("  joints: %d broke", broke);
     // Contacts are read before the queued point writes, aging and deletions.
     recordImpacts(*st, objects, engine.getSimulationTime());
     activateByImpact(*st);
@@ -3162,6 +3179,7 @@ SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
 
     ++st->syncStamp;
     st->stampedCount = 0;
+    st->wantNames = anyJointNetwork(objects);
     st->pointWrites.clear();
     st->deletions.clear();
     for (exint i = 0; i < objects.entries(); ++i)
@@ -3217,6 +3235,31 @@ SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
     // Objects not seen lose their records (their bodies were just removed).
     for (auto it = st->objectSync.begin(); it != st->objectSync.end();)
         it = (it->second.visited == st->syncStamp) ? std::next(it) : st->objectSync.erase(it);
+
+    // Joints, once the bodies they name are current. A changed set of bodies re-reads the networks.
+    if (counts.added || removed || affectorCounts.added || affectorCounts.removed)
+        ++st->bodyVersion;
+    Box3DJointCounts jointCounts;
+    syncJoints(*st, objects, jointCounts);
+    {
+        auto warnJoints = [&](int n, const char *what) {
+            if (n)
+                addError(objects(0), SIM_MESSAGE, ("Box3D: " + std::to_string(n) + " joint primitive(s) " + what).c_str(),
+                         UT_ERROR_WARNING);
+        };
+        warnJoints(jointCounts.unknown, "have a missing or unknown joint_type and are ignored");
+        warnJoints(jointCounts.unresolved, "name a piece or object that does not exist and are ignored");
+        warnJoints(jointCounts.notLines, "are not two-point lines and are ignored");
+        warnJoints(jointCounts.failed, "could not be made (both ends on the world, or the same body twice)");
+        if (jointCounts.shared)
+            addError(objects(0), SIM_MESSAGE,
+                     "Box3D: a joint network is attached to several objects; it is used once, and feedback and "
+                     "broken joints are not written back to it",
+                     UT_ERROR_WARNING);
+        if (jointCounts.created || jointCounts.removed || jointCounts.updated)
+            B3D_LOG("  joints: %d network(s), +%d made, %d updated, -%d removed (joints now %d)", jointCounts.networks,
+                    jointCounts.created, jointCounts.updated, jointCounts.removed, st->world.jointCount());
+    }
 
     // The shapes are made: let go of the hulls this sync held (the shared cache keeps them).
     st->world.pruneHulls();

@@ -30,7 +30,7 @@ public:
     GETSET_DATA_FUNCS_B("enablesleep",  EnableSleep);
     GETSET_DATA_FUNCS_F("timescale",    TimeScale);
     GETSET_DATA_FUNCS_F("contactpushspeed", ContactPushSpeed);  // Box3D contact speed
-    GETSET_DATA_FUNCS_F("contactstiffness", ContactStiffness);  // Box3D contact hertz
+    GETSET_DATA_FUNCS_F("contactstiffness", ContactStiffness);  // Box3D contact stiffness (Hz)
     GETSET_DATA_FUNCS_F("contactdamping",   ContactDamping);    // Box3D contact damping ratio
     GETSET_DATA_FUNCS_F("bouncethreshold",  BounceThreshold);   // Box3D restitution threshold
     GETSET_DATA_FUNCS_F("contactrecycledistance", ContactRecycleDistance);  // 0 = no contact recycling

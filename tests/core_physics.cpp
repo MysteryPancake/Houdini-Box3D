@@ -1064,11 +1064,11 @@ int main()
         CHECK(sawD1);
 
         // live tuning is harmless and applied
-        WorldSettings tuned;  tuned.contactPushSpeed = 1.0f;  tuned.contactHertz = 60.0f;
+        WorldSettings tuned;  tuned.contactPushSpeed = 1.0f;  tuned.contactStiffness = 60.0f;
         tuned.contactDampingRatio = 5.0f;  tuned.restitutionThreshold = 2.0f;  tuned.maxLinearSpeed = 100.0f;
         tuned.enableSpeculative = false;  tuned.enableContinuous = false;  tuned.subSteps = 8;
         fw.applyTuning(tuned);
-        CHECK(fw.settings().subSteps == 8 && fw.settings().contactHertz == 60.0f);
+        CHECK(fw.settings().subSteps == 8 && fw.settings().contactStiffness == 60.0f);
         fw.step(1.0f / 60.0f);
         std::printf("collision group checks done\n");
     }

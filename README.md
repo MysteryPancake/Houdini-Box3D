@@ -70,6 +70,7 @@ In a DOP network, press **TAB** and add:
 
 - **Box3D Solver**: runs the simulation.
 - **Box3D Data**: default material and shape settings for an object.
+- **Box3D Joints**: default settings for joints, one tab per joint type.
 
 Like Houdini's RBD solvers, the solver works on **points**: every point in an object's Geometry is one rigid body, and the point is the body's **centre of mass**. For packed pieces, put the pivot at the centroid (the Pack SOP and RBD tools do this by default), or the piece will turn around an off-centre point. Wire the object into the solver as you would with any other DOP solver.
 
@@ -184,6 +185,10 @@ A **Static Object** DOP collides with solved objects when a collision relationsh
 - Meshes are one-sided. If bodies fall through, turn on **Flip Static Mesh Winding** on a Box3D Data node attached to the affector. Its Friction and Bounce set the surface material.
 - An animated Static Object doesn't push bodies. For something that pushes, use a kinematic point (`active = 0`, `animated = 1`).
 
+### Joints
+
+Attach a joint network to an object with a **SOP Geometry** DOP, Data Name `Joints`. Each two-point line is one Box3D joint: its `joint_type` primitive attribute is `weld`, `spherical`, `revolute`, `prismatic`, `distance`, `motor`, `parallel`, `wheel` or `filter`, and each end's `name` picks a piece (empty means the world). Each end's `P` and `orient` are that piece's joint frame, so put both ends at the pivot for a hinge or weld. Primitive attributes named like the Box3D Joints parameters (`lower_angle`, `stiffness`, ...) override them; angles are in degrees. Joints past their Break Force or Break Torque go into the `broken` group. During the simulation each end's `P` and `orient` follow its piece, so a resimulation can start from any cached frame.
+
 ### Things to know
 
 - Bullet's collision padding attributes and solver settings (ERP, CFM, iterations) are ignored. Use Substeps and the contact settings.
@@ -191,7 +196,7 @@ A **Static Object** DOP collides with solved objects when a collision relationsh
 - Auto-fitted sizes aren't written back to `bullet_prim*`, `bullet_radius` or `bullet_length`.
 - Use `id` if you delete points with `dead`, otherwise every later point counts as a new body.
 - Patterns don't match DOP groups yet.
-- Joints and constraints aren't supported yet.
+- A joint network attached to several objects isn't updated during the simulation, so resimulating it from a cached frame other than the first puts its joints in the wrong place.
 - Escape cancels a step.
 
 ## Troubleshooting

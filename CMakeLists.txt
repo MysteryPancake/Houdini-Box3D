@@ -39,6 +39,7 @@ target_compile_definitions(box3d PUBLIC B3_MAX_WORLDS=${BOX3DDOP_MAX_WORLDS})
 # ---------------------------------------------------------------------------
 add_library(b3dop_core STATIC
     src/Box3DShapes.h
+    src/Box3DJoints.h
     src/Box3DWorld.h
     src/Box3DWorld.cpp
 )
@@ -61,6 +62,9 @@ target_link_libraries(b3dop_core_physics PRIVATE b3dop_core)
 
 add_executable(b3dop_core_mesh tests/core_mesh.cpp)
 target_link_libraries(b3dop_core_mesh PRIVATE b3dop_core)
+
+add_executable(b3dop_core_joints tests/core_joints.cpp)
+target_link_libraries(b3dop_core_joints PRIVATE b3dop_core)
 
 add_executable(b3dop_core_threads tests/core_threads.cpp)
 target_link_libraries(b3dop_core_threads PRIVATE b3dop_core)
@@ -91,6 +95,10 @@ add_library(Box3DDOP SHARED
     src/SIM_Box3DWorld.cpp
     src/SIM_Box3DData.h
     src/SIM_Box3DData.cpp
+    src/SIM_Box3DJoints.h
+    src/SIM_Box3DJoints.cpp
+    src/Box3DJointSync.h
+    src/Box3DJointSync.cpp
     src/SIM_SolverBox3D.h
     src/SIM_SolverBox3D.cpp
     src/Box3DAffectors.h
@@ -112,7 +120,7 @@ houdini_configure_target(Box3DDOP)
 # Node icons: Houdini picks up config/Icons/DOP_<node name>.svg for each node type.
 # houdini_configure_target builds the plugin straight into houdiniX.Y/dso, so the
 # icons go next to it in houdiniX.Y/config/Icons.
-set(BOX3DDOP_NODES box3d_solver box3d_data)       # internal node names
+set(BOX3DDOP_NODES box3d_solver box3d_data box3d_joints)       # internal node names
 set(BOX3DDOP_ICON_DIR "$<TARGET_FILE_DIR:Box3DDOP>/../config/Icons")
 set(BOX3DDOP_ICON_COPIES "")
 foreach(node IN LISTS BOX3DDOP_NODES)

@@ -4,6 +4,7 @@
 
 #include "SIM_Box3DWorld.h"
 #include "SIM_Box3DData.h"
+#include "SIM_Box3DJoints.h"
 #include "SIM_SolverBox3D.h"
 
 // Houdini's version-check entry points. Include in exactly one .cpp of the plugin: this one.
@@ -38,5 +39,6 @@ initializeSIM(void *)
 
     IMPLEMENT_DATAFACTORY(SIM_Box3DWorld);
     IMPLEMENT_DATAFACTORY(SIM_Box3DData);
+    IMPLEMENT_DATAFACTORY(SIM_Box3DJoints);
     IMPLEMENT_DATAFACTORY(SIM_SolverBox3D);
 }

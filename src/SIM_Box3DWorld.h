@@ -170,7 +170,7 @@ struct Box3DSyncFingerprint
 
     // Prop markers (kPropAttribNames in SIM_SolverBox3D.cpp, primsId, nodeHash): when any
     // changed, the scan also compares every body's settings. The .cpp static_asserts the count.
-    static constexpr int kNumPropIds = 25;
+    static constexpr int kNumPropIds = 26;
     using PropIds = std::array<GA_DataId, kNumPropIds>;
 
     int64_t   numPoints  = -1;      // -1 with primitives: packed topology is assumed fixed
@@ -219,6 +219,11 @@ struct Box3DObjectSync
     // zero): unchanged ids mean nothing new to apply.
     GA_DataId forceId  = GA_DataId(-1);
     GA_DataId torqueId = GA_DataId(-1);
+
+    // Bodies by their point's `name` (first point wins), for joint anchors. Rebuilt by each full
+    // scan while some object has a joint network (Box3DSharedState::wantNames).
+    std::unordered_map<std::string, Box3DBodyMirror *> byName;
+    bool namesKnown = false;    // byName describes the current entries
     Box3DSyncFingerprint fp;
 };
 
@@ -229,10 +234,47 @@ struct Box3DAffectorBody
     b3dop::BodyHandle handle    = 0;        // 0: the last build failed (not retried until the signature changes)
     uint64_t          stamp     = 0;        // syncStamp that last saw the object as an affector
     uint64_t          signature = 0;        // geometry + material + baked transform the shape was built from
+    std::string       name;                     // the affector object's name (joint anchors can name it)
     double            pos[3]    = { 0, 0, 0 };      // the body's pose as last given to Box3D
     float             rot[4]    = { 0, 0, 0, 1 };
     float             scale[3]  = { 1, 1, 1 };      // the mesh shape's scale as last given to Box3D
     bool              poseKnown = false;
+};
+
+// One joint made from a primitive of a joint network (Box3DJointSync.cpp).
+struct Box3DJointEntry
+{
+    b3dop::JointHandle   handle   = 0;       // 0: none (broken, or its anchors did not resolve)
+    b3dop::JointType     type     = b3dop::JointType::Weld;
+    b3dop::BodyHandle    bodyA    = 0;       // 0: the world
+    b3dop::BodyHandle    bodyB    = 0;
+    uint64_t             sig      = 0;       // type, bodies, frames: a change recreates the joint
+    b3dop::JointSettings settings;           // as last given to Box3D
+    uint64_t             network  = 0;       // key of its Box3DJointNetwork
+    GA_Offset            prim     = GA_INVALID_OFFSET;
+    uint64_t             stamp    = 0;       // its network's liveStamp when last seen
+    bool                 broken   = false;   // broke (force / torque threshold): never remade
+
+    // Live frames: after each step the anchors' P / orient are set to where the joint's frames
+    // are (written networks only). What was written, to tell our writes from edits upstream.
+    b3dop::JointFrame    wroteA, wroteB;
+    bool                 wrote      = false;
+    float                madeRestLength = -1.0f;   // distance made with restlength < 0: written to `restlength` once
+};
+
+// A joint network: a SIM_Geometry of two-point primitives on one or more objects.
+struct Box3DJointNetwork
+{
+    uint64_t fingerprint = 0;               // geometry identity + data ids of everything read
+    uint64_t bodyVersion = 0;               // Box3DSharedState::bodyVersion when last processed
+    uint64_t liveStamp   = 0;               // stamp its current entries carry
+    uint64_t visited     = 0;               // last sync that saw it
+    int      carrier     = -1;              // object id it is read from (and written back to)
+    int      carriers    = 0;               // objects carrying the same geometry this sync
+    std::string dataName;                   // its data name on the carrier
+    bool     writeFeedback = true;
+    b3dop::JointSettings defaults[b3dop::kJointTypeCount];   // the Box3D Joints node's, as last used
+    bool     defaultsKnown = false;
 };
 
 // Everything shared between timestep copies.
@@ -247,6 +289,12 @@ struct Box3DSharedState
 
     std::unordered_map<int, Box3DObjectSync>    objectSync;     // per object seen by the last sync
     std::unordered_map<int, Box3DAffectorBody>  affectors;      // key: object id of the affector
+
+    // Joints (Box3DJointSync.cpp). Entries are joint user data, so nodes must not move.
+    std::unordered_map<uint64_t, Box3DJointEntry>   joints;         // key: network key + primitive offset
+    std::unordered_map<uint64_t, Box3DJointNetwork> jointNetworks;  // key: carrier object id + data name
+    bool     wantNames   = false;           // some object carries a joint network: keep Box3DObjectSync::byName
+    uint64_t bodyVersion = 0;               // bumped whenever bodies are added or removed
 
     // Scratch reused every step.
     std::unordered_map<int, std::vector<Box3DPointSlot>> slots;     // key: object id

@@ -12,6 +12,7 @@
 #include <memory>
 #include <vector>
 
+#include "Box3DJoints.h"
 #include "Box3DShapes.h"
 
 namespace b3dop {
@@ -24,6 +25,9 @@ constexpr int kDefaultWorkerCount = 8;
 
 // A body, valid until it is destroyed (or the world is). No hash lookup. 0 is invalid.
 using BodyHandle = uint64_t;
+
+// A joint, valid until it, either of its bodies, or the world is destroyed. 0 is invalid.
+using JointHandle = uint64_t;
 
 // One of Box3D's body move events: an awake body after the last step and its final
 // transform. A body that fell asleep this step appears once more with fellAsleep set.
@@ -70,7 +74,7 @@ struct WorldSettings
     bool  enableSleep   = true;
     bool  enableContinuous = true;    // continuous collision vs static bodies (fast objects: vs moving ones too)
     bool  enableSpeculative = true;   // off only to reduce ghost collisions
-    float contactHertz      = 30.0f;  // contact stiffness (cycles per second)
+    float contactStiffness  = 30.0f;  // contact stiffness in Hz (cycles per second)
     float contactDampingRatio = 10.0f;    // contact damping (non-dimensional)
     float contactPushSpeed  = 3.0f;   // max speed overlapping shapes are pushed apart (m/s)
     float restitutionThreshold = 1.0f;    // slower collisions do not bounce (m/s)
@@ -226,6 +230,28 @@ public:
     // Hit events of the last step (pairs that approached faster than impactMinSpeed).
     void  updateHitEvents();
     bool  hadHitEvent(BodyHandle a, BodyHandle b) const;
+
+    // ---- joints ------------------------------------------------------------------
+    // frameA / frameB are world-space frames now (anchor P + orient); the joint keeps each relative
+    // to its body. A null BodyHandle is the world (a shapeless static body made on first use).
+    // Settings are clamped to what Box3D accepts. 0 on failure (both ends the world, the same body
+    // twice, or an invalid body).
+    JointHandle createJoint(JointType type, BodyHandle a, BodyHandle b, const JointFrame &frameA,
+                            const JointFrame &frameB, const JointSettings &s, void *userData = nullptr);
+    void  destroyJoint(JointHandle h);                  // harmless on a joint already gone with its body
+    bool  isJointValid(JointHandle h) const;
+    // Push every setting of the type into a live joint (frames and bodies stay); wakes its bodies.
+    void  updateJoint(JointHandle h, JointType type, const JointSettings &s);
+    bool  jointFeedback(JointHandle h, JointType type, JointFeedback &out) const;
+    // Where the joint's two frames are now, in world space (each body's pose times its local frame;
+    // the world end does not move). Making a joint from these on bodies at the same poses gives the
+    // same joint, so a world rebuilt mid-simulation can remake its joints from them.
+    bool  jointWorldFrames(JointHandle h, JointFrame &a, JointFrame &b) const;
+    // userData of the joints whose force or torque went over their threshold in the last step.
+    int   brokenJoints(std::vector<void *> &userData) const;
+    int   jointCount() const;
+    // Box3D's defaults for a type (b3Default*JointDef), in JointSettings terms.
+    static JointSettings defaultJointSettings(JointType type);
 
     // ---- collision filtering ---------------------------------------------------
     // A profile names a body (group, object name, object id) and its ignore patterns

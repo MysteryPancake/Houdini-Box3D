@@ -48,11 +48,14 @@ extern/box3d/         Box3D submodule (never edit; static lib, EXCLUDE_FROM_ALL)
 icons/box3d.svg     Node icon; the build copies it to config/Icons as DOP_box3d_solver.svg and DOP_box3d_data.svg
 src/
   Box3DShapes.h       Houdini-free, header-only: shape math, packed-prim matrices, hashing, collision-group patterns
+  Box3DJoints.h       Houdini-free, header-only: joint types, JointSettings, the joint parameter table
   Box3DWorld.h/.cpp   Houdini-free pimpl wrapper over one b3World. The ONLY file that includes Box3D headers; defines TaskRunner
   Box3DHoudiniTasks.h TaskRunner on Houdini's TBB pool (UT_TaskGroup). Only SIM_Box3DWorld.cpp includes it
   Box3DDebug.h        B3D_LOG / counters, compiled out unless BOX3DDOP_DEBUG (args still type-checked, never evaluated)
   SIM_Box3DWorld.*    SIM_Data owning the shared world state (the rebuildable cache)
   SIM_Box3DData.*     Default-settings DOP node
+  SIM_Box3DJoints.*   Box3D Joints DOP node: joint defaults per type, parameters generated from the table
+  Box3DJointSync.*    Joint networks -> Box3D joints: read, resolve names, create / update / remove, break, feedback
   SIM_SolverBox3D.*   The solver: sync, step, write-back, post-step passes (the bulk of the plugin)
   SIM_Box3DRegister.cpp  initializeSIM(); includes UT_DSOVersion.h (exactly once, keep it here)
 tests/
@@ -61,6 +64,7 @@ tests/
   core_physics.cpp    Unit + physics checks (CHECK macro, nonzero exit on failure)
   core_threads.cpp    1 worker vs N workers: timing + determinism
   core_taskrunner.cpp Host-supplied TaskRunner shared by 40+ worlds: no extra threads, same results as 1 worker
+  core_joints.cpp     Every joint type, world anchors, live updates, breaking, feedback, the parameter table
   box3d_test.hiplc    Houdini scene for manual testing (tests/backup/ holds older saves)
 ```
 
@@ -128,7 +132,7 @@ point from this body into the other). They share a `thread_local` shape-id scrat
 accepts all of them on a disabled body (proxies are only touched when they exist).
 
 **World settings.** `WorldSettings` (Box3D's defaults, except standard gravity): gravity, `subSteps`, `workerCount`,
-`enableSleep`, `enableContinuous`, `enableSpeculative`, `contactHertz`, `contactDampingRatio`, `contactPushSpeed`,
+`enableSleep`, `enableContinuous`, `enableSpeculative`, `contactStiffness` (Hz), `contactDampingRatio`, `contactPushSpeed`,
 `restitutionThreshold`, `maxLinearSpeed`. `applyTuning` pushes changes into the live world (`b3World_SetGravity`,
 `EnableSleeping`, `EnableContinuous`, `EnableSpeculative`, `SetContactTuning`, `SetRestitutionThreshold`,
 `SetMaximumLinearSpeed`); `workerCount` (parallel tasks per step) is fixed at creation and needs a new world.
@@ -266,7 +270,7 @@ Data names: `"Box3DWorld"`, `kBox3DDataName` (`"Box3DData"`, SIM_Box3DData.h), `
 
 `Box3DObjectSync::fp` (`Box3DSyncFingerprint`): point count and offset range (plain points only; packed topology is
 assumed fixed, a new instance gets a new `id`), data ids of `P`, `orient`, `v`, `w`, `id`, `active`, the node body type,
-and the **prop markers**: data ids of `kPropAttribNames` (25 attributes that change settings or ask for rebuilds, looked
+and the **prop markers**: data ids of `kPropAttribNames` (26 attributes that change settings, ask for rebuilds or rename pieces, looked
 up by name), the primitive list's data id (`primitiveListDataId`: packed transforms are intrinsics; bumping it is up to
 whoever edits a primitive, so an edit that does not is picked up on the next scan) and `nodeHash`. Equal fingerprint ->
 skip.
@@ -542,6 +546,94 @@ flushed line per frame slows Houdini a lot); plain `B3D_LOG` is for one-off even
 rebuilt, fallback notes). All macros compile to nothing without `BOX3DDOP_DEBUG`; arguments used only by logs get
 `(void)x`. Output: stderr, `[b3dop]` prefix. The only counter is `rebuilds`.
 
+## Joints
+
+Box3D's joints first: every Box3D joint type that makes sense for rigid bodies is exposed with Box3D's own
+settings and defaults; Houdini's geometry is only the transport. No SideFX constraint concepts (glue, constraint
+relationships, `constraint_type` position / rotation / all) are used. Character-mover joints (mover, pogo) are left
+out.
+
+Naming: attributes holding the state at the initial pose are called `rest*` (`restlength`); attributes the solver
+keeps current are the plain names (`P`, `orient`) or `current_*` readings. The solver writes no attribute it does
+not read itself, except outputs the user asks for (Write Feedback).
+
+**Core** (`Box3DJoints.h`, `Box3DWorld`, tested in `tests/core_joints.cpp`):
+* `JointType` (weld, spherical, revolute, prismatic, distance, motor, parallel, wheel, filter) and `JointSettings`:
+  every setting of every type in Box3D units (radians, rad/s, Hz). Box3D's FLT_MAX caps are negative values here
+  (unlimited): break thresholds, parallel `maxTorque`, distance `maxLength`, `maxTensionForce`,
+  `maxCompressionForce` (Box3D's signed `lowerSpringForce` / `upperSpringForce`, renamed so the sign cannot be got
+  wrong). Distance `restLength < 0` (`restlength`) = the anchors' distance when the joint is made. Weld: `enableLinearSpring` /
+  `enableAngularSpring` (off = rigid; Box3D's own rule is "hertz 0 = rigid", which reads backwards with the name
+  stiffness). Every Box3D "hertz" is called stiffness.
+* `jointParams()`: one row per setting (attribute / parameter name, label, kind, joint types using it, member
+  pointer, help). The Box3D Joints node, the primitive attribute reader and `sameJointSettings` are all driven by
+  it. `angleTypes` marks a Float that is an angle for some types only (`motor_speed`: revolute deg/s, prismatic and
+  distance units/s). `Rotation` is Euler XYZ degrees in Houdini and a quaternion in the core.
+* `Box3DWorld::defaultJointSettings(type)` copies `b3Default*JointDef`, so the node's defaults are Box3D's.
+* `createJoint(type, bodyA, bodyB, frameA, frameB, settings, userData)`: frames are world space (anchor P +
+  orient) and converted to each body's local frame from its current transform (`toLocal`). A null BodyHandle is the
+  world: one shapeless static body per world, made on first use (`Impl::anchor`, not in `bodyCount`). Settings are
+  clamped first (`sanitized`) to what Box3D asserts on: non-negative stiffness / damping / caps, ordered limits,
+  cone angle 0..pi/2, revolute target -pi..pi, finite vectors, unit quaternions (the test checks
+  `assertCount` does not move in a RelWithDebInfo build). Filter joints always have `collideConnected` off.
+* `updateJoint` pushes every setting of the type through Box3D's setters (all are live) and wakes the bodies.
+  Bodies, frames and type cannot change live: the caller recreates the joint.
+* `jointFeedback`: constraint force / torque (vectors), linear / angular separation, and per-type readings named
+  `current_*` (plus `motor_torque`, `motor_force`, `spin_torque`) so no reading shares a name with a setting (a
+  test checks). Box3D's `b3Joint_GetAngularSeparation` compares the bodies' rotations, not the joint frames
+  (`relQ = inv(qA) * qB` in joint.c), so it reports a non-zero angle for a perfectly held joint between bodies that
+  started rotated relative to each other; we report it as Box3D gives it (the test documents this).
+  For wheel joints Box3D's angular separation is a `// todo` that asserts, so it is reported as 0.
+* Breaking: Box3D raises a joint event when force / torque passes the threshold (solver.c) but does not break the
+  joint; `brokenJoints` returns the events' user data and the caller destroys them. `b3DestroyBody` destroys a
+  body's joints, so handles can go stale: `isJointValid` before use.
+
+**Houdini** (`Box3DJointSync.cpp`, `SIM_Box3DJoints.cpp`):
+* A network is a `SIM_Geometry` on an object named `Joints` (the Box3D Joints node's Geometry Data), attached like
+  the object's own `Geometry`, usually with a SOP Geometry DOP. The node (data name `Box3DJoints`) only holds
+  defaults: Common tab (parameter = attribute name) plus one tab per type (`<type>_<attribute>`). It is optional.
+* `anyJointNetwork` runs first in the sync; while true, each full object scan fills `Box3DObjectSync::byName`
+  (point `name` -> entry, first wins) and an object without `namesKnown` cannot skip. `name` is a prop marker, so a
+  renamed piece rescans.
+* Gather: one network per distinct geometry (`getUniqueId`); the same SOP on several objects is read once
+  (`carriers > 1`: one warning, no write-back, since writing would give each object its own copy and the
+  dedupe would break). Network key = carrier object id + data name.
+* A network is reprocessed only when its fingerprint (identity, topology, data ids of `P`, `name`, `orient`,
+  `joint_type`, every table attribute, the `broken` group), the Box3D Joints defaults, or
+  `Box3DSharedState::bodyVersion` (bumped when bodies or affectors are added / removed) changed. Otherwise its
+  joints keep the network's `liveStamp`, like skipped objects' bodies.
+* Per two-point primitive: `joint_type` (unknown: counted, ignored), anchors resolved (`Anchors::resolve`: empty =
+  world; a piece name in any object in object order; `object/piece`; an object with exactly one body; an affector
+  object's name -> its static mesh body). Unresolved: no joint, retried when bodies change. Settings = the type's
+  defaults + matching primitive attributes (int for toggles, float, vector; angles in degrees). Signature = type,
+  bodies, both frames: equal and the joint valid -> `updateJoint` if settings differ; else recreate.
+  `Box3DJointEntry` (in `st.joints`, key network + primitive offset) is the joint's user data, so nodes must not
+  move (unordered_map). Entries not stamped are destroyed and erased.
+* After the step (`jointsAfterStep`): broken joints are destroyed and flagged (never remade, even if the
+  primitive changes), and for single-carrier networks written back: `broken` primitive group, and with Write
+  Feedback (default on) `force`, `torque` (vectors), `linear_separation`, `angular_separation` (degrees) and the
+  per-type readings (angles in degrees). The data is converted to a `SIM_GeometryCopy` once (like the object
+  geometry), and the fingerprint is re-recorded after the write so it is not seen as an edit. A network whose SOP
+  Geometry re-applies every step overwrites the group; `Box3DJointEntry::broken` still holds until a world rebuild.
+* **Live frames** (written networks, i.e. one carrier): after every step `writeLiveFrames` sets each live joint's
+  anchor points' `P` / `orient` to where its frames are now (`Box3DWorld::jointWorldFrames`: body pose times local
+  frame; a world end does not move). The network data is cached with each timestep (SIM_GeometryCopy), so a world
+  rebuilt mid-simulation makes its joints from the cached `P` / `orient` against the cached body poses, which gives
+  exactly the same local frames as continuing (`tests/core_joints.cpp` compares a rebuilt world with the original).
+  * The authored frames are not kept (no attribute is written that the solver does not read): the network's
+    `P` / `orient` are the authored values only until the first step.
+  * Edits: the entry remembers what it wrote (`wroteA` / `wroteB`, as stored in float). A reprocessed network whose
+    anchor differs (1e-5 relative; q and -q equal) was edited upstream (a SOP Solver): the joint is remade from the
+    new `P` / `orient`. The signature therefore leaves the frames out for written networks; a network that is not
+    written (several carriers) keeps the frames in its signature, so editing them remakes the joint as before.
+  * A distance joint made with `restlength < 0` gets the anchors' distance at that moment written to its
+    `restlength` primitive attribute (created with default -1), so a rebuild keeps the rest length instead of the
+    current, stretched distance.
+  * Our writes bump `P` / `orient`, which are in the network fingerprint; the fingerprint is re-recorded after the
+    write, so an unchanged network still skips. Writing happens every step regardless of Write Feedback.
+  * Not written: networks on several objects (warning), and a SOP Geometry set to re-apply every step overwrites
+    the live values, so a resim from a cached frame other than the first uses the authored frames there.
+
 ## Tests
 
 Built in both configurations (`-DBOX3DDOP_CORE_ONLY=ON` builds only these):
@@ -550,6 +642,7 @@ Built in both configurations (`-DBOX3DDOP_CORE_ONLY=ON` builds only these):
 |---|---|
 | `b3dop_core_smoke` | Box3D version, create / destroy; expects `OK` |
 | `b3dop_core_physics` | Handle API (and the test-side `KeyedWorld`), shape mapping, explicit primitives, mass, body types, resting heights, hulls (limits, caching, instancing), packed matrix math, `sanitizeQuat` / `storedPosition`, setters on existing bodies (material, damping, gravity, sleep, density, enable, shape replacement), live tuning, patterns and collision groups (incl. re-filtering), contacts, mass centring / inertia scaling, sleep threshold, kinematic targets, external forces (force / torque per step, summing, non-finite input, static / kinematic / sleeping bodies, gravity as a force), contact recycling (world distance live, per-body flag at creation and on existing bodies, velocity kept, sleepers not woken) |
+| `b3dop_core_joints` | Every joint type (weld holds, distance keeps length, revolute motor + live speed change, prismatic limit along a rotated frame, motor joint, wheel spin, filter), world anchors, refused joints, clamping (no Box3D asserts), breaking events, frames on moved bodies, live frames (a world rebuilt from `jointWorldFrames` matches the continued one), Box3D defaults, the parameter table, feedback names never equal setting names |
 | `b3dop_core_taskrunner [workers]` | Worlds on one shared host pool: tasks run, results match 1 worker |
 | `b3dop_core_threads [workers] [side] [steps]` | 1 vs N workers: speedup, fails if positions differ by > 1e-4 |
 

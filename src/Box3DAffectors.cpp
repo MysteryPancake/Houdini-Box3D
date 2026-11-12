@@ -14,6 +14,7 @@
 #include <SIM/SIM_Object.h>
 #include <SIM/SIM_ObjectArray.h>
 #include <SIM/SIM_Utils.h>
+#include <UT/UT_String.h>
 #include <UT/UT_Matrix4.h>
 #include <UT/UT_Vector3.h>
 
@@ -139,6 +140,10 @@ syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects, Box3DAffector
 
         Box3DAffectorBody &ab = st.affectors[objectId];
         ab.stamp = st.syncStamp;
+        {
+            const UT_String &nm = obj->getName();
+            ab.name = nm.isstring() ? std::string(nm.buffer()) : std::string();
+        }
 
         // The object's world transform (position + any scale), row-vector layout.
         UT_DMatrix4 xf;
