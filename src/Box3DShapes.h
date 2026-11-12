@@ -552,4 +552,38 @@ fitShapeToPoints(ShapeType type, const float *xyz, int count, ShapeSpec &out)
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// What a point holds after the solver writes a body's result into it.
+//
+// The solver mirrors what the geometry stores so it can tell its own writes from
+// edits by other nodes. These two functions are the single definition of how a
+// value changes on its way into and out of the geometry, shared by the read path
+// (readPointState) and the write-back's prediction, so they cannot drift apart.
+// ---------------------------------------------------------------------------
+
+// Box3D asserts on non-unit quaternions. Houdini users hand us zeros (an
+// attribute that was created with default 0) or slightly off-unit values.
+inline void sanitizeQuat(float q[4])
+{
+    double len2 = 0.0;
+    for (int i = 0; i < 4; ++i) len2 += double(q[i]) * double(q[i]);
+    if (!(len2 > 1e-12) || !std::isfinite(len2))
+    {
+        q[0] = q[1] = q[2] = 0.0f;  q[3] = 1.0f;
+        return;
+    }
+    const float inv = float(1.0 / std::sqrt(len2));
+    for (int i = 0; i < 4; ++i) q[i] *= inv;
+}
+
+// P is written through UT_Vector3 (float) and read back through getPos3 (float),
+// so the geometry holds double -> float -> double. Returns false if the result is
+// not finite (the read path treats that point as absent).
+inline bool storedPosition(const double in[3], double out[3])
+{
+    for (int i = 0; i < 3; ++i)
+        out[i] = double(float(in[i]));
+    return std::isfinite(out[0]) && std::isfinite(out[1]) && std::isfinite(out[2]);
+}
+
 } // namespace b3dop

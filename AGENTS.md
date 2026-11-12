@@ -202,8 +202,10 @@ Per-step scratch lives in `Box3DSharedState` and is reused: `slots` (per object 
 `vector<Box3DPointSlot>`: the point's offset, key, cached mirror entry and freshly read state)
 and `writeItems`. A slot's cached entry is trusted only while its offset and key still match, so
 a steady-state step does no hash lookups; every slot is dropped whenever an entry is erased.
-`syncStamp` / `stampedCount` replace the old `seen` set: an entry whose stamp is not the current
-sync's was not seen, and equal counts mean there is nothing to remove.
+`syncStamp` / `stampedCount` replace the old `seen` set: an entry whose stamp is not current was not
+seen, and equal counts mean there is nothing to remove. "Current" is per object (see "Skipping the sync scan"):
+`Box3DSharedState::isLive(entry)` = the entry's object was visited by this sync and the entry carries that object's
+`liveStamp`.
 
 Smaller per-step savings: `PointAttrs` binds only `id, active, v, w, orient` per object and the
 ~17 body-building attributes lazily (`bindBuildAttrs`, first new body); `getPackedInfo` is skipped
@@ -238,6 +240,8 @@ Data names: world is attached as `"Box3DWorld"`, defaults as `"Box3DData"`; geom
    scale, v, w, orient, bullet_georep, bullet_autofit, bullet_primS/R/T, bullet_radius,
    bullet_length` and the body-setting attributes; any may be invalid = default).
 3. Reads `SIM_Box3DData` fallback settings if attached.
+3b. **Skip check** (before the passes): if the object's change markers equal the ones recorded last time, passes 1 and 2
+   are skipped entirely (see "Skipping the sync scan").
 4. **Pass 1 (parallel when >= 2048 points, `UTparallelFor`)**: per point compute body id
    (`id` attr else point number, which equals the index in a full point-range walk), key,
    `getPackedInfo`, `readPointState`, and `active`, into the persistent slot. Reads only (a slot
@@ -255,6 +259,35 @@ Edits that are **not** picked up on an existing body: `bullet_georep`, `bullet_a
 Data node settings (mass, default shape...), and solver gravity/substeps/sleep. These are applied
 at body/world creation; a rebuild (Reset Simulation or thread-count change) re-reads them.
 (`WorldSettings` is stored at creation and `step` uses the stored `subSteps`.)
+
+### Skipping the sync scan
+
+Passes 1 and 2 read and compare every point, including sleeping ones. For an object that nobody touched they find nothing,
+so each object keeps a `Box3DObjectSync` record in `Box3DSharedState::objectSync` with a `Box3DSyncFingerprint`: point
+count, size of the point offset range, the data ids of `P`, `orient`, `v`, `w`, `id`, `active` (absent = its own value), and
+the Box3D Data body type (a change retypes existing bodies, which the scan applies). A GA data id changes whenever the
+attribute is written, which is what makes it a change marker.
+
+* Recorded at the end of a full scan, and again by `writeResultsBack` after it bumps the ids of what it wrote (otherwise our
+  own write would defeat the skip every step).
+* Next step, equal fingerprint -> `syncObject` counts the object's entries (`entryCount`) into `stampedCount` and returns the
+  stored `hasDynamic`. Nothing per point runs; the mirror entries are untouched.
+* Because entries are not re-stamped, the stamp check is per object: each record has `liveStamp` (what its entries carry
+  while current; unchanged by a skip) and `visited` (last sync that looked at the object). Removal, write-back pass 0 and
+  `isLive` all use that. Records of objects the sync did not see are erased, so an object that disappears and returns scans.
+* **Assumption: packed instances keep their point count and topology.** For geometry with primitives the fingerprint does
+  not track point count / offset range, and the write-back trusts the primitive offset and 3x3 stored in the mirror entry.
+  Whoever wants different topology must create a NEW instance with a new `id` (that changes the `id` / `P` markers, so the
+  object rescans and the old body is removed). Plain points (no primitives) still have their count tracked.
+* **Not detected on a skipped step:** a change to a packed primitive's own rotation / scale that leaves `P`, `id`, `active`,
+  `orient`, `v`, `w` untouched (the primitive transform is an intrinsic, not an attribute with a data id). A translation
+  edit changes `P` and is caught. The write-back keeps the entry's 3x3 current with its own writes.
+* Never skipped when: the last scan had a failed body / duplicate id / non-finite P (those are retried and warned about
+  every step), or the world was rebuilt (the records live in the shared state, so a fresh world starts empty).
+* UNVERIFIED in Houdini: whether the data ids survive the DOP copy of the Geometry between timesteps. If they do not, the
+  fingerprint never matches and every step scans as before (correct, just no gain). Debug builds log
+  `sync: N of M object(s) unchanged, scan skipped` when it works, and `full scan, <marker> changed` when an object that could
+  have skipped did not; check that first. Also unchecked against the HDK: `GA_Detail::getP()`, `GA_Detail::getNumPrimitiveOffsets()`.
 
 ### addPointBody / buildShapes
 
@@ -363,12 +396,19 @@ compiled against the HDK; compare a rotated `bullet_primR` box against a Bullet 
    write geometry (in range, `id` / point index still matches) and looked up again by point id if
    it is stale. Unresolvable bodies are counted and skipped (one warning).
 4. Pass 2 (parallel): `hardenAllPages()` on `P/orient/v/w` first (copy-on-write pages would
-   race), write attributes, compute the new packed matrix (not written yet), then re-read the
-   point state and store it in the (distinct) mirror entry, so the mirror records what the geometry
-   actually holds (P may be stored at lower precision than Box3D; without this, our own write would
-   look like an external edit next step). `bumpDataId()` afterwards.
+   race), write attributes, compute the new packed matrix (not written yet), then store in the (distinct)
+   mirror entry what the geometry now holds, WITHOUT reading it back. The mirror must equal what `readPointState`
+   returns or our own write looks like an external edit next step: `P` = `b3dop::storedPosition` (double -> float ->
+   double; a non-finite result keeps Box3D's value, as the read path treats it as absent), `v`/`w` unchanged (floats),
+   `rot` = `b3dop::sanitizeQuat` of the float quaternion as written, or for a packed point of the rotation of the new
+   matrix. `sanitizeQuat` and `storedPosition` live in `Box3DShapes.h` and are shared by the read path, so they cannot
+   drift; `core_physics` pins them. If `readPointState` changes, change the prediction with it. Set
+   `BOX3DDOP_VERIFY_READBACK=1` (debug build) to have the write-back also read every point back and log
+   `READBACK MISMATCH` on any bit difference. `bumpDataId()` afterwards, then the object's fingerprint is re-recorded.
 5. Pass 3 (serial): packed `setLocalTransform` + `transformDirty` (kept serial because the HDK
-   does not document thread-safety).
+   does not document thread-safety). Pass 2 no longer verifies the point still belongs to its primitive: topology is
+   assumed fixed (see "Skipping the sync scan"); pass 3 only checks the offset is a packed primitive, and counts a
+   body that fails it as unmatched instead of writing.
 
 Static points are never written. Kinematic bodies are also not written back (the mirror's
 `dynamic` flag is true only for `Type::Dynamic`). Of several points sharing an `id`, only the first
@@ -436,7 +476,7 @@ Build with `-DBOX3DDOP_CORE_ONLY=ON` (or as part of the normal build; all three 
 | Target | Checks |
 |---|---|
 | `b3dop_core_smoke` | Prints Box3D version, create/destroy; expects `OK` |
-| `b3dop_core_physics` | World/body API, handle API equivalence, attribute->shape mapping, explicit primitive overrides (Euler order, rotated capsule / box resting heights), mass->density, body type switching, capsule/sphere/box resting heights, hull creation/limits/caching/instancing, packed-matrix math (quaternion<->matrix round trips, `composeLocal3`, row-vector convention), offset hulls, compounds under real physics |
+| `b3dop_core_physics` | `sanitizeQuat` / `storedPosition` (the write-back's mirror prediction), World/body API, handle API equivalence, attribute->shape mapping, explicit primitive overrides (Euler order, rotated capsule / box resting heights), mass->density, body type switching, capsule/sphere/box resting heights, hull creation/limits/caching/instancing, packed-matrix math (quaternion<->matrix round trips, `composeLocal3`, row-vector convention), offset hulls, compounds under real physics |
 | `b3dop_core_threads [workers=4] [side=12] [steps=120]` | Same scene on 1 vs N workers, reports speedup, fails if positions differ by > 1e-4 |
 
 Houdini-side code (`SIM_*`) has no automated tests; `tests/box3d_test.hiplc` is a manual scene.

@@ -1,5 +1,6 @@
 // Exercises the real Box3D calls in the wrapper: a box falls onto a static
 // ground box, comes to rest, and velocities/transforms round-trip.
+#include "Box3DShapes.h"
 #include "Box3DWorld.h"
 #include <cmath>
 #include <cstdio>
@@ -703,6 +704,36 @@ int main()
         CHECK(ew.setTransformByHandle(ew.bodyHandle(2), np, q0));
         CHECK(ew.moveEventCount() == 0);
         std::printf("move-event checks done\n");
+    }
+
+    {
+        // sanitizeQuat / storedPosition: the write-back predicts what the geometry holds
+        // with these instead of reading it back, so their behaviour is pinned here.
+        float z[4] = { 0, 0, 0, 0 };
+        b3dop::sanitizeQuat(z);
+        CHECK(z[0] == 0 && z[1] == 0 && z[2] == 0 && z[3] == 1);           // zero -> identity
+        float nan4[4] = { NAN, 0, 0, 1 };
+        b3dop::sanitizeQuat(nan4);
+        CHECK(nan4[3] == 1 && nan4[0] == 0);                                // non-finite -> identity
+        float off[4] = { 0.1f, 0.2f, 0.3f, 1.7f };
+        b3dop::sanitizeQuat(off);
+        double l2 = 0; for (int i = 0; i < 4; ++i) l2 += double(off[i]) * off[i];
+        CHECK(std::fabs(l2 - 1.0) < 1e-6);                                  // normalised
+        float again[4] = { off[0], off[1], off[2], off[3] };
+        b3dop::sanitizeQuat(again);
+        double drift = 0; for (int i = 0; i < 4; ++i) drift += std::fabs(double(again[i]) - off[i]);
+        CHECK(drift < 1e-6);                                                // idempotent to float noise
+
+        const double in[3] = { 0.1, -12345.678901234, 1e-9 };
+        double out[3];
+        CHECK(b3dop::storedPosition(in, out));
+        for (int i = 0; i < 3; ++i) CHECK(out[i] == double(float(in[i])));
+        double out2[3];
+        CHECK(b3dop::storedPosition(out, out2));                            // idempotent: no drift on re-store
+        for (int i = 0; i < 3; ++i) CHECK(out2[i] == out[i]);
+        const double huge[3] = { 1e300, 0, 0 };
+        CHECK(!b3dop::storedPosition(huge, out));                           // overflows float -> not finite
+        std::printf("stored-pose checks done\n");
     }
 
     w.destroy();

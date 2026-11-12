@@ -9,6 +9,9 @@
 // Houdini must be restarted for the environment itself to change):
 //
 //     BOX3DDOP_REQUESTED_CACHE=<int>  value getRequestedCacheSubclass() returns
+//     BOX3DDOP_VERIFY_READBACK=1      write-back also re-reads every point it wrote and logs
+//                                     "READBACK MISMATCH" if that differs (bit for bit) from the
+//                                     pose it predicted for the mirror. Slow; for checking only.
 #pragma once
 
 #include <atomic>

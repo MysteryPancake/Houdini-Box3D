@@ -106,6 +106,43 @@ struct Box3DWriteItem
     double            newM3[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
 };
 
+// What an object's geometry looked like when the solver last finished with it. If the
+// next step finds exactly the same fingerprint, nothing the sync pass looks at can have
+// changed, and the per-point scan is skipped. Every field is a "did anything touch this"
+// marker: attribute data ids are bumped by any write to the attribute (the solver bumps
+// P / orient / v / w after its own write-back, and records the fingerprint after that).
+struct Box3DSyncFingerprint
+{
+    static constexpr GA_DataId kNoId = GA_DataId(-1);   // attribute absent
+
+    int64_t   numPoints  = -1;      // -1 for geometry with primitives: packed instances are assumed
+    int64_t   numOffsets = -1;      // to keep their topology (a new instance gets a new `id`)
+    GA_DataId pId = kNoId, orientId = kNoId, vId = kNoId, wId = kNoId;
+    GA_DataId idId = kNoId, activeId = kNoId;
+    int       nodeType = -1;        // Box3D Data body type: a change retypes existing bodies
+
+    bool operator==(const Box3DSyncFingerprint &o) const
+    {
+        return numPoints == o.numPoints && numOffsets == o.numOffsets &&
+               pId == o.pId && orientId == o.orientId && vId == o.vId && wId == o.wId &&
+               idId == o.idId && activeId == o.activeId && nodeType == o.nodeType;
+    }
+    bool operator!=(const Box3DSyncFingerprint &o) const { return !(*this == o); }
+};
+
+// Per object, kept in the shared state. Besides the fingerprint it carries the stamp
+// its mirror entries are current under: a skipped sync does not touch the entries, so
+// "seen this step" cannot be a per-entry comparison with the step's own stamp.
+struct Box3DObjectSync
+{
+    uint64_t liveStamp  = 0;        // entries of this object carry this stamp while they are current
+    uint64_t visited    = 0;        // syncStamp of the last sync that looked at the object at all
+    size_t   entryCount = 0;        // entries stamped by the last full scan
+    bool     hasDynamic = false;    // result of the last full scan
+    bool     canSkip    = false;    // fp describes a clean, fully scanned object
+    Box3DSyncFingerprint fp;
+};
+
 // Everything that is shared between timestep copies.
 struct Box3DSharedState
 {
@@ -113,11 +150,15 @@ struct Box3DSharedState
     std::unordered_map<uint64_t, Box3DBodyMirror> mirror; // key: b3dop::makeBodyKey(object id, point id)
     uint64_t                                    generation = 0;  // for logs
 
-    // Bumped once per sync. An entry whose stamp is not the current one was not
-    // seen this step (its point is gone); stampedCount says how many were seen,
-    // so "nothing to remove" is one comparison instead of a scan.
+    // Bumped once per sync. An entry whose stamp is not its object's live stamp
+    // (Box3DObjectSync) was not seen (its point is gone); stampedCount says how many
+    // entries are current, so "nothing to remove" is one comparison instead of a scan.
     uint64_t                                    syncStamp    = 0;
     size_t                                      stampedCount = 0;
+
+    // One record per object seen by the last sync (see Box3DObjectSync). std::unordered_map
+    // nodes are stable, so a pointer to a record survives other inserts.
+    std::unordered_map<int, Box3DObjectSync>    objectSync;
 
     // Scratch reused every step (see Box3DPointSlot / Box3DWriteItem).
     std::unordered_map<int, std::vector<Box3DPointSlot>> slots;     // key: object id
@@ -130,6 +171,15 @@ struct Box3DSharedState
     bool   stamped    = false;
 
     std::mutex                                  mutex;
+
+    // Is this entry current: its object was visited by the latest sync, and the entry
+    // carries the stamp that object's entries are current under?
+    bool isLive(const Box3DBodyMirror &m) const
+    {
+        const auto it = objectSync.find(m.objectId);
+        return it != objectSync.end() && it->second.visited == syncStamp &&
+               m.stamp == it->second.liveStamp;
+    }
 
     // True if this world was last stepped exactly one timestep before `now`.
     // Written as (now - stamp) == timestep so it does not matter whether the

@@ -38,7 +38,9 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <initializer_list>
+#include <iterator>
 #include <map>
 #include <mutex>
 #include <string>
@@ -130,22 +132,6 @@ struct PointAttrs
         length         = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "bullet_length");
     }
 };
-
-// Box3D asserts on non-unit quaternions. Houdini users hand us zeros (an
-// attribute that was created with default 0) or slightly off-unit values.
-void
-sanitizeQuat(float q[4])
-{
-    double len2 = 0.0;
-    for (int i = 0; i < 4; ++i) len2 += double(q[i]) * double(q[i]);
-    if (!(len2 > 1e-12) || !std::isfinite(len2))
-    {
-        q[0] = q[1] = q[2] = 0.0f;  q[3] = 1.0f;
-        return;
-    }
-    const float inv = float(1.0 / std::sqrt(len2));
-    for (int i = 0; i < 4; ++i) q[i] *= inv;
-}
 
 // ---------------------------------------------------------------------------
 // Packed primitives
@@ -538,13 +524,13 @@ readPointState(const GU_Detail *gdp, const PointAttrs &a, GA_Offset off,
     if (pk.prim)
     {
         for (int i = 0; i < 4; ++i) out.rot[i] = pk.rot[i];
-        sanitizeQuat(out.rot);
+        b3dop::sanitizeQuat(out.rot);
     }
     else if (a.orient.isValid())
     {
         const UT_QuaternionF q = a.orient.get(off);
         out.rot[0] = q.x();  out.rot[1] = q.y();  out.rot[2] = q.z();  out.rot[3] = q.w();
-        sanitizeQuat(out.rot);
+        b3dop::sanitizeQuat(out.rot);
     }
 
     out.lin[0] = out.lin[1] = out.lin[2] = 0.0f;
@@ -579,6 +565,48 @@ describeStateDifference(const Box3DBodyPose &a, const Box3DBodyPose &b)
         if (std::fabs(a.lin[i] - b.lin[i]) > eps) return "linear velocity";
     for (int i = 0; i < 3; ++i)
         if (std::fabs(a.ang[i] - b.ang[i]) > eps) return "angular velocity";
+    return nullptr;
+}
+
+// What the sync pass depends on, as cheap change markers (see Box3DSyncFingerprint).
+// `a` must be bound on `gdp`. An absent (or wrong-typed) attribute is its own marker value.
+Box3DSyncFingerprint
+makeFingerprint(const GU_Detail *gdp, const PointAttrs &a, int nodeType)
+{
+    // Geometry with primitives (packed instances) is ASSUMED to keep its point count and
+    // topology: whoever changes it must create a new instance with a new `id`, which shows
+    // up in the `id` / P markers. Plain points are still checked for count changes.
+    const bool trustTopology = gdp->getNumPrimitives() > 0;
+    auto idOf = [](const auto &h) {
+        return h.isValid() ? h.getAttribute()->getDataId() : Box3DSyncFingerprint::kNoId;
+    };
+    Box3DSyncFingerprint fp;
+    fp.numPoints  = trustTopology ? -1 : int64_t(gdp->getNumPoints());
+    fp.numOffsets = trustTopology ? -1 : int64_t(gdp->getNumPointOffsets());
+    const GA_Attribute *P = gdp->getP();
+    fp.pId        = P ? P->getDataId() : Box3DSyncFingerprint::kNoId;
+    fp.orientId   = idOf(a.orient);
+    fp.vId        = idOf(a.v);
+    fp.wId        = idOf(a.w);
+    fp.idId       = idOf(a.id);
+    fp.activeId   = idOf(a.active);
+    fp.nodeType   = nodeType;
+    return fp;
+}
+
+// Which marker differs, for the debug log.
+const char *
+describeFingerprintDifference(const Box3DSyncFingerprint &a, const Box3DSyncFingerprint &b)
+{
+    if (a.numPoints != b.numPoints)   return "point count";
+    if (a.numOffsets != b.numOffsets) return "point offset range";
+    if (a.pId != b.pId)               return "P";
+    if (a.orientId != b.orientId)     return "orient";
+    if (a.vId != b.vId)               return "v";
+    if (a.wId != b.wId)               return "w";
+    if (a.idId != b.idId)             return "id";
+    if (a.activeId != b.activeId)     return "active";
+    if (a.nodeType != b.nodeType)     return "Box3D Data body type";
     return nullptr;
 }
 
@@ -943,6 +971,7 @@ storePacked(Box3DBodyMirror &m, const Box3DPointSlot &s)
 struct SyncCounts
 {
     int added = 0, edited = 0, retyped = 0, failed = 0, duplicates = 0, badP = 0;
+    int skipped = 0;            // objects whose scan was skipped (nothing changed)
     std::unordered_map<std::string, int> fallbacks;     // shape fallback note -> bodies that used it
 };
 
@@ -965,12 +994,41 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
     PointAttrs a(gdp);          // the build attributes are bound on the first new body
     bool       buildAttrsBound = false;
     const bool anyPrims = gdp->getNumPrimitives() > 0;     // no primitives -> no packed points to look for
+    const int  objectId = obj.getObjectId();
     // Default settings for all points of an object (the Box3D Data DOP node), or
     // built-in defaults if the object has none.
     const SIM_Box3DData *dataNode = SIM_DATA_GETCONST(obj, kDataName, SIM_Box3DData);
     const b3dop::BodySettings node = dataNode ? dataNode->toBodySettings() : b3dop::BodySettings();
     b3dop::Box3DWorld &world = st.world;
     bool hasDynamic = false;
+
+    // ---- nothing changed since we last finished with this object? -------------
+    // After a full scan (below) the object's change markers are recorded, and the
+    // write-back records them again after bumping the ids of what it wrote. If the next
+    // step finds the same markers, no point can differ from the mirror, so passes 1 and 2
+    // are skipped: the mirror entries stay current under the stamp they already carry
+    // (liveStamp) and are counted without being touched. Packed instances are assumed to
+    // keep their point count and topology (see makeFingerprint). A packed primitive's own
+    // rotation / scale is NOT covered by any marker: changing it without touching P, `id`
+    // or another marked attribute is not noticed on a skipped step.
+    Box3DObjectSync &os = st.objectSync[objectId];
+    os.visited = st.syncStamp;
+    const Box3DSyncFingerprint fpNow = makeFingerprint(gdp, a, int(node.type));
+    if (os.canSkip && fpNow == os.fp)
+    {
+        ++c.skipped;
+        st.stampedCount += os.entryCount;
+        return os.hasDynamic;
+    }
+#ifdef BOX3DDOP_DEBUG
+    if (os.canSkip)
+        B3D_LOG("  object id=%d: full scan, %s changed", objectId,
+                describeFingerprintDifference(fpNow, os.fp));
+#endif
+    os.canSkip   = false;
+    os.liveStamp = st.syncStamp;        // entries stamped below are current under this
+    size_t stamped = 0;                 // entries stamped by this scan
+    const int problems0 = c.failed + c.duplicates + c.badP;
 
     ShapeSources sources;       // packed geometry, collected lazily per distinct source
 
@@ -981,7 +1039,6 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
     // its slot's offset or key changed. When there is no `id` attribute the body
     // id is the point number, which equals the position in a full point-range
     // walk; it is filled here so the parallel pass never calls pointIndex().
-    const int objectId = obj.getObjectId();
     std::vector<Box3DPointSlot> &snaps = st.slots[objectId];
     {
         size_t n = 0;
@@ -1082,6 +1139,7 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
             m.stamp    = st.syncStamp;
             storePacked(m, s);
             ++st.stampedCount;
+            ++stamped;
             world.releaseBuildState(key);           // shapes are all added
             world.setBodyUserData(m.handle, &m);    // lets write-back map a move event to this entry
             s.entry = &m;
@@ -1097,6 +1155,7 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
         entry->stamp    = st.syncStamp;
         storePacked(*entry, s);
         ++st.stampedCount;
+        ++stamped;
 
         // Did `active` flip?
         if (entry->type != wantType)
@@ -1117,6 +1176,13 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
         }
         hasDynamic = hasDynamic || entry->dynamic;
     }
+
+    // Record the markers for the next step. Bodies that failed, duplicated an id or had a
+    // bad P are retried / reported every step, so such an object keeps scanning.
+    os.entryCount = stamped;
+    os.hasDynamic = hasDynamic;
+    os.fp         = fpNow;
+    os.canSkip    = (c.failed + c.duplicates + c.badP) == problems0;
     return hasDynamic;
 }
 
@@ -1461,7 +1527,7 @@ SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
     {
         for (auto it = st->mirror.begin(); it != st->mirror.end();)
         {
-            if (it->second.stamp != st->syncStamp)
+            if (!st->isLive(it->second))
             {
                 st->world.removeBody(it->first);
                 it = st->mirror.erase(it);
@@ -1473,6 +1539,11 @@ SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
         // The slots cache pointers to entries; some of them may just have died.
         st->slots.clear();
     }
+
+    // Objects this sync did not see (gone, or without Geometry) lose their records: if one
+    // came back it must scan, because its bodies were just removed above.
+    for (auto it = st->objectSync.begin(); it != st->objectSync.end();)
+        it = (it->second.visited == st->syncStamp) ? std::next(it) : st->objectSync.erase(it);
 
     // Hulls built for bodies that were then removed (or never created) are
     // no longer needed; hulls still used by a body stay cached for the next
@@ -1495,6 +1566,8 @@ SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
     if (counts.badP)
         warn("Box3D: " + std::to_string(counts.badP) + " point(s) have a non-finite P and are skipped");
 
+    if (counts.skipped)
+        B3D_LOG("  sync: %d of %d object(s) unchanged, scan skipped", counts.skipped, int(objects.entries()));
     if (counts.added || counts.edited || counts.retyped || counts.failed ||
         counts.duplicates || counts.badP || removed)
     {
@@ -1533,13 +1606,26 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
     items.clear();
     items.reserve(size_t(moveCount));
     int missing = 0;
+    // "Seen by this step's sync" is per object now (a skipped object's entries keep the
+    // stamp of its last scan). Moves of one object tend to be contiguous, so the record
+    // lookup is cached for the last object id.
+    int                    lastObj = -1;
+    const Box3DObjectSync *lastOs  = nullptr;
     for (const b3dop::BodyMove &mv : st->moves)
     {
         if (!mv.userData)
             continue;
         DopBodyState *entry = static_cast<DopBodyState *>(mv.userData);
-        if (!entry->dynamic || entry->stamp != st->syncStamp)
+        if (!entry->dynamic)
             continue;                       // static / kinematic: nothing to write
+        if (entry->objectId != lastObj || !lastOs)
+        {
+            lastObj = entry->objectId;
+            const auto f = st->objectSync.find(lastObj);
+            lastOs = (f != st->objectSync.end()) ? &f->second : nullptr;
+        }
+        if (!lastOs || lastOs->visited != st->syncStamp || entry->stamp != lastOs->liveStamp)
+            continue;                       // not seen by this step's sync
         items.emplace_back();
         Box3DWriteItem &w = items.back();
         w.entry    = entry;
@@ -1626,6 +1712,9 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
         // the same mirror entry. Pages must be hardened first, or the writes would
         // race on copy-on-write pages that are still shared.
         GA_RWHandleV3 pOut(gdp, GA_ATTRIB_POINT, "P");
+#ifdef BOX3DDOP_DEBUG
+        const bool verifyReadback = B3D_ENV_INT("BOX3DDOP_VERIFY_READBACK", 0) != 0;
+#endif
         for (GA_Attribute *attr : { pOut.isValid() ? pOut.getAttribute() : nullptr,
                                     qOut.isValid() ? qOut.getAttribute() : nullptr,
                                     vOut.isValid() ? vOut.getAttribute() : nullptr,
@@ -1647,58 +1736,80 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
 
             // A packed primitive's rotation is NOT the point's `orient`: it is
             // the primitive's own transform. Work out the new matrix here (pure
-            // math, plus reads of the primitive), but do not write it: that is
-            // pass 3. Keep its scale, replace the rotation.
-            // The sync pass already read this point's primitive transform and stored it
-            // in the entry; the geometry has not changed since. Reuse it after a cheap
-            // check that the point still belongs to that packed primitive.
-            PackedInfo pk;
-            if (anyPrims)
+            // math), but do not write it: that is pass 3. Keep its scale, replace the
+            // rotation. Packed instances are assumed to keep their topology, so the
+            // primitive offset and 3x3 the last sync stored in the entry are used as they
+            // are (no vertex / primitive lookups here); pass 3 still checks the primitive.
+            Box3DBodyMirror &me     = *w.entry;
+            const bool       packed = anyPrims && me.packed;
+            float            packedRot[4] = { 0, 0, 0, 1 };
+            if (packed)
             {
-                const Box3DBodyMirror &m = *w.entry;
-                if (!m.packed)
-                {
-                    // a plain point: nothing to find
-                }
-                else
-                {
-                    const GA_Offset po   = GA_Offset(m.primOff);
-                    const GA_Offset vtx  = gdp->pointVertex(off);
-                    const GA_Primitive *prim = (GAisValid(vtx) && gdp->vertexPrimitive(vtx) == po)
-                                                   ? gdp->getPrimitive(po) : nullptr;
-                    if (prim && GU_PrimPacked::isPackedPrimitive(*prim))
-                    {
-                        pk.prim    = static_cast<const GU_PrimPacked *>(prim);
-                        pk.primOff = po;
-                        pk.m4[0] = m.m3[0];  pk.m4[1] = m.m3[1];  pk.m4[2]  = m.m3[2];
-                        pk.m4[4] = m.m3[3];  pk.m4[5] = m.m3[4];  pk.m4[6]  = m.m3[5];
-                        pk.m4[8] = m.m3[6];  pk.m4[9] = m.m3[7];  pk.m4[10] = m.m3[8];
-                    }
-                    else
-                        pk = getPackedInfo(gdp, off);       // did not match: read it properly
-                }
-            }
-            if (pk.prim)
-            {
-                const double oldM3[9] = { pk.m4[0], pk.m4[1], pk.m4[2],
-                                          pk.m4[4], pk.m4[5], pk.m4[6],
-                                          pk.m4[8], pk.m4[9], pk.m4[10] };
-                b3dop::composeLocal3(s.rot, oldM3, w.newM3);
-                w.primOff = pk.primOff;
+                b3dop::composeLocal3(s.rot, me.m3, w.newM3);
+                w.primOff = GA_Offset(me.primOff);
                 w.hasM3   = true;
-                // What the primitive will hold, without reading it back: the
-                // rotation of the matrix pass 3 writes.
+                // What the primitive will hold, without reading it back: the rotation of
+                // the matrix pass 3 writes. The entry's 3x3 follows it, because a skipped
+                // sync no longer refreshes it every step.
                 double sc[3];
-                b3dop::matrix3ToQuatScale(w.newM3, pk.rot, sc);
+                b3dop::matrix3ToQuatScale(w.newM3, packedRot, sc);
+                for (int i = 0; i < 9; ++i) me.m3[i] = w.newM3[i];
             }
 
-            // Re-read what the points actually hold (P may be stored in lower
-            // precision than Box3D's) and keep that in the mirror, so next step's
-            // edit detection compares like with like and does not report our own
-            // write as an edit.
-            Box3DBodyPose stored;
-            const bool storedOk = readPointState(gdp, a, off, pk, stored);
-            static_cast<Box3DBodyPose &>(*w.entry) = storedOk ? stored : s;
+            // What the points now hold, without reading them back. This must equal what
+            // readPointState would return, or next step's edit detection sees our own write
+            // as an external edit. The pieces: P goes through float (storedPosition); v and w
+            // are floats already; orient is stored as written and read through sanitizeQuat; a
+            // packed point's rotation is the rotation of the matrix pass 3 writes (packedRot,
+            // computed above), also through sanitizeQuat. A non-finite P is read as "absent",
+            // in which case the mirror keeps what Box3D reported.
+            Box3DBodyPose &mirror = me;
+            double sp[3];
+            if (b3dop::storedPosition(s.pos, sp))
+            {
+                for (int i = 0; i < 3; ++i) mirror.pos[i] = sp[i];
+                // An output attribute that could not be bound was never written, and the read
+                // path then returns its default (identity / zero), so the prediction does too.
+                const float identity[4] = { 0, 0, 0, 1 };
+                const float *rot = packed ? packedRot : (qOut.isValid() ? s.rot : identity);
+                for (int i = 0; i < 4; ++i) mirror.rot[i] = rot[i];
+                b3dop::sanitizeQuat(mirror.rot);
+                for (int i = 0; i < 3; ++i)
+                {
+                    mirror.lin[i] = vOut.isValid() ? s.lin[i] : 0.0f;
+                    mirror.ang[i] = wOut.isValid() ? s.ang[i] : 0.0f;
+                }
+            }
+            else
+                mirror = s;
+
+#ifdef BOX3DDOP_DEBUG
+            if (verifyReadback)
+            {
+                // Debug check (BOX3DDOP_VERIFY_READBACK=1): the old way, compared bit for bit.
+                Box3DBodyPose stored;
+                PackedInfo pk;
+                if (packed)
+                {
+                    pk.prim = static_cast<const GU_PrimPacked *>(gdp->getPrimitive(w.primOff));
+                    for (int i = 0; i < 4; ++i) pk.rot[i] = packedRot[i];
+                }
+                if (readPointState(gdp, a, off, pk, stored) &&
+                    (std::memcmp(stored.pos, mirror.pos, sizeof(stored.pos)) != 0 ||
+                     std::memcmp(stored.rot, mirror.rot, sizeof(stored.rot)) != 0 ||
+                     std::memcmp(stored.lin, mirror.lin, sizeof(stored.lin)) != 0 ||
+                     std::memcmp(stored.ang, mirror.ang, sizeof(stored.ang)) != 0))
+                {
+                    B3D_LOG("  READBACK MISMATCH object=%d point=%lld: predicted pos=(%.9g %.9g %.9g) rot=(%.9g %.9g %.9g %.9g) "
+                            "read pos=(%.9g %.9g %.9g) rot=(%.9g %.9g %.9g %.9g)",
+                            w.objectId, (long long)w.entry->pointId,
+                            mirror.pos[0], mirror.pos[1], mirror.pos[2],
+                            mirror.rot[0], mirror.rot[1], mirror.rot[2], mirror.rot[3],
+                            stored.pos[0], stored.pos[1], stored.pos[2],
+                            stored.rot[0], stored.rot[1], stored.rot[2], stored.rot[3]);
+                }
+            }
+#endif
         }, kMinParallelWrite);
 
         for (GA_Attribute *attr : { pOut.isValid() ? pOut.getAttribute() : nullptr,
@@ -1708,6 +1819,14 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
             if (attr)
                 attr->bumpDataId();
 
+        // The ids just changed because of OUR write; record them so next step's skip check
+        // does not read them as an external edit.
+        {
+            const auto f = st->objectSync.find(items[begin].objectId);
+            if (f != st->objectSync.end() && f->second.canSkip)
+                f->second.fp = makeFingerprint(gdp, a, f->second.fp.nodeType);
+        }
+
         // ---- pass 3 (serial): packed primitive rotation ----------------------
         // setLocalTransform + transformDirty stay serial: the HDK pages do not
         // say whether they touch shared state.
@@ -1716,8 +1835,14 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
             const Box3DWriteItem &w = items[k];
             if (!w.hasM3)
                 continue;
-            GU_PrimPacked *prim = static_cast<GU_PrimPacked *>(gdp->getPrimitive(w.primOff));
-            setLocal3(*prim, w.newM3);
+            const GA_Primitive *raw = (w.primOff >= 0 && w.primOff < gdp->getNumPrimitiveOffsets())
+                                          ? gdp->getPrimitive(w.primOff) : nullptr;
+            if (!raw || !GU_PrimPacked::isPackedPrimitive(*raw))
+            {
+                ++missing;          // topology changed without a new instance id: skip, do not crash
+                continue;
+            }
+            setLocal3(*static_cast<GU_PrimPacked *>(gdp->getPrimitive(w.primOff)), w.newM3);
         }
     }
 
