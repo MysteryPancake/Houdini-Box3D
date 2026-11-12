@@ -594,10 +594,11 @@ describeStateDifference(const Box3DBodyPose &a, const Box3DBodyPose &b)
 // `a` must be bound on `gdp`. An absent (or wrong-typed) attribute is its own marker value.
 // The primitive list's change marker. A packed primitive's transform (and so its scale) is
 // an intrinsic, not an attribute with a data id; this is the closest marker the detail has.
-// UNVERIFIED against a real HDK build: GA_PrimitiveList::getDataId(), and whether every way
-// of editing a packed transform bumps it. If this does not compile, return
-// Box3DSyncFingerprint::kNoId: the only loss is that a packed-scale edit that touches no
-// attribute is picked up on the next scan instead of the next step.
+// GA_PrimitiveList::getDataId() const and GA_Detail::getPrimitiveList() const are in the HDK
+// reference. The HDK says bumpDataId() is how primitives / intrinsic data are marked dirty,
+// i.e. it is up to whoever edits a packed transform. Houdini's own nodes are expected to do
+// that, but it is not guaranteed for every route (e.g. custom HDK code that only calls
+// setLocalTransform): such an edit is then picked up on the next scan instead of this step.
 GA_DataId
 primitiveListDataId(const GU_Detail *gdp)
 {
@@ -2538,6 +2539,7 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
         // ---- pass 3 (serial): packed primitive rotation ----------------------
         // setLocalTransform + transformDirty stay serial: the HDK pages do not
         // say whether they touch shared state.
+        bool wrotePacked = false;
         for (size_t k = begin; k < end; ++k)
         {
             const Box3DWriteItem &w = items[k];
@@ -2552,7 +2554,14 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
                 continue;
             }
             setLocal3(*static_cast<GU_PrimPacked *>(gdp->getPrimitive(pw.primOff)), pw.newM3);
+            wrotePacked = true;
         }
+        // The HDK documents GA_PrimitiveList::bumpDataId() as the way to mark primitives or
+        // their intrinsic data dirty; setLocalTransform does not do it. Without it, anything
+        // caching on the primitive list's data id would not see the new rotations. The
+        // fingerprint re-recorded below picks up the new id, so this does not defeat the skip.
+        if (wrotePacked)
+            gdp->getPrimitiveList().bumpDataId();
     }
 
     // The ids changed because of OUR write (and releasing a write lock may bump them again

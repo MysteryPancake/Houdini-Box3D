@@ -77,19 +77,19 @@ All attributes are optional except `P`. If one is missing, the value from the Bo
 | `orient` | quaternion | Rotation |
 | `v` | vector | Linear velocity |
 | `w` | vector | Angular velocity (radians/s) |
-| `mass` | float | Mass of the body (the solver derives density from it and the shape volume) |
+| `mass` | float | Mass of the body |
 | `friction` | float | Surface friction |
-| `bounce` | float | Bounciness (Box3D restitution) |
+| `bounce` | float | Bounciness |
 | `lineardamping` | float | Linear damping (0 or more) |
 | `angulardamping` | float | Angular damping (0 or more) |
 | `gravityscale` | float | Multiplies gravity for this body; negative floats upward |
-| `enablesleep` | int | `0` = this body never sleeps (read when the body is created) |
-| `bullet_want_deactivate` | int | `1` = may sleep, `0` = kept awake; overrides `enablesleep` and can change mid-simulation |
+| `enablesleep` | int | `0` = this body never sleeps |
+| `bullet_want_deactivate` | int | `1` = may sleep, `0` = kept awake (overrides `enablesleep`) |
 | `isbullet` | int | Nonzero = continuous collision for fast bodies |
 | `active` | int | `0` = static, anything else = dynamic |
-| `bullet_ignore` | int | Nonzero = the body takes no part in the simulation (no motion, no collisions) |
+| `bullet_ignore` | int | Nonzero = the body is left out of the simulation |
 | `deforming` | int | Nonzero = rebuild the collision shape from the current geometry every step |
-| `bullet_autofit_valid` | int | `0` = rebuild the collision shape once; the solver sets it back to `1` |
+| `bullet_autofit_valid` | int | `0` = rebuild the collision shape once (the solver sets it back to `1`) |
 | `bullet_georep` | string | Collision shape (see below) |
 | `bullet_autofit` | int | `1` = fit a box, sphere or capsule to the packed geometry's bounds, `0` = use the attributes below (default: the Box3D Data node's Auto Fit, on) |
 | `bullet_primS` | vector | Box half extents (autofit off, or no packed geometry) |
@@ -104,26 +104,11 @@ Every step the solver writes `P`, `orient`, `v` and `w` back to the dynamic poin
 
 ### Changing attributes during the simulation
 
-The solver follows the same rules as Houdini's Bullet solver. Change attributes with a Geometry Wrangle DOP, a SOP Solver, or by animating the Box3D Data node.
+Like Houdini's Bullet solver, most attributes can be changed mid-simulation (with a Geometry Wrangle DOP, a SOP Solver, or by animating the Box3D Data node) and take effect on the next step: `P`, `orient`, `v`, `w`, `active`, `mass`, `friction`, `bounce`, damping, `gravityscale`, `bullet_want_deactivate` and `bullet_ignore`.
 
-| Attribute | Changes mid-simulation? | How |
-|---|---|---|
-| `P`, `orient`, `v`, `w`, `active` | Yes | Takes effect on the next step |
-| `mass` | Yes | Takes effect on the next step. The inertia is scaled to match, so the shape's mass distribution stays the same |
-| `friction`, `bounce` | Yes | Takes effect on the next step, including on contacts that already exist |
-| `lineardamping`, `angulardamping` | Yes | Takes effect on the next step |
-| `gravityscale` | Yes | Takes effect on the next step |
-| `bullet_want_deactivate` | Yes | `0` wakes the body and keeps it awake, `1` lets it sleep again |
-| `bullet_ignore` | Yes | Takes the body out of the simulation or puts it back |
-| packed scale (`convexhull`, `concave`, `compound`) | Yes | The hulls are rebuilt at the new scale automatically. The mass stays the same |
-| `pscale` / `scale`, and packed scale for `box`, `sphere`, `capsule` | Only with a rebuild | Set `bullet_autofit_valid = 0` |
-| `bullet_autofit`, `bullet_prim*`, `bullet_radius`, `bullet_length` | Only with a rebuild | Set `bullet_autofit_valid = 0` |
-| `bullet_georep` | Only with a rebuild | Set `bullet_autofit_valid = 0` (once) or `deforming = 1` (every step) |
-| packed geometry itself | Only with a rebuild | `deforming = 1` rebuilds from the current geometry every step |
-| `enablesleep`, `isbullet` | No | Read only when the body is created. Use `bullet_want_deactivate` to control sleep |
-| `id` | Not a rebuild switch | `id` only identifies the body. No value (including `-1`) has a special meaning. Giving a point a different `id` makes it a different body |
+Collision shapes are kept once built. To rebuild one, set `bullet_autofit_valid = 0` (rebuilds once) or `deforming = 1` (rebuilds every step). This is how changes to `bullet_georep`, `bullet_autofit`, the `bullet_prim*` attributes, `bullet_radius`, `bullet_length` and the size of a box, sphere or capsule take effect. Convex and concave shapes follow scale changes on their own.
 
-To force a collision shape to be rebuilt, set `bullet_autofit_valid = 0` for a one-off rebuild or `deforming = 1` to rebuild every step. A rebuild reads every shape attribute again, and the body keeps its position, velocity and identity. If the rebuilt shape is identical, nothing is changed.
+`enablesleep` and `isbullet` only apply when a body is created. `id` has no special values: changing it turns the point into a new body.
 
 ### Shapes
 
@@ -153,9 +138,8 @@ Convex and concave shapes need **packed primitives** (one point plus one packed 
 
 ### Things to know
 
-- Negative `friction`, `bounce` and damping values are clamped to 0 (Box3D does not accept them).
-- See "Changing attributes during the simulation" above for what an existing body picks up. Resetting the simulation always rebuilds everything from the current attributes.
-- When the solver auto-fits a shape it does not write the fitted values back into `bullet_primS` / `bullet_primT` / `bullet_primR` / `bullet_radius` / `bullet_length`, unlike Bullet. It only writes `bullet_autofit_valid = 1`.
+- Negative `friction`, `bounce` and damping values are treated as 0.
+- Unlike Bullet, auto-fitted sizes are not written back to the `bullet_prim*`, `bullet_radius` and `bullet_length` attributes.
 - Triangle-mesh colliders, joints/constraints and collision events are not supported yet.
 
 ## Troubleshooting

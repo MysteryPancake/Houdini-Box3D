@@ -23,6 +23,16 @@ per-point passes are threaded where safe.
 The code is largely LLM-written by an author still learning the HDK. Treat
 HDK usage with healthy skepticism, and see "Risky HDK spots" below.
 
+## Documentation split
+
+`README.md` is for people using the plugin in Houdini: how to build it, which nodes and
+attributes exist, what they do, and what behaves differently from Houdini's own solvers. Keep
+it short. Leave out anything a user cannot act on or would not notice: how the solver does
+something, Box3D internals and terms (density, restitution, move events, hull caches),
+performance mechanics, unverified HDK details. Those belong here in `AGENTS.md`. When a change
+adds a feature, add one line or table row to the README if users need it, and put the
+explanation here.
+
 ## Layout
 
 ```
@@ -348,8 +358,9 @@ count, size of the point offset range, the data ids of `P`, `orient`, `v`, `w`, 
 the Box3D Data body type (a change retypes existing bodies, which the scan applies), and the prop markers for
 mid-simulation updates: data ids of `kPropAttribNames` (`mass, friction, bounce, lineardamping, angulardamping,
 gravityscale, bullet_want_deactivate, bullet_ignore, deforming, bullet_autofit_valid, pscale, scale`, looked up by name),
-the primitive list's data id (`primitiveListDataId`, UNVERIFIED: `GA_PrimitiveList::getDataId()` and whether packed
-transform edits bump it) and `nodeHash` (the Box3D Data node's mass / friction / bounce / damping / gravity scale). A GA data id changes whenever the
+the primitive list's data id (`primitiveListDataId`; `GA_PrimitiveList::getDataId()` is in the HDK reference, and the HDK
+leaves bumping it to whoever edits primitives or their intrinsics, so an edit that does not bump it is only noticed on
+the next scan) and `nodeHash` (the Box3D Data node's mass / friction / bounce / damping / gravity scale). A GA data id changes whenever the
 attribute is written, which is what makes it a change marker.
 
 * Recorded at the end of a full scan, and again (`recordFingerprintAfterWrite`, for every object the sync visited) at the
@@ -507,7 +518,8 @@ compiled against the HDK; compare a rotated `bullet_primR` box against a Bullet 
    `BOX3DDOP_VERIFY_READBACK=1` (debug build) to have the write-back also read every point back and log
    `READBACK MISMATCH` on any bit difference. `bumpDataId()` afterwards, then the object's fingerprint is re-recorded.
 5. Pass 3 (serial): packed `setLocalTransform` + `transformDirty` (kept serial because the HDK
-   does not document thread-safety). Pass 2 no longer verifies the point still belongs to its primitive: topology is
+   does not document thread-safety), then one `getPrimitiveList().bumpDataId()` if any packed transform was written
+   (the HDK's documented way to mark primitive intrinsics dirty; `setLocalTransform` does not bump it). Pass 2 no longer verifies the point still belongs to its primitive: topology is
    assumed fixed (see "Skipping the sync scan"); pass 3 only checks the offset is a packed primitive, and counts a
    body that fails it as unmatched instead of writing.
 
