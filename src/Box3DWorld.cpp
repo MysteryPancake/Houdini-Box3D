@@ -1776,7 +1776,7 @@ Box3DWorld::defaultJointSettings(JointType type)
 
 JointHandle
 Box3DWorld::createJoint(JointType type, BodyHandle a, BodyHandle b, const JointFrame &frameA,
-                        const JointFrame &frameB, const JointSettings &in, void *userData)
+                        const JointFrame &frameB, const JointSettings &in, void *userData, bool framesAreLocal)
 {
     if (!isValid() || (!a && !b) || a == b)
         return 0;
@@ -1799,8 +1799,21 @@ Box3DWorld::createJoint(JointType type, BodyHandle a, BodyHandle b, const JointF
         return 0;
 
     const JointSettings s  = sanitized(in);
-    const b3Transform   fa = toLocal(ida, frameA);
-    const b3Transform   fb = toLocal(idb, frameB);
+    auto asLocal = [](const JointFrame &f) {
+        // Kept bit for bit when already unit length (a stored local frame must come back exact).
+        float q[4] = { f.rot[0], f.rot[1], f.rot[2], f.rot[3] };
+        const double len2 = double(q[0]) * q[0] + double(q[1]) * q[1] + double(q[2]) * q[2] + double(q[3]) * q[3];
+        if (!(std::fabs(len2 - 1.0) < 1e-6))
+            sanitizeQuat(q);
+        b3Transform t;
+        t.p.x = float(f.pos[0]);  t.p.y = float(f.pos[1]);  t.p.z = float(f.pos[2]);
+        t.q = makeQuat(q);
+        return t;
+    };
+    const b3Transform   fa = framesAreLocal ? asLocal(frameA) : toLocal(ida, frameA);
+    const b3Transform   fb = framesAreLocal ? asLocal(frameB) : toLocal(idb, frameB);
+    if (!b3IsValidVec3(fa.p) || !b3IsValidVec3(fb.p))
+        return 0;
     const b3WorldId     w  = myImpl->worldId;
     b3JointId id = b3_nullJointId;
     switch (type)
@@ -1876,8 +1889,14 @@ Box3DWorld::createJoint(JointType type, BodyHandle a, BodyHandle b, const JointF
             float len = s.restLength;
             if (!(len >= 0.0f) || !std::isfinite(len))
             {
-                const double dx = frameB.pos[0] - frameA.pos[0], dy = frameB.pos[1] - frameA.pos[1],
-                             dz = frameB.pos[2] - frameA.pos[2];
+                // The anchors' distance now (from the local frames: through the bodies' poses).
+                JointFrame wa = frameA, wb = frameB;
+                if (framesAreLocal)
+                {
+                    localToWorld(a, frameA, wa);
+                    localToWorld(b, frameB, wb);
+                }
+                const double dx = wb.pos[0] - wa.pos[0], dy = wb.pos[1] - wa.pos[1], dz = wb.pos[2] - wa.pos[2];
                 len = float(std::sqrt(dx * dx + dy * dy + dz * dz));
             }
             d.length           = std::max(len, 1e-4f);           // Box3D wants > 0 (and clamps to its slop)
@@ -2146,6 +2165,47 @@ Box3DWorld::jointWorldFrames(JointHandle h, JointFrame &a, JointFrame &b) const
     };
     toWorld(b3Joint_GetBodyA(id), b3Joint_GetLocalFrameA(id), a);
     toWorld(b3Joint_GetBodyB(id), b3Joint_GetLocalFrameB(id), b);
+    return true;
+}
+
+bool
+Box3DWorld::jointLocalFrames(JointHandle h, JointFrame &a, JointFrame &b) const
+{
+    if (!isJointValid(h))
+        return false;
+    const b3JointId id = unpackJoint(h);
+    auto store = [](const b3Transform &t, JointFrame &out) {
+        out.pos[0] = t.p.x;  out.pos[1] = t.p.y;  out.pos[2] = t.p.z;
+        storeQuat(t.q, out.rot);
+    };
+    store(b3Joint_GetLocalFrameA(id), a);
+    store(b3Joint_GetLocalFrameB(id), b);
+    return true;
+}
+
+bool
+Box3DWorld::localToWorld(BodyHandle h, const JointFrame &local, JointFrame &out) const
+{
+    if (!isValid())
+        return false;
+    if (!h)
+    {
+        out = local;                    // the world body sits at the origin, unrotated
+        return true;
+    }
+    const b3BodyId id = unpackBody(h);
+    if (!b3Body_IsValid(id))
+        return false;
+    float q[4] = { local.rot[0], local.rot[1], local.rot[2], local.rot[3] };
+    sanitizeQuat(q);
+    const b3WorldTransform t = b3Body_GetTransform(id);
+    b3Vec3 lp;
+    lp.x = float(local.pos[0]);  lp.y = float(local.pos[1]);  lp.z = float(local.pos[2]);
+    const b3Vec3 d = b3RotateVector(t.q, lp);
+    out.pos[0] = double(t.p.x) + double(d.x);
+    out.pos[1] = double(t.p.y) + double(d.y);
+    out.pos[2] = double(t.p.z) + double(d.z);
+    storeQuat(b3NormalizeQuat(b3MulQuat(t.q, makeQuat(q))), out.rot);
     return true;
 }
 

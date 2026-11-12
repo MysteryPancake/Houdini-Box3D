@@ -336,6 +336,8 @@ processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &ancho
     const GA_ROHandleS typeH(gdp, GA_ATTRIB_PRIMITIVE, kTypeAttrib);
     const GA_ROHandleS nameH(gdp, GA_ATTRIB_POINT, "name");
     const GA_ROHandleQ orientH(gdp, GA_ATTRIB_POINT, "orient");
+    const GA_ROHandleV3 localPH(gdp, GA_ATTRIB_POINT, "local_P");
+    const GA_ROHandleQ  localQH(gdp, GA_ATTRIB_POINT, "local_orient");
     const GA_PrimitiveGroup *brokenGroup = gdp->findPrimitiveGroup(kBrokenGroup);
     const std::vector<SettingReader> readers = bindSettings(gdp);
 
@@ -355,6 +357,35 @@ processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &ancho
             f.rot[0] = q.x();  f.rot[1] = q.y();  f.rot[2] = q.z();  f.rot[3] = q.w();
         }
         return f;
+    };
+
+    // An anchor's saved local frame (local_P / local_orient), if it has one (a zero quaternion: none).
+    auto savedLocal = [&](GA_Offset pt, b3dop::JointFrame &out) {
+        if (!localPH.isValid() || !localQH.isValid())
+            return false;
+        const UT_Vector3     p = localPH.get(pt);
+        const UT_QuaternionF q = localQH.get(pt);
+        if ((q.x() == 0.0f && q.y() == 0.0f && q.z() == 0.0f && q.w() == 0.0f) ||
+            !std::isfinite(p.x()) || !std::isfinite(p.y()) || !std::isfinite(p.z()))
+            return false;
+        out.pos[0] = p.x();  out.pos[1] = p.y();  out.pos[2] = p.z();
+        out.rot[0] = q.x();  out.rot[1] = q.y();  out.rot[2] = q.z();  out.rot[3] = q.w();
+        return true;
+    };
+    // The saved local frame still describes this anchor: through the body's pose now it lands on
+    // the anchor's P / orient (written together after the same step). A renamed, moved or new
+    // anchor does not, and is made from P / orient instead.
+    auto agrees = [&](b3dop::BodyHandle body, const b3dop::JointFrame &local, const b3dop::JointFrame &live) {
+        b3dop::JointFrame w;
+        if (!world.localToWorld(body, local, w))
+            return false;
+        for (int k = 0; k < 3; ++k)
+            if (std::fabs(w.pos[k] - live.pos[k]) > 1e-5 * std::max(1.0, std::fabs(live.pos[k])))
+                return false;
+        double dot = 0.0;
+        for (int k = 0; k < 4; ++k)
+            dot += double(w.rot[k]) * double(live.rot[k]);
+        return std::fabs(dot) >= 1.0 - 1e-6;
     };
 
     for (GA_Iterator it(gdp->getPrimitiveRange()); !it.atEnd(); ++it)
@@ -437,7 +468,14 @@ processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &ancho
                 const double dx = fb.pos[0] - fa.pos[0], dy = fb.pos[1] - fa.pos[1], dz = fb.pos[2] - fa.pos[2];
                 e.madeRestLength = float(std::sqrt(dx * dx + dy * dy + dz * dz));
             }
-            e.handle   = world.createJoint(type, a, b, fa, fb, s, &e);
+            // Exactly as before from the saved local frames when they still apply (a world rebuilt
+            // mid-simulation); else from P / orient, and the local frames are saved after the step.
+            b3dop::JointFrame la, lb;
+            const bool useLocal = !edited && savedLocal(p0, la) && savedLocal(p1, lb) && agrees(a, la, fa) &&
+                                  agrees(b, lb, fb);
+            e.handle     = useLocal ? world.createJoint(type, a, b, la, lb, s, &e, true)
+                                    : world.createJoint(type, a, b, fa, fb, s, &e);
+            e.writeLocal = !useLocal;
             if (e.handle)
                 ++counts.created;
             else
@@ -448,7 +486,8 @@ processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &ancho
 }
 
 // After the step, for a written network: every live joint's anchors get P / orient set to where
-// its frames are now. A distance joint made with restlength < 0 gets its starting distance
+// its frames are now, and joints made from P / orient save their local frames to local_P /
+// local_orient (relative to their pieces: exact on a rebuild, wherever the pieces are). A distance joint made with restlength < 0 gets its starting distance
 // written to `restlength`, so a world rebuilt mid-simulation keeps it.
 template <class PrimOk>
 void
@@ -474,8 +513,10 @@ writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp, const std::vecto
     GA_RWHandleQ  orientH(gdp, GA_ATTRIB_POINT, "orient");
     if (!pH.isValid() || !orientH.isValid())
         return;
-    bool wroteRestLength = false;
+    bool wroteRestLength = false, wroteLocal = false;
     GA_RWHandleF restLengthH;
+    GA_RWHandleV3 localPH;
+    GA_RWHandleQ  localQH;
 
     for (Box3DJointEntry *e : entries)
     {
@@ -501,6 +542,34 @@ writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp, const std::vecto
             e->madeRestLength = -1.0f;
         }
 
+        if (e->writeLocal)
+        {
+            b3dop::JointFrame la, lb;
+            if (world.jointLocalFrames(e->handle, la, lb))
+            {
+                if (!localPH.isValid())
+                {
+                    bool created = false;
+                    ensure("local_P", 3, false, created);
+                    ensure("local_orient", 4, true, created);
+                    localPH = GA_RWHandleV3(gdp, GA_ATTRIB_POINT, "local_P");
+                    localQH = GA_RWHandleQ(gdp, GA_ATTRIB_POINT, "local_orient");
+                }
+                if (localPH.isValid() && localQH.isValid())
+                {
+                    const b3dop::JointFrame *frames[2] = { &la, &lb };
+                    for (int k = 0; k < 2; ++k)
+                    {
+                        const b3dop::JointFrame &f = *frames[k];
+                        localPH.set(pts[k], UT_Vector3(float(f.pos[0]), float(f.pos[1]), float(f.pos[2])));
+                        localQH.set(pts[k], UT_QuaternionF(f.rot[0], f.rot[1], f.rot[2], f.rot[3]));
+                    }
+                    wroteLocal = true;
+                }
+            }
+            e->writeLocal = false;
+        }
+
         b3dop::JointFrame fa, fb;
         if (!world.jointWorldFrames(e->handle, fa, fb))
             continue;                           // broken, or never made
@@ -519,6 +588,11 @@ writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp, const std::vecto
     orientH.getAttribute()->bumpDataId();
     if (wroteRestLength)
         restLengthH.getAttribute()->bumpDataId();
+    if (wroteLocal)
+    {
+        localPH.getAttribute()->bumpDataId();
+        localQH.getAttribute()->bumpDataId();
+    }
 }
 
 } // namespace

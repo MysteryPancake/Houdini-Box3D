@@ -260,6 +260,7 @@ struct Box3DJointEntry
     b3dop::JointFrame    wroteA, wroteB;
     bool                 wrote      = false;
     float                madeRestLength = -1.0f;   // distance made with restlength < 0: written to `restlength` once
+    bool                 writeLocal = false; // made from P / orient: write local_P / local_orient after the step
 };
 
 // A joint network: a SIM_Geometry of two-point primitives on one or more objects.

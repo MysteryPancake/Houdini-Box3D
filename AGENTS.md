@@ -622,6 +622,16 @@ not read itself, except outputs the user asks for (Write Feedback).
   exactly the same local frames as continuing (`tests/core_joints.cpp` compares a rebuilt world with the original).
   * The authored frames are not kept (no attribute is written that the solver does not read): the network's
     `P` / `orient` are the authored values only until the first step.
+  * **Local frames** (`local_P` / `local_orient`, point attributes, the names SideFX's Constraint Network uses for an
+    anchor in its transform's local space): a joint made from `P` / `orient` saves the frames Box3D keeps
+    (`jointLocalFrames`: relative to the piece, position in its axes, in scene units) after the step. A joint made
+    later (a world rebuilt mid-simulation) is made from them (`createJoint(..., framesAreLocal)`) when they still
+    agree with the live values: `localToWorld(body, local)` must land on the point's `P` / `orient` (1e-5
+    relative, quaternion dot 1 - 1e-6), which holds when all three were written after the same step and fails for
+    a renamed, moved or new anchor (a zero `local_orient` means none). This makes rebuilds exact: going through
+    float world positions loses ~1 float step at the coordinates' size per rebuild (4.6e-4 at x = 12000 in the
+    test), the local frames are small offsets kept bit for bit (`asLocal` only renormalises a quaternion that is
+    not already unit length). The live `P` / `orient` are still read: to make new joints and to see edits.
   * Edits: the entry remembers what it wrote (`wroteA` / `wroteB`, as stored in float). A reprocessed network whose
     anchor differs (1e-5 relative; q and -q equal) was edited upstream (a SOP Solver): the joint is remade from the
     new `P` / `orient`. The signature therefore leaves the frames out for written networks; a network that is not
@@ -642,7 +652,7 @@ Built in both configurations (`-DBOX3DDOP_CORE_ONLY=ON` builds only these):
 |---|---|
 | `b3dop_core_smoke` | Box3D version, create / destroy; expects `OK` |
 | `b3dop_core_physics` | Handle API (and the test-side `KeyedWorld`), shape mapping, explicit primitives, mass, body types, resting heights, hulls (limits, caching, instancing), packed matrix math, `sanitizeQuat` / `storedPosition`, setters on existing bodies (material, damping, gravity, sleep, density, enable, shape replacement), live tuning, patterns and collision groups (incl. re-filtering), contacts, mass centring / inertia scaling, sleep threshold, kinematic targets, external forces (force / torque per step, summing, non-finite input, static / kinematic / sleeping bodies, gravity as a force), contact recycling (world distance live, per-body flag at creation and on existing bodies, velocity kept, sleepers not woken) |
-| `b3dop_core_joints` | Every joint type (weld holds, distance keeps length, revolute motor + live speed change, prismatic limit along a rotated frame, motor joint, wheel spin, filter), world anchors, refused joints, clamping (no Box3D asserts), breaking events, frames on moved bodies, live frames (a world rebuilt from `jointWorldFrames` matches the continued one), Box3D defaults, the parameter table, feedback names never equal setting names |
+| `b3dop_core_joints` | Every joint type (weld holds, distance keeps length, revolute motor + live speed change, prismatic limit along a rotated frame, motor joint, wheel spin, filter), world anchors, refused joints, clamping (no Box3D asserts), breaking events, frames on moved bodies, live frames (a world rebuilt from `jointWorldFrames` matches the continued one), local frames (a joint remade from `jointLocalFrames` at x = 12000 is bit for bit the same), Box3D defaults, the parameter table, feedback names never equal setting names |
 | `b3dop_core_taskrunner [workers]` | Worlds on one shared host pool: tasks run, results match 1 worker |
 | `b3dop_core_threads [workers] [side] [steps]` | 1 vs N workers: speedup, fails if positions differ by > 1e-4 |
 

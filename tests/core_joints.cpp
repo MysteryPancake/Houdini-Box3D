@@ -363,6 +363,70 @@ int main()
         CHECK(std::fabs(pw[0] - pr[0]) < 0.01 && std::fabs(pw[1] - pr[1]) < 0.01);
     }
 
+    // ---- local frames: a joint remade from jointLocalFrames is exactly the same joint, far from the
+    //      origin too, and localToWorld puts them where jointWorldFrames does ----
+    {
+        WorldSettings nog = ws;
+        nog.gravity[1] = 0.0f;
+        Box3DWorld w;
+        CHECK(w.create(nog));
+        const double far = 12000.0;                 // where float world positions are ~1e-3 apart
+        const BodyHandle a = box(w, far, 5, 0), b = box(w, far + 1, 5, 0);
+        const float tilt[4] = { 0.1f, 0.2f, 0.0f, 0.97467943f };
+        const JointHandle j = w.createJoint(JointType::Revolute, a, b, frame(far + 0.5, 5, 0, tilt),
+                                            frame(far + 0.5, 5, 0, tilt),
+                                            Box3DWorld::defaultJointSettings(JointType::Revolute));
+        CHECK(j != 0);
+        const float spin[3] = { 0.3f, 1.0f, 0.2f }, push[3] = { 1, 0, 0 };
+        w.setVelocityByHandle(a, push, spin);
+        steps(w, 30);
+        JointFrame la, lb, wa, wb, ta, tb;
+        CHECK(w.jointLocalFrames(j, la, lb) && w.jointWorldFrames(j, wa, wb));
+        CHECK(w.localToWorld(a, la, ta) && w.localToWorld(b, lb, tb));
+        CHECK(std::fabs(ta.pos[0] - wa.pos[0]) < 1e-9 && std::fabs(tb.pos[1] - wb.pos[1]) < 1e-9);
+        JointFrame wl;
+        CHECK(w.localToWorld(0, la, wl) && wl.pos[0] == la.pos[0]);     // the world: unchanged
+
+        double pa[3], pb[3];
+        float  qa[4], qb[4];
+        w.getTransformByHandle(a, pa, qa);
+        w.getTransformByHandle(b, pb, qb);
+        Box3DWorld r;
+        CHECK(r.create(nog));
+        const BodyHandle ra = box(r, pa[0], pa[1], pa[2]), rb = box(r, pb[0], pb[1], pb[2]);
+        r.setTransformByHandle(ra, pa, qa);
+        r.setTransformByHandle(rb, pb, qb);
+        const JointHandle rj = r.createJoint(JointType::Revolute, ra, rb, la, lb,
+                                             Box3DWorld::defaultJointSettings(JointType::Revolute), nullptr, true);
+        JointFrame ra2, rb2;
+        CHECK(rj != 0 && r.jointLocalFrames(rj, ra2, rb2));
+        bool exact = true;
+        for (int k = 0; k < 3; ++k)
+            exact = exact && ra2.pos[k] == la.pos[k] && rb2.pos[k] == lb.pos[k];
+        for (int k = 0; k < 4; ++k)
+            exact = exact && ra2.rot[k] == la.rot[k] && rb2.rot[k] == lb.rot[k];
+        if (!exact)
+            std::printf("  la (%.9g %.9g %.9g | %.9g %.9g %.9g %.9g) vs (%.9g %.9g %.9g | %.9g %.9g %.9g %.9g)\n",
+                        la.pos[0], la.pos[1], la.pos[2], la.rot[0], la.rot[1], la.rot[2], la.rot[3],
+                        ra2.pos[0], ra2.pos[1], ra2.pos[2], ra2.rot[0], ra2.rot[1], ra2.rot[2], ra2.rot[3]);
+        CHECK(exact);                               // bit for bit
+        // Through world positions instead, the frames come back off by float noise at this distance.
+        Box3DWorld v;
+        CHECK(v.create(nog));
+        const BodyHandle va = box(v, pa[0], pa[1], pa[2]), vb = box(v, pb[0], pb[1], pb[2]);
+        v.setTransformByHandle(va, pa, qa);
+        v.setTransformByHandle(vb, pb, qb);
+        JointFrame fwa = wa, fwb = wb;
+        for (int k = 0; k < 3; ++k) { fwa.pos[k] = double(float(wa.pos[k])); fwb.pos[k] = double(float(wb.pos[k])); }
+        const JointHandle vj = v.createJoint(JointType::Revolute, va, vb, fwa, fwb,
+                                             Box3DWorld::defaultJointSettings(JointType::Revolute));
+        JointFrame va2, vb2;
+        CHECK(vj != 0 && v.jointLocalFrames(vj, va2, vb2));
+        const double err = std::fabs(va2.pos[0] - la.pos[0]) + std::fabs(va2.pos[1] - la.pos[1]) +
+                           std::fabs(va2.pos[2] - la.pos[2]);
+        std::printf("local frames at x=%.0f: exact remake; via float world positions off by %.2e\n", far, err);
+    }
+
     // Feedback attribute names never overwrite a setting of the same name.
     {
         Box3DWorld w;

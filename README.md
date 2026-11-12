@@ -187,7 +187,7 @@ A **Static Object** DOP collides with solved objects when a collision relationsh
 
 ### Joints
 
-Attach a joint network to an object with a **SOP Geometry** DOP, Data Name `Joints`. Each two-point line is one Box3D joint: its `joint_type` primitive attribute is `weld`, `spherical`, `revolute`, `prismatic`, `distance`, `motor`, `parallel`, `wheel` or `filter`, and each end's `name` picks a piece (empty means the world). Each end's `P` and `orient` are that piece's joint frame, so put both ends at the pivot for a hinge or weld. Primitive attributes named like the Box3D Joints parameters (`lower_angle`, `stiffness`, ...) override them; angles are in degrees. Joints past their Break Force or Break Torque go into the `broken` group. During the simulation each end's `P` and `orient` follow its piece, so a resimulation can start from any cached frame.
+Attach a joint network to an object with a **SOP Geometry** DOP, Data Name `Joints`. Each two-point line is one Box3D joint: its `joint_type` primitive attribute is `weld`, `spherical`, `revolute`, `prismatic`, `distance`, `motor`, `parallel`, `wheel` or `filter`, and each end's `name` picks a piece (empty means the world). Each end's `P` and `orient` are that piece's joint frame, so put both ends at the pivot for a hinge or weld. Primitive attributes named like the Box3D Joints parameters (`lower_angle`, `stiffness`, ...) override them; angles are in degrees. Joints past their Break Force or Break Torque go into the `broken` group. During the simulation each end's `P` and `orient` follow its piece, and `local_P` / `local_orient` are written so a resimulation can start exactly from any cached frame.
 
 ### Things to know
 

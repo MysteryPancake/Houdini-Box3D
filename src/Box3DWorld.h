@@ -236,8 +236,11 @@ public:
     // to its body. A null BodyHandle is the world (a shapeless static body made on first use).
     // Settings are clamped to what Box3D accepts. 0 on failure (both ends the world, the same body
     // twice, or an invalid body).
+    // With framesAreLocal the frames are already relative to their bodies (what jointLocalFrames
+    // returns), so a joint can be remade exactly, without going through world positions.
     JointHandle createJoint(JointType type, BodyHandle a, BodyHandle b, const JointFrame &frameA,
-                            const JointFrame &frameB, const JointSettings &s, void *userData = nullptr);
+                            const JointFrame &frameB, const JointSettings &s, void *userData = nullptr,
+                            bool framesAreLocal = false);
     void  destroyJoint(JointHandle h);                  // harmless on a joint already gone with its body
     bool  isJointValid(JointHandle h) const;
     // Push every setting of the type into a live joint (frames and bodies stay); wakes its bodies.
@@ -247,6 +250,10 @@ public:
     // the world end does not move). Making a joint from these on bodies at the same poses gives the
     // same joint, so a world rebuilt mid-simulation can remake its joints from them.
     bool  jointWorldFrames(JointHandle h, JointFrame &a, JointFrame &b) const;
+    // The joint's frames relative to its bodies, exactly as Box3D keeps them.
+    bool  jointLocalFrames(JointHandle h, JointFrame &a, JointFrame &b) const;
+    // A body-relative frame in world space with the body's current pose (null handle: the world).
+    bool  localToWorld(BodyHandle h, const JointFrame &local, JointFrame &out) const;
     // userData of the joints whose force or torque went over their threshold in the last step.
     int   brokenJoints(std::vector<void *> &userData) const;
     int   jointCount() const;
