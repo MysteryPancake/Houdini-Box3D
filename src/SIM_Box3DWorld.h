@@ -60,6 +60,13 @@ struct Box3DBodyMirror : Box3DBodyPose
     int      objectId = 0;
     uint64_t stamp    = 0;            // Box3DSharedState::syncStamp of the last sync that saw it
 
+    // The packed primitive this point belongs to, as the last sync read it: the 3x3
+    // of its full transform. Write-back reuses it instead of reading the primitive
+    // again (the geometry does not change between the two).
+    bool     packed   = false;
+    int64_t  primOff  = -1;           // GA_Offset of the primitive
+    double   m3[9]    = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+
     // Cached so the per-step loops need no hash lookups into the Box3D world:
     // the body's handle, and the body type the solver last set (the same value
     // Box3DWorld::getBodyType would return). Valid for the life of the entry:
@@ -82,6 +89,9 @@ struct Box3DPointSlot
     Box3DBodyPose     cur;
     bool              ok     = false;    // readPointState succeeded (P is finite)
     bool              active = true;
+    bool              packed = false;    // the point belongs to a packed primitive
+    int64_t           primOff = -1;
+    double            m3[9]  = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
 };
 
 // One awake body's result on its way from Box3D to the geometry (writeResultsBack).
@@ -112,6 +122,7 @@ struct Box3DSharedState
     // Scratch reused every step (see Box3DPointSlot / Box3DWriteItem).
     std::unordered_map<int, std::vector<Box3DPointSlot>> slots;     // key: object id
     std::vector<Box3DWriteItem>                 writeItems;
+    std::vector<b3dop::BodyMove>                moves;          // this step's move events
 
     // The sim time reading (SIM_Engine::getSimulationTime()) at the last
     // solve, and whether there has been one.

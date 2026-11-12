@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 #include "Box3DShapes.h"
 
@@ -113,6 +114,10 @@ public:
 
     // Change an existing body between static / kinematic / dynamic.
     bool setBodyType(uint64_t id, BodySettings::Type type);
+    // Frees the settings kept for building the body's shapes (the shapes, density and
+    // type live in Box3D). Call once the body's shapes are all added; getBodyType and
+    // setBodyType keep working, but shapes added afterwards use default settings.
+    void releaseBuildState(uint64_t id);
     bool getBodyType(uint64_t id, BodySettings::Type &out) const;
 
     // Density used by shapes added to this body AFTER the call. The solver sets
@@ -177,6 +182,9 @@ public:
     // Cleared at the start of every step, so after a step that did not run they are empty.
     int  moveEventCount() const;
     bool getMoveEvent(int index, BodyMove &out) const;
+    // All of them in one call: `out` is resized to the event count (its capacity is
+    // kept, so a reused vector allocates nothing in a steady state). Returns the count.
+    int  getMoveEvents(std::vector<BodyMove> &out) const;
     // Stored in the Box3D body and returned in BodyMove::userData. The caller owns
     // what it points at; it must stay valid while the body exists.
     void setBodyUserData(BodyHandle h, void *userData);

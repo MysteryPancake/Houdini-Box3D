@@ -205,6 +205,15 @@ a steady-state step does no hash lookups; every slot is dropped whenever an entr
 `syncStamp` / `stampedCount` replace the old `seen` set: an entry whose stamp is not the current
 sync's was not seen, and equal counts mean there is nothing to remove.
 
+Smaller per-step savings: `PointAttrs` binds only `id, active, v, w, orient` per object and the
+~17 body-building attributes lazily (`bindBuildAttrs`, first new body); `getPackedInfo` is skipped
+when the geometry has no primitives; the sync pass stores each packed point's primitive offset and
+3x3 in its mirror entry and write-back reuses them (after checking the point still belongs to that
+primitive) instead of re-reading the transform; `pruneHulls` only runs on steps that added, failed
+or removed a body; `Box3DWorld::releaseBuildState` drops a body's build-time `BodySettings` once its
+shapes exist (type queries then ask Box3D); move events come from one `getMoveEvents` call into a
+reused vector.
+
 ## Solver step (`SIM_SolverBox3D::solveObjectsSubclass`)
 
 ```
@@ -369,8 +378,9 @@ Static points are never written. Kinematic bodies are also not written back (the
 
 * Box3D's thread pool is its own (`workerCount`); `autothreads` = `hardware_concurrency()`,
   else the `threads` parm (1..32). Changing the count forces a world rebuild.
-* The plugin's own parallel loops use TBB through `UTparallelFor` with a 2048-point threshold
-  (`kMinParallelPoints`). Rule of thumb in the code: parallel lambdas only read shared data or
+* The plugin's own parallel loops use TBB through `UTparallelFor`, with per-pass thresholds
+  (untuned starting points in the code): sync read 8192 points when the geometry has no
+  primitives, 2048 when it has; write-back 1024. Rule of thumb in the code: parallel lambdas only read shared data or
   write element `i` of their own output; the Box3D world and the mirror are only touched
   in serial passes (the write-back's parallel pass also updates the mirror entry of its own body).
 * The shared-state mutex is held for the whole sync/step/write-back.

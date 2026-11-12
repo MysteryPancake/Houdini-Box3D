@@ -497,7 +497,9 @@ Box3DWorld::setBodyType(uint64_t id, BodySettings::Type type)
     if (type == BodySettings::Type::Static)         t = b3_staticBody;
     else if (type == BodySettings::Type::Kinematic) t = b3_kinematicBody;
     b3Body_SetType(it->second, t);
-    myImpl->bodySettings[id].type = type;
+    auto bs = myImpl->bodySettings.find(id);     // gone after releaseBuildState
+    if (bs != myImpl->bodySettings.end())
+        bs->second.type = type;
     return true;
 }
 
@@ -505,10 +507,27 @@ bool
 Box3DWorld::getBodyType(uint64_t id, BodySettings::Type &out) const
 {
     auto it = myImpl->bodySettings.find(id);
-    if (it == myImpl->bodySettings.end())
+    if (it != myImpl->bodySettings.end())
+    {
+        out = it->second.type;
+        return true;
+    }
+    auto b = myImpl->bodies.find(id);           // settings released: ask Box3D
+    if (b == myImpl->bodies.end())
         return false;
-    out = it->second.type;
+    switch (b3Body_GetType(b->second))
+    {
+        case b3_staticBody:    out = BodySettings::Type::Static;    break;
+        case b3_kinematicBody: out = BodySettings::Type::Kinematic; break;
+        default:               out = BodySettings::Type::Dynamic;   break;
+    }
     return true;
+}
+
+void
+Box3DWorld::releaseBuildState(uint64_t id)
+{
+    myImpl->bodySettings.erase(id);
 }
 
 bool
@@ -644,6 +663,32 @@ Box3DWorld::getMoveEvent(int index, BodyMove &out) const
     out.rot[3] = e.transform.q.s;
     out.fellAsleep = e.fellAsleep;
     return true;
+}
+
+int
+Box3DWorld::getMoveEvents(std::vector<BodyMove> &out) const
+{
+    out.clear();
+    if (!isValid())
+        return 0;
+    const b3BodyEvents ev = b3World_GetBodyEvents(myImpl->worldId);
+    out.resize(size_t(ev.moveCount));
+    for (int i = 0; i < ev.moveCount; ++i)
+    {
+        const b3BodyMoveEvent &e = ev.moveEvents[i];
+        BodyMove &o = out[size_t(i)];
+        o.userData = e.userData;
+        o.handle   = packBody(e.bodyId);
+        o.pos[0] = static_cast<double>(e.transform.p.x);
+        o.pos[1] = static_cast<double>(e.transform.p.y);
+        o.pos[2] = static_cast<double>(e.transform.p.z);
+        o.rot[0] = e.transform.q.v.x;
+        o.rot[1] = e.transform.q.v.y;
+        o.rot[2] = e.transform.q.v.z;
+        o.rot[3] = e.transform.q.s;
+        o.fellAsleep = e.fellAsleep;
+    }
+    return ev.moveCount;
 }
 
 void

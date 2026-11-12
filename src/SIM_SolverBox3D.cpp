@@ -96,30 +96,38 @@ struct PointAttrs
     GA_ROHandleF  radius;      // float  bullet_radius: sphere / capsule radius
     GA_ROHandleF  length;      // float  bullet_length: capsule straight section along Y
 
+    // Binds only what every step needs for existing bodies: id, active, v, w and
+    // orient. Everything else is for building a body, so it is bound by
+    // bindBuildAttrs() the first time a body is created (a step that only syncs
+    // and writes back saves about 17 attribute lookups per object).
     explicit PointAttrs(const GU_Detail *gdp)
         : id(gdp, GA_ATTRIB_POINT, "id"),
           active(gdp, GA_ATTRIB_POINT, "active"),
-          mass(gdp, GA_ATTRIB_POINT, "mass"),
-          friction(gdp, GA_ATTRIB_POINT, "friction"),
-          bounce(gdp, GA_ATTRIB_POINT, "bounce"),
-          lineardamping(gdp, GA_ATTRIB_POINT, "lineardamping"),
-          angulardamping(gdp, GA_ATTRIB_POINT, "angulardamping"),
-          gravityscale(gdp, GA_ATTRIB_POINT, "gravityscale"),
-          enablesleep(gdp, GA_ATTRIB_POINT, "enablesleep"),
-          isbullet(gdp, GA_ATTRIB_POINT, "isbullet"),
-          pscale(gdp, GA_ATTRIB_POINT, "pscale"),
-          scale(gdp, GA_ATTRIB_POINT, "scale"),
           v(gdp, GA_ATTRIB_POINT, "v"),
           w(gdp, GA_ATTRIB_POINT, "w"),
-          orient(gdp, GA_ATTRIB_POINT, "orient"),
-          georep(gdp, GA_ATTRIB_POINT, "bullet_georep"),
-          autofit(gdp, GA_ATTRIB_POINT, "bullet_autofit"),
-          primS(gdp, GA_ATTRIB_POINT, "bullet_primS"),
-          primR(gdp, GA_ATTRIB_POINT, "bullet_primR"),
-          primT(gdp, GA_ATTRIB_POINT, "bullet_primT"),
-          radius(gdp, GA_ATTRIB_POINT, "bullet_radius"),
-          length(gdp, GA_ATTRIB_POINT, "bullet_length")
+          orient(gdp, GA_ATTRIB_POINT, "orient")
     {
+    }
+
+    void bindBuildAttrs(const GU_Detail *gdp)
+    {
+        mass           = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "mass");
+        friction       = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "friction");
+        bounce         = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "bounce");
+        lineardamping  = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "lineardamping");
+        angulardamping = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "angulardamping");
+        gravityscale   = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "gravityscale");
+        enablesleep    = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "enablesleep");
+        isbullet       = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "isbullet");
+        pscale         = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "pscale");
+        scale          = GA_ROHandleV3(gdp, GA_ATTRIB_POINT, "scale");
+        georep         = GA_ROHandleS(gdp, GA_ATTRIB_POINT, "bullet_georep");
+        autofit        = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "bullet_autofit");
+        primS          = GA_ROHandleV3(gdp, GA_ATTRIB_POINT, "bullet_primS");
+        primR          = GA_ROHandleV3(gdp, GA_ATTRIB_POINT, "bullet_primR");
+        primT          = GA_ROHandleV3(gdp, GA_ATTRIB_POINT, "bullet_primT");
+        radius         = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "bullet_radius");
+        length         = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "bullet_length");
     }
 };
 
@@ -198,17 +206,23 @@ setLocal3(GU_PrimPacked &p, const double m[9])
     p.transformDirty();
 }
 
-// Below this many points a parallel pass costs more than it saves.
-constexpr size_t kMinParallelPoints = 2048;
+// Below this many points a parallel pass costs more than it saves. Starting points,
+// not measured: the sync read is cheap for plain points (a few attribute reads) and
+// costly for packed ones (a primitive transform each); the write-back does more work
+// per point than either.
+constexpr size_t kMinParallelPoints      = 2048;    // default
+constexpr size_t kMinParallelReadPlain   = 8192;    // sync read, no primitives in the geometry
+constexpr size_t kMinParallelReadPacked  = 2048;    // sync read, geometry has primitives
+constexpr size_t kMinParallelWrite       = 1024;    // write-back
 
 // Runs f(i) for i in [0, n), threaded on Houdini's TBB pool when n is large.
 // f must only read shared data, or write to element i of its own output; the
 // serial passes around each call are where the Box3D world and the mirror are touched.
 template <class F>
 void
-parallelForEach(size_t n, const F &f)
+parallelForEach(size_t n, const F &f, size_t minParallel = kMinParallelPoints)
 {
-    if (n < kMinParallelPoints)
+    if (n < minParallel)
     {
         for (size_t i = 0; i < n; ++i)
             f(i);
@@ -914,6 +928,18 @@ addPointBody(b3dop::Box3DWorld &world, ShapeSources &src, const b3dop::BodySetti
     return true;
 }
 
+// Keep what the read pass learned about the point's packed primitive in its mirror
+// entry, for the write-back.
+void
+storePacked(Box3DBodyMirror &m, const Box3DPointSlot &s)
+{
+    m.packed  = s.packed;
+    m.primOff = s.primOff;
+    if (s.packed)
+        for (int i = 0; i < 9; ++i)
+            m.m3[i] = s.m3[i];
+}
+
 struct SyncCounts
 {
     int added = 0, edited = 0, retyped = 0, failed = 0, duplicates = 0, badP = 0;
@@ -936,7 +962,9 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
     if (!gdp)
         return false;
 
-    const PointAttrs a(gdp);
+    PointAttrs a(gdp);          // the build attributes are bound on the first new body
+    bool       buildAttrsBound = false;
+    const bool anyPrims = gdp->getNumPrimitives() > 0;     // no primitives -> no packed points to look for
     // Default settings for all points of an object (the Box3D Data DOP node), or
     // built-in defaults if the object has none.
     const SIM_Box3DData *dataNode = SIM_DATA_GETCONST(obj, kDataName, SIM_Box3DData);
@@ -978,10 +1006,18 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
         if (key != s.key)
             s.entry = nullptr;
         s.key = key;
-        const PackedInfo pk = getPackedInfo(gdp, s.off);
+        const PackedInfo pk = anyPrims ? getPackedInfo(gdp, s.off) : PackedInfo();
         s.ok     = readPointState(gdp, a, s.off, pk, s.cur);
         s.active = !a.active.isValid() || a.active.get(s.off) != 0;
-    });
+        s.packed = pk.prim != nullptr;
+        if (s.packed)
+        {
+            s.primOff = int64_t(pk.primOff);
+            s.m3[0] = pk.m4[0];  s.m3[1] = pk.m4[1];  s.m3[2] = pk.m4[2];
+            s.m3[3] = pk.m4[4];  s.m3[4] = pk.m4[5];  s.m3[5] = pk.m4[6];
+            s.m3[6] = pk.m4[8];  s.m3[7] = pk.m4[9];  s.m3[8] = pk.m4[10];
+        }
+    }, anyPrims ? kMinParallelReadPacked : kMinParallelReadPlain);
 
     // ---- pass 2 (serial): apply to Box3D and the mirror -------------------
     // Runs in point order, so "first duplicate id wins" holds. An entry whose
@@ -1020,7 +1056,12 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
 
         if (!entry)
         {
-            PackedInfo pk = getPackedInfo(gdp, off);    // only new bodies need it again
+            if (!buildAttrsBound)
+            {
+                a.bindBuildAttrs(gdp);
+                buildAttrsBound = true;
+            }
+            PackedInfo pk = anyPrims ? getPackedInfo(gdp, off) : PackedInfo();    // only new bodies need it again
             readPackedPivot(pk);        // the hull is built from it
             std::string fallbackNote;
             if (!addPointBody(world, sources, node, a, off, bid, key, pk, cur, active, &fallbackNote))
@@ -1039,7 +1080,9 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
             m.pointId  = bid;
             m.objectId = objectId;
             m.stamp    = st.syncStamp;
+            storePacked(m, s);
             ++st.stampedCount;
+            world.releaseBuildState(key);           // shapes are all added
             world.setBodyUserData(m.handle, &m);    // lets write-back map a move event to this entry
             s.entry = &m;
             ++c.added;
@@ -1052,6 +1095,7 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
         entry->pointId  = bid;
         entry->objectId = objectId;
         entry->stamp    = st.syncStamp;
+        storePacked(*entry, s);
         ++st.stampedCount;
 
         // Did `active` flip?
@@ -1433,7 +1477,8 @@ SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
     // Hulls built for bodies that were then removed (or never created) are
     // no longer needed; hulls still used by a body stay cached for the next
     // body that instances the same geometry.
-    st->world.pruneHulls();
+    if (counts.added || counts.failed || removed)
+        st->world.pruneHulls();     // hulls only become unused when a body is added (a failed one) or removed
 
     // Problems the user should see on the node, not only in the debug log.
     // One warning per kind per sync, with a count. Fallback shapes are only
@@ -1480,7 +1525,7 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
     // Each body's user data is its mirror entry, which knows its point. The events
     // are cleared at the start of every step, so after a step that did not run this
     // is empty.
-    const int moveCount = world.moveEventCount();
+    const int moveCount = world.getMoveEvents(st->moves);     // one call, scratch reused
     if (moveCount == 0)
         return;
 
@@ -1488,10 +1533,9 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
     items.clear();
     items.reserve(size_t(moveCount));
     int missing = 0;
-    for (int e = 0; e < moveCount; ++e)
+    for (const b3dop::BodyMove &mv : st->moves)
     {
-        b3dop::BodyMove mv;
-        if (!world.getMoveEvent(e, mv) || !mv.userData)
+        if (!mv.userData)
             continue;
         DopBodyState *entry = static_cast<DopBodyState *>(mv.userData);
         if (!entry->dynamic || entry->stamp != st->syncStamp)
@@ -1555,7 +1599,8 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
 
         const bool createdOrient = ensureResultAttribs(gdp);
 
-        const PointAttrs a(gdp);          // bound AFTER the attributes exist
+        const PointAttrs a(gdp);          // bound AFTER the attributes exist (only the sync-critical ones are needed here)
+        const bool anyPrims = gdp->getNumPrimitives() > 0;
         GA_RWHandleV3 vOut(gdp, GA_ATTRIB_POINT, "v");
         GA_RWHandleV3 wOut(gdp, GA_ATTRIB_POINT, "w");
         GA_RWHandleQ  qOut(gdp, GA_ATTRIB_POINT, "orient");
@@ -1604,7 +1649,35 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
             // the primitive's own transform. Work out the new matrix here (pure
             // math, plus reads of the primitive), but do not write it: that is
             // pass 3. Keep its scale, replace the rotation.
-            PackedInfo pk = getPackedInfo(gdp, off);
+            // The sync pass already read this point's primitive transform and stored it
+            // in the entry; the geometry has not changed since. Reuse it after a cheap
+            // check that the point still belongs to that packed primitive.
+            PackedInfo pk;
+            if (anyPrims)
+            {
+                const Box3DBodyMirror &m = *w.entry;
+                if (!m.packed)
+                {
+                    // a plain point: nothing to find
+                }
+                else
+                {
+                    const GA_Offset po   = GA_Offset(m.primOff);
+                    const GA_Offset vtx  = gdp->pointVertex(off);
+                    const GA_Primitive *prim = (GAisValid(vtx) && gdp->vertexPrimitive(vtx) == po)
+                                                   ? gdp->getPrimitive(po) : nullptr;
+                    if (prim && GU_PrimPacked::isPackedPrimitive(*prim))
+                    {
+                        pk.prim    = static_cast<const GU_PrimPacked *>(prim);
+                        pk.primOff = po;
+                        pk.m4[0] = m.m3[0];  pk.m4[1] = m.m3[1];  pk.m4[2]  = m.m3[2];
+                        pk.m4[4] = m.m3[3];  pk.m4[5] = m.m3[4];  pk.m4[6]  = m.m3[5];
+                        pk.m4[8] = m.m3[6];  pk.m4[9] = m.m3[7];  pk.m4[10] = m.m3[8];
+                    }
+                    else
+                        pk = getPackedInfo(gdp, off);       // did not match: read it properly
+                }
+            }
             if (pk.prim)
             {
                 const double oldM3[9] = { pk.m4[0], pk.m4[1], pk.m4[2],
@@ -1626,7 +1699,7 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
             Box3DBodyPose stored;
             const bool storedOk = readPointState(gdp, a, off, pk, stored);
             static_cast<Box3DBodyPose &>(*w.entry) = storedOk ? stored : s;
-        });
+        }, kMinParallelWrite);
 
         for (GA_Attribute *attr : { pOut.isValid() ? pOut.getAttribute() : nullptr,
                                     qOut.isValid() ? qOut.getAttribute() : nullptr,

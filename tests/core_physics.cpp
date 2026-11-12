@@ -671,6 +671,21 @@ int main()
         CHECK(mv.rot[0] == q[0] && mv.rot[3] == q[3]);
         CHECK(!ew.getMoveEvent(1, mv) && !ew.getMoveEvent(-1, mv));
 
+        // the bulk accessor agrees with the single one, and reuses the vector
+        std::vector<b3dop::BodyMove> all;
+        CHECK(ew.getMoveEvents(all) == 1 && all.size() == 1);
+        CHECK(all[0].userData == &tag && all[0].handle == mv.handle && all[0].pos[1] == mv.pos[1]);
+
+        // releasing the build settings keeps type queries and changes working (Box3D answers)
+        b3dop::BodySettings::Type ty;
+        CHECK(ew.getBodyType(2, ty) && ty == b3dop::BodySettings::Type::Dynamic);
+        ew.releaseBuildState(2);
+        CHECK(ew.getBodyType(2, ty) && ty == b3dop::BodySettings::Type::Dynamic);
+        CHECK(ew.setBodyType(2, b3dop::BodySettings::Type::Kinematic));
+        CHECK(ew.getBodyType(2, ty) && ty == b3dop::BodySettings::Type::Kinematic);
+        CHECK(ew.setBodyType(2, b3dop::BodySettings::Type::Dynamic));
+        CHECK(!ew.getBodyType(99, ty));
+
         // resting on the ground, it falls asleep: one last event with the flag, then none
         bool sawSleep = false;
         int  lastCount = 1;
