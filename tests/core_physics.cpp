@@ -9,6 +9,16 @@
 static int fails = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); ++fails; } } while (0)
 
+// Row-vector rotation matrix for unit quaternion q (x, y, z, w); builds test matrices only.
+static void
+quatToMatrix3(const float q[4], double m[9])
+{
+    const double x = q[0], y = q[1], z = q[2], w = q[3];
+    m[0] = 1 - 2 * (y * y + z * z);  m[1] = 2 * (x * y + z * w);      m[2] = 2 * (x * z - y * w);
+    m[3] = 2 * (x * y - z * w);      m[4] = 1 - 2 * (x * x + z * z);  m[5] = 2 * (y * z + x * w);
+    m[6] = 2 * (x * z + y * w);      m[7] = 2 * (y * z - x * w);      m[8] = 1 - 2 * (x * x + y * y);
+}
+
 int main()
 {
     b3dop::Box3DWorld w;
@@ -85,6 +95,7 @@ int main()
     // ---- point-attribute mapping (Box3DShapes.h) + addShape/setBodyType ----
     {
         using namespace b3dop;
+
         ShapeType t = ShapeType::Box;
         CHECK(parseShapeType("sphere", t) && t == ShapeType::Sphere);
         CHECK(parseShapeType("box", t) && t == ShapeType::Box);
@@ -201,64 +212,21 @@ int main()
         t = ShapeType::Box;
         CHECK(!parseShapeType("cylinder", t) && !parseShapeType("plane", t) && t == ShapeType::Box);
 
-        // quaternion <-> row matrix round trip, scale split
+        // test fixture: S(2,3,4) * R(0.7 rad about Y), row-vector layout
         const float s45 = std::sin(0.5f * 0.7f), c45 = std::cos(0.5f * 0.7f);
-        const float qa[4] = { 0.0f, s45, 0.0f, c45 };               // 0.7 rad about Y
+        const float qa[4] = { 0.0f, s45, 0.0f, c45 };
         double m[9];
         quatToMatrix3(qa, m);
-        float  qb[4];  double sc[3];
-        CHECK(matrix3ToQuatScale(m, qb, sc));
-        CHECK(std::fabs(qb[1] - qa[1]) < 1e-5f && std::fabs(qb[3] - qa[3]) < 1e-5f);
-        CHECK(std::fabs(sc[0] - 1) < 1e-5 && std::fabs(sc[2] - 1) < 1e-5);
-        // Y rotation of +0.7 rad takes +X (row vector [1 0 0]) to (cos, 0, -sin).
-        CHECK(std::fabs(m[0] - std::cos(0.7)) < 1e-5 && std::fabs(m[2] + std::sin(0.7)) < 1e-5);
-
-        // scaled rotation: rows scaled by 2, 3, 4 (M = S * R)
         double ms[9];
         for (int r = 0; r < 3; ++r)
             for (int c = 0; c < 3; ++c)
                 ms[r * 3 + c] = (2.0 + r) * m[r * 3 + c];
-        CHECK(matrix3ToQuatScale(ms, qb, sc));
-        CHECK(std::fabs(sc[0] - 2) < 1e-6 && std::fabs(sc[1] - 3) < 1e-6 && std::fabs(sc[2] - 4) < 1e-6);
-        CHECK(std::fabs(qb[1] - qa[1]) < 1e-5f);
-        // a degenerate matrix reports failure and gives identity
-        const double zero9[9] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-        CHECK(!matrix3ToQuatScale(zero9, qb, sc) && qb[3] == 1.0f);
-
-        // composeLocal3: replace the rotation, keep the per-row scale. Run over
-        // rotations that hit every branch of the matrix -> quaternion conversion
-        // (w large, and x / y / z dominant, incl. near 180 degrees).
         {
-            const float axes[][3] = { {0, 1, 0}, {1, 0, 0}, {0, 0, 1}, {1, 2, 3}, {-2, 1, 0.5f} };
-            const float angs[]    = { 0.3f, 1.2f, 2.9f, 3.1f, -2.0f };
-            for (const auto &ax : axes)
-                for (float an : angs)
-                {
-                    const float al = std::sqrt(ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2]);
-                    const float sh = std::sin(0.5f * an) / al;
-                    const float qn[4] = { ax[0] * sh, ax[1] * sh, ax[2] * sh, std::cos(0.5f * an) };
-
-                    double out[9];
-                    composeLocal3(qn, ms, out);                       // ms = S(2,3,4) * R(0.7 about Y)
-                    float qo[4];  double so[3];
-                    CHECK(matrix3ToQuatScale(out, qo, so));
-                    const float d = qo[0] * qn[0] + qo[1] * qn[1] + qo[2] * qn[2] + qo[3] * qn[3];
-                    CHECK(std::fabs(std::fabs(d) - 1.0f) < 1e-5f);    // same rotation (q and -q are equal)
-                    CHECK(std::fabs(so[0] - 2) < 1e-6 && std::fabs(so[1] - 3) < 1e-6 && std::fabs(so[2] - 4) < 1e-6);
-
-                    // and it really is the row-vector rotation: row i of the result is scale[i] * rotated axis i
-                    double r[9];  quatToMatrix3(qn, r);
-                    float  q0[4];  double s0[3];
-                    matrix3ToQuatScale(ms, q0, s0);                   // the scale compose must keep (about 2, 3, 4)
-                    for (int i = 0; i < 9; ++i)
-                        CHECK(std::fabs(out[i] - s0[i / 3] * r[i]) < 1e-12);
-                }
-            // degenerate old matrix: scale falls back to 1, the rotation is still applied
-            double out0[9];
-            composeLocal3(qa, zero9, out0);
-            double ref0[9];  quatToMatrix3(qa, ref0);
-            for (int i = 0; i < 9; ++i)
-                CHECK(std::fabs(out0[i] - ref0[i]) < 1e-12);
+            double sc[3];
+            CHECK(matrixRowLengths(ms, sc));
+            CHECK(std::fabs(sc[0] - 2) < 1e-6 && std::fabs(sc[1] - 3) < 1e-6 && std::fabs(sc[2] - 4) < 1e-6);
+            const double zero9[9] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+            CHECK(!matrixRowLengths(zero9, sc) && sc[0] == 1.0);
         }
 
         // connected sets: prims 0-1-2 chain through shared points, 3 is alone, 4 joins 3

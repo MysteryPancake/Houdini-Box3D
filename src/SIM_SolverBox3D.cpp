@@ -64,9 +64,44 @@ const char *const kDataName      = "Box3DData";
 
 using DopBodyState = Box3DBodyMirror;
 
-// getGdp() returns a pointer from one lock type and a reference from the other.
-template <class T> T *gdpPtr(T *p) { return p; }
-template <class T> T *gdpPtr(T &r) { return &r; }
+// Packed 3x3 (row-vector, M = S * R) split into per-row scale and a unit quaternion with the
+// HDK, so packed rotations follow Houdini's own quaternion convention. Shear and mirroring
+// are dropped; false (identity, scale 1) if degenerate.
+bool
+splitPackedMatrix(const double m3[9], float q[4], double scale[3])
+{
+    q[0] = q[1] = q[2] = 0.0f;  q[3] = 1.0f;
+    scale[0] = scale[1] = scale[2] = 1.0;
+    UT_Matrix3D m(m3[0], m3[1], m3[2], m3[3], m3[4], m3[5], m3[6], m3[7], m3[8]);
+    const double det = m.determinant();
+    if (!std::isfinite(det) || std::fabs(det) < 1e-30)
+        return false;
+    if (det < 0.0)                                  // mirrored: flip the third row
+        for (int c = 0; c < 3; ++c)
+            m(2, c) = -m(2, c);
+    UT_Vector3D s;
+    m.extractScales(s);                             // m is left a pure rotation
+    UT_QuaternionD rq;
+    rq.updateFromRotationMatrix(m);
+    rq.normalize();
+    q[0] = float(rq.x());  q[1] = float(rq.y());  q[2] = float(rq.z());  q[3] = float(rq.w());
+    scale[0] = std::fabs(s.x());  scale[1] = std::fabs(s.y());  scale[2] = std::fabs(s.z());
+    return true;
+}
+
+// oldM3's per-row scale with q's rotation: a packed primitive's new local 3x3.
+void
+composePackedMatrix(const float q[4], const double oldM3[9], double out[9])
+{
+    float  oq[4];
+    double sc[3];
+    splitPackedMatrix(oldM3, oq, sc);               // sc stays 1 if oldM3 is degenerate
+    UT_DMatrix3 r;
+    UT_QuaternionD(q[0], q[1], q[2], q[3]).getRotationMatrix(r);
+    for (int row = 0; row < 3; ++row)
+        for (int col = 0; col < 3; ++col)
+            out[row * 3 + col] = sc[row] * r(row, col);
+}
 
 // Point attributes the solver reads (Houdini RBD names). All optional: invalid = default.
 struct PointAttrs
@@ -259,7 +294,7 @@ getPackedInfo(const GU_Detail *gdp, GA_Offset ptoff)
     const double m3[9] = { pk.m4[0], pk.m4[1], pk.m4[2],
                            pk.m4[4], pk.m4[5], pk.m4[6],
                            pk.m4[8], pk.m4[9], pk.m4[10] };
-    b3dop::matrix3ToQuatScale(m3, pk.rot, pk.scale);
+    splitPackedMatrix(m3, pk.rot, pk.scale);
     return pk;
 }
 
@@ -440,15 +475,15 @@ struct ShapeSources
         bool                 connectedBuilt = false;
     };
     std::unordered_map<const GU_Detail *, InnerEntry> inner;
-    // Fragments: (shared source detail, fragment name) -> that fragment's piece.
-    std::map<std::pair<const GU_Detail *, std::string>, InnerEntry> fragments;
+    // Fragments: (shared source detail, first primitive offset) -> that fragment's piece.
+    std::map<std::pair<const GU_Detail *, GA_Offset>, InnerEntry> fragments;
 
     // The primitive's pieces (by `name`, or connected sets), or null.
     const PieceGroup *innerPieces(const GU_PrimPacked &prim, bool connected)
     {
         GU_ConstDetailHandle handle = prim.getPackedDetail();
         GU_DetailHandleAutoReadLock lock(handle);
-        const GU_Detail *gdp = gdpPtr(lock.getGdp());
+        const GU_Detail *gdp = lock.getGdp();
         if (!gdp)
             return nullptr;
 
@@ -458,15 +493,18 @@ struct ShapeSources
         InnerEntry              *entry = nullptr;
         if (frag)
         {
-            const std::string name = frag->isIntValue() ? std::to_string(frag->intValue())
-                                                        : std::string(frag->name().c_str());
-            const auto key = std::make_pair(gdp, name);
+            // GU_PackedFragment does not expose its attribute value; its primitive range does
+            // identify it (no two fragments of one source share a primitive).
+            const GA_Range range = frag->getPrimitiveRange();
+            const GA_Iterator first(range);
+            const GA_Offset   firstOff = first.atEnd() ? GA_INVALID_OFFSET : *first;
+            const auto key = std::make_pair(gdp, firstOff);
             auto fit = fragments.find(key);
             if (fit == fragments.end())
             {
                 InnerEntry e;
                 e.handle = handle;
-                collectFragmentPiece(gdp, frag->getPrimitiveRange(), name, e.pieces);
+                collectFragmentPiece(gdp, range, std::to_string(int64_t(firstOff)), e.pieces);
                 fit = fragments.emplace(key, std::move(e)).first;
             }
             entry = &fit->second;
@@ -1049,8 +1087,7 @@ readPscaleScale(const PointAttrs &a, GA_Offset off, float &ps, float sc[3])
 bool
 sizeKeyFromM3(const double m3[9], double out[3])
 {
-    float q[4];
-    return b3dop::matrix3ToQuatScale(m3, q, out);
+    return b3dop::matrixRowLengths(m3, out);
 }
 
 void
@@ -1416,7 +1453,7 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
         return;
     }
     SIM_GeometryAutoReadLock lock(geo);
-    const GU_Detail *gdp = gdpPtr(lock.getGdp());
+    const GU_Detail *gdp = lock.getGdp();
     if (!gdp)
         return;
 
@@ -1933,7 +1970,7 @@ recordFingerprintAfterWrite(Box3DSharedState &st, const SIM_Object &obj)
     if (!geo)
         return;
     SIM_GeometryAutoReadLock rlock(geo);
-    const GU_Detail *gdp = gdpPtr(rlock.getGdp());
+    const GU_Detail *gdp = rlock.getGdp();
     if (!gdp)
         return;
     const PointAttrs a(gdp);
@@ -2106,7 +2143,7 @@ writePointAttrs(Box3DSharedState &st, SIM_ObjectArray &objects)
         unsigned wrote = 0;
         {
             SIM_GeometryAutoWriteLock lock(geo);
-            GU_Detail *gdp = gdpPtr(lock.getGdp());
+            GU_Detail *gdp = &lock.getGdp();
             if (!gdp)
                 return;
             if ((want & Box3DPointWrite::kMass) && !gdp->findPointAttribute("mass"))
@@ -2164,7 +2201,7 @@ ageObjects(Box3DSharedState &st, SIM_ObjectArray &objects, float dt)
         bool markedDead = false;
         {
             SIM_GeometryAutoWriteLock lock(geo);
-            GU_Detail *gdp = gdpPtr(lock.getGdp());
+            GU_Detail *gdp = &lock.getGdp();
             if (!gdp)
                 continue;
             if (!gdp->findPointAttribute("age"))
@@ -2220,7 +2257,7 @@ deleteDeadPoints(Box3DSharedState &st, SIM_ObjectArray &objects)
         bool deleted = false;
         {
             SIM_GeometryAutoWriteLock lock(geo);
-            GU_Detail *gdp = gdpPtr(lock.getGdp());
+            GU_Detail *gdp = &lock.getGdp();
             if (!gdp)
                 return;
             const GA_ROHandleI id(gdp, GA_ATTRIB_POINT, "id");
@@ -2705,7 +2742,7 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
         }
 
         SIM_GeometryAutoWriteLock lock(geo);
-        GU_Detail *gdp = gdpPtr(lock.getGdp());
+        GU_Detail *gdp = &lock.getGdp();
         if (!gdp)
             continue;
         refresh.push_back(obj);
@@ -2773,13 +2810,13 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
             float             packedRot[4] = { 0, 0, 0, 1 };
             if (packed)
             {
-                b3dop::composeLocal3(s.rot, me.m3, pw->newM3);
+                composePackedMatrix(s.rot, me.m3, pw->newM3);
                 pw->primOff = GA_Offset(me.primOff);
                 pw->has     = true;
                 // What the primitive will hold; the entry's 3x3 follows (a skipped sync does
                 // not refresh it).
                 double sc[3];
-                b3dop::matrix3ToQuatScale(pw->newM3, packedRot, sc);
+                splitPackedMatrix(pw->newM3, packedRot, sc);
                 for (int i = 0; i < 9; ++i) me.m3[i] = pw->newM3[i];
             }
 

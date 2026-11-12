@@ -34,6 +34,7 @@ row to the README if users need it, and put the explanation here.
 CMakeLists.txt        Targets: b3dop_core, 3 test exes, Box3DDOP (plugin)
 build.sh / build.bat  Convenience wrappers (HFS discovery, submodule fetch, stale build/ reset)
 extern/box3d/         Box3D submodule (never edit; static lib, EXCLUDE_FROM_ALL)
+icons/box3d.svg     Node icon; the build copies it to config/Icons as DOP_box3d_solver.svg and DOP_box3d_data.svg
 src/
   Box3DShapes.h       Houdini-free, header-only: shape math, packed-prim matrices, hashing, collision-group patterns
   Box3DWorld.h/.cpp   Houdini-free pimpl wrapper over one b3World. The ONLY file that includes Box3D headers
@@ -61,6 +62,9 @@ Layering (keep it):
 * `BOX3DDOP_CORE_ONLY=ON` builds only `box3d`, `b3dop_core` and the tests, then `return()`s before any HDK use.
 * Otherwise `find_package(Houdini)` (with `$HFS/toolkit/cmake`) and `houdini_configure_target`, which also copies the
   plugin into `~/houdiniX.Y/dso` (`Documents/houdiniX.Y/dso` on Windows). Close Houdini to overwrite it on Windows.
+* A post-build step copies `icons/box3d.svg` to `<dso>/../config/Icons/DOP_<node name>.svg` (Houdini's default icon
+  name for a node type is `<TABLE>_<name>`; the HDK alternative, `OP_Operator::setIconName`, needs the operator, which
+  the automatic DOPs don't expose to us). Renaming a node's internal name means renaming its icon.
 * `BOX3DDOP_DEBUG` (default ON) defines `BOX3DDOP_DEBUG=1` for the plugin target only.
 * `BOX3D_DIR` (default `extern/box3d`) must point at Box3D's own `CMakeLists.txt`.
 * `-DBOX3D_DOUBLE_PRECISION=ON` works: positions cross the boundary as `double[3]` and `Box3DWorld.cpp` converts through
@@ -104,8 +108,9 @@ accepts all of them on a disabled body (proxies are only touched when they exist
 
 **Collision filtering.** `CollisionFilterTable` (`Box3DShapes.h`) holds every distinct `FilterProfile` (group, object
 name, object id as text, ignore patterns) and answers `shouldCollide(a, b)`: neither profile's ignore patterns match the
-other's names. Patterns are Houdini style (`matchPatternList` / `globMatch`: space-separated globs with `*`, `?`,
-`[...]`, `^pat` removes). `finish()` precomputes an N x N table (N <= 2048, else matched on the fly), so lookups are
+other's names. Patterns are matched by `patternMatcher()`: in Houdini `UT_String::multiMatch` (installed in
+`initializeSIM`; globs separated by spaces or commas, `^pat` removes), in the tests the Houdini-free stand-in
+`matchPatternList` / `globMatch`. `finish()` precomputes an N x N table (N <= 2048, else matched on the fly), so lookups are
 read-only and safe from Box3D's threaded pair finding; the table is only changed during the sync. Every shape is created
 with `enableCustomFiltering = true` (Box3D cannot turn it on later) and its body's profile + 1 in its user data; the
 world registers `b3World_SetCustomFilterCallback`. The filter only runs on new pairs, so `setFilterProfileByHandle` also
@@ -123,8 +128,7 @@ Several hulls on one body make a dynamic compound; overlapping pieces count thei
 **`Box3DShapes.h`** (all unit-tested): `parseShapeType` / `ShapeTypeCache` (exact lowercase Houdini names; `compound`
 = `concave`; unknown values, including `cylinder` and `plane`, return false); `makeShapeSpec` (`pscale * scale` as a
 bounding box, components made positive and >= 1e-4; sphere diameter = largest component; capsule radius = half of
-max(x, z)); `PrimOverrides` / `applyPrimOverrides`; row-vector matrix helpers (`quatToMatrix3`, `matrix3ToQuatScale`
-splitting `M = S * R` and dropping shear / mirror, `composeLocal3`); `packedPointsToBodyLocal` (`(p - pivot) * S`);
+max(x, z)); `PrimOverrides` / `applyPrimOverrides`; `matrixRowLengths`; `packedPointsToBodyLocal` (`(p - pivot) * S`);
 `packedScale` (row lengths rounded to 5 significant digits, so rotated instances share a hull; ~1e-5 scale error);
 `packedHullKey` (kind 1 merged, 2 per piece); `connectedSets` (union-find); `fitShapeToPoints`; `sanitizeQuat` /
 `storedPosition` (shared by the read path and the write-back's prediction); pattern matching and
@@ -257,11 +261,10 @@ equal to what its body was built with.
 * **Impacts** (node `addimpact`, Add Impact Data; no attribute): with it on, a scan lists every body in
   `Box3DObjectSync::impacts`. `recordImpacts` gathers their contact points, skipping asleep dynamic bodies and contacts
   where neither body is awake. Only when there is at least one does it create a fresh `SIM_Impacts`
-  (`SIM_DATA_CREATE`, flags 0) and call `addPointImpact(pos, normal, impulse, ptnum, otherobjid, otherptnum, -1, 0, 0,
+  (`SIM_DATA_CREATE` with flags 0 replaces existing data) and call `addPointImpact(pos, normal, impulse, ptnum, otherobjid, otherptnum, -1, 0, 0,
   0, time, 0)` per point (normal of the surface hit, pointing at this body; ptnum = `entry->pointIndex`). An object
   with Impacts last step and none now loses the data (`removeNamedSubData`, `impactObjects`). No Feedback data (that is
-  for mutual interaction with other solvers). UNVERIFIED: that `SIM_DATA_CREATE` without `SIM_DATA_RETURN_EXISTING`
-  replaces existing data, and Houdini's normal convention.
+  for mutual interaction with other solvers). UNVERIFIED: Houdini's impact normal convention.
 * **Activation by impact** (`min_activation_impulse`, `activationignore`): inactive bodies with a threshold are listed
   in `Box3DObjectSync::activation`. After the step, a contact at or above it from a body whose profile does not match
   `activationignore` makes the body dynamic (mass re-applied, woken), queues `active = 1` and forces a scan. It moves
@@ -287,7 +290,7 @@ equal to what its body was built with.
   mirror once.
 * `buildShapes`:
   1. Packed point: its geometry into `PieceGroup`s via `ShapeSources` (cached per source detail, and per
-     `(source, fragment name)` for packed fragments, for one `syncObject`).
+     `(source, first primitive)` for packed fragments, for one `syncObject`).
   2. Packed convex / concave: `packedHullKey`, `findHull` first, body-local points only on a miss. Convex merges all
      pieces (kind 1) unless hull-per-connected; concave is one hull per piece (kind 2).
   3. Otherwise body-local point sets -> `pieceFromPoints` (hull, or a fitted box with a note).
@@ -306,10 +309,12 @@ assumptions are wrong, only that conversion and the `hasLength` line of `applyPr
 **Pieces and packed geometry.** Pieces are grouped by the primitive `name` attribute (unnamed share one; no primitives:
 one piece). `hullperconnected` (convex only): one hull per connected set, ignoring `name`. Packed fragments
 (`GU_PackedFragment`, Pack SOP with `name`) share one source detail; a fragment's points are one piece, keyed by
-(source, fragment name, pivot, scale). The pivot is `GEO_PrimPacked::getPivot`; the body origin is the point's `P`.
+its first primitive (GU_PackedFragment does not expose its attribute value; no two fragments share a primitive),
+pivot and scale. The pivot is `GEO_PrimPacked::getPivot`; the body origin is the point's `P`.
 Packed rotation is read from `getFullTransform4` (not `orient`) and written with `setLocalTransform`;
-`composeLocal3` keeps the per-row scale. The quaternion <-> matrix pair is DIY (`quatToMatrix3` /
-`matrix3ToQuatScale`, tested as inverses), deliberately not the HDK's undocumented convention.
+`splitPackedMatrix` (`UT_Matrix3D::extractScales` + `UT_QuaternionD::updateFromRotationMatrix`; shear dropped,
+a mirror flips the third row) and `composePackedMatrix` (`getRotationMatrix`, per-row scale kept) use the HDK, so
+packed rotations follow Houdini's own quaternion convention.
 
 ### writeResultsBack
 
@@ -402,18 +407,20 @@ is a manual scene. No CI.
 
 ## HDK calls
 
-Checked against the HDK reference: `GU_PrimPacked::isPackedPrimitive`, `getFullTransform4`, `setLocalTransform`,
-`getPivot`, `transformDirty`; `GA_Detail::getPrimitiveList()` / `GA_PrimitiveList::getDataId()` / `bumpDataId()`,
+Checked against the HDK reference: `GU_PrimPacked::isPackedPrimitive`, `getPackedDetail`, `sharedImplementation`,
+`getFullTransform4`, `setLocalTransform`, `getPivot`, `transformDirty`; `GU_PackedFragment::getPrimitiveRange`;
+`GU_DetailHandleAutoReadLock` / `SIM_GeometryAutoReadLock::getGdp` (const pointer), `SIM_GeometryAutoWriteLock::getGdp`
+(reference); `GA_Detail::getPrimitiveList()` / `GA_PrimitiveList::getDataId()` / `bumpDataId()`,
 `findPointAttribute` (const), `getP`, `getNumPointOffsets`, `getNumPrimitiveOffsets`, `pointVertex`,
 `vertexPrimitive`, `getPointMap`, `pointIndex`, `pointOffset`, `destroyPointOffset` (`GA_DESTROY_DEGENERATE`),
-`destroyPrimitive`, `bumpAllDataIds`; `GA_Attribute::getDataId` / `bumpDataId`; `GEO_Detail::addIntTuple`;
-`SIM_Impacts::addPointImpact`, `SIM_IMPACTS_DATANAME`; `SIM_RootData::getName`, `removeNamedSubData`; `UT_String::
-isstring` / `buffer`.
+`destroyPrimitive`, `bumpAllDataIds`; `GA_Attribute::getDataId` / `bumpDataId`; `GA_AIFSharedStringTuple::getHandle`
+/ `getTableString`; `GEO_Detail::addIntTuple`; `SIM_DATA_CREATE` flags (`SIM_DATA_RETURN_EXISTING` unset = replace);
+`SIM_Impacts::addPointImpact`, `SIM_IMPACTS_DATANAME`; `SIM_RootData::getName`, `removeNamedSubData`;
+`UT_String::multiMatch`, `isstring`, `buffer`; `UT_Matrix3D::extractScales`, `UT_QuaternionT::getRotationMatrix` /
+`updateFromRotationMatrix`; node icons as `config/Icons/DOP_<name>.svg`.
 
-Unchecked or riskier: `getPackedDetail()`, the fragment calls (`sharedImplementation()`, `GU_PackedFragment::
-getPrimitiveRange`, `name`, `isIntValue`, `intValue`), `GU_DetailHandleAutoReadLock`, the shared-string lookup in
-`GeorepLookup`, `SIM_DATA_CREATE` flag semantics, and the timestamp semantics behind `canContinue`. `gdpPtr()` exists
-because `getGdp()` returns a pointer or a reference depending on the lock type.
+Still unchecked: the timestamp semantics behind `canContinue`, data ids surviving the DOP copy, the impact normal
+convention, and Bullet's `bullet_primR` order and `bullet_length` meaning (Bullet docs, not HDK).
 
 ## Known gaps / TODO
 

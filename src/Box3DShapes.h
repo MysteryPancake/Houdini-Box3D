@@ -246,95 +246,22 @@ makeBodyKey(int objectId, int64_t pointId)
 // that layout (m3[row*3+col], m4[row*4+col]). Quaternions are x, y, z, w.
 // ---------------------------------------------------------------------------
 
-// Row-vector rotation matrix for unit quaternion q (x, y, z, w).
-inline void
-quatToMatrix3(const float q[4], double m[9])
-{
-    const double x = q[0], y = q[1], z = q[2], w = q[3];
-    // Column-vector matrix R, then transposed into row-vector layout.
-    const double r00 = 1 - 2 * (y * y + z * z), r01 = 2 * (x * y - z * w), r02 = 2 * (x * z + y * w);
-    const double r10 = 2 * (x * y + z * w), r11 = 1 - 2 * (x * x + z * z), r12 = 2 * (y * z - x * w);
-    const double r20 = 2 * (x * z - y * w), r21 = 2 * (y * z + x * w), r22 = 1 - 2 * (x * x + y * y);
-    m[0] = r00; m[1] = r10; m[2] = r20;
-    m[3] = r01; m[4] = r11; m[5] = r21;
-    m[6] = r02; m[7] = r12; m[8] = r22;
-}
-
-// Split M = S * R into per-row scale and a unit quaternion. False (identity, scale 1) if
-// degenerate. Shear and mirroring are dropped.
+// A 3x3's row lengths (the per-row scale of M = S * R). False if a row is zero or non-finite.
+// The plugin splits rotations with the HDK (UT_Matrix3D::extractScales); this Houdini-free
+// version is only for scale keys.
 inline bool
-matrix3ToQuatScale(const double m[9], float outQ[4], double outScale[3])
+matrixRowLengths(const double m[9], double out[3])
 {
-    outQ[0] = outQ[1] = outQ[2] = 0.0f;  outQ[3] = 1.0f;
-    outScale[0] = outScale[1] = outScale[2] = 1.0;
-
-    double e0[3] = { m[0], m[1], m[2] };
-    double e1[3] = { m[3], m[4], m[5] };
-    double e2[3] = { m[6], m[7], m[8] };
-    auto len = [](const double *v) { return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); };
-    const double l0 = len(e0), l1 = len(e1), l2 = len(e2);
-    if (!(l0 > 1e-12) || !(l1 > 1e-12) || !(l2 > 1e-12) ||
-        !std::isfinite(l0) || !std::isfinite(l1) || !std::isfinite(l2))
-        return false;
-    outScale[0] = l0;  outScale[1] = l1;  outScale[2] = l2;
-
-    for (int i = 0; i < 3; ++i) e0[i] /= l0;
-    double d = e1[0] * e0[0] + e1[1] * e0[1] + e1[2] * e0[2];
-    for (int i = 0; i < 3; ++i) e1[i] -= d * e0[i];
-    const double n1 = len(e1);
-    if (!(n1 > 1e-12)) return false;
-    for (int i = 0; i < 3; ++i) e1[i] /= n1;
-    // Right-handed third axis (drops a mirror).
-    e2[0] = e0[1] * e1[2] - e0[2] * e1[1];
-    e2[1] = e0[2] * e1[0] - e0[0] * e1[2];
-    e2[2] = e0[0] * e1[1] - e0[1] * e1[0];
-
-    // Rows e0,e1,e2 are the row-vector matrix; column-vector R[i][j] = row[j][i].
-    const double r00 = e0[0], r01 = e1[0], r02 = e2[0];
-    const double r10 = e0[1], r11 = e1[1], r12 = e2[1];
-    const double r20 = e0[2], r21 = e1[2], r22 = e2[2];
-
-    double x, y, z, w;
-    const double tr = r00 + r11 + r22;
-    if (tr > 0.0)
+    out[0] = out[1] = out[2] = 1.0;
+    double l[3];
+    for (int r = 0; r < 3; ++r)
     {
-        const double s = std::sqrt(tr + 1.0) * 2.0;
-        w = 0.25 * s;  x = (r21 - r12) / s;  y = (r02 - r20) / s;  z = (r10 - r01) / s;
+        l[r] = std::sqrt(m[r * 3] * m[r * 3] + m[r * 3 + 1] * m[r * 3 + 1] + m[r * 3 + 2] * m[r * 3 + 2]);
+        if (!(l[r] > 1e-12) || !std::isfinite(l[r]))
+            return false;
     }
-    else if (r00 > r11 && r00 > r22)
-    {
-        const double s = std::sqrt(1.0 + r00 - r11 - r22) * 2.0;
-        w = (r21 - r12) / s;  x = 0.25 * s;  y = (r01 + r10) / s;  z = (r02 + r20) / s;
-    }
-    else if (r11 > r22)
-    {
-        const double s = std::sqrt(1.0 + r11 - r00 - r22) * 2.0;
-        w = (r02 - r20) / s;  x = (r01 + r10) / s;  y = 0.25 * s;  z = (r12 + r21) / s;
-    }
-    else
-    {
-        const double s = std::sqrt(1.0 + r22 - r00 - r11) * 2.0;
-        w = (r10 - r01) / s;  x = (r02 + r20) / s;  y = (r12 + r21) / s;  z = 0.25 * s;
-    }
-    const double n = std::sqrt(x * x + y * y + z * z + w * w);
-    if (!(n > 1e-12)) return false;
-    outQ[0] = float(x / n);  outQ[1] = float(y / n);  outQ[2] = float(z / n);  outQ[3] = float(w / n);
+    out[0] = l[0];  out[1] = l[1];  out[2] = l[2];
     return true;
-}
-
-// oldM3's per-row scale with q's rotation (a packed primitive's new local 3x3). Uses the
-// quatToMatrix3 / matrix3ToQuatScale pair, tested as inverses.
-inline void
-composeLocal3(const float q[4], const double oldM3[9], double outM3[9])
-{
-    float  oq[4];
-    double sc[3];
-    matrix3ToQuatScale(oldM3, oq, sc);          // sc stays 1 if the old matrix is degenerate
-    double r[9];
-    quatToMatrix3(q, r);
-    for (int row = 0; row < 3; ++row)
-        for (int col = 0; col < 3; ++col)
-            outM3[row * 3 + col] = sc[row] * r[row * 3 + col];
 }
 
 // The scale packedPointsToBodyLocal bakes in: m4's row lengths, rounded to 5 significant
@@ -343,8 +270,7 @@ inline bool
 packedScale(const double m4[16], double S[3])
 {
     const double m3[9] = { m4[0], m4[1], m4[2],  m4[4], m4[5], m4[6],  m4[8], m4[9], m4[10] };
-    float q[4];
-    if (!matrix3ToQuatScale(m3, q, S))
+    if (!matrixRowLengths(m3, S))
         return false;
     // Round to 5 significant digits.
     for (int j = 0; j < 3; ++j)
@@ -542,8 +468,9 @@ inline bool storedPosition(const double in[3], double out[3])
 // ---------------------------------------------------------------------------
 // Collision groups (`collisiongroup`, `collisionignore`, `activationignore`)
 //
-// Houdini patterns: space-separated globs (`*`, `?`, `[abc]`) left to right; `^pat` removes
-// what it matches.
+// Houdini patterns: globs (`*`, `?`, `[abc]`) separated by spaces or commas, left to right;
+// `^pat` removes what it matches. In Houdini the HDK's UT_String::multiMatch does the matching
+// (see patternMatcher); globMatch / matchPatternList are the Houdini-free stand-in for tests.
 // ---------------------------------------------------------------------------
 
 // One case-sensitive glob against one name.
@@ -634,6 +561,17 @@ matchPatternList(const std::string &patterns, const std::string &name)
     return matched;
 }
 
+// The matcher patternsMatchProfile uses: matchPatternList by default (tests); the plugin
+// installs Houdini's own (UT_String::multiMatch) in initializeSIM. Set before any solve; read
+// only afterwards, so it is safe from Box3D's threads.
+using PatternMatchFn = bool (*)(const std::string &patterns, const std::string &name);
+inline PatternMatchFn &
+patternMatcher()
+{
+    static PatternMatchFn fn = &matchPatternList;
+    return fn;
+}
+
 // A body's names for pattern matching (group, object name, object id) and its ignore patterns.
 struct FilterProfile
 {
@@ -647,8 +585,8 @@ struct FilterProfile
 inline bool
 patternsMatchProfile(const std::string &patterns, const FilterProfile &who)
 {
-    return matchPatternList(patterns, who.group) || matchPatternList(patterns, who.objectName) ||
-           matchPatternList(patterns, who.objectId);
+    const PatternMatchFn match = patternMatcher();
+    return match(patterns, who.group) || match(patterns, who.objectName) || match(patterns, who.objectId);
 }
 
 // Every distinct profile, and whether two collide (neither ignores the other). Profiles are

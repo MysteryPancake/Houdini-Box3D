@@ -26,7 +26,7 @@ cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release
 ```
 
-Always build **Release** or **RelWithDebInfo**, not Debug. The DLL is copied to `Documents\houdiniX.Y\dso`. Close Houdini before rebuilding.
+Always build **Release** or **RelWithDebInfo**, not Debug. The DLL is copied to `Documents\houdiniX.Y\dso` and the node icons to `Documents\houdiniX.Y\config\Icons`. Close Houdini before rebuilding.
 
 `build.bat` does the same thing in one step, but you need to edit the Houdini path at the top of the file first.
 
@@ -45,7 +45,7 @@ source /opt/hfsX.Y.ZZZ/houdini_setup
 ./build.sh
 ```
 
-The plugin is copied to `~/houdiniX.Y/dso`. Close Houdini before rebuilding.
+The plugin is copied to `~/houdiniX.Y/dso` and the node icons to `~/houdiniX.Y/config/Icons`. Close Houdini before rebuilding.
 
 ### Checking Box3D without Houdini
 

@@ -81,3 +81,13 @@ endif()
 # Output name, and copies the plugin into the houdiniX.Y/dso folder (Documents on
 # Windows, the home directory on Linux)
 houdini_configure_target(Box3DDOP)
+
+# Node icons: Houdini picks up config/Icons/DOP_<node name>.svg for each node type.
+# houdini_configure_target builds the plugin straight into houdiniX.Y/dso, so the
+# icons go next to it in houdiniX.Y/config/Icons.
+set(BOX3DDOP_ICON_DIR "$<TARGET_FILE_DIR:Box3DDOP>/../config/Icons")
+add_custom_command(TARGET Box3DDOP POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${BOX3DDOP_ICON_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/icons/box3d.svg" "${BOX3DDOP_ICON_DIR}/DOP_box3d_solver.svg"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/icons/box3d.svg" "${BOX3DDOP_ICON_DIR}/DOP_box3d_data.svg"
+    VERBATIM)
