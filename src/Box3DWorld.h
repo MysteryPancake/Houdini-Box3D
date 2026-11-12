@@ -130,6 +130,41 @@ public:
     void       applyMassFromShapes(BodyHandle h);
     bool       setTypeByHandle(BodyHandle h, BodySettings::Type type);   // static / kinematic / dynamic
 
+    // ---- mid-simulation changes (handle API) --------------------------------
+    // What the solver uses when a point attribute changes on an existing body. Each takes
+    // effect from the next step; none of them wakes a sleeping body unless it says so
+    // (Box3D's own rules: enabling "never sleep" wakes it).
+    //
+    // Friction / restitution go to every shape of the body. Box3D re-mixes a contact's
+    // friction and restitution from its shapes every step, so touching contacts follow too.
+    void  setMaterialByHandle(BodyHandle h, float friction, float restitution);
+    void  setDampingByHandle(BodyHandle h, float linear, float angular);
+    void  setGravityScaleByHandle(BodyHandle h, float gravityScale);
+    // May the body sleep? ANDed with the world's enableSleep, like createBody does.
+    void  setSleepEnabledByHandle(BodyHandle h, bool enableSleep);
+    // Density of every shape, then the mass is applied once. The solver keeps mass constant
+    // by passing mass / total shape volume, so this is "change the mass" and also what a
+    // fresh build with the same attributes would produce (inertia follows the shapes).
+    void  setDensityByHandle(BodyHandle h, float density);
+    // Take a body out of the simulation (no collisions, no motion) or put it back. A
+    // disabled body keeps its shapes and settings.
+    void  setEnabledByHandle(BodyHandle h, bool enabled);
+    bool  isEnabledByHandle(BodyHandle h) const;
+    // Remove every shape of the body (and release the hulls it used) so new ones can be
+    // added: destroyShapesByHandle, then createShape / createHullShape with updateMass =
+    // false, then applyMassFromShapes once. Contacts of the old shapes are dropped.
+    void  destroyShapesByHandle(BodyHandle h);
+    void  wakeByHandle(BodyHandle h);
+
+    // Read back (tests, debugging). Material is the first shape's; 0 / false if unknown.
+    bool  getMaterialByHandle(BodyHandle h, float &friction, float &restitution) const;
+    bool  getDampingByHandle(BodyHandle h, float &linear, float &angular) const;
+    float gravityScaleByHandle(BodyHandle h) const;
+    bool  isSleepEnabledByHandle(BodyHandle h) const;
+    bool  isAwakeByHandle(BodyHandle h) const;
+    float massByHandle(BodyHandle h) const;
+    int   shapeCountByHandle(BodyHandle h) const;
+
     // ---- bodies --------------------------------------------------------
     bool addBody(uint64_t id, const BodySettings &body,
                  const double position[3], const float rotationXYZW[4]);

@@ -865,6 +865,121 @@ int main()
         std::printf("handle-build checks done\n");
     }
 
+    // ---- mid-simulation changes (what the solver does when an attribute changes) ----
+    {
+        using namespace b3dop;
+        Box3DWorld dw;
+        CHECK(dw.create(WorldSettings()));
+        const float qid[4] = { 0, 0, 0, 1 };
+        BodySettings stat;  stat.type = BodySettings::Type::Static;
+        const double gp[3] = { 0, -0.5, 0 };
+        const BodyHandle ground = dw.createBody(stat, gp, qid);
+        ShapeSpec groundSpec;  groundSpec.halfExtents[0] = groundSpec.halfExtents[2] = 100.0f;
+        groundSpec.halfExtents[1] = 0.5f;
+        CHECK(ground && dw.createShape(ground, stat, groundSpec));
+
+        ShapeSpec cube;        // unit cube, volume 1
+        BodySettings dyn;
+        const double p0[3] = { 0, 0.5, 0 };
+        const BodyHandle b = dw.createBody(dyn, p0, qid);
+        CHECK(b && dw.createShape(b, dyn, cube));
+        CHECK(std::fabs(dw.massByHandle(b) - 1.0f) < 1e-4f);
+
+        // friction / restitution reach the shapes
+        dw.setMaterialByHandle(b, 0.25f, 0.75f);
+        float f = 0, r = 0;
+        CHECK(dw.getMaterialByHandle(b, f, r) && f == 0.25f && r == 0.75f);
+
+        // damping, gravity scale
+        dw.setDampingByHandle(b, 0.5f, 2.0f);
+        float ld = 0, ad = 0;
+        CHECK(dw.getDampingByHandle(b, ld, ad) && ld == 0.5f && ad == 2.0f);
+        dw.setGravityScaleByHandle(b, -1.0f);
+        CHECK(dw.gravityScaleByHandle(b) == -1.0f);
+
+        // mass via density (volume 1 -> mass = density); inertia follows the shape
+        dw.setDensityByHandle(b, 7.0f);
+        CHECK(std::fabs(dw.massByHandle(b) - 7.0f) < 1e-4f);
+
+        // gravity scale -1 floats the body up
+        for (int i = 0; i < 30; ++i) dw.step(1.0f / 60.0f);
+        double p[3];  float q[4];
+        CHECK(dw.getTransformByHandle(b, p, q) && p[1] > 0.6);
+
+        // sleep permission: a body that may not sleep is awake and stays so
+        dw.setGravityScaleByHandle(b, 0.0f);
+        const float zero[3] = { 0, 0, 0 };
+        dw.setVelocityByHandle(b, zero, zero);
+        dw.setSleepEnabledByHandle(b, false);
+        CHECK(!dw.isSleepEnabledByHandle(b));
+        for (int i = 0; i < 200; ++i) dw.step(1.0f / 60.0f);
+        CHECK(dw.isAwakeByHandle(b));
+        dw.setSleepEnabledByHandle(b, true);
+        CHECK(dw.isSleepEnabledByHandle(b));
+        for (int i = 0; i < 200; ++i) dw.step(1.0f / 60.0f);
+        CHECK(!dw.isAwakeByHandle(b));                  // still body, allowed to sleep: asleep
+
+        // disabled: does not move, keeps its shapes; enabled again: moves
+        dw.setGravityScaleByHandle(b, 1.0f);
+        dw.wakeByHandle(b);
+        CHECK(dw.isAwakeByHandle(b));
+        dw.setEnabledByHandle(b, false);
+        CHECK(!dw.isEnabledByHandle(b));
+        double before[3];
+        CHECK(dw.getTransformByHandle(b, before, q));
+        for (int i = 0; i < 10; ++i) dw.step(1.0f / 60.0f);
+        CHECK(dw.getTransformByHandle(b, p, q) && p[1] == before[1]);
+        CHECK(dw.shapeCountByHandle(b) == 1);
+        dw.setEnabledByHandle(b, true);
+        CHECK(dw.isEnabledByHandle(b));
+        for (int i = 0; i < 10; ++i) dw.step(1.0f / 60.0f);
+        CHECK(dw.getTransformByHandle(b, p, q) && p[1] < before[1]);
+
+        // rebuild: drop the shapes, add a bigger cube; mass recomputed from the new shape
+        float pts[24];
+        int k = 0;
+        for (int sx = -1; sx <= 1; sx += 2)
+            for (int sy = -1; sy <= 1; sy += 2)
+                for (int sz = -1; sz <= 1; sz += 2)
+                {
+                    pts[k++] = float(sx);  pts[k++] = float(sy);  pts[k++] = float(sz);
+                }
+        float hv = 0;
+        const HullId big = dw.createHull(pts, 8, &hv);      // 2x2x2, volume 8
+        CHECK(big && std::fabs(hv - 8.0f) < 1e-3f);
+        dw.destroyShapesByHandle(b);
+        CHECK(dw.shapeCountByHandle(b) == 0);
+        BodySettings dense = dyn;  dense.density = 7.0f / 8.0f;      // keep mass 7
+        CHECK(dw.createHullShape(b, dense, big, false));
+        dw.applyMassFromShapes(b);
+        CHECK(dw.shapeCountByHandle(b) == 1);
+        CHECK(std::fabs(dw.massByHandle(b) - 7.0f) < 1e-3f);
+        // rebuilding again releases the hull it used: prune empties the cache
+        dw.destroyShapesByHandle(b);
+        CHECK(dw.createShape(b, dyn, cube));
+        dw.pruneHulls();
+        CHECK(dw.hullCacheSize() == 0);
+        // and the body comes to rest on the ground at its new size
+        for (int i = 0; i < 240; ++i) dw.step(1.0f / 60.0f);
+        CHECK(dw.getTransformByHandle(b, p, q) && std::fabs(p[1] - 0.5) < 0.05);
+
+        // handle 0 is ignored everywhere
+        dw.setMaterialByHandle(0, 1, 1);  dw.setDampingByHandle(0, 1, 1);  dw.setGravityScaleByHandle(0, 1);
+        dw.setSleepEnabledByHandle(0, true);  dw.setDensityByHandle(0, 1);  dw.setEnabledByHandle(0, false);
+        dw.destroyShapesByHandle(0);  dw.wakeByHandle(0);
+        CHECK(!dw.isEnabledByHandle(0) && dw.massByHandle(0) == 0.0f && dw.shapeCountByHandle(0) == 0);
+
+        // the world's sleep switch wins: with sleep off in the world a body never sleeps
+        Box3DWorld nw;
+        WorldSettings noSleep;  noSleep.enableSleep = false;
+        CHECK(nw.create(noSleep));
+        const BodyHandle nb = nw.createBody(dyn, p0, qid);
+        CHECK(nb && nw.createShape(nb, dyn, cube));
+        nw.setSleepEnabledByHandle(nb, true);
+        CHECK(!nw.isSleepEnabledByHandle(nb));
+        std::printf("mid-sim update checks done\n");
+    }
+
     w.destroy();
     CHECK(!w.isValid());
     std::printf(fails ? "FAILED\n" : "OK\n");

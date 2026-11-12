@@ -109,6 +109,18 @@ calls `applyMassFromShapes` once (required before the next step). A single-shape
 gain is small (a 3-piece compound costs about the same either way in a microbenchmark); it is kept because it is
 free and scales with piece count.
 
+**Mid-simulation setters** (handle API, used when an attribute changes on an existing body):
+`setMaterialByHandle` (friction + restitution on every shape; Box3D re-mixes contact friction / restitution from the
+shapes every step, so touching contacts follow), `setDampingByHandle`, `setGravityScaleByHandle`,
+`setSleepEnabledByHandle` (ANDed with the world's `enableSleep`, like `createBody`; disabling sleep wakes the body),
+`setDensityByHandle` (every shape, then one `b3Body_ApplyMassFromShapes`), `setEnabledByHandle` (`b3Body_Disable` /
+`b3Body_Enable`: no motion, no collisions, shapes kept), `destroyShapesByHandle` (destroys every shape with
+`updateBodyMass = false` and releases the body's hulls; the caller re-adds shapes and applies the mass once) and
+`wakeByHandle`. Read-back getters for the tests: `getMaterialByHandle` (first shape), `getDampingByHandle`,
+`gravityScaleByHandle`, `isSleepEnabledByHandle`, `isAwakeByHandle`, `massByHandle`, `shapeCountByHandle`. They share
+one `thread_local` shape-id scratch vector; the solver calls them serially. Box3D accepts all of them on a disabled
+body (checked in its source: proxies are only touched when they exist).
+
 `WorldSettings`: gravity, `subSteps` (default 4), `workerCount` (Box3D's own thread
 pool, sized at creation, max 32; it does not use Houdini's TBB), `enableSleep`,
 `enableContinuous`.
@@ -150,7 +162,11 @@ Hull cache:
 `Box3DShapes.h` highlights (all unit-tested):
 
 * `ShapeTypeCache`: `parseShapeType` with a memo by string value (one strcmp against the last value seen, usually a
-  hit). The solver keeps one per scan. Same answers as `parseShapeType`, including "unknown leaves `out` alone".
+  hit). The solver keeps one in `Box3DSharedState::shapeTypes` for the life of the world (a shape type never changes
+  once a body exists). `GeorepLookup` (solver) goes one step further: `bullet_georep` is a shared-string attribute, so
+  it reads the point's integer handle (`GA_AIFSharedStringTuple::getHandle`) and resolves each distinct handle once per
+  scan via `getTableString`; handles are per attribute table, so that map is per scan. Falls back to the string +
+  memo if the attribute has no shared-string interface. UNVERIFIED against a real HDK build. Same answers as `parseShapeType`, including "unknown leaves `out` alone".
 * `parseShapeType(const char*)`: exact, case-sensitive. `convexhull`, `concave`,
   `compound` (== concave), `box`, `sphere`, `capsule`, `none`. Anything else
   (including Houdini's `cylinder`, `plane`) returns false so the caller uses the node default.
@@ -210,8 +226,10 @@ prims the primitive transform.
 
 `Box3DBodyMirror` (per body, per world): last `pos/rot/lin/ang` handed to or read back
 from Box3D (in DOP terms), `dynamic`, cached `handle`, cached `type`, plus the body's point
-(`pointOff`, `pointId`, `objectId`) and a `stamp`. It exists to (a) detect edits by other nodes
-and (b) avoid hash lookups in the per-step loops. Box3D's body user data points at the entry
+(`pointOff`, `pointId`, `objectId`) and a `stamp`. It also keeps what the body was built from, for mid-simulation
+updates: `props` (`Box3DBodyProps`: effective mass, friction, restitution, damping, gravity scale, sleep permission,
+ignored), `volume` (total shape volume), `shapeSig`, `shapeless`, `autoScale` and `sizeKey` (see "Mid-simulation
+updates"). It exists to (a) detect edits by other nodes and (b) avoid hash lookups in the per-step loops. Box3D's body user data points at the entry
 (`setBodyUserData`), so entries must not move: they live in an `unordered_map` (node-stable) and
 are only erased together with their body.
 
@@ -224,12 +242,12 @@ seen, and equal counts mean there is nothing to remove. "Current" is per object 
 `Box3DSharedState::isLive(entry)` = the entry's object was visited by this sync and the entry carries that object's
 `liveStamp`.
 
-Smaller per-step savings: `PointAttrs` binds only `id, active, v, w, orient` per object and the
-~17 body-building attributes lazily (`bindBuildAttrs`, first new body); `getPackedInfo` is skipped
+Smaller per-step savings: `PointAttrs` binds only `id, active, v, w, orient` per object before the skip check; the
+~21 other attributes are bound (`bindBuildAttrs`) only when the object is actually scanned; `getPackedInfo` is skipped
 when the geometry has no primitives; the sync pass stores each packed point's primitive offset and
 3x3 in its mirror entry and write-back reuses them (after checking the point still belongs to that
-primitive) instead of re-reading the transform; `pruneHulls` only runs on steps that added, failed
-or removed a body; bodies are built through the handle API, so no per-body `BodySettings` is ever stored; move events come from one `getMoveEvents` call into a
+primitive) instead of re-reading the transform; `pruneHulls` only runs on steps that added, failed,
+rebuilt or removed a body; bodies are built through the handle API, so no per-body `BodySettings` is ever stored; move events come from one `getMoveEvents` call into a
 reused vector.
 
 ## Solver step (`SIM_SolverBox3D::solveObjectsSubclass`)
@@ -242,6 +260,7 @@ lock st->mutex
 syncFromGeometry   -> per object syncObject(); remove bodies whose point is gone; pruneHulls; emit warnings
 stepWorld          -> b3World_Step(dt, subSteps)
 writeResultsBack   -> only for bodies in Box3D's move events (awake ones), grouped per object
+writeAutofitValid  -> bullet_autofit_valid = 1 on points whose shape was (re)built while it was 0
 st->stamp = now
 publishEvents      -> TODO stub
 ```
@@ -252,10 +271,12 @@ Data names: world is attached as `"Box3DWorld"`, defaults as `"Box3DData"`; geom
 ### syncObject (per object)
 
 1. Gets `SIM_Geometry` (const) under `SIM_GeometryAutoReadLock`; skips objects with none.
-2. Resolves `PointAttrs` (read handles for `id, active, mass, friction, bounce, pscale,
-   scale, v, w, orient, bullet_georep, bullet_autofit, bullet_primS/R/T, bullet_radius,
-   bullet_length` and the body-setting attributes; any may be invalid = default).
-3. Reads `SIM_Box3DData` fallback settings if attached.
+2. Resolves `PointAttrs` (`id, active, v, w, orient` up front; after the skip check also `mass, friction, bounce,
+   pscale, scale, bullet_georep, bullet_autofit, bullet_primS/R/T, bullet_radius, bullet_length`, the other
+   body-setting attributes and the mid-simulation controls `bullet_want_deactivate, bullet_ignore, deforming,
+   bullet_autofit_valid`; any may be invalid = default).
+3. Reads `SIM_Box3DData` fallback settings if attached (body type and a hash of its mass / friction / bounce / damping /
+   gravity scale before the skip check, the full settings after it).
 3b. **Skip check** (before the passes): if the object's change markers equal the ones recorded last time, passes 1 and 2
    are skipped entirely (see "Skipping the sync scan").
 4. **Pass 1 (parallel when >= 2048 points, `UTparallelFor`)**: per point compute body id
@@ -264,17 +285,56 @@ Data names: world is attached as `"Box3DWorld"`, defaults as `"Box3DData"`; geom
    whose offset or key changed forgets its cached mirror entry).
 5. **Pass 2 (serial, point order)**: duplicate `id` (entry already has the current stamp) -> counted, first wins; non-finite `P`
    -> counted and treated as absent (existing body is removed later); unknown key ->
-   `addPointBody` (also `readPackedPivot`); known key -> handle `active` flips
-   (`setBodyType`) and external edits (`describeStateDifference` on pos/orient/lin/ang vs
-   mirror with eps 1e-5, q and -q treated equal -> push `setTransformByHandle` +
-   `setVelocityByHandle`, refresh mirror).
+   `addPointBody` (also `readPackedPivot`); known key -> mid-simulation updates (shape rebuild, then settings; see
+   below), then `active` flips (`setBodyType`; a shapeless body always stays static) and external edits
+   (`describeStateDifference` on pos/orient/lin/ang vs mirror with eps 1e-5, q and -q treated equal -> push
+   `setTransformByHandle` + `setVelocityByHandle`, refresh mirror).
 
-Edits that are **not** picked up on an existing body: `bullet_georep`, `bullet_autofit`,
-`bullet_prim*`, `bullet_radius`, `bullet_length`, `pscale`, `scale`,
-`mass`, `friction`, `bounce`, the damping / gravity scale / bullet / sleep attributes, Box3D
-Data node settings (mass, default shape...), and solver gravity/substeps/sleep. These are applied
-at body/world creation; a rebuild (Reset Simulation or thread-count change) re-reads them.
-(`WorldSettings` is stored at creation and `step` uses the stored `subSteps`.)
+Edits that are **not** picked up on an existing body (by design, matching Bullet): `bullet_georep`, `bullet_autofit`,
+`bullet_prim*`, `bullet_radius`, `bullet_length`, a box / sphere / capsule's `pscale` / `scale` / packed scale, unless
+`bullet_autofit_valid = 0` or `deforming = 1` asks for a rebuild; `enablesleep` and `isbullet` (creation only). Box3D
+Data `defaultshape` / `autofit` / `hullperconnected` likewise only apply at creation or rebuild, and solver
+gravity/substeps/sleep only when the world is created (`WorldSettings` is stored at creation and `step` uses the
+stored `subSteps`).
+
+### Mid-simulation updates
+
+Target behaviour is Houdini's Bullet solver as documented on the RBD Packed Object page. Everything below happens in
+pass 2 for an existing body; a new body is built from the same readers, so an untouched point always compares equal to
+what its body was built with.
+
+* **Settings** (`readDynamicProps` -> `applyPropChanges`): effective `mass`, `friction`, `bounce`, `lineardamping`,
+  `angulardamping`, `gravityscale` (point attribute if present and usable, else the Box3D Data value), sleep
+  permission and `bullet_ignore`, compared with `entry->props`; only the setters for what differs are called.
+  * `mass` -> `setDensityByHandle(mass / entry->volume)`: same as a fresh build, inertia scales with the mass
+    (Houdini has `computemass` / `inertialtensorstiffness`; neither is supported here).
+  * Sleep: at creation `bullet_want_deactivate`, else `enablesleep`, else the node. Afterwards only
+    `bullet_want_deactivate` (when it exists) changes it; `enablesleep` is creation-only, as in Bullet.
+  * `bullet_ignore` != 0 -> `setEnabledByHandle(false)` (also at creation). A disabled body has no move events, so it
+    is not written back.
+  * Only compared when `checkProps`: the object's prop markers (`samePropMarkers`) changed since the last scan, it has
+    no recorded markers yet, or it has deforming bodies. A scan triggered by, say, an animated `P` alone does not
+    read them.
+* **Shape rebuild** (`rebuildPointShapes`) when `deforming != 0` (every step), `bullet_autofit_valid == 0` (once), or
+  `entry->autoScale` and the size key moved by more than 1e-4 relative (`sameSizeKey`). It calls `planShapes` (the
+  same code that builds a new body: georep, autofit, prim overrides, pscale/scale, packed geometry) and compares its
+  `shapeSignature` (hull ids + primitive numbers) with `entry->shapeSig`: equal -> nothing touched. Otherwise
+  `destroyShapesByHandle`, `addPlannedShapes` with density = mass / new volume (so mass is preserved and inertia
+  follows the new shape), `wakeByHandle`. The body (handle, pose, velocity, identity, mirror entry) stays. A plan of
+  `none`, or one whose shapes all fail, leaves the body `shapeless`, which forces it static until a later rebuild
+  gives it shapes.
+  * `autoScale` is set for convex / concave only (Houdini: dynamic scale works for convex hull and concave, not for
+    auto-fitted primitives). `sizeKey` = the packed 3x3's row lengths (`matrix3ToQuatScale`), or `pscale * scale` for
+    a plain point (whose convex / concave is the fallback box). Our own write-back recomposes the packed rotation
+    keeping row lengths, hence the tolerance.
+  * Objects with a deforming body never skip (`Box3DObjectSync::anyDeforming`), and always compare settings.
+* **`bullet_autofit_valid` write-back**: every point built or rebuilt while it was 0 (fresh bodies included) is queued
+  in `Box3DSharedState::validWrites`; `writeAutofitValid` (after `writeResultsBack`, whether or not the body moved)
+  sets it to 1 via `resolvePointOffsets`, bumps the id and re-records the fingerprint. Unlike Bullet, the fitted
+  values are not written into `bullet_prim*` / `bullet_radius` / `bullet_length`.
+* **`id`** has no special values. It is the identity key: a different `id` is a different body (old one removed, new
+  one built). The `id = -1` "force a rebuild" trick some notes describe is NOT implemented, on purpose.
+* Not tested against a live Houdini yet; `core_physics` covers the Box3DWorld setters.
 
 ### Skipping the sync scan
 
@@ -284,11 +344,16 @@ whole `currentWorldSettings()`.)
 
 Passes 1 and 2 read and compare every point, including sleeping ones. For an object that nobody touched they find nothing,
 so each object keeps a `Box3DObjectSync` record in `Box3DSharedState::objectSync` with a `Box3DSyncFingerprint`: point
-count, size of the point offset range, the data ids of `P`, `orient`, `v`, `w`, `id`, `active` (absent = its own value), and
-the Box3D Data body type (a change retypes existing bodies, which the scan applies). A GA data id changes whenever the
+count, size of the point offset range, the data ids of `P`, `orient`, `v`, `w`, `id`, `active` (absent = its own value),
+the Box3D Data body type (a change retypes existing bodies, which the scan applies), and the prop markers for
+mid-simulation updates: data ids of `kPropAttribNames` (`mass, friction, bounce, lineardamping, angulardamping,
+gravityscale, bullet_want_deactivate, bullet_ignore, deforming, bullet_autofit_valid, pscale, scale`, looked up by name),
+the primitive list's data id (`primitiveListDataId`, UNVERIFIED: `GA_PrimitiveList::getDataId()` and whether packed
+transform edits bump it) and `nodeHash` (the Box3D Data node's mass / friction / bounce / damping / gravity scale). A GA data id changes whenever the
 attribute is written, which is what makes it a change marker.
 
-* Recorded at the end of a full scan, and again at the end of `writeResultsBack`: after it bumped the ids of what it wrote
+* Recorded at the end of a full scan, and again (`recordFingerprintAfterWrite`, for every object the sync visited) at the
+  end of `writeResultsBack` and `writeAutofitValid`: after it bumped the ids of what it wrote
   AND after every write lock is released (releasing a write lock may bump ids again), from a read of the geometry as the
   next step will see it. Otherwise our own write would defeat the skip every step. If a debug log shows
   `full scan, changed: P <old>-><new>, ...` every step, the ids are being changed by something after the solver returns
@@ -312,12 +377,13 @@ attribute is written, which is what makes it a change marker.
   `sync: N of M object(s) unchanged, scan skipped` when it works, and `full scan, <marker> changed` when an object that could
   have skipped did not; check that first. Also unchecked against the HDK: `GA_Detail::getP()`, `GA_Detail::getNumPrimitiveOffsets()`.
 
-### addPointBody / buildShapes
+### addPointBody / planShapes / buildShapes
 
 * Body type = node type, forced to Static if `active == 0`.
-* `mass`, `friction`, `bounce`, `lineardamping`, `angulardamping`, `gravityscale`,
-  `enablesleep`, `isbullet` attributes override node values. Shape type = `bullet_georep` string
-  via `parseShapeType`, else node `defaultShape`.
+* `readDynamicProps` + `settingsFor`: `mass`, `friction`, `bounce`, `lineardamping`, `angulardamping`, `gravityscale`,
+  `enablesleep` / `bullet_want_deactivate`, `bullet_ignore` override node values; `isbullet` is read in `addPointBody`
+  only. `planShapes`: shape type = `bullet_georep` string via `parseShapeType`, else node `defaultShape`, then
+  `buildShapes`, `shapeSignature`, `autoScale` / `sizeKey`. `addPlannedShapes` adds the pieces.
 * `none` -> static body with no shapes (the only legal shapeless body).
 * Size from `pscale` (default 1) and `scale` (default 1,1,1).
 * `buildShapes` flow:
@@ -485,21 +551,25 @@ The Box3D Data node's data name on the object is `Box3DData`.
 `P` required. `orient` (quat, ignored on input for packed points), `v`, `w` (rad/s), `mass`
 (density = mass/volume), `friction`, `bounce` (restitution), `lineardamping`, `angulardamping`,
 `gravityscale` (floats), `enablesleep`, `isbullet` (ints, 0 = off), `active` (0 static, else
-dynamic), `bullet_georep` (shape string), `bullet_autofit` (int), `bullet_primS`,
+dynamic), `bullet_want_deactivate` (int, 1 may sleep), `bullet_ignore` (int), `deforming` (int),
+`bullet_autofit_valid` (int, written back as 1), `bullet_georep` (shape string), `bullet_autofit` (int), `bullet_primS`,
 `bullet_primR`, `bullet_primT` (vectors), `bullet_radius`, `bullet_length` (floats; see
 "Explicit primitives"), `pscale`, `scale`, `id`. Each of `mass`, `friction`,
 `bounce`, `lineardamping`, `angulardamping`, `gravityscale`, `enablesleep`, `isbullet`
 overrides the Box3D Data parameter of the same name; negative / non-finite values are
 clamped to 0 / ignored (gravityscale may be negative). Identity is
 `(object id, id attribute or point number)`; use `id` if points can be deleted/reordered.
-Written back: `P`, `orient`, `v`, `w` on dynamic points (and packed primitive transform).
+Written back: `P`, `orient`, `v`, `w` on dynamic points (and packed primitive transform), and
+`bullet_autofit_valid = 1` where a shape was (re)built while it was 0. See "Mid-simulation updates" for which
+attributes an existing body follows.
 
 ## Warnings surfaced on the node
 
 One `UT_ERROR_WARNING` per kind per step with a count: shape fell back to box (flat / <4
 points / too complex / empty packed geometry / convex without packed prim); points that could
 not become a body; duplicate `id`; non-finite `P`; Geometry not writable; points with no Box3D body
-at write-back. Fallback warnings only appear on the frame the body is created.
+at write-back. Fallback warnings only appear on the frame the body is created, or on a step that rebuilt its shape
+(including "the rebuilt collision shape could not be created").
 
 ## Debug logging (`Box3DDebug.h`)
 

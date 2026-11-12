@@ -7,6 +7,7 @@
 #include <initializer_list>
 #include <vector>
 
+#include <GA/GA_AIFSharedStringTuple.h>
 #include <GA/GA_Handle.h>
 #include <GA/GA_Iterator.h>
 #include <GA/GA_Primitive.h>
@@ -100,11 +101,15 @@ struct PointAttrs
     GA_ROHandleV3 primT;       // vector bullet_primT: shape offset from the body origin
     GA_ROHandleF  radius;      // float  bullet_radius: sphere / capsule radius
     GA_ROHandleF  length;      // float  bullet_length: capsule straight section along Y
+    // Mid-simulation controls (Houdini RBD Packed Object names).
+    GA_ROHandleI  wantDeactivate;  // int bullet_want_deactivate: 1 = may sleep, 0 = kept awake (read every scan)
+    GA_ROHandleI  ignore;          // int bullet_ignore: nonzero = taken out of the simulation (read every scan)
+    GA_ROHandleI  deforming;       // int deforming: nonzero = shape rebuilt from the geometry every step
+    GA_ROHandleI  autofitValid;    // int bullet_autofit_valid: 0 = rebuild the shape once; the solver writes 1 back
 
-    // Binds only what every step needs for existing bodies: id, active, v, w and
-    // orient. Everything else is for building a body, so it is bound by
-    // bindBuildAttrs() the first time a body is created (a step that only syncs
-    // and writes back saves about 17 attribute lookups per object).
+    // The constructor binds only what the skip check and the write-back need: id, active,
+    // v, w and orient. Everything else is bound by bindBuildAttrs() when an object is
+    // actually scanned (a skipped object never looks at them).
     explicit PointAttrs(const GU_Detail *gdp)
         : id(gdp, GA_ATTRIB_POINT, "id"),
           active(gdp, GA_ATTRIB_POINT, "active"),
@@ -133,7 +138,21 @@ struct PointAttrs
         primT          = GA_ROHandleV3(gdp, GA_ATTRIB_POINT, "bullet_primT");
         radius         = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "bullet_radius");
         length         = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "bullet_length");
+        wantDeactivate = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "bullet_want_deactivate");
+        ignore         = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "bullet_ignore");
+        deforming      = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "deforming");
+        autofitValid   = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "bullet_autofit_valid");
     }
+};
+
+// Point attributes whose data ids mark "a body setting or shape may have changed" (the
+// fingerprint's propIds, in this order). bullet_georep / bullet_autofit / bullet_prim* /
+// bullet_radius / bullet_length are not here on purpose: like Bullet, editing them alone
+// changes nothing until bullet_autofit_valid = 0 or deforming = 1, which are.
+const char *const kPropAttribNames[Box3DSyncFingerprint::kNumPropIds] = {
+    "mass", "friction", "bounce", "lineardamping", "angulardamping", "gravityscale",
+    "bullet_want_deactivate", "bullet_ignore", "deforming", "bullet_autofit_valid",
+    "pscale", "scale",      // a plain point's convex / concave fallback box follows these
 };
 
 // ---------------------------------------------------------------------------
@@ -573,8 +592,20 @@ describeStateDifference(const Box3DBodyPose &a, const Box3DBodyPose &b)
 
 // What the sync pass depends on, as cheap change markers (see Box3DSyncFingerprint).
 // `a` must be bound on `gdp`. An absent (or wrong-typed) attribute is its own marker value.
+// The primitive list's change marker. A packed primitive's transform (and so its scale) is
+// an intrinsic, not an attribute with a data id; this is the closest marker the detail has.
+// UNVERIFIED against a real HDK build: GA_PrimitiveList::getDataId(), and whether every way
+// of editing a packed transform bumps it. If this does not compile, return
+// Box3DSyncFingerprint::kNoId: the only loss is that a packed-scale edit that touches no
+// attribute is picked up on the next scan instead of the next step.
+GA_DataId
+primitiveListDataId(const GU_Detail *gdp)
+{
+    return gdp->getNumPrimitives() > 0 ? gdp->getPrimitiveList().getDataId() : Box3DSyncFingerprint::kNoId;
+}
+
 Box3DSyncFingerprint
-makeFingerprint(const GU_Detail *gdp, const PointAttrs &a, int nodeType)
+makeFingerprint(const GU_Detail *gdp, const PointAttrs &a, int nodeType, uint64_t nodeHash)
 {
     // Geometry with primitives (packed instances) is ASSUMED to keep its point count and
     // topology: whoever changes it must create a new instance with a new `id`, which shows
@@ -594,6 +625,15 @@ makeFingerprint(const GU_Detail *gdp, const PointAttrs &a, int nodeType)
     fp.idId       = idOf(a.id);
     fp.activeId   = idOf(a.active);
     fp.nodeType   = nodeType;
+    // Looked up by name (a dozen lookups per object per step): `a` binds only the
+    // sync-critical handles before the skip check.
+    for (int i = 0; i < Box3DSyncFingerprint::kNumPropIds; ++i)
+    {
+        const GA_Attribute *attr = gdp->findPointAttribute(kPropAttribNames[i]);
+        fp.propIds[i] = attr ? attr->getDataId() : Box3DSyncFingerprint::kNoId;
+    }
+    fp.primsId  = primitiveListDataId(gdp);
+    fp.nodeHash = nodeHash;
     return fp;
 }
 
@@ -618,6 +658,11 @@ describeFingerprintDifference(const Box3DSyncFingerprint &was, const Box3DSyncFi
     add("id",      (long long)was.idId,     (long long)now.idId);
     add("active",  (long long)was.activeId, (long long)now.activeId);
     add("body type", was.nodeType, now.nodeType);
+    for (int i = 0; i < Box3DSyncFingerprint::kNumPropIds; ++i)
+        add(kPropAttribNames[i], (long long)was.propIds[i], (long long)now.propIds[i]);
+    add("primitives", (long long)was.primsId, (long long)now.primsId);
+    if (was.nodeHash != now.nodeHash)
+        out += out.empty() ? "Box3D Data values" : ", Box3D Data values";
     return out;
 }
 #endif
@@ -849,59 +894,238 @@ buildShapes(b3dop::Box3DWorld &world, ShapeSources &src, b3dop::ShapeType type,
     return out;
 }
 
-// Create the body + shapes for one point and apply its initial velocity.
-bool
-addPointBody(b3dop::Box3DWorld &world, ShapeSources &src, b3dop::ShapeTypeCache &shapeTypes,
-             const b3dop::BodySettings &node,
-             const PointAttrs &a, GA_Offset off, int64_t bodyId,
-             const PackedInfo &pk, const Box3DBodyPose &st, bool active,
-             void *userData, b3dop::BodyHandle &outHandle,
-             std::string *fallbackNote = nullptr)
+// Reads a point's shape type from `bullet_georep` without touching the string. The attribute is
+// a shared-string attribute: every point stores an integer handle into one table of distinct
+// strings (GA_AIFSharedStringTuple::getHandle / getTableString). So the per-point work is one
+// integer read and a lookup in a tiny per-scan map; each distinct handle is turned into text
+// and parsed once. Handles belong to one attribute's table and may differ between copies of the
+// geometry, so the handle map lives for one scan only; the text -> type memo
+// (Box3DSharedState::shapeTypes) lives as long as the world. Without the shared-string
+// interface it reads the string and uses the memo directly. UNVERIFIED in Houdini: compiled
+// against the HDK class reference only.
+struct GeorepLookup
 {
-    outHandle = 0;
-    b3dop::BodySettings b = node;
-    b.type = active ? node.type : b3dop::BodySettings::Type::Static;     // `active` = 0 makes a point static
-    // Per-point overrides of the node's values. Box3D asserts on negative
-    // friction / restitution / damping, so clamp attribute values at 0 and
-    // ignore non-finite ones.
-    auto nonNegative = [](float v, float fallback) {
-        return std::isfinite(v) ? std::max(v, 0.0f) : fallback;
-    };
-    if (a.friction.isValid())       b.friction       = nonNegative(a.friction.get(off),       b.friction);
-    if (a.bounce.isValid())         b.restitution    = nonNegative(a.bounce.get(off),         b.restitution);
-    if (a.lineardamping.isValid())  b.linearDamping  = nonNegative(a.lineardamping.get(off),  b.linearDamping);
-    if (a.angulardamping.isValid()) b.angularDamping = nonNegative(a.angulardamping.get(off), b.angularDamping);
+    const GA_Attribute            *attr = nullptr;
+    const GA_AIFSharedStringTuple *aif  = nullptr;
+    struct Parsed { bool ok = false; b3dop::ShapeType type = b3dop::ShapeType::Box; };
+    std::unordered_map<int64_t, Parsed> byHandle;
+
+    void bind(const PointAttrs &a)
+    {
+        attr = a.georep.isValid() ? a.georep.getAttribute() : nullptr;
+        aif  = attr ? attr->getAIFSharedStringTuple() : nullptr;
+    }
+
+    // False when the point has no usable value (attribute missing, empty or unknown string):
+    // `out` is then left as the caller's default.
+    bool get(const PointAttrs &a, GA_Offset off, b3dop::ShapeTypeCache &memo, b3dop::ShapeType &out)
+    {
+        if (!attr)
+            return false;
+        if (!aif)
+            return memo.parse(a.georep.get(off), out);
+        const GA_StringIndexType handle = aif->getHandle(attr, off, 0);
+        if (handle == GA_INVALID_STRING_INDEX)
+            return false;
+        auto it = byHandle.find(int64_t(handle));
+        if (it == byHandle.end())
+        {
+            Parsed p;
+            p.ok = memo.parse(aif->getTableString(attr, handle), p.type);
+            it = byHandle.emplace(int64_t(handle), p).first;
+        }
+        if (it->second.ok)
+            out = it->second.type;
+        return it->second.ok;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Body settings, shape planning, and mid-simulation updates
+// ---------------------------------------------------------------------------
+
+// Box3D asserts on negative friction / restitution / damping: attribute values are
+// clamped at 0 and non-finite ones ignored.
+float
+nonNegative(float v, float fallback)
+{
+    return std::isfinite(v) ? std::max(v, 0.0f) : fallback;
+}
+
+// The settings of one point that may change during the simulation. Building a body and
+// comparing an existing body against its point both read through here, so an untouched
+// point always compares equal to what its body was built with.
+//
+// sleepOk is the CREATION rule (bullet_want_deactivate, else enablesleep, else the node);
+// a scan of an existing body only takes bullet_want_deactivate from it (enablesleep is a
+// creation-time setting, as in Bullet).
+Box3DBodyProps
+readDynamicProps(const b3dop::BodySettings &node, const PointAttrs &a, GA_Offset off)
+{
+    Box3DBodyProps p;
+    p.mass = node.mass;
+    if (a.mass.isValid())
+    {
+        const float m = float(a.mass.get(off));
+        if (m > 0.0f && std::isfinite(m))
+            p.mass = m;
+    }
+    p.friction       = a.friction.isValid()       ? nonNegative(a.friction.get(off),       node.friction)       : node.friction;
+    p.restitution    = a.bounce.isValid()         ? nonNegative(a.bounce.get(off),         node.restitution)    : node.restitution;
+    p.linearDamping  = a.lineardamping.isValid()  ? nonNegative(a.lineardamping.get(off),  node.linearDamping)  : node.linearDamping;
+    p.angularDamping = a.angulardamping.isValid() ? nonNegative(a.angulardamping.get(off), node.angularDamping) : node.angularDamping;
+    p.gravityScale   = node.gravityScale;
     if (a.gravityscale.isValid())
     {
         const float g = a.gravityscale.get(off);
-        if (std::isfinite(g)) b.gravityScale = g;      // may be negative (floats upward)
+        if (std::isfinite(g)) p.gravityScale = g;      // may be negative (floats upward)
     }
-    if (a.enablesleep.isValid())    b.enableSleep    = a.enablesleep.get(off) != 0;
-    if (a.isbullet.isValid())       b.isBullet       = a.isbullet.get(off) != 0;
+    p.sleepOk = node.enableSleep;
+    if (a.enablesleep.isValid())    p.sleepOk = a.enablesleep.get(off) != 0;
+    if (a.wantDeactivate.isValid()) p.sleepOk = a.wantDeactivate.get(off) != 0;
+    p.ignored = a.ignore.isValid() && a.ignore.get(off) != 0;
+    return p;
+}
 
-    // Shape: `bullet_georep` string attribute, else the node's default.
-    b3dop::ShapeType type = node.defaultShape;
-    if (a.georep.isValid())
-        shapeTypes.parse(a.georep.get(off), type);  // unknown -> keep default (memoized by value)
+// mass -> density (Box3D computes mass from density * volume; for a compound the volume
+// is the sum of the pieces). Unusable mass or volume keeps the node's density.
+float
+densityFor(float mass, float volume, float fallback)
+{
+    return (mass > 0.0f && std::isfinite(mass) && volume > 0.0f) ? mass / volume : fallback;
+}
 
-    // `none`: a static body with no collision shape (like Bullet, where it still
-    // exists for constraints). The one case where a body is allowed to be shapeless.
-    if (type == b3dop::ShapeType::None)
-    {
-        b.type = b3dop::BodySettings::Type::Static;
-        outHandle = world.createBody(b, st.pos, st.rot, userData);
-        return outHandle != 0;
-    }
+// The node's settings with a point's values applied.
+b3dop::BodySettings
+settingsFor(const b3dop::BodySettings &node, const Box3DBodyProps &p, b3dop::BodySettings::Type type)
+{
+    b3dop::BodySettings b = node;
+    b.type           = type;
+    b.friction       = p.friction;
+    b.restitution    = p.restitution;
+    b.linearDamping  = p.linearDamping;
+    b.angularDamping = p.angularDamping;
+    b.gravityScale   = p.gravityScale;
+    b.enableSleep    = p.sleepOk;
+    return b;
+}
 
-    // pscale / scale size plain points. A packed point's size is its
-    // primitive's transform, so they only matter as the fallback box there.
-    const float ps = a.pscale.isValid() ? float(a.pscale.get(off)) : 1.0f;
-    float sc[3] = { 1.0f, 1.0f, 1.0f };
+// pscale / scale: size plain points. A packed point's size is its primitive's transform,
+// so there they only matter as the fallback box.
+void
+readPscaleScale(const PointAttrs &a, GA_Offset off, float &ps, float sc[3])
+{
+    ps = a.pscale.isValid() ? float(a.pscale.get(off)) : 1.0f;
+    sc[0] = sc[1] = sc[2] = 1.0f;
     if (a.scale.isValid())
     {
         const UT_Vector3 s = a.scale.get(off);
         sc[0] = s.x();  sc[1] = s.y();  sc[2] = s.z();
     }
+}
+
+// The scale a convex / concave body's shapes depend on: a packed primitive's per-axis scale
+// (the row lengths of its 3x3), else pscale * scale (the fallback box of a plain point).
+bool
+sizeKeyFromM3(const double m3[9], double out[3])
+{
+    float q[4];
+    return b3dop::matrix3ToQuatScale(m3, q, out);
+}
+
+void
+sizeKeyFromAttrs(float ps, const float sc[3], double out[3])
+{
+    for (int i = 0; i < 3; ++i)
+        out[i] = double(ps) * double(sc[i]);
+}
+
+// Equal within 1e-4 relative: our own write-back recomposes packed transforms, and float
+// noise in the row lengths must not count as a scale change.
+bool
+sameSizeKey(const double a[3], const double b[3])
+{
+    for (int i = 0; i < 3; ++i)
+    {
+        const double tol = 1e-4 * std::max(std::fabs(a[i]), std::fabs(b[i]));
+        if (!(std::fabs(a[i] - b[i]) <= tol))
+            return false;
+    }
+    return true;
+}
+
+// The size key of an existing body's point, from what pass 1 read.
+bool
+currentSizeKey(const PointAttrs &a, const Box3DPointSlot &s, double out[3])
+{
+    if (s.packed)
+        return sizeKeyFromM3(s.m3, out);
+    float ps, sc[3];
+    readPscaleScale(a, s.off, ps, sc);
+    sizeKeyFromAttrs(ps, sc, out);
+    return true;
+}
+
+// What a point's body is made of: its shape type and pieces, plus what the mirror keeps to
+// recognise the same shapes again (sig) and to follow scale changes (autoScale, sizeKey).
+struct ShapePlan
+{
+    b3dop::ShapeType type = b3dop::ShapeType::Box;
+    BuiltShapes      shapes;            // no pieces for `none`
+    uint64_t         sig  = 0;
+    bool             autoScale = false;
+    double           sizeKey[3] = { 1, 1, 1 };
+};
+
+// Identifies a set of built shapes. Hulls are keyed by content (or by source, pivot and
+// scale for packed instances) and primitives by their numbers, so equal signatures mean
+// Box3D would get identical shapes and a rebuild can be skipped.
+uint64_t
+shapeSignature(b3dop::ShapeType type, const BuiltShapes &s)
+{
+    uint64_t h = b3dop::mixHash(0x9e3779b97f4a7c15ull, uint64_t(int(type)) + 1);
+    for (const Piece &pc : s.pieces)
+    {
+        if (pc.isHull)
+            h = b3dop::mixHash(b3dop::mixHash(h, 1), pc.hull);
+        else
+        {
+            const b3dop::ShapeSpec &sp = pc.spec;
+            const float f[] = { float(int(sp.type)),
+                                sp.halfExtents[0], sp.halfExtents[1], sp.halfExtents[2],
+                                sp.radius, sp.halfLength,
+                                sp.center[0], sp.center[1], sp.center[2],
+                                sp.rot[0], sp.rot[1], sp.rot[2], sp.rot[3] };
+            h = b3dop::mixHash(b3dop::mixHash(h, 2), b3dop::hashFloats(f, sizeof(f) / sizeof(f[0])));
+        }
+    }
+    return h ? h : 1;
+}
+
+// Decide a point's shapes from its current attributes (bullet_georep, bullet_autofit,
+// bullet_prim*, bullet_radius, bullet_length, pscale, scale, packed geometry). Hulls it
+// needs are created in (or found in) the world's cache; no body is touched.
+ShapePlan
+planShapes(b3dop::Box3DWorld &world, ShapeSources &src, GeorepLookup &georep, b3dop::ShapeTypeCache &shapeTypes,
+           const b3dop::BodySettings &node, const PointAttrs &a, GA_Offset off, int64_t bodyId,
+           const PackedInfo &pk)
+{
+    ShapePlan plan;
+
+    // Shape: `bullet_georep` string attribute, else the node's default.
+    plan.type = node.defaultShape;
+    georep.get(a, off, shapeTypes, plan.type);       // unknown / missing -> keep the default
+
+    // `none`: a static body with no collision shape (like Bullet, where it still
+    // exists for constraints). The one case where a body is allowed to be shapeless.
+    if (plan.type == b3dop::ShapeType::None)
+    {
+        plan.sig = shapeSignature(plan.type, plan.shapes);
+        return plan;
+    }
+
+    float ps, sc[3];
+    readPscaleScale(a, off, ps, sc);
 
     // AutoFit: the packed geometry's bounds decide the box / sphere / capsule. The
     // attribute overrides the node's setting; without a packed primitive there is
@@ -934,50 +1158,105 @@ addPointBody(b3dop::Box3DWorld &world, ShapeSources &src, b3dop::ShapeTypeCache 
     if (a.radius.isValid())  { ov.hasRadius = true;  ov.radius = a.radius.get(off); }
     if (a.length.isValid())  { ov.hasLength = true;  ov.length = a.length.get(off); }
 
-    const BuiltShapes shapes = buildShapes(world, src, type, node.hullPerConnectedSet, ps, sc, pk,
-                                           autofit, ov);
+    plan.shapes = buildShapes(world, src, plan.type, node.hullPerConnectedSet, ps, sc, pk, autofit, ov);
     (void)bodyId;                   // only used by the debug log
-    if (shapes.note)
+    if (plan.shapes.note)
+        B3D_LOG("  body id=%lld: %s", (long long)bodyId, plan.shapes.note);
+    plan.sig = shapeSignature(plan.type, plan.shapes);
+
+    // Convex / concave follow scale changes by themselves (Houdini: "the solver updates the
+    // collision geometry and inertial tensor"); auto-fitted and explicit primitives do not.
+    plan.autoScale = (plan.type == b3dop::ShapeType::Convex || plan.type == b3dop::ShapeType::Concave);
+    if (plan.autoScale)
     {
-        B3D_LOG("  body id=%lld: %s", (long long)bodyId, shapes.note);
-        if (fallbackNote)
-            *fallbackNote = shapes.note;    // surfaced to the user as one warning per kind
+        if (pk.prim)
+        {
+            const double m3[9] = { pk.m4[0], pk.m4[1], pk.m4[2],
+                                   pk.m4[4], pk.m4[5], pk.m4[6],
+                                   pk.m4[8], pk.m4[9], pk.m4[10] };
+            plan.autoScale = sizeKeyFromM3(m3, plan.sizeKey);
+        }
+        else
+            sizeKeyFromAttrs(ps, sc, plan.sizeKey);
+    }
+    return plan;
+}
+
+// Add a plan's pieces to a body. A body with several pieces (concave, hull-per-connected-set)
+// would recompute its mass once per piece: they are all added without the update and the
+// mass is applied once. A single shape lets Box3D do it as part of the add. Returns how many
+// pieces were added.
+int
+addPlannedShapes(b3dop::Box3DWorld &world, b3dop::BodyHandle h, const b3dop::BodySettings &b, const ShapePlan &plan)
+{
+    const bool multi = plan.shapes.pieces.size() > 1;
+    int added = 0;
+    for (const Piece &pc : plan.shapes.pieces)
+        added += (pc.isHull ? world.createHullShape(h, b, pc.hull, !multi)
+                            : world.createShape(h, b, pc.spec, !multi)) ? 1 : 0;
+    if (multi && added > 0)
+        world.applyMassFromShapes(h);
+    return added;
+}
+
+// Keep in the mirror entry what the body was built from (see Box3DBodyMirror).
+void
+storePlan(DopBodyState &m, const ShapePlan &plan)
+{
+    m.shapeSig  = plan.sig;
+    m.volume    = plan.shapes.totalVolume;
+    m.autoScale = plan.autoScale;
+    for (int i = 0; i < 3; ++i)
+        m.sizeKey[i] = plan.sizeKey[i];
+}
+
+// Create the body + shapes for one point and apply its initial velocity. `entry` is the
+// body's mirror entry: it becomes the body's user data and receives what the body was built
+// from (props, shape signature, volume, ...), which later scans compare against.
+bool
+addPointBody(b3dop::Box3DWorld &world, ShapeSources &src, GeorepLookup &georep, b3dop::ShapeTypeCache &shapeTypes,
+             const b3dop::BodySettings &node,
+             const PointAttrs &a, GA_Offset off, int64_t bodyId,
+             const PackedInfo &pk, const Box3DBodyPose &st, bool active,
+             DopBodyState &entry, b3dop::BodyHandle &outHandle,
+             std::string *fallbackNote = nullptr)
+{
+    outHandle = 0;
+    const Box3DBodyProps p = readDynamicProps(node, a, off);
+    // `active` = 0 makes a point static.
+    b3dop::BodySettings b = settingsFor(node, p, active ? node.type : b3dop::BodySettings::Type::Static);
+    if (a.isbullet.isValid())
+        b.isBullet = a.isbullet.get(off) != 0;          // creation-time only, like Bullet
+
+    const ShapePlan plan = planShapes(world, src, georep, shapeTypes, node, a, off, bodyId, pk);
+    if (plan.shapes.note && fallbackNote)
+        *fallbackNote = plan.shapes.note;       // surfaced to the user as one warning per kind
+    entry.props     = p;
+    entry.shapeless = (plan.type == b3dop::ShapeType::None);
+    storePlan(entry, plan);
+
+    if (entry.shapeless)
+    {
+        b.type = b3dop::BodySettings::Type::Static;
+        outHandle = world.createBody(b, st.pos, st.rot, &entry);
+        if (outHandle && p.ignored)
+            world.setEnabledByHandle(outHandle, false);
+        return outHandle != 0;
     }
 
-    // mass -> density (Box3D computes mass from density * volume; for a
-    // compound the volume is the sum of the pieces). The node's `mass` is the
-    // default for every body; the `mass` point attribute overrides it.
-    float mass = node.mass;
-    if (a.mass.isValid())
-    {
-        const float m = float(a.mass.get(off));
-        if (m > 0.0f && std::isfinite(m))
-            mass = m;
-    }
-    if (mass > 0.0f && std::isfinite(mass) && shapes.totalVolume > 0.0f)
-        b.density = mass / shapes.totalVolume;
+    // The node's `mass` is the default for every body; the `mass` point attribute overrides it.
+    b.density = densityFor(p.mass, plan.shapes.totalVolume, node.density);
 
     // The settings `b` stay a local: the handle API takes them per shape, so nothing about
     // the body is remembered by the world.
-    const b3dop::BodyHandle h = world.createBody(b, st.pos, st.rot, userData);
+    const b3dop::BodyHandle h = world.createBody(b, st.pos, st.rot, &entry);
     if (!h)
         return false;
-
-    // A body with several pieces (concave, hull-per-connected-set) would recompute its mass
-    // once per piece. Add them all without the update and apply the mass once. A single
-    // shape just lets Box3D do it as part of the add.
-    const bool multi = shapes.pieces.size() > 1;
-    int added = 0;
-    for (const Piece &pc : shapes.pieces)
-        added += (pc.isHull ? world.createHullShape(h, b, pc.hull, !multi)
-                            : world.createShape(h, b, pc.spec, !multi)) ? 1 : 0;
-    if (added == 0)
+    if (addPlannedShapes(world, h, b, plan) == 0)
     {
         world.destroyBody(h);       // never leave a shapeless body behind
         return false;
     }
-    if (multi)
-        world.applyMassFromShapes(h);
 
     // Initial velocity, set after the mass is final (Box3D shifts a body's velocity when its
     // centre of mass moves, so this order keeps the values exactly as given). A fresh body
@@ -986,8 +1265,102 @@ addPointBody(b3dop::Box3DWorld &world, ShapeSources &src, b3dop::ShapeTypeCache 
                         st.ang[0] != 0.0f || st.ang[1] != 0.0f || st.ang[2] != 0.0f;
     if (hasVel && b.type != b3dop::BodySettings::Type::Static)
         world.setVelocityByHandle(h, st.lin, st.ang);
+    if (p.ignored)
+        world.setEnabledByHandle(h, false);     // bullet_ignore: exists, but takes no part
     outHandle = h;
     return true;
+}
+
+// Rebuild an existing body's collision shapes from its point's current attributes and
+// geometry (deforming = 1, bullet_autofit_valid = 0, or a convex / concave scale change).
+// The body itself (and so its pose, velocity and identity) stays. If the new plan gives the
+// same shapes nothing is touched. Returns true if the shapes were replaced; `noShape` is set
+// when the new shapes could not be added (the body is then shapeless, so static).
+bool
+rebuildPointShapes(b3dop::Box3DWorld &world, ShapeSources &src, GeorepLookup &georep,
+                   b3dop::ShapeTypeCache &shapeTypes, const b3dop::BodySettings &node,
+                   const PointAttrs &a, GA_Offset off, int64_t bodyId, const PackedInfo &pk,
+                   const Box3DBodyProps &p, DopBodyState &entry, std::string &note, bool &noShape)
+{
+    noShape = false;
+    const ShapePlan plan = planShapes(world, src, georep, shapeTypes, node, a, off, bodyId, pk);
+    if (plan.shapes.note)
+        note = plan.shapes.note;
+    if (plan.sig == entry.shapeSig)
+    {
+        storePlan(entry, plan);     // same shapes; refresh the size key it was measured at
+        return false;
+    }
+
+    const b3dop::BodyHandle h = entry.handle;
+    world.destroyShapesByHandle(h);
+    storePlan(entry, plan);
+    entry.shapeless = true;
+    if (plan.type != b3dop::ShapeType::None)
+    {
+        b3dop::BodySettings b = settingsFor(node, p, entry.type);
+        b.density = densityFor(p.mass, plan.shapes.totalVolume, node.density);
+        if (addPlannedShapes(world, h, b, plan) > 0)
+            entry.shapeless = false;
+        else
+            noShape = true;
+    }
+    world.wakeByHandle(h);          // new shapes need fresh contacts; a resting body must re-settle
+    B3D_LOG_VERBOSE("  body id=%lld: collision shape rebuilt", (long long)bodyId);
+    return true;
+}
+
+// Push the settings that differ from what the body has. With `shapesRebuilt` the new shapes
+// already carry the current friction / restitution / density. Returns true if anything changed.
+bool
+applyPropChanges(b3dop::Box3DWorld &world, DopBodyState &e, const Box3DBodyProps &p,
+                 const b3dop::BodySettings &node, bool shapesRebuilt)
+{
+    const Box3DBodyProps &o = e.props;
+    const b3dop::BodyHandle h = e.handle;
+    bool changed = shapesRebuilt;
+    if (!shapesRebuilt && (p.friction != o.friction || p.restitution != o.restitution))
+    {
+        world.setMaterialByHandle(h, p.friction, p.restitution);
+        changed = true;
+    }
+    if (p.linearDamping != o.linearDamping || p.angularDamping != o.angularDamping)
+    {
+        world.setDampingByHandle(h, p.linearDamping, p.angularDamping);
+        changed = true;
+    }
+    if (p.gravityScale != o.gravityScale)
+    {
+        world.setGravityScaleByHandle(h, p.gravityScale);
+        changed = true;
+    }
+    if (p.sleepOk != o.sleepOk)
+    {
+        world.setSleepEnabledByHandle(h, p.sleepOk);
+        changed = true;
+    }
+    if (!shapesRebuilt && p.mass != o.mass)
+    {
+        world.setDensityByHandle(h, densityFor(p.mass, e.volume, node.density));
+        changed = true;
+    }
+    if (p.ignored != o.ignored)
+    {
+        world.setEnabledByHandle(h, !p.ignored);
+        changed = true;
+    }
+    e.props = p;
+    return changed;
+}
+
+// Remember that this point's bullet_autofit_valid must be set back to 1 after the step.
+void
+queueValidWrite(Box3DSharedState &st, DopBodyState &m)
+{
+    st.validWrites.emplace_back();
+    Box3DWriteItem &w = st.validWrites.back();
+    w.entry    = &m;
+    w.objectId = m.objectId;
 }
 
 // Keep what the read pass learned about the point's packed primitive in its mirror
@@ -1005,6 +1378,8 @@ storePacked(Box3DBodyMirror &m, const Box3DPointSlot &s)
 struct SyncCounts
 {
     int added = 0, edited = 0, retyped = 0, failed = 0, duplicates = 0, badP = 0;
+    int rebuilt = 0;            // existing bodies whose collision shapes were replaced
+    int updated = 0;            // existing bodies whose settings (mass, friction, ...) changed
     int skipped = 0;            // objects whose scan was skipped (nothing changed)
     std::unordered_map<std::string, int> fallbacks;     // shape fallback note -> bodies that used it
 };
@@ -1025,8 +1400,7 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
     if (!gdp)
         return false;
 
-    PointAttrs a(gdp);          // the build attributes are bound on the first new body
-    bool       buildAttrsBound = false;
+    PointAttrs a(gdp);          // the other attributes are bound once the object is known to need a scan
     const bool anyPrims = gdp->getNumPrimitives() > 0;     // no primitives -> no packed points to look for
     const int  objectId = obj.getObjectId();
     // Default settings for all points of an object (the Box3D Data DOP node), or
@@ -1035,12 +1409,17 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
     // after the skip check; the skip check itself only needs the body type.
     const SIM_Box3DData *dataNode = SIM_DATA_GETCONST(obj, kDataName, SIM_Box3DData);
     int nodeType = int(b3dop::BodySettings().type);
+    uint64_t nodeHash = 0;      // the node values that change existing bodies mid-simulation
     if (dataNode)
     {
         const int bt = int(dataNode->getBodyType());       // same mapping as toBodySettings()
         nodeType = int(bt == 0 ? b3dop::BodySettings::Type::Static
                      : bt == 1 ? b3dop::BodySettings::Type::Kinematic
                                : b3dop::BodySettings::Type::Dynamic);
+        const float v[6] = { float(dataNode->getMass()), float(dataNode->getFriction()),
+                             float(dataNode->getBounce()), float(dataNode->getLinearDamping()),
+                             float(dataNode->getAngularDamping()), float(dataNode->getGravityScale()) };
+        nodeHash = b3dop::hashFloats(v, 6);
     }
     b3dop::Box3DWorld &world = st.world;
     bool hasDynamic = false;
@@ -1052,11 +1431,13 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
     // are skipped: the mirror entries stay current under the stamp they already carry
     // (liveStamp) and are counted without being touched. Packed instances are assumed to
     // keep their point count and topology (see makeFingerprint). A packed primitive's own
-    // rotation / scale is NOT covered by any marker: changing it without touching P, `id`
-    // or another marked attribute is not noticed on a skipped step.
+    // rotation / scale is only covered by the primitive list's data id (primitiveListDataId,
+    // unverified): if an edit does not bump it, it is noticed on the next scan instead.
+    // The markers include the attributes that change body settings mid-simulation (mass,
+    // friction, ..., bullet_autofit_valid, deforming) and the Box3D Data node's values.
     Box3DObjectSync &os = st.objectSync[objectId];
     os.visited = st.syncStamp;
-    const Box3DSyncFingerprint fpNow = makeFingerprint(gdp, a, nodeType);
+    const Box3DSyncFingerprint fpNow = makeFingerprint(gdp, a, nodeType, nodeHash);
     if (os.canSkip && fpNow == os.fp)
     {
         ++c.skipped;
@@ -1075,7 +1456,17 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
     const int problems0 = c.failed + c.duplicates + c.badP;
 
     ShapeSources sources;       // packed geometry, collected lazily per distinct source
-    b3dop::ShapeTypeCache shapeTypes;   // `bullet_georep` strings seen by this scan
+    GeorepLookup georep;                // handle -> shape type for this scan (see GeorepLookup)
+    a.bindBuildAttrs(gdp);
+    georep.bind(a);
+
+    // Compare every existing body's settings with its point only when something that can
+    // change them was touched (a prop marker or the node's values), or when the object has
+    // deforming bodies (rebuilt every step anyway). Otherwise the scan only syncs pose,
+    // velocity and `active`. Convex / concave scale is checked on every scan (it costs a
+    // matrix split of what pass 1 already read).
+    const bool checkProps = !os.propsKnown || !os.fp.samePropMarkers(fpNow) || os.anyDeforming;
+    bool       anyDeforming = false;
 
     // ---- pass 1 (parallel): read every point's attributes -----------------
     // Reads only. The slots persist between steps (no allocation in a steady
@@ -1183,24 +1574,21 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
         }
 
         const bool active = s.active;
-        const b3dop::BodySettings::Type wantType =
-            active ? node.type : b3dop::BodySettings::Type::Static;
+        // Per point, read only when the attribute exists (RBD Packed Object creates both).
+        const bool deforming   = a.deforming.isValid() && a.deforming.get(off) != 0;
+        const bool refitWanted = a.autofitValid.isValid() && a.autofitValid.get(off) == 0;
+        anyDeforming = anyDeforming || deforming;
 
         if (freshEntry)
         {
-            if (!buildAttrsBound)
-            {
-                a.bindBuildAttrs(gdp);
-                buildAttrsBound = true;
-            }
             PackedInfo pk = anyPrims ? getPackedInfo(gdp, off) : PackedInfo();    // only new bodies need it again
             readPackedPivot(pk);        // the hull is built from it
             std::string fallbackNote;
             // The entry's address is stable (unordered_map node), so it goes into the body's
             // user data at creation: write-back maps a move event back to it from there.
             b3dop::BodyHandle handle = 0;
-            if (!addPointBody(world, sources, shapeTypes, node, a, off, bid, pk, cur, active,
-                              entry, handle, &fallbackNote))
+            if (!addPointBody(world, sources, georep, st.shapeTypes, node, a, off, bid, pk, cur, active,
+                              *entry, handle, &fallbackNote))
             {
                 ++c.failed;
                 st.mirror.erase(newIt);         // no body: drop the placeholder entry again
@@ -1210,9 +1598,12 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
             if (!fallbackNote.empty())
                 ++c.fallbacks[fallbackNote];
             DopBodyState &m = *entry;
+            // `none` bodies are static whatever `active` says.
+            const b3dop::BodySettings::Type type =
+                (active && !m.shapeless) ? node.type : b3dop::BodySettings::Type::Static;
             static_cast<Box3DBodyPose &>(m) = cur;
-            m.dynamic  = (wantType == b3dop::BodySettings::Type::Dynamic);
-            m.type     = wantType;
+            m.dynamic  = (type == b3dop::BodySettings::Type::Dynamic);
+            m.type     = type;
             m.handle   = handle;
             m.pointOff = off;
             m.pointId  = bid;
@@ -1224,6 +1615,8 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
             s.entry = &m;
             ++c.added;
             hasDynamic = hasDynamic || m.dynamic;
+            if (refitWanted)
+                queueValidWrite(st, m);     // built from current attributes: mark the fit valid
             continue;
         }
 
@@ -1235,6 +1628,49 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
         storePacked(*entry, s);
         ++st.stampedCount;
         ++stamped;
+
+        // ---- mid-simulation changes (see "Mid-simulation updates" in AGENTS.md) ----
+        // Shape first: a rebuild can leave a body shapeless, which decides its type below.
+        // Like Bullet, a shape is only rebuilt when asked (deforming, bullet_autofit_valid = 0)
+        // or, for convex / concave, when its scale changed. Editing bullet_georep, bullet_prim*
+        // etc. alone does nothing; the point `id` has no special values either.
+        bool rebuild = deforming || refitWanted;
+        if (!rebuild && entry->autoScale)
+        {
+            double key[3];
+            rebuild = currentSizeKey(a, s, key) && !sameSizeKey(key, entry->sizeKey);
+        }
+        if (rebuild || checkProps)
+        {
+            Box3DBodyProps p = readDynamicProps(node, a, off);
+            if (!a.wantDeactivate.isValid())
+                p.sleepOk = entry->props.sleepOk;       // enablesleep is creation-time only
+            bool shapesRebuilt = false;
+            if (rebuild)
+            {
+                PackedInfo pk = anyPrims ? getPackedInfo(gdp, off) : PackedInfo();
+                readPackedPivot(pk);
+                std::string note;
+                bool        noShape = false;
+                shapesRebuilt = rebuildPointShapes(world, sources, georep, st.shapeTypes, node, a, off, bid,
+                                                   pk, p, *entry, note, noShape);
+                if (shapesRebuilt)
+                {
+                    ++c.rebuilt;
+                    if (!note.empty())
+                        ++c.fallbacks[note];
+                    if (noShape)
+                        ++c.fallbacks["the rebuilt collision shape could not be created; the body is static until it gets one"];
+                }
+            }
+            if (applyPropChanges(world, *entry, p, node, shapesRebuilt))
+                ++c.updated;
+        }
+        if (refitWanted)
+            queueValidWrite(st, *entry);
+
+        const b3dop::BodySettings::Type wantType =
+            (active && !entry->shapeless) ? node.type : b3dop::BodySettings::Type::Static;
 
         // Did `active` flip?
         if (entry->type != wantType)
@@ -1258,10 +1694,13 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c)
 
     // Record the markers for the next step. Bodies that failed, duplicated an id or had a
     // bad P are retried / reported every step, so such an object keeps scanning.
-    os.entryCount = stamped;
-    os.hasDynamic = hasDynamic;
-    os.fp         = fpNow;
-    os.canSkip    = (c.failed + c.duplicates + c.badP) == problems0;
+    // An object with deforming bodies rebuilds them every step, so it never skips.
+    os.entryCount   = stamped;
+    os.hasDynamic   = hasDynamic;
+    os.fp           = fpNow;
+    os.propsKnown   = true;
+    os.anyDeforming = anyDeforming;
+    os.canSkip      = (c.failed + c.duplicates + c.badP) == problems0 && !anyDeforming;
     return hasDynamic;
 }
 
@@ -1421,6 +1860,105 @@ getOrMakeWritableGeometry(SIM_Object &obj)
         B3D_LOG("  writeBack: object id=%d Geometry converted to a writable SIM_GeometryCopy",
                 obj.getObjectId());
     return geo;
+}
+
+
+// Re-record an object's fingerprint after the solver wrote to its geometry, from a read of
+// the geometry as the next step will see it (call with every write lock released: releasing
+// one may bump ids again). Otherwise our own write would look like an external edit: it
+// would defeat the sync skip, and a written prop marker (bullet_autofit_valid) would make
+// the next scan compare every body's settings.
+void
+recordFingerprintAfterWrite(Box3DSharedState &st, const SIM_Object &obj)
+{
+    const auto f = st.objectSync.find(obj.getObjectId());
+    if (f == st.objectSync.end() || f->second.visited != st.syncStamp)
+        return;
+    const SIM_Geometry *geo = SIM_DATA_GETCONST(obj, SIM_GEOMETRY_DATANAME, SIM_Geometry);
+    if (!geo)
+        return;
+    SIM_GeometryAutoReadLock rlock(geo);
+    const GU_Detail *gdp = gdpPtr(rlock.getGdp());
+    if (!gdp)
+        return;
+    const PointAttrs a(gdp);
+    f->second.fp = makeFingerprint(gdp, a, f->second.fp.nodeType, f->second.fp.nodeHash);
+}
+
+// `objects` is sorted by object id, so an object is found by binary search. (A linear scan
+// is the fallback should that ever not hold.)
+SIM_Object *
+findObjectById(SIM_ObjectArray &objects, int id)
+{
+    exint lo = 0, hi = objects.entries();
+    while (lo < hi)
+    {
+        const exint mid = lo + (hi - lo) / 2;
+        const int   mid_id = objects(mid)->getObjectId();
+        if (mid_id == id) return objects(mid);
+        if (mid_id < id) lo = mid + 1; else hi = mid;
+    }
+    for (exint i = 0; i < objects.entries(); ++i)
+        if (objects(i)->getObjectId() == id)
+            return objects(i);
+    return nullptr;
+}
+
+// After the step: set bullet_autofit_valid back to 1 on the points whose shape was built or
+// rebuilt while it was 0, as Bullet does, so a refit requested once happens once. Unlike the
+// result write-back this covers every such point, asleep, static or ignored. Points are found
+// the same way (resolvePointOffsets); one that cannot be found keeps its 0 and is refit again
+// next step, which is harmless.
+void
+writeAutofitValid(Box3DSharedState &st, SIM_ObjectArray &objects)
+{
+    std::vector<Box3DWriteItem> &items = st.validWrites;
+    if (items.empty())
+        return;
+    const auto byObject = [](const Box3DWriteItem &x, const Box3DWriteItem &y) { return x.objectId < y.objectId; };
+    if (!std::is_sorted(items.begin(), items.end(), byObject))     // the sync fills them in object order
+        std::stable_sort(items.begin(), items.end(), byObject);
+
+    for (size_t runBegin = 0; runBegin < items.size();)
+    {
+        size_t runEnd = runBegin;
+        while (runEnd < items.size() && items[runEnd].objectId == items[runBegin].objectId)
+            ++runEnd;
+        const size_t begin = runBegin, end = runEnd;
+        runBegin = runEnd;
+
+        SIM_Object *obj = findObjectById(objects, items[begin].objectId);
+        if (!obj)
+            continue;
+        SIM_GeometryCopy *geo = getOrMakeWritableGeometry(*obj);
+        if (!geo)
+            continue;           // writeResultsBack has already warned about this object
+        bool wrote = false;
+        {
+            SIM_GeometryAutoWriteLock lock(geo);
+            GU_Detail *gdp = gdpPtr(lock.getGdp());
+            if (gdp)
+            {
+                GA_RWHandleI valid(gdp, GA_ATTRIB_POINT, "bullet_autofit_valid");
+                if (valid.isValid())
+                {
+                    const PointAttrs a(gdp);
+                    resolvePointOffsets(gdp, a, items, begin, end);
+                    for (size_t k = begin; k < end; ++k)
+                        if (items[k].off != GA_INVALID_OFFSET)
+                        {
+                            valid.set(items[k].off, 1);
+                            wrote = true;
+                        }
+                    if (wrote)
+                        valid.getAttribute()->bumpDataId();
+                }
+            }
+        }
+        if (wrote)
+            recordFingerprintAfterWrite(st, *obj);
+    }
+    items.clear();
 }
 
 } // namespace
@@ -1592,6 +2130,7 @@ SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
     syncFromGeometry(*worldData, objects, objectHasDynamic);
     stepWorld(*worldData, static_cast<float>(dt));
     writeResultsBack(*worldData, objects, objectHasDynamic);
+    writeAutofitValid(*st, objects);        // bullet_autofit_valid = 1 where a shape was (re)built
 
     st->stampTime = now;
     st->stamped   = true;
@@ -1653,6 +2192,7 @@ SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
 
     ++st->syncStamp;            // entries synced below carry this stamp
     st->stampedCount = 0;
+    st->validWrites.clear();    // filled by the scans below, written after the step
     for (exint i = 0; i < objects.entries(); ++i)
         objectHasDynamic[size_t(i)] = syncObject(*st, *objects(i), counts) ? 1 : 0;
 
@@ -1684,8 +2224,8 @@ SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
     // Hulls built for bodies that were then removed (or never created) are
     // no longer needed; hulls still used by a body stay cached for the next
     // body that instances the same geometry.
-    if (counts.added || counts.failed || removed)
-        st->world.pruneHulls();     // hulls only become unused when a body is added (a failed one) or removed
+    if (counts.added || counts.failed || counts.rebuilt || removed)
+        st->world.pruneHulls();     // hulls only become unused when a body is added (a failed one), rebuilt or removed
 
     // Problems the user should see on the node, not only in the debug log.
     // One warning per kind per sync, with a count. Fallback shapes are only
@@ -1707,14 +2247,15 @@ SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
     // Adding / removing bodies is an event worth a line; edits, retypes and the problem
     // counts can repeat every step, so those lines need BOX3DDOP_VERBOSE=1.
     if (counts.added || counts.edited || counts.retyped || counts.failed ||
-        counts.duplicates || counts.badP || removed)
+        counts.duplicates || counts.badP || counts.rebuilt || counts.updated || removed)
     {
-        const bool event = counts.added || removed;
+        const bool event = counts.added || removed || counts.rebuilt;
         (void)event;                // only used by the debug log
         B3D_LOG_IF(event, "  sync: +%d added, -%d removed, %d edited externally, %d type changes, "
+                "%d shapes rebuilt, %d settings changed, "
                 "%d failed, %d duplicate ids, %d non-finite P  (bodies now %d)",
-                counts.added, removed, counts.edited, counts.retyped, counts.failed,
-                counts.duplicates, counts.badP, st->world.bodyCount());
+                counts.added, removed, counts.edited, counts.retyped, counts.rebuilt, counts.updated,
+                counts.failed, counts.duplicates, counts.badP, st->world.bodyCount());
     }
 }
 
@@ -2018,20 +2559,7 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
     // too), so record them now that every lock is released, from a read of the geometry as
     // the next step will see it. Otherwise our own write would defeat the sync skip.
     for (SIM_Object *obj : refresh)
-    {
-        const auto f = st->objectSync.find(obj->getObjectId());
-        if (f == st->objectSync.end() || !f->second.canSkip)
-            continue;
-        const SIM_Geometry *geo = SIM_DATA_GETCONST(*obj, SIM_GEOMETRY_DATANAME, SIM_Geometry);
-        if (!geo)
-            continue;
-        SIM_GeometryAutoReadLock rlock(geo);
-        const GU_Detail *gdp = gdpPtr(rlock.getGdp());
-        if (!gdp)
-            continue;
-        const PointAttrs a(gdp);
-        f->second.fp = makeFingerprint(gdp, a, f->second.fp.nodeType);
-    }
+        recordFingerprintAfterWrite(*st, *obj);
 
     if (missing)
     {

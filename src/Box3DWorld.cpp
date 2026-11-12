@@ -595,6 +595,178 @@ Box3DWorld::setTypeByHandle(BodyHandle h, BodySettings::Type type)
     return true;
 }
 
+// ---- mid-simulation changes ---------------------------------------------------
+
+namespace {
+
+// Every shape of a body, in a scratch vector the caller keeps (no allocation once warm).
+int
+bodyShapes(b3BodyId id, std::vector<b3ShapeId> &out)
+{
+    const int n = b3Body_GetShapeCount(id);
+    out.resize(size_t(n > 0 ? n : 0));
+    return n > 0 ? b3Body_GetShapes(id, out.data(), n) : 0;
+}
+
+thread_local std::vector<b3ShapeId> tShapes;
+
+} // namespace
+
+void
+Box3DWorld::setMaterialByHandle(BodyHandle h, float friction, float restitution)
+{
+    if (!h)
+        return;
+    const int n = bodyShapes(unpackBody(h), tShapes);
+    for (int i = 0; i < n; ++i)
+    {
+        if (b3Shape_GetType(tShapes[size_t(i)]) == b3_compoundShape)
+            continue;                   // never made by this wrapper; Box3D asserts on it
+        b3Shape_SetFriction(tShapes[size_t(i)], friction);
+        b3Shape_SetRestitution(tShapes[size_t(i)], restitution);
+    }
+}
+
+void
+Box3DWorld::setDampingByHandle(BodyHandle h, float linear, float angular)
+{
+    if (!h)
+        return;
+    const b3BodyId id = unpackBody(h);
+    b3Body_SetLinearDamping(id, linear);
+    b3Body_SetAngularDamping(id, angular);
+}
+
+void
+Box3DWorld::setGravityScaleByHandle(BodyHandle h, float gravityScale)
+{
+    if (h)
+        b3Body_SetGravityScale(unpackBody(h), gravityScale);
+}
+
+void
+Box3DWorld::setSleepEnabledByHandle(BodyHandle h, bool enableSleep)
+{
+    if (h)
+        b3Body_EnableSleep(unpackBody(h), enableSleep && myImpl->settings.enableSleep);
+}
+
+void
+Box3DWorld::setDensityByHandle(BodyHandle h, float density)
+{
+    if (!h || !(density >= 0.0f) || !std::isfinite(density))
+        return;
+    const b3BodyId id = unpackBody(h);
+    const int n = bodyShapes(id, tShapes);
+    for (int i = 0; i < n; ++i)
+        b3Shape_SetDensity(tShapes[size_t(i)], density, false);
+    if (n > 0)
+        b3Body_ApplyMassFromShapes(id);
+}
+
+void
+Box3DWorld::setEnabledByHandle(BodyHandle h, bool enabled)
+{
+    if (!h)
+        return;
+    const b3BodyId id = unpackBody(h);
+    if (b3Body_IsEnabled(id) == enabled)
+        return;
+    if (enabled)
+        b3Body_Enable(id);
+    else
+        b3Body_Disable(id);
+}
+
+bool
+Box3DWorld::isEnabledByHandle(BodyHandle h) const
+{
+    return h && b3Body_IsEnabled(unpackBody(h));
+}
+
+void
+Box3DWorld::destroyShapesByHandle(BodyHandle h)
+{
+    if (!h)
+        return;
+    const b3BodyId id = unpackBody(h);
+    const int n = bodyShapes(id, tShapes);
+    for (int i = 0; i < n; ++i)
+        b3DestroyShape(tShapes[size_t(i)], false);      // the caller applies the mass after re-adding
+
+    auto bh = myImpl->bodyHulls.find(h);
+    if (bh != myImpl->bodyHulls.end())
+    {
+        for (HullId hull : bh->second)
+            myImpl->releaseHull(hull);
+        myImpl->bodyHulls.erase(bh);
+    }
+}
+
+void
+Box3DWorld::wakeByHandle(BodyHandle h)
+{
+    if (!h)
+        return;
+    const b3BodyId id = unpackBody(h);
+    if (b3Body_GetType(id) != b3_staticBody)
+        b3Body_SetAwake(id, true);
+}
+
+bool
+Box3DWorld::getMaterialByHandle(BodyHandle h, float &friction, float &restitution) const
+{
+    friction = restitution = 0.0f;
+    if (!h)
+        return false;
+    if (bodyShapes(unpackBody(h), tShapes) <= 0)
+        return false;
+    friction    = b3Shape_GetFriction(tShapes[0]);
+    restitution = b3Shape_GetRestitution(tShapes[0]);
+    return true;
+}
+
+bool
+Box3DWorld::getDampingByHandle(BodyHandle h, float &linear, float &angular) const
+{
+    linear = angular = 0.0f;
+    if (!h)
+        return false;
+    linear  = b3Body_GetLinearDamping(unpackBody(h));
+    angular = b3Body_GetAngularDamping(unpackBody(h));
+    return true;
+}
+
+float
+Box3DWorld::gravityScaleByHandle(BodyHandle h) const
+{
+    return h ? b3Body_GetGravityScale(unpackBody(h)) : 0.0f;
+}
+
+bool
+Box3DWorld::isSleepEnabledByHandle(BodyHandle h) const
+{
+    return h && b3Body_IsSleepEnabled(unpackBody(h));
+}
+
+bool
+Box3DWorld::isAwakeByHandle(BodyHandle h) const
+{
+    return h && b3Body_IsAwake(unpackBody(h));
+}
+
+float
+Box3DWorld::massByHandle(BodyHandle h) const
+{
+    return h ? b3Body_GetMass(unpackBody(h)) : 0.0f;
+}
+
+int
+Box3DWorld::shapeCountByHandle(BodyHandle h) const
+{
+    return h ? b3Body_GetShapeCount(unpackBody(h)) : 0;
+}
+
 bool
 Box3DWorld::setBodyType(uint64_t id, BodySettings::Type type)
 {

@@ -46,9 +46,35 @@ struct Box3DBodyPose
     float  ang[3] = { 0, 0, 0 };      // radians per second
 };
 
+// The body settings that may change during the simulation, as last applied to Box3D. A
+// scan compares the point's current values with these and calls only the setters for
+// what differs (see "Mid-simulation updates" in AGENTS.md). Values are the effective
+// ones: point attribute if present and usable, else the Box3D Data node's.
+struct Box3DBodyProps
+{
+    float mass           = 1.0f;      // `mass`; Box3D gets density = mass / shape volume
+    float friction       = 0.6f;      // `friction`
+    float restitution    = 0.0f;      // `bounce`
+    float linearDamping  = 0.0f;      // `lineardamping`
+    float angularDamping = 0.0f;      // `angulardamping`
+    float gravityScale   = 1.0f;      // `gravityscale`
+    bool  sleepOk        = true;      // creation: bullet_want_deactivate, else enablesleep; later: bullet_want_deactivate only
+    bool  ignored        = false;     // `bullet_ignore`: body disabled in Box3D
+};
+
 struct Box3DBodyMirror : Box3DBodyPose
 {
     bool   dynamic = false;           // a body the solver writes back (not static)
+
+    // Mid-simulation updates: what the body was built with, so a scan can tell what changed.
+    Box3DBodyProps props;
+    float    volume    = 0.0f;        // total shape volume (mass -> density)
+    uint64_t shapeSig  = 0;           // signature of the built shapes: a rebuild that yields the same shapes is a no-op
+    bool     shapeless = false;       // `bullet_georep` none (or a rebuild left no shape): always static
+    // Convex / concave follow scale changes on their own (Bullet does the same); the
+    // other shapes only rebuild on bullet_autofit_valid = 0 or deforming = 1.
+    bool     autoScale = false;
+    double   sizeKey[3] = { 1, 1, 1 };   // the scale the shapes were built at (packed scale, or pscale * scale)
 
     // Where this body's point is, refreshed by every sync. The write-back reads
     // Box3D's move events (one per awake body) and finds the point from here, so
@@ -126,17 +152,37 @@ struct Box3DSyncFingerprint
 {
     static constexpr GA_DataId kNoId = GA_DataId(-1);   // attribute absent
 
+    // Attributes that change a body's settings or shape mid-simulation (see kPropAttribNames
+    // in SIM_SolverBox3D.cpp for the order). A change in any of them, in the node's values
+    // (nodeHash) or in the primitive list (packed scale) makes the next scan compare every
+    // body's settings; otherwise a scan only syncs position / rotation / velocity / active.
+    static constexpr int kNumPropIds = 12;
+
     int64_t   numPoints  = -1;      // -1 for geometry with primitives: packed instances are assumed
     int64_t   numOffsets = -1;      // to keep their topology (a new instance gets a new `id`)
     GA_DataId pId = kNoId, orientId = kNoId, vId = kNoId, wId = kNoId;
     GA_DataId idId = kNoId, activeId = kNoId;
     int       nodeType = -1;        // Box3D Data body type: a change retypes existing bodies
 
+    GA_DataId propIds[kNumPropIds] = { kNoId, kNoId, kNoId, kNoId, kNoId, kNoId,
+                                       kNoId, kNoId, kNoId, kNoId, kNoId, kNoId };
+    GA_DataId primsId  = kNoId;     // primitive list (packed transforms, i.e. packed scale)
+    uint64_t  nodeHash = 0;         // Box3D Data node's mass / friction / bounce / damping / gravity scale
+
+    // Only the markers of mid-simulation settings (see above).
+    bool samePropMarkers(const Box3DSyncFingerprint &o) const
+    {
+        for (int i = 0; i < kNumPropIds; ++i)
+            if (propIds[i] != o.propIds[i])
+                return false;
+        return primsId == o.primsId && nodeHash == o.nodeHash;
+    }
     bool operator==(const Box3DSyncFingerprint &o) const
     {
         return numPoints == o.numPoints && numOffsets == o.numOffsets &&
                pId == o.pId && orientId == o.orientId && vId == o.vId && wId == o.wId &&
-               idId == o.idId && activeId == o.activeId && nodeType == o.nodeType;
+               idId == o.idId && activeId == o.activeId && nodeType == o.nodeType &&
+               samePropMarkers(o);
     }
     bool operator!=(const Box3DSyncFingerprint &o) const { return !(*this == o); }
 };
@@ -151,6 +197,8 @@ struct Box3DObjectSync
     size_t   entryCount = 0;        // entries stamped by the last full scan
     bool     hasDynamic = false;    // result of the last full scan
     bool     canSkip    = false;    // fp describes a clean, fully scanned object
+    bool     propsKnown = false;    // a full scan recorded fp's prop markers (else every body's settings are compared)
+    bool     anyDeforming = false;  // a point had `deforming` != 0: rebuilt every step, so never skipped
     Box3DSyncFingerprint fp;
 };
 
@@ -176,6 +224,14 @@ struct Box3DSharedState
     std::vector<Box3DWriteItem>                 writeItems;
     std::vector<Box3DPackedWrite>               packedWrites;   // side data of the items above
     std::vector<b3dop::BodyMove>                moves;          // this step's move events
+    // Points whose shape was (re)built because bullet_autofit_valid was 0: the solver sets
+    // the attribute back to 1 after the step, like Bullet. Filled by the sync in object order.
+    std::vector<Box3DWriteItem>                 validWrites;
+
+    // `bullet_georep` strings already parsed. A shape type never changes once a body exists, and a
+    // scene uses a handful of distinct strings, so this lives as long as the world: scans
+    // (including rebuilds' later scans) never parse the same string twice.
+    b3dop::ShapeTypeCache                       shapeTypes;
 
     // The sim time reading (SIM_Engine::getSimulationTime()) at the last
     // solve, and whether there has been one.
