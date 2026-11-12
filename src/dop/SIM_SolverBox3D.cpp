@@ -131,6 +131,7 @@ struct PointAttrs
     GA_ROHandleF  gravityscale;
     GA_ROHandleI  enablesleep;     // creation only
     GA_ROHandleI  fastObject;      // fastobject
+    GA_ROHandleI  fastRotation;    // fastrotation
     GA_ROHandleI  contactRecycling;    // contactrecycling
     GA_ROHandleF  sleepThreshold;  // sleepthreshold
     GA_ROHandleF  pscale;
@@ -183,6 +184,7 @@ struct PointAttrs
         gravityscale   = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "gravityscale");
         enablesleep    = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "enablesleep");
         fastObject     = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "fastobject");
+        fastRotation   = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "fastrotation");
         contactRecycling = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "contactrecycling");
         sleepThreshold = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "sleepthreshold");
         pscale         = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "pscale");
@@ -223,7 +225,7 @@ const char *const kPropAttribNames[] = {
     "collision_category", "collision_mask", "animated", "density", "computemass",
     "inertialtensorstiffness", "sleepthreshold", "fastobject",
     "min_activation_impulse", "collision_group", "dead", "bullet_sleeping",
-    "contactrecycling", "lock_linear", "lock_angular",
+    "contactrecycling", "lock_linear", "lock_angular", "fastrotation",
     "name",                 // joint anchors find bodies by it
 };
 static_assert(std::size(kPropAttribNames) == Box3DSyncFingerprint::kNumPropIds,
@@ -1074,6 +1076,7 @@ readDynamicProps(const b3dop::BodySettings &node, const PointAttrs &a, GA_Offset
         if (t >= 0.0f) p.sleepThreshold = t;
     }
     p.fastObject = a.fastObject.isValid() ? a.fastObject.get(off) != 0 : node.isBullet;
+    p.fastRotation = a.fastRotation.isValid() && a.fastRotation.get(off) != 0;
     p.contactRecycling = a.contactRecycling.isValid() ? a.contactRecycling.get(off) != 0 : node.contactRecycling;
     p.minActivationImpulse = 0.0f;
     if (a.minActivation.isValid())
@@ -1188,6 +1191,7 @@ settingsFor(const b3dop::BodySettings &node, const Box3DBodyProps &p, b3dop::Bod
     b.locks          = p.locks;
     b.sleepThreshold = p.sleepThreshold;
     b.isBullet       = p.fastObject;
+    b.fastRotation   = p.fastRotation;
     b.contactRecycling = p.contactRecycling;
     return b;
 }
@@ -1512,6 +1516,11 @@ applyPropChanges(b3dop::Box3DWorld &world, Box3DBodyMirror &e, const Box3DBodyPr
     if (p.sleepThreshold != o.sleepThreshold)
     {
         world.setSleepThresholdByHandle(h, p.sleepThreshold);
+        changed |= kPropsChanged;
+    }
+    if (p.fastRotation != o.fastRotation)
+    {
+        world.setFastRotationByHandle(h, p.fastRotation);
         changed |= kPropsChanged;
     }
     if (p.fastObject != o.fastObject)

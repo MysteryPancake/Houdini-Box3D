@@ -338,6 +338,10 @@ equal to what its body was built with.
   `applyBodyMass` calls `applyMassByHandle(..., comAtOrigin = true, stiffness)` after creation, rebuild, a retype to
   dynamic, activation and mass changes. Velocities are therefore the point's. No `computecom`: an off-centre pivot makes
   the piece turn about it, like in Houdini.
+* **Fast rotation** (`fastrotation`, int): `BodySettings::fastRotation` -> `b3BodyDef::allowFastRotation`; changes use
+  `setFastRotationByHandle` (`b3Body_AllowFastRotation`). Without it Box3D caps angular speed at `B3_MAX_ROTATION`
+  (pi/4) per Box3D step, i.e. per DOP step here (the solver's Substeps are inside one step and don't raise it).
+  No node default: Box3D says round bodies only.
 * **Motion locks** (`lock_linear`, `lock_angular`: vec3, nonzero component = locked world axis): `readDynamicProps`
   fills `Box3DBodyProps::locks` -> `BodySettings::locks` -> `b3BodyDef::motionLocks`; changes use
   `setMotionLocksByHandle` (`b3Body_SetMotionLocks`, which zeroes the newly locked velocity components). Box3D zeroes
@@ -523,7 +527,7 @@ have a hard minimum of 0 (Box3D asserts on negatives). `toBodySettings()` maps t
 
 `P` (required), `orient` (not for packed points), `v`, `w` (rad/s), `id`, `active`, `animated`, `mass`, `computemass`,
 `density`, `inertialtensorstiffness`, `friction`, `bounce`, `lineardamping`, `angulardamping`, `gravityscale`,
-`enablesleep`, `bullet_want_deactivate`, `sleepthreshold`, `bullet_sleeping`, `fastobject`, `contactrecycling`, `bullet_ignore`,
+`enablesleep`, `bullet_want_deactivate`, `sleepthreshold`, `bullet_sleeping`, `fastobject`, `fastrotation`, `contactrecycling`, `bullet_ignore`,
 `collision_category`, `collision_mask`, `collision_group`, `lock_linear`, `lock_angular`, `min_activation_impulse`, `dead`, `age`, `life`,
 `deforming`, `bullet_autofit_valid`, `bullet_georep`, `bullet_autofit`, `bullet_primS` / `R` / `T`, `bullet_radius`,
 `bullet_length`, `pscale`, `scale`. Negative material values are clamped to 0, non-finite ones ignored (`gravityscale`
@@ -652,7 +656,7 @@ Built in both configurations (`-DBOX3DDOP_CORE_ONLY=ON` builds only these):
 | Target | Checks |
 |---|---|
 | `b3dop_core_smoke` | Box3D version, create / destroy; expects `OK` |
-| `b3dop_core_physics` | Handle API (and the test-side `KeyedWorld`), shape mapping, explicit primitives, mass, body types, resting heights, hulls (limits, caching, instancing), packed matrix math, `sanitizeQuat` / `storedPosition`, setters on existing bodies (material, damping, gravity, sleep, density, enable, shape replacement), live tuning, motion locks (world axes, live changes), collision filtering (bits, positive / negative groups, re-filtering), contacts, mass centring / inertia scaling, sleep threshold, kinematic targets, external forces (force / torque per step, summing, non-finite input, static / kinematic / sleeping bodies, gravity as a force), contact recycling (world distance live, per-body flag at creation and on existing bodies, velocity kept, sleepers not woken) |
+| `b3dop_core_physics` | Handle API (and the test-side `KeyedWorld`), shape mapping, explicit primitives, mass, body types, resting heights, hulls (limits, caching, instancing), packed matrix math, `sanitizeQuat` / `storedPosition`, setters on existing bodies (material, damping, gravity, sleep, density, enable, shape replacement), live tuning, motion locks (world axes, live changes), fast rotation (the cap, live toggle), collision filtering (bits, positive / negative groups, re-filtering), contacts, mass centring / inertia scaling, sleep threshold, kinematic targets, external forces (force / torque per step, summing, non-finite input, static / kinematic / sleeping bodies, gravity as a force), contact recycling (world distance live, per-body flag at creation and on existing bodies, velocity kept, sleepers not woken) |
 | `b3dop_core_joints` | Every joint type (weld holds, distance keeps length, revolute motor + live speed change, prismatic limit along a rotated frame, motor joint, wheel spin, filter), world anchors, refused joints, clamping (no Box3D asserts), breaking events, frames on moved bodies, live frames (a world rebuilt from `jointWorldFrames` matches the continued one), local frames (a joint remade from `jointLocalFrames` at x = 12000 is bit for bit the same), Box3D defaults, the parameter table, feedback names never equal setting names |
 | `b3dop_core_taskrunner [workers]` | Worlds on one shared host pool: tasks run, results match 1 worker |
 | `b3dop_core_threads [workers] [side] [steps]` | 1 vs N workers: speedup, fails if positions differ by > 1e-4 |

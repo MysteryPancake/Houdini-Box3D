@@ -98,6 +98,7 @@ All attributes are optional except `P`. If one is missing, the value from the Bo
 | `sleepthreshold` | float | Speed below which the body may fall asleep (after half a second) |
 | `bullet_sleeping` | int | Written by the solver: `1` while asleep. Set it to `0` to wake the body |
 | `fastobject` | int | Nonzero = a fast body can't pass through other moving bodies (it never passes through static ones) |
+| `fastrotation` | int | Nonzero = no spin speed limit (normally 45° of rotation per step, about 180 rpm at 24 fps). Only for round pieces like wheels and balls: other shapes can miss collisions when spinning that fast |
 | `contactrecycling` | int | `0` = this body's contacts are never recycled (see Contact Recycle Distance); default is the Box3D Data setting, on |
 | `active` | int | `0` = static, anything else = dynamic |
 | `animated` | int | With `active` = 0: the body follows its animated point and pushes what it touches |

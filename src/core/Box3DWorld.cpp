@@ -583,6 +583,7 @@ Box3DWorld::createBody(const BodySettings &body, const double position[3], const
     def.gravityScale   = body.gravityScale;
     def.enableSleep    = body.enableSleep;      // Box3D applies the world switch on top
     def.isBullet       = body.isBullet;
+    def.allowFastRotation = body.fastRotation;
     def.enableContactRecycling = body.contactRecycling;
     def.motionLocks = toB3Locks(body.locks);
     if (body.sleepThreshold >= 0.0f && std::isfinite(body.sleepThreshold))
@@ -1011,6 +1012,19 @@ Box3DWorld::setSleepEnabledByHandle(BodyHandle h, bool enableSleep)
 {
     if (h)
         b3Body_EnableSleep(unpackBody(h), enableSleep);
+}
+
+void
+Box3DWorld::setFastRotationByHandle(BodyHandle h, bool flag)
+{
+    if (h)
+        b3Body_AllowFastRotation(unpackBody(h), flag);      // no-op when unchanged
+}
+
+bool
+Box3DWorld::fastRotationByHandle(BodyHandle h) const
+{
+    return h && b3Body_IsFastRotationAllowed(unpackBody(h));
 }
 
 void

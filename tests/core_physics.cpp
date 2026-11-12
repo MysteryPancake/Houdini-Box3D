@@ -1004,6 +1004,35 @@ int main()
         std::printf("motion lock checks done\n");
     }
 
+    // ---- fast rotation (allowFastRotation: no angular speed cap) ----------------
+    {
+        using namespace b3dop;
+        KeyedWorld rw;
+        CHECK(rw.create(WorldSettings()));
+        const float qid[4] = { 0, 0, 0, 1 };
+        ShapeSpec ball;  ball.type = ShapeType::Sphere;  ball.radius = 0.5f;
+        BodySettings capped;  capped.gravityScale = 0.0f;
+        BodySettings fast = capped;  fast.fastRotation = true;
+        const double pa[3] = { 0, 0, 0 }, pb[3] = { 5, 0, 0 };
+        const BodyHandle a = rw.createBody(capped, pa, qid), b = rw.createBody(fast, pb, qid);
+        CHECK(rw.createShape(a, capped, ball) && rw.createShape(b, fast, ball));
+        CHECK(!rw.fastRotationByHandle(a) && rw.fastRotationByHandle(b));
+        const float v0[3] = { 0, 0, 0 }, spin[3] = { 0, 100, 0 };      // rad/s
+        CHECK(rw.setVelocityByHandle(a, v0, spin) && rw.setVelocityByHandle(b, v0, spin));
+        const float dt = 1.0f / 60.0f, cap = 0.25f * 3.14159265f / dt;   // B3_MAX_ROTATION per step
+        rw.step(dt);
+        float lin[3], ang[3];
+        CHECK(rw.getVelocityByHandle(a, lin, ang) && std::fabs(ang[1] - cap) < 0.01f * cap);
+        CHECK(rw.getVelocityByHandle(b, lin, ang) && std::fabs(ang[1] - 100.0f) < 0.5f);
+        // live: turning it on lets a capped body spin up again
+        rw.setFastRotationByHandle(a, true);
+        CHECK(rw.fastRotationByHandle(a));
+        CHECK(rw.setVelocityByHandle(a, v0, spin));
+        rw.step(dt);
+        CHECK(rw.getVelocityByHandle(a, lin, ang) && std::fabs(ang[1] - 100.0f) < 0.5f);
+        std::printf("fast rotation checks done\n");
+    }
+
     // ---- collision filtering (Box3D's b3Filter) ---------------------------------
     {
         using namespace b3dop;

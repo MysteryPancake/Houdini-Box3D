@@ -154,6 +154,7 @@ struct BodySettings
     bool  contactRecycling = true;  // `contactrecycling`: this body's contacts may be recycled (see WorldSettings)
     bool  enableSleep    = true;
     bool  isBullet       = false;   // Box3D "bullet": continuous collision vs moving bodies too (`fastobject`)
+    bool  fastRotation   = false;   // `fastrotation`: no angular speed cap (B3_MAX_ROTATION per step); round bodies only
     float sleepThreshold = 0.05f;   // m/s
     CollisionFilter filter;         // `collision_category` / `collision_mask` / `collision_group`
     MotionLocks     locks;          // `lock_linear` / `lock_angular`
@@ -219,6 +220,8 @@ public:
     void  setGravityScaleByHandle(BodyHandle h, float gravityScale);
     void  setSleepEnabledByHandle(BodyHandle h, bool enableSleep);   // the world switch applies on top
     void  setBulletByHandle(BodyHandle h, bool flag);
+    void  setFastRotationByHandle(BodyHandle h, bool flag);
+    bool  fastRotationByHandle(BodyHandle h) const;
     // Box3D copies a body's recycling flag into each contact when the contact is made, so on its own
     // a change only reaches new contacts. For an awake dynamic body the existing ones are dropped
     // too (disable + enable, velocity kept) so they are rebuilt with the new setting. A sleeping,
