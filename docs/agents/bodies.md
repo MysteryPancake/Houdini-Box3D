@@ -124,12 +124,12 @@ equal to what its body was built with.
   before deleting any (`destroyPrimitive(prim, true)` for packed, else `destroyPointOffset(off,
   GA_DESTROY_DEGENERATE)`), then `bumpAllDataIds()` and `forceScan`. Without `id`, later points become new bodies.
 * **Aging** (solver Enable Aging): `age += dt` (DOP step, not time-scaled) on every point, `dead = 1` past a positive
-  `life` (attributes created if missing). Writes every point every step while on; in parallel past `kMinParallelPoints`, with
+  `life` (attributes created if missing). Writes every point every step while on; in parallel past `kMinParallelPoints` (`UTparallelFor` over a `GA_SplittableRange`, no offset vector), with
   `age` / `dead` pages hardened first.
 * **Time Scale**: Box3D steps by `stepDt = dt * timescale`; animated targets use it; `canContinue` uses the DOP step.
 
 **Point writes after the step** (`Box3DPointWrite`: `kAutofitValid`, `kMass`): grouped per object
-(`forEachObjectRun`), offsets via the templated `resolvePointOffsets`, then `recordFingerprintAfterWrite`.
+(`forEachObjectRun`: a stable O(n) bucket pass, runs in first-seen order, nothing moved if already grouped), offsets via the templated `resolvePointOffsets`, then `recordFingerprintAfterWrite`.
 
 ## Building shapes (`addPointBody`, `planShapes`, `buildShapes`)
 

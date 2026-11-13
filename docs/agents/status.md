@@ -54,7 +54,7 @@ remove an item once it has been checked, and record anything new here rather tha
   rebuilds once from the geometry (no save / load of the world) and continues sensibly.
 * Node messages (`addError` on `objects(0)` with `SIM_MESSAGE`): they appear on the Box3D Solver node (not only on the
   object), and clear on the next step once the problem is gone.
-* `objects` sorted by object id (`box3dObjectById` binary search). Only speed is at stake: there is a linear fallback.
+* `objects` sorted by object id (`box3dObjectById` binary search, a miss is final). Checked once per solve (`st.objectsSorted`); an array that is not sorted falls back to a linear scan, so only speed is at stake.
 * Box3D's tasks on Houdini's TBB pool (`Box3DHoudiniTasks`): no stall or deadlock when several DOP networks or threaded
   SOPs cook at once, under `HOUDINI_MAXTHREADS=1`, or where threading is disabled for the cooking thread
   (`UT_Thread::isThreadingEnabled()` false: tasks run inline).

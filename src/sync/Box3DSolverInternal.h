@@ -53,6 +53,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
@@ -91,11 +92,35 @@ constexpr size_t kMinParallelReadPlain   = 8192;    // sync read, no primitives 
 constexpr size_t kMinParallelReadPacked  = 2048;    // sync read, geometry has primitives
 constexpr size_t kMinParallelWrite       = 1024;    // write-back
 
+// The thresholds in use. In BOX3DDOP_DEBUG builds an environment variable overrides each one (a
+// decimal count, read once per process), so a benchmark can sweep them without rebuilding:
+//   BOX3DDOP_MIN_PARALLEL_POINTS / _READ_PLAIN / _READ_PACKED / _WRITE
+// Release builds always use the constants above.
+inline size_t
+tunedMinParallel(const char *envName, size_t fallback)
+{
+#ifdef BOX3DDOP_DEBUG
+    if (const char *v = std::getenv(envName))
+    {
+        char *end = nullptr;
+        const unsigned long long n = std::strtoull(v, &end, 10);
+        if (end != v)
+            return size_t(n);
+    }
+#endif
+    (void)envName;
+    return fallback;
+}
+inline size_t minParallelPoints()     { static const size_t v = tunedMinParallel("BOX3DDOP_MIN_PARALLEL_POINTS",      kMinParallelPoints);     return v; }
+inline size_t minParallelReadPlain()  { static const size_t v = tunedMinParallel("BOX3DDOP_MIN_PARALLEL_READ_PLAIN",  kMinParallelReadPlain);  return v; }
+inline size_t minParallelReadPacked() { static const size_t v = tunedMinParallel("BOX3DDOP_MIN_PARALLEL_READ_PACKED", kMinParallelReadPacked); return v; }
+inline size_t minParallelWrite()      { static const size_t v = tunedMinParallel("BOX3DDOP_MIN_PARALLEL_WRITE",       kMinParallelWrite);      return v; }
+
 // f(i) for i in [0, n), on Houdini's TBB pool when n is large. f may only read shared data and
 // write element i of its own output.
 template <class F>
 void
-parallelForEach(size_t n, const F &f, size_t minParallel = kMinParallelPoints, size_t grain = 1)
+parallelForEach(size_t n, const F &f, size_t minParallel = minParallelPoints(), size_t grain = 1)
 {
     if (n < minParallel)
     {

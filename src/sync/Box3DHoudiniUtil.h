@@ -32,21 +32,36 @@ box3dWritableGeometry(SIM_Object &obj, const char *name)
     return SIM_DATA_CREATE(obj, name, SIM_GeometryCopy, SIM_DATA_RETURN_EXISTING | SIM_DATA_ADOPT_EXISTING_ON_DELETE);
 }
 
-// The object with this id, or null. Binary search (`objects` is sorted by id), linear as a fallback.
-inline SIM_Object *
-box3dObjectById(SIM_ObjectArray &objects, int id)
+// True if `objects` is in ascending object id order (checked once per solve).
+inline bool
+box3dObjectsSortedById(SIM_ObjectArray &objects)
 {
-    exint lo = 0, hi = objects.entries();
-    while (lo < hi)
+    for (exint i = 1; i < objects.entries(); ++i)
+        if (objects(i - 1)->getObjectId() > objects(i)->getObjectId())
+            return false;
+    return true;
+}
+
+// The object with this id, or null. Binary search when `sorted` (box3dObjectsSortedById: then a
+// miss is final, no scan); an array not known to be sorted is scanned linearly.
+inline SIM_Object *
+box3dObjectById(SIM_ObjectArray &objects, int id, bool sorted)
+{
+    if (sorted)
     {
-        const exint mid    = lo + (hi - lo) / 2;
-        const int   mid_id = objects(mid)->getObjectId();
-        if (mid_id == id)
-            return objects(mid);
-        if (mid_id < id)
-            lo = mid + 1;
-        else
-            hi = mid;
+        exint lo = 0, hi = objects.entries();
+        while (lo < hi)
+        {
+            const exint mid    = lo + (hi - lo) / 2;
+            const int   mid_id = objects(mid)->getObjectId();
+            if (mid_id == id)
+                return objects(mid);
+            if (mid_id < id)
+                lo = mid + 1;
+            else
+                hi = mid;
+        }
+        return nullptr;
     }
     for (exint i = 0; i < objects.entries(); ++i)
         if (objects(i)->getObjectId() == id)

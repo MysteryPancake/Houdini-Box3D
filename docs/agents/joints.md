@@ -76,7 +76,7 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   `Box3DSharedState::bodyVersion` (bumped when bodies or affectors are added / removed) changed. Otherwise its
   joints keep the network's `liveStamp`, like skipped objects' bodies.
 * Per two-point primitive: `constraint_name` -> kind (missing or unknown: counted, ignored), anchors resolved
-  (`Anchors::resolve`: empty = world; a piece name in any object in object order; `object/piece`; an object with
+  (`Anchors::resolve`, hash tables built on the first resolve of a step, first match in object order: empty = world; a piece name in any object in object order; `object/piece`; an object with
   exactly one body; an affector object's name -> its static mesh body). Unresolved: no joint, retried when bodies
   change. Settings = the kind's + matching primitive attributes, the Constraint Network DOP's rule: float attributes
   multiply the node's value (angles too: the attribute is a factor, so no degree conversion), toggles (int), vectors

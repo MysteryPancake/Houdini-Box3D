@@ -878,7 +878,7 @@ void
 readSlots(const ScanContext &ctx, int objectId, SlotList &snaps)
 {
     parallelForEach(snaps.size(), [&](size_t i) { readSlot(ctx, objectId, snaps[i]); },
-                    ctx.anyPrims ? kMinParallelReadPacked : kMinParallelReadPlain);
+                    ctx.anyPrims ? minParallelReadPacked() : minParallelReadPlain());
 }
 
 // ---- step 3 (parallel, chunked): plan the shapes of new and rebuilt bodies ------

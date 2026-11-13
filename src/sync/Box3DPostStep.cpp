@@ -5,6 +5,8 @@
 #include "Box3DSolverInternal.h"
 #include "dop/SIM_SolverBox3D.h"
 
+#include <GA/GA_SplittableRange.h>
+
 #include <array>
 
 namespace box3dsolver {
@@ -160,18 +162,64 @@ forceScan(Box3DSharedState &st, int objectId)
         f->second.canSkip = false;
 }
 
-// f(begin, end) per run of items with the same objectId (sorted first if needed).
+// f(begin, end) per run of items with the same objectId. Items are first grouped by object, in
+// O(n): a stable bucket pass (items of one object keep their relative order), not a sort, since
+// objects are few and the order of the move events changes from step to step. Runs come in the
+// order each object first appears, not in id order. Already grouped items are not moved.
 template <class Item, class F>
 void
 forEachObjectRun(std::vector<Item> &items, const F &f)
 {
-    const auto byObject = [](const Item &x, const Item &y) { return x.objectId < y.objectId; };
-    if (!std::is_sorted(items.begin(), items.end(), byObject))
-        std::stable_sort(items.begin(), items.end(), byObject);
-    for (size_t runBegin = 0; runBegin < items.size();)
+    const size_t n = items.size();
+    if (n == 0)
+        return;
+
+    // Pass 1: the bucket of every item, and the size of every bucket.
+    std::unordered_map<int, uint32_t> bucketOf;     // objectId -> bucket (first-seen order)
+    std::vector<uint32_t> bucket(n);
+    std::vector<size_t> start;                       // size of a bucket, then its first slot
+    size_t runs = 0;
+    int lastId = items[0].objectId;
+    uint32_t lastBucket = 0;
+    bool haveLast = false;
+    for (size_t i = 0; i < n; ++i)
+    {
+        const int id = items[i].objectId;
+        if (!haveLast || id != lastId)
+        {
+            const auto ins = bucketOf.try_emplace(id, uint32_t(bucketOf.size()));
+            lastBucket = ins.first->second;
+            lastId = id;
+            haveLast = true;
+            ++runs;
+        }
+        if (lastBucket >= start.size())
+            start.resize(size_t(lastBucket) + 1, 0);
+        ++start[lastBucket];
+        bucket[i] = lastBucket;
+    }
+
+    // More runs than objects: an object's items are not together, so move them.
+    if (runs != bucketOf.size())
+    {
+        size_t sum = 0;
+        for (size_t &c : start)
+        {
+            const size_t count = c;
+            c = sum;
+            sum += count;
+        }
+        thread_local std::vector<Item> scratch;     // kept between steps: no allocation
+        scratch.resize(n);
+        for (size_t i = 0; i < n; ++i)
+            scratch[start[bucket[i]]++] = items[i];
+        items.swap(scratch);
+    }
+
+    for (size_t runBegin = 0; runBegin < n;)
     {
         size_t runEnd = runBegin;
-        while (runEnd < items.size() && items[runEnd].objectId == items[runBegin].objectId)
+        while (runEnd < n && items[runEnd].objectId == items[runBegin].objectId)
             ++runEnd;
         f(runBegin, runEnd);
         runBegin = runEnd;
@@ -227,7 +275,7 @@ recordImpacts(Box3DSharedState &st, SIM_ObjectArray &objects, const SIM_Time &no
     std::vector<int> wrote;
     for (const auto &kv : hitsOf)
     {
-        SIM_Object *obj = box3dObjectById(objects, kv.first);
+        SIM_Object *obj = box3dObjectById(objects, kv.first, st.objectsSorted);
         if (!obj)
             continue;
         SIM_Impacts *imp = SIM_DATA_CREATE(*obj, SIM_IMPACTS_DATANAME, SIM_Impacts, 0);
@@ -250,7 +298,7 @@ recordImpacts(Box3DSharedState &st, SIM_ObjectArray &objects, const SIM_Time &no
     std::sort(wrote.begin(), wrote.end());
     for (const int id : st.impactObjects)
         if (!std::binary_search(wrote.begin(), wrote.end(), id))
-            if (SIM_Object *obj = box3dObjectById(objects, id))
+            if (SIM_Object *obj = box3dObjectById(objects, id, st.objectsSorted))
                 obj->removeNamedSubData(SIM_IMPACTS_DATANAME);
     st.impactObjects.swap(wrote);
 }
@@ -264,7 +312,7 @@ writePointAttrs(Box3DSharedState &st, SIM_ObjectArray &objects)
     if (items.empty())
         return;
     forEachObjectRun(items, [&](size_t begin, size_t end) {
-        SIM_Object *obj = box3dObjectById(objects, items[begin].objectId);
+        SIM_Object *obj = box3dObjectById(objects, items[begin].objectId, st.objectsSorted);
         if (!obj)
             return;
         SIM_GeometryCopy *geo = getOrMakeWritableGeometry(*obj);
@@ -341,21 +389,11 @@ ageObjects(Box3DSharedState &st, SIM_ObjectArray &objects, float dt)
             GA_RWHandleI dead(gdp, GA_ATTRIB_POINT, "dead");
             if (!age.isValid())
                 continue;
-            std::vector<GA_Offset> offs;
-            offs.reserve(size_t(gdp->getNumPoints()));
-            for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it)
-                offs.push_back(*it);
-            // Shared copy-on-write pages would race: harden what the parallel pass writes.
+            const GA_Range range(gdp->getPointRange());
             const bool killing = life.isValid() && dead.isValid();
-            if (offs.size() >= kMinParallelPoints)
-            {
-                age.getAttribute()->hardenAllPages();
-                if (killing)
-                    dead.getAttribute()->hardenAllPages();
-            }
             std::atomic<bool> anyDead{ false };
-            parallelForEach(offs.size(), [&](size_t i) {
-                const GA_Offset off = offs[i];
+            // Each point touches only its own `age` / `dead` slot.
+            const auto agePoint = [&](GA_Offset off) {
                 const float a = age.get(off) + dt;
                 age.set(off, a);
                 if (killing)
@@ -367,7 +405,25 @@ ageObjects(Box3DSharedState &st, SIM_ObjectArray &objects, float dt)
                         anyDead.store(true, std::memory_order_relaxed);
                     }
                 }
-            }, kMinParallelPoints, 1024);
+            };
+            if (size_t(range.getEntries()) < minParallelPoints())
+            {
+                for (GA_Iterator it(range); !it.atEnd(); ++it)
+                    agePoint(*it);
+            }
+            else
+            {
+                // Shared copy-on-write pages would race: harden what the parallel pass writes.
+                age.getAttribute()->hardenAllPages();
+                if (killing)
+                    dead.getAttribute()->hardenAllPages();
+                UTparallelFor(GA_SplittableRange(range), [&](const GA_SplittableRange &r) {
+                    GA_Offset start, end;
+                    for (GA_Iterator it(r); it.blockAdvance(start, end);)
+                        for (GA_Offset off = start; off < end; ++off)
+                            agePoint(off);
+                });
+            }
             markedDead = anyDead.load();
             age.getAttribute()->bumpDataId();
             if (markedDead)
@@ -388,7 +444,7 @@ deleteDeadPoints(Box3DSharedState &st, SIM_ObjectArray &objects)
     if (items.empty())
         return;
     forEachObjectRun(items, [&](size_t begin, size_t end) {
-        SIM_Object *obj = box3dObjectById(objects, items[begin].objectId);
+        SIM_Object *obj = box3dObjectById(objects, items[begin].objectId, st.objectsSorted);
         if (!obj)
             return;
         SIM_GeometryCopy *geo = getOrMakeWritableGeometry(*obj);
@@ -503,7 +559,7 @@ writeWholeObjects(Box3DSharedState &st, SIM_ObjectArray &objects, const std::vec
     {
         const b3dop::BodyMove &mv = st.moves[size_t(mi)];
         Box3DBodyMirror *entry = static_cast<Box3DBodyMirror *>(mv.userData);
-        SIM_Object *obj = box3dObjectById(objects, entry->objectId);
+        SIM_Object *obj = box3dObjectById(objects, entry->objectId, st.objectsSorted);
         float lin[3], ang[3];
         if (!obj || !st.world.getVelocityByHandle(entry->handle, lin, ang))
             continue;
@@ -522,7 +578,7 @@ readVelocities(Box3DSharedState &st)
     parallelForEach(items.size(), [&](size_t i) {
         Box3DWriteItem &w = items[i];
         st.world.getVelocityByHandle(w.entry->handle, w.lin, w.ang);
-    }, kMinParallelWrite);
+    }, minParallelWrite());
 }
 
 // A new quaternion attribute is 0,0,0,0: start every point at identity.
@@ -725,9 +781,9 @@ writeObjectResults(Box3DSharedState &st, GU_Detail *gdp, size_t begin, size_t en
     const BodyWriter writer(st, gdp, a, begin, end);
     const std::array<GA_Attribute *, 5> written = writer.writtenAttributes();
     // Shared copy-on-write pages would race: a parallel pass hardens what it writes first.
-    if (end - begin >= kMinParallelWrite)
+    if (end - begin >= minParallelWrite())
         hardenWrittenPages(gdp, items, begin, end, written);
-    parallelForEach(end - begin, [&](size_t j) { writer.write(items[begin + j]); }, kMinParallelWrite);
+    parallelForEach(end - begin, [&](size_t j) { writer.write(items[begin + j]); }, minParallelWrite());
     for (GA_Attribute *attr : written)
         if (attr)
             attr->bumpDataId();
@@ -761,7 +817,7 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
     // Grouped by object, so each geometry is locked once.
     std::vector<SIM_Object *> refresh;      // objects written to
     forEachObjectRun(items, [&](size_t begin, size_t end) {
-        SIM_Object *obj = box3dObjectById(objects, items[begin].objectId);
+        SIM_Object *obj = box3dObjectById(objects, items[begin].objectId, st->objectsSorted);
         if (!obj)
             return;
 

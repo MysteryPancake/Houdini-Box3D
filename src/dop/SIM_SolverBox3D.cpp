@@ -225,6 +225,7 @@ SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
         else
         {
             std::lock_guard<std::mutex> lock(st->mutex);
+    st->objectsSorted = box3dObjectsSortedById(objects);
             if (st->world.settings().workerCount != currentWorkerCount())
             {
                 // The pool is sized at creation; a rebuild only loses warm starting and sleep.

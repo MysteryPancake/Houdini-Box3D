@@ -326,6 +326,7 @@ struct Box3DSharedState
     std::unordered_map<uint64_t, Box3DJointEntry>   joints;         // key: network key + primitive offset
     std::unordered_map<uint64_t, Box3DJointNetwork> jointNetworks;  // key: relationship name (or object id)
     bool     wantNames   = false;           // some object has a constraint network: keep Box3DObjectSync::byName
+    bool     objectsSorted = false;         // this solve's objects are in id order (box3dObjectById may binary search)
     uint64_t bodyVersion = 0;               // bumped whenever bodies are added or removed
 
     // Scratch reused every step.

@@ -236,6 +236,9 @@ networkFingerprint(const GU_Detail *gdp)
 }
 
 // Anchor names -> bodies, over the objects of this solve (in their order) and the affectors.
+// The name tables are built on the first resolve(): a step whose networks are all unchanged never
+// resolves a name, so it pays nothing for them. After that a name is a hash lookup, not a scan of
+// every object per anchor.
 class Anchors
 {
 public:
@@ -259,34 +262,30 @@ public:
         out = 0;
         if (name.empty())
             return true;
+        buildTables();
         const size_t slash = name.find('/');
         if (slash != std::string::npos)
         {
-            const std::string objName = name.substr(0, slash), piece = name.substr(slash + 1);
-            for (const auto &o : myObjects)
-                if (o.first == objName)
-                    return findIn(*o.second, piece, out);
-            return false;
+            // The first object with this name decides, whether or not it has the piece.
+            const auto o = myObjectByName.find(name.substr(0, slash));
+            return o != myObjectByName.end() && findIn(*o->second, name.substr(slash + 1), out);
         }
-        for (const auto &o : myObjects)
-            if (findIn(*o.second, name, out))
-                return true;
-        for (const auto &o : myObjects)
-            if (o.first == name && o.second->bodies.size() == 1 && o.second->bodies[0]->handle)
+        // Order: a piece in any object, an object with one body, an affector.
+        for (const auto *table : { &myPiece, &mySingleBody, &myAffector })
+        {
+            const auto it = table->find(name);
+            if (it != table->end())
             {
-                out = o.second->bodies[0]->handle;
+                out = it->second;
                 return true;
             }
-        for (const auto &kv : myState.affectors)
-            if (kv.second.name == name && kv.second.handle)
-            {
-                out = kv.second.handle;
-                return true;
-            }
+        }
         return false;
     }
 
 private:
+    using HandleTable = std::unordered_map<std::string, b3dop::BodyHandle>;
+
     static bool findIn(const Box3DObjectSync &os, const std::string &piece, b3dop::BodyHandle &out)
     {
         const auto it = os.byName.find(piece);
@@ -296,8 +295,34 @@ private:
         return true;
     }
 
+    // Each table keeps the first match in object order (what a scan in that order would find).
+    void buildTables() const
+    {
+        if (myBuilt)
+            return;
+        myBuilt = true;
+        for (const auto &o : myObjects)
+        {
+            myObjectByName.try_emplace(o.first, o.second);
+            for (const auto &p : o.second->byName)
+                if (p.second->handle)
+                    myPiece.try_emplace(p.first, p.second->handle);
+            if (o.second->bodies.size() == 1 && o.second->bodies[0]->handle)
+                mySingleBody.try_emplace(o.first, o.second->bodies[0]->handle);
+        }
+        for (const auto &kv : myState.affectors)
+            if (kv.second.handle)
+                myAffector.try_emplace(kv.second.name, kv.second.handle);
+    }
+
     const Box3DSharedState                                        &myState;
     std::vector<std::pair<std::string, const Box3DObjectSync *>> myObjects;
+
+    mutable bool                                                   myBuilt = false;
+    mutable std::unordered_map<std::string, const Box3DObjectSync *> myObjectByName;
+    mutable HandleTable                                            myPiece;
+    mutable HandleTable                                            mySingleBody;
+    mutable HandleTable                                            myAffector;
 };
 
 // The primitive attributes that override a setting, bound once per network.
@@ -1228,7 +1253,7 @@ jointsAfterStep(Box3DSharedState &st, SIM_ObjectArray &objects)
         const auto ents = entriesOf.find(kv.first);
         if (ents == entriesOf.end() && !anyBroken)
             continue;                           // no joints to keep live, nothing broke
-        SIM_Object *obj = box3dObjectById(objects, net.objectId);
+        SIM_Object *obj = box3dObjectById(objects, net.objectId, st.objectsSorted);
         NetworkSource src;
         src.inGroup = net.inGroup;
         src.relName = net.relName;
