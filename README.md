@@ -158,7 +158,7 @@ Debug logging is off by default; configure with `-DBOX3DDOP_DEBUG=ON` to print t
 
 ## For developers
 
-See [AGENTS.md](AGENTS.md) for a technical writeup of the codebase.
+See [CLAUDE.md](CLAUDE.md) for a technical writeup of the codebase.
 
 ## License
 

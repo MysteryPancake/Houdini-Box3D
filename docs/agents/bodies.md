@@ -1,6 +1,6 @@
 # Bodies: updates, features, shapes
 
-Part of the solver step: how a point becomes a body and how it changes mid-simulation. The step order is in [solver.md](solver.md). Index and rules: [AGENTS.md](../../AGENTS.md).
+Part of the solver step: how a point becomes a body and how it changes mid-simulation. The step order is in [solver.md](solver.md). Index and rules: [CLAUDE.md](../../CLAUDE.md).
 
 ## Mid-simulation updates
 

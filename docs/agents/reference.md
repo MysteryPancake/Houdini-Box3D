@@ -1,6 +1,6 @@
 # Reference: parameters, attributes, warnings
 
-What the nodes expose and what is deliberately left out. Index and rules: [AGENTS.md](../../AGENTS.md).
+What the nodes expose and what is deliberately left out. Index and rules: [CLAUDE.md](../../CLAUDE.md).
 
 ## Parameters
 

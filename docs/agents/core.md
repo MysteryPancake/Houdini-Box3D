@@ -1,6 +1,6 @@
 # Core layer
 
-The Houdini-free layer, `b3dop::Box3DWorld`: the API, hull cache and world settings. Index and rules: [AGENTS.md](../../AGENTS.md).
+The Houdini-free layer, `b3dop::Box3DWorld`: the API, hull cache and world settings. Index and rules: [CLAUDE.md](../../CLAUDE.md).
 
 ## Core layer: `b3dop::Box3DWorld`
 

@@ -1,6 +1,6 @@
 # Status: untested, verified, TODO
 
-The one list of unverified items, the HDK calls already checked, and the one list of work still to do. Index and rules: [AGENTS.md](../../AGENTS.md).
+The one list of unverified items, the HDK calls already checked, and the one list of work still to do. Index and rules: [CLAUDE.md](../../CLAUDE.md).
 
 ## Untested and unverified
 

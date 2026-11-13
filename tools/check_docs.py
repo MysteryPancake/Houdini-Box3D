@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check that the docs still point at things that exist.
 
-For AGENTS.md and docs/agents/*.md:
+For CLAUDE.md and docs/agents/*.md:
   * every relative markdown link resolves to a file;
   * every `kSomething` constant mentioned in backticks is still defined or used under src/ or tests/;
   * every point attribute named in src/sync/Box3DAttribNames.h is mentioned in backticks in README.md
@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
-docs = [root / "AGENTS.md", *sorted((root / "docs" / "agents").glob("*.md"))]
+docs = [root / "CLAUDE.md", *sorted((root / "docs" / "agents").glob("*.md"))]
 
 code = "\n".join(
     p.read_text(encoding="utf-8", errors="replace")

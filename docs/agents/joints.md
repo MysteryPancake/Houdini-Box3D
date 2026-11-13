@@ -1,6 +1,6 @@
 # Joints
 
-Constraint networks, our joint nodes and SideFX constraint data mapping. Index and rules: [AGENTS.md](../../AGENTS.md).
+Constraint networks, our joint nodes and SideFX constraint data mapping. Index and rules: [CLAUDE.md](../../CLAUDE.md).
 
 ## Joints
 

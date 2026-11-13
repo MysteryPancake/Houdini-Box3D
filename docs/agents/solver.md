@@ -1,6 +1,6 @@
 # Solver and world state
 
-The shared world state, the step order, the sync pass, the skip fingerprint, write-back and threading. What the sync does to a body is in [bodies.md](bodies.md); forces in [forces-affectors.md](forces-affectors.md). Index and rules: [AGENTS.md](../../AGENTS.md).
+The shared world state, the step order, the sync pass, the skip fingerprint, write-back and threading. What the sync does to a body is in [bodies.md](bodies.md); forces in [forces-affectors.md](forces-affectors.md). Index and rules: [CLAUDE.md](../../CLAUDE.md).
 
 ## Shared state (`SIM_Box3DWorld`)
 

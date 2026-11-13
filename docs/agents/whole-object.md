@@ -1,6 +1,6 @@
 # Whole-object bodies
 
-RBD Object style bodies: one body per DOP object. Index and rules: [AGENTS.md](../../AGENTS.md).
+RBD Object style bodies: one body per DOP object. Index and rules: [CLAUDE.md](../../CLAUDE.md).
 
 ## Whole-object bodies (`syncWholeObject`)
 

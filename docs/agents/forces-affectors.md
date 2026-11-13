@@ -1,6 +1,6 @@
 # Forces and affectors
 
-External forces (Force DOPs, point `force` / `torque`) and Static Object colliders. Index and rules: [AGENTS.md](../../AGENTS.md).
+External forces (Force DOPs, point `force` / `torque`) and Static Object colliders. Index and rules: [CLAUDE.md](../../CLAUDE.md).
 
 ## External forces (`applyExternalForces`)
 

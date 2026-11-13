@@ -1,6 +1,6 @@
 # Build, tests, debug, package
 
-How the project is built, tested and packaged. Index and rules: [AGENTS.md](../../AGENTS.md).
+How the project is built, tested and packaged. Index and rules: [CLAUDE.md](../../CLAUDE.md).
 
 ## Build system
 
