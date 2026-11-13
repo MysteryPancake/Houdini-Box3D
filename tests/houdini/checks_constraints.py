@@ -41,18 +41,23 @@ FACE = (0.5, 2, 0)  # the shared face of the fixed piece (0, 2, 0) and the hangi
 
 
 def hanging_pair(name, joints, line_attrs=None, conrels=None, gravity=None, solver_kind="box3d",
-                 pieces=None, anchors=None):
+                 pieces=None, anchors=None, data_parms=None, keep_velocity=False, network_edit=None,
+                 net_parms=None):
     """A piece hanging off a fixed one through a constraint network line.
     joints: constraint_name of the line (None: the first joint node's Data Name). conrels:
     [(node type, {parm: value})] wired into the network (merged if several). Returns (dop, piece
-    names)."""
+    names). data_parms: Box3D Data parameters for the pieces (Box3D solver only). network_edit:
+    called with the network's SOP path, returns the path to use (to add SOPs after it).
+    net_parms: Constraint Network parameters ({candidate names tuple: value})."""
     dop = new_dopnet(name)
     pieces = pieces or [
         {"size": (1, 1, 1), "center": (0, 2, 0), "attrs": {"active": 0}},
         {"size": (1, 1, 1), "center": (1, 2, 0), "attrs": {"active": 1}},
     ]
     path, names = packed_boxes(name + "_pieces", pieces)
-    obj = packed_object(dop, "pieces", path)
+    obj = packed_object(dop, "pieces", path, keep_velocity=keep_velocity)
+    if data_parms and solver_kind == "box3d":
+        obj = box3d_data(dop, obj, "data", **data_parms)
     nodes = []
     for i, (type_name, parms) in enumerate(conrels or []):
         node = create(dop, type_name, f"joint{i}")
@@ -64,9 +69,13 @@ def hanging_pair(name, joints, line_attrs=None, conrels=None, gravity=None, solv
     pa, pb = anchors or (FACE, FACE)
     line = (names[0], pa, names[1], pb, joints) + ((line_attrs,) if line_attrs else ())
     network_path = constraint_lines(name + "_network", [line])
+    if network_edit:
+        network_path = network_edit(network_path)
     net = create(dop, "constraintnetwork", "constraint_network")
     net.setInput(0, obj)
     set_parm(net, ["soppath", "constraintsoppath", "geosoppath"], network_path)
+    for names_tuple, value in (net_parms or {}).items():
+        set_parm(net, list(names_tuple), value)
     if len(nodes) == 1:
         net.setInput(1, nodes[0])
     elif nodes:
@@ -137,7 +146,8 @@ def test_next_constraint():
     pos = track[36][0][names[1]]
     dist = (pos - hou.Vector3(FACE)).length()
     attrs = track[36][1]
-    ok = pos[1] < 1.9 and close(dist, 0.5, 0.05) and attrs.get("constraint_name") == "spherical"
+    ok = pos[1] < 1.9 and close(dist, 0.5, 0.05) and attrs.get("constraint_name") == "spherical" \
+        and not attrs.get("next_constraint_name")
     return [Result("next_constraint", Result.PASS if ok else Result.FAIL,
                    f"piece at y={pos[1]:.2f} (swung = below 1.9), {dist:.3f} from the anchor (expected 0.5); "
                    f"line attributes on frame 36: {attrs}")]
@@ -145,7 +155,8 @@ def test_next_constraint():
 
 def test_feedback():
     """The solver writes force, torque, distance and angle onto a holding weld's line."""
-    dop, names = hanging_pair("feedback", "weld", conrels=[("box3d_weldconrel", {})])
+    dop, names = hanging_pair("feedback", "weld", conrels=[("box3d_weldconrel", {})],
+                              data_parms={"computemass": 0, "mass": 1.0})
 
     def sample(sim, f):
         geo = find_network_geometry(sim)
@@ -159,8 +170,13 @@ def test_feedback():
     if vals is None:
         raise SetupError("could not find the constraint network geometry in the simulation")
     missing = [a for a, v in vals.items() if v is None]
-    return [Result("feedback", Result.FAIL if missing else Result.PASS,
-                   f"line attributes on frame 24: {vals}" + (f"; missing {missing}" if missing else ""))]
+    if missing:
+        return [Result("feedback", Result.FAIL, f"line attributes on frame 24: {vals}; missing {missing}")]
+    # A 1 kg piece hanging off the weld: the joint carries its weight (m g) and holds (distance ~0).
+    force, dist = abs(vals["force"]), abs(vals["distance"])
+    ok = close(force, 9.80665, 0.25 * 9.80665) and dist < 0.01
+    return [Result("feedback", Result.PASS if ok else Result.FAIL,
+                   f"line attributes on frame 24: {vals} (expected force about 9.8 N for 1 kg, distance near 0)")]
 
 
 def test_centroid_anchors():
@@ -176,18 +192,29 @@ def test_centroid_anchors():
                    f"centroids 1.0 apart at the start, {d:.3f} after 2 s (SideFX Glue / Hard would keep 1.0)")]
 
 
-def sidefx_compare(kind, conrel_type, line_attrs):
+def sidefx_compare(kind, conrel_type, line_attrs, spin=None):
     """A piece 2 below a fixed one, held by a SideFX constraint with anchors at the centroids,
-    in Box3D and in Bullet. Returns the centroid distance after 2 s for each."""
+    in Box3D and in Bullet. Returns {solver: (centroid distance, rotation angle in degrees)}
+    after 2 s. spin: initial w (rad/s) of the hanging piece."""
+    from b3dtest import packed_transform
     out = {}
     for solver_kind in ("box3d", "bullet"):
-        pieces = [{"size": (1, 1, 1), "center": (0, 4, 0), "attrs": {"active": 0}},
-                  {"size": (1, 1, 1), "center": (0.5, 2, 0), "attrs": {"active": 1}}]
-        dop, names = hanging_pair(f"{kind}_{solver_kind}", None, line_attrs=line_attrs,
+        hang = {"active": 1, "w": tuple(spin)} if spin else {"active": 1}
+        fixed = {"active": 0, "w": (0.0, 0.0, 0.0)} if spin else {"active": 0}
+        pieces = [{"size": (1, 1, 1), "center": (0, 4, 0), "attrs": fixed},
+                  {"size": (1, 1, 1), "center": (0.5, 2, 0), "attrs": hang}]
+        dop, names = hanging_pair(f"{kind}_{solver_kind}{'_spin' if spin else ''}", None, line_attrs=line_attrs,
                                   conrels=[(conrel_type, {})], solver_kind=solver_kind, pieces=pieces,
-                                  anchors=((0, 4, 0), (0.5, 2, 0)))
-        track = step(dop, 48, lambda sim, f: packed_positions(sim, "pieces"))
-        out[solver_kind] = (track[48][names[1]] - track[48][names[0]]).length()
+                                  anchors=((0, 4, 0), (0.5, 2, 0)), keep_velocity=bool(spin))
+
+        def sample(sim, f):
+            return packed_positions(sim, "pieces"), packed_transform(sim, "pieces", names[1])
+
+        track = step(dop, 48, sample)
+        r = track[48][1]
+        trace = r[0][0] + r[1][1] + r[2][2]
+        angle = math.degrees(math.acos(max(-1.0, min(1.0, (trace - 1) / 2))))
+        out[solver_kind] = ((track[48][0][names[1]] - track[48][0][names[0]]).length(), angle)
     return out
 
 
@@ -195,16 +222,23 @@ def test_sidefx_hard():
     """SideFX Hard constraint (constraint_type position, no restlength) compared with Bullet: the
     distance it holds between a fixed piece and one hanging about 2.06 below it."""
     d = sidefx_compare("hard", "hardconrel", {"constraint_type": "position"})
-    ok = close(d["box3d"], d["bullet"], 0.1)
+    ok = close(d["box3d"][0], d["bullet"][0], 0.1)
     return [Result("sidefx_hard", Result.PASS if ok else Result.FAIL,
-                   f"held distance after 2 s: Box3D {d['box3d']:.3f}, Bullet {d['bullet']:.3f} (start 2.06)")]
+                   f"held distance after 2 s: Box3D {d['box3d'][0]:.3f}, Bullet {d['bullet'][0]:.3f} (start 2.06)")]
 
 
 def test_sidefx_spring():
-    """SideFX Spring constraint compared with Bullet: how far the hanging piece ends up. INFO."""
+    """SideFX Spring constraint compared with Bullet: how far the hanging piece ends up, and
+    (constraint_type all, piece spinning at the start) whether an angular spring turns it back.
+    INFO."""
     d = sidefx_compare("spring", "springconrel", {"constraint_type": "position"})
+    a = sidefx_compare("spring_all", "springconrel", {"constraint_type": "all"}, spin=(0.0, 3.0, 0.0))
     return [Result("sidefx_spring", Result.INFO,
-                   f"distance after 2 s: Box3D {d['box3d']:.3f}, Bullet {d['bullet']:.3f} (start 2.06)")]
+                   f"position spring, distance after 2 s: Box3D {d['box3d'][0]:.3f}, Bullet {d['bullet'][0]:.3f} "
+                   f"(start 2.06)"),
+            Result("sidefx_spring", Result.INFO,
+                   f"'all' spring, piece started spinning 3 rad/s about y: turned {a['box3d'][1]:.0f} deg in Box3D, "
+                   f"{a['bullet'][1]:.0f} deg in Bullet after 2 s (small = an angular spring pulled it back)")]
 
 
 # ---------------------------------------------------------------------------

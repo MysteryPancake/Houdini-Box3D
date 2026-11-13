@@ -10,8 +10,10 @@ remove an item once it has been checked, and record anything new here rather tha
 **General**
 * No `SIM_*` code has CI; `tests/box3d_test.hiplc` is a manual scene. The core tests pass, and so do the first
   Houdini checks (`checks_core.py`, Houdini 22.0.479), which settled the items they cover; they are no longer listed
-  here. `checks_solver.py`, `checks_output.py` and `checks_constraints.py` script many of the items below (UI, cache,
-  scale, threads, masks, packed types, outputs, forces, constraints, whole objects) and have not been run yet. The plugin builds against the real HDK (Houdini 22.0.479, MSVC, no warnings), so "compiled only
+  here. `checks_solver.py`, `checks_output.py`, `checks_constraints.py` and `checks_more.py` script most of the items
+  below (UI, caches, scale, threads, masks, packed types, outputs, forces, constraints, SOP Solver edits, attribute
+  toggles, whole objects, comparisons with Bullet and the POP Solver) and have not been run yet. What no script can
+  check: Escape mid-step, the viewport, motion blur, and how greyed-out parameters look. The plugin builds against the real HDK (Houdini 22.0.479, MSVC, no warnings), so "compiled only
   against stand-in headers" notes are gone too: what remains is behaviour.
 * The `BodyProps` refactor (`BodyProps` embedded in `BodySettings`): changing a Box3D Data value (friction, damping,
   Allow Sleeping, Add Impact Data) mid-simulation still updates existing bodies, and an untouched object still skips

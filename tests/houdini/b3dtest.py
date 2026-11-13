@@ -297,9 +297,11 @@ def merge(dop, nodes, name="merge"):
     return m
 
 
-def box3d_solver(dop, upstream, gravity=None):
-    solver = create(dop, "box3d_solver", "box3d_solver")
-    solver.setInput(0, upstream)
+def box3d_solver(dop, upstream, gravity=None, name="box3d_solver"):
+    """A Box3D Solver; upstream None makes one to wire into a Multiple Solver."""
+    solver = create(dop, "box3d_solver", name)
+    if upstream is not None:
+        solver.setInput(0, upstream)
     if gravity is not None:
         set_parm(solver, ["gravity"], tuple(gravity))
     return solver
@@ -311,6 +313,43 @@ def bullet_solver(dop, upstream):
     grav = create(dop, "gravity", "gravity")
     grav.setInput(0, solver)
     return grav
+
+
+def multisolver(dop, upstream, solvers, name="multisolver"):
+    """A Multiple Solver: objects from upstream, solved by `solvers` (nodes with no object input)
+    in order."""
+    ms = create(dop, "multisolver", name)
+    ms.setInput(0, upstream)
+    for i, s in enumerate(solvers):
+        ms.setInput(i + 1, s)
+    return ms
+
+
+def sop_solver(dop, vex, name="sop_solver"):
+    """A SOP Solver DOP whose SOP network runs `vex` over the points each step (after its
+    default contents). @Frame and @Time are the current frame and time."""
+    ss = create(dop, "sopsolver", name)
+    last = ss.displayNode()
+    if last is None:
+        kids = ", ".join(c.name() for c in ss.children())
+        raise SetupError(f"{ss.path()}: no display node inside to add a wrangle after (children: {kids})")
+    wr = ss.createNode("attribwrangle", "edit")
+    wr.setInput(0, last)
+    set_parm(wr, ["snippet"], vex)
+    display(wr)
+    return ss
+
+
+def append_sop(sop_path, type_name, setup=None):
+    """Adds a SOP after the one at sop_path (in the same object), shows it and returns its path.
+    setup(node) sets its parameters."""
+    prev = hou.node(sop_path)
+    node = create(prev.parent(), type_name)
+    node.setInput(0, prev)
+    if setup:
+        setup(node)
+    display(node)
+    return node.path()
 
 
 def finish(dop, last):

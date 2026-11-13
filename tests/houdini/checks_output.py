@@ -322,10 +322,18 @@ def test_impacts():
                 else math.sqrt(sum(c * c for c in r.field(imp_field))) for r in recs)
     expected = math.sqrt(2 * G * 1.0)
     extras = {n: recs[0].field(n) for n in fields if n.lower() in ("ptnum", "time", "otherobjid", "primnum")}
-    ok = 0.7 * expected <= total <= 1.6 * expected
-    return [Result("impacts", Result.PASS if ok else Result.FAIL,
-                   f"frame {first}: {len(recs)} record(s), impulses sum to {total:.2f} N*s (expected about "
-                   f"{expected:.2f}); first record {extras}")]
+    results = [Result("impacts", Result.PASS if 0.7 * expected <= total <= 1.6 * expected else Result.FAIL,
+                      f"frame {first}: {len(recs)} record(s), impulses sum to {total:.2f} N*s (expected about "
+                      f"{expected:.2f})")]
+    # The box is point 0 of its object; the time is the end of the step that hit (frame `first`).
+    ptnum = next((recs[0].field(n) for n in fields if n.lower() == "ptnum"), None)
+    t = next((recs[0].field(n) for n in fields if n.lower() == "time"), None)
+    t_expected = (first - 1) / hou.fps()
+    ok = ptnum == 0 and t is not None and abs(t - t_expected) <= 1.0 / hou.fps() + 1e-6
+    results.append(Result("impacts", Result.PASS if ok else Result.FAIL,
+                          f"first record: point number {ptnum} (expected 0), time {t} (expected about "
+                          f"{t_expected:.4f}); all fields {extras}"))
+    return results
 
 
 # ---------------------------------------------------------------------------

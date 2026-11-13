@@ -34,12 +34,13 @@ import hou  # noqa: E402
 
 import checks_constraints  # noqa: E402
 import checks_core  # noqa: E402
+import checks_more  # noqa: E402
 import checks_output  # noqa: E402
 import checks_solver  # noqa: E402
 from b3dtest import Result, SetupError  # noqa: E402
 
 # Every test, in run order: module by module.
-MODULES = [checks_core, checks_solver, checks_output, checks_constraints]
+MODULES = [checks_core, checks_solver, checks_output, checks_constraints, checks_more]
 TESTS = {}
 for module in MODULES:
     for name, fn in module.TESTS.items():
