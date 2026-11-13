@@ -606,13 +606,206 @@ struct NetworkRef
     uint64_t      key    = 0;
 };
 
+// A primitive's joint: type and settings from its constraint data (with the primitive's own
+// overrides), and the frame offsets of SideFX data.
+struct JointSpec
+{
+    b3dop::JointType     type = b3dop::JointType::Weld;
+    b3dop::JointSettings s;
+    b3dop::JointFrame    adjA, adjB;        // the frames relative to the anchors: identity but for SideFX data
+    uint64_t             frameSig = 0;
+};
+
+// One network's primitives, read from its geometry, into joints: make, update, drop.
+class NetworkPass
+{
+public:
+    NetworkPass(Box3DSharedState &st, const NetworkRef &ref, Box3DJointNetwork &net, const Anchors &anchors,
+                const GU_Detail *gdp, float timeStep, Box3DJointCounts &counts)
+        : mySt(st), myWorld(st.world), myRef(ref), myNet(net), myAnchors(anchors), myGdp(gdp),
+          myTimeStep(timeStep), myCounts(counts), myRd(gdp), myReaders(bindSettings(gdp)),
+          mySfReaders(bindSideFX(gdp))
+    {
+    }
+
+    void run()
+    {
+        for (GA_Iterator it(myGdp->getPrimitiveRange()); !it.atEnd(); ++it)
+        {
+            const GA_Offset     off  = *it;
+            const GA_Primitive *prim = myGdp->getPrimitive(off);
+            if (prim)
+                processPrimitive(*prim, off);
+        }
+    }
+
+private:
+    void dropJoint(Box3DJointEntry &e)
+    {
+        myWorld.destroyJoint(e.handle);         // harmless when already gone with a body
+        e.handle = 0;
+    }
+
+    // The joint entry of a primitive (made on first sight).
+    Box3DJointEntry &entryFor(GA_Offset off)
+    {
+        auto ins = mySt.joints.try_emplace(b3dop::mixHash(myRef.key, uint64_t(int64_t(off))));
+        Box3DJointEntry &e = ins.first->second;
+        if (ins.second)
+        {
+            e.network = myRef.key;
+            e.prim    = off;
+        }
+        return e;
+    }
+
+    // The type, settings and frame offsets for the primitive.
+    JointSpec specFor(const Box3DJointKind &kind, GA_Offset off, b3dop::BodyHandle a, b3dop::BodyHandle b,
+                      const b3dop::JointFrame &fa, const b3dop::JointFrame &fb) const
+    {
+        JointSpec j;
+        if (kind.sideFX)
+        {
+            // SideFX data: the primitive's overrides on its options, then mapped onto a Box3D joint.
+            b3dop::SideFXSettings sf = kind.sideFXSettings;
+            applySideFXOverrides(mySfReaders, kind.sideFXType, off, sf);
+            b3dop::SideFXContext ctx;
+            ctx.timeStep = myTimeStep;
+            ctx.a        = sideFXBody(myWorld, a);
+            ctx.b        = sideFXBody(myWorld, b);
+            const b3dop::SideFXJoint m = b3dop::mapSideFX(kind.sideFXType, sf, myRd.mode(off), ctx);
+            j.type     = m.type;
+            j.s        = m.settings;
+            j.frameSig = sideFXFrameSignature(m);
+            b3dop::sideFXFrameOffsets(m, fa, fb, j.adjA, j.adjB);
+        }
+        else
+        {
+            j.type = kind.type;
+            j.s    = kind.settings;
+            applyOverrides(myReaders, j.type, off, j.s);
+            // A distance joint that measured its own rest length keeps it (see writeLiveFrames).
+            if (j.type == b3dop::JointType::Distance && !(j.s.restLength >= 0.0f) && myRd.autoRest.isValid())
+            {
+                const float made = myRd.autoRest.get(off);
+                if (made >= 0.0f)
+                    j.s.restLength = made;
+            }
+        }
+        return j;
+    }
+
+    // (Re)make the joint from scratch. Exactly as before from the saved local frames when they still
+    // apply (a world rebuilt mid-simulation); else from P / orient, and the local frames are saved
+    // after the step. The local frames are the joint's (with any SideFX offset), so they are compared
+    // with the frames the anchors give now.
+    void makeJoint(Box3DJointEntry &e, const JointSpec &j, b3dop::BodyHandle a, b3dop::BodyHandle b,
+                   GA_Offset p0, GA_Offset p1, const b3dop::JointFrame &fa, const b3dop::JointFrame &fb,
+                   uint64_t sig, bool edited)
+    {
+        dropJoint(e);
+        e.type     = j.type;
+        e.bodyA    = a;
+        e.bodyB    = b;
+        e.sig      = sig;
+        e.settings = j.s;
+        e.wrote    = false;
+        e.adjA     = j.adjA;
+        e.adjB     = j.adjB;
+        e.madeRestLength = -1.0f;
+        if (j.type == b3dop::JointType::Distance && !(j.s.restLength >= 0.0f))
+        {
+            const double dx = fb.pos[0] - fa.pos[0], dy = fb.pos[1] - fa.pos[1], dz = fb.pos[2] - fa.pos[2];
+            e.madeRestLength = float(std::sqrt(dx * dx + dy * dy + dz * dz));
+        }
+        const b3dop::JointFrame ja = jointFrameOf(fa, j.adjA), jb = jointFrameOf(fb, j.adjB);
+        b3dop::JointFrame la, lb;
+        const bool useLocal = !edited && myRd.savedLocal(p0, la) && myRd.savedLocal(p1, lb) &&
+                              localFrameAgrees(myWorld, a, la, ja) && localFrameAgrees(myWorld, b, lb, jb);
+        e.handle     = useLocal ? myWorld.createJoint(j.type, a, b, la, lb, j.s, &e, true)
+                                : myWorld.createJoint(j.type, a, b, ja, jb, j.s, &e);
+        e.writeLocal = !useLocal;
+        if (e.handle)
+            ++myCounts.created;
+        else
+            ++myCounts.failed;
+    }
+
+    void processPrimitive(const GA_Primitive &prim, GA_Offset off)
+    {
+        if (prim.getVertexCount() != 2)
+        {
+            ++myCounts.notLines;
+            return;
+        }
+        const Box3DJointKind *kind = myRd.kind(off, myNet.kinds);
+        if (!kind)
+        {
+            ++myCounts.unknown;
+            return;
+        }
+
+        Box3DJointEntry &e = entryFor(off);
+
+        // Broken (by us, or marked in the geometry): never remade.
+        if (e.broken || (myRd.broken && myRd.broken->containsOffset(off)))
+        {
+            e.broken = true;
+            dropJoint(e);
+            e.stamp = myNet.liveStamp;
+            return;
+        }
+
+        const GA_Offset   p0 = prim.getPointOffset(0), p1 = prim.getPointOffset(1);
+        b3dop::BodyHandle a = 0, b = 0;
+        if (!myAnchors.resolve(myRd.anchorName(p0), a) || !myAnchors.resolve(myRd.anchorName(p1), b))
+        {
+            ++myCounts.unresolved;
+            dropJoint(e);
+            return;                             // not stamped: removed; retried when bodies change
+        }
+        // P / orient are live on a written network (where the pieces are now), so a world rebuilt
+        // mid-simulation makes its joints from them exactly as frame 1 does from the authored ones.
+        const b3dop::JointFrame fa = myRd.frame(p0), fb = myRd.frame(p1);
+        const JointSpec         j  = specFor(*kind, off, a, b, fa, fb);
+
+        const bool live = myNet.writable;
+        uint64_t   sig  = jointSignature(j.type, a, b, fa, fb, !live);
+        if (j.frameSig)
+            sig = b3dop::mixHash(sig, j.frameSig) | 1;
+        const bool edited = live && e.wrote && (frameEdited(fa, e.wroteA) || frameEdited(fb, e.wroteB));
+
+        if (myWorld.isJointValid(e.handle) && e.sig == sig && e.type == j.type && !edited)
+        {
+            if (!b3dop::sameJointSettings(j.type, j.s, e.settings))
+            {
+                myWorld.updateJoint(e.handle, j.type, j.s);
+                e.settings = j.s;
+                ++myCounts.updated;
+            }
+        }
+        else
+            makeJoint(e, j, a, b, p0, p1, fa, fb, sig, edited);
+        e.stamp = myNet.liveStamp;
+    }
+
+    Box3DSharedState                &mySt;
+    b3dop::Box3DWorld               &myWorld;
+    const NetworkRef                &myRef;
+    Box3DJointNetwork               &myNet;
+    const Anchors                   &myAnchors;
+    const GU_Detail                 *myGdp;
+    const float                      myTimeStep;
+    Box3DJointCounts                &myCounts;
+    const NetworkReader              myRd;
+    const std::vector<SettingReader> myReaders;
+    const std::vector<SideFXReader>  mySfReaders;
+};
+
 void
 processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &anchors, float timeStep,
                Box3DJointCounts &counts)
 {
-    using b3dop::JointType;
-    b3dop::Box3DWorld &world = st.world;
-
     Box3DJointNetwork &net = st.jointNetworks[ref.key];
     net.visited  = st.syncStamp;
     net.objectId = ref.object->getObjectId();
@@ -642,142 +835,7 @@ processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &ancho
     net.bodyVersion = st.bodyVersion;
     net.liveStamp   = st.syncStamp;
 
-    const NetworkReader              rd(gdp);
-    const std::vector<SettingReader> readers   = bindSettings(gdp);
-    const std::vector<SideFXReader>  sfReaders = bindSideFX(gdp);
-
-    for (GA_Iterator it(gdp->getPrimitiveRange()); !it.atEnd(); ++it)
-    {
-        const GA_Offset     off  = *it;
-        const GA_Primitive *prim = gdp->getPrimitive(off);
-        if (!prim)
-            continue;
-        if (prim->getVertexCount() != 2)
-        {
-            ++counts.notLines;
-            continue;
-        }
-        const Box3DJointKind *kind = rd.kind(off, net.kinds);
-        if (!kind)
-        {
-            ++counts.unknown;
-            continue;
-        }
-
-        auto ins = st.joints.try_emplace(b3dop::mixHash(ref.key, uint64_t(int64_t(off))));
-        Box3DJointEntry &e = ins.first->second;
-        if (ins.second)
-        {
-            e.network = ref.key;
-            e.prim    = off;
-        }
-        auto drop = [&]() {
-            world.destroyJoint(e.handle);       // harmless when already gone with a body
-            e.handle = 0;
-        };
-
-        // Broken (by us, or marked in the geometry): never remade.
-        if (e.broken || (rd.broken && rd.broken->containsOffset(off)))
-        {
-            e.broken = true;
-            drop();
-            e.stamp = net.liveStamp;
-            continue;
-        }
-
-        const GA_Offset   p0 = prim->getPointOffset(0), p1 = prim->getPointOffset(1);
-        b3dop::BodyHandle a = 0, b = 0;
-        if (!anchors.resolve(rd.anchorName(p0), a) || !anchors.resolve(rd.anchorName(p1), b))
-        {
-            ++counts.unresolved;
-            drop();
-            continue;                           // not stamped: removed; retried when bodies change
-        }
-        // P / orient are live on a written network (where the pieces are now), so a world rebuilt
-        // mid-simulation makes its joints from them exactly as frame 1 does from the authored ones.
-        const b3dop::JointFrame fa = rd.frame(p0), fb = rd.frame(p1);
-        JointType            type;
-        b3dop::JointSettings s;
-        b3dop::JointFrame    adjA, adjB;        // the frames relative to the anchors: identity but for SideFX data
-        uint64_t             frameSig = 0;
-        if (kind->sideFX)
-        {
-            // SideFX data: the primitive's overrides on its options, then mapped onto a Box3D joint.
-            b3dop::SideFXSettings sf = kind->sideFXSettings;
-            applySideFXOverrides(sfReaders, kind->sideFXType, off, sf);
-            b3dop::SideFXContext ctx;
-            ctx.timeStep = timeStep;
-            ctx.a        = sideFXBody(world, a);
-            ctx.b        = sideFXBody(world, b);
-            const b3dop::SideFXJoint m = b3dop::mapSideFX(kind->sideFXType, sf, rd.mode(off), ctx);
-            type     = m.type;
-            s        = m.settings;
-            frameSig = sideFXFrameSignature(m);
-            b3dop::sideFXFrameOffsets(m, fa, fb, adjA, adjB);
-        }
-        else
-        {
-            type = kind->type;
-            s    = kind->settings;
-            applyOverrides(readers, type, off, s);
-            // A distance joint that measured its own rest length keeps it (see writeLiveFrames).
-            if (type == JointType::Distance && !(s.restLength >= 0.0f) && rd.autoRest.isValid())
-            {
-                const float made = rd.autoRest.get(off);
-                if (made >= 0.0f)
-                    s.restLength = made;
-            }
-        }
-        const bool     live   = net.writable;
-        uint64_t       sig    = jointSignature(type, a, b, fa, fb, !live);
-        if (frameSig)
-            sig = b3dop::mixHash(sig, frameSig) | 1;
-        const bool     edited = live && e.wrote && (frameEdited(fa, e.wroteA) || frameEdited(fb, e.wroteB));
-
-        if (world.isJointValid(e.handle) && e.sig == sig && e.type == type && !edited)
-        {
-            if (!b3dop::sameJointSettings(type, s, e.settings))
-            {
-                world.updateJoint(e.handle, type, s);
-                e.settings = s;
-                ++counts.updated;
-            }
-        }
-        else
-        {
-            drop();
-            e.type     = type;
-            e.bodyA    = a;
-            e.bodyB    = b;
-            e.sig      = sig;
-            e.settings = s;
-            e.wrote    = false;
-            e.adjA     = adjA;
-            e.adjB     = adjB;
-            e.madeRestLength = -1.0f;
-            if (type == JointType::Distance && !(s.restLength >= 0.0f))
-            {
-                const double dx = fb.pos[0] - fa.pos[0], dy = fb.pos[1] - fa.pos[1], dz = fb.pos[2] - fa.pos[2];
-                e.madeRestLength = float(std::sqrt(dx * dx + dy * dy + dz * dz));
-            }
-            // Exactly as before from the saved local frames when they still apply (a world rebuilt
-            // mid-simulation); else from P / orient, and the local frames are saved after the step.
-            // The local frames are the joint's (with any SideFX offset), so they are compared with
-            // the frames the anchors give now.
-            const b3dop::JointFrame ja = jointFrameOf(fa, adjA), jb = jointFrameOf(fb, adjB);
-            b3dop::JointFrame la, lb;
-            const bool useLocal = !edited && rd.savedLocal(p0, la) && rd.savedLocal(p1, lb) && localFrameAgrees(world, a, la, ja) &&
-                                  localFrameAgrees(world, b, lb, jb);
-            e.handle     = useLocal ? world.createJoint(type, a, b, la, lb, s, &e, true)
-                                    : world.createJoint(type, a, b, ja, jb, s, &e);
-            e.writeLocal = !useLocal;
-            if (e.handle)
-                ++counts.created;
-            else
-                ++counts.failed;
-        }
-        e.stamp = net.liveStamp;
-    }
+    NetworkPass(st, ref, net, anchors, gdp, timeStep, counts).run();
 }
 
 // After the step, for a written network: every live joint's anchors get P / orient set to where
@@ -984,15 +1042,18 @@ syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects, float timeStep, Box3D
         it = (it->second.visited == st.syncStamp) ? std::next(it) : st.jointNetworks.erase(it);
 }
 
+namespace {
+
+using EntriesByNetwork = std::unordered_map<uint64_t, std::vector<Box3DJointEntry *>>;
+
+// Joints over their force / torque threshold: read their local frames (a next constraint may start
+// from them), then destroy them. Read the events before destroying anything.
 int
-jointsAfterStep(Box3DSharedState &st, SIM_ObjectArray &objects)
+breakJoints(Box3DSharedState &st, EntriesByNetwork &brokeIn)
 {
     b3dop::Box3DWorld &world = st.world;
-
-    // ---- breaking: read the events before destroying anything ----
     std::vector<void *> events;
     world.brokenJoints(events);
-    std::unordered_map<uint64_t, std::vector<Box3DJointEntry *>> brokeIn;     // network -> joints
     int broke = 0;
     for (void *p : events)
     {
@@ -1006,9 +1067,150 @@ jointsAfterStep(Box3DSharedState &st, SIM_ObjectArray &objects)
         brokeIn[e->network].push_back(e);
         ++broke;
     }
+    return broke;
+}
+
+// Whether a primitive offset still names a primitive of the (written) geometry.
+struct PrimExists
+{
+    const GU_Detail *gdp;
+    bool operator()(GA_Offset off) const
+    {
+        return off >= 0 && off < gdp->getNumPrimitiveOffsets() && gdp->getPrimitive(off) != nullptr;
+    }
+};
+
+// A broken joint with a next_constraint_name switches to it: its joint is remade as that
+// constraint at the next step, from where the pieces are now, and the attribute is cleared. The
+// anchors go where the broken joint's frames are now (writeLiveFrames).
+void
+switchToNextConstraint(const b3dop::Box3DWorld &world, Box3DJointEntry &e)
+{
+    e.broken = false;
+    b3dop::JointFrame fa, fb;
+    if (e.brokeLocalKnown && world.localToWorld(e.bodyA, e.brokeLocalA, fa) &&
+        world.localToWorld(e.bodyB, e.brokeLocalB, fb))
+    {
+        e.wroteA       = asStored(anchorFrameOf(fa, e.adjA));
+        e.wroteB       = asStored(anchorFrameOf(fb, e.adjB));
+        e.wrote        = true;
+        e.switchFrames = true;
+    }
+}
+
+// The joints that broke: a primitive with a next_constraint_name switches to it, the rest go into
+// the `broken` group. True if any switched.
+bool
+writeBrokenJoints(const b3dop::Box3DWorld &world, GU_Detail *gdp, const PrimExists &primOk,
+                  const std::vector<Box3DJointEntry *> &broken)
+{
+    GA_RWHandleS conNameH(gdp, GA_ATTRIB_PRIMITIVE, kConstraintName);
+    GA_RWHandleS nextH(gdp, GA_ATTRIB_PRIMITIVE, kNextConstraintName);
+    GA_PrimitiveGroup *grp = nullptr;
+    bool switched = false;
+    for (Box3DJointEntry *e : broken)
+    {
+        if (!primOk(e->prim))
+            continue;
+        UT_StringHolder nextName;
+        if (nextH.isValid() && conNameH.isValid())
+            nextName = nextH.get(e->prim);
+        if (nextName.isstring())
+        {
+            conNameH.set(e->prim, nextName);
+            nextH.set(e->prim, UT_StringHolder());
+            switchToNextConstraint(world, *e);
+            switched = true;
+            continue;
+        }
+        if (!grp)
+        {
+            grp = gdp->findPrimitiveGroup(kBrokenGroup);
+            if (!grp)
+                grp = gdp->newPrimitiveGroup(kBrokenGroup);
+        }
+        if (grp)
+            grp->addOffset(e->prim);
+    }
+    if (grp)
+        grp->bumpDataId();
+    if (switched)
+    {
+        conNameH.getAttribute()->bumpDataId();
+        nextH.getAttribute()->bumpDataId();
+    }
+    return switched;
+}
+
+// Feedback, under the Constraint Network DOP's names: force / distance for the linear part,
+// torque / angle (radians) for the angular part, plus the per-type readings.
+void
+writeFeedback(const b3dop::Box3DWorld &world, GU_Detail *gdp, const PrimExists &primOk,
+              const std::vector<Box3DJointEntry *> &entries)
+{
+    std::unordered_map<std::string, GA_RWHandleF> scalars;
+    auto scalar = [&](const char *name) -> GA_RWHandleF & {
+        auto it = scalars.find(name);
+        if (it == scalars.end())
+        {
+            if (!gdp->findPrimitiveAttribute(name))
+                gdp->addFloatTuple(GA_ATTRIB_PRIMITIVE, name, 1);
+            it = scalars.emplace(name, GA_RWHandleF(gdp, GA_ATTRIB_PRIMITIVE, name)).first;
+        }
+        return it->second;
+    };
+    auto length = [](const float *v) {
+        return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    };
+    GA_RWHandleF &forceH  = scalar("force");
+    GA_RWHandleF &distH   = scalar("distance");
+    GA_RWHandleF &torqueH = scalar("torque");
+    GA_RWHandleF &angleH  = scalar("angle");
+    for (const Box3DJointEntry *e : entries)
+    {
+        b3dop::JointFeedback fb;
+        if (!primOk(e->prim) || !world.jointFeedback(e->handle, e->type, fb))
+            continue;
+        if (forceH.isValid())  forceH.set(e->prim, length(fb.force));
+        if (distH.isValid())   distH.set(e->prim, fb.linearSeparation);
+        if (torqueH.isValid()) torqueH.set(e->prim, length(fb.torque));
+        if (angleH.isValid())  angleH.set(e->prim, fb.angularSeparation);
+        for (int k = 0; k < fb.extraCount; ++k)
+        {
+            GA_RWHandleF &h = scalar(fb.extraName[k]);
+            if (h.isValid())
+                h.set(e->prim, fb.extraIsAngle[k] ? fb.extra[k] * b3dop::kRadToDeg : fb.extra[k]);
+        }
+    }
+    for (auto &sc : scalars)
+        if (sc.second.isValid())
+            sc.second.getAttribute()->bumpDataId();
+}
+
+// One network's results into its (locked, writable) geometry. True if a constraint_name switched.
+bool
+writeNetworkResults(const b3dop::Box3DWorld &world, GU_Detail *gdp, const std::vector<Box3DJointEntry *> &entries,
+                    const std::vector<Box3DJointEntry *> *broken)
+{
+    const PrimExists primOk{ gdp };
+    const bool switched = broken && writeBrokenJoints(world, gdp, primOk, *broken);
+    writeLiveFrames(world, gdp, entries, primOk);
+    writeFeedback(world, gdp, primOk, entries);
+    return switched;
+}
+
+} // namespace
+
+int
+jointsAfterStep(Box3DSharedState &st, SIM_ObjectArray &objects)
+{
+    b3dop::Box3DWorld &world = st.world;
+
+    EntriesByNetwork brokeIn;               // network -> joints that broke
+    const int broke = breakJoints(st, brokeIn);
 
     // ---- write-back: broken group / next_constraint_name, live frames, feedback ----
-    std::unordered_map<uint64_t, std::vector<Box3DJointEntry *>> entriesOf;
+    EntriesByNetwork entriesOf;
     bool entriesGathered = false;
     for (auto &kv : st.jointNetworks)
     {
@@ -1040,100 +1242,7 @@ jointsAfterStep(Box3DSharedState &st, SIM_ObjectArray &objects)
         {
             SIM_GeometryAutoWriteLock lock(geo);
             GU_Detail *gdp = &lock.getGdp();
-            auto primOk = [&](GA_Offset off) {
-                return off >= 0 && off < gdp->getNumPrimitiveOffsets() && gdp->getPrimitive(off) != nullptr;
-            };
-            if (anyBroken)
-            {
-                // A primitive with a next_constraint_name switches to it (its joint is remade as
-                // that constraint at the next step, from where the pieces are now) and the
-                // attribute is cleared; the rest go into the `broken` group.
-                GA_RWHandleS conNameH(gdp, GA_ATTRIB_PRIMITIVE, kConstraintName);
-                GA_RWHandleS nextH(gdp, GA_ATTRIB_PRIMITIVE, kNextConstraintName);
-                GA_PrimitiveGroup *grp = nullptr;
-                for (Box3DJointEntry *e : broken->second)
-                {
-                    if (!primOk(e->prim))
-                        continue;
-                    UT_StringHolder nextName;
-                    if (nextH.isValid() && conNameH.isValid())
-                        nextName = nextH.get(e->prim);
-                    if (nextName.isstring())
-                    {
-                        conNameH.set(e->prim, nextName);
-                        nextH.set(e->prim, UT_StringHolder());
-                        e->broken = false;
-                        switched  = true;
-                        // The anchors go where the broken joint's frames are now (below).
-                        b3dop::JointFrame fa, fb;
-                        if (e->brokeLocalKnown && world.localToWorld(e->bodyA, e->brokeLocalA, fa) &&
-                            world.localToWorld(e->bodyB, e->brokeLocalB, fb))
-                        {
-                            e->wroteA       = asStored(anchorFrameOf(fa, e->adjA));
-                            e->wroteB       = asStored(anchorFrameOf(fb, e->adjB));
-                            e->wrote        = true;
-                            e->switchFrames = true;
-                        }
-                        continue;
-                    }
-                    if (!grp)
-                    {
-                        grp = gdp->findPrimitiveGroup(kBrokenGroup);
-                        if (!grp)
-                            grp = gdp->newPrimitiveGroup(kBrokenGroup);
-                    }
-                    if (grp)
-                        grp->addOffset(e->prim);
-                }
-                if (grp)
-                    grp->bumpDataId();
-                if (switched)
-                {
-                    conNameH.getAttribute()->bumpDataId();
-                    nextH.getAttribute()->bumpDataId();
-                }
-            }
-            writeLiveFrames(world, gdp, entries, primOk);
-
-            // Feedback, under the Constraint Network DOP's names: force / distance for the linear
-            // part, torque / angle (radians) for the angular part, plus the per-type readings.
-            std::unordered_map<std::string, GA_RWHandleF> scalars;
-            auto scalar = [&](const char *name) -> GA_RWHandleF & {
-                auto it = scalars.find(name);
-                if (it == scalars.end())
-                {
-                    if (!gdp->findPrimitiveAttribute(name))
-                        gdp->addFloatTuple(GA_ATTRIB_PRIMITIVE, name, 1);
-                    it = scalars.emplace(name, GA_RWHandleF(gdp, GA_ATTRIB_PRIMITIVE, name)).first;
-                }
-                return it->second;
-            };
-            auto length = [](const float *v) {
-                return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-            };
-            GA_RWHandleF &forceH  = scalar("force");
-            GA_RWHandleF &distH   = scalar("distance");
-            GA_RWHandleF &torqueH = scalar("torque");
-            GA_RWHandleF &angleH  = scalar("angle");
-            for (const Box3DJointEntry *e : entries)
-            {
-                b3dop::JointFeedback fb;
-                if (!primOk(e->prim) || !world.jointFeedback(e->handle, e->type, fb))
-                    continue;
-                if (forceH.isValid())  forceH.set(e->prim, length(fb.force));
-                if (distH.isValid())   distH.set(e->prim, fb.linearSeparation);
-                if (torqueH.isValid()) torqueH.set(e->prim, length(fb.torque));
-                if (angleH.isValid())  angleH.set(e->prim, fb.angularSeparation);
-                for (int k = 0; k < fb.extraCount; ++k)
-                {
-                    GA_RWHandleF &h = scalar(fb.extraName[k]);
-                    if (h.isValid())
-                        h.set(e->prim, fb.extraIsAngle[k] ? fb.extra[k] * b3dop::kRadToDeg : fb.extra[k]);
-                }
-            }
-            for (auto &sc : scalars)
-                if (sc.second.isValid())
-                    sc.second.getAttribute()->bumpDataId();
+            switched = writeNetworkResults(world, gdp, entries, anyBroken ? &broken->second : nullptr);
         }
         // Our own write is not an edit: re-record the fingerprint (the lock is released). A
         // switched constraint_name is ours too, but must be read: force a re-read.

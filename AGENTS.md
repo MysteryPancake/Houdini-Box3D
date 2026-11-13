@@ -61,13 +61,14 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DAffectorMath.h Header-only: affector (Static Object) transform math
     Box3DDebug.h        B3D_LOG / counters, compiled out unless BOX3DDOP_DEBUG (args still type-checked, never evaluated)
   dop/                Houdini SIM_Data classes: the nodes and the world cache
-    SIM_Box3DWorld.*    SIM_Data owning the shared world state (the rebuildable cache)
+    SIM_Box3DWorld.*    SIM_Data owning the shared world state (the rebuildable cache); the state itself is sync/Box3DState.h
     SIM_Box3DData.*     Default-settings DOP node
     SIM_Box3DConRel.*   Box3D <Type> Constraint Relationship DOP nodes (one per joint type), parameters from the table
     SIM_Box3DParms.h    Box3DParms: builds a node's parameter templates (tabs, ranges, menus) from a table
     SIM_SolverBox3D.*   The solver node: parameters, node messages and the solve loop (the parts are in sync/)
     SIM_Box3DRegister.cpp  initializeSIM(); includes UT_DSOVersion.h (exactly once, keep it here)
   sync/               Houdini data -> the Box3D world, used by the solver
+    Box3DState.h           Box3DSharedState: mirror entries, per-object sync records, affector bodies, joint entries, scratch
     Box3DSolverInternal.h  What the solver's parts share (namespace box3dsolver); only the solver's files include it
     Box3DShapeBuild.cpp    Packed primitives, collision source geometry (pieces, summary cache), buildShapes
     Box3DPointSync.cpp     One body per point: point state, fingerprint, body settings, shape plans, syncObject
@@ -261,19 +262,23 @@ Data names: `"Box3DWorld"`, `kBox3DDataName` (`"Box3DData"`, SIM_Box3DData.h), `
 
 ### syncObject (per object)
 
+`syncObject` is the driver; the passes are helpers in `Box3DPointSync.cpp`: `collectSlots`, `readSlots` / `readSlot`,
+`planSlots`, `reserveMirror`, `ApplyPass` (pass 2) and `NameIndex` (the `name` map for joint anchors). A cancel in
+`planSlots` or `ApplyPass::run` makes `syncObject` return early.
+
 1. Read-locks the `SIM_Geometry` (objects without one are skipped). `PointAttrs` binds `id, active, v, w, orient`.
 2. Box3D Data: body type and `nodeHash` (its values that change existing bodies, Add Impact Data included).
 3. **Skip check** (see below). On a skip, the object's entries are counted and nothing per point runs.
 4. Otherwise binds the remaining attributes and builds the `ScanContext` (world, geometry, attributes, node settings,
    shape sources, georep lookup) that the per-point helpers take.
-5. **Pass 1** (parallel above 8192 points, 2048 with primitives): per point body id (`id`, else the point number = its
+5. **Pass 1** (`collectSlots`: serial offsets; `readSlots`: parallel above 8192 points, 2048 with primitives): per point body id (`id`, else the point number = its
    position in the walk), key, `getPackedInfo` (with the 3x3's row scale, kept for the write-back), `readPointState`,
    `active`, the mirror entry (read only), and whether it needs shapes built: new body, or a rebuild (`deforming`,
    `bullet_autofit_valid == 0`, convex / concave scale change).
-   **Pass 1b** (parallel, chunks of 256 with an Escape check between): `planShapes` for those points, into a per-scan
+   **Pass 1b** (`planSlots`; parallel, chunks of 256 with an Escape check between): `planShapes` for those points, into a per-scan
    plan list (`Box3DPointSlot::plan`). Hull building, the slow part of a rebuild, happens here; `ShapeSources`,
    `GeorepLookup` (mutexes) and Box3DWorld's hull calls are thread-safe. Pass 2 takes the plans (`takePlan`).
-6. **Pass 2** (serial, point order): duplicate `id` -> counted, first wins; non-finite `P` -> counted, its body removed;
+6. **Pass 2** (`ApplyPass`; serial, point order): duplicate `id` -> counted, first wins; non-finite `P` -> counted, its body removed;
    `dead` -> queued for deletion, its body removed; unknown key -> `addPointBody`; known key -> `updateExistingBody`:
    mid-simulation updates (shape rebuild, then settings), type change (`wantedType`), then the animated target or an
    external edit (`poseDiffers`, eps 1e-5, q and -q equal -> `setTransformByHandle` + `setVelocityByHandle`). Both
@@ -493,6 +498,10 @@ a mirror flips the third row) and `composePackedMatrix` (`getRotationMatrix`, pe
 packed rotations follow Houdini's own quaternion convention.
 
 ### writeResultsBack
+
+`SIM_SolverBox3D::writeResultsBack` is the driver (it owns the node messages); the work is in `Box3DPostStep.cpp`:
+`collectMovedBodies`, `writeWholeObjects`, `readVelocities`, then per object `writeObjectResults` (`BodyWriter` for one
+body's attributes, `writePackedRotations` for step 5).
 
 0. Move events (read once into `st.moves` right after the step; impacts use them too): every awake body and its
    transform (a body falling asleep appears once more). Only live dynamic entries become items, which point at their

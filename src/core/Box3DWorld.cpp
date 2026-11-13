@@ -1725,6 +1725,212 @@ toLocal(b3BodyId body, const JointFrame &f)
     return out;
 }
 
+// A frame already relative to its body. Kept bit for bit when already unit length (a stored local
+// frame must come back exact).
+b3Transform
+asLocalFrame(const JointFrame &f)
+{
+    float q[4] = { f.rot[0], f.rot[1], f.rot[2], f.rot[3] };
+    const double len2 = double(q[0]) * q[0] + double(q[1]) * q[1] + double(q[2]) * q[2] + double(q[3]) * q[3];
+    if (!(std::fabs(len2 - 1.0) < 1e-6))
+        sanitizeQuat(q);
+    b3Transform t;
+    t.p.x = float(f.pos[0]);  t.p.y = float(f.pos[1]);  t.p.z = float(f.pos[2]);
+    t.q = makeQuat(q);
+    return t;
+}
+
+// What every per-type create function needs: the world, the sanitized settings, both bodies with
+// their local frames, and (distance joints) the rest length to make the joint with.
+struct JointBuild
+{
+    b3WorldId            world;
+    const JointSettings &s;
+    b3BodyId             a, b;
+    b3Transform          fa, fb;
+    void                *userData;
+    float                distanceLength = 0.0f;
+
+    void fillBase(b3JointDef &base) const { ::b3dop::fillBase(base, s, a, b, fa, fb, userData); }
+};
+
+b3JointId
+createWeldJoint(const JointBuild &j)
+{
+    const JointSettings &s = j.s;
+    b3WeldJointDef d = b3DefaultWeldJointDef();
+    j.fillBase(d.base);
+    d.linearHertz         = s.enableLinearSpring ? s.linearStiffness : 0.0f;   // 0: rigid
+    d.linearDampingRatio  = s.linearDampingRatio;
+    d.angularHertz        = s.enableAngularSpring ? s.angularStiffness : 0.0f;
+    d.angularDampingRatio = s.angularDampingRatio;
+    return b3CreateWeldJoint(j.world, &d);
+}
+
+b3JointId
+createSphericalJoint(const JointBuild &j)
+{
+    const JointSettings &s = j.s;
+    b3SphericalJointDef d = b3DefaultSphericalJointDef();
+    j.fillBase(d.base);
+    d.enableSpring     = s.enableSpring;
+    d.hertz            = s.stiffness;
+    d.dampingRatio     = s.dampingRatio;
+    d.targetRotation   = makeQuat(s.targetRotation);
+    d.enableConeLimit  = s.enableConeLimit;
+    d.coneAngle        = s.coneAngle;
+    d.enableTwistLimit = s.enableTwistLimit;
+    d.lowerTwistAngle  = s.lowerTwistAngle;
+    d.upperTwistAngle  = s.upperTwistAngle;
+    d.enableMotor      = s.enableMotor;
+    d.maxMotorTorque   = s.maxMotorTorque;
+    d.motorVelocity    = finiteVec3(s.motorVelocity);
+    return b3CreateSphericalJoint(j.world, &d);
+}
+
+b3JointId
+createRevoluteJoint(const JointBuild &j)
+{
+    const JointSettings &s = j.s;
+    b3RevoluteJointDef d = b3DefaultRevoluteJointDef();
+    j.fillBase(d.base);
+    d.targetAngle    = s.targetAngle;
+    d.enableSpring   = s.enableSpring;
+    d.hertz          = s.stiffness;
+    d.dampingRatio   = s.dampingRatio;
+    d.enableLimit    = s.enableLimit;
+    d.lowerAngle     = s.lowerAngle;
+    d.upperAngle     = s.upperAngle;
+    d.enableMotor    = s.enableMotor;
+    d.maxMotorTorque = s.maxMotorTorque;
+    d.motorSpeed     = s.motorSpeed;
+    return b3CreateRevoluteJoint(j.world, &d);
+}
+
+b3JointId
+createPrismaticJoint(const JointBuild &j)
+{
+    const JointSettings &s = j.s;
+    b3PrismaticJointDef d = b3DefaultPrismaticJointDef();
+    j.fillBase(d.base);
+    d.enableSpring      = s.enableSpring;
+    d.hertz             = s.stiffness;
+    d.dampingRatio      = s.dampingRatio;
+    d.targetTranslation = s.targetTranslation;
+    d.enableLimit       = s.enableLimit;
+    d.lowerTranslation  = s.lowerTranslation;
+    d.upperTranslation  = s.upperTranslation;
+    d.enableMotor       = s.enableMotor;
+    d.maxMotorForce     = s.maxMotorForce;
+    d.motorSpeed        = s.motorSpeed;
+    return b3CreatePrismaticJoint(j.world, &d);
+}
+
+b3JointId
+createDistanceJoint(const JointBuild &j)
+{
+    const JointSettings &s = j.s;
+    b3DistanceJointDef d = b3DefaultDistanceJointDef();
+    j.fillBase(d.base);
+    d.length           = std::max(j.distanceLength, 1e-4f);      // Box3D wants > 0 (and clamps to its slop)
+    d.enableSpring     = s.enableSpring;
+    d.lowerSpringForce = distanceLowerSpringForce(s);
+    d.upperSpringForce = distanceUpperSpringForce(s);
+    d.hertz            = s.stiffness;
+    d.dampingRatio     = s.dampingRatio;
+    d.enableLimit      = s.enableLimit;
+    d.minLength        = s.minLength;
+    d.maxLength        = distanceMaxLength(s);
+    d.enableMotor      = s.enableMotor;
+    d.maxMotorForce    = s.maxMotorForce;
+    d.motorSpeed       = s.motorSpeed;
+    return b3CreateDistanceJoint(j.world, &d);
+}
+
+b3JointId
+createMotorJoint(const JointBuild &j)
+{
+    const JointSettings &s = j.s;
+    b3MotorJointDef d = b3DefaultMotorJointDef();
+    j.fillBase(d.base);
+    d.linearVelocity      = finiteVec3(s.linearVelocity);
+    d.maxVelocityForce    = s.maxVelocityForce;
+    d.angularVelocity     = finiteVec3(s.angularVelocity);
+    d.maxVelocityTorque   = s.maxVelocityTorque;
+    d.linearHertz         = s.linearStiffness;
+    d.linearDampingRatio  = s.linearDampingRatio;
+    d.maxSpringForce      = s.maxSpringForce;
+    d.angularHertz        = s.angularStiffness;
+    d.angularDampingRatio = s.angularDampingRatio;
+    d.maxSpringTorque     = s.maxSpringTorque;
+    return b3CreateMotorJoint(j.world, &d);
+}
+
+b3JointId
+createParallelJoint(const JointBuild &j)
+{
+    const JointSettings &s = j.s;
+    b3ParallelJointDef d = b3DefaultParallelJointDef();
+    j.fillBase(d.base);
+    d.hertz        = s.stiffness;
+    d.dampingRatio = s.dampingRatio;
+    d.maxTorque    = cap(s.maxTorque);
+    return b3CreateParallelJoint(j.world, &d);
+}
+
+b3JointId
+createWheelJoint(const JointBuild &j)
+{
+    const JointSettings &s = j.s;
+    b3WheelJointDef d = b3DefaultWheelJointDef();
+    j.fillBase(d.base);
+    d.enableSuspensionSpring = s.enableSuspensionSpring;
+    d.suspensionHertz        = s.suspensionStiffness;
+    d.suspensionDampingRatio = s.suspensionDampingRatio;
+    d.enableSuspensionLimit  = s.enableSuspensionLimit;
+    d.lowerSuspensionLimit   = s.lowerSuspensionLimit;
+    d.upperSuspensionLimit   = s.upperSuspensionLimit;
+    d.enableSpinMotor        = s.enableSpinMotor;
+    d.maxSpinTorque          = s.maxSpinTorque;
+    d.spinSpeed              = s.spinSpeed;
+    d.enableSteering         = s.enableSteering;
+    d.steeringHertz          = s.steeringStiffness;
+    d.steeringDampingRatio   = s.steeringDampingRatio;
+    d.targetSteeringAngle    = s.targetSteeringAngle;
+    d.maxSteeringTorque      = s.maxSteeringTorque;
+    d.enableSteeringLimit    = s.enableSteeringLimit;
+    d.lowerSteeringLimit     = s.lowerSteeringLimit;
+    d.upperSteeringLimit     = s.upperSteeringLimit;
+    return b3CreateWheelJoint(j.world, &d);
+}
+
+b3JointId
+createFilterJoint(const JointBuild &j)
+{
+    b3FilterJointDef d = b3DefaultFilterJointDef();
+    j.fillBase(d.base);
+    d.base.collideConnected = false;        // its whole purpose
+    return b3CreateFilterJoint(j.world, &d);
+}
+
+b3JointId
+createJointOfType(JointType type, const JointBuild &j)
+{
+    switch (type)
+    {
+        case JointType::Weld:      return createWeldJoint(j);
+        case JointType::Spherical: return createSphericalJoint(j);
+        case JointType::Revolute:  return createRevoluteJoint(j);
+        case JointType::Prismatic: return createPrismaticJoint(j);
+        case JointType::Distance:  return createDistanceJoint(j);
+        case JointType::Motor:     return createMotorJoint(j);
+        case JointType::Parallel:  return createParallelJoint(j);
+        case JointType::Wheel:     return createWheelJoint(j);
+        case JointType::Filter:    return createFilterJoint(j);
+    }
+    return b3_nullJointId;
+}
+
 } // namespace
 
 JointSettings
@@ -1908,181 +2114,30 @@ Box3DWorld::createJoint(JointType type, BodyHandle a, BodyHandle b, const JointF
         return 0;
 
     const JointSettings s  = sanitized(in);
-    auto asLocal = [](const JointFrame &f) {
-        // Kept bit for bit when already unit length (a stored local frame must come back exact).
-        float q[4] = { f.rot[0], f.rot[1], f.rot[2], f.rot[3] };
-        const double len2 = double(q[0]) * q[0] + double(q[1]) * q[1] + double(q[2]) * q[2] + double(q[3]) * q[3];
-        if (!(std::fabs(len2 - 1.0) < 1e-6))
-            sanitizeQuat(q);
-        b3Transform t;
-        t.p.x = float(f.pos[0]);  t.p.y = float(f.pos[1]);  t.p.z = float(f.pos[2]);
-        t.q = makeQuat(q);
-        return t;
-    };
-    const b3Transform   fa = framesAreLocal ? asLocal(frameA) : toLocal(ida, frameA);
-    const b3Transform   fb = framesAreLocal ? asLocal(frameB) : toLocal(idb, frameB);
+    const b3Transform   fa = framesAreLocal ? asLocalFrame(frameA) : toLocal(ida, frameA);
+    const b3Transform   fb = framesAreLocal ? asLocalFrame(frameB) : toLocal(idb, frameB);
     if (!b3IsValidVec3(fa.p) || !b3IsValidVec3(fb.p))
         return 0;
-    const b3WorldId     w  = myImpl->worldId;
-    b3JointId id = b3_nullJointId;
-    switch (type)
+
+    JointBuild build{ myImpl->worldId, s, ida, idb, fa, fb, userData };
+    if (type == JointType::Distance)
     {
-        case JointType::Weld:
+        float len = s.restLength;
+        if (!(len >= 0.0f) || !std::isfinite(len))
         {
-            b3WeldJointDef d = b3DefaultWeldJointDef();
-            fillBase(d.base, s, ida, idb, fa, fb, userData);
-            d.linearHertz         = s.enableLinearSpring ? s.linearStiffness : 0.0f;   // 0: rigid
-            d.linearDampingRatio  = s.linearDampingRatio;
-            d.angularHertz        = s.enableAngularSpring ? s.angularStiffness : 0.0f;
-            d.angularDampingRatio = s.angularDampingRatio;
-            id = b3CreateWeldJoint(w, &d);
-            break;
-        }
-        case JointType::Spherical:
-        {
-            b3SphericalJointDef d = b3DefaultSphericalJointDef();
-            fillBase(d.base, s, ida, idb, fa, fb, userData);
-            d.enableSpring     = s.enableSpring;
-            d.hertz            = s.stiffness;
-            d.dampingRatio     = s.dampingRatio;
-            d.targetRotation   = makeQuat(s.targetRotation);
-            d.enableConeLimit  = s.enableConeLimit;
-            d.coneAngle        = s.coneAngle;
-            d.enableTwistLimit = s.enableTwistLimit;
-            d.lowerTwistAngle  = s.lowerTwistAngle;
-            d.upperTwistAngle  = s.upperTwistAngle;
-            d.enableMotor      = s.enableMotor;
-            d.maxMotorTorque   = s.maxMotorTorque;
-            d.motorVelocity    = finiteVec3(s.motorVelocity);
-            id = b3CreateSphericalJoint(w, &d);
-            break;
-        }
-        case JointType::Revolute:
-        {
-            b3RevoluteJointDef d = b3DefaultRevoluteJointDef();
-            fillBase(d.base, s, ida, idb, fa, fb, userData);
-            d.targetAngle    = s.targetAngle;
-            d.enableSpring   = s.enableSpring;
-            d.hertz          = s.stiffness;
-            d.dampingRatio   = s.dampingRatio;
-            d.enableLimit    = s.enableLimit;
-            d.lowerAngle     = s.lowerAngle;
-            d.upperAngle     = s.upperAngle;
-            d.enableMotor    = s.enableMotor;
-            d.maxMotorTorque = s.maxMotorTorque;
-            d.motorSpeed     = s.motorSpeed;
-            id = b3CreateRevoluteJoint(w, &d);
-            break;
-        }
-        case JointType::Prismatic:
-        {
-            b3PrismaticJointDef d = b3DefaultPrismaticJointDef();
-            fillBase(d.base, s, ida, idb, fa, fb, userData);
-            d.enableSpring      = s.enableSpring;
-            d.hertz             = s.stiffness;
-            d.dampingRatio      = s.dampingRatio;
-            d.targetTranslation = s.targetTranslation;
-            d.enableLimit       = s.enableLimit;
-            d.lowerTranslation  = s.lowerTranslation;
-            d.upperTranslation  = s.upperTranslation;
-            d.enableMotor       = s.enableMotor;
-            d.maxMotorForce     = s.maxMotorForce;
-            d.motorSpeed        = s.motorSpeed;
-            id = b3CreatePrismaticJoint(w, &d);
-            break;
-        }
-        case JointType::Distance:
-        {
-            b3DistanceJointDef d = b3DefaultDistanceJointDef();
-            fillBase(d.base, s, ida, idb, fa, fb, userData);
-            float len = s.restLength;
-            if (!(len >= 0.0f) || !std::isfinite(len))
+            // The anchors' distance now (from the local frames: through the bodies' poses).
+            JointFrame wa = frameA, wb = frameB;
+            if (framesAreLocal)
             {
-                // The anchors' distance now (from the local frames: through the bodies' poses).
-                JointFrame wa = frameA, wb = frameB;
-                if (framesAreLocal)
-                {
-                    localToWorld(a, frameA, wa);
-                    localToWorld(b, frameB, wb);
-                }
-                const double dx = wb.pos[0] - wa.pos[0], dy = wb.pos[1] - wa.pos[1], dz = wb.pos[2] - wa.pos[2];
-                len = float(std::sqrt(dx * dx + dy * dy + dz * dz));
+                localToWorld(a, frameA, wa);
+                localToWorld(b, frameB, wb);
             }
-            d.length           = std::max(len, 1e-4f);           // Box3D wants > 0 (and clamps to its slop)
-            d.enableSpring     = s.enableSpring;
-            d.lowerSpringForce = distanceLowerSpringForce(s);
-            d.upperSpringForce = distanceUpperSpringForce(s);
-            d.hertz            = s.stiffness;
-            d.dampingRatio     = s.dampingRatio;
-            d.enableLimit      = s.enableLimit;
-            d.minLength        = s.minLength;
-            d.maxLength        = distanceMaxLength(s);
-            d.enableMotor      = s.enableMotor;
-            d.maxMotorForce    = s.maxMotorForce;
-            d.motorSpeed       = s.motorSpeed;
-            id = b3CreateDistanceJoint(w, &d);
-            break;
+            const double dx = wb.pos[0] - wa.pos[0], dy = wb.pos[1] - wa.pos[1], dz = wb.pos[2] - wa.pos[2];
+            len = float(std::sqrt(dx * dx + dy * dy + dz * dz));
         }
-        case JointType::Motor:
-        {
-            b3MotorJointDef d = b3DefaultMotorJointDef();
-            fillBase(d.base, s, ida, idb, fa, fb, userData);
-            d.linearVelocity      = finiteVec3(s.linearVelocity);
-            d.maxVelocityForce    = s.maxVelocityForce;
-            d.angularVelocity     = finiteVec3(s.angularVelocity);
-            d.maxVelocityTorque   = s.maxVelocityTorque;
-            d.linearHertz         = s.linearStiffness;
-            d.linearDampingRatio  = s.linearDampingRatio;
-            d.maxSpringForce      = s.maxSpringForce;
-            d.angularHertz        = s.angularStiffness;
-            d.angularDampingRatio = s.angularDampingRatio;
-            d.maxSpringTorque     = s.maxSpringTorque;
-            id = b3CreateMotorJoint(w, &d);
-            break;
-        }
-        case JointType::Parallel:
-        {
-            b3ParallelJointDef d = b3DefaultParallelJointDef();
-            fillBase(d.base, s, ida, idb, fa, fb, userData);
-            d.hertz        = s.stiffness;
-            d.dampingRatio = s.dampingRatio;
-            d.maxTorque    = cap(s.maxTorque);
-            id = b3CreateParallelJoint(w, &d);
-            break;
-        }
-        case JointType::Wheel:
-        {
-            b3WheelJointDef d = b3DefaultWheelJointDef();
-            fillBase(d.base, s, ida, idb, fa, fb, userData);
-            d.enableSuspensionSpring = s.enableSuspensionSpring;
-            d.suspensionHertz        = s.suspensionStiffness;
-            d.suspensionDampingRatio = s.suspensionDampingRatio;
-            d.enableSuspensionLimit  = s.enableSuspensionLimit;
-            d.lowerSuspensionLimit   = s.lowerSuspensionLimit;
-            d.upperSuspensionLimit   = s.upperSuspensionLimit;
-            d.enableSpinMotor        = s.enableSpinMotor;
-            d.maxSpinTorque          = s.maxSpinTorque;
-            d.spinSpeed              = s.spinSpeed;
-            d.enableSteering         = s.enableSteering;
-            d.steeringHertz          = s.steeringStiffness;
-            d.steeringDampingRatio   = s.steeringDampingRatio;
-            d.targetSteeringAngle    = s.targetSteeringAngle;
-            d.maxSteeringTorque      = s.maxSteeringTorque;
-            d.enableSteeringLimit    = s.enableSteeringLimit;
-            d.lowerSteeringLimit     = s.lowerSteeringLimit;
-            d.upperSteeringLimit     = s.upperSteeringLimit;
-            id = b3CreateWheelJoint(w, &d);
-            break;
-        }
-        case JointType::Filter:
-        {
-            b3FilterJointDef d = b3DefaultFilterJointDef();
-            fillBase(d.base, s, ida, idb, fa, fb, userData);
-            d.base.collideConnected = false;        // its whole purpose
-            id = b3CreateFilterJoint(w, &d);
-            break;
-        }
+        build.distanceLength = len;
     }
+    const b3JointId id = createJointOfType(type, build);
     return B3_IS_NULL(id) ? 0 : b3StoreJointId(id);
 }
 

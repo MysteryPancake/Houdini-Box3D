@@ -797,8 +797,362 @@ updateExistingBody(ScanContext &ctx, Box3DSharedState &st, Box3DPointSlot &s, Bo
     }
 }
 
-// Sync one object's points into the world. Returns early (object half synced) if the user
-// cancels: the caller then discards the world (see solveObjectsSubclass).
+namespace {
+
+using SlotList = std::vector<Box3DPointSlot>;
+
+// ---- syncObject, step 1 (serial): collect the slots --------------------------
+// One slot per point, in point order, with its offset and point number. A slot forgets its cached
+// entry when its offset changed. Without `id` the body id is the point number, i.e. the position
+// in this walk.
+void
+collectSlots(const GU_Detail *gdp, SlotList &snaps)
+{
+    size_t n = 0;
+    for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it, ++n)
+    {
+        if (n == snaps.size())
+            snaps.emplace_back();
+        Box3DPointSlot &s = snaps[n];
+        if (s.off != *it)
+            s.entry = nullptr;
+        s.off = *it;
+        s.bid = int64_t(n);
+        s.index = int64_t(n);
+    }
+    snaps.resize(n);
+}
+
+// ---- step 2 (parallel): read the points ---------------------------------------
+// One point as the scan sees it: body id and key, state, packed primitive, and whether it needs
+// shapes built (a new body, or a rebuild: deforming, bullet_autofit_valid = 0, or a convex /
+// concave scale change, like Bullet). The mirror is only read here (the apply pass changes it).
+void
+readSlot(const ScanContext &ctx, int objectId, Box3DPointSlot &s)
+{
+    const PointAttrs &a = ctx.a;
+    if (a.id.isValid())
+        s.bid = int64_t(a.id.get(s.off));
+    const uint64_t key = b3dop::makeBodyKey(objectId, s.bid);
+    if (key != s.key)
+        s.entry = nullptr;
+    s.key = key;
+    const PackedInfo pk = ctx.anyPrims ? getPackedInfo(ctx.gdp, s.off) : PackedInfo();
+    s.ok     = readPointState(ctx.gdp, a, s.off, pk, s.cur, &s.badVelocity);
+    s.active = !a.active.isValid() || a.active.get(s.off) != 0;
+    s.packed = pk.prim != nullptr;
+    if (s.packed)
+    {
+        s.primOff = int64_t(pk.primOff);
+        std::copy(pk.m3, pk.m3 + 9, s.m3);
+        std::copy(pk.scale, pk.scale + 3, s.rowScale);
+    }
+
+    s.plan        = -1;
+    s.deforming   = a.deforming.isValid() && a.deforming.get(s.off) != 0;
+    s.refitWanted = a.autofitValid.isValid() && a.autofitValid.get(s.off) == 0;
+    s.rebuild     = false;
+    if (!s.ok || (a.dead.isValid() && a.dead.get(s.off) != 0))
+        return;
+    if (!s.entry)
+    {
+        const auto it = ctx.st.mirror.find(key);
+        if (it != ctx.st.mirror.end())
+            s.entry = &it->second;
+    }
+    if (const Box3DBodyMirror *e = s.entry)
+    {
+        s.rebuild = s.deforming || s.refitWanted;
+        if (!s.rebuild && e->autoScale)
+        {
+            float  ps, sc[3];
+            double sk[3];
+            readPscaleScale(a, s.off, ps, sc);
+            s.rebuild = sizeKey(s.packed, s.m3, ps, sc, sk) && !sameSizeKey(sk, e->sizeKey);
+        }
+    }
+}
+
+void
+readSlots(const ScanContext &ctx, int objectId, SlotList &snaps)
+{
+    parallelForEach(snaps.size(), [&](size_t i) { readSlot(ctx, objectId, snaps[i]); },
+                    ctx.anyPrims ? kMinParallelReadPacked : kMinParallelReadPlain);
+}
+
+// ---- step 3 (parallel, chunked): plan the shapes of new and rebuilt bodies ------
+// Building hulls is the slow part of a new world and of deforming bodies. Box3DWorld's hull
+// calls, ShapeSources and GeorepLookup are thread-safe, so the plans are made here in parallel and
+// the apply pass only creates bodies. Chunked, so Escape is checked in between.
+
+// The slots that need a plan: new bodies (unless `dead`) and existing ones being rebuilt.
+std::vector<size_t>
+slotsNeedingPlans(const PointAttrs &a, const SlotList &snaps)
+{
+    std::vector<size_t> want;
+    for (size_t i = 0; i < snaps.size(); ++i)
+        if (snaps[i].ok && (!snaps[i].entry ? !(a.dead.isValid() && a.dead.get(snaps[i].off) != 0)
+                                            : snaps[i].rebuild))
+            want.push_back(i);
+    return want;
+}
+
+// False if the user cancelled.
+bool
+planSlots(ScanContext &ctx, SlotList &snaps, std::vector<ShapePlan> &plans, StepProgress &progress)
+{
+    const std::vector<size_t> want = slotsNeedingPlans(ctx.a, snaps);
+    plans.resize(want.size());
+    for (size_t c0 = 0; c0 < want.size(); c0 += kPlanChunk)
+    {
+        if (progress.check())
+            return false;
+        const size_t c1 = std::min(want.size(), c0 + kPlanChunk);
+        parallelForEach(c1 - c0, [&](size_t j) {
+            Box3DPointSlot &s = snaps[want[c0 + j]];
+            plans[c0 + j] = planShapes(ctx, s.off, s.bid, ctx.packedInfo(s.off));
+            s.plan = int32_t(c0 + j);
+        }, 2);
+    }
+    return true;
+}
+
+// Many new bodies (a fresh world): size the mirror once.
+void
+reserveMirror(Box3DSharedState &st, const SlotList &snaps)
+{
+    size_t fresh = 0;
+    for (const Box3DPointSlot &s : snaps)
+        fresh += s.entry ? 0 : 1;
+    if (fresh >= 64)
+        st.mirror.reserve(st.mirror.size() + fresh);
+}
+
+// Bodies by point `name`, for joint anchors (only while some object has a joint network). The old
+// map is kept to see whether a rename changed what the names resolve to.
+class NameIndex
+{
+public:
+    NameIndex(Box3DSharedState &st, Box3DObjectSync &os, const GU_Detail *gdp)
+        : myNameH(gdp, GA_ATTRIB_POINT, "name")
+    {
+        myOld.swap(os.byName);
+        os.byName.clear();
+        os.namesKnown = st.wantNames;
+        myNames.bind(myNameH);
+        myKeep = st.wantNames && myNames.valid();
+    }
+    NameIndex(const NameIndex &) = delete;
+    NameIndex &operator=(const NameIndex &) = delete;
+
+    // The first point of a name wins.
+    void add(Box3DObjectSync &os, GA_Offset off, Box3DBodyMirror *entry) const
+    {
+        if (!myKeep)
+            return;
+        std::string n = myNames.str(off);
+        if (!n.empty())
+            os.byName.emplace(std::move(n), entry);
+    }
+
+    // Joint anchors resolve by point `name`: a renamed piece re-resolves the joints.
+    void finish(Box3DSharedState &st, const Box3DObjectSync &os) const
+    {
+        if (myKeep && os.byName != myOld)
+            ++st.bodyVersion;
+    }
+
+private:
+    const GA_ROHandleS                                  myNameH;
+    StringAttr                                          myNames;
+    std::unordered_map<std::string, Box3DBodyMirror *> myOld;
+    bool                                                myKeep = false;
+};
+
+// ---- step 4 (serial, point order): apply to Box3D and the mirror ----------------
+// An entry already carrying this step's stamp belongs to an earlier point (duplicate id). Escape is
+// checked between points (the hulls were built by the planning step).
+class ApplyPass
+{
+public:
+    ApplyPass(ScanContext &ctx, Box3DObjectSync &os, SyncCounts &c, std::vector<ShapePlan> &plans,
+              const NameIndex &names, int objectId, bool checkProps)
+        : myCtx(ctx), mySt(ctx.st), myOs(os), myC(c), myPlans(plans), myNames(names),
+          myObjectId(objectId), myCheckProps(checkProps)
+    {
+    }
+
+    // False if the user cancelled.
+    bool run(SlotList &snaps, StepProgress &progress)
+    {
+        size_t pointIndex = 0;
+        for (Box3DPointSlot &s : snaps)
+        {
+            if (pointIndex++ % kProgressEvery == 0 && progress.check())
+                return false;
+            applyPoint(s);
+        }
+        return true;
+    }
+
+    size_t stamped      = 0;        // entries stamped by this scan
+    bool   anyDeforming = false;
+    bool   anyDriven    = false;
+
+private:
+    using MirrorMap = std::unordered_map<uint64_t, Box3DBodyMirror>;
+
+    // A point's mirror entry: the cached one, else found, or (for a readable point) inserted unstamped.
+    struct EntryRef
+    {
+        Box3DBodyMirror  *entry = nullptr;
+        bool              fresh = false;        // just inserted, no body yet
+        MirrorMap::iterator node;               // to erase if the body cannot be built
+    };
+
+    EntryRef resolveEntry(Box3DPointSlot &s)
+    {
+        EntryRef r;
+        r.entry = s.entry;
+        if (r.entry)
+            return r;
+        if (s.ok)
+        {
+            // One lookup for "known?" and "make room"; a new node is unstamped.
+            auto res = mySt.mirror.try_emplace(s.key);
+            r.entry  = &res.first->second;
+            r.fresh  = res.second;
+            if (r.fresh)
+                r.node = res.first;
+        }
+        else
+        {
+            auto mit = mySt.mirror.find(s.key);     // a bad point never creates a body
+            if (mit != mySt.mirror.end())
+                r.entry = &mit->second;
+        }
+        s.entry = r.entry;
+        return r;
+    }
+
+    // Drops a just-inserted entry that will get no body.
+    void dropFresh(const EntryRef &r, Box3DPointSlot &s)
+    {
+        if (r.fresh)
+        {
+            mySt.mirror.erase(r.node);
+            s.entry = nullptr;
+        }
+    }
+
+    // A point with no body yet: build it from its plan. False if that failed.
+    bool addBody(Box3DPointSlot &s, Box3DBodyMirror &entry, bool animated, unsigned &writes)
+    {
+        const Box3DBodyProps p = myCtx.props(s.off);
+        std::string fallbackNote;
+        const b3dop::BodyHandle handle = addPointBody(myCtx, s, takePlan(myCtx, s, myPlans), animated, p, entry,
+                                                      fallbackNote);
+        if (!handle)
+        {
+            ++myC.failed;
+            return false;
+        }
+        if (!fallbackNote.empty())
+            ++myC.fallbacks[fallbackNote];
+        entry.setPose(s.cur);
+        entry.type     = wantedType(myCtx.node, s.active, animated, entry.shapeless);
+        entry.handle   = handle;
+        entry.driven   = false;
+        if (p.computeMass)
+            writes |= Box3DPointWrite::kMass;
+        ++myC.added;
+        return true;
+    }
+
+    // Every body this scan keeps: its point as read now, for the write-back and later scans.
+    void stampEntry(const Box3DPointSlot &s, Box3DBodyMirror &entry)
+    {
+        entry.pointOff   = s.off;
+        entry.pointId    = s.bid;
+        entry.pointIndex = s.index;
+        entry.objectId   = myObjectId;
+        entry.stamp      = mySt.syncStamp;
+        entry.sync       = &myOs;
+        storePacked(entry, s);
+        ++mySt.stampedCount;
+        ++stamped;
+    }
+
+    void applyPoint(Box3DPointSlot &s)
+    {
+        const PointAttrs &a   = myCtx.a;
+        const GA_Offset   off = s.off;
+
+        const EntryRef ref   = resolveEntry(s);
+        Box3DBodyMirror *entry = ref.entry;
+
+        if (entry && entry->stamp == mySt.syncStamp)
+        {
+            ++myC.duplicates;           // two points with the same `id`: first wins
+            return;
+        }
+
+        if (!s.ok)
+        {
+            ++myC.badP;                 // not stamped: the body (if any) is removed
+            return;
+        }
+        if (s.badVelocity)
+            ++myC.badVelocity;          // simulated, with the bad v / w read as zero
+
+        // `dead`: deleted after the step. Not stamped, so its body goes with the gone points'.
+        if (a.dead.isValid() && a.dead.get(off) != 0)
+        {
+            Box3DDeletion d;
+            d.objectId = myObjectId;
+            d.off      = off;
+            d.pointId  = s.bid;
+            mySt.deletions.push_back(d);
+            dropFresh(ref, s);
+            ++myC.dead;
+            return;
+        }
+
+        const bool animated = !s.active && a.animated.isValid() && a.animated.get(off) != 0;
+        anyDeforming = anyDeforming || s.deforming;
+        unsigned writes = s.refitWanted ? Box3DPointWrite::kAutofitValid : 0u;
+
+        if (ref.fresh && !addBody(s, *entry, animated, writes))
+        {
+            dropFresh(ref, s);
+            return;
+        }
+
+        stampEntry(s, *entry);
+        if (!ref.fresh)
+            updateExistingBody(myCtx, mySt, s, *entry, animated, myCheckProps, myPlans, myC, writes, anyDriven);
+
+        if (writes)
+            queuePointWrite(mySt, *entry, writes, effectiveMass(entry->props, entry->volume));
+        myOs.bodies.push_back(entry);
+        myNames.add(myOs, off, entry);
+    }
+
+    ScanContext            &myCtx;
+    Box3DSharedState       &mySt;
+    Box3DObjectSync        &myOs;
+    SyncCounts             &myC;
+    std::vector<ShapePlan> &myPlans;
+    const NameIndex        &myNames;
+    const int               myObjectId;
+    const bool              myCheckProps;
+};
+
+} // namespace
+
+// Sync one object's points into the world: collect slots, read, plan shapes, apply. Returns early
+// (object half synced) if the user cancels: the caller then discards the world (see
+// solveObjectsSubclass).
 void
 syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c, StepProgress &progress)
 {
@@ -826,7 +1180,7 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c, StepProgr
 
     // ---- unchanged since we last finished with it? ---------------------------
     // Markers are recorded after a scan and again after our own writes. Same markers: no point
-    // can differ from the mirror, so both passes are skipped and the entries stay current
+    // can differ from the mirror, so every pass is skipped and the entries stay current
     // under liveStamp.
     Box3DObjectSync &os = st.objectSync[objectId];
     os.visited   = st.syncStamp;
@@ -846,266 +1200,39 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c, StepProgr
 #endif
     os.canSkip   = false;
     os.liveStamp = st.syncStamp;
-    size_t stamped = 0;                 // entries stamped by this scan
     const int problems0 = c.failed + c.duplicates + c.badP;
 
     a.bindBuildAttrs(gdp);
     ScanContext ctx(st, gdp, a, node);
-    const bool anyPrims = ctx.anyPrims;
 
     // Settings are compared only when a prop marker changed (or deforming bodies need a rebuild
     // anyway); otherwise the scan syncs pose, velocity and type. Convex / concave scale is
     // checked on every scan.
     const bool checkProps = !os.propsKnown || !os.fp.samePropMarkers(fpNow) || os.anyDeforming;
-    bool       anyDeforming = false;
-    bool       anyDriven    = false;
 
     // For the post-step passes; kept as they are while the object is skipped.
     os.bodies.clear();
-    // Bodies by `name`, for joint anchors (only while some object has a joint network). The old
-    // map is kept to see whether a rename changed what the names resolve to.
-    std::unordered_map<std::string, Box3DBodyMirror *> oldByName;
-    oldByName.swap(os.byName);
-    os.byName.clear();
-    os.namesKnown = st.wantNames;
-    const GA_ROHandleS nameH(gdp, GA_ATTRIB_POINT, "name");
-    StringAttr         names;
-    names.bind(nameH);
-    const bool         keepNames = st.wantNames && names.valid();
+    const NameIndex names(st, os, gdp);
 
-    // ---- pass 1 (parallel): read every point ---------------------------------
-    // Offsets first (serial); a slot forgets its cached entry when its offset or key changed.
-    // Without `id` the body id is the point number, i.e. the position in this walk.
-    std::vector<Box3DPointSlot> &snaps = st.slots[objectId];
-    {
-        size_t n = 0;
-        for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it, ++n)
-        {
-            if (n == snaps.size())
-                snaps.emplace_back();
-            Box3DPointSlot &s = snaps[n];
-            if (s.off != *it)
-                s.entry = nullptr;
-            s.off = *it;
-            s.bid = int64_t(n);
-            s.index = int64_t(n);
-        }
-        snaps.resize(n);
-    }
-
-    parallelForEach(snaps.size(), [&](size_t i) {
-        Box3DPointSlot &s = snaps[i];
-        if (a.id.isValid())
-            s.bid = int64_t(a.id.get(s.off));
-        const uint64_t key = b3dop::makeBodyKey(objectId, s.bid);
-        if (key != s.key)
-            s.entry = nullptr;
-        s.key = key;
-        const PackedInfo pk = anyPrims ? getPackedInfo(gdp, s.off) : PackedInfo();
-        s.ok     = readPointState(gdp, a, s.off, pk, s.cur, &s.badVelocity);
-        s.active = !a.active.isValid() || a.active.get(s.off) != 0;
-        s.packed = pk.prim != nullptr;
-        if (s.packed)
-        {
-            s.primOff = int64_t(pk.primOff);
-            std::copy(pk.m3, pk.m3 + 9, s.m3);
-            std::copy(pk.scale, pk.scale + 3, s.rowScale);
-        }
-
-        // Does the point need shapes built: a new body, or a rebuild (deforming,
-        // bullet_autofit_valid = 0, or a convex / concave scale change, like Bullet)? The mirror
-        // is only read here (pass 2 changes it).
-        s.plan        = -1;
-        s.deforming   = a.deforming.isValid() && a.deforming.get(s.off) != 0;
-        s.refitWanted = a.autofitValid.isValid() && a.autofitValid.get(s.off) == 0;
-        s.rebuild     = false;
-        if (!s.ok || (a.dead.isValid() && a.dead.get(s.off) != 0))
-            return;
-        if (!s.entry)
-        {
-            const auto it = st.mirror.find(key);
-            if (it != st.mirror.end())
-                s.entry = &it->second;
-        }
-        if (const Box3DBodyMirror *e = s.entry)
-        {
-            s.rebuild = s.deforming || s.refitWanted;
-            if (!s.rebuild && e->autoScale)
-            {
-                float  ps, sc[3];
-                double sk[3];
-                readPscaleScale(a, s.off, ps, sc);
-                s.rebuild = sizeKey(s.packed, s.m3, ps, sc, sk) && !sameSizeKey(sk, e->sizeKey);
-            }
-        }
-    }, anyPrims ? kMinParallelReadPacked : kMinParallelReadPlain);
-
-    // ---- pass 1b (parallel): plan the shapes of new and rebuilt bodies -----------
-    // Building hulls is the slow part of a new world and of deforming bodies. Box3DWorld's hull
-    // calls, ShapeSources and GeorepLookup are thread-safe, so the plans are made here in
-    // parallel and pass 2 only creates bodies. Chunked, so Escape is checked in between.
+    SlotList &snaps = st.slots[objectId];
+    collectSlots(gdp, snaps);
+    readSlots(ctx, objectId, snaps);
     std::vector<ShapePlan> plans;
-    {
-        std::vector<size_t> want;
-        for (size_t i = 0; i < snaps.size(); ++i)
-            if (snaps[i].ok && (!snaps[i].entry ? !(a.dead.isValid() && a.dead.get(snaps[i].off) != 0)
-                                                : snaps[i].rebuild))
-                want.push_back(i);
-        plans.resize(want.size());
-        for (size_t c0 = 0; c0 < want.size(); c0 += kPlanChunk)
-        {
-            if (progress.check())
-                return;
-            const size_t c1 = std::min(want.size(), c0 + kPlanChunk);
-            parallelForEach(c1 - c0, [&](size_t j) {
-                Box3DPointSlot &s = snaps[want[c0 + j]];
-                plans[c0 + j] = planShapes(ctx, s.off, s.bid, ctx.packedInfo(s.off));
-                s.plan = int32_t(c0 + j);
-            }, 2);
-        }
-    }
-
-    // Many new bodies (a fresh world): size the mirror once.
-    {
-        size_t fresh = 0;
-        for (const Box3DPointSlot &s : snaps)
-            fresh += s.entry ? 0 : 1;
-        if (fresh >= 64)
-            st.mirror.reserve(st.mirror.size() + fresh);
-    }
-
-    // ---- pass 2 (serial, point order): apply to Box3D and the mirror ----------
-    // An entry already carrying this step's stamp belongs to an earlier point (duplicate id).
-    // Escape is checked here, between points (the hulls were built by the pre-pass).
-    size_t pointIndex = 0;
-    for (Box3DPointSlot &s : snaps)
-    {
-        if (pointIndex++ % kProgressEvery == 0 && progress.check())
-            return;
-
-        const GA_Offset off = s.off;
-
-        Box3DBodyMirror *entry = s.entry;
-        bool freshEntry = false;        // `entry` was just inserted, no body yet
-        auto newIt = st.mirror.end();   // its node, to erase if the body cannot be built
-        if (!entry)
-        {
-            if (s.ok)
-            {
-                // One lookup for "known?" and "make room"; a new node is unstamped.
-                auto res   = st.mirror.try_emplace(s.key);
-                entry      = &res.first->second;
-                freshEntry = res.second;
-                if (freshEntry)
-                    newIt = res.first;
-            }
-            else
-            {
-                auto mit = st.mirror.find(s.key);   // a bad point never creates a body
-                if (mit != st.mirror.end())
-                    entry = &mit->second;
-            }
-            s.entry = entry;
-        }
-        // Drops a just-inserted entry that will get no body.
-        auto dropFresh = [&]() {
-            if (freshEntry)
-            {
-                st.mirror.erase(newIt);
-                s.entry = nullptr;
-            }
-        };
-
-        if (entry && entry->stamp == st.syncStamp)
-        {
-            ++c.duplicates;         // two points with the same `id`: first wins
-            continue;
-        }
-
-        if (!s.ok)
-        {
-            ++c.badP;               // not stamped: the body (if any) is removed
-            continue;
-        }
-        if (s.badVelocity)
-            ++c.badVelocity;        // simulated, with the bad v / w read as zero
-
-        // `dead`: deleted after the step. Not stamped, so its body goes with the gone points'.
-        if (a.dead.isValid() && a.dead.get(off) != 0)
-        {
-            Box3DDeletion d;
-            d.objectId = objectId;
-            d.off      = off;
-            d.pointId  = s.bid;
-            st.deletions.push_back(d);
-            dropFresh();
-            ++c.dead;
-            continue;
-        }
-
-        const bool animated = !s.active && a.animated.isValid() && a.animated.get(off) != 0;
-        anyDeforming = anyDeforming || s.deforming;
-        unsigned writes = s.refitWanted ? Box3DPointWrite::kAutofitValid : 0u;
-
-        if (freshEntry)
-        {
-            const Box3DBodyProps p = ctx.props(off);
-            std::string fallbackNote;
-            const b3dop::BodyHandle handle = addPointBody(ctx, s, takePlan(ctx, s, plans), animated, p, *entry,
-                                                          fallbackNote);
-            if (!handle)
-            {
-                ++c.failed;
-                dropFresh();
-                continue;
-            }
-            if (!fallbackNote.empty())
-                ++c.fallbacks[fallbackNote];
-            entry->setPose(s.cur);
-            entry->type     = wantedType(node, s.active, animated, entry->shapeless);
-            entry->handle   = handle;
-            entry->driven   = false;
-            if (p.computeMass)
-                writes |= Box3DPointWrite::kMass;
-            ++c.added;
-        }
-
-        // Every body this scan keeps: its point as read now, for the write-back and later scans.
-        entry->pointOff   = off;
-        entry->pointId    = s.bid;
-        entry->pointIndex = s.index;
-        entry->objectId   = objectId;
-        entry->stamp      = st.syncStamp;
-        entry->sync       = &os;
-        storePacked(*entry, s);
-        ++st.stampedCount;
-        ++stamped;
-
-        if (!freshEntry)
-            updateExistingBody(ctx, st, s, *entry, animated, checkProps, plans, c, writes, anyDriven);
-
-        if (writes)
-            queuePointWrite(st, *entry, writes, effectiveMass(entry->props, entry->volume));
-        os.bodies.push_back(entry);
-        if (keepNames)
-        {
-            std::string n = names.str(off);
-            if (!n.empty())
-                os.byName.emplace(std::move(n), entry);     // the first point of a name wins
-        }
-    }
-
-    // Joint anchors resolve by point `name`: a renamed piece re-resolves the joints.
-    if (keepNames && os.byName != oldByName)
-        ++st.bodyVersion;
+    if (!planSlots(ctx, snaps, plans, progress))
+        return;
+    reserveMirror(st, snaps);
+    ApplyPass apply(ctx, os, c, plans, names, objectId, checkProps);
+    if (!apply.run(snaps, progress))
+        return;
+    names.finish(st, os);
 
     // Problems (retried and reported every step), deforming and driven bodies keep it scanning.
-    os.entryCount   = stamped;
+    os.entryCount   = apply.stamped;
     os.fp           = fpNow;
     os.propsKnown   = true;
-    os.anyDeforming = anyDeforming;
-    os.anyDriven    = anyDriven;
-    os.canSkip      = (c.failed + c.duplicates + c.badP) == problems0 && !anyDeforming && !anyDriven;
+    os.anyDeforming = apply.anyDeforming;
+    os.anyDriven    = apply.anyDriven;
+    os.canSkip      = (c.failed + c.duplicates + c.badP) == problems0 && !apply.anyDeforming && !apply.anyDriven;
 }
 
 } // namespace box3dsolver

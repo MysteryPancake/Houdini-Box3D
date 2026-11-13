@@ -90,12 +90,10 @@ destroyAffector(Box3DSharedState &st, Box3DAffectorBody &ab)
     ab.handle = 0;
 }
 
-} // namespace
-
-void
-syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects, Box3DAffectorCounts &counts)
+// ---- gather: every affector of a solved object, once, that we do not solve ourselves ----
+std::vector<const SIM_Object *>
+gatherAffectors(SIM_ObjectArray &objects)
 {
-    // ---- gather: every affector of a solved object, once, that we do not solve ourselves ----
     std::unordered_set<int> solved;
     for (exint i = 0; i < objects.entries(); ++i)
         solved.insert(objects(i)->getObjectId());
@@ -117,14 +115,228 @@ syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects, Box3DAffector
             affectors.push_back(a);
         }
     }
+    return affectors;
+}
+
+// An affector as one sync reads it: its transform (split into pose and scale), its material, and
+// the signature of what its mesh shape depends on.
+struct AffectorInput
+{
+    double              m[16] = {};                 // world transform, row-vector layout
+    double              pos[3] = {};
+    float               rot[4] = { 0, 0, 0, 1 };
+    float               scale[3] = { 1, 1, 1 };
+    bool                rigid  = false;             // pose + per-axis scale; else the matrix is baked
+    b3dop::BodySettings body;
+    uint64_t            sig    = 0;
+};
+
+// The object's world transform (position + any scale). False if it is not finite.
+bool
+readAffectorTransform(const SIM_Object &obj, AffectorInput &in)
+{
+    UT_DMatrix4 xf;
+    SIMgetGeometryTransform(xf, obj);
+    box3dToArray(xf, in.m);
+    for (double d : in.m)
+        if (!std::isfinite(d))
+            return false;
+
+    // Rotation + per-axis scale + translation: the body takes the pose and the mesh shape the
+    // scale, so an animated transform never rebuilds the mesh. Shear or mirroring: baked.
+    in.rigid = b3dop::decomposeScaledRigid(in.m, in.pos, in.rot, in.scale);
+    return true;
+}
+
+// Material: a Box3D Data node on the affector sets friction and bounce (bodies are always static).
+b3dop::BodySettings
+affectorBodySettings(const SIM_Object &obj)
+{
+    b3dop::BodySettings body;
+    if (const SIM_Box3DData *node = SIM_DATA_GETCONST(obj, kBox3DDataName, SIM_Box3DData))
+        body = node->toBodySettings();
+    body.type = b3dop::BodySettings::Type::Static;
+    return body;
+}
+
+// What the shape depends on: the points and polygons, the material, and (when it cannot be split
+// into pose and scale) the whole matrix, which is baked into the vertices.
+uint64_t
+affectorSignature(const GU_Detail *gdp, const AffectorInput &in)
+{
+    const GA_Attribute *P = gdp->getP();
+    uint64_t sig = b3dop::kHashSeed;
+    sig = b3dop::mixHash(sig, P ? uint64_t(P->getDataId()) : 0);
+    sig = b3dop::mixHash(sig, gdp->getNumPrimitives() > 0 ? uint64_t(gdp->getPrimitiveList().getDataId()) : 0);
+    sig = b3dop::mixHash(sig, uint64_t(gdp->getNumPoints()));
+    sig = b3dop::mixHash(sig, uint64_t(gdp->getNumPrimitives()));
+    const float mat[3] = { in.body.friction, in.body.restitution, in.body.flipMeshWinding ? 1.0f : 0.0f };
+    sig = b3dop::mixHash(sig, b3dop::hashFloats(mat, 3));
+    sig = b3dop::mixHash(sig, in.rigid ? 1 : 2);
+    if (!in.rigid)
+        for (double d : in.m)
+            sig = b3dop::mixDouble(sig, d);
+    return sig;
+}
+
+// ---- update: the same shape as last time ------------------------------------------------
+// A moved (animated) object only needs a new pose and / or mesh scale; a failed build (handle 0)
+// stays failed until the signature changes.
+void
+updateAffector(Box3DSharedState &st, Box3DAffectorBody &ab, const AffectorInput &in, Box3DAffectorCounts &counts)
+{
+    if (!ab.handle)
+    {
+        ++counts.failed;
+        return;
+    }
+
+    // Rolling resistance and conveyor velocity are not in the signature: a change (an animated
+    // belt speed) updates the shapes instead of rebuilding the mesh.
+    const b3dop::BodySettings &body = in.body;
+    if (ab.rolling != body.rollingResistance ||
+        !std::equal(ab.tangent, ab.tangent + 3, body.tangentVelocity))
+    {
+        st.world.setSurfaceByHandle(ab.handle, body.rollingResistance, body.tangentVelocity);
+        ab.rolling = body.rollingResistance;
+        b3dop::copy3(ab.tangent, body.tangentVelocity);
+    }
+    if (!in.rigid)
+        return;
+
+    const double *pos = in.pos;
+    const float  *rot = in.rot;
+    const bool samePose = std::fabs(ab.pos[0] - pos[0]) < 1e-9 && std::fabs(ab.pos[1] - pos[1]) < 1e-9 &&
+                          std::fabs(ab.pos[2] - pos[2]) < 1e-9 && std::fabs(ab.rot[0] - rot[0]) < 1e-7f &&
+                          std::fabs(ab.rot[1] - rot[1]) < 1e-7f && std::fabs(ab.rot[2] - rot[2]) < 1e-7f &&
+                          std::fabs(ab.rot[3] - rot[3]) < 1e-7f;
+    const bool sameScale = ab.scale[0] == in.scale[0] && ab.scale[1] == in.scale[1] && ab.scale[2] == in.scale[2];
+    if (!samePose)
+    {
+        st.world.setTransformByHandle(ab.handle, pos, rot);
+        b3dop::copy3(ab.pos, pos);
+        b3dop::copy4(ab.rot, rot);
+    }
+    if (!sameScale)
+    {
+        st.world.setMeshScaleByHandle(ab.handle, in.scale);
+        b3dop::copy3(ab.scale, in.scale);
+    }
+    if (!samePose || !sameScale)
+        ++counts.moved;
+}
+
+// ---- build ----------------------------------------------------------------------------------
+// Shear or mirroring cannot be a body transform plus mesh scale: bake the matrix into the vertices
+// (`baked`) and keep the body at the origin. (Mirroring flips the winding, so flip the triangles back.)
+void
+bakeTransform(const double m[16], TriMesh &mesh, std::vector<float> &baked)
+{
+    const size_t n = mesh.xyz.size() / 3;
+    baked.resize(mesh.xyz.size());
+    for (size_t i = 0; i < n; ++i)
+    {
+        const double p[3] = { mesh.xyz[3 * i], mesh.xyz[3 * i + 1], mesh.xyz[3 * i + 2] };
+        double q[3];
+        b3dop::transformPoint(m, p, q);
+        for (int j = 0; j < 3; ++j)
+            baked[3 * i + size_t(j)] = float(q[j]);
+    }
+    const double det = m[0] * (m[5] * m[10] - m[6] * m[9]) - m[1] * (m[4] * m[10] - m[6] * m[8]) +
+                       m[2] * (m[4] * m[9] - m[5] * m[8]);
+    if (det < 0.0)
+        for (size_t t = 0; t + 2 < mesh.tris.size(); t += 3)
+            std::swap(mesh.tris[t + 1], mesh.tris[t + 2]);
+}
+
+// (Re)build from scratch: one static body with one triangle mesh shape.
+void
+buildAffector(Box3DSharedState &st, Box3DAffectorBody &ab, int objectId, const GU_Detail *gdp,
+              const AffectorInput &in, TriMesh &mesh, std::vector<float> &baked, Box3DAffectorCounts &counts)
+{
+    destroyAffector(st, ab);
+    ab.signature = in.sig;
+    ab.poseKnown = true;
+
+    const b3dop::BodySettings &body = in.body;
+    buildMesh(gdp, !body.flipMeshWinding, mesh);
+    if (mesh.tris.empty())
+    {
+        ++counts.failed;
+        return;
+    }
+    const float *verts = mesh.xyz.data();
+    double bodyPos[3]   = { 0, 0, 0 };
+    float  bodyRot[4]   = { 0, 0, 0, 1 };
+    float  bodyScale[3] = { 1, 1, 1 };
+    if (in.rigid)
+    {
+        b3dop::copy3(bodyPos, in.pos);
+        b3dop::copy4(bodyRot, in.rot);
+        b3dop::copy3(bodyScale, in.scale);
+    }
+    else
+    {
+        bakeTransform(in.m, mesh, baked);
+        verts = baked.data();
+        ++counts.baked;
+    }
+
+    const b3dop::BodyHandle h = st.world.createBody(body, bodyPos, bodyRot, nullptr);
+    if (!h)
+    {
+        ++counts.failed;
+        return;
+    }
+    if (!st.world.createMeshShape(h, body, verts, int(mesh.xyz.size() / 3), mesh.tris.data(),
+                                  int(mesh.tris.size() / 3), 0.0f, bodyScale))
+    {
+        st.world.destroyBody(h);
+        ++counts.failed;
+        return;
+    }
+    ab.handle = h;
+    ab.rolling = body.rollingResistance;
+    b3dop::copy3(ab.tangent, body.tangentVelocity);
+    b3dop::copy3(ab.pos, bodyPos);
+    b3dop::copy4(ab.rot, bodyRot);
+    b3dop::copy3(ab.scale, bodyScale);
+    ++counts.added;
+    B3D_LOG("  affector id=%d: static mesh built, %d triangle(s)%s", objectId, int(mesh.tris.size() / 3),
+            in.rigid ? "" : " (transform baked)");
+}
+
+// ---- remove: objects that are no longer affectors ---------------------------------------
+void
+removeStaleAffectors(Box3DSharedState &st, Box3DAffectorCounts &counts)
+{
+    for (auto it = st.affectors.begin(); it != st.affectors.end();)
+    {
+        if (it->second.stamp != st.syncStamp)
+        {
+            if (it->second.handle)
+                ++counts.removed;
+            destroyAffector(st, it->second);
+            it = st.affectors.erase(it);
+        }
+        else
+            ++it;
+    }
+}
+
+} // namespace
+
+void
+syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects, Box3DAffectorCounts &counts)
+{
+    const std::vector<const SIM_Object *> affectors = gatherAffectors(objects);
     counts.total = int(affectors.size());
 
-    // ---- build / update ---------------------------------------------------------------------
+    // Build or update each one.
     TriMesh mesh;
     std::vector<float> baked;
     for (const SIM_Object *obj : affectors)
     {
-        const int objectId = obj->getObjectId();
         const SIM_Geometry *geo = obj->getGeometry();
         if (!geo)
         {
@@ -139,176 +351,27 @@ syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects, Box3DAffector
             continue;
         }
 
-        Box3DAffectorBody &ab = st.affectors[objectId];
+        Box3DAffectorBody &ab = st.affectors[obj->getObjectId()];
         ab.stamp = st.syncStamp;
         {
             const UT_String &nm = obj->getName();
             ab.name = nm.isstring() ? std::string(nm.buffer()) : std::string();
         }
 
-        // The object's world transform (position + any scale), row-vector layout.
-        UT_DMatrix4 xf;
-        SIMgetGeometryTransform(xf, *obj);
-        double m[16];
-        box3dToArray(xf, m);
-        bool finite = true;
-        for (double d : m)
-            finite = finite && std::isfinite(d);
-        if (!finite)
+        AffectorInput in;
+        if (!readAffectorTransform(*obj, in))
         {
             ++counts.failed;
             continue;
         }
+        in.body = affectorBodySettings(*obj);
+        in.sig  = affectorSignature(gdp, in);
 
-        // Rotation + per-axis scale + translation: the body takes the pose and the mesh shape the
-        // scale, so an animated transform never rebuilds the mesh. Shear or mirroring: baked.
-        double pos[3];
-        float  rot[4], scale[3];
-        const bool rigid = b3dop::decomposeScaledRigid(m, pos, rot, scale);
-
-        // Material: a Box3D Data node on the affector sets friction and bounce (bodies are always static).
-        b3dop::BodySettings body;
-        if (const SIM_Box3DData *node = SIM_DATA_GETCONST(*obj, kBox3DDataName, SIM_Box3DData))
-            body = node->toBodySettings();
-        body.type = b3dop::BodySettings::Type::Static;
-
-        // What the shape depends on: the points and polygons, the material, and (when it cannot
-        // be split into pose and scale) the whole matrix, which is baked into the vertices.
-        const GA_Attribute *P = gdp->getP();
-        uint64_t sig = b3dop::kHashSeed;
-        sig = b3dop::mixHash(sig, P ? uint64_t(P->getDataId()) : 0);
-        sig = b3dop::mixHash(sig, gdp->getNumPrimitives() > 0 ? uint64_t(gdp->getPrimitiveList().getDataId()) : 0);
-        sig = b3dop::mixHash(sig, uint64_t(gdp->getNumPoints()));
-        sig = b3dop::mixHash(sig, uint64_t(gdp->getNumPrimitives()));
-        const float mat[3] = { body.friction, body.restitution, body.flipMeshWinding ? 1.0f : 0.0f };
-        sig = b3dop::mixHash(sig, b3dop::hashFloats(mat, 3));
-        sig = b3dop::mixHash(sig, rigid ? 1 : 2);
-        if (!rigid)
-            for (double d : m)
-                sig = b3dop::mixDouble(sig, d);
-
-        const bool unchanged = ab.poseKnown && ab.signature == sig;
-        if (unchanged)
-        {
-            // Same shape. A moved (animated) object only needs a new pose and / or mesh scale; a
-            // failed build (handle 0) stays failed until the signature changes.
-            if (ab.handle)
-            {
-                // Rolling resistance and conveyor velocity are not in the signature: a change (an animated
-                // belt speed) updates the shapes instead of rebuilding the mesh.
-                if (ab.rolling != body.rollingResistance ||
-                    !std::equal(ab.tangent, ab.tangent + 3, body.tangentVelocity))
-                {
-                    st.world.setSurfaceByHandle(ab.handle, body.rollingResistance, body.tangentVelocity);
-                    ab.rolling = body.rollingResistance;
-                    b3dop::copy3(ab.tangent, body.tangentVelocity);
-                }
-            }
-            if (ab.handle && rigid)
-            {
-                const bool samePose = std::fabs(ab.pos[0] - pos[0]) < 1e-9 && std::fabs(ab.pos[1] - pos[1]) < 1e-9 &&
-                                      std::fabs(ab.pos[2] - pos[2]) < 1e-9 && std::fabs(ab.rot[0] - rot[0]) < 1e-7f &&
-                                      std::fabs(ab.rot[1] - rot[1]) < 1e-7f && std::fabs(ab.rot[2] - rot[2]) < 1e-7f &&
-                                      std::fabs(ab.rot[3] - rot[3]) < 1e-7f;
-                const bool sameScale = ab.scale[0] == scale[0] && ab.scale[1] == scale[1] && ab.scale[2] == scale[2];
-                if (!samePose)
-                {
-                    st.world.setTransformByHandle(ab.handle, pos, rot);
-                    b3dop::copy3(ab.pos, pos);
-                    b3dop::copy4(ab.rot, rot);
-                }
-                if (!sameScale)
-                {
-                    st.world.setMeshScaleByHandle(ab.handle, scale);
-                    b3dop::copy3(ab.scale, scale);
-                }
-                if (!samePose || !sameScale)
-                    ++counts.moved;
-            }
-            else if (!ab.handle)
-                ++counts.failed;
-            continue;
-        }
-
-        // (Re)build from scratch.
-        destroyAffector(st, ab);
-        ab.signature = sig;
-        ab.poseKnown = true;
-
-        buildMesh(gdp, !body.flipMeshWinding, mesh);
-        if (mesh.tris.empty())
-        {
-            ++counts.failed;
-            continue;
-        }
-        const float *verts = mesh.xyz.data();
-        double bodyPos[3]   = { 0, 0, 0 };
-        float  bodyRot[4]   = { 0, 0, 0, 1 };
-        float  bodyScale[3] = { 1, 1, 1 };
-        if (rigid)
-        {
-            b3dop::copy3(bodyPos, pos);
-            b3dop::copy4(bodyRot, rot);
-            b3dop::copy3(bodyScale, scale);
-        }
+        if (ab.poseKnown && ab.signature == in.sig)
+            updateAffector(st, ab, in, counts);
         else
-        {
-            // Shear or mirroring cannot be a body transform plus mesh scale: bake the matrix into the vertices and keep the body at
-            // the origin. (Mirroring flips the winding, so flip the triangles back.)
-            const size_t n = mesh.xyz.size() / 3;
-            baked.resize(mesh.xyz.size());
-            for (size_t i = 0; i < n; ++i)
-            {
-                const double p[3] = { mesh.xyz[3 * i], mesh.xyz[3 * i + 1], mesh.xyz[3 * i + 2] };
-                double q[3];
-                b3dop::transformPoint(m, p, q);
-                for (int j = 0; j < 3; ++j)
-                    baked[3 * i + size_t(j)] = float(q[j]);
-            }
-            const double det = m[0] * (m[5] * m[10] - m[6] * m[9]) - m[1] * (m[4] * m[10] - m[6] * m[8]) +
-                               m[2] * (m[4] * m[9] - m[5] * m[8]);
-            if (det < 0.0)
-                for (size_t t = 0; t + 2 < mesh.tris.size(); t += 3)
-                    std::swap(mesh.tris[t + 1], mesh.tris[t + 2]);
-            verts = baked.data();
-            ++counts.baked;
-        }
-
-        const b3dop::BodyHandle h = st.world.createBody(body, bodyPos, bodyRot, nullptr);
-        if (!h)
-        {
-            ++counts.failed;
-            continue;
-        }
-        if (!st.world.createMeshShape(h, body, verts, int(mesh.xyz.size() / 3), mesh.tris.data(),
-                                      int(mesh.tris.size() / 3), 0.0f, bodyScale))
-        {
-            st.world.destroyBody(h);
-            ++counts.failed;
-            continue;
-        }
-        ab.handle = h;
-        ab.rolling = body.rollingResistance;
-        b3dop::copy3(ab.tangent, body.tangentVelocity);
-        b3dop::copy3(ab.pos, bodyPos);
-        b3dop::copy4(ab.rot, bodyRot);
-        b3dop::copy3(ab.scale, bodyScale);
-        ++counts.added;
-        B3D_LOG("  affector id=%d: static mesh built, %d triangle(s)%s", objectId, int(mesh.tris.size() / 3),
-                rigid ? "" : " (transform baked)");
+            buildAffector(st, ab, obj->getObjectId(), gdp, in, mesh, baked, counts);
     }
 
-    // ---- remove: objects that are no longer affectors ---------------------------------------
-    for (auto it = st.affectors.begin(); it != st.affectors.end();)
-    {
-        if (it->second.stamp != st.syncStamp)
-        {
-            if (it->second.handle)
-                ++counts.removed;
-            destroyAffector(st, it->second);
-            it = st.affectors.erase(it);
-        }
-        else
-            ++it;
-    }
+    removeStaleAffectors(st, counts);
 }

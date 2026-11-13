@@ -435,46 +435,43 @@ deleteDeadPoints(Box3DSharedState &st, SIM_ObjectArray &objects)
     items.clear();
 }
 
-} // namespace box3dsolver
+namespace {
 
-using namespace box3dsolver;
-
-void
-SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects)
+// ---- writeResultsBack, step 0 (serial): the bodies that moved -----------------
+// Box3D's move events (read into st.moves right after the step): every awake body and its
+// transform (a body falling asleep appears once more). Each body's user data is its entry.
+struct MovedBodies
 {
-    Box3DSharedState *st = worldData.state();
-    b3dop::Box3DWorld &world = st->world;
+    std::vector<int> wholeMoves;        // move events of whole-object bodies
+    int              missing = 0;       // moved bodies without a handle
+};
 
-    // ---- pass 0 (serial): the bodies that moved -----------------------------
-    // Box3D's move events (read into st->moves right after the step): every awake body and its
-    // transform (a body falling asleep appears once more). Each body's user data is its entry.
-    const int moveCount = int(st->moves.size());
-    if (moveCount == 0)
-        return;
-
-    std::vector<Box3DWriteItem> &items = st->writeItems;
+// Fills st.writeItems and st.packedWrites with the point bodies to write.
+MovedBodies
+collectMovedBodies(Box3DSharedState &st)
+{
+    MovedBodies out;
+    const int moveCount = int(st.moves.size());
+    std::vector<Box3DWriteItem> &items = st.writeItems;
     items.clear();
     items.reserve(size_t(moveCount));
-    std::vector<Box3DPackedWrite> &packedWrites = st->packedWrites;
-    packedWrites.clear();
-    int missing = 0;
-    std::vector<int> wholeMoves;            // move events of whole-object bodies
+    st.packedWrites.clear();
     for (int mi = 0; mi < moveCount; ++mi)
     {
-        const b3dop::BodyMove &mv = st->moves[size_t(mi)];
+        const b3dop::BodyMove &mv = st.moves[size_t(mi)];
         if (!mv.userData)
             continue;
         Box3DBodyMirror *entry = static_cast<Box3DBodyMirror *>(mv.userData);
-        if (!entry->dynamic() || !st->isLive(*entry))
+        if (!entry->dynamic() || !st.isLive(*entry))
             continue;                       // only dynamic bodies seen by this step's sync are written
         if (!entry->handle)
         {
-            ++missing;
+            ++out.missing;
             continue;
         }
         if (entry->wholeObject)
         {
-            wholeMoves.push_back(mi);       // written to the object's Position data below
+            out.wholeMoves.push_back(mi);   // written to the object's Position data
             continue;
         }
         items.emplace_back();
@@ -484,8 +481,8 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
         w.objectId = entry->objectId;
         if (entry->packed)
         {
-            w.packedIdx = int(packedWrites.size());
-            packedWrites.emplace_back();
+            w.packedIdx = int(st.packedWrites.size());
+            st.packedWrites.emplace_back();
         }
         // `awake`: only changes are written (and only if the attribute exists). entry->awake is
         // updated where the write happens, so an unresolved point is retried next step.
@@ -493,32 +490,273 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
         if (nowAwake != entry->awake)
             w.awakeState = nowAwake ? 1 : 0;
     }
+    return out;
+}
 
-    // Whole-object bodies: one Position data each (serial; few objects).
+// Whole-object bodies: one Position data each (serial; few objects). Returns how many could not
+// be written.
+int
+writeWholeObjects(Box3DSharedState &st, SIM_ObjectArray &objects, const std::vector<int> &wholeMoves)
+{
     int notWritten = 0;
     for (const int mi : wholeMoves)
     {
-        const b3dop::BodyMove &mv = st->moves[size_t(mi)];
+        const b3dop::BodyMove &mv = st.moves[size_t(mi)];
         Box3DBodyMirror *entry = static_cast<Box3DBodyMirror *>(mv.userData);
         SIM_Object *obj = box3dObjectById(objects, entry->objectId);
         float lin[3], ang[3];
-        if (!obj || !world.getVelocityByHandle(entry->handle, lin, ang))
+        if (!obj || !st.world.getVelocityByHandle(entry->handle, lin, ang))
             continue;
         entry->awake = !mv.fellAsleep;
         if (!writeWholeObject(*obj, *entry, mv.pos, mv.rot, lin, ang))
             ++notWritten;
     }
-    warnCount(objects, notWritten,
-              "object(s) have Position data the solver cannot write (not a Position or Motion); their results were not written back");
+    return notWritten;
+}
 
-    if (items.empty())
-        return;
-
-    // Velocities (not in move events): Box3D allows read-only calls from several threads.
+// Velocities (not in move events): Box3D allows read-only calls from several threads.
+void
+readVelocities(Box3DSharedState &st)
+{
+    std::vector<Box3DWriteItem> &items = st.writeItems;
     parallelForEach(items.size(), [&](size_t i) {
         Box3DWriteItem &w = items[i];
-        world.getVelocityByHandle(w.entry->handle, w.lin, w.ang);
+        st.world.getVelocityByHandle(w.entry->handle, w.lin, w.ang);
     }, kMinParallelWrite);
+}
+
+// A new quaternion attribute is 0,0,0,0: start every point at identity.
+void
+startOrientAtIdentity(GU_Detail *gdp)
+{
+    GA_RWHandleQ qOut(gdp, GA_ATTRIB_POINT, "orient");
+    if (!qOut.isValid())
+        return;
+    for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it)
+        qOut.set(*it, UT_QuaternionF(0.0f, 0.0f, 0.0f, 1.0f));
+}
+
+// ---- step 2 (parallel): write one body's attributes ------------------------------
+// The attribute handles of one object's geometry, and what it takes to write one item. write()
+// touches only its own point and its own item's entry, so items can be written concurrently.
+class BodyWriter
+{
+public:
+    // The items [begin, end) of st.writeItems belong to `gdp`; their points are resolved.
+    BodyWriter(Box3DSharedState &st, GU_Detail *gdp, const PointAttrs &a, size_t begin, size_t end)
+        : myMoves(st.moves), myPackedWrites(st.packedWrites), myGdp(gdp), myA(a),
+          myAnyPrims(gdp->getNumPrimitives() > 0),
+          myP(gdp, GA_ATTRIB_POINT, "P"), myV(gdp, GA_ATTRIB_POINT, "v"), myW(gdp, GA_ATTRIB_POINT, "w"),
+          myQ(gdp, GA_ATTRIB_POINT, "orient"),
+          myAwake(gdp, GA_ATTRIB_POINT, "awake")        // only if it exists
+    {
+        if (myAwake.isValid())
+            for (size_t k = begin; k < end && !myAnyAwakeWrite; ++k)
+                myAnyAwakeWrite = st.writeItems[k].awakeState >= 0 && st.writeItems[k].off != GA_INVALID_OFFSET;
+#ifdef BOX3DDOP_DEBUG
+        myVerifyReadback = B3D_ENV_INT("BOX3DDOP_VERIFY_READBACK", 0) != 0;
+#endif
+    }
+
+    // The attributes write() writes (null: not written).
+    std::array<GA_Attribute *, 5> writtenAttributes() const
+    {
+        return { myP.isValid() ? myP.getAttribute() : nullptr,
+                 myQ.isValid() ? myQ.getAttribute() : nullptr,
+                 myV.isValid() ? myV.getAttribute() : nullptr,
+                 myW.isValid() ? myW.getAttribute() : nullptr,
+                 myAnyAwakeWrite ? myAwake.getAttribute() : nullptr };
+    }
+
+    void write(Box3DWriteItem &w) const
+    {
+        if (w.off == GA_INVALID_OFFSET)
+            return;
+        const b3dop::BodyMove &mv = myMoves[size_t(w.move)];
+        writeAttributes(w, mv);
+        Box3DPackedWrite *pw = composePacked(w, mv);
+        updateMirror(w, mv, pw != nullptr);
+#ifdef BOX3DDOP_DEBUG
+        if (myVerifyReadback)
+            verifyReadback(w, pw);
+#endif
+    }
+
+private:
+    void writeAttributes(const Box3DWriteItem &w, const b3dop::BodyMove &mv) const
+    {
+        const GA_Offset off = w.off;
+        if (myP.isValid()) myP.set(off, UT_Vector3(float(mv.pos[0]), float(mv.pos[1]), float(mv.pos[2])));
+        if (myQ.isValid()) myQ.set(off, UT_QuaternionF(mv.rot[0], mv.rot[1], mv.rot[2], mv.rot[3]));
+        if (myV.isValid()) myV.set(off, UT_Vector3(w.lin[0], w.lin[1], w.lin[2]));
+        if (myW.isValid()) myW.set(off, UT_Vector3(w.ang[0], w.ang[1], w.ang[2]));
+        if (myAnyAwakeWrite && w.awakeState >= 0)
+        {
+            myAwake.set(off, int(w.awakeState));
+            w.entry->awake = (w.awakeState != 0);
+        }
+    }
+
+    // Packed: the new 3x3 (the scale the sync read, the new rotation) is computed here and written
+    // in step 3, to the primitive the last sync stored. Null if the body is not packed.
+    Box3DPackedWrite *composePacked(const Box3DWriteItem &w, const b3dop::BodyMove &mv) const
+    {
+        Box3DBodyMirror  &me = *w.entry;
+        Box3DPackedWrite *pw = w.packedIdx >= 0 ? &myPackedWrites[size_t(w.packedIdx)] : nullptr;
+        if (!(myAnyPrims && me.packed && pw))
+            return nullptr;
+        composePackedMatrix(mv.rot, me.rowScale, pw->newM3);
+        pw->primOff = GA_Offset(me.primOff);
+        pw->has     = true;
+        std::copy(pw->newM3, pw->newM3 + 9, me.m3);     // a skipped sync does not refresh it
+        return pw;
+    }
+
+    // What the read path will see, so our own write does not look like an external edit: P through
+    // float; the rotation as written (poseDiffers allows for the float noise of a packed
+    // transform's round trip and for q vs -q). Non-finite P: Box3D's values.
+    void updateMirror(const Box3DWriteItem &w, const b3dop::BodyMove &mv, bool packed) const
+    {
+        Box3DBodyPose &mirror = *w.entry;
+        const bool hasRot = packed || myQ.isValid();        // else the read path sees identity
+        const float identity[4] = { 0, 0, 0, 1 };
+        std::copy(hasRot ? mv.rot : identity, (hasRot ? mv.rot : identity) + 4, mirror.rot);
+        b3dop::sanitizeQuat(mirror.rot);
+        for (int i = 0; i < 3; ++i)
+        {
+            mirror.lin[i] = myV.isValid() ? w.lin[i] : 0.0f;
+            mirror.ang[i] = myW.isValid() ? w.ang[i] : 0.0f;
+        }
+        if (!b3dop::storedPosition(mv.pos, mirror.pos))
+            std::copy(mv.pos, mv.pos + 3, mirror.pos);
+    }
+
+#ifdef BOX3DDOP_DEBUG
+    // BOX3DDOP_VERIFY_READBACK=1: read back; a difference poseDiffers sees would make the next
+    // scan treat our own write as an external edit.
+    void verifyReadback(const Box3DWriteItem &w, const Box3DPackedWrite *pw) const
+    {
+        const Box3DBodyPose &mirror = *w.entry;
+        Box3DBodyPose stored;
+        PackedInfo pk;
+        if (pw)
+        {
+            pk.prim = static_cast<const GU_PrimPacked *>(myGdp->getPrimitive(pw->primOff));
+            double sc[3];
+            splitPackedMatrix(pw->newM3, pk.rot, sc);
+        }
+        if (readPointState(myGdp, myA, w.off, pk, stored) && poseDiffers(stored, mirror))
+        {
+            B3D_LOG("  READBACK MISMATCH object=%d point=%lld: predicted pos=(%.9g %.9g %.9g) rot=(%.9g %.9g %.9g %.9g) "
+                    "read pos=(%.9g %.9g %.9g) rot=(%.9g %.9g %.9g %.9g)",
+                    w.objectId, (long long)w.entry->pointId,
+                    mirror.pos[0], mirror.pos[1], mirror.pos[2],
+                    mirror.rot[0], mirror.rot[1], mirror.rot[2], mirror.rot[3],
+                    stored.pos[0], stored.pos[1], stored.pos[2],
+                    stored.rot[0], stored.rot[1], stored.rot[2], stored.rot[3]);
+        }
+    }
+#endif
+
+    const std::vector<b3dop::BodyMove> &myMoves;
+    std::vector<Box3DPackedWrite>       &myPackedWrites;
+    [[maybe_unused]] GU_Detail          *myGdp;       // read back only by the debug check
+    [[maybe_unused]] const PointAttrs   &myA;
+    const bool                           myAnyPrims;
+    mutable GA_RWHandleV3                myP, myV, myW;
+    mutable GA_RWHandleQ                 myQ;
+    mutable GA_RWHandleI                 myAwake;
+    bool                                 myAnyAwakeWrite = false;
+#ifdef BOX3DDOP_DEBUG
+    bool                                 myVerifyReadback = false;
+#endif
+};
+
+// ---- step 3 (serial): packed primitive rotations ---------------------------------
+// Serial: the HDK does not document setLocalTransform as thread-safe. Returns the bodies whose
+// primitive is gone (the topology changed without a new id).
+int
+writePackedRotations(GU_Detail *gdp, const std::vector<Box3DWriteItem> &items, size_t begin, size_t end,
+                     const std::vector<Box3DPackedWrite> &packedWrites)
+{
+    int  missing     = 0;
+    bool wrotePacked = false;
+    for (size_t k = begin; k < end; ++k)
+    {
+        const Box3DWriteItem &w = items[k];
+        if (w.packedIdx < 0 || !packedWrites[size_t(w.packedIdx)].has)
+            continue;
+        const Box3DPackedWrite &pw = packedWrites[size_t(w.packedIdx)];
+        const GA_Primitive *raw = (pw.primOff >= 0 && pw.primOff < gdp->getNumPrimitiveOffsets())
+                                      ? gdp->getPrimitive(pw.primOff) : nullptr;
+        if (!raw || !GU_PrimPacked::isPackedPrimitive(*raw))
+        {
+            ++missing;
+            continue;
+        }
+        setLocal3(*static_cast<GU_PrimPacked *>(gdp->getPrimitive(pw.primOff)), pw.newM3);
+        wrotePacked = true;
+    }
+    // setLocalTransform does not mark the primitive list dirty; the HDK leaves that to us.
+    if (wrotePacked)
+        gdp->getPrimitiveList().bumpDataId();
+    return missing;
+}
+
+// One object's results, st.writeItems[begin, end), into its (locked, writable) geometry. Returns
+// how many bodies could not be matched to a point or primitive.
+int
+writeObjectResults(Box3DSharedState &st, GU_Detail *gdp, size_t begin, size_t end)
+{
+    std::vector<Box3DWriteItem> &items = st.writeItems;
+
+    if (ensureResultAttribs(gdp))
+        startOrientAtIdentity(gdp);
+    const PointAttrs a(gdp);          // after the attributes exist
+
+    // ---- step 1 (serial): find each body's point in the geometry ----
+    resolvePointOffsets(gdp, a, items, begin, end);
+    int missing = 0;
+    for (size_t k = begin; k < end; ++k)
+        if (items[k].off == GA_INVALID_OFFSET)
+            ++missing;
+
+    // ---- step 2 (parallel): write attributes, one task per body ----
+    const BodyWriter writer(st, gdp, a, begin, end);
+    const std::array<GA_Attribute *, 5> written = writer.writtenAttributes();
+    // Shared copy-on-write pages would race: a parallel pass hardens what it writes first.
+    if (end - begin >= kMinParallelWrite)
+        hardenWrittenPages(gdp, items, begin, end, written);
+    parallelForEach(end - begin, [&](size_t j) { writer.write(items[begin + j]); }, kMinParallelWrite);
+    for (GA_Attribute *attr : written)
+        if (attr)
+            attr->bumpDataId();
+
+    return missing + writePackedRotations(gdp, items, begin, end, st.packedWrites);
+}
+
+} // namespace
+
+} // namespace box3dsolver
+
+using namespace box3dsolver;
+
+void
+SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects)
+{
+    Box3DSharedState *st = worldData.state();
+    if (st->moves.empty())
+        return;
+
+    MovedBodies moved = collectMovedBodies(*st);
+    int missing = moved.missing;
+    warnCount(objects, writeWholeObjects(*st, objects, moved.wholeMoves),
+              "object(s) have Position data the solver cannot write (not a Position or Motion); their results were not written back");
+
+    std::vector<Box3DWriteItem> &items = st->writeItems;
+    if (items.empty())
+        return;
+    readVelocities(*st);
 
     // Grouped by object, so each geometry is locked once.
     std::vector<SIM_Object *> refresh;      // objects written to
@@ -543,150 +781,7 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
         if (!gdp)
             return;
         refresh.push_back(obj);
-
-        const bool createdOrient = ensureResultAttribs(gdp);
-
-        const PointAttrs a(gdp);          // after the attributes exist
-        const bool anyPrims = gdp->getNumPrimitives() > 0;
-        GA_RWHandleV3 vOut(gdp, GA_ATTRIB_POINT, "v");
-        GA_RWHandleV3 wOut(gdp, GA_ATTRIB_POINT, "w");
-        GA_RWHandleQ  qOut(gdp, GA_ATTRIB_POINT, "orient");
-
-        if (createdOrient && qOut.isValid())
-        {
-            // A new quaternion attribute is 0,0,0,0: start every point at identity.
-            for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it)
-                qOut.set(*it, UT_QuaternionF(0.0f, 0.0f, 0.0f, 1.0f));
-        }
-
-        // ---- pass 1 (serial): find each body's point in the geometry --------
-        resolvePointOffsets(gdp, a, items, begin, end);
-        int unresolved = 0;
-        for (size_t k = begin; k < end; ++k)
-            if (items[k].off == GA_INVALID_OFFSET)
-                ++unresolved;
-        missing += unresolved;
-
-        // ---- pass 2 (parallel): write attributes, one task per body ------------
-        GA_RWHandleV3 pOut(gdp, GA_ATTRIB_POINT, "P");
-        GA_RWHandleI  awakeOut(gdp, GA_ATTRIB_POINT, "awake");      // only if it exists
-        bool anyAwakeWrite = false;
-        if (awakeOut.isValid())
-            for (size_t k = begin; k < end && !anyAwakeWrite; ++k)
-                anyAwakeWrite = items[k].awakeState >= 0 && items[k].off != GA_INVALID_OFFSET;
-#ifdef BOX3DDOP_DEBUG
-        const bool verifyReadback = B3D_ENV_INT("BOX3DDOP_VERIFY_READBACK", 0) != 0;
-#endif
-        // The attributes pass 2 writes (null: not written).
-        const std::array<GA_Attribute *, 5> written = {
-            pOut.isValid() ? pOut.getAttribute() : nullptr,
-            qOut.isValid() ? qOut.getAttribute() : nullptr,
-            vOut.isValid() ? vOut.getAttribute() : nullptr,
-            wOut.isValid() ? wOut.getAttribute() : nullptr,
-            anyAwakeWrite ? awakeOut.getAttribute() : nullptr };
-        // Shared copy-on-write pages would race: a parallel pass hardens what it writes first.
-        if (end - begin >= kMinParallelWrite)
-            hardenWrittenPages(gdp, items, begin, end, written);
-
-        parallelForEach(end - begin, [&](size_t j) {
-            Box3DWriteItem &w = items[begin + j];
-            if (w.off == GA_INVALID_OFFSET)
-                return;
-            const GA_Offset        off = w.off;
-            const b3dop::BodyMove &mv  = st->moves[size_t(w.move)];
-
-            if (pOut.isValid()) pOut.set(off, UT_Vector3(float(mv.pos[0]), float(mv.pos[1]), float(mv.pos[2])));
-            if (qOut.isValid()) qOut.set(off, UT_QuaternionF(mv.rot[0], mv.rot[1], mv.rot[2], mv.rot[3]));
-            if (vOut.isValid()) vOut.set(off, UT_Vector3(w.lin[0], w.lin[1], w.lin[2]));
-            if (wOut.isValid()) wOut.set(off, UT_Vector3(w.ang[0], w.ang[1], w.ang[2]));
-            if (anyAwakeWrite && w.awakeState >= 0)
-            {
-                awakeOut.set(off, int(w.awakeState));
-                w.entry->awake = (w.awakeState != 0);
-            }
-
-            // Packed: the new 3x3 (the scale the sync read, the new rotation) is computed here and
-            // written in pass 3, to the primitive the last sync stored.
-            Box3DBodyMirror  &me     = *w.entry;
-            Box3DPackedWrite *pw     = w.packedIdx >= 0 ? &packedWrites[size_t(w.packedIdx)] : nullptr;
-            const bool        packed = anyPrims && me.packed && pw;
-            if (packed)
-            {
-                composePackedMatrix(mv.rot, me.rowScale, pw->newM3);
-                pw->primOff = GA_Offset(me.primOff);
-                pw->has     = true;
-                std::copy(pw->newM3, pw->newM3 + 9, me.m3);     // a skipped sync does not refresh it
-            }
-
-            // What the read path will see, so our own write does not look like an external edit:
-            // P through float; the rotation as written (poseDiffers allows for the float noise of
-            // a packed transform's round trip and for q vs -q). Non-finite P: Box3D's values.
-            Box3DBodyPose &mirror = me;
-            const bool hasRot = packed || qOut.isValid();       // else the read path sees identity
-            const float identity[4] = { 0, 0, 0, 1 };
-            std::copy(hasRot ? mv.rot : identity, (hasRot ? mv.rot : identity) + 4, mirror.rot);
-            b3dop::sanitizeQuat(mirror.rot);
-            for (int i = 0; i < 3; ++i)
-            {
-                mirror.lin[i] = vOut.isValid() ? w.lin[i] : 0.0f;
-                mirror.ang[i] = wOut.isValid() ? w.ang[i] : 0.0f;
-            }
-            if (!b3dop::storedPosition(mv.pos, mirror.pos))
-                std::copy(mv.pos, mv.pos + 3, mirror.pos);
-
-#ifdef BOX3DDOP_DEBUG
-            if (verifyReadback)
-            {
-                // BOX3DDOP_VERIFY_READBACK=1: read back; a difference poseDiffers sees would make
-                // the next scan treat our own write as an external edit.
-                Box3DBodyPose stored;
-                PackedInfo pk;
-                if (packed)
-                {
-                    pk.prim = static_cast<const GU_PrimPacked *>(gdp->getPrimitive(pw->primOff));
-                    double sc[3];
-                    splitPackedMatrix(pw->newM3, pk.rot, sc);
-                }
-                if (readPointState(gdp, a, off, pk, stored) && poseDiffers(stored, mirror))
-                {
-                    B3D_LOG("  READBACK MISMATCH object=%d point=%lld: predicted pos=(%.9g %.9g %.9g) rot=(%.9g %.9g %.9g %.9g) "
-                            "read pos=(%.9g %.9g %.9g) rot=(%.9g %.9g %.9g %.9g)",
-                            w.objectId, (long long)w.entry->pointId,
-                            mirror.pos[0], mirror.pos[1], mirror.pos[2],
-                            mirror.rot[0], mirror.rot[1], mirror.rot[2], mirror.rot[3],
-                            stored.pos[0], stored.pos[1], stored.pos[2],
-                            stored.rot[0], stored.rot[1], stored.rot[2], stored.rot[3]);
-                }
-            }
-#endif
-        }, kMinParallelWrite);
-
-        for (GA_Attribute *attr : written)
-            if (attr)
-                attr->bumpDataId();
-
-        // ---- pass 3 (serial): packed primitive rotation ----------------------
-        // Serial: the HDK does not document setLocalTransform as thread-safe.
-        bool wrotePacked = false;
-        for (size_t k = begin; k < end; ++k)
-        {
-            const Box3DWriteItem &w = items[k];
-            if (w.packedIdx < 0 || !packedWrites[size_t(w.packedIdx)].has)
-                continue;
-            const Box3DPackedWrite &pw = packedWrites[size_t(w.packedIdx)];
-            const GA_Primitive *raw = (pw.primOff >= 0 && pw.primOff < gdp->getNumPrimitiveOffsets())
-                                          ? gdp->getPrimitive(pw.primOff) : nullptr;
-            if (!raw || !GU_PrimPacked::isPackedPrimitive(*raw))
-            {
-                ++missing;          // topology changed without a new id
-                continue;
-            }
-            setLocal3(*static_cast<GU_PrimPacked *>(gdp->getPrimitive(pw.primOff)), pw.newM3);
-            wrotePacked = true;
-        }
-        // setLocalTransform does not mark the primitive list dirty; the HDK leaves that to us.
-        if (wrotePacked)
-            gdp->getPrimitiveList().bumpDataId();
+        missing += writeObjectResults(*st, gdp, begin, end);
     });
 
     // Re-record the fingerprints now that every lock is released.
