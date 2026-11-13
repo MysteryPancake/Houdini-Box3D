@@ -10,7 +10,8 @@ remove an item once it has been checked, and record anything new here rather tha
 **General**
 * No `SIM_*` code has CI; `tests/box3d_test.hiplc` is a manual scene. The plugin builds against the real HDK (Houdini
   22.0.479, MSVC, no warnings). The core tests pass, and so does every Houdini check (`checks_core.py`,
-  `checks_solver.py`, `checks_output.py`, `checks_constraints.py`, `checks_more.py`, `checks_extra.py`; Houdini
+  `checks_solver.py`, `checks_output.py`, `checks_constraints.py`, `checks_more.py`, `checks_extra.py`,
+  `checks_regress.py` with its baseline.json; Houdini
   22.0.479; the items they settled are no longer listed here). What no script can check: Escape mid-step, the
   viewport, motion blur, and how greyed-out parameters look.
 * An untouched object still skips its scan after a Box3D Data change elsewhere (debug log: `scan skipped`). (A Box3D

@@ -57,11 +57,18 @@ lists the real ones), not a plugin failure. Each test runs in its own hython pro
 and the rest still run; the `probe_*` tests isolate the parts of the `network` scene. Not in CI (needs Houdini).
 The tests are in `tests/houdini/checks_*.py` by area (core, solver / UI / caching,
 outputs / packed geometry, constraints / whole objects, more: SOP Solver / Multiple Solver scenes, Bullet and POP
-comparisons, extra: joint toggles, mixing, determinism, contacts, shapes and AutoFit against Bullet, bad input, timing), each with a `TESTS` dict the runner collects; helpers in
+comparisons, extra: joint toggles, mixing, determinism, contacts, shapes and AutoFit against Bullet, bad input, timing;
+regress: every joint type's defining motion, Bullet Soft, every kind of body, concave vs convex, and the baseline), each with a `TESTS` dict the runner collects; helpers in
 `tests/houdini/b3dtest.py`. A test function can carry `.env` (environment variables for its process, e.g.
 `HOUDINI_MAXTHREADS=1`). Each test's latest overall status (the worst of its results) is kept in
 `tests/houdini/out/last_results.json`, updated as each test finishes; `--failed` runs the tests whose last status was
 FAIL / ERROR / SETUP / CRASH plus any never run (`--info` adds INFO).
+
+The `baseline` test (`checks_regress.py`) simulates one fixed mixed scene and compares every piece's position and
+rotation on frame 48 with `tests/houdini/baseline.json` (1e-3): it catches any change of behaviour between versions of
+the plugin, Box3D or Houdini, including ones no other check looks at. The first run records the file (INFO); after an
+intended change, `run_tests.py baseline --update-baseline` records it again (commit the new file with the change).
+Changing `baseline_scene` also needs a new baseline.
 
 Core tests:
 

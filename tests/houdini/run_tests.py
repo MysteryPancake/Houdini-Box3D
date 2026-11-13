@@ -11,6 +11,7 @@ Run from the repository root, with the plugin built (build.bat copies it to the 
     hython tests/houdini/run_tests.py network --repeat 20   # for intermittent crashes
     hython tests/houdini/run_tests.py --failed        # only what failed (or never ran) last time
     hython tests/houdini/run_tests.py --failed --info # ... plus the INFO results
+    hython tests/houdini/run_tests.py baseline --update-baseline  # record baseline.json again
 
 On Windows, test_houdini.bat in the repository root finds Houdini and runs this.
 
@@ -41,12 +42,13 @@ import checks_core  # noqa: E402
 import checks_extra  # noqa: E402
 import checks_more  # noqa: E402
 import checks_output  # noqa: E402
+import checks_regress  # noqa: E402
 import checks_solver  # noqa: E402
 import review  # noqa: E402
 from b3dtest import Result, SetupError  # noqa: E402
 
 # Every test, in run order: module by module.
-MODULES = [checks_core, checks_solver, checks_output, checks_constraints, checks_more, checks_extra]
+MODULES = [checks_core, checks_solver, checks_output, checks_constraints, checks_more, checks_extra, checks_regress]
 TESTS = {}
 for module in MODULES:
     for name, fn in module.TESTS.items():
@@ -146,11 +148,16 @@ def main():
                         help="run only the tests whose last result was FAIL, ERROR, SETUP or CRASH, and tests that "
                              "have never run")
     parser.add_argument("--info", action="store_true", help="with --failed: also the tests whose last result was INFO")
+    parser.add_argument("--update-baseline", action="store_true",
+                        help="the baseline test records its result as the new baseline.json instead of comparing "
+                             "(after an intended change of behaviour)")
     parser.add_argument("--child", help=argparse.SUPPRESS)
     parser.add_argument("--result-file", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.child:
         return run_child(args.child, args.out, args.result_file)
+    if args.update_baseline:
+        os.environ[checks_regress.UPDATE_ENV] = "1"  # the test processes inherit it
     if args.list:
         for module in MODULES:
             print(f"[{module.__name__}]")
