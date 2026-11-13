@@ -148,21 +148,27 @@ def _wrap(text):
     return lines
 
 
-def _sticky(net, name, lines, above=True):
-    """A sticky note in net holding lines, placed above (or left of) its laid-out nodes."""
+def place_note_left(net, note, gap=1.0):
+    """Puts a sticky note to the left of every node in net, its top level with the highest node.
+    Uses the bounding box of all the nodes, so it never lands on one (children()[0] is not the
+    leftmost node). Same helper as examples/make_examples.py."""
+    nodes = net.children()
+    if not nodes:
+        note.setPosition(hou.Vector2(-gap - note.size()[0], 0))
+        return
+    left = min(n.position()[0] for n in nodes)
+    top = max(n.position()[1] + n.size()[1] for n in nodes)
+    note.setPosition(hou.Vector2(left - gap - note.size()[0], top - note.size()[1]))
+
+
+def _sticky(net, name, lines):
+    """A sticky note in net holding lines, placed to the left of its laid-out nodes."""
     note = net.createStickyNote(name)
     note.setText("\n".join(lines))
     width = max(6.0, min(18.0, 0.11 * max((len(s) for s in lines), default=20)))
     height = max(1.5, 0.22 * len(lines) + 0.6)
     note.setSize(hou.Vector2(width, height))
-    nodes = [n for n in net.children()]
-    if nodes:
-        xs = [n.position()[0] for n in nodes]
-        ys = [n.position()[1] + n.size()[1] for n in nodes]
-        if above:
-            note.setPosition(hou.Vector2(min(xs), max(ys) + 1.0))
-        else:
-            note.setPosition(hou.Vector2(min(xs) - width - 1.0, max(ys) - height))
+    place_note_left(net, note)
     return note
 
 
@@ -212,7 +218,7 @@ def tidy_for_review(test_name, test_fn, results):
     if hidden:
         lines += _wrap("Hidden (they only feed the simulations; turn their display flag on to see the "
                        "source geometry): " + ", ".join(hidden))
-    _sticky(obj, "about_this_test", lines, above=False)
+    _sticky(obj, "about_this_test", lines)
 
     for i, (n, moved, left) in enumerate(placed, 1):
         if n not in dopnets:
