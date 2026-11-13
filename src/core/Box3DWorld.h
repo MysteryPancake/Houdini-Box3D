@@ -155,16 +155,19 @@ struct MotionLocks
     bool operator!=(const MotionLocks &o) const { return !(*this == o); }
 };
 
-struct BodySettings
+// The settings of a body that can change while it lives: the solver compares two of these and calls only
+// the setters of Box3DWorld for what differs. Built from a point's attributes, else Box3D Data's values.
+// operator== compares every field exactly, except that two NaNs count as equal (so a NaN setting that
+// has not changed is not seen as a change).
+struct BodyProps
 {
-    enum class Type { Static, Kinematic, Dynamic };
-
-    Type  type           = Type::Dynamic;
-    float mass           = 1.0f;    // solver only: density = mass / shape volume
-    float density        = 1.0f;    // what Box3DWorld uses
-    bool  computeMass    = false;   // solver only: mass = density * volume instead
+    float mass           = 1.0f;    // `mass`; solver only: density = mass / shape volume
+    float density        = 1.0f;    // `density`: the shape density Box3DWorld uses (the solver passes mass / volume instead,
+                                    // unless computeMass)
+    bool  computeMass    = false;   // `computemass`; solver only: mass = density * volume instead
+    float inertiaScale   = 1.0f;    // `inertialtensorstiffness`; solver only: scales the inertia of the mass
     float friction       = 0.6f;
-    float restitution    = 0.0f;
+    float restitution    = 0.0f;    // `bounce`
     float rollingResistance = 0.0f;           // `rollingresistance`: 0 .. 1, slows rolling (see b3SurfaceMaterial)
     float tangentVelocity[3] = { 0, 0, 0 };   // `tangentvelocity`: conveyor belt speed, in the body's local space
     float linearDamping  = 0.0f;
@@ -172,15 +175,39 @@ struct BodySettings
     float gravityScale   = 1.0f;
     bool  contactRecycling = true;  // `contactrecycling`: this body's contacts may be recycled (see WorldSettings)
     bool  enableSleep    = true;    // `enablesleep`: this body may fall asleep
-    bool  startAwake     = true;    // `awake` at creation. A body that cannot sleep always starts awake
-    bool  startEnabled   = true;    // `enabled` at creation. A disabled body does not move or collide, and is never awake
-    bool  isBullet       = false;   // Box3D "bullet": continuous collision vs moving bodies too (`fastobject`)
+    bool  enabled        = true;    // `enabled`: a disabled body does not move or collide, and is never awake
+    bool  fastObject     = false;   // `fastobject`: Box3D "bullet", continuous collision vs moving bodies too
     bool  fastRotation   = false;   // `fastrotation`: no angular speed cap (B3_MAX_ROTATION per step); round bodies only
     float sleepThreshold = 0.05f;   // m/s
     float ccdThreshold   = 0.5f;    // `ccdthreshold` (Box3D safetyFactor): continuous collision once a step's motion
                                     // exceeds this times the body's thinnest extent. Box3D recommends 0.01 .. 0.5
     CollisionFilter filter;         // `collision_category` / `collision_mask` / `collision_group`
     MotionLocks     locks;          // `lock_linear` / `lock_angular`
+
+    bool operator==(const BodyProps &o) const
+    {
+        auto same = [](float a, float b) { return a == b || (a != a && b != b); };
+        return same(mass, o.mass) && same(density, o.density) && computeMass == o.computeMass &&
+               same(inertiaScale, o.inertiaScale) && same(friction, o.friction) &&
+               same(restitution, o.restitution) && same(rollingResistance, o.rollingResistance) &&
+               same(tangentVelocity[0], o.tangentVelocity[0]) && same(tangentVelocity[1], o.tangentVelocity[1]) &&
+               same(tangentVelocity[2], o.tangentVelocity[2]) &&
+               same(linearDamping, o.linearDamping) && same(angularDamping, o.angularDamping) &&
+               same(gravityScale, o.gravityScale) && contactRecycling == o.contactRecycling &&
+               enableSleep == o.enableSleep && enabled == o.enabled && fastObject == o.fastObject &&
+               fastRotation == o.fastRotation && same(sleepThreshold, o.sleepThreshold) &&
+               same(ccdThreshold, o.ccdThreshold) && filter == o.filter && locks == o.locks;
+    }
+    bool operator!=(const BodyProps &o) const { return !(*this == o); }
+};
+
+struct BodySettings
+{
+    enum class Type { Static, Kinematic, Dynamic };
+
+    Type      type = Type::Dynamic;
+    BodyProps props;                // what can change later
+    bool      startAwake = true;    // `awake` at creation. A body that cannot sleep always starts awake
 
     // Solver only:
     ShapeType defaultShape = ShapeType::Box;     // when `bullet_georep` is missing or unknown

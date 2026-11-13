@@ -114,26 +114,27 @@ SIM_Box3DData::toBodySettings() const
     if (shape >= 0 && shape <= 5)
         s.defaultShape = b3dop::ShapeType(shape);
 
-    s.mass           = static_cast<float>(getMass());
-    s.computeMass    = getComputeMass();
-    s.density        = static_cast<float>(getDensity());
-    s.friction       = static_cast<float>(getFriction());
-    s.restitution    = static_cast<float>(getBounce());
-    s.rollingResistance = static_cast<float>(getRollingResistance());
+    b3dop::BodyProps &p = s.props;
+    p.mass           = static_cast<float>(getMass());
+    p.computeMass    = getComputeMass();
+    p.density        = static_cast<float>(getDensity());
+    p.friction       = static_cast<float>(getFriction());
+    p.restitution    = static_cast<float>(getBounce());
+    p.rollingResistance = static_cast<float>(getRollingResistance());
     {
         const UT_Vector3 t = getTangentVelocity();
         for (int i = 0; i < 3; ++i)
-            s.tangentVelocity[i] = static_cast<float>(t(i));
+            p.tangentVelocity[i] = static_cast<float>(t(i));
     }
-    s.linearDamping  = static_cast<float>(getLinearDamping());
-    s.angularDamping = static_cast<float>(getAngularDamping());
-    s.gravityScale   = static_cast<float>(getGravityScale());
-    s.enableSleep    = getEnableSleep();
+    p.linearDamping  = static_cast<float>(getLinearDamping());
+    p.angularDamping = static_cast<float>(getAngularDamping());
+    p.gravityScale   = static_cast<float>(getGravityScale());
+    p.enableSleep    = getEnableSleep();
     s.startAwake     = !getStartAsleep();
-    s.isBullet       = getFastObject();
-    s.contactRecycling = getContactRecycling();
-    s.sleepThreshold = static_cast<float>(getSleepThreshold());
-    s.ccdThreshold   = static_cast<float>(getCcdThreshold());
+    p.fastObject     = getFastObject();
+    p.contactRecycling = getContactRecycling();
+    p.sleepThreshold = static_cast<float>(getSleepThreshold());
+    p.ccdThreshold   = static_cast<float>(getCcdThreshold());
     s.hullPerConnectedSet = getHullPerConnected();
     s.autoFit        = getAutoFit();
     s.flipMeshWinding = getFlipWinding();

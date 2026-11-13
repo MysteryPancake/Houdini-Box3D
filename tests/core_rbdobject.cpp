@@ -37,17 +37,17 @@ main()
     {
         const WholeObjectSetup s = rbdObjectSetup(RbdObjectSettings());
         const BodySettings d;
-        CHECK(s.node.computeMass == d.computeMass && s.node.mass == d.mass && s.node.density == d.density);
-        CHECK(s.node.friction == d.friction && s.node.restitution == d.restitution);
+        CHECK(s.node.props.computeMass == d.props.computeMass && s.node.props.mass == d.props.mass && s.node.props.density == d.props.density);
+        CHECK(s.node.props.friction == d.props.friction && s.node.props.restitution == d.props.restitution);
         CHECK(s.node.defaultShape == d.defaultShape && s.node.autoFit == d.autoFit);
-        CHECK(s.inertiaScale == 1.0f && !s.explicitShape);
+        CHECK(s.node.props.inertiaScale == 1.0f && !s.explicitShape);
     }
 
     // ---- an RBD Object as Houdini makes it ----
     {
         const WholeObjectSetup s = rbdObjectSetup(houdiniDefaults());
-        CHECK(s.node.computeMass && s.node.density == 1000.0f && s.node.mass == 1.0f);
-        CHECK(s.node.friction == 1.0f && s.node.restitution == 0.5f);
+        CHECK(s.node.props.computeMass && s.node.props.density == 1000.0f && s.node.props.mass == 1.0f);
+        CHECK(s.node.props.friction == 1.0f && s.node.props.restitution == 0.5f);
         CHECK(s.node.defaultShape == ShapeType::Convex && s.node.autoFit && !s.node.hullPerConnectedSet);
         CHECK(!s.explicitShape);
     }
@@ -59,12 +59,12 @@ main()
         r.friction = -1.0f; r.bounce = INFINITY;
         const WholeObjectSetup s = rbdObjectSetup(r);
         const BodySettings d;
-        CHECK(s.node.density == d.density && s.node.mass == d.mass && s.inertiaScale == 1.0f);
-        CHECK(s.node.friction == d.friction && s.node.restitution == d.restitution);
+        CHECK(s.node.props.density == d.props.density && s.node.props.mass == d.props.mass && s.node.props.inertiaScale == 1.0f);
+        CHECK(s.node.props.friction == d.props.friction && s.node.props.restitution == d.props.restitution);
         r = houdiniDefaults();
         r.inertiaStiffness = 2.5f;  r.computeMass = false;  r.mass = 40.0f;
         const WholeObjectSetup t = rbdObjectSetup(r);
-        CHECK(t.inertiaScale == 2.5f && !t.node.computeMass && t.node.mass == 40.0f);
+        CHECK(t.node.props.inertiaScale == 2.5f && !t.node.props.computeMass && t.node.props.mass == 40.0f);
     }
 
     // ---- shapes from Bullet Data ----
@@ -111,7 +111,7 @@ main()
         r.primS[0] = r.primS[1] = r.primS[2] = 0.5f;
         const WholeObjectSetup s = rbdObjectSetup(r);
         BodySettings b = s.node;
-        b.density = s.node.density;               // computemass: density as is
+        b.props.density = s.node.props.density;               // computemass: density as is
         const double p[3] = { 0, 5, 0 };
         const float  q[4] = { 0, 0, 0, 1 };
         const BodyHandle h = w.createBody(b, p, q);

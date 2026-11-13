@@ -150,7 +150,8 @@ recordFingerprintAfterWrite(Box3DSharedState &st, const SIM_Object &obj)
     if (!gdp)
         return;
     const PointAttrs a(gdp);
-    f->second.fp = makeFingerprint(gdp, a, f->second.fp.nodeType, f->second.fp.nodeHash);
+    Box3DSyncFingerprint &fp = f->second.fp;
+    fp = makeFingerprint(gdp, a, fp.nodeType, fp.nodeProps, fp.addImpact);
 }
 
 // Make the next sync scan the object, after a write the scan must act on (active, dead, deletions).

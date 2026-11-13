@@ -251,7 +251,7 @@ struct WholeObjectScan
     const double                   *m;          // geometry -> object space
     const double                   *pivot;
     const b3dop::WholeObjectSetup  &setup;
-    const Box3DBodyProps           &p;
+    const b3dop::BodyProps         &p;
     uint64_t                        sig;        // wholeObjectShapeSig
     const Box3DBodyPose            &cur;
     SyncCounts                     &c;
@@ -275,9 +275,11 @@ createWholeObjectBody(Box3DSharedState &st, uint64_t key, const WholeObjectScan 
     std::copy(s.pivot, s.pivot + 3, entry->pivot);
 
     const b3dop::BodySettings::Type type = entry->shapeless ? b3dop::BodySettings::Type::Static : node.type;
-    b3dop::BodySettings b = settingsFor(node, s.p, type);
-    b.density    = boxDensity(s.p, shapes.totalVolume);
-    b.startAwake = node.startAwake;
+    b3dop::BodySettings b = node;
+    b.type          = type;
+    b.props         = s.p;
+    b.props.density = boxDensity(s.p, shapes.totalVolume);
+    b.startAwake    = node.startAwake;
     entry->awake = b.startAwake;
     const b3dop::BodyHandle h = createBodyWithShapes(s.world, b, s.cur, shapes, entry->shapeless, s.p, true, *entry);
     if (!h)
@@ -302,7 +304,7 @@ updateWholeObjectBody(Box3DBodyMirror &entry, const WholeObjectScan &s)
 {
     b3dop::Box3DWorld &world = s.world;
     const b3dop::BodySettings &node = s.node();
-    const Box3DBodyProps &p = s.p;
+    const b3dop::BodyProps &p = s.p;
 
     // Geometry, transform, pivot or shape settings changed: new shapes on the same body.
     bool rebuilt = false;
@@ -310,8 +312,10 @@ updateWholeObjectBody(Box3DBodyMirror &entry, const WholeObjectScan &s)
     {
         BuiltShapes shapes = wholeObjectShapes(world, s.gdp, s.m, s.pivot, s.setup);
         world.destroyShapesByHandle(entry.handle);
-        b3dop::BodySettings b = settingsFor(node, p, entry.type);
-        b.density = boxDensity(p, shapes.totalVolume);
+        b3dop::BodySettings b = node;
+        b.type          = entry.type;
+        b.props         = p;
+        b.props.density = boxDensity(p, shapes.totalVolume);
         entry.shapeless = addShapes(world, entry.handle, b, shapes) == 0;
         applyBodyMass(world, entry.handle, p, shapes.totalVolume, false);    // even with none: clears Box3D's dirty mass
         entry.volume    = shapes.totalVolume;
@@ -389,8 +393,7 @@ syncWholeObject(Box3DSharedState &st, const SIM_Object &obj, const SIM_Geometry 
     wholeObjectPose(obj, gdp, m, entry, pivot, cur);
 
     PointAttrs none(gdp);           // build attributes left unbound: Box3D Data values only
-    Box3DBodyProps p = readDynamicProps(setup.node, none, GA_Offset(0));
-    p.inertiaScale = setup.inertiaScale;
+    const b3dop::BodyProps p = readDynamicProps(setup.node, none, GA_Offset(0));
     const WholeObjectScan scan{ st.world, gdp, m, pivot, setup, p, wholeObjectShapeSig(gdp, m, pivot, setup), cur, c };
 
     if (entry)

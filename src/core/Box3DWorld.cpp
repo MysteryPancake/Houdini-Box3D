@@ -382,16 +382,17 @@ cleanTangent(const float in[3], float out[3])
 b3ShapeDef
 shapeDefFor(const BodySettings &b, bool updateMass)
 {
+    const BodyProps &p = b.props;
     float tangent[3];
     b3ShapeDef def = b3DefaultShapeDef();
     def.updateBodyMass          = updateMass;     // false: the caller applies the mass afterwards
-    def.density                 = b.density;
-    def.baseMaterial.friction    = b.friction;
-    def.baseMaterial.restitution = b.restitution;
-    def.baseMaterial.rollingResistance = cleanRolling(b.rollingResistance);
-    cleanTangent(b.tangentVelocity, tangent);
+    def.density                 = p.density;
+    def.baseMaterial.friction    = p.friction;
+    def.baseMaterial.restitution = p.restitution;
+    def.baseMaterial.rollingResistance = cleanRolling(p.rollingResistance);
+    cleanTangent(p.tangentVelocity, tangent);
     def.baseMaterial.tangentVelocity   = makeVec3(tangent);
-    def.filter                  = toB3Filter(b.filter);
+    def.filter                  = toB3Filter(p.filter);
     def.enableHitEvents         = true;     // for the Impacts speed filter; costs nothing without a threshold
     return def;
 }
@@ -579,24 +580,25 @@ Box3DWorld::createBody(const BodySettings &body, const double position[3], const
     if (!isValid())
         return 0;
 
+    const BodyProps &p = body.props;
     b3BodyDef def = b3DefaultBodyDef();
     def.type           = toB3Type(body.type);
     def.position       = makePos(position);
     def.rotation       = makeQuat(rotationXYZW);
-    def.linearDamping  = body.linearDamping;
-    def.angularDamping = body.angularDamping;
-    def.gravityScale   = body.gravityScale;
-    def.enableSleep    = body.enableSleep;      // Box3D applies the world switch on top
+    def.linearDamping  = p.linearDamping;
+    def.angularDamping = p.angularDamping;
+    def.gravityScale   = p.gravityScale;
+    def.enableSleep    = p.enableSleep;         // Box3D applies the world switch on top
     def.isAwake        = body.startAwake;       // Box3D: a body that cannot sleep starts awake anyway
-    def.isEnabled      = body.startEnabled;
-    def.isBullet       = body.isBullet;
-    def.allowFastRotation = body.fastRotation;
-    def.enableContactRecycling = body.contactRecycling;
-    def.motionLocks = toB3Locks(body.locks);
-    if (body.sleepThreshold >= 0.0f && std::isfinite(body.sleepThreshold))
-        def.sleepThreshold = body.sleepThreshold;
-    if (body.ccdThreshold >= 0.0f && std::isfinite(body.ccdThreshold))      // Box3D asserts on negatives
-        def.safetyFactor = body.ccdThreshold;
+    def.isEnabled      = p.enabled;
+    def.isBullet       = p.fastObject;
+    def.allowFastRotation = p.fastRotation;
+    def.enableContactRecycling = p.contactRecycling;
+    def.motionLocks = toB3Locks(p.locks);
+    if (p.sleepThreshold >= 0.0f && std::isfinite(p.sleepThreshold))
+        def.sleepThreshold = p.sleepThreshold;
+    if (p.ccdThreshold >= 0.0f && std::isfinite(p.ccdThreshold))      // Box3D asserts on negatives
+        def.safetyFactor = p.ccdThreshold;
     def.userData       = userData;
 
     const b3BodyId bodyId = b3CreateBody(myImpl->worldId, &def);

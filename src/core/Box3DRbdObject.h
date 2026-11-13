@@ -44,7 +44,6 @@ struct RbdObjectSettings
 struct WholeObjectSetup
 {
     BodySettings node;                  // Box3D Data's defaults with the RBD Object's values on top
-    float        inertiaScale  = 1.0f;  // inertialtensorstiffness
     bool         explicitShape = false; // AutoFit off on a box / sphere / capsule: `spec`, not fitted
     ShapeSpec    spec;
 };
@@ -57,19 +56,20 @@ rbdObjectSetup(const RbdObjectSettings &r)
     auto isPositive = [](float v) { return v > 0.0f && std::isfinite(v); };
     auto isNonNeg   = [](float v) { return v >= 0.0f && std::isfinite(v); };
 
+    BodyProps &p = n.props;
     if (r.hasComputeMass)
-        n.computeMass = r.computeMass;
+        p.computeMass = r.computeMass;
     if (r.hasDensity && isPositive(r.density))
-        n.density = r.density;
+        p.density = r.density;
     if (r.hasMass && isPositive(r.mass))
-        n.mass = r.mass;
+        p.mass = r.mass;
     if (r.hasInertia && isPositive(r.inertiaStiffness))
-        out.inertiaScale = r.inertiaStiffness;
+        p.inertiaScale = r.inertiaStiffness;
 
     if (r.hasFriction && isNonNeg(r.friction))
-        n.friction = r.friction;
+        p.friction = r.friction;
     if (r.hasBounce && isNonNeg(r.bounce))
-        n.restitution = r.bounce;
+        p.restitution = r.bounce;
 
     // Unknown names (cylinder, plane) keep the default shape, as for points.
     ShapeType shape = n.defaultShape;

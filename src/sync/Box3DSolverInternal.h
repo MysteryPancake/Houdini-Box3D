@@ -339,15 +339,15 @@ struct GeorepLookup
 bool readPointState(const GU_Detail *gdp, const PointAttrs &a, GA_Offset off,
                const PackedInfo &pk, Box3DBodyPose &out, bool *badVelocity = nullptr);
 bool poseDiffers(const Box3DBodyPose &a, const Box3DBodyPose &b);
-Box3DSyncFingerprint makeFingerprint(const GU_Detail *gdp, const PointAttrs &a, int nodeType, uint64_t nodeHash);
-Box3DBodyProps readDynamicProps(const b3dop::BodySettings &node, const PointAttrs &a, GA_Offset off);
-float boxDensity(const Box3DBodyProps &p, float volume);
-float effectiveMass(const Box3DBodyProps &p, float volume);
+Box3DSyncFingerprint makeFingerprint(const GU_Detail *gdp, const PointAttrs &a, int nodeType,
+                                     const b3dop::BodyProps &nodeProps, bool addImpact);
+b3dop::BodyProps readDynamicProps(const b3dop::BodySettings &node, const PointAttrs &a, GA_Offset off);
+float boxDensity(const b3dop::BodyProps &p, float volume);
+float effectiveMass(const b3dop::BodyProps &p, float volume);
 b3dop::BodySettings::Type wantedType(const b3dop::BodySettings &node, bool active, bool animated, bool shapeless);
-void applyBodyMass(b3dop::Box3DWorld &world, b3dop::BodyHandle h, const Box3DBodyProps &p, float volume,
+void applyBodyMass(b3dop::Box3DWorld &world, b3dop::BodyHandle h, const b3dop::BodyProps &p, float volume,
               bool setShapeDensity = true);
 bool startAwakeFor(const b3dop::BodySettings &node, const PointAttrs &a, GA_Offset off);
-b3dop::BodySettings settingsFor(const b3dop::BodySettings &node, const Box3DBodyProps &p, b3dop::BodySettings::Type type);
 
 // What every point of one syncObject() scan shares.
 struct ScanContext
@@ -377,7 +377,7 @@ struct ScanContext
     }
 
     // The point's changeable settings.
-    Box3DBodyProps props(GA_Offset off) const { return readDynamicProps(node, a, off); }
+    b3dop::BodyProps props(GA_Offset off) const { return readDynamicProps(node, a, off); }
 };
 
 // A point's shapes, plus their signature and scale key.
@@ -392,9 +392,9 @@ struct ShapePlan
 
 int addShapes(b3dop::Box3DWorld &world, b3dop::BodyHandle h, const b3dop::BodySettings &b, const BuiltShapes &shapes);
 b3dop::BodyHandle createBodyWithShapes(b3dop::Box3DWorld &world, const b3dop::BodySettings &b, const Box3DBodyPose &pose,
-                                       const BuiltShapes &shapes, bool shapeless, const Box3DBodyProps &p, bool giveVelocity,
+                                       const BuiltShapes &shapes, bool shapeless, const b3dop::BodyProps &p, bool giveVelocity,
                                        Box3DBodyMirror &entry);
-unsigned applyPropChanges(b3dop::Box3DWorld &world, Box3DBodyMirror &e, const Box3DBodyProps &p, bool shapesRebuilt);
+unsigned applyPropChanges(b3dop::Box3DWorld &world, Box3DBodyMirror &e, const b3dop::BodyProps &p, bool shapesRebuilt);
 
 struct SyncCounts
 {

@@ -128,7 +128,7 @@ int main()
 
         BodySettings dyn;
         const ShapeSpec heavy = makeShapeSpec(ShapeType::Box, 1.0f, one);
-        dyn.density = 50.0f / shapeVolume(heavy);
+        dyn.props.density = 50.0f / shapeVolume(heavy);
         const double hp[3] = { -2, 3, 0 }, sp[3] = { 2, 3, 0 };
         CHECK(pw.addBody(makeBodyKey(1, 1), dyn, hp, qid));
         CHECK(pw.addShape(makeBodyKey(1, 1), heavy));
@@ -433,7 +433,7 @@ int main()
         float offVol = 0.0f;
         const HullId ho = hw.createHull(offCube.data(), 8, &offVol);
         CHECK(ho != 0);
-        BodySettings db;  db.density = 4.0f;
+        BodySettings db;  db.props.density = 4.0f;
         const double sp[3] = { 0, 3, 0 };
         CHECK(hw.addBody(10, db, sp, qid));
         CHECK(hw.setBodyDensity(10, 40.0f / offVol));            // mass attribute 40 -> density
@@ -744,7 +744,7 @@ int main()
 
         // user data comes back in the move events (the solver maps an event to its mirror entry with it)
         int tag = 7;
-        BodySettings dyn;  dyn.density = 2.0f;
+        BodySettings dyn;  dyn.props.density = 2.0f;
         const double dp[3] = { 0, 3, 0 };
         const BodyHandle falling = hw.createBody(dyn, dp, qid, &tag);
         ShapeSpec cubeSpec;  cubeSpec.type = ShapeType::Box;
@@ -782,7 +782,7 @@ int main()
         const HullId hB = hw.createHull(pB.data(), 8, &vB);
         const HullId hC = hw.createHull(pC.data(), 8, &vC);
         CHECK(hA && hB && hC);
-        BodySettings dense;  dense.density = 5.0f;
+        BodySettings dense;  dense.props.density = 5.0f;
         const double lp[3] = { 6, 3, 0 };
 
         CHECK(hw.addBody(500, dense, lp, qid) && hw.addHullShape(500, hA) && hw.addHullShape(500, hB) &&
@@ -919,7 +919,7 @@ int main()
         CHECK(big && std::fabs(hv - 8.0f) < 1e-3f);
         dw.destroyShapesByHandle(b);
         CHECK(dw.shapeCountByHandle(b) == 0);
-        BodySettings dense = dyn;  dense.density = 7.0f / 8.0f;      // keep mass 7
+        BodySettings dense = dyn;  dense.props.density = 7.0f / 8.0f;      // keep mass 7
         CHECK(dw.createHullShape(b, dense, big, false));
         dw.applyMassFromShapes(b);
         CHECK(dw.shapeCountByHandle(b) == 1);
@@ -967,15 +967,15 @@ int main()
         const float qid[4] = { 0, 0, 0, 1 };
         ShapeSpec cube;
         // linear Y locked: gravity doesn't move it; X still moves
-        BodySettings ly;  ly.locks.linear[1] = true;
+        BodySettings ly;  ly.props.locks.linear[1] = true;
         const double p0[3] = { 0, 5, 0 };
         const BodyHandle a = lw.createBody(ly, p0, qid);
         CHECK(lw.createShape(a, ly, cube));
-        CHECK(lw.motionLocksByHandle(a) == ly.locks);
+        CHECK(lw.motionLocksByHandle(a) == ly.props.locks);
         const float vx[3] = { 2, 0, 0 }, w0[3] = { 0, 0, 0 };
         CHECK(lw.setVelocityByHandle(a, vx, w0));
         // angular X and Z locked, spun about all three: only Y rotation survives
-        BodySettings az;  az.locks.angular[0] = az.locks.angular[2] = true;  az.gravityScale = 0.0f;
+        BodySettings az;  az.props.locks.angular[0] = az.props.locks.angular[2] = true;  az.props.gravityScale = 0.0f;
         const double p1[3] = { 10, 5, 0 };
         const BodyHandle b = lw.createBody(az, p1, qid);
         CHECK(lw.createShape(b, az, cube));
@@ -1009,8 +1009,8 @@ int main()
         CHECK(rw.create(WorldSettings()));
         const float qid[4] = { 0, 0, 0, 1 };
         ShapeSpec ball;  ball.type = ShapeType::Sphere;  ball.radius = 0.5f;
-        BodySettings capped;  capped.gravityScale = 0.0f;
-        BodySettings fast = capped;  fast.fastRotation = true;
+        BodySettings capped;  capped.props.gravityScale = 0.0f;
+        BodySettings fast = capped;  fast.props.fastRotation = true;
         const double pa[3] = { 0, 0, 0 }, pb[3] = { 5, 0, 0 };
         const BodyHandle a = rw.createBody(capped, pa, qid), b = rw.createBody(fast, pb, qid);
         CHECK(rw.createShape(a, capped, ball) && rw.createShape(b, fast, ball));
@@ -1031,10 +1031,66 @@ int main()
         std::printf("fast rotation checks done\n");
     }
 
+    // ---- BodyProps::operator== ---------------------------------------------------
+    // The solver detects changes with it, so a field it forgets would never be noticed: change each
+    // one alone and expect a difference.
+    {
+        using namespace b3dop;
+        const BodyProps base;
+        CHECK(base == BodyProps() && !(base != BodyProps()));
+        CHECK(base == BodySettings().props);
+        const std::vector<void (*)(BodyProps &)> edits = {
+            [](BodyProps &p) { p.mass += 1.0f; },
+            [](BodyProps &p) { p.density += 1.0f; },
+            [](BodyProps &p) { p.computeMass = !p.computeMass; },
+            [](BodyProps &p) { p.inertiaScale += 1.0f; },
+            [](BodyProps &p) { p.friction += 1.0f; },
+            [](BodyProps &p) { p.restitution += 1.0f; },
+            [](BodyProps &p) { p.rollingResistance += 1.0f; },
+            [](BodyProps &p) { p.tangentVelocity[0] += 1.0f; },
+            [](BodyProps &p) { p.tangentVelocity[1] += 1.0f; },
+            [](BodyProps &p) { p.tangentVelocity[2] += 1.0f; },
+            [](BodyProps &p) { p.linearDamping += 1.0f; },
+            [](BodyProps &p) { p.angularDamping += 1.0f; },
+            [](BodyProps &p) { p.gravityScale += 1.0f; },
+            [](BodyProps &p) { p.contactRecycling = !p.contactRecycling; },
+            [](BodyProps &p) { p.enableSleep = !p.enableSleep; },
+            [](BodyProps &p) { p.enabled = !p.enabled; },
+            [](BodyProps &p) { p.fastObject = !p.fastObject; },
+            [](BodyProps &p) { p.fastRotation = !p.fastRotation; },
+            [](BodyProps &p) { p.sleepThreshold += 1.0f; },
+            [](BodyProps &p) { p.ccdThreshold += 1.0f; },
+            [](BodyProps &p) { p.filter.category = 1; },
+            [](BodyProps &p) { p.filter.mask = 1; },
+            [](BodyProps &p) { p.filter.group = 1; },
+            [](BodyProps &p) { p.locks.linear[2] = true; },
+            [](BodyProps &p) { p.locks.angular[1] = true; },
+        };
+        for (size_t i = 0; i < edits.size(); ++i)
+        {
+            BodyProps changed = base;
+            edits[i](changed);
+            if (!(changed != base && !(changed == base)))
+                std::printf("BodyProps edit %zu not detected\n", i);
+            CHECK(changed != base && !(changed == base));
+        }
+        // a NaN setting equals itself (an unchanged NaN is no change) but differs from a number
+        const float nan = std::nanf("");
+        BodyProps na = base, nb = base;
+        na.friction = nb.friction = nan;
+        na.tangentVelocity[1] = nb.tangentVelocity[1] = nan;
+        CHECK(na == nb && !(na != nb));
+        nb.friction = 0.6f;
+        CHECK(na != nb);
+        // 25 independent edits: one per scalar, and the filter and lock members one by one
+        CHECK(edits.size() == 25);
+        std::printf("BodyProps comparison checks done\n");
+    }
+
     // ---- CCD threshold (Box3D safetyFactor) --------------------------------------
     {
         using namespace b3dop;
-        CHECK(BodySettings().ccdThreshold == 0.5f);         // Box3D's default
+        CHECK(BodySettings().props.ccdThreshold == 0.5f);         // Box3D's default
         // a fast cube at a thin static wall: swept (default) it stops; with a huge threshold it is
         // never "fast", so it tunnels straight through
         auto run = [&](float threshold, bool liveSet) {
@@ -1045,8 +1101,8 @@ int main()
             ShapeSpec ws;  ws.halfExtents[0] = 0.05f;  ws.halfExtents[1] = ws.halfExtents[2] = 5.0f;
             const double wp[3] = { 0, 0, 0 };
             CHECK(cw.createShape(cw.createBody(wall, wp, qid), wall, ws));
-            BodySettings fast;  fast.gravityScale = 0.0f;
-            if (!liveSet) fast.ccdThreshold = threshold;
+            BodySettings fast;  fast.props.gravityScale = 0.0f;
+            if (!liveSet) fast.props.ccdThreshold = threshold;
             ShapeSpec cube;  cube.halfExtents[0] = cube.halfExtents[1] = cube.halfExtents[2] = 0.1f;
             const double cp[3] = { -2, 0, 0 };
             const BodyHandle c = cw.createBody(fast, cp, qid);
@@ -1068,7 +1124,7 @@ int main()
             CHECK(cw.create(WorldSettings()));
             const float qid[4] = { 0, 0, 0, 1 };
             const double p0[3] = { 0, 0, 0 };
-            BodySettings b;  b.ccdThreshold = -1.0f;            // invalid: Box3D's default, no assert
+            BodySettings b;  b.props.ccdThreshold = -1.0f;            // invalid: Box3D's default, no assert
             const BodyHandle h = cw.createBody(b, p0, qid);
             CHECK(std::fabs(cw.ccdThresholdByHandle(h) - 0.5f) < 1e-6f);
             cw.setCcdThresholdByHandle(h, 0.1f);
@@ -1097,7 +1153,7 @@ int main()
         const BodyHandle gh = fw.createBody(st, gp, qid);
         CHECK(fw.createShape(gh, st, gs));
         ShapeSpec cube;
-        BodySettings dd;  dd.filter = debris;
+        BodySettings dd;  dd.props.filter = debris;
         const double p1[3] = { 0, 0.5, 0 }, p2[3] = { 0, 3, 0 };
         const BodyHandle d1 = fw.createBody(dd, p1, qid), d2 = fw.createBody(dd, p2, qid);
         CHECK(fw.createShape(d1, dd, cube) && fw.createShape(d2, dd, cube));
@@ -1119,8 +1175,8 @@ int main()
             CHECK(gw.create(WorldSettings()));
             const BodyHandle g2 = gw.createBody(st, gp, qid);
             CHECK(gw.createShape(g2, st, gs));
-            BodySettings neg;  neg.filter.group = -3;
-            BodySettings pos;  pos.filter.group = 4;  pos.filter.mask = 0;   // a zero mask hits nothing...
+            BodySettings neg;  neg.props.filter.group = -3;
+            BodySettings pos;  pos.props.filter.group = 4;  pos.props.filter.mask = 0;   // a zero mask hits nothing...
             const double a1[3] = { 0, 0.5, 0 }, a2[3] = { 0, 3, 0 }, b1[3] = { 5, 0.5, 0 }, b2[3] = { 5, 3, 0 };
             const BodyHandle n1 = gw.createBody(neg, a1, qid), n2 = gw.createBody(neg, a2, qid);
             const BodyHandle q1 = gw.createBody(pos, b1, qid), q2 = gw.createBody(pos, b2, qid);
@@ -1187,7 +1243,7 @@ int main()
         CHECK(std::fabs(mw.sleepThresholdByHandle(b) - 0.2f) < 1e-6f);
         mw.setSleepThresholdByHandle(b, -1.0f);
         CHECK(mw.sleepThresholdByHandle(b) == def);
-        BodySettings sleepy;  sleepy.sleepThreshold = 0.5f;
+        BodySettings sleepy;  sleepy.props.sleepThreshold = 0.5f;
         const double ps[3] = { -5, 10, 0 };
         const BodyHandle sb = mw.createBody(sleepy, ps, qid);
         CHECK(sb && std::fabs(mw.sleepThresholdByHandle(sb) - 0.5f) < 1e-6f);
@@ -1400,7 +1456,7 @@ int main()
         // per body: off at creation means this body's contacts are never recycled ...
         KeyedWorld pw;
         BodyHandle pbox = 0;
-        BodySettings noRec = dyn;  noRec.contactRecycling = false;
+        BodySettings noRec = dyn;  noRec.props.contactRecycling = false;
         CHECK(pw.create(ws) && setup(pw, noRec, pbox));
         CHECK(!pw.contactRecyclingByHandle(pbox));
         settle(pw, 120);
@@ -1474,8 +1530,8 @@ int main()
         for (int k = 0; k < 2; ++k)
         {
             KeyedWorld rw;
-            BodySettings ballBody;  ballBody.friction = 0.6f;
-            ballBody.rollingResistance = k == 0 ? 0.0f : 0.3f;
+            BodySettings ballBody;  ballBody.props.friction = 0.6f;
+            ballBody.props.rollingResistance = k == 0 ? 0.0f : 0.3f;
             CHECK(rw.create(ws));
             const BodyHandle g = rw.createBody(stat, gp, qid);
             const double bp[3] = { 0, 0.5, 0 };
@@ -1485,7 +1541,7 @@ int main()
             CHECK(rw.setVelocityByHandle(s, lin, ang));
             float rolling = 0, tv[3];
             CHECK(rw.getSurfaceByHandle(s, rolling, tv));
-            CHECK(rolling == ballBody.rollingResistance);
+            CHECK(rolling == ballBody.props.rollingResistance);
             for (int i = 0; i < 180; ++i) rw.step(dt);
             float l2[3], a2[3];  double p2[3];  float q2[4];
             CHECK(rw.getVelocityByHandle(s, l2, a2) && rw.getTransformByHandle(s, p2, q2));
@@ -1501,8 +1557,8 @@ int main()
         {
             KeyedWorld cw;
             BodySettings bad = stat;
-            bad.rollingResistance = -1.0f;
-            bad.tangentVelocity[0] = std::nanf("");
+            bad.props.rollingResistance = -1.0f;
+            bad.props.tangentVelocity[0] = std::nanf("");
             CHECK(cw.create(ws));
             const BodyHandle h = cw.createBody(bad, gp, qid);
             CHECK(h && cw.createShape(h, bad, slab));
@@ -1525,7 +1581,7 @@ int main()
         auto beltRun = [&](const float beltRot[4], const float tangent[3], int steps, float lin[3]) {
             KeyedWorld cw;
             BodySettings belt = stat;
-            for (int i = 0; i < 3; ++i) belt.tangentVelocity[i] = tangent[i];
+            for (int i = 0; i < 3; ++i) belt.props.tangentVelocity[i] = tangent[i];
             CHECK(cw.create(ws));
             const BodyHandle g = cw.createBody(belt, gp, beltRot);
             const double bp[3] = { 0, 0.5, 0 };
@@ -1607,8 +1663,8 @@ int main()
             ws.isotropicInertiaTolerance = 0.5f;
             KeyedWorld sw;
             CHECK(sw.create(ws));
-            BodySettings g;  g.type = BodySettings::Type::Static;  g.restitution = 0.0f;
-            BodySettings ball;  ball.restitution = 0.9f;
+            BodySettings g;  g.type = BodySettings::Type::Static;  g.props.restitution = 0.0f;
+            BodySettings ball;  ball.props.restitution = 0.9f;
             CHECK(sw.addBody(1, g, gpos, qid2));
             CHECK(sw.addBoxShape(1, gh2));
             CHECK(sw.addBody(2, ball, spos, qid2));
@@ -1741,13 +1797,13 @@ int main()
         CHECK(sw.getTransformByHandle(a, p, q) && p[1] < 4.5);
 
         // a body that may not sleep starts awake whatever startAwake says (Box3D's rule)
-        BodySettings never = asleep;  never.enableSleep = false;
+        BodySettings never = asleep;  never.props.enableSleep = false;
         const BodyHandle n = sw.createBody(never, hi, qid);
         CHECK(n && sw.createShape(n, never, cube));
         CHECK(sw.isAwakeByHandle(n) && !sw.isSleepEnabledByHandle(n));
 
         // starts disabled: no motion, never awake; enabling makes it a normal awake body
-        BodySettings off;  off.startEnabled = false;
+        BodySettings off;  off.props.enabled = false;
         const BodyHandle d = sw.createBody(off, hi, qid);
         CHECK(d && sw.createShape(d, off, cube));
         CHECK(!sw.isEnabledByHandle(d) && !sw.isAwakeByHandle(d));

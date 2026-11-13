@@ -71,7 +71,7 @@ public:
     {
         Entry *e = find(id);
         if (e)
-            e->settings.density = density;
+            e->settings.props.density = density;
         return e != nullptr;
     }
 

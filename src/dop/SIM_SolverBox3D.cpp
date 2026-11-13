@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <mutex>
 #include <string>
+#include <unordered_set>
 
 using namespace box3dsolver;
 
@@ -175,14 +176,25 @@ SIM_SolverBox3D::currentWorldSettings() const
 
 SIM_Solver::SIM_Result
 SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
-                                      SIM_ObjectArray &objects,
-                                      SIM_ObjectArray & /*newobjects*/,
+                                      SIM_ObjectArray &allObjects,
+                                      SIM_ObjectArray &newobjects,
                                       SIM_ObjectArray & /*feedbacktoobjects*/,
                                       const SIM_Time &timestep)
 {
     // Start or end of the step: canContinue() does not care.
     const double now = engine.getSimulationTime();
     const double dt  = timestep;
+
+    // Objects created this timestep keep their initial state: they are left out of the whole step (no body,
+    // no write-back) and are solved from the next one. Works whether or not `newobjects` is also
+    // part of `allObjects`.
+    std::unordered_set<int> newIds;
+    for (exint i = 0; i < newobjects.entries(); ++i)
+        newIds.insert(newobjects(i)->getObjectId());
+    SIM_ObjectArray objects;
+    for (exint i = 0; i < allObjects.entries(); ++i)
+        if (newIds.find(allObjects(i)->getObjectId()) == newIds.end())
+            objects.append(allObjects(i));
 
     if (objects.entries() == 0)
         return SIM_SOLVER_SUCCESS;

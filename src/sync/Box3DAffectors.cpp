@@ -165,7 +165,7 @@ uint64_t
 affectorSignature(const GU_Detail *gdp, const AffectorInput &in)
 {
     uint64_t sig = geometryIdentity(gdp, /*withUniqueId=*/false);
-    const float mat[3] = { in.body.friction, in.body.restitution, in.body.flipMeshWinding ? 1.0f : 0.0f };
+    const float mat[3] = { in.body.props.friction, in.body.props.restitution, in.body.flipMeshWinding ? 1.0f : 0.0f };
     sig = b3dop::mixHash(sig, b3dop::hashFloats(mat, 3));
     sig = b3dop::mixHash(sig, in.rigid ? 1 : 2);
     if (!in.rigid)
@@ -188,13 +188,13 @@ updateAffector(Box3DSharedState &st, Box3DAffectorBody &ab, const AffectorInput 
 
     // Rolling resistance and conveyor velocity are not in the signature: a change (an animated
     // belt speed) updates the shapes instead of rebuilding the mesh.
-    const b3dop::BodySettings &body = in.body;
-    if (ab.rolling != body.rollingResistance ||
-        !std::equal(ab.tangent, ab.tangent + 3, body.tangentVelocity))
+    const b3dop::BodyProps &props = in.body.props;
+    if (ab.rolling != props.rollingResistance ||
+        !std::equal(ab.tangent, ab.tangent + 3, props.tangentVelocity))
     {
-        st.world.setSurfaceByHandle(ab.handle, body.rollingResistance, body.tangentVelocity);
-        ab.rolling = body.rollingResistance;
-        b3dop::copy3(ab.tangent, body.tangentVelocity);
+        st.world.setSurfaceByHandle(ab.handle, props.rollingResistance, props.tangentVelocity);
+        ab.rolling = props.rollingResistance;
+        b3dop::copy3(ab.tangent, props.tangentVelocity);
     }
     if (!in.rigid)
         return;
@@ -291,8 +291,8 @@ buildAffector(Box3DSharedState &st, Box3DAffectorBody &ab, int objectId, const G
         return;
     }
     ab.handle = h;
-    ab.rolling = body.rollingResistance;
-    b3dop::copy3(ab.tangent, body.tangentVelocity);
+    ab.rolling = body.props.rollingResistance;
+    b3dop::copy3(ab.tangent, body.props.tangentVelocity);
     b3dop::copy3(ab.pos, bodyPos);
     b3dop::copy4(ab.rot, bodyRot);
     b3dop::copy3(ab.scale, bodyScale);

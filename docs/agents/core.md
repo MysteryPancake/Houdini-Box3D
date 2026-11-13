@@ -11,6 +11,9 @@ handle; the solver keeps handles in the mirror and erases entries with their bod
 **Handles only.** `createBody`, `createShape` / `createHullShape` (taking the caller's `BodySettings`), `destroyBody`,
 `setTypeByHandle` / `typeByHandle` and the `*ByHandle` calls touch no hash map. Caller-chosen ids (`addBody`,
 `addShape`, `removeBody`, ...) live in `tests/KeyedWorld.h`, a test-only subclass built on the public handle API.
+`BodySettings` is the type, the start-awake flag and the solver-only shape options around a `BodyProps`: the settings
+that can change on a live body (material, damping, sleep, filter, locks, ...), with an exact `operator==` so a caller
+can compare two and call only the setters for what differs.
 
 **Mass.** A shape add recomputes the mass unless `updateMass` is false. The solver always passes false and then calls
 `applyMassByHandle` once (required before the next step): it sets every shape's density, applies the mass from the
@@ -36,7 +39,7 @@ accepts all of them on a disabled body (proxies are only touched when they exist
 `SetMaximumLinearSpeed`); `workerCount` (parallel tasks per step) is fixed at creation and needs a new world.
 
 **Collision filtering.** Box3D's own `b3Filter`, nothing custom. `CollisionFilter` (`Box3DWorld.h`: category, mask,
-group; defaults every bit / every bit / 0, Box3D's `B3_DEFAULT_*_BITS`) lives in `BodySettings::filter`; `shapeDefFor`
+group; defaults every bit / every bit / 0, Box3D's `B3_DEFAULT_*_BITS`) lives in `BodyProps::filter`; `shapeDefFor`
 puts it on every shape (`toB3Filter`) and Box3D checks pairs inline in its broad phase. `setFilterByHandle` calls
 `b3Shape_SetFilter(..., invokeContacts = true)` on each shape, which resets the proxy (dropping contacts that no longer
 pass) and is a no-op for an unchanged filter. No custom filter callback, no shape user data.

@@ -31,32 +31,6 @@ struct Box3DBodyPose
     float  ang[3] = { 0, 0, 0 };      // radians per second
 };
 
-// Settings that may change during the simulation, as last applied (attribute, else the Box3D
-// Data value). A scan calls only the setters for what differs.
-struct Box3DBodyProps
-{
-    float mass           = 1.0f;      // `mass`; Box3D gets density = mass / shape volume
-    float friction       = 0.6f;      // `friction`
-    float restitution    = 0.0f;      // `bounce`
-    float rollingResistance = 0.0f;   // `rollingresistance`
-    float tangentVelocity[3] = { 0, 0, 0 };   // `tangentvelocity`
-    float linearDamping  = 0.0f;      // `lineardamping`
-    float angularDamping = 0.0f;      // `angulardamping`
-    float gravityScale   = 1.0f;      // `gravityscale`
-    bool  enableSleep    = true;      // `enablesleep`
-    bool  enabled        = true;      // `enabled`: 0 leaves the body out of the simulation
-    bool  computeMass    = false;     // `computemass`
-    float density        = 1000.0f;   // `density`
-    float inertiaScale   = 1.0f;      // `inertialtensorstiffness`
-    float sleepThreshold = 0.05f;     // `sleepthreshold`
-    float ccdThreshold   = 0.5f;      // `ccdthreshold`
-    bool  fastObject     = false;     // `fastobject`
-    bool  fastRotation   = false;     // `fastrotation`
-    bool  contactRecycling = true;    // `contactrecycling`
-    b3dop::CollisionFilter filter;    // `collision_category` / `collision_mask` / `collision_group`
-    b3dop::MotionLocks     locks;     // `lock_linear` / `lock_angular`
-};
-
 struct Box3DObjectSync;
 
 struct Box3DBodyMirror : Box3DBodyPose
@@ -64,8 +38,9 @@ struct Box3DBodyMirror : Box3DBodyPose
     // Overwrites the pose part only (position, orientation, velocities), leaving the rest as is.
     void setPose(const Box3DBodyPose &pose) { static_cast<Box3DBodyPose &>(*this) = pose; }
 
-    // What the body was built with, so a scan can tell what changed.
-    Box3DBodyProps props;
+    // The settings the body was built with or last given (attribute, else the Box3D Data value), so a
+    // scan calls only the setters for what differs.
+    b3dop::BodyProps props;
     float    volume    = 0.0f;        // total shape volume
     uint64_t shapeSig  = 0;           // a rebuild giving the same signature is a no-op
     bool     shapeless = false;       // `none`, or a rebuild left no shape: always static
@@ -177,7 +152,7 @@ struct Box3DSyncFingerprint
 {
     static constexpr GA_DataId kNoId = GA_DataId(-1);   // attribute absent
 
-    // Prop markers (kPropAttribNames in Box3DAttribNames.h, primsId, nodeHash): when any
+    // Prop markers (kPropAttribNames in Box3DAttribNames.h, primsId, nodeProps, addImpact): when any
     // changed, the scan also compares every body's settings. The count comes from that table.
     static constexpr int kNumPropIds = int(std::size(box3dsolver::kPropAttribNames));
     using PropIds = std::array<GA_DataId, kNumPropIds>;
@@ -189,7 +164,8 @@ struct Box3DSyncFingerprint
     int       nodeType = -1;        // Box3D Data body type
     PropIds   propIds  = filledPropIds();
     GA_DataId primsId  = kNoId;     // primitive list (packed transforms)
-    uint64_t  nodeHash = 0;         // Box3D Data values that change existing bodies
+    b3dop::BodyProps nodeProps;     // Box3D Data values that change existing bodies
+    bool      addImpact = false;    // Box3D Data "Add Impact Data"
 
     static PropIds filledPropIds()
     {
@@ -199,7 +175,7 @@ struct Box3DSyncFingerprint
     }
     bool samePropMarkers(const Box3DSyncFingerprint &o) const
     {
-        return propIds == o.propIds && primsId == o.primsId && nodeHash == o.nodeHash;
+        return propIds == o.propIds && primsId == o.primsId && nodeProps == o.nodeProps && addImpact == o.addImpact;
     }
     bool operator==(const Box3DSyncFingerprint &o) const
     {

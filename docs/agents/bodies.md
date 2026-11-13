@@ -8,7 +8,8 @@ Target behaviour is Houdini's Bullet solver. A new body is built from the same r
 equal to what its body was built with.
 
 * **Settings** (`readDynamicProps` -> `applyPropChanges`): the effective (attribute, else Box3D Data) values in
-  `Box3DBodyProps`, compared with `entry->props`; only the setters for what differs run. Compared only when `checkProps`
+  `b3dop::BodyProps` (core, `Box3DWorld.h`; `BodySettings::props` embeds it), compared with `entry->props`; only the
+  setters for what differs run. Compared only when `checkProps`
   (prop markers changed, none recorded yet, or deforming bodies); a scan triggered by an animated `P` alone does not.
   * Mass, `computemass`, `density`, `inertialtensorstiffness` -> `applyBodyMass` (same as a fresh build).
   * Sleep and enable state: `enablesleep` (else the node) -> `setSleepEnabledByHandle`, live; `enabled` ->
@@ -34,21 +35,21 @@ equal to what its body was built with.
   `applyBodyMass` calls `applyMassByHandle(..., comAtOrigin = true, stiffness)` after creation, rebuild, a retype to
   dynamic and mass changes. Velocities are therefore the point's. No `computecom`: an off-centre pivot makes
   the piece turn about it, like in Houdini.
-* **CCD threshold** (`ccdthreshold`, float; node `ccdthreshold`, default = Box3D's): `BodySettings::ccdThreshold`
+* **CCD threshold** (`ccdthreshold`, float; node `ccdthreshold`, default = Box3D's): `BodyProps::ccdThreshold`
   -> `b3BodyDef::safetyFactor` (negative / non-finite keep Box3D's default; Box3D asserts on negatives); changes use
   `setCcdThresholdByHandle` (`b3Body_SetSafetyFactor`). A body is "fast" (swept, contacts not recycled) when a step's
   motion > threshold x its min extent. Renamed from Box3D's "safety factor" so the name says what it does.
-* **Fast rotation** (`fastrotation`, int): `BodySettings::fastRotation` -> `b3BodyDef::allowFastRotation`; changes use
+* **Fast rotation** (`fastrotation`, int): `BodyProps::fastRotation` -> `b3BodyDef::allowFastRotation`; changes use
   `setFastRotationByHandle` (`b3Body_AllowFastRotation`). Without it Box3D caps angular speed at `B3_MAX_ROTATION`
   (pi/4) per Box3D step, i.e. per DOP step here (the solver's Substeps are inside one step and don't raise it).
   No node default: Box3D says round bodies only.
 * **Motion locks** (`lock_linear`, `lock_angular`: vec3, nonzero component = locked world axis): `readDynamicProps`
-  fills `Box3DBodyProps::locks` -> `BodySettings::locks` -> `b3BodyDef::motionLocks`; changes use
+  fills `BodyProps::locks` -> `b3BodyDef::motionLocks`; changes use
   `setMotionLocksByHandle` (`b3Body_SetMotionLocks`, which zeroes the newly locked velocity components). Box3D zeroes
   locked components of `v` / `w` every iteration, so locked bodies also ignore `v` / `w` and forces on those axes.
 * **Collision filtering** (`collision_category`, `collision_mask` read as `GA_ROHandleID` so a 32-bit `-1` sign-extends
-  to every bit; `collision_group` int): `readDynamicProps` fills `Box3DBodyProps::filter`, which goes into
-  `BodySettings::filter`; changes use `setFilterByHandle`. Missing attributes keep Box3D's defaults. Affector bodies use
+  to every bit; `collision_group` int): `readDynamicProps` fills `BodyProps::filter`, which `shapeDefFor`
+  puts on the shapes; changes use `setFilterByHandle`. Missing attributes keep Box3D's defaults. Affector bodies use
   the defaults.
 * **Animated** (`animated` with `active` = 0): Kinematic. A pose edit becomes `setTargetTransformByHandle(cur, stepDt)`
   with `driven = true`; a step without one zeroes a driven body's velocity (so its object never skips while driven). Not
@@ -60,7 +61,7 @@ equal to what its body was built with.
   (`B3_TIME_TO_SLEEP`).
 * **Sleep and enable state** (`enablesleep`, `awake`, `enabled`): one attribute per Box3D concept
   (`b3BodyDef::enableSleep` / `isAwake` / `isEnabled`).
-  * `enablesleep` (node: Allow Sleeping, in `nodeSettingsHash`) and `enabled` are settings (`Box3DBodyProps`) and change
+  * `enablesleep` (node: Allow Sleeping) and `enabled` are settings (`BodyProps`) and change
     live. `enabled` is `def.isEnabled` at creation (no create-then-disable); toggling later is `b3Body_Enable` /
     `Disable`, which Box3D documents as expensive. A disabled body has no move events, so it is not written back.
   * `awake` is state, not a setting. At creation it is `def.isAwake` (the point's value, else the node's Start Asleep).
@@ -82,7 +83,7 @@ equal to what its body was built with.
 * **Fast object** (`fastobject`): Box3D's `isBullet`, renamed because Houdini's `isbullet` means "treat as a Bullet
   object". Changes mid-simulation.
 * **Contact recycling** (`contactrecycling`, Box3D Data toggle default on, int point attribute): Box3D's per-body
-  `enableContactRecycling` (`BodySettings::contactRecycling` -> `b3BodyDef`). The distance is world-wide:
+  `enableContactRecycling` (`BodyProps::contactRecycling` -> `b3BodyDef`). The distance is world-wide:
   `WorldSettings::contactRecycleDistance` (solver `contactrecycledistance`, default = Box3D's `10 * B3_LINEAR_SLOP`
   at its default length units; 0 = off). It is not in `b3WorldDef`, so `create` sets it after `b3CreateWorld`, and
   `applyTuning` pushes changes through `b3World_SetContactRecycleDistance` (non-finite: ignored, previous kept, like
@@ -92,11 +93,11 @@ equal to what its body was built with.
   `setContactRecyclingByHandle` therefore also rebuilds them for an awake dynamic body: `b3Body_Disable` + `b3Body_Enable`
   destroys and recreates its contacts, but zeroes velocity and wakes, so the velocity is saved and restored. Sleeping,
   static and kinematic bodies are not cycled (a cycle would wake them): they take it for new contacts only. A point-attribute
-  or node change goes through the usual prop path (`kPropAttribNames`, `nodeHash`, `applyPropChanges`).
+  or node change goes through the usual prop path (`kPropAttribNames`, the fingerprint's `nodeProps`, `applyPropChanges`).
   `Box3DWorld::recycledContactCount()` (`b3World_GetCounters`) feeds the tests and a verbose log line.
 * **Rolling resistance and conveyor velocity** (`rollingresistance` float, `tangentvelocity` vector; Box3D Data
   `rollingresistance` / `tangentvelocity`): Box3D's `b3SurfaceMaterial::rollingResistance` and `tangentVelocity`, set in
-  `shapeDefFor` (`BodySettings::rollingResistance`, `tangentVelocity[3]`; negative or non-finite values become 0, since
+  `shapeDefFor` (`BodyProps::rollingResistance`, `tangentVelocity[3]`; negative or non-finite values become 0, since
   Box3D asserts on them). Rolling resistance is the larger of the two shapes' values times the larger radius (hulls use
   `0.25 * innerRadius`, `contact.c`), capped by the normal impulse. Tangent velocity is local to the shape, rotated by the
   body each step and projected onto the contact surface; the friction row drives the relative tangent velocity to it
@@ -111,7 +112,7 @@ equal to what its body was built with.
   not cycled; it takes the change when it wakes. Affector (Static Object) meshes read the values from their Box3D Data
   node but keep them out of the shape signature, so an animated belt speed updates the shapes
   (`Box3DAffectorBody::rolling` / `tangent`) instead of rebuilding the mesh. Point path: `kPropAttribNames`,
-  `nodeSettingsHash`, `readDynamicProps`, `applyPropChanges`. Tests: "surface material" block in `core_physics.cpp`.
+  the fingerprint's `nodeProps`, `readDynamicProps`, `applyPropChanges`. Tests: "surface material" block in `core_physics.cpp`.
 * **Impacts** (node `addimpact`, Add Impact Data; no attribute): `recordImpacts` walks this step's awake bodies (the
   move events), reads each one's contacts once and records them for both bodies whose object has the option: the awake
   body itself, and the other one when it is not awake (an awake one records its own) and not an asleep dynamic body. So
@@ -134,7 +135,8 @@ equal to what its body was built with.
 ## Building shapes (`addPointBody`, `planShapes`, `buildShapes`)
 
 * Type: `wantedType` (active -> node type; inactive -> static, or kinematic if animated; shapeless -> static).
-* `readDynamicProps` + `settingsFor` give the settings; `planShapes` the shape type (`bullet_georep`, else node
+* `readDynamicProps` gives the `BodyProps`; the `BodySettings` a body is created with is the node's, with the type and
+  those props put in (density from `boxDensity`); `planShapes` the shape type (`bullet_georep`, else node
   `defaultShape`) and pieces; `createBodyWithShapes` (shared with whole objects) makes the body, adds them
   (`addShapes`), `applyBodyMass`, then the initial `v` / `w` (after the mass, because a moving centre of mass shifts the
   velocity; not for static or animated bodies, nor for one that is not awake).

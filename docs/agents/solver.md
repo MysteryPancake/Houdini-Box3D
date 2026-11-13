@@ -49,6 +49,12 @@ deleteDeadPoints   `dead` points
 stamp = now
 ```
 
+**New objects.** Objects in `newobjects` (created this timestep) keep their initial state: `solveObjectsSubclass` drops them
+by object id before anything else, so for this step they get no body, no write-back, no aging and no joints, and the
+rest of the step sees only the other objects. They are solved from the next timestep, as ordinary objects. A step whose
+objects are all new returns at once without a world or a stamp, so the next step builds the world as for a first step.
+The drop works whether the engine lists new objects in `newobjects` only or in both arrays.
+
 **Escape.** `StepProgress::check()` calls `UTgetInterrupt()->opInterrupt()` with no percent and no `opStart` of our
 own (SideFX's `SIM_VolumetricConnectedComponentBuilder` does the same), so Houdini's own "Stepping simulation" message
 and bar are left alone. SIM_Engine discards and re-cooks an interrupted step itself (`setSimulationTime`,
@@ -69,7 +75,7 @@ Data names: `"Box3DWorld"`, `kBox3DDataName` (`"Box3DData"`, SIM_Box3DData.h), `
 `planSlots` or `ApplyPass::run` makes `syncObject` return early.
 
 1. Read-locks the `SIM_Geometry` (objects without one are skipped). `PointAttrs` binds `id, active, v, w, orient`.
-2. Box3D Data: body type and `nodeHash` (its values that change existing bodies, Add Impact Data included).
+2. Box3D Data: body type and `BodyProps` (its values that change existing bodies), plus Add Impact Data.
 3. **Skip check** (see below). On a skip, the object's entries are counted and nothing per point runs.
 4. Otherwise binds the remaining attributes and builds the `ScanContext` (world, geometry, attributes, node settings,
    shape sources, georep lookup) that the per-point helpers take.
@@ -94,7 +100,8 @@ Data names: `"Box3DWorld"`, `kBox3DDataName` (`"Box3DData"`, SIM_Box3DData.h), `
 assumed fixed, a new instance gets a new `id`), data ids of `P`, `orient`, `v`, `w`, `id`, `active`, the node body type,
 and the **prop markers**: data ids of `kPropAttribNames` (the attributes that change settings, ask for rebuilds or rename pieces, looked
 up by name; the table is in `Box3DAttribNames.h` and `Box3DSyncFingerprint::kNumPropIds` is its length), the primitive list's data id (`primitiveListDataId`: packed transforms are intrinsics; bumping it is up to
-whoever edits a primitive, so an edit that does not is picked up on the next scan) and `nodeHash`. Equal fingerprint ->
+whoever edits a primitive, so an edit that does not is picked up on the next scan) and the node's `BodyProps` and Add Impact Data. The fingerprint keeps the node's `BodyProps` itself (`nodeProps`) and
+compares it with `BodyProps::operator==` (two NaNs are equal, so an unchanged NaN setting still skips), so there is no hand-kept field list and no hash collision. Equal fingerprint ->
 skip.
 
 * Recorded at the end of a scan and again after each of our own writes (`recordFingerprintAfterWrite`, once every write

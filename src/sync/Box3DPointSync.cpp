@@ -89,7 +89,7 @@ primitiveListDataId(const GU_Detail *gdp)
 
 // The object's change markers (Box3DSyncFingerprint). `a` must be bound on `gdp`.
 Box3DSyncFingerprint
-makeFingerprint(const GU_Detail *gdp, const PointAttrs &a, int nodeType, uint64_t nodeHash)
+makeFingerprint(const GU_Detail *gdp, const PointAttrs &a, int nodeType, const b3dop::BodyProps &nodeProps, bool addImpact)
 {
     // Packed geometry is assumed to keep its topology (a new instance gets a new `id`, which
     // the id / P markers show); plain points are checked for count changes.
@@ -115,7 +115,8 @@ makeFingerprint(const GU_Detail *gdp, const PointAttrs &a, int nodeType, uint64_
         fp.propIds[i] = attr ? attr->getDataId() : Box3DSyncFingerprint::kNoId;
     }
     fp.primsId  = primitiveListDataId(gdp);
-    fp.nodeHash = nodeHash;
+    fp.nodeProps = nodeProps;
+    fp.addImpact = addImpact;
     return fp;
 }
 
@@ -143,7 +144,7 @@ describeFingerprintDifference(const Box3DSyncFingerprint &was, const Box3DSyncFi
     for (int i = 0; i < Box3DSyncFingerprint::kNumPropIds; ++i)
         add(kPropAttribNames[i], (long long)was.propIds[i], (long long)now.propIds[i]);
     add("primitives", (long long)was.primsId, (long long)now.primsId);
-    if (was.nodeHash != now.nodeHash)
+    if (was.nodeProps != now.nodeProps || was.addImpact != now.addImpact)
         out += out.empty() ? "Box3D Data values" : ", Box3D Data values";
     return out;
 }
@@ -160,24 +161,25 @@ clampNonNeg(float v, float fallback)
     return std::isfinite(v) ? std::max(v, 0.0f) : fallback;
 }
 
-// A point's changeable settings. Building and comparing both read through here, so an
-// untouched point compares equal. (`awake` is not a setting: see startAwakeFor.)
-Box3DBodyProps
+// A point's changeable settings: Box3D Data's, with the point's attributes on top. Building and
+// comparing both read through here, so an untouched point compares equal. (`awake` is not a
+// setting: see startAwakeFor.)
+b3dop::BodyProps
 readDynamicProps(const b3dop::BodySettings &node, const PointAttrs &a, GA_Offset off)
 {
-    Box3DBodyProps p;
-    p.mass = node.mass;
+    b3dop::BodyProps p = node.props;
     if (a.mass.isValid())
     {
         const float m = float(a.mass.get(off));
         if (m > 0.0f && std::isfinite(m))
             p.mass = m;
     }
-    p.friction       = a.friction.isValid()       ? clampNonNeg(a.friction.get(off),       node.friction)       : node.friction;
-    p.restitution    = a.bounce.isValid()         ? clampNonNeg(a.bounce.get(off),         node.restitution)    : node.restitution;
-    p.rollingResistance = a.rollingResistance.isValid() ? clampNonNeg(a.rollingResistance.get(off), node.rollingResistance)
-                                                        : node.rollingResistance;
-    b3dop::copy3(p.tangentVelocity, node.tangentVelocity);
+    if (a.friction.isValid())
+        p.friction = clampNonNeg(a.friction.get(off), p.friction);
+    if (a.bounce.isValid())
+        p.restitution = clampNonNeg(a.bounce.get(off), p.restitution);
+    if (a.rollingResistance.isValid())
+        p.rollingResistance = clampNonNeg(a.rollingResistance.get(off), p.rollingResistance);
     if (a.tangentVelocity.isValid())
     {
         const UT_Vector3 t = a.tangentVelocity.get(off);
@@ -185,25 +187,27 @@ readDynamicProps(const b3dop::BodySettings &node, const PointAttrs &a, GA_Offset
             for (int i = 0; i < 3; ++i)
                 p.tangentVelocity[i] = float(t(i));
     }
-    p.linearDamping  = a.lineardamping.isValid()  ? clampNonNeg(a.lineardamping.get(off),  node.linearDamping)  : node.linearDamping;
-    p.angularDamping = a.angulardamping.isValid() ? clampNonNeg(a.angulardamping.get(off), node.angularDamping) : node.angularDamping;
-    p.gravityScale   = node.gravityScale;
+    if (a.lineardamping.isValid())
+        p.linearDamping = clampNonNeg(a.lineardamping.get(off), p.linearDamping);
+    if (a.angulardamping.isValid())
+        p.angularDamping = clampNonNeg(a.angulardamping.get(off), p.angularDamping);
     if (a.gravityscale.isValid())
     {
         const float g = a.gravityscale.get(off);
         if (std::isfinite(g)) p.gravityScale = g;      // may be negative
     }
-    p.enableSleep = a.enablesleep.isValid() ? a.enablesleep.get(off) != 0 : node.enableSleep;
-    p.enabled     = !a.enabled.isValid() || a.enabled.get(off) != 0;
+    if (a.enablesleep.isValid())
+        p.enableSleep = a.enablesleep.get(off) != 0;
+    if (a.enabled.isValid())
+        p.enabled = a.enabled.get(off) != 0;
 
-    p.computeMass = a.computeMass.isValid() ? a.computeMass.get(off) != 0 : node.computeMass;
-    p.density     = node.density;
+    if (a.computeMass.isValid())
+        p.computeMass = a.computeMass.get(off) != 0;
     if (a.density.isValid())
     {
         const float d = a.density.get(off);
         if (d > 0.0f && std::isfinite(d)) p.density = d;
     }
-    p.inertiaScale = 1.0f;
     if (a.inertiaStiffness.isValid())
     {
         const float k = a.inertiaStiffness.get(off);
@@ -214,21 +218,22 @@ readDynamicProps(const b3dop::BodySettings &node, const PointAttrs &a, GA_Offset
         const float v = h.get(off);
         return (v >= 0.0f && std::isfinite(v)) ? v : -1.0f;
     };
-    p.sleepThreshold = node.sleepThreshold;
     if (a.sleepThreshold.isValid())
     {
         const float t = threshold(a.sleepThreshold);
         if (t >= 0.0f) p.sleepThreshold = t;
     }
-    p.ccdThreshold = node.ccdThreshold;
     if (a.ccdThreshold.isValid())
     {
         const float t = threshold(a.ccdThreshold);
         if (t >= 0.0f) p.ccdThreshold = t;
     }
-    p.fastObject = a.fastObject.isValid() ? a.fastObject.get(off) != 0 : node.isBullet;
-    p.fastRotation = a.fastRotation.isValid() && a.fastRotation.get(off) != 0;
-    p.contactRecycling = a.contactRecycling.isValid() ? a.contactRecycling.get(off) != 0 : node.contactRecycling;
+    if (a.fastObject.isValid())
+        p.fastObject = a.fastObject.get(off) != 0;
+    if (a.fastRotation.isValid())
+        p.fastRotation = a.fastRotation.get(off) != 0;
+    if (a.contactRecycling.isValid())
+        p.contactRecycling = a.contactRecycling.get(off) != 0;
     if (a.collisionCategory.isValid())
         p.filter.category = uint64_t(a.collisionCategory.get(off));
     if (a.collisionMask.isValid())
@@ -284,7 +289,7 @@ struct StringAttr
 
 // Box3D density: computemass -> density; else mass / volume (density if unusable).
 float
-boxDensity(const Box3DBodyProps &p, float volume)
+boxDensity(const b3dop::BodyProps &p, float volume)
 {
     if (p.computeMass)
         return p.density;
@@ -293,7 +298,7 @@ boxDensity(const Box3DBodyProps &p, float volume)
 
 // The mass Houdini reports (written to `mass` with computemass).
 float
-effectiveMass(const Box3DBodyProps &p, float volume)
+effectiveMass(const b3dop::BodyProps &p, float volume)
 {
     return p.computeMass ? p.density * volume : p.mass;
 }
@@ -314,7 +319,7 @@ wantedType(const b3dop::BodySettings &node, bool active, bool animated, bool sha
 // scaled by inertialtensorstiffness. Static / kinematic bodies only get shape densities.
 // setShapeDensity = false for shapes just created with boxDensity(p, volume).
 void
-applyBodyMass(b3dop::Box3DWorld &world, b3dop::BodyHandle h, const Box3DBodyProps &p, float volume,
+applyBodyMass(b3dop::Box3DWorld &world, b3dop::BodyHandle h, const b3dop::BodyProps &p, float volume,
               bool setShapeDensity)
 {
     world.applyMassByHandle(h, boxDensity(p, volume), true, p.inertiaScale, setShapeDensity);
@@ -326,31 +331,6 @@ bool
 startAwakeFor(const b3dop::BodySettings &node, const PointAttrs &a, GA_Offset off)
 {
     return a.awake.isValid() ? a.awake.get(off) != 0 : node.startAwake;
-}
-
-// The node's settings with a point's values applied.
-b3dop::BodySettings
-settingsFor(const b3dop::BodySettings &node, const Box3DBodyProps &p, b3dop::BodySettings::Type type)
-{
-    b3dop::BodySettings b = node;
-    b.type           = type;
-    b.friction       = p.friction;
-    b.restitution    = p.restitution;
-    b.rollingResistance = p.rollingResistance;
-    b3dop::copy3(b.tangentVelocity, p.tangentVelocity);
-    b.linearDamping  = p.linearDamping;
-    b.angularDamping = p.angularDamping;
-    b.gravityScale   = p.gravityScale;
-    b.enableSleep    = p.enableSleep;
-    b.startEnabled   = p.enabled;
-    b.filter         = p.filter;
-    b.locks          = p.locks;
-    b.sleepThreshold = p.sleepThreshold;
-    b.ccdThreshold   = p.ccdThreshold;
-    b.isBullet       = p.fastObject;
-    b.fastRotation   = p.fastRotation;
-    b.contactRecycling = p.contactRecycling;
-    return b;
 }
 
 // pscale / scale (a packed point's size is its transform; these only size its fallback box).
@@ -495,7 +475,7 @@ addShapes(b3dop::Box3DWorld &world, b3dop::BodyHandle h, const b3dop::BodySettin
 // gets no shapes. 0 on failure, leaving no body behind.
 b3dop::BodyHandle
 createBodyWithShapes(b3dop::Box3DWorld &world, const b3dop::BodySettings &b, const Box3DBodyPose &pose,
-                     const BuiltShapes &shapes, bool shapeless, const Box3DBodyProps &p, bool giveVelocity,
+                     const BuiltShapes &shapes, bool shapeless, const b3dop::BodyProps &p, bool giveVelocity,
                      Box3DBodyMirror &entry)
 {
     const b3dop::BodyHandle h = world.createBody(b, pose.pos, pose.rot, &entry);
@@ -537,7 +517,7 @@ takePlan(ScanContext &ctx, const Box3DPointSlot &s, std::vector<ShapePlan> &plan
 // the body's user data and records what it was built from. Returns 0 on failure.
 b3dop::BodyHandle
 addPointBody(ScanContext &ctx, const Box3DPointSlot &s, const ShapePlan &plan, bool animated,
-             const Box3DBodyProps &p, Box3DBodyMirror &entry, std::string &fallbackNote)
+             const b3dop::BodyProps &p, Box3DBodyMirror &entry, std::string &fallbackNote)
 {
     b3dop::Box3DWorld &world = ctx.world;
     const Box3DBodyPose &st  = s.cur;
@@ -548,9 +528,11 @@ addPointBody(ScanContext &ctx, const Box3DPointSlot &s, const ShapePlan &plan, b
     entry.animated  = animated;
     storePlan(entry, plan);
 
-    b3dop::BodySettings b = settingsFor(ctx.node, p, wantedType(ctx.node, s.active, animated, entry.shapeless));
-    b.density    = boxDensity(p, plan.shapes.totalVolume);
-    b.startAwake = startAwakeFor(ctx.node, ctx.a, s.off);
+    b3dop::BodySettings b = ctx.node;
+    b.type          = wantedType(ctx.node, s.active, animated, entry.shapeless);
+    b.props         = p;
+    b.props.density = boxDensity(p, plan.shapes.totalVolume);
+    b.startAwake    = startAwakeFor(ctx.node, ctx.a, s.off);
     entry.awake  = b.startAwake;
 
     // Animated bodies follow their point instead of starting with its velocity.
@@ -562,7 +544,7 @@ addPointBody(ScanContext &ctx, const Box3DPointSlot &s, const ShapePlan &plan, b
 // true if replaced; `noShape` if none could be added (the body is then static).
 bool
 rebuildPointShapes(ScanContext &ctx, const Box3DPointSlot &s, const ShapePlan &plan,
-                   const Box3DBodyProps &p, Box3DBodyMirror &entry, std::string &note, bool &noShape)
+                   const b3dop::BodyProps &p, Box3DBodyMirror &entry, std::string &note, bool &noShape)
 {
     b3dop::Box3DWorld &world = ctx.world;
     noShape = false;
@@ -580,8 +562,10 @@ rebuildPointShapes(ScanContext &ctx, const Box3DPointSlot &s, const ShapePlan &p
     entry.shapeless = true;
     if (plan.type != b3dop::ShapeType::None)
     {
-        b3dop::BodySettings b = settingsFor(ctx.node, p, entry.type);
-        b.density = boxDensity(p, plan.shapes.totalVolume);
+        b3dop::BodySettings b = ctx.node;
+        b.type          = entry.type;
+        b.props         = p;
+        b.props.density = boxDensity(p, plan.shapes.totalVolume);
         if (addShapes(world, h, b, plan.shapes) > 0)
             entry.shapeless = false;
         else
@@ -598,9 +582,11 @@ rebuildPointShapes(ScanContext &ctx, const Box3DPointSlot &s, const ShapePlan &p
 enum : unsigned { kPropsChanged = 1, kMassChanged = 2 };
 
 unsigned
-applyPropChanges(b3dop::Box3DWorld &world, Box3DBodyMirror &e, const Box3DBodyProps &p, bool shapesRebuilt)
+applyPropChanges(b3dop::Box3DWorld &world, Box3DBodyMirror &e, const b3dop::BodyProps &p, bool shapesRebuilt)
 {
-    const Box3DBodyProps &o = e.props;
+    const b3dop::BodyProps &o = e.props;
+    if (!shapesRebuilt && p == o)
+        return 0;                       // nothing differs (the field compares below would call setters for a NaN)
     const b3dop::BodyHandle h = e.handle;
     unsigned changed = shapesRebuilt ? unsigned(kPropsChanged) : 0u;
     // Runs `set` and records a props change when `differs`.
@@ -672,17 +658,6 @@ storePacked(Box3DBodyMirror &m, const Box3DPointSlot &s)
     }
 }
 
-// Box3D Data values that change existing bodies (the fingerprint's nodeHash).
-uint64_t
-nodeSettingsHash(const b3dop::BodySettings &n, bool addImpact)
-{
-    const float v[] = { n.mass, n.friction, n.restitution, n.linearDamping, n.angularDamping, n.gravityScale,
-                        n.density, n.computeMass ? 1.0f : 0.0f, n.sleepThreshold, n.isBullet ? 1.0f : 0.0f,
-                        n.contactRecycling ? 1.0f : 0.0f, n.ccdThreshold, n.enableSleep ? 1.0f : 0.0f,
-                        n.rollingResistance, n.tangentVelocity[0], n.tangentVelocity[1], n.tangentVelocity[2] };
-    return b3dop::mixHash(b3dop::hashFloats(v, sizeof(v) / sizeof(v[0])), addImpact ? 1 : 2);
-}
-
 // The mid-simulation changes of an existing body (docs/agents/bodies.md, "Mid-simulation updates"): shape
 // rebuild and settings, type, then the animated target or an external edit of its pose.
 // Adds to `writes` the point attributes to write after the step.
@@ -699,7 +674,7 @@ updateExistingBody(ScanContext &ctx, Box3DSharedState &st, Box3DPointSlot &s, Bo
     const bool rebuild = s.rebuild;
     if (rebuild || checkProps)
     {
-        Box3DBodyProps p = ctx.props(off);
+        b3dop::BodyProps p = ctx.props(off);
         bool shapesRebuilt = false;
         if (rebuild)
         {
@@ -1031,7 +1006,7 @@ private:
     // A point with no body yet: build it from its plan. False if that failed.
     bool addBody(Box3DPointSlot &s, Box3DBodyMirror &entry, bool animated, unsigned &writes)
     {
-        const Box3DBodyProps p = myCtx.props(s.off);
+        const b3dop::BodyProps p = myCtx.props(s.off);
         std::string fallbackNote;
         const b3dop::BodyHandle handle = addPointBody(myCtx, s, takePlan(myCtx, s, myPlans), animated, p, entry,
                                                       fallbackNote);
@@ -1169,7 +1144,7 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c, StepProgr
     os.visited   = st.syncStamp;
     os.addImpact = addImpact;
     os.wholeObject = false;
-    const Box3DSyncFingerprint fpNow = makeFingerprint(gdp, a, int(node.type), nodeSettingsHash(node, addImpact));
+    const Box3DSyncFingerprint fpNow = makeFingerprint(gdp, a, int(node.type), node.props, addImpact);
     if (os.canSkip && fpNow == os.fp && (!st.wantNames || os.namesKnown))
     {
         ++c.skipped;

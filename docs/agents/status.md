@@ -13,12 +13,25 @@ remove an item once it has been checked, and record anything new here rather tha
   the solver into `sync/` files, every `SIM_*` and `sync/` file has only been compiled against minimal stand-in HDK
   headers (plain C++ errors and cross-file symbols checked, not HDK API mistakes). `Box3DHoudiniTasks.h` was not
   compiled against the HDK when written.
+* The `BodyProps` refactor (`BodyProps` embedded in `BodySettings`, `settingsFor` and `nodeSettingsHash` removed) was
+  compiled and tested only in the Houdini-free core (`BodyProps::operator==` incl. NaN, the core tests). The `sync/` and
+  `SIM_Box3DData` edits were not compiled at all, not even against the stand-in headers: `readDynamicProps` starting
+  from `node.props`, the fingerprint's `nodeProps` / `addImpact`, the `applyPropChanges` early-out, the four body-settings
+  builds in `Box3DPointSync.cpp` / `Box3DWholeObject.cpp`, and `affectorBodySettings`. Check in Houdini: changing a Box3D
+  Data value (friction, damping, Allow Sleeping, Add Impact Data) mid-simulation still updates existing bodies, and an
+  untouched object still skips its scan.
 * `tests/box3d_test.hiplc` still uses the removed Box3D Joints node and needs rebuilding with a Constraint Network.
 
 **HDK and Houdini behaviour**
 * Data ids surviving the DOP copy between timesteps (the sync skip). If they do not, every step scans: correct, no gain.
   The debug log `sync: N of M object(s) unchanged, scan skipped` shows it working.
 * The timestamp semantics behind `canContinue`.
+* `newobjects` (left out of the step, see "Solver step" in [solver.md](solver.md)): whether the engine passes them in
+  `newobjects` only or in both arrays (the code handles both), and that an object is "new" for one timestep only. If
+  the engine kept passing an object as new until a solver handled it, it would never be solved. Check in Houdini: an
+  object created at frame 1 shows its initial state on frame 1 and first moves on frame 2; one created later (a Source
+  or Merge at frame 20) does the same; a Constraint Network created with its pieces gives no "does not exist" warning
+  after the first step; the points' initial `v` / `w` still apply on the object's first solved step.
 * Taken from the HDK samples in `DOP.zip`, not compiled against a real HDK: `SIM_Force::getForce` (public, const;
   arguments as in `SIM_ForceOrbit::getForceSubclass`), `SIM_EachDataCallback::callbackConst`,
   `SIM_DataFilterByType("SIM_Force")`, `SIM_FORCES_DATANAME`, `forEachConstSubData`, `SIM_DATA_CASTCONST`, and which
@@ -214,8 +227,6 @@ constructor); `DECLARE_CLASSNAME` / `DECLARE_DATAFACTORY` expansions (`SIM_DataU
 
 The one list of what is still to do. Keep it here only (no TODO comments in the code).
 
-* `newobjects` are solved on their first step instead of keeping their initial state (`syncFromGeometry`); e.g. step
-  them as kinematic once.
 * Static triangle-mesh colliders for the concave *point* case (not started; affector meshes exist, see "Affector static
   colliders" in [forces-affectors.md](forces-affectors.md)). Box3D meshes (`b3CreateMeshShape`) and height fields only collide as static, which is why `concave` /
   `compound` are one hull per piece (Bullet's concave is a triangle mesh and may move). Intended split: a static
