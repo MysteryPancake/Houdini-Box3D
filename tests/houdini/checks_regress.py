@@ -17,6 +17,7 @@ import hou
 from b3dtest import (
     Result,
     box3d_solver,
+    bullet_solver,
     close,
     constraint_lines,
     create,
@@ -258,6 +259,40 @@ def test_anchor_positions():
                    f"{FACE}), current_P {cur_txt} (expected about {slid})")]
 
 
+def first_frame_drop(tag, solver_kind, solve_first):
+    """y of a box dropped from 3 on frame 1 and frame 2, with the RBD Packed Object's Solve On
+    Creation Frame set to solve_first."""
+    path, names = packed_boxes(f"first_{tag}_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0),
+                                                        "attrs": {"active": 1}}])
+    dop = new_dopnet(f"first_{tag}")
+    obj = packed_object(dop, "pieces", path)
+    set_parm(obj, ["solvefirstframe", "solveoncreationframe", "solve_first_frame"], int(solve_first))
+    finish(dop, box3d_solver(dop, obj) if solver_kind == "box3d" else bullet_solver(dop, obj))
+    ys = step(dop, 2, lambda sim, f: packed_positions(sim, "pieces")[names[0]][1])
+    return ys[1], ys[2]
+
+
+def test_solve_first_frame():
+    """The object node's Solve On Creation Frame, against Bullet: off, a box created on frame 1
+    shows its starting height (3) on frame 1 and first moves on frame 2; on, it has already
+    taken a step on frame 1, by the same amount as in Bullet."""
+    results = []
+    for solve_first in (False, True):
+        tag = "on" if solve_first else "off"
+        b1, b2 = first_frame_drop(f"{tag}_box3d", "box3d", solve_first)
+        t1, t2 = first_frame_drop(f"{tag}_bullet", "bullet", solve_first)
+        if solve_first:
+            ok = b1 < 3.0 - 1e-4 and t1 < 3.0 - 1e-4 and abs((3.0 - b1) - (3.0 - t1)) < 0.01
+            expect = "moved one step on frame 1 in both, by about the same"
+        else:
+            ok = b1 == 3.0 and t1 == 3.0 and b2 < 3.0
+            expect = "3 on frame 1 in both, lower on frame 2"
+        results.append(Result("solve_first_frame", Result.PASS if ok else Result.FAIL,
+                              f"Solve On Creation Frame {tag}: Box3D y {b1:.4f} on frame 1, {b2:.4f} on frame 2; "
+                              f"Bullet {t1:.4f}, {t2:.4f} (expected {expect})"))
+    return results
+
+
 def test_sidefx_soft():
     """SideFX's Bullet Soft Constraint Relationship (10 Hz, damping ratio 1; Rest Length set to 0,
     since its default 1 pushes the anchors a unit apart) holding a hanging piece, in Box3D and in
@@ -453,6 +488,7 @@ def test_baseline():
 TESTS = {
     "joint_types": test_joint_types,
     "anchor_positions": test_anchor_positions,
+    "solve_first_frame": test_solve_first_frame,
     "sidefx_soft": test_sidefx_soft,
     "body_types": test_body_types,
     "shape_kinds": test_shape_kinds,

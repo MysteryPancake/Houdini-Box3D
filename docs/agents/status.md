@@ -174,11 +174,10 @@ passed as a `PRM_Template`'s conditional pointer.
 * Mirrored packed pieces lose their mirror once they move (the write-back writes a non-mirrored transform).
 * Packed primitive spheres and nested packed primitives collide as one point (hulls from points only): unpack or warn.
 * SideFX Glue breaks under static load (Break Force = strength / timestep) where Bullet's Glue holds.
-* The solver's collision-shape guide draws nothing on an object's creation frame (frame 1 for most scenes): new
-  objects are first solved a step later, and a step whose objects are all new builds no world, so there are no
-  bodies to draw. A preview world built just for the guide was tried and dropped. Solve On Creation Frame on the
-  object (`SIM_Object::getSolveFirstFrame()`) is not read either: the solver drops every new object; honouring it
-  would also give such objects a guide on their first frame.
+* The solver's collision-shape guide draws nothing on an object's creation frame (frame 1 for most scenes) unless
+  the object has Solve On Creation Frame on: other new objects are first solved a step later, and a step whose
+  objects are all new builds no world, so there are no bodies to draw. A preview world built just for the guide was
+  tried and dropped.
 
 * GCC/Clang `-Wshadow` (shadowing members and outer scopes, beyond the local shadowing MSVC `/W4` reports) and
   `-Wconversion` (about 12) are off.

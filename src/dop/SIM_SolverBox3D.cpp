@@ -251,16 +251,24 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   const double now = engine.getSimulationTime();
   const double dt = timestep;
 
-  // Objects created this timestep keep their initial state: they are left out
-  // of the whole step (no body, no write-back) and are solved from the next
-  // one. Works whether or not `newobjects` is also part of `allObjects`.
-  std::unordered_set<int> newIds;
+  // Objects created this timestep keep their initial state unless their object
+  // node has Solve On Creation Frame on: the others are left out of the whole
+  // step (no body, no write-back) and are solved from the next one. Works
+  // whether or not `newobjects` is also part of `allObjects`.
+  std::unordered_set<int> waitIds; // new, not solved on their creation frame
   for (exint i = 0; i < newobjects.entries(); ++i)
-    newIds.insert(newobjects(i)->getObjectId());
+    if (!newobjects(i)->getSolveFirstFrame())
+      waitIds.insert(newobjects(i)->getObjectId());
   SIM_ObjectArray objects;
+  std::unordered_set<int> kept;
   for (exint i = 0; i < allObjects.entries(); ++i)
-    if (newIds.find(allObjects(i)->getObjectId()) == newIds.end())
+    if (waitIds.find(allObjects(i)->getObjectId()) == waitIds.end() &&
+        kept.insert(allObjects(i)->getObjectId()).second)
       objects.add(allObjects(i));
+  for (exint i = 0; i < newobjects.entries(); ++i)
+    if (newobjects(i)->getSolveFirstFrame() &&
+        kept.insert(newobjects(i)->getObjectId()).second)
+      objects.add(newobjects(i));
 
   if (objects.entries() == 0)
     return SIM_SOLVER_SUCCESS;

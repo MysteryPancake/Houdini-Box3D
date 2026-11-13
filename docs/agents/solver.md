@@ -68,11 +68,13 @@ polylines with a primitive `Cd` (dimmed for sleeping and for static / kinematic 
 tried: a guide asked for while the solver steps is skipped. Bodies the world no longer has are not drawn; static
 colliders from affectors are not drawn.
 
-**New objects.** Objects in `newobjects` (created this timestep) keep their initial state: `solveObjectsSubclass` drops them
+**New objects.** Objects in `newobjects` (created this timestep) keep their initial state unless their object node has
+Solve On Creation Frame on (`SIM_Object::getSolveFirstFrame()`, as Bullet): `solveObjectsSubclass` drops the others
 by object id before anything else, so for this step they get no body, no write-back, no aging and no joints, and the
 rest of the step sees only the other objects. They are solved from the next timestep, as ordinary objects. A step whose
-objects are all new returns at once without a world or a stamp, so the next step builds the world as for a first step.
-The drop works whether the engine lists new objects in `newobjects` only or in both arrays.
+objects are all dropped returns at once without a world or a stamp, so the next step builds the world as for a first
+step. New objects with the toggle on are solved in this step like the rest (added from `newobjects` if `allObjects`
+lacks them, never twice). Both work whether the engine lists new objects in `newobjects` only or in both arrays.
 
 **Escape.** `StepProgress::check()` calls `UTgetInterrupt()->opInterrupt()` with no percent and no `opStart` of our
 own (SideFX's `SIM_VolumetricConnectedComponentBuilder` does the same), so Houdini's own "Stepping simulation" message
