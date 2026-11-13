@@ -45,25 +45,30 @@ const SIM_DopDescription *SIM_Box3DData::getDescription() {
                 "is fully simulated. Points with active = 0 are static.")
           .toggle("computemass", "Compute Mass", false,
                   "Work out mass from Density and shape volume instead of "
-                  "using Mass. Overridden by the computemass attribute.")
+                  "using Mass. A computemass point attribute wins; RBD Packed "
+                  "Object always writes one.")
           .number("mass", "Mass", 1.0, R{0, 10},
-                  "Mass of each body (used when Compute Mass is off). "
-                  "Overridden by the mass point attribute.",
+                  "Mass of each body (when Compute Mass is off). A mass point "
+                  "attribute wins; RBD Packed Object always writes one: set it "
+                  "there.",
                   "{ computemass == 1 }")
           .number("density", "Density", 1000.0, R{0, 2000},
-                  "Mass per unit volume, used when Compute Mass is on (1000 is "
-                  "about water). Overridden by the density attribute.",
+                  "Mass per unit volume, with Compute Mass on (1000 is about "
+                  "water). A density attribute wins; RBD Packed Object always "
+                  "writes one.",
                   "{ computemass == 0 }")
           .number("gravityscale", "Gravity Scale", 1.0,
                   "Multiplies the solver's Gravity: 0 floats, negative falls "
                   "upward. Overridden by the gravityscale attribute.")
           .tab("Material")
           .number("friction", "Friction", 0.6, R{0, 1},
-                  "How much surfaces resist sliding; 0 is ice-slick. "
-                  "Overridden by the friction attribute.")
-          .number("bounce", "Bounce", 0.0, R{0, 1},
-                  "Speed kept after a collision: 0 doesn't bounce, 1 bounces "
-                  "at full speed. Overridden by the bounce attribute.")
+                  "How much surfaces resist sliding; 0 is ice-slick. A "
+                  "friction attribute wins; RBD Packed Object always writes "
+                  "one: set it there.")
+          .number(
+              "bounce", "Bounce", 0.0, R{0, 1},
+              "Speed kept after a collision: 0 doesn't bounce, 1 full speed. A "
+              "bounce attribute wins; RBD Packed Object always writes one.")
           .number("rollingresistance", "Rolling Resistance", 0.0, R{0, 1},
                   "How much round bodies resist rolling; 0 rolls freely. "
                   "Overridden by the rollingresistance attribute.")

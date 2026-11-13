@@ -42,7 +42,7 @@ FACE = (0.5, 2, 0)  # the shared face of the fixed piece (0, 2, 0) and the hangi
 
 def hanging_pair(name, joints, line_attrs=None, conrels=None, gravity=None, solver_kind="box3d",
                  pieces=None, anchors=None, data_parms=None, keep_velocity=False, network_edit=None,
-                 net_parms=None):
+                 net_parms=None, packed_parms=None):
     """A piece hanging off a fixed one through a constraint network line.
     joints: constraint_name of the line (None: the first joint node's Data Name). conrels:
     [(node type, {parm: value})] wired into the network (merged if several). Returns (dop, piece
@@ -55,7 +55,7 @@ def hanging_pair(name, joints, line_attrs=None, conrels=None, gravity=None, solv
         {"size": (1, 1, 1), "center": (1, 2, 0), "attrs": {"active": 1}},
     ]
     path, names = packed_boxes(name + "_pieces", pieces)
-    obj = packed_object(dop, "pieces", path, keep_velocity=keep_velocity)
+    obj = packed_object(dop, "pieces", path, keep_velocity=keep_velocity, **(packed_parms or {}))
     if data_parms and solver_kind == "box3d":
         obj = box3d_data(dop, obj, "data", **data_parms)
     nodes = []
@@ -156,7 +156,7 @@ def test_next_constraint():
 def test_feedback():
     """The solver writes force, torque, distance and angle onto a holding weld's line."""
     dop, names = hanging_pair("feedback", "weld", conrels=[("box3d_weldconrel", {})],
-                              data_parms={"computemass": 0, "mass": 1.0})
+                              packed_parms={"computemass": 0, "mass": 1.0})
 
     def sample(sim, f):
         geo = find_network_geometry(sim)
@@ -225,6 +225,16 @@ def test_sidefx_hard():
     ok = close(d["box3d"][0], d["bullet"][0], 0.1)
     return [Result("sidefx_hard", Result.PASS if ok else Result.FAIL,
                    f"held distance after 2 s: Box3D {d['box3d'][0]:.3f}, Bullet {d['bullet'][0]:.3f} (start 2.06)")]
+
+
+def test_sidefx_hard_all():
+    """SideFX Hard constraint with constraint_type 'all', compared with Bullet: does Bullet's 'all'
+    also use the rest length (1 by default), or hold the starting offset like Box3D's (2.06)?"""
+    d = sidefx_compare("hard_all", "hardconrel", {"constraint_type": "all"})
+    ok = close(d["box3d"][0], d["bullet"][0], 0.1)
+    return [Result("sidefx_hard_all", Result.PASS if ok else Result.FAIL,
+                   f"held distance after 2 s: Box3D {d['box3d'][0]:.3f}, Bullet {d['bullet'][0]:.3f} (start 2.06; "
+                   "1.0 = the default rest length)")]
 
 
 def test_sidefx_spring():
@@ -306,11 +316,14 @@ def test_rbd_object_transform():
     set_parm(obj, ["usetransform"], 1)
     ground_path, _ = packed_boxes("rbd_scaled_ground", [GROUND])
     finish(dop, box3d_solver(dop, merge(dop, [packed_object(dop, "ground", ground_path), obj])))
-    pts = step(dop, 96, lambda sim, f: whole_object_points(sim, "box"))[96]
+    track = step(dop, 144, lambda sim, f: whole_object_points(sim, "box"))
+    pts = track[144]
     lo, hi = min(p[1] for p in pts), max(p[1] for p in pts)
+    speed = max((a - b).length() for a, b in zip(track[144], track[143])) * hou.fps()
     ok = close(lo, 0.0, 0.03) and close(hi, 2.0, 0.05)
     return [Result("rbd_object_transform", Result.PASS if ok else Result.FAIL,
-                   f"at rest spans y {lo:.3f} to {hi:.3f} (expected 0 to 2)")]
+                   f"after 6 s spans y {lo:.3f} to {hi:.3f} (expected 0 to 2; 2.06 would be a 2-unit box tilted "
+                   f"about 2 deg), fastest point moving {speed:.3f}/s")]
 
 
 def test_other_rbd_objects():
@@ -354,47 +367,46 @@ def test_other_rbd_objects():
         def heights(sim, f):
             out = []
             for o in sim.objects():
-                try:
-                    out.append(o.transform().extractTranslates()[1])
-                except Exception:
-                    pass
+                xform = o.transform()
+                geo = o.geometry()
+                pts = geo.points() if geo is not None else []
+                if pts:
+                    out.append(min((p.position() * xform)[1] for p in pts))
             return out
 
         track = step(dop, 24, heights)
         n = len(track[24])
-        fell = n > 0 and all(b < a - 0.5 for a, b in zip(track[1], track[24]))
+        fell = n > 0 and len(track[1]) == n and all(b < a - 0.5 for a, b in zip(track[1], track[24]))
         results.append(Result("other_rbd_objects", Result.PASS if fell else Result.FAIL,
-                              f"{label}: {n} object(s), all fell: {fell}"))
+                              f"{label}: {n} object(s) with geometry; lowest points {[round(y, 2) for y in track[1]]} "
+                              f"on frame 1, {[round(y, 2) for y in track[24]]} on frame 24"))
     return results
 
 
 def test_data_change_midsim():
-    """Changing Box3D Data's Friction mid-simulation (Set Always) updates an existing body: a box
-    sliding with friction 0 stops once friction becomes 1 at frame 13."""
-    path, names = packed_boxes("friction_piece", [{"size": (1, 1, 1), "center": (0, 0.5, 0),
-                                                   "attrs": {"v": (5.0, 0.0, 0.0)}}])
+    """Changing Box3D Data's Friction mid-simulation (its parmop_friction menu at Set Always)
+    updates an existing body: an RBD Object box sliding with friction 0 stops once friction
+    becomes 1 at frame 13. (A whole object: RBD Packed Object would override friction with its
+    own point attribute.)"""
     dop = new_dopnet("friction_change")
-    obj = packed_object(dop, "piece", path, keep_velocity=True)
-    data = box3d_data(dop, obj, "data")
+    obj = rbd_object(dop, "box", box_sop("friction_box", (0, 0.5, 0)), vel=(5, 0, 0))
+    data = box3d_data(dop, obj, "data", bounce=0.0)
     set_expression(data, ["friction"], "if($F < 13, 0, 1)")
-    always = [p for p in data.parms()
-              if p.parmTemplate().type() == hou.parmTemplateType.Menu
-              and any("always" in lbl.lower() for lbl in p.menuLabels())]
-    target = next((p for p in always if "default" in p.name().lower()), None) or \
-        next((p for p in always if "friction" in p.name().lower()), None)
+    target = data.parm("parmop_friction")
     if target is None:
-        raise SetupError("no 'Set Always' operation menu found on Box3D Data; menus: "
-                         + ", ".join(p.name() for p in always))
-    set_menu_by_label(data, [target.name()], "Always")
-    ground_path, _ = packed_boxes("friction_ground", [GROUND])
-    finish(dop, box3d_solver(dop, merge(dop, [packed_object(dop, "ground", ground_path), data])))
-    track = step(dop, 40, lambda sim, f: packed_positions(sim, "piece"))
-    v12 = (track[12][names[0]][0] - track[11][names[0]][0]) * hou.fps()
-    v40 = (track[40][names[0]][0] - track[39][names[0]][0]) * hou.fps()
+        ops = ", ".join(p.name() for p in data.parms() if p.name().startswith("parmop"))
+        raise SetupError(f"no parmop_friction on Box3D Data; operation menus: {ops}")
+    set_menu_by_label(data, ["parmop_friction"], "Always")
+    ground_path, _ = packed_boxes("friction_ground", [dict(GROUND, attrs={"active": 0})])
+    ground = packed_object(dop, "ground", ground_path, friction=1.0)
+    finish(dop, box3d_solver(dop, merge(dop, [ground, data])))
+    track = step(dop, 40, lambda sim, f: centroid(whole_object_points(sim, "box")))
+    v12 = (track[12][0] - track[11][0]) * hou.fps()
+    v40 = (track[40][0] - track[39][0]) * hou.fps()
     ok = v12 > 4.0 and v40 < 0.5
     return [Result("data_change_midsim", Result.PASS if ok else Result.FAIL,
                    f"speed {v12:.2f} on frame 12 (friction 0) and {v40:.2f} on frame 40 (friction 1 from frame 13; "
-                   f"set with '{target.name()}' = Set Always)")]
+                   "parmop_friction = Set Always; ground friction 1)")]
 
 
 def test_static_object_transform():
@@ -423,6 +435,7 @@ TESTS = {
     "feedback": test_feedback,
     "centroid_anchors": test_centroid_anchors,
     "sidefx_hard": test_sidefx_hard,
+    "sidefx_hard_all": test_sidefx_hard_all,
     "sidefx_spring": test_sidefx_spring,
     "rbd_first_frames": test_rbd_first_frames,
     "rbd_initial_motion": test_rbd_initial_motion,

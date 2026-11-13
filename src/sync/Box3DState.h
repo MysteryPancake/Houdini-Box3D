@@ -209,6 +209,9 @@ struct Box3DObjectSync {
   bool anyDriven =
       false; // a moved animated body (velocity to clear): never skip
   bool addImpact = false; // Box3D Data "Add Impact Data"
+  // The point attributes last reported as overriding this object's Box3D Data
+  // (noteOverriddenData): reported again only when the set changes.
+  std::string overridesReported;
   std::vector<Box3DBodyMirror *>
       bodies; // every body of the object (rebuilt by each full scan)
   // `force` / `torque` data ids right after the solver last zeroed them (or

@@ -337,6 +337,49 @@ bool startAwakeFor(const b3dop::BodySettings &node, const PointAttrs &a,
   return a.awake.isValid() ? a.awake.get(off) != 0 : node.startAwake;
 }
 
+// Point attributes that replace a Box3D Data value on an object with a Box3D
+// Data node. RBD Packed Object writes several of them onto every point from its
+// own parameters (mass, density, computemass, friction, bounce in Houdini
+// 22.0), so its Box3D Data values for those do nothing; this makes that
+// visible. Reported once per object: on its first full scan, and again only if
+// the set changes. (`active` is left out: it only takes over Body Type when 0.)
+void noteOverriddenData(const GU_Detail *gdp, Box3DObjectSync &os,
+                        SyncCounts &c) {
+  static const char *const kOverriding[] = {"mass",
+                                            "density",
+                                            "computemass",
+                                            "friction",
+                                            "bounce",
+                                            "rollingresistance",
+                                            "tangentvelocity",
+                                            "lineardamping",
+                                            "angulardamping",
+                                            "gravityscale",
+                                            "enablesleep",
+                                            "awake",
+                                            "sleepthreshold",
+                                            "ccdthreshold",
+                                            "fastobject",
+                                            "contactrecycling",
+                                            "bullet_georep",
+                                            "bullet_autofit"};
+  std::string found;
+  for (const char *name : kOverriding)
+    if (gdp->findPointAttribute(name)) {
+      found += found.empty() ? "" : " ";
+      found += name;
+    }
+  if (found == os.overridesReported)
+    return;
+  os.overridesReported = found;
+  if (found.empty())
+    return;
+  ++c.overriddenObjects;
+  for (const char *name : kOverriding)
+    if (gdp->findPointAttribute(name))
+      ++c.overriddenData[name];
+}
+
 // pscale / scale (a packed point's size is its transform; these only size its
 // fallback box).
 void readPscaleScale(const PointAttrs &a, GA_Offset off, float &ps,
@@ -1169,6 +1212,8 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
   os.canSkip = false;
   os.liveStamp = st.syncStamp;
   const int problems0 = c.failed + c.duplicates + c.badP;
+  if (dataNode)
+    noteOverriddenData(gdp, os, c);
 
   a.bindBuildAttrs(gdp);
   ScanContext ctx(st, gdp, a, node);

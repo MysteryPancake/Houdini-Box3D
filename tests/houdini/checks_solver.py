@@ -1,6 +1,7 @@
 """Solver, UI and caching checks: the joint / Data / Solver parameter UI, node messages, cache
 continuity, removing the object that carries the world, scene scale, a single thread."""
 
+import re
 import time
 
 import hou
@@ -46,15 +47,28 @@ def folder_labels(group):
     return labels
 
 
+def disable_when(node, parm):
+    """The disable-when condition Houdini loaded for `parm` (a parameter or a vector's tuple), or ''.
+    (Parm.isDisabled() only reports Parm.disable(); conditions are evaluated by the UI.)"""
+    pt = node.parmTuple(parm)
+    if pt is None:
+        raise SetupError(f"{node.path()} has no parameter '{parm}'")
+    conds = pt.parmTemplate().conditionals()
+    return " ".join(conds.get(hou.parmCondType.DisableWhen, "").split())
+
+
 def disabled(node, parm, toggles):
-    """Sets the toggles ({name: value}) and returns whether `parm` (a parameter, or a vector's
-    tuple) is disabled."""
+    """Whether the disable-when condition of `parm` holds with the toggles set ({name: value}).
+    Evaluates Houdini's loaded condition string: '{ a == 0 } { b == 0 }' is disabled when any
+    {} group holds; the terms inside one group must all hold."""
+    cond = disable_when(node, parm)
     for name, value in toggles.items():
         node.parm(name).set(value)
-    p = node.parm(parm) or (node.parmTuple(parm)[0] if node.parmTuple(parm) else None)
-    if p is None:
-        raise SetupError(f"{node.path()} has no parameter '{parm}'")
-    return p.isDisabled()
+    for group in re.findall(r"\{([^}]*)\}", cond):
+        terms = re.findall(r"(\w+)\s*==\s*(-?[\d.]+)", group)
+        if terms and all(float(node.parm(n).eval()) == float(v) for n, v in terms):
+            return True
+    return False
 
 
 def test_ui():
@@ -70,6 +84,7 @@ def test_ui():
             problems.append(f"{what}: got {got!r}, expected {want!r}")
 
     rev = create(dop, "box3d_revoluteconrel", "revolute")
+    expect("Revolute Stiffness disable-when string", disable_when(rev, "stiffness"), "{ enable_spring == 0 }")
     expect("Revolute Stiffness disabled with Enable Spring off", disabled(rev, "stiffness", {"enable_spring": 0}), True)
     expect("Revolute Stiffness enabled with Enable Spring on", disabled(rev, "stiffness", {"enable_spring": 1}), False)
     expect("Revolute Motor Speed disabled with Enable Motor off", disabled(rev, "motor_speed", {"enable_motor": 0}), True)
@@ -120,7 +135,9 @@ def test_ui():
 
     if problems:
         return [Result("ui", Result.FAIL, f"{len(problems)} of {checked} checks: " + "; ".join(problems))]
-    return [Result("ui", Result.PASS, f"all {checked} UI checks (disable conditions, ranges, defaults, tabs, labels)")]
+    return [Result("ui", Result.PASS, f"all {checked} UI checks: the disable-when conditions Houdini loaded give the "
+                                      "right greying for each toggle state, plus ranges, defaults, tabs and labels "
+                                      "(how they look greyed out still needs eyes)")]
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +249,15 @@ def test_remove_world_object():
     if deleter is None:
         raise SetupError("no Delete Objects DOP found (tried 'deleteobjects', 'delete')")
     deleter.setInput(0, solver)
-    set_parm(deleter, ["group", "objpattern", "objects"], "first")
+    try:
+        set_parm(deleter, ["numdeletes"], 1)
+    except SetupError:
+        pass
+    set_parm(deleter, ["objgroup0", "group", "objpattern", "objects"], "first")
+    try:
+        set_parm(deleter, ["deleteobjects0"], 1)
+    except SetupError:
+        pass
     set_expression(deleter, ["activation"], "$SF >= 20")
     finish(dop, deleter)
 

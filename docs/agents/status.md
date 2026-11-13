@@ -24,8 +24,8 @@ remove an item once it has been checked, and record anything new here rather tha
 * Data ids surviving the DOP copy between timesteps (the sync skip). If they do not, every step scans: correct, no gain.
   The debug log `sync: N of M object(s) unchanged, scan skipped` shows it working.
 * The timestamp semantics behind `canContinue`.
-* Force DOPs (`SIM_Force::getForce`, found with `SIM_DataFilterByType("SIM_Force")`): not yet run in Houdini, and
-  whether `getForce` is thread-safe (evaluation is kept serial).
+* Force DOPs: a Gravity Force DOP pulls at g and adds to the solver's Gravity (verified). Whether `getForce` is
+  thread-safe (evaluation is kept serial).
 * Houdini's impact normal convention (Impacts data).
 * Bullet's `bullet_primR` rotation order (taken as XYZ Euler degrees) and `bullet_length` meaning (taken as the
   capsule's straight section without caps).
@@ -37,40 +37,30 @@ remove an item once it has been checked, and record anything new here rather tha
 * `Box3DParms::Range::hardMin = false` (`PRM_RANGE_UI` minimum) for the joint nodes' signed sliders, and tabs on the
   joint nodes (switcher from `Box3DParms`): not yet seen in Houdini.
 **Solver step, caching and threads** (debug build: `REBUILD` lines in the log show every world rebuild)
-* `getRequestedCacheSubclass` = 1: with the DOP cache on, off, or past its memory limit, playing forward continues the
-  world every frame (no rebuild per frame); scrubbing back inside the cache and playing on resumes from the cached
-  frame (one rebuild, then continuous).
 * An Escape mid-step (`SIM_SOLVER_FAIL`, world unstamped): Houdini discards that step and re-cooks it, the frames before
   it stay cached and correct, the re-cook rebuilds once. Also that Escape reaches `opInterrupt()` at all with no
   `opStart` of ours, during a long first-frame sync of many convex hulls.
 * The world data rides on the first object that has it (else `objects(0)`): removing that object mid-simulation (a
   Delete Objects DOP, a changed solver group) loses the world, which should mean one rebuild, not a crash or a stall.
-* Saved caches: loading a `.sim` / File Cache DOP cache or reopening a `.hip`, then simulating on from a loaded frame,
-  rebuilds once from the geometry (no save / load of the world) and continues sensibly.
-* Node messages (`addError` on `objects(0)` with `SIM_MESSAGE`): they appear on the Box3D Solver node (not only on the
-  object), and clear on the next step once the problem is gone.
+* Node messages: they appear on the Box3D Solver node (verified); that they clear on the next step once the problem
+  is gone is scripted (`messages_clear`) but not yet run.
 * `objects` sorted by object id (`box3dObjectById` binary search, a miss is final). Checked once per solve (`st.objectsSorted`); an array that is not sorted falls back to a linear scan, so only speed is at stake.
-* Box3D's tasks on Houdini's TBB pool (`Box3DHoudiniTasks`): no stall or deadlock when several DOP networks or threaded
-  SOPs cook at once, under `HOUDINI_MAXTHREADS=1`, or where threading is disabled for the cooking thread
-  (`UT_Thread::isThreadingEnabled()` false: tasks run inline).
-* Scene scale: Box3D's tolerances (contact slop, speculative margin, sleep and bounce thresholds, Contact Recycle
-  Distance) assume metres. Check a scene modelled in centimetres or at 100x scale for jitter, gaps or tunnelling.
+* Box3D's tasks on Houdini's TBB pool (`Box3DHoudiniTasks`): no stall when several DOP networks or threaded SOPs cook
+  at once, or where threading is disabled for the cooking thread (tasks run inline). `HOUDINI_MAXTHREADS=1` is fine.
+* Scene scale: Box3D's tolerances assume metres. Measured (`scale`): a three-box stack rests 2.495 / 2.490 / 2.417 box
+  sizes tall at 0.01x / 1x / 100x (2.5 ideal), with slight jitter at 100x: centimetre-scale scenes sink about 3%.
 
 **Points and packed geometry**
 * Point walk order is point-number order (`GA_Iterator` over `getPointRange()`): the walk position is the body id
   without `id`, and the point number written to Impacts. Check after a Sort SOP upstream, with and without `id`.
-* `collision_category` / `collision_mask` read through a 64-bit handle (`GA_ROHandleID`) from a 32-bit `i@` attribute:
-  that it binds and that `-1` sign-extends to every bit (README promises it).
 * Packed points: the body's primitive is found through the point's vertex (one point per packed primitive), `P` is the
   pivot's world position, and `getFullTransform4` includes that translation. Check pieces whose pivot is not at the
   centroid, and a wrangle that moves `P` of a packed point mid-simulation (an edit, so the body teleports).
-* Packed types other than packed geometry and fragments (Packed Disk, Alembic, USD / packed sequences):
-  `getPackedDetail()` gives usable geometry, and what loading it costs on the first frame.
-* Packed geometry holding nested packed primitives, or non-polygon primitives (primitive spheres, tubes, volumes /
-  VDBs, curves): hulls are built from their points only (a nested packed primitive is a single point, a sphere
-  primitive its centre). Expected to be wrong; decide whether to unpack or warn.
-* Mirrored packed transforms (negative determinant): the third row is flipped on read and the write-back writes a
-  non-mirrored transform. Check what a mirrored piece looks like after it starts moving.
+* Packed USD / packed sequences: `getPackedDetail()` gives usable geometry (Packed Disk and Packed Alembic do).
+* (Confirmed, `odd_packed_contents`: a packed primitive sphere or a nested packed primitive collides as a single point,
+  half sunk into the ground. Listed under Known gaps.)
+* (Confirmed, `mirrored_piece`: the write-back drops the mirror, determinant -1 becomes +1 once the piece moves. Listed
+  under Known gaps.)
 * `SourceSummaryCache` (process-wide, survives rebuilds): relies on `GU_Detail::getUniqueId()` never being reused in a
   session and every edit to a packed source bumping its `P` or primitive-list data id. Edit a packed source in place
   (no new id) and rebuild: a stale summary would give the old hull.
@@ -91,19 +81,15 @@ remove an item once it has been checked, and record anything new here rather tha
   SOP every step (Overwrite with SOP / deforming geometry) overwrite the written `P` / `orient` / `v` / `w`. Is that wanted?
 * Releasing a `SIM_GeometryAutoWriteLock` may bump data ids (the fingerprint is re-recorded after release). If our own
   writes still look like edits, every object scans every step: watch for `full scan, changed:` lines in a debug build.
-* Downstream readers get what they expect: DOP Import (Transform Pieces / Fetch), RBD Unpack / I/O and motion blur
-  read `P`, `orient`, packed transforms, `v` (of the body origin, which is the centre of mass) and `w` (radians per
-  second, world). Only awake dynamic bodies are written, so a body that falls asleep keeps its last small `v` / `w`
-  (possible motion-blur smear on resting pieces).
+* Downstream readers: DOP Import (Fetch) matches the simulation, `v` is -g t for a falling body and `w` is in radians
+  per second (verified). Still open: motion blur, and that a body falling asleep keeps its last small `v` / `w`.
 * `addPointImpact` arguments: impulse in N*s, the point number, the other object id and point, primitive -1, and time =
   `engine.getSimulationTime()` at the end of the step. Check against Houdini's impact tools (DOP Import of Impacts, a
   SOP Solver reading them), and that a fresh `SIM_Impacts` each step (removed when there are none) is what they want.
   No Feedback data: other solvers in a Multi Solver do not see our impacts.
 * `mass` is written only with `computemass` (the computed value). Bullet's write-back may differ.
-* Aging: `age` counts DOP seconds (Time Scale ignored, as documented) and `dead` is set once `age > life`. Compare with
-  the POP Solver (it may use `>=`), and check that a `life` of 0 means never dies, as here.
-* Dead deletion (`destroyPrimitive(prim, true)` for packed points): a constraint network naming the deleted piece drops
-  its joint (anchor unresolved) without errors; other data referring to point numbers is renumbered.
+* Aging: `age` counts seconds, life 0 never dies, and a dead packed piece is deleted (verified, also inside a
+  constraint network without errors). Compared with the POP Solver's timing: scripted (`aging_vs_pop`), not yet run.
 * Point `force` / `torque`: world-space newtons and newton-metres (what POP Force writes), applied at the centre of mass
   for one step, then zeroed by the solver. A POP Force must cook before the Box3D Solver in the same step; the zeroing
   may clash with another solver reading `force` in a Multi Solver.
@@ -117,49 +103,33 @@ remove an item once it has been checked, and record anything new here rather tha
 * Static Objects whose geometry is packed, SDF-only or not polygons: only polygons are used, so they collide with
   nothing and warn "no usable collision geometry". (The Ground Plane DOP works: a dropped box lands on it.)
 * A Static Object with Use Deforming Geometry bumps `P` every step, so its mesh is rebuilt every step (cost).
-* Objects solved by another solver (Bullet, RBD, POP) that have a collide relationship with ours become static polygon
-  meshes, posed each step: one-way interaction. Check the warning count and the behaviour.
+* Objects solved by another solver (Bullet, RBD, POP) with a collide relationship: packed ones are ignored by Box3D
+  ("no usable collision geometry", seen with a Bullet RBD Packed Object, which then fell through the Box3D body). One-way
+  collision with polygon objects is untested.
 
 **Constraint relationship nodes**
 * Their icons are picked up.
 
 **Constraint networks**
 * Relationships found with `getRelationship(ingroup, i)` for both `ingroup` true and false; deduplicated by name.
-* Writing the relationship's geometry from the solver (non-const `getGeometry()`; the Bullet solver writes it back the
-  same way): results must not bleed into earlier cached frames. Overwrite with SOP on re-imports every step and loses
-  the live frames / `broken` group (expected).
-* Attach Internal Constraints to Object (`ConstraintGeometry` on the object): where the constraint data lives then.
-* `next_constraint_name`: the switch happens, the new joint starts exactly where the old one was, the attribute is
-  cleared. `GA_RWHandleS::set` taking a `UT_StringHolder`.
-* Feedback: `force` / `torque` are now float magnitudes (were vectors); a scene with an existing vector `force` on the
-  network writes only component 0. `distance` / `angle` (radians) match Bullet's names.
 * Float attributes multiply the node's value (Houdini's rule): confirm it is wanted, since zero defaults (limits,
   targets) and -1 caps cannot be changed per primitive unless the node is set to 1.
-* Networks from Connect Adjacent Pieces put each end at its piece's centroid; a Box3D Weld node pulls the two ends
-  together, so pieces may snap (SideFX Glue / Hard all hold the offset instead).
 
 **SideFX constraint data**
 * `SIM_Options::importOption` converting SideFX's int / bool options (Glue with the Box3D Solver holds, so reading
   SideFX's data works; the individual values are not checked).
-* Glue: Break Force = strength / timestep is our own rule. Compare breakage with Bullet on a typical fracture; Box3D's
-  weld also carries weight, so a tall glued wall may break at its base where Bullet's would not.
+* (Confirmed, `sidefx_glue`: Box3D's Glue breaks under a hanging piece's weight at Strength 1 and 100 where Bullet's
+  holds; both hold at 1e4. Listed under Known gaps.)
 * Hard: `all` ignoring the rest length, and `position` with Houdini's default rest length 1 and no `restlength`
   attribute giving a rod of length 1 (the documented meaning), are guesses about Bullet's behaviour.
 * `constraint_type` missing = all.
 * Which end is Cone Twist's goal (taken as point 1); only matters when goal and constrained axes differ.
-* Spring: whether Bullet's Spring applies an angular spring with the same strength (assumed, from the HDK's
-  `SIM_ConRelSpring::getTorque`).
 * Soft / Spring `all` with a rest length shifts the frames along the anchor line when the joint is made; after a
   world rebuild from a stretched pose the offset direction is re-derived from the anchors and may differ slightly.
 
 **Whole-object bodies**
-* `SIM_PositionSimple`'s translation convention: written as the pivot's displacement, then checked through
-  `getTransform` and rewritten as the pivot's world position if the pivot does not land on the body. A drift or jump
-  on the first write-back points here.
 * The `Colliders` label on RBD Point Object and RBD Fractured Object (only RBD Object and RBD Packed Object were
   checked); its value is not used, only "present and not PackedObject".
-* RBD State (an `RBD_State`) casts to `SIM_Motion` / `SIM_PositionSimple` through `getPointerToType` without linking
-  Houdini's RBD library; its initial velocity and angular velocity are read (radians) and the body starts with them.
 * `SIM_DATA_CREATE(obj, "Position", SIM_Motion, 0)` when the object has no Position data, and whether writing
   `Position` from a solver needs anything more (Bullet and the RBD solver do it).
 * The viewport and DOP Import SOP follow the written Position data (through the geometry's `positionpath`).
@@ -194,6 +164,14 @@ constructor); `DECLARE_CLASSNAME` / `DECLARE_DATAFACTORY` expansions (`SIM_DataU
 passed as a `PRM_Template`'s conditional pointer.
 
 ## Known gaps / TODO
+
+* RBD Packed Object writes its own physical attributes onto every point and point attributes win, so Box3D Data's
+  mass / density / compute mass / friction / bounce do nothing there (as with Bullet). Decided: keep Bullet's rule,
+  document it (README, tooltips) and warn once per object. A Box3D Packed Object node (an asset: Empty Object, SOP
+  Geometry, Box3D Data, no stamped attributes) would give Box3D Data its full role on packed geometry.
+* Mirrored packed pieces lose their mirror once they move (the write-back writes a non-mirrored transform).
+* Packed primitive spheres and nested packed primitives collide as one point (hulls from points only): unpack or warn.
+* SideFX Glue breaks under static load (Break Force = strength / timestep) where Bullet's Glue holds.
 
 * GCC/Clang `-Wshadow` (shadowing members and outer scopes, beyond the local shadowing MSVC `/W4` reports) and
   `-Wconversion` (about 12) are off.

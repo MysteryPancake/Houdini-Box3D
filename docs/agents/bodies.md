@@ -155,6 +155,12 @@ equal to what its body was built with.
      writes default `bullet_primS` (1, 1, 1) and `bullet_radius` 1 onto every point (seen in Houdini 22.0), so
      applying them with autofit on made every plain point a size-2 box whatever its `pscale`.
 * Notes are aggregated into one node warning per kind, on the step a shape is built.
+* Point attributes override Box3D Data, as for Bullet (Box3D Data only fills in missing ones). RBD Packed Object
+  writes several onto every point from its own parameters (`mass`, `density`, `computemass`, `friction`, `bounce`
+  in Houdini 22.0), so its Box3D Data values for those do nothing. `noteOverriddenData` (Box3DPointSync.cpp) lists
+  the attributes present that replace a Box3D Data value, on objects that have a Box3D Data node, once per object
+  (first full scan, or when the set changes, `Box3DObjectSync::overridesReported`); the solver turns the step's
+  total into one warning. The Box3D Data tooltips of those five say so.
 
 **Explicit primitives** (Bullet Data with AutoFit off; `bullet_autofit` attribute, else the node toggle, default on):
 for `box`, `sphere`, `capsule` only. `bullet_primS` = box HALF extents (Bullet Data documents Box Size as a half-size);

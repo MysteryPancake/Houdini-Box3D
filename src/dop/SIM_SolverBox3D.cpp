@@ -490,6 +490,16 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
     warnCount(objects, fb.second, "point(s): " + fb.first);
   for (const auto &fb : counts.objectFallbacks)
     warnCount(objects, fb.second, "object(s): " + fb.first);
+  if (counts.overriddenObjects > 0) {
+    std::string names;
+    for (const auto &od : counts.overriddenData)
+      names += (names.empty() ? "" : ", ") + od.first;
+    message(objects, "point attribute(s) " + names +
+                         " override Box3D Data on " +
+                         std::to_string(counts.overriddenObjects) +
+                         " object(s). RBD Packed Object writes these from its "
+                         "own parameters: set the values there");
+  }
   warnCount(objects, counts.failed,
             "point(s) could not be turned into a body and are not simulated");
   warnCount(objects, counts.failedObjects,

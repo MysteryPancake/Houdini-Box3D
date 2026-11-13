@@ -35,6 +35,7 @@ from b3dtest import (
     set_menu_by_label,
     set_parm,
     sop_solver,
+    sop_solver_contents,
     step,
 )
 from checks_constraints import hanging_pair, sidefx_compare
@@ -68,7 +69,7 @@ def test_messages_clear():
 
     dop, names = hanging_pair("messages_clear", "weld", conrels=[("box3d_weldconrel", {})],
                               network_edit=animate_name,
-                              net_parms={("overwrite", "overwritewithsop", "useoverwrite"): 1})
+                              net_parms={("reloadfromsops", "overwrite", "overwritewithsop"): 1})
     solver = dop.node("box3d_solver")
     track = step(dop, 20, lambda sim, f: [m for m in node_messages(solver) if "Box3D" in m])
     early = [m for f in range(2, 9) for m in track[f]]
@@ -143,9 +144,15 @@ def test_point_order():
         runs[label] = step(dop, 48, lambda sim, f: packed_positions(sim, "pieces"))[48]
     diffs = {k: max_difference(runs[k], runs["plain"]) for k in ("reversed", "reversed+id")}
     ok = all(d < 1e-3 for d in diffs.values())
+
+    def detail(run):
+        return ", ".join(f"{n}: {tuple(round(c, 2) for c in runs['plain'][n])} -> {tuple(round(c, 2) for c in run[n])}"
+                         for n in sorted(run) if (run[n] - runs["plain"][n]).length() >= 1e-3)
+
     return [Result("point_order", Result.PASS if ok else Result.FAIL,
                    f"largest per-piece difference from the unsorted run: reversed {diffs['reversed']:.2e}, "
-                   f"reversed with id {diffs['reversed+id']:.2e}")]
+                   f"reversed with id {diffs['reversed+id']:.2e}"
+                   + ("" if ok else f". Differing pieces (unsorted -> reversed): {detail(runs['reversed'])}"))]
 
 
 # ---------------------------------------------------------------------------
@@ -195,13 +202,14 @@ def test_sop_solver_edit():
     dop = new_dopnet("sopedit")
     obj = packed_object(dop, "pieces", path)
     edit = sop_solver(dop, f'if (s@name == "{names[1]}" && abs(@Frame - 12) < 0.5) @P.x += 5;')
+    contents = sop_solver_contents(edit)
     finish(dop, multisolver(dop, obj, [box3d_solver(dop, None), edit]))
     track = step(dop, 24, lambda sim, f: packed_positions(sim, "pieces")[names[1]])
     x11, x13, x24, y24 = track[11][0], track[13][0], track[24][0], track[24][1]
     ok = close(x11, 0.0, 0.05) and close(x13, 5.0, 0.05) and close(x24, 5.0, 0.05) and close(y24, 0.5, 0.05)
     return [Result("sop_solver_edit", Result.PASS if ok else Result.FAIL,
                    f"x: {x11:.2f} on frame 11, {x13:.2f} on frame 13, {x24:.2f} on frame 24 (expected 0, 5, 5); "
-                   f"resting at y={y24:.2f}")]
+                   f"resting at y={y24:.2f}" + ("" if ok else f". SOP Solver contents: {contents}"))]
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +231,7 @@ def test_time_scale_kinematic():
         dop = new_dopnet("kinematic_" + tag)
         obj = packed_object(dop, "pieces", path)
         mover = sop_solver(dop, f'if (s@name == "{names[1]}") @P.x = @Time;')
+        contents = sop_solver_contents(mover)
         solver = box3d_solver(dop, None)
         set_parm(solver, ["timescale"], ts)
         finish(dop, multisolver(dop, obj, [mover, solver]))
@@ -231,7 +240,8 @@ def test_time_scale_kinematic():
         t = 48 / hou.fps()
         rows.append(f"Time Scale {ts:g}: kinematic x {kx:.2f} (animation {t:.2f}), pushed box x {bx:.2f}")
         ok = ok and close(kx, t, 0.05)
-    return [Result("time_scale_kinematic", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+    return [Result("time_scale_kinematic", Result.PASS if ok else Result.FAIL,
+                   "; ".join(rows) + ("" if ok else f". SOP Solver contents: {contents}"))]
 
 
 # ---------------------------------------------------------------------------
@@ -338,21 +348,45 @@ def test_dead_with_network():
 
 def test_animated_static():
     """A Static Object grid that rises to y = 1 over the first second (Use Object Transform): a box
-    dropped from y = 8 lands on it and rests at 1.5."""
-    geo = new_geo("rising_grid")
-    grid = create(geo, "grid")
-    set_parm(grid, ["size"], (10, 10))
-    display(grid)
-    set_expression(geo, ["ty"], "min($T, 1)")
-    dop = new_dopnet("animated_static")
-    static = create(dop, "staticobject", "collider")
-    set_parm(static, ["soppath"], grid.path())
-    set_parm(static, ["usetransform"], 1)
-    path, names = packed_boxes("animated_static_box", [{"size": (1, 1, 1), "center": (0, 8, 0)}])
-    finish(dop, box3d_solver(dop, merge(dop, [packed_object(dop, "box", path), static])))
-    y = step(dop, 96, lambda sim, f: packed_positions(sim, "box"))[96][names[0]][1]
-    return [Result("animated_static", Result.PASS if close(y, 1.5, 0.03) else Result.FAIL,
-                   f"box rests at y={y:.3f} (expected 1.5 on the grid that rose to 1)")]
+    dropped from y = 8 lands on it and rests at 1.5. Also reports the collider's transform as
+    Houdini gives it, and tries again with Use Deforming Geometry on."""
+    results = []
+    for deforming in (False, True):
+        tag = "deforming" if deforming else "plain"
+        geo = new_geo("rising_grid_" + tag)
+        grid = create(geo, "grid")
+        set_parm(grid, ["size"], (10, 10))
+        display(grid)
+        set_expression(geo, ["ty"], "min($T, 1)")
+        dop = new_dopnet("animated_static_" + tag)
+        static = create(dop, "staticobject", "collider")
+        set_parm(static, ["soppath"], grid.path())
+        set_parm(static, ["usetransform"], 1)
+        if deforming:
+            try:
+                set_parm(static, ["usedeforminggeo", "usedeforming", "deforming"], 1)
+            except SetupError as e:
+                results.append(Result("animated_static", Result.INFO, f"no Use Deforming Geometry toggle: {e}"))
+                continue
+        path, names = packed_boxes("animated_static_box_" + tag, [{"size": (1, 1, 1), "center": (0, 8, 0)}])
+        finish(dop, box3d_solver(dop, merge(dop, [packed_object(dop, "box", path), static])))
+
+        def sample(sim, f):
+            col = sim.findObject("collider")
+            return packed_positions(sim, "box"), (col.transform().extractTranslates()[1] if col else None)
+
+        track = step(dop, 96, sample)
+        y = track[96][0][names[0]][1]
+        col_y = {f: track[f][1] for f in (1, 13, 25, 96)}
+        label = "with Use Deforming Geometry" if deforming else "plain"
+        moved = col_y[25] is not None and col_y[25] > 0.5
+        hint = "" if close(y, 1.5, 0.03) else (
+            " Houdini moved the collider, so Box3D ignored the move" if moved else
+            " Houdini itself did not move the collider object")
+        results.append(Result("animated_static", Result.PASS if close(y, 1.5, 0.03) else Result.FAIL,
+                              f"{label}: box rests at y={y:.3f} (expected 1.5); the collider object's y on frames "
+                              f"1, 13, 25, 96: {[None if v is None else round(v, 2) for v in col_y.values()]}.{hint}"))
+    return results
 
 
 # ---------------------------------------------------------------------------

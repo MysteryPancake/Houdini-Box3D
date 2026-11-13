@@ -21,6 +21,7 @@ from b3dtest import (
     merge,
     new_dopnet,
     new_geo,
+    node_messages,
     object_bbox,
     packed_boxes,
     packed_object,
@@ -114,12 +115,23 @@ setpointattrib(0, "P", pt, point(0, "P", pt) + (piv - old) * m);
 """)
     display(wr)
     start_min = wr.geometry().boundingBox().minvec()[1]
-    _, track = drop_one("pivot", wr.path())
-    lo, hi = track[72]
+    dop = new_dopnet("pivot")
+    obj = packed_object(dop, "piece", wr.path())
+    finish(dop, box3d_solver(dop, merge(dop, [ground_object(dop, "pivot_ground"), obj])))
+
+    def sample(sim, f):
+        return object_bbox(sim, "piece"), packed_transform(sim, "piece"), packed_positions(sim, "piece")
+
+    track = step(dop, 96, sample)
+    (lo, hi), r, pos = track[96]
+    tilt = math.degrees(math.acos(max(-1.0, min(1.0, r[1][1] / max(1e-9, math.sqrt(sum(c * c for c in r[1])))))))
+    p96, p95 = list(pos.values())[0], list(track[95][2].values())[0]
+    speed = (p96 - p95).length() * hou.fps()
     ok = close(lo[1], 0.0, 0.02) and close(hi[1] - lo[1], 1.0, 0.02)
     return [Result("offset_pivot", Result.PASS if ok else Result.FAIL,
-                   f"pivot moved off the centroid (geometry bottom started at y={start_min:.2f}); at rest the box spans "
-                   f"y {lo[1]:.3f} to {hi[1]:.3f} (expected 0 to 1)")]
+                   f"pivot moved off the centroid (geometry bottom started at y={start_min:.2f}); after 4 s the box "
+                   f"spans y {lo[1]:.3f} to {hi[1]:.3f} (expected 0 to 1), tilted {tilt:.1f} deg, pivot moving "
+                   f"{speed:.3f}/s, pivot point at {tuple(round(c, 3) for c in p96)}")]
 
 
 # ---------------------------------------------------------------------------
@@ -291,13 +303,15 @@ def test_written_velocity():
 
 
 def impact_records(sim, obj_name):
+    """This frame's impact records as plain {field: value} dicts. (DopRecord objects are live: read
+    later, they show whatever frame is current then.)"""
     obj = sim.findObject(obj_name)
     data = obj.findSubData("Impacts") if obj is not None else None
     if data is None:
         return []
     for rtype in data.recordTypes():
         if "mpact" in rtype:
-            return list(data.records(rtype))
+            return [{n: r.field(n) for n in r.fieldNames()} for r in data.records(rtype)]
     return []
 
 
@@ -306,28 +320,28 @@ def test_impacts():
     frame add up to about m*v (4.4 N*s), with its point number and a time."""
     path, names = packed_boxes("impact_piece", [{"size": (1, 1, 1), "center": (0, 1.5, 0)}])
     dop = new_dopnet("impacts")
-    obj = packed_object(dop, "piece", path)
-    data = box3d_data(dop, obj, "data", addimpact=1, computemass=0, mass=1.0, bounce=0.0)
+    obj = packed_object(dop, "piece", path, computemass=0, mass=1.0, bounce=0.0)
+    data = box3d_data(dop, obj, "data", addimpact=1)
     finish(dop, box3d_solver(dop, merge(dop, [ground_object(dop, "impacts_ground"), data])))
     track = step(dop, 30, lambda sim, f: impact_records(sim, "piece"))
     first = next((f for f in sorted(track) if track[f]), None)
     if first is None:
         return [Result("impacts", Result.FAIL, "no Impacts records on any frame")]
     recs = track[first]
-    fields = list(recs[0].fieldNames())
+    fields = list(recs[0])
     imp_field = next((n for n in fields if "impulse" in n.lower()), None)
     if imp_field is None:
         raise SetupError(f"Impacts records have no impulse field; fields: {fields}")
-    total = sum(abs(r.field(imp_field)) if not isinstance(r.field(imp_field), (tuple, list))
-                else math.sqrt(sum(c * c for c in r.field(imp_field))) for r in recs)
+    total = sum(abs(r[imp_field]) if not isinstance(r[imp_field], (tuple, list))
+                else math.sqrt(sum(c * c for c in r[imp_field])) for r in recs)
     expected = math.sqrt(2 * G * 1.0)
-    extras = {n: recs[0].field(n) for n in fields if n.lower() in ("ptnum", "time", "otherobjid", "primnum")}
+    extras = {n: recs[0][n] for n in fields if n.lower() in ("ptnum", "time", "otherobjid", "primnum")}
     results = [Result("impacts", Result.PASS if 0.7 * expected <= total <= 1.6 * expected else Result.FAIL,
                       f"frame {first}: {len(recs)} record(s), impulses sum to {total:.2f} N*s (expected about "
                       f"{expected:.2f})")]
     # The box is point 0 of its object; the time is the end of the step that hit (frame `first`).
-    ptnum = next((recs[0].field(n) for n in fields if n.lower() == "ptnum"), None)
-    t = next((recs[0].field(n) for n in fields if n.lower() == "time"), None)
+    ptnum = next((recs[0][n] for n in fields if n.lower() == "ptnum"), None)
+    t = next((recs[0][n] for n in fields if n.lower() == "time"), None)
     t_expected = (first - 1) / hou.fps()
     ok = ptnum == 0 and t is not None and abs(t - t_expected) <= 1.0 / hou.fps() + 1e-6
     results.append(Result("impacts", Result.PASS if ok else Result.FAIL,
@@ -342,21 +356,21 @@ def test_impacts():
 
 
 def test_mass_written():
-    """With Compute Mass on (density 500), the points get mass = 500 for a 1 m cube; with it off
-    the mass attribute is not changed by the solver."""
+    """With Compute Mass on (density 500, set on RBD Packed Object, which writes them onto the
+    points), the solver writes mass = 500 for a 1 m cube; with it off the mass attribute (3) is
+    left alone."""
     rows, ok = [], True
     for compute in (1, 0):
         path, names = packed_boxes(f"mass_{compute}", [{"size": (1, 1, 1), "center": (0, 0.5, 0)}])
         dop = new_dopnet(f"mass_{compute}")
-        obj = packed_object(dop, "piece", path)
-        data = box3d_data(dop, obj, "data", computemass=compute, density=500.0, mass=3.0)
-        finish(dop, box3d_solver(dop, merge(dop, [ground_object(dop, f"mass_ground_{compute}"), data])))
+        obj = packed_object(dop, "piece", path, computemass=compute, density=500.0, mass=3.0)
+        finish(dop, box3d_solver(dop, merge(dop, [ground_object(dop, f"mass_ground_{compute}"), obj])))
         attrs = step(dop, 3, lambda sim, f: point_attributes(sim, "piece", names[0], ["mass"]))
         before, after = attrs[1]["mass"], attrs[3]["mass"]
         rows.append(f"Compute Mass {'on' if compute else 'off'}: mass {before} on frame 1, {after} on frame 3")
         if compute and not (after is not None and close(after, 500.0, 1.0)):
             ok = False
-        if not compute and after != before:
+        if not compute and not (after is not None and close(after, 3.0, 1e-3)):
             ok = False
     return [Result("mass_written", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
 
@@ -407,9 +421,8 @@ def test_point_force():
     ]
     path, names = packed_boxes("force_pieces", pieces)
     dop = new_dopnet("force")
-    obj = packed_object(dop, "pieces", path)
-    data = box3d_data(dop, obj, "data", computemass=0, mass=1.0)
-    finish(dop, box3d_solver(dop, data, gravity=(0, 0, 0)))
+    obj = packed_object(dop, "pieces", path, computemass=0, mass=1.0)
+    finish(dop, box3d_solver(dop, obj, gravity=(0, 0, 0)))
 
     def sample(sim, f):
         return {n: point_attributes(sim, "pieces", n, ["v", "w", "force"]) for n in names}
@@ -448,7 +461,35 @@ def test_gravity_dop():
     return [Result("gravity_dop", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
 
 
+def test_rbd_packed_attributes():
+    """Lists the point attributes RBD Packed Object puts on a packed piece (as the solver gets them
+    on frame 1), and shows whether a Box3D Data value (Friction 0.123) reaches the body or is
+    overridden by one of them. INFO: point attributes override Box3D Data by design."""
+    path, names = packed_boxes("stamp_piece", [{"size": (1, 1, 1), "center": (0, 2, 0)}])
+    dop = new_dopnet("stamped")
+    obj = packed_object(dop, "piece", path)
+    data = box3d_data(dop, obj, "data", friction=0.123, mass=7.0, computemass=0)
+    solver = box3d_solver(dop, data)
+    finish(dop, solver)
+    attrs = step(dop, 1, lambda sim, f: point_attributes(sim, "piece", names[0]))[1] or {}
+    warned = []
+    step(dop, 3, lambda sim, f: warned.extend(m for m in node_messages(solver) if "override Box3D Data" in m))
+    ours = {"friction", "bounce", "mass", "density", "computemass", "lineardamping", "angulardamping",
+            "gravityscale", "enablesleep", "sleepthreshold", "ccdthreshold", "rollingresistance", "pscale",
+            "bullet_georep", "bullet_primS", "bullet_radius", "bullet_autofit", "active", "animated", "v", "w"}
+    overriding = {k: attrs[k] for k in sorted(attrs) if k in ours}
+    others = sorted(k for k in attrs if k not in ours)
+    results = [Result("rbd_packed_attributes", Result.INFO,
+                      f"attributes that override Box3D Data: {overriding}. Other attributes: {others}. Box3D Data asked "
+                      "for friction 0.123 and mass 7: any value above that differs is RBD Packed Object's")]
+    results.append(Result("rbd_packed_attributes", Result.PASS if warned else Result.FAIL,
+                          f"solver warning: {warned[0]!r}" if warned else
+                          "no 'override Box3D Data' warning on the solver node"))
+    return results
+
+
 TESTS = {
+    "rbd_packed_attributes": test_rbd_packed_attributes,
     "collision_masks": test_collision_masks,
     "offset_pivot": test_offset_pivot,
     "packed_disk": test_packed_disk,

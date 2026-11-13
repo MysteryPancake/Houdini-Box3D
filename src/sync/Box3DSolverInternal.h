@@ -436,6 +436,11 @@ struct SyncCounts {
   int failedObjects = 0; // whole objects (syncWholeObject) that got no body
   std::unordered_map<std::string, int>
       objectFallbacks; // whole objects: note -> count
+  // Box3D Data values overridden by point attributes (RBD Packed Object writes
+  // several from its own parameters): attribute -> objects, sorted for the
+  // message. Each object counts once (noteOverriddenData).
+  std::map<std::string, int> overriddenData;
+  int overriddenObjects = 0;
 };
 
 constexpr size_t kProgressEvery =

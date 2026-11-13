@@ -133,7 +133,7 @@ def new_geo(name):
 
 
 # What a piece gets for an attribute it doesn't set (Bullet's meaning of a missing attribute).
-ATTR_DEFAULTS = {"active": 1, "animated": 0, "v": (0.0, 0.0, 0.0), "w": (0.0, 0.0, 0.0)}
+ATTR_DEFAULTS = {"active": 1, "animated": 0, "v": (0.0, 0.0, 0.0), "w": (0.0, 0.0, 0.0), "life": 0.0, "age": 0.0}
 
 
 def packed_boxes(name, pieces):
@@ -261,13 +261,17 @@ def new_dopnet(name="dop"):
     return create(hou.node("/obj"), "dopnet", name)
 
 
-def packed_object(dop, name, sop_path, keep_velocity=False):
+def packed_object(dop, name, sop_path, keep_velocity=False, **parms):
     """An RBD Packed Object. keep_velocity: keep the points' v / w (else RBD Packed Object
-    replaces them with its own initial velocity)."""
+    replaces them with its own initial velocity). parms: its own parameters, e.g. mass=1.0,
+    computemass=0: RBD Packed Object writes these onto every point as attributes, which
+    override Box3D Data (see test rbd_packed_attributes)."""
     obj = create(dop, "rbdpackedobject", name)
     set_parm(obj, ["soppath"], sop_path)
     if keep_velocity:
         set_parm(obj, ["inheritvelocity", "usepointvelocity", "inheritvel"], 1)
+    for parm, value in parms.items():
+        set_parm(obj, [parm], value)
     return obj
 
 
@@ -329,15 +333,28 @@ def sop_solver(dop, vex, name="sop_solver"):
     """A SOP Solver DOP whose SOP network runs `vex` over the points each step (after its
     default contents). @Frame and @Time are the current frame and time."""
     ss = create(dop, "sopsolver", name)
+    wr = ss.createNode("attribwrangle", "edit")
+    set_parm(wr, ["snippet"], vex)
+    # An Output SOP decides what the network returns (over the display flag): go in front of it.
+    outputs = [c for c in ss.children() if c.type().name() == "output"]
+    if outputs:
+        out = outputs[0]
+        wr.setInput(0, out.input(0))
+        out.setInput(0, wr)
+        return ss
     last = ss.displayNode()
     if last is None:
-        kids = ", ".join(c.name() for c in ss.children())
-        raise SetupError(f"{ss.path()}: no display node inside to add a wrangle after (children: {kids})")
-    wr = ss.createNode("attribwrangle", "edit")
+        kids = ", ".join(f"{c.name()} ({c.type().name()})" for c in ss.children())
+        raise SetupError(f"{ss.path()}: no Output or display node inside to add a wrangle to (children: {kids})")
     wr.setInput(0, last)
-    set_parm(wr, ["snippet"], vex)
     display(wr)
     return ss
+
+
+def sop_solver_contents(ss):
+    """What is inside a SOP Solver DOP, for messages."""
+    return ", ".join(f"{c.name()} ({c.type().name()}){' [display]' if c.isDisplayFlagSet() else ''}"
+                     for c in ss.children())
 
 
 def append_sop(sop_path, type_name, setup=None):

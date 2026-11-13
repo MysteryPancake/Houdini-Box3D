@@ -60,7 +60,7 @@ SideFX's Glue, Hard, Spring, Bullet Soft and Cone Twist Constraint Relationships
 
 ## Point attributes
 
-All attributes are optional except `P`. A missing one uses the Box3D Data value. Every step the solver writes `P`, `orient`, `v` and `w` back to the dynamic points.
+All attributes are optional except `P`. A missing one uses the Box3D Data value. RBD Packed Object writes its own `mass`, `density`, `computemass`, `friction` and `bounce` onto every point, as for Bullet, so set those on RBD Packed Object (the solver warns when they override Box3D Data). Every step the solver writes `P`, `orient`, `v` and `w` back to the dynamic points.
 
 | Attribute | Type | Meaning |
 |---|---|---|
