@@ -440,14 +440,14 @@ def test_rbd_defaults():
     convex hull (not a box)."""
     results = []
     # Mass and bounce from a head-on hit: A is a default RBD Object (1 m cube), B the same cube
-    # with Box3D Data giving it a known mass of density x volume and bounce 0 (A's 0.5 wins: the
-    # bounce mixing default is Maximum). Momentum: mA*2 = mA*vA + mB*vB.
+    # with Box3D Data giving it a known mass of density x volume and bounce 1 (A's 0.5 wins: the
+    # bounce mixing default is Minimum). Momentum: mA*2 = mA*vA + mB*vB.
     probe = new_dopnet("probe")
     density = parm_value(create(probe, "rbdobject", "probe"), ["density"], 1000.0)
     probe.destroy()
     expected_mass = density * 1.0
     _, _, _, _, va, vb = collide_whole_objects(
-        "rbd_defaults_hit", b_data={"computemass": 0, "mass": expected_mass, "bounce": 0.0})
+        "rbd_defaults_hit", b_data={"computemass": 0, "mass": expected_mass, "bounce": 1.0})
     mass_ratio = vb / (2.0 - va) if abs(2.0 - va) > 1e-6 else float("nan")  # mA / mB
     bounce = (vb - va) / 2.0
     msg = f"after the hit A vx={va:.2f}, B vx={vb:.2f}: mass(A)/mass(B) = {mass_ratio:.2f}, bounce = {bounce:.2f}"

@@ -39,7 +39,7 @@ G = 9.80665
 
 def ground_object(dop, name, **parms):
     """A static packed ground box (top at y = 0). parms: RBD Packed Object parameters, e.g.
-    bounce=0.0 (its default 0.5 is written onto the point and mixes as the maximum)."""
+    bounce=0.0 (its default 0.5 is written onto the point)."""
     path, _ = packed_boxes(name + "_geo", [GROUND])
     return packed_object(dop, name, path, **parms)
 

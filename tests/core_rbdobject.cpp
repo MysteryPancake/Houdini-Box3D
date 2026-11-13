@@ -28,7 +28,7 @@ int main() {
   // ---- nothing read: Box3D Data's defaults ----
   {
     const WholeObjectSetup s = rbdObjectSetup(RbdObjectSettings());
-    const BodySettings d;
+    const BodySettings d = nodeBodyDefaults();
     CHECK(s.node.props.computeMass == d.props.computeMass &&
           s.node.props.mass == d.props.mass &&
           s.node.props.density == d.props.density);
@@ -58,7 +58,7 @@ int main() {
     r.friction = -1.0f;
     r.bounce = INFINITY;
     const WholeObjectSetup s = rbdObjectSetup(r);
-    const BodySettings d;
+    const BodySettings d = nodeBodyDefaults();
     CHECK(s.node.props.density == d.props.density &&
           s.node.props.mass == d.props.mass &&
           s.node.props.inertiaScale == 1.0f);

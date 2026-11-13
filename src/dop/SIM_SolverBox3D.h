@@ -55,12 +55,12 @@ public:
   GETSET_DATA_FUNCS_F("isotropicinertia", IsotropicInertia);
   GETSET_DATA_FUNCS_B("enablewarmstarting", EnableWarmStarting);
   GETSET_DATA_FUNCS_F("impactminspeed", ImpactMinSpeed);
-  GETSET_DATA_FUNCS_I(
-      "frictionmixing",
-      FrictionMixing); // 0 geometric mean, 1 min, 2 max, 3 average, 4 multiply
+  GETSET_DATA_FUNCS_I("frictionmixing",
+                      FrictionMixing); // 0 geometric mean, 1 min, 2 max, 3
+                                       // average, 4 multiply (default)
   GETSET_DATA_FUNCS_I(
       "restitutionmixing",
-      RestitutionMixing); // same order as friction (2 max is the default)
+      RestitutionMixing); // same order as friction (1 min is the default)
   GETSET_DATA_FUNCS_B("enableaging",
                       EnableAging); // age += dt; dead = 1 once age > life
 

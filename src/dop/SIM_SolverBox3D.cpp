@@ -103,11 +103,13 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
           .toggle("restitutionpropagation", "Bounce Propagation", false,
                   "Pass bounce on through stacks of touching pieces.")
           // Both menus list the rules in the same order (kMixingMenu*); the
-          // stored value is the menu index.
-          .menu("frictionmixing", "Friction Mixing", 0,
+          // stored value is the menu index. Defaults are Bullet's rules as
+          // measured in Houdini (test bullet_mixing): multiply friction, take
+          // the smaller bounce.
+          .menu("frictionmixing", "Friction Mixing", 4,
                 {"Geometric Mean", "Minimum", "Maximum", "Average", "Multiply"},
                 "How the friction of two touching bodies is combined.")
-          .menu("restitutionmixing", "Bounce Mixing", 2,
+          .menu("restitutionmixing", "Bounce Mixing", 1,
                 {"Geometric Mean", "Minimum", "Maximum", "Average", "Multiply"},
                 "How the bounce of two touching bodies is combined.")
           .tab("Advanced")
@@ -225,7 +227,7 @@ b3dop::WorldSettings SIM_SolverBox3D::currentWorldSettings() const {
   s.warmStarting = getEnableWarmStarting();
   s.impactMinSpeed = static_cast<float>(getImpactMinSpeed());
   // Menu index -> rule. Both menus: Geometric Mean, Minimum, Maximum, Average,
-  // Multiply. Out of range (set from a script): Box3D's defaults.
+  // Multiply. Out of range (set from a script): the menus' defaults.
   using FM = b3dop::WorldSettings::FrictionMixing;
   using RM = b3dop::WorldSettings::RestitutionMixing;
   static const FM kFriction[] = {FM::GeometricMean, FM::Minimum, FM::Maximum,
@@ -234,8 +236,8 @@ b3dop::WorldSettings SIM_SolverBox3D::currentWorldSettings() const {
                                     RM::Average, RM::Multiply};
   const int fm = static_cast<int>(getFrictionMixing()),
             rm = static_cast<int>(getRestitutionMixing());
-  s.frictionMixing = (fm >= 0 && fm < 5) ? kFriction[fm] : FM::GeometricMean;
-  s.restitutionMixing = (rm >= 0 && rm < 5) ? kRestitution[rm] : RM::Maximum;
+  s.frictionMixing = (fm >= 0 && fm < 5) ? kFriction[fm] : FM::Multiply;
+  s.restitutionMixing = (rm >= 0 && rm < 5) ? kRestitution[rm] : RM::Minimum;
   return s;
 }
 

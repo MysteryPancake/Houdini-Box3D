@@ -119,7 +119,7 @@ def test_ui():
     # Ranges and defaults (Box3DJoints.h: jointParamRange, nodeJointDefaults)
     t = rev.parm("stiffness").parmTemplate()
     expect("Stiffness hard minimum 0", (t.minValue(), t.minIsStrict()), (0.0, True))
-    expect("Stiffness default", round(t.defaultValue()[0], 4), 5.0)
+    expect("Stiffness default", round(t.defaultValue()[0], 4), 10.0)
     t = rev.parm("lower_angle").parmTemplate()
     expect("Lower Angle slider minimum -180, not hard", (t.minValue(), t.minIsStrict()), (-180.0, False))
     expect("Lower Angle default", round(t.defaultValue()[0], 4), -45.0)

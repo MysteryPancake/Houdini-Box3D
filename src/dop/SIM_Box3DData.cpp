@@ -15,6 +15,8 @@ const SIM_DopDescription *SIM_Box3DData::getDescription() {
   // asserts on negative values, so ranges have a hard minimum of 0 (larger
   // values than the slider can be typed).
   using R = Box3DParms::Range;
+  // Bullet-like defaults, shared with objects that have no Box3D Data.
+  static const b3dop::BodySettings kDefaults = b3dop::nodeBodyDefaults();
   static Box3DParms p;
   static const PRM_Template *templates =
       p.tab("Shape")
@@ -44,7 +46,7 @@ const SIM_DopDescription *SIM_Box3DData::getDescription() {
           .menu("bodytype", "Body Type", 2, {"Static", "Kinematic", "Dynamic"},
                 "Static never moves, Kinematic follows its animation, Dynamic "
                 "is fully simulated. Points with active = 0 are static.")
-          .toggle("computemass", "Compute Mass", false,
+          .toggle("computemass", "Compute Mass", kDefaults.props.computeMass,
                   "Work out mass from Density and shape volume instead of "
                   "using Mass. A computemass point attribute wins; RBD Packed "
                   "Object always writes one.")
@@ -53,7 +55,7 @@ const SIM_DopDescription *SIM_Box3DData::getDescription() {
                   "attribute wins; RBD Packed Object always writes one: set it "
                   "there.",
                   "{ computemass == 1 }")
-          .number("density", "Density", 1000.0, R{0, 2000},
+          .number("density", "Density", kDefaults.props.density, R{0, 2000},
                   "Mass per unit volume, with Compute Mass on (1000 is about "
                   "water). A density attribute wins; RBD Packed Object always "
                   "writes one.",
@@ -62,12 +64,12 @@ const SIM_DopDescription *SIM_Box3DData::getDescription() {
                   "Multiplies the solver's Gravity: 0 floats, negative falls "
                   "upward. Overridden by the gravityscale attribute.")
           .tab("Material")
-          .number("friction", "Friction", 0.6, R{0, 1},
+          .number("friction", "Friction", kDefaults.props.friction, R{0, 1},
                   "How much surfaces resist sliding; 0 is ice-slick. A "
                   "friction attribute wins; RBD Packed Object always writes "
                   "one: set it there.")
           .number(
-              "bounce", "Bounce", 0.0, R{0, 1},
+              "bounce", "Bounce", kDefaults.props.restitution, R{0, 1},
               "Speed kept after a collision: 0 doesn't bounce, 1 full speed. A "
               "bounce attribute wins; RBD Packed Object always writes one.")
           .number("rollingresistance", "Rolling Resistance", 0.0, R{0, 1},

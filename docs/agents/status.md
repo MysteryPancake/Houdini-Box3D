@@ -135,12 +135,10 @@ remove an item once it has been checked, and record anything new here rather tha
 * Float noise: the mirror takes a read-back after each write; a constant "edited" count (teleports) every step would
   mean the read-back does not match what the next sync reads.
 * Impacts record point -1 for whole objects.
-* Solver guide geometry (Show Collision Shapes, `Box3DGuide.cpp`): written against the HDK reference, not yet
-  built. To check: the Guides tab appears on the Box3D Solver; the shapes draw for packed pieces, plain points and
-  RBD Objects, at the right pose on cached frames; `SIM_GuidePerObject` really gets one guide per solved object from
-  the solver's subdata. Calls used: `createGuideObjectSubclass`, `buildGuideGeometrySubclass`, `setGuideTemplates`,
-  `GET_GUIDE_FUNC_B` / `_V3`, `SIM_Engine::getNumSimulationObjects` / `getSimulationObject`, `GU_PrimPoly::build`.
-  Built and drawing (confirmed by eye). It draws nothing on an object's creation frame: see Known gaps.
+* Bullet mixing defaults (not yet built): Friction Mixing Multiply, Bounce Mixing Minimum (Bullet in Houdini 22.0
+  measured friction 0.16 and bounce 0.198 for 0.2 against 0.8: `bullet_mixing`), Box3D Data Bounce 0.5. Tests that
+  relied on the old rules were changed: `rbd_defaults` (B bounce 1), `bounce_heights` (ground bounce 1),
+  `friction_slope` (ramp friction 1). The baseline needs `--update-baseline`.
 * Performance Monitor stage events (`UT_PerfMonAutoSolveEvent`, see solver.md): built, but not yet looked at in the
   profiler (whether they nest under the solver node's entry the way Bullet's do).
 
@@ -187,7 +185,8 @@ passed as a `PRM_Template`'s conditional pointer.
 * Scenes saved before the joint nodes' Breakable / Set Rest Length / Limit Spring Force / Limit Max Length / Limit
   Torque toggles load with them off, so a Break Force, Rest Length etc. typed in such a scene is ignored until the
   toggle is turned on. Bounce Mixing's menu was reordered: a non-default choice saved before then reads as a
-  different rule.
+  different rule. The mixing defaults changed to Multiply / Minimum: a scene that relied on the old defaults
+  (Geometric Mean / Maximum) behaves differently unless those are set on its solver.
 
 The one list of what is still to do. Keep it here only (no TODO comments in the code).
 

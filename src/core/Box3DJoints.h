@@ -682,10 +682,11 @@ inline JointRange jointParamRange(const JointParam &p, JointType t) {
 // values set here.
 inline JointSettings nodeJointDefaults(JointType t, JointSettings s) {
   const float deg = kDegToRad;
+  // Springs start as Bullet Soft's defaults (10 Hz, damping ratio 1).
   auto spring = [](float &hz, float &ratio) {
     if (hz <= 0.0f) {
-      hz = 5.0f;
-      ratio = 0.7f;
+      hz = 10.0f;
+      ratio = 1.0f;
     }
   };
   switch (t) {

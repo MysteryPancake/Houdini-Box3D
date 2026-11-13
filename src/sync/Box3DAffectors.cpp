@@ -139,13 +139,23 @@ bool readAffectorTransform(const SIM_Object &obj, AffectorInput &in) {
   return true;
 }
 
-// Material: a Box3D Data node on the affector sets friction and bounce (bodies
-// are always static).
+// Material (bodies are always static): a Box3D Data node on the affector sets
+// friction and bounce; without one, the object's own Friction and Bounce
+// (PhysicalParms: Static Object's and Ground Plane's Physical tab, as RBD
+// Object's are read), else Box3D Data's defaults.
 b3dop::BodySettings affectorBodySettings(const SIM_Object &obj) {
-  b3dop::BodySettings body;
+  b3dop::BodySettings body = b3dop::nodeBodyDefaults();
   if (const SIM_Box3DData *node =
           SIM_DATA_GETCONST(obj, kBox3DDataName, SIM_Box3DData))
     body = node->toBodySettings();
+  else if (const SIM_Data *phys = obj.getConstNamedSubData("PhysicalParms")) {
+    // Box3D asserts on negative material values: those keep the default.
+    fpreal64 v = 0.0;
+    if (box3dDataOption(*phys, "friction", v) && std::isfinite(v) && v >= 0.0)
+      body.props.friction = static_cast<float>(v);
+    if (box3dDataOption(*phys, "bounce", v) && std::isfinite(v) && v >= 0.0)
+      body.props.restitution = static_cast<float>(v);
+  }
   body.type = b3dop::BodySettings::Type::Static;
   return body;
 }

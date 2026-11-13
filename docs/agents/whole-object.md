@@ -40,8 +40,9 @@ its state in the object's `Position` data instead of point attributes.
     Padding / shrink and Bullet's sleep options stay unread (see "Not supported on purpose" in [reference.md](reference.md)); `bullet_add_impact` is
     not read either, so Impacts stay opt-in through Box3D Data.
   Values Box3D cannot use (non-positive mass / density / inertia, negative friction / bounce, non-finite) keep Box3D
-  Data's defaults. Houdini's RBD Object defaults differ from Box3D Data's: density 1000 with Compute Mass (a 1 m box is
-  1000 kg), friction 1, bounce 0.5 (both default to a convex hull). Body type is the node's (no `active` / `animated`).
+  Data's defaults. Houdini's RBD Object defaults match Box3D Data's (`nodeBodyDefaults`: density 1000 with Compute
+  Mass, so a 1 m box is 1000 kg; friction 1; a convex hull) except bounce (0.5 against 0). Body type is the node's (no
+  `active` / `animated`).
 * Mirror: one entry, key `makeBodyKey(objectId, kWholeObjectId = -1)`, `wholeObject = true`, `pivot`, no point
   (`pointOff` -1, `pointIndex` -1 in Impacts). The object scans every step (one body: no fingerprint).
   `Box3DObjectSync::wholeObject` makes aging and point `force` / `torque` skip the object; Force DOPs still apply.

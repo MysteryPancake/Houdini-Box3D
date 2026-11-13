@@ -134,6 +134,11 @@ equal to what its body was built with.
 
 ## Building shapes (`addPointBody`, `planShapes`, `buildShapes`)
 
+* Defaults: Box3D Data's (`nodeBodyDefaults()` in Box3DWorld.h, Bullet's RBD values where Box3D has the setting:
+  Compute Mass with density 1000, friction 1, bounce 0.5), which objects without a Box3D Data node get too. The
+  solver's mixing defaults are Bullet's as measured by `bullet_mixing`: friction multiplied, the smaller bounce.
+  `BodySettings()` keeps the core's own values (mass 1, friction 0.6, bounce 0) for direct use of `Box3DWorld`, and
+  `WorldSettings` keeps Box3D's rules (geometric mean, maximum).
 * Type: `wantedType` (active -> node type; inactive -> static, or kinematic if animated; shapeless -> static).
 * `readDynamicProps` gives the `BodyProps`; the `BodySettings` a body is created with is the node's, with the type and
   those props put in (density from `boxDensity`); `planShapes` the shape type (`bullet_georep`, else node

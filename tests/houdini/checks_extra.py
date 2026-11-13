@@ -207,16 +207,20 @@ def test_negative_never_values():
 # ---------------------------------------------------------------------------
 
 
-def slide_distance(name, mu_box, mu_ground, mixing=None, v0=3.0):
-    """A box sliding at v0 on the ground: how far it goes before stopping."""
+def slide_distance(name, mu_box, mu_ground, mixing=None, v0=3.0, solver_kind="box3d"):
+    """A box sliding at v0 on the ground: how far it goes before stopping (Box3D, or Bullet)."""
     pieces = [dict(GROUND, attrs={"active": 0, "friction": mu_ground, "bounce": 0.0}),
               {"size": (1, 1, 1), "center": (0, 0.5, 0),
                "attrs": {"active": 1, "friction": mu_box, "bounce": 0.0, "v": (v0, 0.0, 0.0)}}]
     path, names = packed_boxes(name + "_pieces", pieces)
     dop = new_dopnet(name)
-    solver = box3d_solver(dop, packed_object(dop, "pieces", path, keep_velocity=True))
-    if mixing:
-        set_menu_by_label(solver, ["frictionmixing"], mixing)
+    obj = packed_object(dop, "pieces", path, keep_velocity=True)
+    if solver_kind == "bullet":
+        solver = bullet_solver(dop, obj)
+    else:
+        solver = box3d_solver(dop, obj)
+        if mixing:
+            set_menu_by_label(solver, ["frictionmixing"], mixing)
     finish(dop, solver)
     track = step(dop, 72, lambda sim, f: packed_positions(sim, "pieces")[names[1]])
     return track[72][0], track[72][1]
@@ -237,18 +241,22 @@ def test_friction_mixing():
     return [Result("friction_mixing", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
 
 
-def bounce_drop(name, e_box, e_ground, mixing=None, height=2.0):
-    """A box dropped with its bottom `height` above the ground. Returns the measured restitution
-    sqrt(rebound peak / height) and the track."""
+def bounce_drop(name, e_box, e_ground, mixing=None, height=2.0, solver_kind="box3d"):
+    """A box dropped with its bottom `height` above the ground (Box3D, or Bullet). Returns the
+    measured restitution sqrt(rebound peak / height) and the track."""
     pieces = [dict(GROUND, attrs={"active": 0, "bounce": e_ground, "friction": 0.5}),
               {"size": (1, 1, 1), "center": (0, 0.5 + height, 0), "attrs": {"active": 1, "bounce": e_box,
                                                                              "friction": 0.5}}]
     path, names = packed_boxes(name + "_pieces", pieces)
     dop = new_dopnet(name)
-    solver = box3d_solver(dop, packed_object(dop, "pieces", path))
-    set_parm(solver, ["bouncethreshold"], 0.1)
-    if mixing:
-        set_menu_by_label(solver, ["restitutionmixing"], mixing)
+    obj = packed_object(dop, "pieces", path)
+    if solver_kind == "bullet":
+        solver = bullet_solver(dop, obj)
+    else:
+        solver = box3d_solver(dop, obj)
+        set_parm(solver, ["bouncethreshold"], 0.1)
+        if mixing:
+            set_menu_by_label(solver, ["restitutionmixing"], mixing)
     finish(dop, solver)
     track = step(dop, 72, lambda sim, f: packed_positions(sim, "pieces")[names[1]][1] - 0.5)
     frames = sorted(track)
@@ -272,12 +280,31 @@ def test_bounce_mixing():
     return [Result("bounce_mixing", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
 
 
+def test_bullet_mixing():
+    """How Houdini's Bullet combines two bodies' friction and bounce, to choose Box3D's mixing
+    defaults: a box (friction 0.2, bounce 0.2) sliding on and dropped onto ground with 0.8, in
+    Bullet; the measured values against each Box3D mixing rule. INFO."""
+    rules = ("Geometric Mean", "Minimum", "Maximum", "Average", "Multiply")
+    v0 = 3.0
+    x, _ = slide_distance("bullet_mix_slide", 0.2, 0.8, v0=v0, solver_kind="bullet")
+    mu = v0 * v0 / (2 * G * x) if x > 1e-6 else float("inf")
+    e, _ = bounce_drop("bullet_mix_bounce", 0.2, 0.8, solver_kind="bullet")
+
+    def nearest(measured):
+        return min(rules, key=lambda r: abs(mix(r, 0.2, 0.8) - measured))
+
+    table = ", ".join(f"{r} {mix(r, 0.2, 0.8):.2f}" for r in rules)
+    return [Result("bullet_mixing", Result.INFO,
+                   f"Bullet friction: slid {x:.3f} from 3 m/s, so friction {mu:.3f}, nearest rule {nearest(mu)}; "
+                   f"bounce {e:.3f}, nearest rule {nearest(e)} (0.2 with 0.8 under each rule: {table})")]
+
+
 def test_bounce_heights():
-    """Boxes with bounce 0.3, 0.6 and 0.9 dropped 2 m onto ground with bounce 0 (default mixing,
-    Maximum): each rebounds to bounce^2 x 2 m."""
+    """Boxes with bounce 0.3, 0.6 and 0.9 dropped 2 m onto ground with bounce 1 (default mixing,
+    Minimum, so the box's own bounce is used): each rebounds to bounce^2 x 2 m."""
     rows, ok = [], True
     for e in (0.3, 0.6, 0.9):
-        got, _ = bounce_drop(f"bounce_height_{int(e * 10)}", e, 0.0)
+        got, _ = bounce_drop(f"bounce_height_{int(e * 10)}", e, 1.0)
         good = close(got, e, 0.05)
         ok = ok and good
         rows.append(f"bounce {e:g}: rebounded {got * got * 2:.3f} m, measured bounce {got:.3f}")
@@ -393,14 +420,15 @@ def test_substeps_fps():
 
 
 def test_friction_slope():
-    """A box on a ramp, friction 0.5 on both (it should start sliding above atan 0.5 = 26.6
-    degrees): it stays put at 22 degrees and slides at 31."""
+    """A box (friction 0.5) on a ramp (friction 1): under the default Multiply mixing the contact
+    has friction 0.5, so it should start sliding above atan 0.5 = 26.6 degrees: it stays put at
+    22 degrees and slides at 31."""
     rows, ok = [], True
     for angle, should_slide in ((22.0, False), (31.0, True)):
         t = math.radians(angle)
         n = (-math.sin(t), math.cos(t), 0.0)  # the ramp's surface normal
         pieces = [{"size": (20, 1, 20), "center": tuple(-0.5 * c for c in n), "rotate": (0, 0, angle),
-                   "attrs": {"active": 0, "friction": 0.5, "bounce": 0.0, "bullet_georep": "convexhull"}},
+                   "attrs": {"active": 0, "friction": 1.0, "bounce": 0.0, "bullet_georep": "convexhull"}},
                   {"size": (1, 1, 1), "center": tuple(0.501 * c for c in n), "rotate": (0, 0, angle),
                    "attrs": {"active": 1, "friction": 0.5, "bounce": 0.0, "bullet_georep": "convexhull"}}]
         path, names = packed_boxes(f"slope_{int(angle)}_pieces", pieces)
@@ -956,6 +984,7 @@ TESTS = {
     "negative_never_values": test_negative_never_values,
     "friction_mixing": test_friction_mixing,
     "bounce_mixing": test_bounce_mixing,
+    "bullet_mixing": test_bullet_mixing,
     "determinism_repeat": test_determinism_repeat,
     "determinism_threads": test_determinism_threads,
     "substeps_fps": test_substeps_fps,

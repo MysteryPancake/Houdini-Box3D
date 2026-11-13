@@ -1193,7 +1193,7 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
   const SIM_Box3DData *dataNode =
       SIM_DATA_GETCONST(obj, kBox3DDataName, SIM_Box3DData);
   const b3dop::BodySettings node =
-      dataNode ? dataNode->toBodySettings() : b3dop::BodySettings();
+      dataNode ? dataNode->toBodySettings() : b3dop::nodeBodyDefaults();
   const bool addImpact = dataNode && dataNode->getAddImpact();
 
   // ---- unchanged since we last finished with it? ---------------------------

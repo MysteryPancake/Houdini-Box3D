@@ -65,6 +65,7 @@ struct WholeObjectSetup {
 inline WholeObjectSetup rbdObjectSetup(const RbdObjectSettings &r) {
   WholeObjectSetup out;
   BodySettings &n = out.node;
+  n = nodeBodyDefaults();
   auto isPositive = [](float v) { return v > 0.0f && std::isfinite(v); };
   auto isNonNeg = [](float v) { return v >= 0.0f && std::isfinite(v); };
 

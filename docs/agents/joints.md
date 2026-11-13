@@ -40,7 +40,8 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   runs for every joint every step and walks only those rows. Per-type loops over the table should use it.
 * `Box3DWorld::defaultJointSettings(type)` copies `b3Default*JointDef`. The nodes start from `nodeJointDefaults(type, ...)`
   over it instead: Box3D's spring stiffness, motor effort and limits are all 0, so turning a toggle on did nothing (or,
-  for limits, locked the joint at 0..0). Only the node UI defaults; Box3D's stay the base everywhere else.
+  for limits, locked the joint at 0..0). Springs start at Bullet Soft's 10 Hz and damping ratio 1. Only the node UI
+  defaults; Box3D's stay the base everywhere else.
 * `jointNodeToggles()`: node-only toggles (Breakable, Set Rest Length, Limit Spring Force, Limit Max Length, Limit
   Torque) in place of typing -1 for "never / unlimited". Gated settings name them in `enabledBy`; `settings()` writes -1
   into them while the toggle is off (`jointNodeToggleOf`), so the settings, primitive attributes (float attributes

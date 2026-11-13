@@ -61,7 +61,10 @@ Objects that the solver is not given but that affect a solved object through a c
   not retried until the signature changes (counted as failed, one warning per step).
 * Core: `Box3DWorld::createMeshShape` (static bodies only; validates indices and finiteness). Box3D keeps a pointer to the
   `b3MeshData`, so `Impl::bodyMeshes` owns it: freed after `destroyBody` / `destroyShapesByHandle`, and after the world.
-* Material: an optional `Box3DData` on the affector (friction, bounce); the body type is always static.
+* Material (`affectorBodySettings`): an optional `Box3DData` on the affector (friction, bounce); without one, the
+  object's own Friction and Bounce from its `PhysicalParms` (Static Object's and Ground Plane's Physical tab: 1 and
+  0.5 by default), read by name as for RBD Objects; negative or non-finite values keep `nodeBodyDefaults()`. The body
+  type is always static. (`static_material` checks Static Object's Friction.)
 * Not done: SDF / volume collision of Static Objects, height fields, mesh sharing between identical affectors,
   `getCollider`-style per-pair collider selection, affectors with `SIM_ColliderInfo` options.
 * Verified against the HDK docs: `void SIMgetGeometryTransform(UT_DMatrix4 &result, const SIM_Object &)` (SIM_Utils.h;

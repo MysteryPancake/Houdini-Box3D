@@ -293,6 +293,37 @@ def test_solve_first_frame():
     return results
 
 
+def static_slide(tag, static_friction):
+    """x after 2 s of a box (friction 1) launched at 3 m/s along a 40 x 40 grid Static Object whose
+    own Friction is static_friction (no Box3D Data on it)."""
+    geo = new_geo(f"static_mat_{tag}_grid")
+    grid = create(geo, "grid", "grid")
+    set_parm(grid, ["size"], (40, 40))
+    display(grid)
+    path, names = packed_boxes(f"static_mat_{tag}_box", [{"size": (1, 1, 1), "center": (0, 0.5, 0),
+                                                          "attrs": {"active": 1, "friction": 1.0, "bounce": 0.0,
+                                                                    "v": (3.0, 0.0, 0.0)}}])
+    dop = new_dopnet(f"static_mat_{tag}")
+    static = create(dop, "staticobject", "ground")
+    set_parm(static, ["soppath"], grid.path())
+    set_parm(static, ["friction"], static_friction)
+    set_parm(static, ["bounce"], 0.0)
+    box = packed_object(dop, "pieces", path, keep_velocity=True)
+    finish(dop, box3d_solver(dop, merge(dop, [static, box])))
+    return step(dop, 48, lambda sim, f: packed_positions(sim, "pieces")[names[0]][0] if f == 48 else None)[48]
+
+
+def test_static_material():
+    """A Static Object's own Friction (its Physical tab, no Box3D Data on it) is used: a box with
+    friction 1 launched at 3 m/s keeps sliding on a Static Object with Friction 0 (Multiply:
+    0) and stops within half a metre on one with Friction 1."""
+    slick, grippy = static_slide("slick", 0.0), static_slide("grippy", 1.0)
+    ok = slick > 4.0 and grippy < 0.6
+    return [Result("static_material", Result.PASS if ok else Result.FAIL,
+                   f"box slid {slick:.2f} on Friction 0 (expected about 6: no friction), {grippy:.2f} on Friction 1 "
+                   "(expected about 0.46)")]
+
+
 def test_sidefx_soft():
     """SideFX's Bullet Soft Constraint Relationship (10 Hz, damping ratio 1; Rest Length set to 0,
     since its default 1 pushes the anchors a unit apart) holding a hanging piece, in Box3D and in
@@ -489,6 +520,7 @@ TESTS = {
     "joint_types": test_joint_types,
     "anchor_positions": test_anchor_positions,
     "solve_first_frame": test_solve_first_frame,
+    "static_material": test_static_material,
     "sidefx_soft": test_sidefx_soft,
     "body_types": test_body_types,
     "shape_kinds": test_shape_kinds,
