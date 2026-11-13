@@ -62,7 +62,7 @@ Load only the file for the area you are changing.
 
 **Values that live in code stay in code.** Defaults, counts, thresholds and sizes are not copied into these files: name
 the constant or table and its file (`kMinParallelPoints` in `Box3DSolverInternal.h`, `kPropAttribNames` in
-`Box3DPointSync.cpp`, the `Box3DParms` tables in `SIM_*.cpp`). A number in a doc is only for a measurement or a fact
+`Box3DAttribNames.h`, the `Box3DParms` tables in `SIM_*.cpp`). A number in a doc is only for a measurement or a fact
 about Box3D / Houdini that the code does not hold. `python tools/check_docs.py` checks that the `k...` constants and the
 relative links the docs mention still exist.
 

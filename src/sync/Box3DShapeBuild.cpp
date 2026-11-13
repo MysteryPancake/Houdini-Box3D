@@ -260,12 +260,7 @@ private:
 uint64_t
 sourceIdentity(const GU_Detail *gdp, GA_Offset fragmentFirst, bool connected)
 {
-    const GA_Attribute *P = gdp->getP();
-    uint64_t h = b3dop::mixHash(b3dop::kHashSeed, uint64_t(gdp->getUniqueId()));
-    h = b3dop::mixHash(h, P ? uint64_t(P->getDataId()) : 0);
-    h = b3dop::mixHash(h, uint64_t(gdp->getPrimitiveList().getDataId()));
-    h = b3dop::mixHash(h, uint64_t(gdp->getNumPoints()));
-    h = b3dop::mixHash(h, uint64_t(gdp->getNumPrimitives()));
+    uint64_t h = geometryIdentity(gdp);
     h = b3dop::mixHash(h, uint64_t(int64_t(fragmentFirst)));
     return b3dop::mixHash(h, connected ? 1 : 2);
 }

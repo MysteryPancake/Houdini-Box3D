@@ -6,23 +6,6 @@
 
 namespace box3dsolver {
 
-// Attributes whose data ids are the fingerprint's prop markers (propIds, in order). The shape
-// attributes are left out on purpose: like Bullet, editing them alone changes nothing until
-// bullet_autofit_valid = 0 or deforming = 1.
-const char *const kPropAttribNames[] = {
-    "mass", "friction", "bounce", "lineardamping", "angulardamping", "gravityscale",
-    "enablesleep", "enabled", "awake", "deforming", "bullet_autofit_valid",
-    "pscale", "scale",      // a plain point's convex / concave fallback box
-    "collision_category", "collision_mask", "animated", "density", "computemass",
-    "inertialtensorstiffness", "sleepthreshold", "ccdthreshold", "fastobject",
-    "collision_group", "dead",
-    "contactrecycling", "lock_linear", "lock_angular", "fastrotation",
-    "rollingresistance", "tangentvelocity",
-    "name",                 // joint anchors find bodies by it
-};
-static_assert(std::size(kPropAttribNames) == Box3DSyncFingerprint::kNumPropIds,
-              "kPropAttribNames and Box3DSyncFingerprint::kNumPropIds must match");
-
 // ---------------------------------------------------------------------------
 // Point state
 // ---------------------------------------------------------------------------

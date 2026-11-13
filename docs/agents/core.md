@@ -61,7 +61,7 @@ budget (`setSharedHullBudget`; the default is in `HullLibrary`, `Box3DWorld.cpp`
 `hullCacheSize()` is the hulls a world holds; `sharedHullCount/Bytes`, `hullBuildCount/Attempts` report on the cache.
 
 Packed sources also get a **source summary** (`SourceSummaryCache` in Box3DShapeBuild.cpp, process-wide): the group and
-piece hashes, keyed by the source detail's identity (`getUniqueId`, `P` and primitive-list data ids, counts, fragment,
+piece hashes, keyed by the source detail's identity (`geometryIdentity`: `getUniqueId`, `P` and primitive-list data ids, counts, fragment,
 connected or not). `buildShapes` tries it first for packed convex / concave points: when every hull key it gives is still
 cached, the source geometry is not read or hashed at all. This relies on whoever edits a source bumping its data ids.
 

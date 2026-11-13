@@ -5,6 +5,7 @@
 // of SIM data whose class is not in the HDK.
 #pragma once
 
+#include <GU/GU_Detail.h>
 #include <SIM/SIM_DataUtils.h>
 #include <SIM/SIM_Geometry.h>
 #include <SIM/SIM_GeometryCopy.h>
@@ -67,6 +68,25 @@ box3dObjectById(SIM_ObjectArray &objects, int id, bool sorted)
         if (objects(i)->getObjectId() == id)
             return objects(i);
     return nullptr;
+}
+
+// The part of a geometry's identity that every hash of it shares: P's data id, the primitive
+// list's data id, the point and primitive counts and, with `withUniqueId`, the detail's unique id.
+// Callers mix their own markers on top. An absent P and a list with no primitives (its data id
+// means nothing then) both count as ~0. The affector signature passes false: a mesh that is
+// copied into a new detail with the same contents must not rebuild.
+inline uint64_t
+geometryIdentity(const GU_Detail *gdp, bool withUniqueId = true)
+{
+    using b3dop::mixHash;
+    uint64_t h = b3dop::kHashSeed;
+    if (withUniqueId)
+        h = mixHash(h, uint64_t(gdp->getUniqueId()));
+    const GA_Attribute *P = gdp->getP();
+    h = mixHash(h, P ? uint64_t(P->getDataId()) : ~0ull);
+    h = mixHash(h, gdp->getNumPrimitives() > 0 ? uint64_t(gdp->getPrimitiveList().getDataId()) : ~0ull);
+    h = mixHash(h, uint64_t(gdp->getNumPoints()));
+    return mixHash(h, uint64_t(gdp->getNumPrimitives()));
 }
 
 // A Houdini 4x4 (row-vector layout) as 16 doubles, row by row.

@@ -217,11 +217,7 @@ uint64_t
 networkFingerprint(const GU_Detail *gdp)
 {
     using b3dop::mixHash;
-    uint64_t h = mixHash(b3dop::kHashSeed, uint64_t(gdp->getUniqueId()));
-    h = mixHash(h, idOf(gdp->getP()));
-    h = mixHash(h, uint64_t(gdp->getPrimitiveList().getDataId()));
-    h = mixHash(h, uint64_t(gdp->getNumPoints()));
-    h = mixHash(h, uint64_t(gdp->getNumPrimitives()));
+    uint64_t h = geometryIdentity(gdp);
     h = mixHash(h, idOf(gdp->findPointAttribute("name")));
     h = mixHash(h, idOf(gdp->findPointAttribute("orient")));
     h = mixHash(h, idOf(gdp->findPrimitiveAttribute(kConstraintName)));

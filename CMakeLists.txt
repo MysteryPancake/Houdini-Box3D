@@ -114,6 +114,7 @@ add_library(Box3DDOP SHARED
     src/dop/SIM_Box3DRegister.cpp
     # sync/: Houdini data -> Box3D world, the solver's parts (Box3DSolverInternal.h)
     src/sync/Box3DState.h
+    src/sync/Box3DAttribNames.h
     src/sync/Box3DSolverInternal.h
     src/sync/Box3DShapeBuild.cpp
     src/sync/Box3DPointSync.cpp

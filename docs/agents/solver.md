@@ -93,7 +93,7 @@ Data names: `"Box3DWorld"`, `kBox3DDataName` (`"Box3DData"`, SIM_Box3DData.h), `
 `Box3DObjectSync::fp` (`Box3DSyncFingerprint`): point count and offset range (plain points only; packed topology is
 assumed fixed, a new instance gets a new `id`), data ids of `P`, `orient`, `v`, `w`, `id`, `active`, the node body type,
 and the **prop markers**: data ids of `kPropAttribNames` (the attributes that change settings, ask for rebuilds or rename pieces, looked
-up by name; a `static_assert` ties its length to `Box3DSyncFingerprint::kNumPropIds`), the primitive list's data id (`primitiveListDataId`: packed transforms are intrinsics; bumping it is up to
+up by name; the table is in `Box3DAttribNames.h` and `Box3DSyncFingerprint::kNumPropIds` is its length), the primitive list's data id (`primitiveListDataId`: packed transforms are intrinsics; bumping it is up to
 whoever edits a primitive, so an edit that does not is picked up on the next scan) and `nodeHash`. Equal fingerprint ->
 skip.
 

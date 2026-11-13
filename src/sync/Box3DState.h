@@ -11,12 +11,14 @@
 
 #include <array>
 #include <cstdint>
+#include <iterator>
 #include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "core/Box3DSideFX.h"
+#include "sync/Box3DAttribNames.h"
 #include "core/Box3DWorld.h"
 
 // One body's pose and velocity as last given to / read from Box3D (DOP terms). Compared with
@@ -175,9 +177,9 @@ struct Box3DSyncFingerprint
 {
     static constexpr GA_DataId kNoId = GA_DataId(-1);   // attribute absent
 
-    // Prop markers (kPropAttribNames in SIM_SolverBox3D.cpp, primsId, nodeHash): when any
-    // changed, the scan also compares every body's settings. The .cpp static_asserts the count.
-    static constexpr int kNumPropIds = 31;
+    // Prop markers (kPropAttribNames in Box3DAttribNames.h, primsId, nodeHash): when any
+    // changed, the scan also compares every body's settings. The count comes from that table.
+    static constexpr int kNumPropIds = int(std::size(box3dsolver::kPropAttribNames));
     using PropIds = std::array<GA_DataId, kNumPropIds>;
 
     int64_t   numPoints  = -1;      // -1 with primitives: packed topology is assumed fixed

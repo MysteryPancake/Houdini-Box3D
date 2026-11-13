@@ -13,6 +13,7 @@
 #include "dop/SIM_Box3DData.h"
 #include "dop/SIM_Box3DWorld.h"
 #include "core/Box3DDebug.h"
+#include "Box3DAttribNames.h"
 #include "Box3DHoudiniUtil.h"
 
 #include <GA/GA_AIFSharedStringTuple.h>
@@ -137,100 +138,28 @@ parallelForEach(size_t n, const F &f, size_t minParallel = minParallelPoints(), 
 // Point attributes the solver reads (Houdini RBD names). All optional: invalid = default.
 struct PointAttrs
 {
-    GA_ROHandleI  id;          // else the point number
-    GA_ROHandleI  active;      // 0 = inactive (static, or kinematic if animated)
-    GA_ROHandleF  mass;
-    GA_ROHandleF  friction;
-    GA_ROHandleF  bounce;      // Box3D restitution
-    GA_ROHandleF  rollingResistance;   // rollingresistance
-    GA_ROHandleV3 tangentVelocity;     // tangentvelocity
-    GA_ROHandleF  lineardamping;
-    GA_ROHandleF  angulardamping;
-    GA_ROHandleF  gravityscale;
-    GA_ROHandleI  enablesleep;     // 0 = this body never sleeps
-    GA_ROHandleI  fastObject;      // fastobject
-    GA_ROHandleI  fastRotation;    // fastrotation
-    GA_ROHandleI  contactRecycling;    // contactrecycling
-    GA_ROHandleF  sleepThreshold;  // sleepthreshold
-    GA_ROHandleF  ccdThreshold;    // ccdthreshold
-    GA_ROHandleF  pscale;
-    GA_ROHandleV3 scale;
-    GA_ROHandleV3 v;
-    GA_ROHandleV3 w;           // radians / second
-    GA_ROHandleQ  orient;      // ignored for packed points (the primitive's transform is used)
-    GA_ROHandleS  georep;      // bullet_georep (b3dop::parseShapeType)
-    GA_ROHandleI  autofit;     // bullet_autofit
-    GA_ROHandleV3 primS;       // bullet_prim* / radius / length: see b3dop::PrimOverrides
-    GA_ROHandleV3 primR;
-    GA_ROHandleV3 primT;
-    GA_ROHandleF  radius;
-    GA_ROHandleF  length;
-    GA_ROHandleI  enabled;         // 0 = left out of the simulation (Box3D isEnabled)
-    GA_ROHandleI  awake;           // 0 = asleep (Box3D isAwake): starts the body, and the solver keeps it up to date
-    GA_ROHandleI  deforming;       // rebuild the shape every step
-    GA_ROHandleI  autofitValid;    // bullet_autofit_valid: 0 = rebuild once (written back as 1)
-    GA_ROHandleID collisionCategory;   // b3Filter: read as 64-bit (a 32-bit -1 is every bit)
-    GA_ROHandleID collisionMask;
-    GA_ROHandleI  collisionGroup;
-    GA_ROHandleV3 lockLinear;          // lock_linear / lock_angular: per world axis, nonzero = locked
-    GA_ROHandleV3 lockAngular;
-    GA_ROHandleI  animated;
-    GA_ROHandleF  density;
-    GA_ROHandleI  computeMass;
-    GA_ROHandleF  inertiaStiffness;    // inertialtensorstiffness
-    GA_ROHandleI  dead;
+    // One GA_ROHandle per entry of Box3DAttribNames.h (id, active, v, w, orient, then the props
+    // and shape attributes); see that file for what each means. Invalid = default.
+#define BOX3D_ATTR_MEMBER(member, name, Tag) GA_ROHandle##Tag member;
+    BOX3D_SYNC_ATTRS(BOX3D_ATTR_MEMBER)
+    BOX3D_PROP_ATTRS(BOX3D_ATTR_MEMBER)
+    BOX3D_SHAPE_ATTRS(BOX3D_ATTR_MEMBER)
+#undef BOX3D_ATTR_MEMBER
 
     // The constructor binds what the skip check and write-back need; bindBuildAttrs() the rest,
     // once an object is actually scanned.
     explicit PointAttrs(const GU_Detail *gdp)
-        : id(gdp, GA_ATTRIB_POINT, "id"),
-          active(gdp, GA_ATTRIB_POINT, "active"),
-          v(gdp, GA_ATTRIB_POINT, "v"),
-          w(gdp, GA_ATTRIB_POINT, "w"),
-          orient(gdp, GA_ATTRIB_POINT, "orient")
     {
+#define BOX3D_ATTR_BIND(member, name, Tag) member = GA_ROHandle##Tag(gdp, GA_ATTRIB_POINT, name);
+        BOX3D_SYNC_ATTRS(BOX3D_ATTR_BIND)
     }
 
     void bindBuildAttrs(const GU_Detail *gdp)
     {
-        mass           = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "mass");
-        friction       = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "friction");
-        bounce         = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "bounce");
-        rollingResistance = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "rollingresistance");
-        tangentVelocity   = GA_ROHandleV3(gdp, GA_ATTRIB_POINT, "tangentvelocity");
-        lineardamping  = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "lineardamping");
-        angulardamping = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "angulardamping");
-        gravityscale   = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "gravityscale");
-        enablesleep    = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "enablesleep");
-        fastObject     = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "fastobject");
-        fastRotation   = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "fastrotation");
-        contactRecycling = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "contactrecycling");
-        sleepThreshold = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "sleepthreshold");
-        ccdThreshold   = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "ccdthreshold");
-        pscale         = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "pscale");
-        scale          = GA_ROHandleV3(gdp, GA_ATTRIB_POINT, "scale");
-        georep         = GA_ROHandleS(gdp, GA_ATTRIB_POINT, "bullet_georep");
-        autofit        = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "bullet_autofit");
-        primS          = GA_ROHandleV3(gdp, GA_ATTRIB_POINT, "bullet_primS");
-        primR          = GA_ROHandleV3(gdp, GA_ATTRIB_POINT, "bullet_primR");
-        primT          = GA_ROHandleV3(gdp, GA_ATTRIB_POINT, "bullet_primT");
-        radius         = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "bullet_radius");
-        length         = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "bullet_length");
-        enabled        = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "enabled");
-        awake          = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "awake");
-        deforming      = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "deforming");
-        autofitValid   = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "bullet_autofit_valid");
-        collisionCategory = GA_ROHandleID(gdp, GA_ATTRIB_POINT, "collision_category");
-        collisionMask  = GA_ROHandleID(gdp, GA_ATTRIB_POINT, "collision_mask");
-        collisionGroup = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "collision_group");
-        lockLinear     = GA_ROHandleV3(gdp, GA_ATTRIB_POINT, "lock_linear");
-        lockAngular    = GA_ROHandleV3(gdp, GA_ATTRIB_POINT, "lock_angular");
-        animated       = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "animated");
-        density        = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "density");
-        computeMass    = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "computemass");
-        inertiaStiffness = GA_ROHandleF(gdp, GA_ATTRIB_POINT, "inertialtensorstiffness");
-        dead           = GA_ROHandleI(gdp, GA_ATTRIB_POINT, "dead");
+        BOX3D_PROP_ATTRS(BOX3D_ATTR_BIND)
+        BOX3D_SHAPE_ATTRS(BOX3D_ATTR_BIND)
     }
+#undef BOX3D_ATTR_BIND
 };
 
 // ---- packed primitives (Box3DShapeBuild.cpp) ----

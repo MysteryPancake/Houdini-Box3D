@@ -164,12 +164,7 @@ affectorBodySettings(const SIM_Object &obj)
 uint64_t
 affectorSignature(const GU_Detail *gdp, const AffectorInput &in)
 {
-    const GA_Attribute *P = gdp->getP();
-    uint64_t sig = b3dop::kHashSeed;
-    sig = b3dop::mixHash(sig, P ? uint64_t(P->getDataId()) : 0);
-    sig = b3dop::mixHash(sig, gdp->getNumPrimitives() > 0 ? uint64_t(gdp->getPrimitiveList().getDataId()) : 0);
-    sig = b3dop::mixHash(sig, uint64_t(gdp->getNumPoints()));
-    sig = b3dop::mixHash(sig, uint64_t(gdp->getNumPrimitives()));
+    uint64_t sig = geometryIdentity(gdp, /*withUniqueId=*/false);
     const float mat[3] = { in.body.friction, in.body.restitution, in.body.flipMeshWinding ? 1.0f : 0.0f };
     sig = b3dop::mixHash(sig, b3dop::hashFloats(mat, 3));
     sig = b3dop::mixHash(sig, in.rigid ? 1 : 2);

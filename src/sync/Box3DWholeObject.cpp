@@ -165,12 +165,7 @@ wholeObjectShapeSig(const GU_Detail *gdp, const double m[16], const double pivot
 {
     const b3dop::BodySettings &node = setup.node;
     using b3dop::mixHash;
-    uint64_t h = mixHash(b3dop::kHashSeed, uint64_t(gdp->getUniqueId()));
-    const GA_Attribute *P = gdp->getP();
-    h = mixHash(h, P ? uint64_t(P->getDataId()) : ~0ull);
-    h = mixHash(h, uint64_t(gdp->getPrimitiveList().getDataId()));
-    h = mixHash(h, uint64_t(gdp->getNumPoints()));
-    h = mixHash(h, uint64_t(gdp->getNumPrimitives()));
+    uint64_t h = geometryIdentity(gdp);
     for (int i = 0; i < 16; ++i)
         h = b3dop::mixDouble(h, m[i]);
     for (int i = 0; i < 3; ++i)
