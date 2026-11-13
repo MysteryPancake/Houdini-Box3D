@@ -659,16 +659,22 @@ def test_autofit_bullet():
     way: lying flat (tilt 0) when the shape fits the box, standing on an edge at its starting
     30 degrees when a box shape is fitted to the axis-aligned bounds of the tilted geometry.
     Covers convex hull, box with AutoFit with the tilt baked into the packed geometry and on the
-    packed transform, and (INFO) no bullet_georep at all, where each solver uses its default."""
+    packed transform, sphere and capsule with AutoFit (rest height only: they roll), and no
+    bullet_georep at all, where each solver uses its default (both a convex hull)."""
     cases = (
         # label, bullet_georep (None: unset), tilt baked into the packed geometry
         ("convex hull, tilt baked in", "convexhull", True),
         ("box + autofit, tilt baked in", "box", True),
         ("box + autofit, tilt on the packed transform", "box", False),
+        ("sphere + autofit, tilt baked in", "sphere", True),
+        ("capsule + autofit, tilt baked in", "capsule", True),
         ("no bullet_georep, tilt baked in", None, True),
     )
     results = []
     for i, (label, georep, baked) in enumerate(cases):
+        # A sphere or capsule can roll, so only its rest height says how it was fitted (sphere:
+        # its radius; capsule lying down: its radius too).
+        rolls = georep in ("sphere", "capsule")
         got = {}
         for solver_kind in ("box3d", "bullet"):
             dop = autofit_scene(f"autofit_{i}_{solver_kind}", solver_kind, georep, baked)
@@ -676,11 +682,7 @@ def test_autofit_bullet():
         (yb, tb, sb), (yt, tt, st) = got["box3d"], got["bullet"]
         msg = (f"{label}: Box3D rests at y {yb:.3f}, tilt {tb:.1f} deg; Bullet y {yt:.3f}, tilt {tt:.1f} deg "
                f"(flat: tilt 0 and y 0.2 or 0.3; fitted to the tilted bounds: tilt 30, y about 0.32)")
-        if georep is None:
-            results.append(Result("autofit_bullet", Result.INFO,
-                                  msg + f". Attributes seen on frame 1: Box3D {sb}, Bullet {st}"))
-            continue
-        same = abs(tb - tt) < 5.0 and abs(yb - yt) < 0.05
+        same = (rolls or abs(tb - tt) < 5.0) and abs(yb - yt) < 0.05
         results.append(Result("autofit_bullet", Result.PASS if same else Result.FAIL,
                               msg if same else msg + f". Attributes seen on frame 1: Box3D {sb}, Bullet {st}"))
     return results

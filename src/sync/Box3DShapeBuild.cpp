@@ -466,11 +466,12 @@ BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
       for (const NamedPiece *np : used)
         addHull(np->hash, 2, {np}); // one hull per piece
   } else if (!wantGeometry && !used.empty()) {
-    // Box / sphere / capsule on a packed point with autofit: fit to the bounds.
+    // Box / sphere / capsule on a packed point with autofit: fit to the
+    // geometry, turned with it.
     toBodyLocal(used, pts);
     Piece pc;
-    if (fitShapeToPoints(type, pts.data(), static_cast<int>(pts.size() / 3),
-                         pc.spec)) {
+    if (Box3DWorld::fitShapeOriented(
+            type, pts.data(), static_cast<int>(pts.size() / 3), pc.spec)) {
       pc.volume = shapeVolume(pc.spec);
       add(pc);
     }
@@ -558,8 +559,8 @@ BuiltShapes buildWholeObjectShapes(b3dop::Box3DWorld &world,
     for (const NamedPiece *np : all)
       toBody(*np, pts);
     Piece pc;
-    if (b3dop::fitShapeToPoints(type, pts.data(),
-                                static_cast<int>(pts.size() / 3), pc.spec)) {
+    if (b3dop::Box3DWorld::fitShapeOriented(
+            type, pts.data(), static_cast<int>(pts.size() / 3), pc.spec)) {
       pc.volume = b3dop::shapeVolume(pc.spec);
       out.totalVolume += pc.volume;
       out.pieces.push_back(pc);

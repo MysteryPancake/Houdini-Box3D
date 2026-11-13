@@ -320,6 +320,10 @@ HullId hashPoints(const float *xyz, int count) {
 }
 
 // Null, or a rotation within float noise of identity (qx, qy, qz ~ 0, w ~ +-1).
+// fitShapeOriented: a turned frame must make the box at least this much
+// smaller (relative volume) to replace the body axes.
+constexpr double kTurnedFitGain = 1e-3;
+
 bool isIdentityRotation(const float q[4]) {
   return !q || (std::fabs(q[0]) < 1e-6f && std::fabs(q[1]) < 1e-6f &&
                 std::fabs(q[2]) < 1e-6f);
@@ -861,6 +865,98 @@ HullId Box3DWorld::createHullWithKey(HullId key, const float *xyz,
   if (outVolume)
     *outVolume = ref->volume;
   return key;
+}
+
+bool Box3DWorld::fitShapeOriented(ShapeType type, const float *xyz, int count,
+                                  ShapeSpec &out) {
+  if (!xyz || count < 4)
+    return fitShapeToPoints(type, xyz, count, out);
+  for (int i = 0; i < count * 3; ++i)
+    if (!std::isfinite(xyz[i]))
+      return false;
+
+  std::vector<b3Vec3> pts(static_cast<size_t>(count));
+  for (int i = 0; i < count; ++i)
+    pts[static_cast<size_t>(i)] = makeVec3(xyz + 3 * i);
+  // Only the hull's directions are used, so a reduced budget is fine (the
+  // extents are measured over every point).
+  b3HullData *hull = nullptr;
+  for (int budget : {B3_MAX_HULL_VERTICES, 44, 32, 16, 8}) {
+    hull = b3CreateHull(pts.data(), count, budget);
+    if (hull)
+      break;
+  }
+  if (!hull)
+    return fitShapeToPoints(type, xyz, count, out);
+
+  const b3Vec3 *hp = b3GetHullPoints(hull);
+  const b3Plane *planes = b3GetHullPlanes(hull);
+  const b3HullFace *faces = b3GetHullFaces(hull);
+  const b3HullHalfEdge *edges = b3GetHullEdges(hull);
+  const int nv = hull->vertexCount;
+
+  // The box volume along `axes`, over the hull's vertices.
+  auto volumeAlong = [&](const float axes[3][3]) {
+    double v = 1.0;
+    for (int k = 0; k < 3; ++k) {
+      float lo = 0.0f, hi = 0.0f;
+      for (int i = 0; i < nv; ++i) {
+        const float d =
+            hp[i].x * axes[k][0] + hp[i].y * axes[k][1] + hp[i].z * axes[k][2];
+        if (i == 0 || d < lo)
+          lo = d;
+        if (i == 0 || d > hi)
+          hi = d;
+      }
+      v *= static_cast<double>(hi - lo);
+    }
+    return v;
+  };
+
+  float best[3][3];
+  std::memcpy(best, identityFrame(), sizeof best);
+  const double bodyAxesVolume = volumeAlong(best);
+  double bestVolume = bodyAxesVolume;
+  if (hp && planes && faces && edges)
+    for (int f = 0; f < hull->faceCount; ++f) {
+      const b3Vec3 n = planes[f].normal;
+      const int first = faces[f].edge;
+      int e = first;
+      for (int guard = 0; guard < hull->edgeCount; ++guard) {
+        const b3Vec3 a = hp[edges[e].origin];
+        const b3Vec3 b = hp[edges[edges[e].next].origin];
+        // The edge direction made perpendicular to the normal.
+        float u[3] = {b.x - a.x, b.y - a.y, b.z - a.z};
+        const float dn = u[0] * n.x + u[1] * n.y + u[2] * n.z;
+        u[0] -= dn * n.x;
+        u[1] -= dn * n.y;
+        u[2] -= dn * n.z;
+        const float len = std::sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+        if (len > 1e-6f) {
+          float axes[3][3] = {
+              {u[0] / len, u[1] / len, u[2] / len}, {n.x, n.y, n.z}, {0, 0, 0}};
+          axes[2][0] = axes[0][1] * axes[1][2] - axes[0][2] * axes[1][1];
+          axes[2][1] = axes[0][2] * axes[1][0] - axes[0][0] * axes[1][2];
+          axes[2][2] = axes[0][0] * axes[1][1] - axes[0][1] * axes[1][0];
+          const double v = volumeAlong(axes);
+          if (v < bestVolume) {
+            bestVolume = v;
+            std::memcpy(best, axes, sizeof best);
+          }
+        }
+        e = edges[e].next;
+        if (e == first)
+          break;
+      }
+    }
+  b3DestroyHull(hull);
+
+  // Turn only for a clearly smaller box, so float noise never turns geometry
+  // that lies along the body axes.
+  if (!(bestVolume < bodyAxesVolume * (1.0 - kTurnedFitGain)))
+    std::memcpy(best, identityFrame(), sizeof best);
+  canonicalFrame(best);
+  return fitShapeInFrame(type, xyz, count, best, out);
 }
 
 void Box3DWorld::pruneHulls() {

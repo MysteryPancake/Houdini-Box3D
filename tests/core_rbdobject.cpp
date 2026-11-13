@@ -76,8 +76,8 @@ int main() {
   // ---- shapes from Bullet Data ----
   {
     RbdObjectSettings r = houdiniDefaults();
-    r.georep = "cylinder"; // no Box3D shape: the default (box)
-    CHECK(rbdObjectSetup(r).node.defaultShape == ShapeType::Box);
+    r.georep = "cylinder"; // no Box3D shape: the default (convex hull)
+    CHECK(rbdObjectSetup(r).node.defaultShape == ShapeType::Convex);
     r.georep = "none";
     CHECK(rbdObjectSetup(r).node.defaultShape == ShapeType::None);
     r.georep = "compound";

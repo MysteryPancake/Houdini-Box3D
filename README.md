@@ -112,12 +112,12 @@ Set `bullet_georep` to the same lowercase names Houdini's RBD tools use:
 
 | Value | Result |
 |---|---|
-| `box`, `sphere`, `capsule` | A simple shape fitted to the packed geometry, or sized from `pscale` / `scale` |
+| `box`, `sphere`, `capsule` | A simple shape fitted to the packed geometry (turned to follow it; a capsule lies along the longest side), or sized from `pscale` / `scale` |
 | `convexhull` | One convex hull around the packed geometry |
 | `concave`, `compound` | Several convex hulls on one body, one per `name` piece of the packed geometry |
 | `none` | A static body with no collision |
 
-Anything else (including `cylinder` and `plane`) uses the Default Shape. Convex and concave shapes need **packed primitives**, one point plus one packed primitive per body (for example from the Pack SOP or RBD Packed Objects). Pack a simplified proxy for best performance.
+Anything else (including `cylinder` and `plane`) uses Box3D Data's Default Shape, a convex hull unless changed. Convex and concave shapes need **packed primitives**, one point plus one packed primitive per body (for example from the Pack SOP or RBD Packed Objects). Pack a simplified proxy for best performance.
 
 To set a box, sphere or capsule by hand, turn Auto Fit off (or set `bullet_autofit = 0`) and use `bullet_primS` (box half extents), `bullet_radius`, `bullet_length` (capsule, along Y), `bullet_primT` (offset) and `bullet_primR` (rotation, Euler degrees).
 

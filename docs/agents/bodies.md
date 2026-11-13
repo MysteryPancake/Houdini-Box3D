@@ -137,7 +137,8 @@ equal to what its body was built with.
 * Type: `wantedType` (active -> node type; inactive -> static, or kinematic if animated; shapeless -> static).
 * `readDynamicProps` gives the `BodyProps`; the `BodySettings` a body is created with is the node's, with the type and
   those props put in (density from `boxDensity`); `planShapes` the shape type (`bullet_georep`, else node
-  `defaultShape`) and pieces; `createBodyWithShapes` (shared with whole objects) makes the body, adds them
+  `defaultShape`, Convex by default as in RBD Packed Object; a plain point whose shape comes from the default, not from
+  `bullet_georep`, gets the pscale box silently instead of a hull fallback note) and pieces; `createBodyWithShapes` (shared with whole objects) makes the body, adds them
   (`addShapes`), `applyBodyMass`, then the initial `v` / `w` (after the mass, because a moving centre of mass shifts the
   velocity; not for static or animated bodies, nor for one that is not awake).
 * The mirror entry is inserted (`try_emplace`) before the body exists and becomes its user data; it is erased again if
@@ -149,7 +150,7 @@ equal to what its body was built with.
   2. Packed convex / concave: `pieceFromPoints` with a `packedHullKey` (by content if the transform is degenerate):
      `findHull` first, body-local points only on a miss, else a fitted box with a note. Convex merges all pieces
      (kind 1) unless hull-per-connected; concave is one hull per piece (kind 2).
-  3. Box / sphere / capsule on a packed point with autofit: fitted to the bounds.
+  3. Box / sphere / capsule on a packed point with autofit: `Box3DWorld::fitShapeOriented` (see "AutoFit" below).
   4. Nothing usable (plain point, autofit off, empty geometry): `makeShapeSpec(pscale * scale)`, plus
      `applyPrimOverrides` only with autofit off; convex / concave fall back to a box with a note. RBD Packed Object
      writes default `bullet_primS` (1, 1, 1) and `bullet_radius` 1 onto every point (seen in Houdini 22.0), so
@@ -161,6 +162,17 @@ equal to what its body was built with.
   the attributes present that replace a Box3D Data value, on objects that have a Box3D Data node, once per object
   (first full scan, or when the set changes, `Box3DObjectSync::overridesReported`); the solver turns the step's
   total into one warning. The Box3D Data tooltips of those five say so.
+
+**AutoFit** (`Box3DWorld::fitShapeOriented`, also for whole objects): the frame with the smallest box among the body
+axes and, from a throwaway `b3CreateHull` of the points, each face normal paired with each of that face's edges (exact
+for boxes and prisms; a fractured piece gets a face of its hull flush). A turned frame must beat the body axes by
+`kTurnedFitGain` (Box3DWorld.cpp), so geometry along the body axes keeps them exactly; `canonicalFrame` picks the
+equivalent frame closest to the body axes. In that frame (`fitShapeInFrame`, Box3DShapes.h): box = the bounds, turned
+(a turned box is an 8-corner hull, as for `bullet_primR`); sphere = centred on them, radius the largest half extent;
+capsule = along the frame axis with the largest extent, radius the larger other half extent, caps inside the bounds
+(Bullet's capsule runs along Y; here a lying piece gets a lying capsule). Extents are measured over every point. Not
+cached: each AutoFit body builds one hull at creation. `fitShapeToPoints` (body axes only) is the fallback when a
+piece cannot be hulled.
 
 **Explicit primitives** (Bullet Data with AutoFit off; `bullet_autofit` attribute, else the node toggle, default on):
 for `box`, `sphere`, `capsule` only. `bullet_primS` = box HALF extents (Bullet Data documents Box Size as a half-size);

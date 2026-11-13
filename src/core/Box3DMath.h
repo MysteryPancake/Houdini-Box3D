@@ -74,6 +74,48 @@ inline void sanitizeQuat(float q[4]) {
     q[i] *= inv;
 }
 
+// The unit quaternion of the rotation whose matrix has columns x, y, z (an
+// orthonormal right-handed frame: it turns the unit axes into x, y, z).
+inline void quatFromAxes(const float x[3], const float y[3], const float z[3],
+                         float q[4]) {
+  // m[r][c]: column c is the image of unit axis c.
+  const double m00 = x[0], m10 = x[1], m20 = x[2];
+  const double m01 = y[0], m11 = y[1], m21 = y[2];
+  const double m02 = z[0], m12 = z[1], m22 = z[2];
+  const double trace = m00 + m11 + m22;
+  double qx, qy, qz, qw;
+  if (trace > 0.0) {
+    const double s = 0.5 / std::sqrt(trace + 1.0);
+    qw = 0.25 / s;
+    qx = (m21 - m12) * s;
+    qy = (m02 - m20) * s;
+    qz = (m10 - m01) * s;
+  } else if (m00 > m11 && m00 > m22) {
+    const double s = 2.0 * std::sqrt(1.0 + m00 - m11 - m22);
+    qw = (m21 - m12) / s;
+    qx = 0.25 * s;
+    qy = (m01 + m10) / s;
+    qz = (m02 + m20) / s;
+  } else if (m11 > m22) {
+    const double s = 2.0 * std::sqrt(1.0 + m11 - m00 - m22);
+    qw = (m02 - m20) / s;
+    qx = (m01 + m10) / s;
+    qy = 0.25 * s;
+    qz = (m12 + m21) / s;
+  } else {
+    const double s = 2.0 * std::sqrt(1.0 + m22 - m00 - m11);
+    qw = (m10 - m01) / s;
+    qx = (m02 + m20) / s;
+    qy = (m12 + m21) / s;
+    qz = 0.25 * s;
+  }
+  q[0] = static_cast<float>(qx);
+  q[1] = static_cast<float>(qy);
+  q[2] = static_cast<float>(qz);
+  q[3] = static_cast<float>(qw);
+  sanitizeQuat(q);
+}
+
 // P is stored as float: double -> float -> double. False if not finite.
 inline bool storedPosition(const double in[3], double out[3]) {
   for (int i = 0; i < 3; ++i)

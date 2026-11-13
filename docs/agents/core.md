@@ -76,7 +76,7 @@ in `GeorepLookup`); `makeShapeSpec` (`pscale * scale` as a bounding box, compone
 (`Box3DShapes.h`) by `clampExtent`; sphere diameter = largest component; capsule radius = half of
 max(x, z)); `PrimOverrides` / `applyPrimOverrides`; `matrixRowLengths`; `packedPointsToBodyLocal` (`(p - pivot) * S`);
 `packedScale` (row lengths rounded to 5 significant digits, so rotated instances share a hull; ~1e-5 scale error);
-`packedHullKey` (kind 1 merged, 2 per piece); `connectedSets` (union-find); `fitShapeToPoints`; `sanitizeQuat` /
+`packedHullKey` (kind 1 merged, 2 per piece); `connectedSets` (union-find); `fitShapeInFrame` / `fitShapeToPoints` / `canonicalFrame` (and `Box3DWorld::fitShapeOriented`, which needs a Box3D hull); `sanitizeQuat` /
 `storedPosition` (shared by the read path and the write-back's prediction).
 
 ## World settings added from the Box3D world API

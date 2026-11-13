@@ -349,47 +349,112 @@ inline void packedPointsToBodyLocal(const float *xyz, int count,
           (static_cast<double>(xyz[3 * i + j]) - pivotIn[j]) * S[j]);
 }
 
-// A box / sphere / capsule fitted to the points' bounds: auto-fit on packed
-// geometry, and the fallback when points cannot be hulled. Extents are clamped
-// like makeShapeSpec.
-inline bool fitShapeToPoints(ShapeType type, const float *xyz, int count,
-                             ShapeSpec &out) {
+// The body axes as a fitting frame (rows: the frame's axes in body space).
+inline const float (&identityFrame())[3][3] {
+  static const float kIdentity[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+  return kIdentity;
+}
+
+// A box / sphere / capsule fitted to the points' bounds measured along `axes`
+// (three orthonormal, right-handed rows in body space). Box: those bounds,
+// turned by the frame. Sphere: centred on them, radius the largest half
+// extent. Capsule: along the frame axis with the largest extent, radius the
+// larger of the other two half extents, caps inside the bounds. Extents are
+// clamped like makeShapeSpec. False for no points or a non-finite one.
+inline bool fitShapeInFrame(ShapeType type, const float *xyz, int count,
+                            const float axes[3][3], ShapeSpec &out) {
   if (count <= 0)
     return false;
-  float lo[3] = {xyz[0], xyz[1], xyz[2]};
-  float hi[3] = {xyz[0], xyz[1], xyz[2]};
-  for (int i = 0; i < count; ++i)
-    for (int j = 0; j < 3; ++j) {
-      const float v = xyz[3 * i + j];
-      if (!std::isfinite(v))
-        return false;
-      if (v < lo[j])
-        lo[j] = v;
-      if (v > hi[j])
-        hi[j] = v;
+  float lo[3], hi[3];
+  for (int i = 0; i < count; ++i) {
+    const float *p = xyz + 3 * i;
+    if (!finite3(p))
+      return false;
+    for (int k = 0; k < 3; ++k) {
+      const float d = p[0] * axes[k][0] + p[1] * axes[k][1] + p[2] * axes[k][2];
+      if (i == 0 || d < lo[k])
+        lo[k] = d;
+      if (i == 0 || d > hi[k])
+        hi[k] = d;
     }
+  }
 
   float half[3], mid[3];
-  for (int j = 0; j < 3; ++j) {
-    mid[j] = 0.5f * (lo[j] + hi[j]);
-    half[j] = 0.5f * clampExtent(hi[j] - lo[j]);
+  for (int k = 0; k < 3; ++k) {
+    mid[k] = 0.5f * (lo[k] + hi[k]);
+    half[k] = 0.5f * clampExtent(hi[k] - lo[k]);
   }
 
   out = ShapeSpec();
-  copy3(out.center, mid);
+  for (int j = 0; j < 3; ++j)
+    out.center[j] =
+        mid[0] * axes[0][j] + mid[1] * axes[1][j] + mid[2] * axes[2][j];
+  const bool turned = !(axes[0][0] == 1.0f && axes[1][1] == 1.0f &&
+                        axes[2][2] == 1.0f); // keeps an exact identity
   if (type == ShapeType::Sphere) {
     out.type = ShapeType::Sphere;
     out.radius = std::max({half[0], half[1], half[2]});
   } else if (type == ShapeType::Capsule) {
-    // Y axis; radius covers the wider of x / z; the caps sit inside the bounds.
+    // The shape's Y is the long axis: a cyclic permutation keeps the frame
+    // right-handed.
+    int l = 1;
+    if (half[0] > half[l])
+      l = 0;
+    if (half[2] > half[l])
+      l = 2;
+    const int a = (l + 2) % 3, b = (l + 1) % 3;
     out.type = ShapeType::Capsule;
-    out.radius = std::max(half[0], half[2]);
-    out.halfLength = std::max(half[1] - out.radius, 0.0f);
+    out.radius = std::max(half[a], half[b]);
+    out.halfLength = std::max(half[l] - out.radius, 0.0f);
+    if (turned || l != 1)
+      quatFromAxes(axes[a], axes[l], axes[b], out.rot);
   } else {
     out.type = ShapeType::Box;
     copy3(out.halfExtents, half);
+    if (turned)
+      quatFromAxes(axes[0], axes[1], axes[2], out.rot);
   }
   return true;
+}
+
+// A box / sphere / capsule fitted to the points' bounds along the body axes:
+// the fallback when points cannot be hulled (fitShapeOriented in Box3DWorld.h
+// is AutoFit, which also tries turned frames).
+inline bool fitShapeToPoints(ShapeType type, const float *xyz, int count,
+                             ShapeSpec &out) {
+  return fitShapeInFrame(type, xyz, count, identityFrame(), out);
+}
+
+// Turns an orthonormal frame (rows) into the closest one to the body axes that
+// spans the same box: each body axis in turn takes the remaining frame axis
+// most parallel to it, pointing its way; the third is their cross product, so
+// the result is right-handed. A frame already along the body axes becomes the
+// exact identity.
+inline void canonicalFrame(float axes[3][3]) {
+  float in[3][3];
+  std::memcpy(in, axes, sizeof in);
+  bool used[3] = {false, false, false};
+  for (int j = 0; j < 2; ++j) {
+    int best = -1;
+    for (int k = 0; k < 3; ++k)
+      if (!used[k] &&
+          (best < 0 || std::fabs(in[k][j]) > std::fabs(in[best][j])))
+        best = k;
+    used[best] = true;
+    const float s = in[best][j] < 0.0f ? -1.0f : 1.0f;
+    for (int c = 0; c < 3; ++c)
+      axes[j][c] = s * in[best][c];
+  }
+  axes[2][0] = axes[0][1] * axes[1][2] - axes[0][2] * axes[1][1];
+  axes[2][1] = axes[0][2] * axes[1][0] - axes[0][0] * axes[1][2];
+  axes[2][2] = axes[0][0] * axes[1][1] - axes[0][1] * axes[1][0];
+  // Snap float noise so an unturned frame is exactly the identity.
+  for (int r = 0; r < 3; ++r)
+    for (int c = 0; c < 3; ++c) {
+      const float want = (r == c) ? 1.0f : 0.0f;
+      if (std::fabs(axes[r][c] - want) < 1e-6f)
+        axes[r][c] = want;
+    }
 }
 
 } // namespace b3dop

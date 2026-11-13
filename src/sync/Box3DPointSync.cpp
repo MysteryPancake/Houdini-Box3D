@@ -492,7 +492,14 @@ ShapePlan planShapes(ScanContext &ctx, GA_Offset off, int64_t bodyId,
   ShapePlan plan;
 
   plan.type = ctx.node.defaultShape;
-  ctx.georep.get(a, off, plan.type); // else the node's default
+  const bool named = ctx.georep.get(a, off, plan.type); // else the default
+  // A default hull on a plain point (no packed geometry to hull) is the
+  // pscale box, without the "needs a packed primitive" note an explicit
+  // bullet_georep gets.
+  if (!named && !pk.prim &&
+      (plan.type == b3dop::ShapeType::Convex ||
+       plan.type == b3dop::ShapeType::Concave))
+    plan.type = b3dop::ShapeType::Box;
 
   // `none`: a static, shapeless body (like Bullet, it still exists for
   // constraints).

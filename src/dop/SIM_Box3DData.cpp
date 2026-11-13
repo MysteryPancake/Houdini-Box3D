@@ -18,7 +18,8 @@ const SIM_DopDescription *SIM_Box3DData::getDescription() {
   static Box3DParms p;
   static const PRM_Template *templates =
       p.tab("Shape")
-          .menu("defaultshape", "Default Shape", 0,
+          .menu("defaultshape", "Default Shape",
+                static_cast<int>(b3dop::ShapeType::Convex),
                 {"Box", "Sphere", "Convex Hull",
                  "Concave / Compound (Hull per Piece)", "Capsule",
                  "None (No Collision)"},

@@ -264,8 +264,9 @@ struct BodySettings {
       true; // `awake` at creation. A body that cannot sleep always starts awake
 
   // Solver only:
-  ShapeType defaultShape =
-      ShapeType::Box; // when `bullet_georep` is missing or unknown
+  // When `bullet_georep` is missing or unknown: a hull, as RBD Packed Object's
+  // own default (points without packed geometry keep the pscale box).
+  ShapeType defaultShape = ShapeType::Convex;
   bool autoFit =
       true; // box / sphere / capsule fit the packed geometry's bounds
   bool hullPerConnectedSet =
@@ -519,6 +520,17 @@ public:
                            uint64_t budgetGroup = 0);
   // lets go of the hulls this world holds (the shared cache keeps them)
   void pruneHulls();
+
+  // AutoFit: a box / sphere / capsule fitted to body-local points along the
+  // frame that gives the smallest box (fitShapeInFrame in Box3DShapes.h). The
+  // candidates are the body axes and, from a convex hull of the points, each
+  // face normal paired with each of that face's edges, so a box, prism or
+  // fractured piece turned inside its packed geometry gets a shape turned
+  // with it. A turned frame wins only when its box is clearly smaller, so
+  // geometry along the body axes keeps the body axes exactly. Fewer than 4
+  // points or no hull: the body axes. Thread-safe, nothing cached.
+  static bool fitShapeOriented(ShapeType type, const float *xyz, int count,
+                               ShapeSpec &out);
   int hullCacheSize() const; // hulls this world holds
 
   // The shared cache: entries, bytes, and the byte budget past which the least

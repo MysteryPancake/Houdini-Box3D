@@ -19,7 +19,7 @@ its state in the object's `Position` data instead of point attributes.
   box, zero velocity.
 * Object space = the geometry through its own transform (`SIM_Geometry::getTransform`; scale / shear baked into the
   shape points). Shapes (`buildWholeObjectShapes`) from Box3D Data's Default Shape / Create Convex Hull per Set of
-  Connected Primitives: box / sphere / capsule fitted to all points, convex one hull (or per connected set), concave
+  Connected Primitives: box / sphere / capsule fitted to all points (`fitShapeOriented`, as for points; see bodies.md), convex one hull (or per connected set), concave
   one hull per primitive `name`; unkeyed hulls (by content); `none` or no points: shapeless static. The shape signature
   (`wholeObjectShapeSig`: geometry identity, P / primitive list data ids, counts, own transform, pivot, shape settings)
   changing rebuilds the shapes on the same body.
