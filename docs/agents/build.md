@@ -52,7 +52,10 @@ arguments on. Each builds its scene from scratch
 in Houdini, remove its item there. SETUP results mean the script guessed a node or parameter name wrong (the message
 lists the real ones), not a plugin failure. Each test runs in its own hython process, so a crash is reported as CRASH
 and the rest still run; the `probe_*` tests isolate the parts of the `network` scene. Not in CI (needs Houdini).
-Helpers in `tests/houdini/b3dtest.py`.
+The tests are in `tests/houdini/checks_*.py` by area (core, solver / UI / caching,
+outputs / packed geometry, constraints / whole objects), each with a `TESTS` dict the runner collects; helpers in
+`tests/houdini/b3dtest.py`. A test function can carry `.env` (environment variables for its process, e.g.
+`HOUDINI_MAXTHREADS=1`).
 
 Core tests:
 

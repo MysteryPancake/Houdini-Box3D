@@ -8,9 +8,10 @@ The one list of everything not yet tested in Houdini or confirmed against SideFX
 remove an item once it has been checked, and record anything new here rather than in comments or other sections.
 
 **General**
-* No `SIM_*` code has CI; `tests/box3d_test.hiplc` is a manual scene. The core tests pass, and so do the Houdini
-  checks in `tests/houdini/run_tests.py` (Houdini 22.0.479), which settled the items they cover; they are no longer
-  listed here. The plugin builds against the real HDK (Houdini 22.0.479, MSVC, no warnings), so "compiled only
+* No `SIM_*` code has CI; `tests/box3d_test.hiplc` is a manual scene. The core tests pass, and so do the first
+  Houdini checks (`checks_core.py`, Houdini 22.0.479), which settled the items they cover; they are no longer listed
+  here. `checks_solver.py`, `checks_output.py` and `checks_constraints.py` script many of the items below (UI, cache,
+  scale, threads, masks, packed types, outputs, forces, constraints, whole objects) and have not been run yet. The plugin builds against the real HDK (Houdini 22.0.479, MSVC, no warnings), so "compiled only
   against stand-in headers" notes are gone too: what remains is behaviour.
 * The `BodyProps` refactor (`BodyProps` embedded in `BodySettings`): changing a Box3D Data value (friction, damping,
   Allow Sleeping, Add Impact Data) mid-simulation still updates existing bodies, and an untouched object still skips
