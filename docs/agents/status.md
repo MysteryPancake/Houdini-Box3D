@@ -47,6 +47,8 @@ remove an item once it has been checked, and record anything new here rather tha
 * Disable-when conditions (`PRM_Conditional`, `PRM_CONDTYPE_DISABLE`) on the joint nodes' toggles and on vector
   parameters (`target_rotation`, `motor_velocity`): not yet seen greying out in Houdini. Space-separated `{ }` groups
   are taken as OR (Houdini's documented disable-when syntax).
+* `Box3DParms::Range::hardMin = false` (`PRM_RANGE_UI` minimum) for the joint nodes' signed sliders, and tabs on the
+  joint nodes (switcher from `Box3DParms`): not yet seen in Houdini.
 * The GETSET setters' float / double overloads as listed for `SIM_OptionsUser.h`.
 * Objects in one solve call: Houdini passes several objects to one solver call only when they share the same Solver
   data and are in a mutual relationship; otherwise each object (or group) is solved in its own call, with feedback
@@ -228,6 +230,11 @@ constructor); `DECLARE_CLASSNAME` / `DECLARE_DATAFACTORY` expansions (`SIM_DataU
 passed as a `PRM_Template`'s conditional pointer.
 
 ## Known gaps / TODO
+
+* Scenes saved before the joint nodes' Breakable / Set Rest Length / Limit Spring Force / Limit Max Length / Limit
+  Torque toggles load with them off, so a Break Force, Rest Length etc. typed in such a scene is ignored until the
+  toggle is turned on. Bounce Mixing's menu was reordered: a non-default choice saved before then reads as a
+  different rule.
 
 The one list of what is still to do. Keep it here only (no TODO comments in the code).
 

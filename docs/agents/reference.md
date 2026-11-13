@@ -13,7 +13,11 @@ Solver (read every step; only the thread count rebuilds the world): `gravity`, `
 Box3D's defaults: `contactstiffness`, `contactdamping`, `contactpushspeed`, `bouncethreshold`,
 `contactrecycledistance`, `maxlinearspeed`, `enablecontinuous`. Force DOPs: `useforces`, `forceswake` (disabled while
 `useforces` is off). Box3D Data: `startasleep` and `sleepthreshold` are disabled while `enablesleep` is off,
-`mass` / `density` by `computemass`; joint nodes: see `enabledBy` in [joints.md](joints.md).
+`mass` / `density` by `computemass`; joint nodes: see `enabledBy` in [joints.md](joints.md). Solver
+`frictionmixing` and `restitutionmixing` menus list the rules in the same order (geometric mean, minimum, maximum,
+average, multiply); `worldSettings` maps the index to each enum (their orders differ). Settings on one node that
+need a setting on the other (sleep, Fast Object, impacts, contact recycling) say so in the tooltip: Houdini can't
+disable across nodes.
 
 Box3D Data (per object): `defaultshape` (menu order: box, sphere, convex hull, concave, capsule, none; the stored value
 is the menu index), `autofit`, `hullperconnected`, `bodytype` (static, kinematic, dynamic), `computemass`, `mass`,

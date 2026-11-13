@@ -140,7 +140,7 @@ Joints use Houdini's **Constraint Network** DOP. Wire Box3D Constraint Relations
 - Each end's `P` and `orient` are that piece's joint frame, so put both ends at the pivot for a hinge or weld.
 - Primitive attributes named like the node's parameters (`lower_angle`, `stiffness`, ...) modify them, as with Bullet: float attributes multiply the node's value, other attributes replace it.
 - SideFX's constraint relationships become the nearest Box3D joint (using `constraint_type`): Glue breaks when its Strength is reached within one timestep, and Cone Twist uses the smaller of Max Up and Max Out Rotation.
-- Joints past their Break Force or Break Torque go into the `broken` group, or switch to their `next_constraint_name`. Every step the solver writes `force`, `distance`, `torque` and `angle` (radians) onto each line.
+- Joints with **Breakable** on, past their Break Force or Break Torque, go into the `broken` group, or switch to their `next_constraint_name`. Every step the solver writes `force`, `distance`, `torque` and `angle` (radians) onto each line.
 
 ## Things to know
 

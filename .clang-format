@@ -1,0 +1,2 @@
+# clang-format defaults (LLVM style). Kept so a .clang-format in a parent folder cannot change it.
+BasedOnStyle: LLVM

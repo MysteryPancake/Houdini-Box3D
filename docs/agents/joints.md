@@ -32,9 +32,21 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   turns it into the node's disable-when string, following chains (steering limits need Steering) and skipping toggles
   the type lacks (the parallel joint's spring and the motor joint's springs have none). Only the UI uses it: a disabled
   parameter is still read, and its primitive attribute still overrides it.
+  `jointParamUiOrder(type)` is the order the node shows: table order, but each gated setting moves to just below its
+  toggle, so a toggle only greys out the block under it. Parameters are saved by name, so reordering is safe for
+  existing scenes. Keep always-on settings out of the middle of a toggle's block (why `restlength` is near the top).
   `jointParamIndices(type)` is the table filtered to the rows a type uses (built once, table order); `sameJointSettings`
   runs for every joint every step and walks only those rows. Per-type loops over the table should use it.
-* `Box3DWorld::defaultJointSettings(type)` copies `b3Default*JointDef`, so the node's defaults are Box3D's.
+* `Box3DWorld::defaultJointSettings(type)` copies `b3Default*JointDef`. The nodes start from `nodeJointDefaults(type, ...)`
+  over it instead: Box3D's spring stiffness, motor effort and limits are all 0, so turning a toggle on did nothing (or,
+  for limits, locked the joint at 0..0). Only the node UI defaults; Box3D's stay the base everywhere else.
+* `jointNodeToggles()`: node-only toggles (Breakable, Set Rest Length, Limit Spring Force, Limit Max Length, Limit
+  Torque) in place of typing -1 for "never / unlimited". Gated settings name them in `enabledBy`; `settings()` writes -1
+  into them while the toggle is off (`jointNodeToggleOf`), so the settings, primitive attributes (float attributes
+  multiply the node's -1, as before) and the SideFX mapping keep their meaning. Not in `jointParams()`: no attribute,
+  no fingerprint, no `sameJointSettings` entry. `findJointParam` searches both lists.
+* `jointParamRange(p, type)`: each float's slider; a hard 0 minimum where `sanitized` (Box3DWorld.cpp) would clamp
+  anyway. `motor_speed` has an angle range on revolute and a linear one elsewhere.
 * Houdini units in one place: `jointParamSize` (1 or 3 values), `setJointParam` (Houdini values -> settings: degrees
   -> radians, toggles, Euler rotations through a caller-supplied converter, `box3dEulerToQuat`) and `getJointParam`
   (the inverse, for node defaults). Used by the nodes and by the primitive overrides (for everything but floats,
@@ -61,9 +73,10 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
 * Nodes: `SIM_Box3DConRel` (`SIM_ConRel` + `SIM_OptionsUser`, like SideFX's `SIM_ConRelSpring`; abstract,
   `DECLARE_CLASSNAME` only) and one subclass per joint type from `BOX3D_DECLARE_CONREL`, each with its own automatic DOP
   (`box3d_<type>conrel`, label "Box3D <Type> Constraint Relationship", default Data Name `<type>`). `describe(type)`
-  builds the parameters (`Box3DParms`, defaults from `getJointParam`) once per type: every setting the type uses,
-  common ones first, parameter name = attribute name (no per-type prefixes). `settings()` reads them through
-  `setJointParam` in Box3D units over Box3D's defaults.
+  builds the parameters (`Box3DParms`, defaults from `getJointParam` over `nodeJointDefaults`) once per type: a "Joint"
+  tab with the settings every type has (and Breakable), then a tab named after the type, in `jointParamUiOrder`,
+  parameter name = attribute name (no per-type prefixes). `settings()` reads them through `setJointParam` in Box3D
+  units over Box3D's defaults, then applies the node toggles.
 * Networks: every relationship of a solved object (group and affector side) whose relationship type data is a
   `SIM_ConstraintNetworkRelationship`, once per relationship name (a relationship is on every object it constrains),
   geometry from its `getGeometry()`; plus each object's own `ConstraintGeometry` (Attach Internal Constraints to

@@ -135,4 +135,7 @@ Layering (keep it):
 * Hull keys must always imply identical body-local points (`createHullWithKey` trusts them).
 * Sanitize every new input path: Box3D asserts on non-unit quaternions and negative material values.
 * Row-vector matrices on the Houdini side; never mix with column-vector math.
-* Style: Allman braces, return type on its own line (HDK sample style), 4-space indent, aligned declarations.
+* Style: clang-format's default (LLVM) style, pinned by the root `.clang-format`. Run `clang-format -i` on every
+  `.cpp` / `.h` file you create or change under `src/` and `tests/` before finishing, and don't hand-format or
+  hand-align around it. Never format `extern/` (it has its own `.clang-format` and is never edited). Keep comments
+  inside macros on their own line: a trailing comment after a `\` continuation gets wrapped into the macro.
