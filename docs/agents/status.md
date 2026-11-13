@@ -74,6 +74,9 @@ remove an item once it has been checked, and record anything new here rather tha
   are not compared with Bullet.
 * Shared-string handles (`GA_AIFSharedStringTuple::getHandle`) are stable for one scan of one detail (`bullet_georep`
   and `name` are memoised by handle).
+* (Confirmed, `autofit_bullet`: convex hulls and AutoFit boxes on a rotated packed transform rest as in Bullet; a box
+  tilted in SOPs before packing does not, see Known gaps.) Unknown: which shape Bullet uses without `bullet_georep`
+  (a convex hull and an oriented box both lie flat there).
 
 **Write-back and outputs**
 * RBD Packed Object's plain `SIM_Geometry` is replaced once by an adopting `SIM_GeometryCopy`
@@ -170,6 +173,10 @@ passed as a `PRM_Template`'s conditional pointer.
 
 ## Known gaps / TODO
 
+* AutoFit box fits the packed geometry's axis-aligned bounds in packed space; Bullet's follows the geometry's own
+  orientation (`autofit_bullet`: a box tilted in SOPs before packing rests tilted 30 degrees on an edge in Box3D, flat
+  in Bullet). Points without `bullet_georep` get the same misfit, since the Default Shape is Box (RBD Packed Object
+  writes no `bullet_georep`). Options: Default Shape Convex Hull; an oriented box fit for AutoFit.
 * RBD Packed Object writes its own physical attributes onto every point and point attributes win, so Box3D Data's
   mass / density / compute mass / friction / bounce do nothing there (as with Bullet). Decided: keep Bullet's rule,
   document it (README, tooltips) and warn once per object. A Box3D Packed Object node (an asset: Empty Object, SOP

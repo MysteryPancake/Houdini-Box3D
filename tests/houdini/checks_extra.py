@@ -14,6 +14,7 @@ from b3dtest import (
     SetupError,
     box3d_data,
     box3d_solver,
+    bullet_solver,
     close,
     constraint_lines,
     create,
@@ -33,6 +34,7 @@ from b3dtest import (
     set_parm,
     sop_solver,
     step,
+    vex_value,
 )
 from checks_constraints import FACE, broken_count, hanging_pair
 from checks_solver import stack_scene
@@ -567,6 +569,123 @@ def add_wrangle(sop_path, snippet):
     return wr.path()
 
 
+AUTOFIT_SIZE = (0.6, 0.4, 0.8)
+AUTOFIT_TILT = (0.0, 0.0, 30.0)  # degrees, about z
+AUTOFIT_CENTER = (0.0, 0.6, 0.0)
+
+
+def autofit_scene(name, solver_kind, georep, rotate_before_pack):
+    """A 0.6 x 0.4 x 0.8 box tilted 30 degrees about z, dropped on a static ground, both packed
+    pieces of one RBD Packed Object. rotate_before_pack: the tilt is baked into the packed
+    geometry (as Assemble or Pack after a Transform SOP leave it: the packed transform is
+    identity), else it is on the packed transform. georep: the piece's bullet_georep (with
+    bullet_autofit 1), or None to leave both attributes off (each solver's own default)."""
+    geo = new_geo(name + "_geo")
+
+    def branch(tag, size, center, rotate, before, attrs):
+        box = create(geo, "box", f"{tag}_box")
+        set_parm(box, ["size"], tuple(size))
+        last = box
+        if before:
+            xf = create(geo, "xform", f"{tag}_place")
+            xf.setInput(0, last)
+            set_parm(xf, ["r"], tuple(rotate))
+            set_parm(xf, ["t"], tuple(center))
+            last = xf
+        asm = create(geo, "assemble", f"{tag}_pack")
+        asm.setInput(0, last)
+        set_parm(asm, ["pack_geo", "packgeo", "pack"], 1)
+        last = asm
+        if not before:
+            # The box is centred on the origin, so rotating there turns the packed piece in place.
+            xf = create(geo, "xform", f"{tag}_place")
+            xf.setInput(0, last)
+            set_parm(xf, ["r"], tuple(rotate))
+            set_parm(xf, ["t"], tuple(center))
+            last = xf
+        sets = [f's@name = "{tag}";'] + [f"{vex_value(v)[0]}@{k} = {vex_value(v)[1]};" for k, v in attrs.items()]
+        wr = create(geo, "attribwrangle", f"{tag}_attrs")
+        wr.setInput(0, last)
+        set_parm(wr, ["snippet"], " ".join(sets))
+        return wr
+
+    # Both pieces get the same attributes: Merge would give the ground an empty bullet_georep and
+    # bullet_autofit 0 otherwise (with RBD Packed Object's bullet_primS 1 1 1, a 2 x 2 x 2 box).
+    piece_attrs = {"active": 1, "v": (0.0, 0.0, 0.0), "w": (0.0, 0.0, 0.0), "bounce": 0.0}
+    ground_attrs = {"active": 0, "v": (0.0, 0.0, 0.0), "w": (0.0, 0.0, 0.0), "bounce": 0.0}
+    if georep is not None:
+        piece_attrs.update({"bullet_georep": georep, "bullet_autofit": 1})
+        ground_attrs.update({"bullet_georep": "box", "bullet_autofit": 1})
+    ground = branch("ground", GROUND["size"], GROUND["center"], (0, 0, 0), True, ground_attrs)
+    piece = branch("piece", AUTOFIT_SIZE, AUTOFIT_CENTER, AUTOFIT_TILT, rotate_before_pack, piece_attrs)
+    m = create(geo, "merge", "merge")
+    m.setInput(0, ground)
+    m.setInput(1, piece)
+    display(m)
+
+    dop = new_dopnet(name)
+    obj = packed_object(dop, "pieces", m.path(), keep_velocity=True)
+    finish(dop, box3d_solver(dop, obj) if solver_kind == "box3d" else bullet_solver(dop, obj))
+    return dop
+
+
+def autofit_rest(dop, rotate_before_pack, frames=72):
+    """Drops the piece and returns (rest height of its point, tilt in degrees, bullet_georep and
+    bullet_autofit as the solver saw them on frame 1). Tilt: the smallest angle between one of
+    the box's own axes and vertical (0 = lying on a face)."""
+    def sample(sim, f):
+        obj = sim.findObject("pieces")
+        geo = obj.geometry()
+        prim = next(pr for pr in geo.prims() if pr.points() and pr.points()[0].attribValue("name") == "piece")
+        m = hou.Matrix4(prim.intrinsicValue("packedfulltransform"))
+        seen = point_attributes(sim, "pieces", "piece", ["bullet_georep", "bullet_autofit"]) if f == 1 else None
+        return prim.points()[0].position(), m, seen
+
+    track = step(dop, frames, sample)
+    pos, m, _ = track[frames]
+    seen = track[1][2]
+    # The box's axes in the packed geometry's own space: turned by the tilt when it was baked in.
+    local = hou.hmath.buildRotate(hou.Vector3(AUTOFIT_TILT)) if rotate_before_pack else hou.hmath.identityTransform()
+    origin = hou.Vector3(0, 0, 0) * local * m
+    tilt = 90.0
+    for axis in ((1, 0, 0), (0, 1, 0), (0, 0, 1)):
+        d = (hou.Vector3(axis) * local * m - origin).normalized()
+        tilt = min(tilt, math.degrees(math.acos(max(-1.0, min(1.0, abs(d[1]))))))
+    return pos[1], tilt, seen
+
+
+def test_autofit_bullet():
+    """A tilted box dropped in Box3D and in Bullet with the same shape settings ends up the same
+    way: lying flat (tilt 0) when the shape fits the box, standing on an edge at its starting
+    30 degrees when a box shape is fitted to the axis-aligned bounds of the tilted geometry.
+    Covers convex hull, box with AutoFit with the tilt baked into the packed geometry and on the
+    packed transform, and (INFO) no bullet_georep at all, where each solver uses its default."""
+    cases = (
+        # label, bullet_georep (None: unset), tilt baked into the packed geometry
+        ("convex hull, tilt baked in", "convexhull", True),
+        ("box + autofit, tilt baked in", "box", True),
+        ("box + autofit, tilt on the packed transform", "box", False),
+        ("no bullet_georep, tilt baked in", None, True),
+    )
+    results = []
+    for i, (label, georep, baked) in enumerate(cases):
+        got = {}
+        for solver_kind in ("box3d", "bullet"):
+            dop = autofit_scene(f"autofit_{i}_{solver_kind}", solver_kind, georep, baked)
+            got[solver_kind] = autofit_rest(dop, baked)
+        (yb, tb, sb), (yt, tt, st) = got["box3d"], got["bullet"]
+        msg = (f"{label}: Box3D rests at y {yb:.3f}, tilt {tb:.1f} deg; Bullet y {yt:.3f}, tilt {tt:.1f} deg "
+               f"(flat: tilt 0 and y 0.2 or 0.3; fitted to the tilted bounds: tilt 30, y about 0.32)")
+        if georep is None:
+            results.append(Result("autofit_bullet", Result.INFO,
+                                  msg + f". Attributes seen on frame 1: Box3D {sb}, Bullet {st}"))
+            continue
+        same = abs(tb - tt) < 5.0 and abs(yb - yt) < 0.05
+        results.append(Result("autofit_bullet", Result.PASS if same else Result.FAIL,
+                              msg if same else msg + f". Attributes seen on frame 1: Box3D {sb}, Bullet {st}"))
+    return results
+
+
 def test_bad_input():
     """No crash, and the good pieces still land, with: empty input geometry; a zero-size piece; a
     piece at an infinite position and one with a NaN velocity; two pieces with the same name."""
@@ -807,6 +926,7 @@ TESTS = {
     "sleep": test_sleep,
     "rolling_resistance": test_rolling_resistance,
     "shape_types": test_shape_types,
+    "autofit_bullet": test_autofit_bullet,
     "bad_input": test_bad_input,
     "rewire_midsim": test_rewire_midsim,
     "large_scene": test_large_scene,
