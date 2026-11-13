@@ -13,6 +13,16 @@ I made design decisions based on the RBD Bullet Solver where possible, so it sho
 >
 > I've tried my best to keep the code organized, clean and bug free.
 
+## Installing
+
+A prebuilt Windows build is available in the [Releases](../../releases) section. To install it, put it in your Houdini packages folder:
+
+```
+Documents\houdini22.0\packages
+```
+
+It only loads in the Houdini version it was built for. For other versions or Linux, see [Building](#building).
+
 ## Building
 
 You need CMake, a C++17 compiler, git and a Houdini install (for the HDK). Clone with submodules so Box3D is included:
