@@ -115,9 +115,9 @@ makeShapeSpec(ShapeType type, float pscale, const float scale[3])
 // Explicit primitives (Bullet Data with AutoFit off). Each is optional:
 //   bullet_primS   box HALF extents (Bullet Data documents Box Size as a half-size)
 //   bullet_radius  sphere / capsule radius
-//   bullet_length  capsule straight section along Y, caps not included (assumed)
+//   bullet_length  capsule straight section along Y, caps not included
 //   bullet_primT   offset from the body origin
-//   bullet_primR   Euler degrees, order XYZ (assumed; the solver builds the quaternion)
+//   bullet_primR   Euler degrees, order XYZ (the solver builds the quaternion)
 // ---------------------------------------------------------------------------
 struct PrimOverrides
 {

@@ -71,9 +71,9 @@ buildMesh(const GU_Detail *gdp, bool houdiniWinding, TriMesh &out)
         {
             const int32_t b = vertexOf(prim->getPointOffset(i));
             const int32_t c = vertexOf(prim->getPointOffset(i + 1));
-            // Houdini polygons wind clockwise seen from their front (assumed: the Flip Static Mesh Winding
-            // toggle on the Box3D Data node is there in case it is not); Box3D wants counter-clockwise
-            // front faces, and its meshes are one-sided.
+            // Houdini polygons wind clockwise seen from their front (Flip Static Mesh Winding on the Box3D
+            // Data node reverses this); Box3D wants counter-clockwise front faces, and its meshes are
+            // one-sided.
             out.tris.push_back(first);
             out.tris.push_back(houdiniWinding ? c : b);
             out.tris.push_back(houdiniWinding ? b : c);

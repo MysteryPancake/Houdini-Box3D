@@ -40,6 +40,8 @@ In a DOP network, press **TAB** and add a **Box3D Solver**, then wire your objec
 
 Like Houdini's RBD solvers, it works on **points**: every point in the object's geometry is one rigid body, and the point is its **centre of mass**. For packed pieces, put the pivot at the centroid (the Pack SOP and RBD tools do this by default).
 
+Objects from **RBD Object** and similar nodes are one rigid body each instead, as with the older RBD workflow. Their settings come from Box3D Data, and their results go to the object's Position data.
+
 ## Nodes
 
 - Box3D Solver

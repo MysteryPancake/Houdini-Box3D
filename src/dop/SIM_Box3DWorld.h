@@ -77,6 +77,11 @@ struct Box3DBodyMirror : Box3DBodyPose
     bool     awake     = true;        // the value of `awake` as last read from or written to the point
     int64_t  pointIndex = -1;         // point number at the last scan (Impacts data)
 
+    // A whole DOP object as one body (RBD Object etc., see syncWholeObject): no point; its pose
+    // lives in the object's Position data, about `pivot` (object space).
+    bool     wholeObject = false;
+    double   pivot[3]    = { 0, 0, 0 };
+
     // The body's point, refreshed by every sync, so the write-back needs no lookup. Box3D's
     // body user data points at this entry, so entries never move (unordered_map nodes) and
     // are only erased with their body.
@@ -213,6 +218,7 @@ struct Box3DObjectSync
     size_t   entryCount = 0;        // entries stamped by the last full scan
     bool     canSkip    = false;    // fp describes a clean, fully scanned object
     bool     propsKnown = false;    // fp's prop markers are recorded
+    bool     wholeObject = false;   // the object is one body (syncWholeObject), not one per point
     bool     anyDeforming = false;  // deforming bodies: never skip
     bool     anyDriven    = false;  // a moved animated body (velocity to clear): never skip
     bool     addImpact    = false;  // Box3D Data "Add Impact Data"
