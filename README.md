@@ -149,6 +149,7 @@ Joints use Houdini's **Constraint Network** DOP. Wire Box3D Constraint Relations
 - Use `id` if you delete points with `dead`, otherwise every later point counts as a new body.
 - Sleeping a body also sleeps the bodies touching it.
 - Escape cancels a step.
+- The Performance Monitor shows each solver stage (sync, step, write-back, ...) as its own entry.
 
 ## Troubleshooting
 

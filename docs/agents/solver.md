@@ -49,6 +49,13 @@ deleteDeadPoints   `dead` points
 stamp = now
 ```
 
+**Performance Monitor.** Each stage opens a `UT_PerfMonAutoSolveEvent(this, "Box3D: <stage>")` (as Bullet does), so
+the profiler lists the stages under the solver node instead of one entry: Rebuild World, Sync Bodies, Sync Affectors,
+Remove Bodies, Sync Constraints, Apply Forces, Step World (`world.step` + move events), Write Results, Constraint
+Feedback, Record Impacts, Point Updates (point writes, aging, dead points). Events are opened only on the solve
+thread; threaded passes count toward the stage that runs them. When the monitor is not recording, the constructor
+only checks two flags. Box3D's own step breakdown (`b3World_GetProfile`) is not reported.
+
 **New objects.** Objects in `newobjects` (created this timestep) keep their initial state: `solveObjectsSubclass` drops them
 by object id before anything else, so for this step they get no body, no write-back, no aging and no joints, and the
 rest of the step sees only the other objects. They are solved from the next timestep, as ordinary objects. A step whose

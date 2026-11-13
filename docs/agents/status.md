@@ -144,11 +144,15 @@ remove an item once it has been checked, and record anything new here rather tha
 * Float noise: the mirror takes a read-back after each write; a constant "edited" count (teleports) every step would
   mean the read-back does not match what the next sync reads.
 * Impacts record point -1 for whole objects.
+* Performance Monitor stage events (`UT_PerfMonAutoSolveEvent`, see solver.md): not yet built or checked in Houdini
+  that they nest under the solver node's entry the way Bullet's do.
 
 ## HDK calls
 
 Checked against the HDK reference: `GU_PrimPacked::isPackedPrimitive`, `getPackedDetail`, `sharedImplementation`,
 `getFullTransform4`, `setLocalTransform`, `getPivot`, `transformDirty`; `GU_PackedFragment::getPrimitiveRange`, `detailPtr`; `UTgetInterrupt`, `UT_Interrupt::opInterrupt`;
+`UT_PerfMonAutoSolveEvent(const SIM_Solver *, const char *)` (`UT_PerfMonAutoEvent.h`; starts timed / memory solve
+events only while recording, stops them in the destructor);
 `GU_DetailHandleAutoReadLock` / `SIM_GeometryAutoReadLock::getGdp` (const pointer), `SIM_GeometryAutoWriteLock::getGdp`
 (reference); `GA_Detail::getPrimitiveList()` / `GA_PrimitiveList::getDataId()` / `bumpDataId()`,
 `findPointAttribute` (const), `getP`, `getNumPointOffsets`, `getNumPrimitiveOffsets`, `pointVertex`,
