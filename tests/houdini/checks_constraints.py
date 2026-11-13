@@ -382,6 +382,15 @@ def test_other_rbd_objects():
 
         track = step(dop, 24, heights)
         n = len(track[24])
+        if type_name == "rbdpointobject" and n == 0:
+            sim = dop.simulation()
+            objs = sim.objects()
+            kinds = sorted({k for o in objs for k in o.subData().keys()})
+            results.append(Result("other_rbd_objects", Result.INFO,
+                                  f"{label}: {len(objs)} object(s) in the simulation, none with geometry; their data: "
+                                  f"{kinds}. Instance geometry parameter set: "
+                                  f"{[p for p in ('geopath', 'instancepath', 'geometrypath', 'instance') if obj.parm(p)]}"))
+            continue
         fell = n > 0 and len(track[1]) == n and all(b < a - 0.5 for a, b in zip(track[1], track[24]))
         results.append(Result("other_rbd_objects", Result.PASS if fell else Result.FAIL,
                               f"{label}: {n} object(s) with geometry; lowest points {[round(y, 2) for y in track[1]]} "

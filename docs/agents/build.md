@@ -56,7 +56,9 @@ The tests are in `tests/houdini/checks_*.py` by area (core, solver / UI / cachin
 outputs / packed geometry, constraints / whole objects, more: SOP Solver / Multiple Solver scenes, Bullet and POP
 comparisons), each with a `TESTS` dict the runner collects; helpers in
 `tests/houdini/b3dtest.py`. A test function can carry `.env` (environment variables for its process, e.g.
-`HOUDINI_MAXTHREADS=1`).
+`HOUDINI_MAXTHREADS=1`). Each test's latest overall status (the worst of its results) is kept in
+`tests/houdini/out/last_results.json`, updated as each test finishes; `--failed` runs the tests whose last status was
+FAIL / ERROR / SETUP / CRASH plus any never run (`--info` adds INFO).
 
 Core tests:
 

@@ -46,11 +46,10 @@ remove an item once it has been checked, and record anything new here rather tha
   sizes tall at 0.01x / 1x / 100x (2.5 ideal), with slight jitter at 100x: centimetre-scale scenes sink about 3%.
 
 **Points and packed geometry**
-* Point walk order is point-number order (`GA_Iterator` over `getPointRange()`): the walk position is the body id
-  without `id`, and the point number written to Impacts. Check after a Sort SOP upstream, with and without `id`.
-* Packed points: the body's primitive is found through the point's vertex (one point per packed primitive), `P` is the
-  pivot's world position, and `getFullTransform4` includes that translation. Check pieces whose pivot is not at the
-  centroid, and a wrangle that moves `P` of a packed point mid-simulation (an edit, so the body teleports).
+* Point order: reversing the points upstream (Sort SOP) keeps every body's identity, with and without `id` (verified,
+  `point_order`), but results differ slightly (5 cm after sliding 3 units): bodies are created in point order even when
+  `id` exists, and Box3D's results depend on body order. Creating them in `id` order would make results independent of
+  point order whenever `id` exists. The point number written to Impacts follows the current order.
 * Packed USD / packed sequences: `getPackedDetail()` gives usable geometry (Packed Disk and Packed Alembic do).
 * (Confirmed, `odd_packed_contents`: a packed primitive sphere or a nested packed primitive collides as a single point,
   half sunk into the ground. Listed under Known gaps.)
@@ -78,11 +77,12 @@ remove an item once it has been checked, and record anything new here rather tha
   writes still look like edits, every object scans every step: watch for `full scan, changed:` lines in a debug build.
 * Downstream readers: DOP Import (Fetch) matches the simulation, `v` is -g t for a falling body and `w` is in radians
   per second (verified). Still open: motion blur, and that a body falling asleep keeps its last small `v` / `w`.
-* `addPointImpact`: the point number and the time (end of the step) are right (verified, `impacts`); the impulse size
-  is checked against m*v (re-run with a bounce-0 ground pending). Whether a fresh `SIM_Impacts` each step suits
-  Houdini's impact tools, and no Feedback data for other solvers in a Multi Solver.
+* `addPointImpact`: impulse (m*v plus the step's support), point number and time verified (`impacts`). Whether a fresh
+  `SIM_Impacts` each step suits Houdini's impact tools, and no Feedback data for other solvers in a Multi Solver.
 * Aging: `age` counts seconds, life 0 never dies, and a dead packed piece is deleted (verified, also inside a
-  constraint network without errors). Compared with the POP Solver's timing: scripted (`aging_vs_pop`), not yet run.
+  constraint network without errors). Compared with the POP Solver at 24 fps, a life of 0.5 dies on frame 14 here and
+  frame 12 there: our age starts a frame later (a new object is not solved on its creation frame) and dies at
+  age > life, POP's probably at >=.
 * Point `force` / `torque`: applied for one step and zeroed (verified, `point_force`: F/m and torque/I exact). A POP
   Force must cook before the Box3D Solver in the same step; the zeroing may clash with another solver reading `force`
   in a Multi Solver.
@@ -113,9 +113,6 @@ remove an item once it has been checked, and record anything new here rather tha
   SideFX's data works; the individual values are not checked).
 * (Confirmed, `sidefx_glue`: Box3D's Glue breaks under a hanging piece's weight at Strength 1 and 100 where Bullet's
   holds; both hold at 1e4. Listed under Known gaps.)
-* Hard compared with Bullet (Houdini 22.0): `position` matches (both hold the rest length, 1 by default), and Bullet's
-  `all` and a missing `constraint_type` also hold the rest length, where ours held the starting offset. Fixed (`all`
-  now keeps the anchors the rest length apart); re-run `sidefx_hard_all` / `sidefx_hard_untyped` to confirm.
 * Which end is Cone Twist's goal (taken as point 1); only matters when goal and constrained axes differ.
 * Soft / Spring `all` with a rest length shifts the frames along the anchor line when the joint is made; after a
   world rebuild from a stretched pose the offset direction is re-derived from the anchors and may differ slightly.

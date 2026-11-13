@@ -9,11 +9,14 @@ Run from the repository root, with the plugin built (build.bat copies it to the 
     hython tests/houdini/run_tests.py two_rbd network # some tests (names below)
     hython tests/houdini/run_tests.py --list
     hython tests/houdini/run_tests.py network --repeat 20   # for intermittent crashes
+    hython tests/houdini/run_tests.py --failed        # only what failed (or never ran) last time
+    hython tests/houdini/run_tests.py --failed --info # ... plus the INFO results
 
 On Windows, test_houdini.bat in the repository root finds Houdini and runs this.
 
 Each test runs in its own hython process, so a crash (CRASH) doesn't stop the others. Each
-test's scene is saved to tests/houdini/out/<test>.hip to open and inspect afterwards.
+test's scene is saved to tests/houdini/out/<test>.hip to open and inspect afterwards, and each
+test's latest result to tests/houdini/out/last_results.json (what --failed reads).
 Exit code 1 if anything failed, errored or crashed.
 """
 
@@ -100,6 +103,29 @@ def run_isolated(name, out_dir):
     return [Result(name, status, message) for status, message in data]
 
 
+# Worst first: a test's overall status is the worst of its results.
+SEVERITY = [Result.CRASH, Result.ERROR, Result.SETUP, Result.FAIL, Result.INFO, Result.PASS]
+NEEDS_RERUN = {Result.CRASH, Result.ERROR, Result.SETUP, Result.FAIL}
+
+
+def worst(statuses):
+    return min(statuses, key=SEVERITY.index) if statuses else Result.PASS
+
+
+def load_last(path):
+    """{test name: overall status} from the last runs, or {} if there is none yet."""
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_last(path, last):
+    with open(path, "w") as f:
+        json.dump(dict(sorted(last.items())), f, indent=1)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("tests", nargs="*", help="tests to run (default: all)")
@@ -108,6 +134,10 @@ def main():
                         help="folder for each test's saved .hip")
     parser.add_argument("--repeat", type=int, default=1,
                         help="run the selected tests this many times (for intermittent crashes)")
+    parser.add_argument("--failed", action="store_true",
+                        help="run only the tests whose last result was FAIL, ERROR, SETUP or CRASH, and tests that "
+                             "have never run")
+    parser.add_argument("--info", action="store_true", help="with --failed: also the tests whose last result was INFO")
     parser.add_argument("--child", help=argparse.SUPPRESS)
     parser.add_argument("--result-file", help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -124,17 +154,36 @@ def main():
         print(f"unknown test(s): {', '.join(unknown)}. Use --list.")
         return 2
     os.makedirs(args.out, exist_ok=True)
+    last_path = os.path.join(args.out, "last_results.json")
+    last = load_last(last_path)
+
+    selected = list(args.tests or TESTS)
+    if args.failed:
+        wanted = NEEDS_RERUN | ({Result.INFO} if args.info else set())
+        selected = [t for t in selected if t not in last or last[t] in wanted]
+        if not selected:
+            print("Nothing to re-run: every test passed last time" + ("" if args.info else " (or was INFO; add --info)")
+                  + ". Run without --failed for all of them.")
+            return 0
+        print(f"Re-running {len(selected)} test(s) that failed or never ran: {', '.join(selected)}", flush=True)
 
     results = []
     for run in range(1, max(args.repeat, 1) + 1):
         if args.repeat > 1:
             print(f"=== run {run} of {args.repeat}", flush=True)
-        for name in args.tests or TESTS:
+        for name in selected:
             print(f"--- {name}", flush=True)
             got = run_isolated(name, args.out)
             for r in got:
                 print(f"  {r.status:5}  {r.message}", flush=True)
             results.extend(got)
+            # Recorded as each test finishes, so an interrupted run still updates what it covered.
+            # With --repeat, the worst of the repeats is kept.
+            status = worst([r.status for r in got])
+            if run > 1 and name in last:
+                status = worst([status, last[name]])
+            last[name] = status
+            save_last(last_path, last)
 
     print("\nSummary")
     for status in (Result.PASS, Result.FAIL, Result.INFO, Result.SETUP, Result.ERROR, Result.CRASH):
@@ -144,7 +193,10 @@ def main():
     if any(r.status == Result.SETUP for r in results):
         print("\nSETUP means this script guessed a node or parameter name wrong for your Houdini version;"
               " the message lists the real names. It is not a plugin failure.")
-    bad = any(r.status in (Result.FAIL, Result.ERROR, Result.SETUP, Result.CRASH) for r in results)
+    still = sorted(t for t, st in last.items() if st in NEEDS_RERUN and t in TESTS)
+    if still:
+        print(f"\nTo re-run what still fails: test_houdini.bat --failed   ({len(still)}: {', '.join(still)})")
+    bad = any(r.status in NEEDS_RERUN for r in results)
     return 1 if bad else 0
 
 

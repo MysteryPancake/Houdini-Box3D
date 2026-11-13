@@ -5,6 +5,7 @@ rem Runs the Houdini checks (tests\houdini\run_tests.py) with hython.
 rem   test_houdini.bat                    every test
 rem   test_houdini.bat pscale network     some tests
 rem   test_houdini.bat --list             list the tests
+rem   test_houdini.bat --failed           only what failed (or never ran) last time; add --info for INFO too
 rem Build the plugin first (build.bat): the checks load it from the dso folder.
 rem Finds Houdini the same way as build.bat.
 
