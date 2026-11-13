@@ -6,6 +6,7 @@
 // Box3DWorld creates the joints. Settings are in Box3D units: radians, radians per second, Hz.
 #pragma once
 
+#include <array>
 #include <vector>
 
 #include "Box3DMath.h"       // kDegToRad, kRadToDeg
@@ -331,14 +332,34 @@ jointParams()
     return kParams;
 }
 
+// Indices into jointParams() of the settings type `t` uses, in table order. Built once, so per-type
+// loops (sameJointSettings runs for every joint every step) skip the other types' entries.
+// Empty for a value that is not a JointType.
+inline const std::vector<int> &
+jointParamIndices(JointType t)
+{
+    static const std::array<std::vector<int>, kJointTypeCount> kIndices = [] {
+        std::array<std::vector<int>, kJointTypeCount> idx;
+        const std::vector<JointParam> &params = jointParams();
+        for (int ty = 0; ty < kJointTypeCount; ++ty)
+            for (size_t i = 0; i < params.size(); ++i)
+                if (params[i].usedBy(JointType(ty)))
+                    idx[size_t(ty)].push_back(int(i));
+        return idx;
+    }();
+    static const std::vector<int> kNone;
+    const int i = int(t);
+    return (i >= 0 && i < kJointTypeCount) ? kIndices[size_t(i)] : kNone;
+}
+
 // The settings type `t` uses are equal (exact compare; the rest is ignored).
 inline bool
 sameJointSettings(JointType t, const JointSettings &a, const JointSettings &b)
 {
-    for (const JointParam &p : jointParams())
+    const std::vector<JointParam> &params = jointParams();
+    for (const int idx : jointParamIndices(t))
     {
-        if (!p.usedBy(t))
-            continue;
+        const JointParam &p = params[size_t(idx)];
         switch (p.kind)
         {
             case JointParam::Toggle:

@@ -72,6 +72,16 @@ int main()
             const int members = (p.b ? 1 : 0) + (p.f ? 1 : 0) + (p.v ? 1 : 0) + (p.q ? 1 : 0);
             CHECK(members == 1 && p.types != 0 && std::string(p.name).find(' ') == std::string::npos);
         }
+        // jointParamIndices is the table filtered by usedBy, in table order, for every type.
+        for (int t = 0; t < kJointTypeCount; ++t)
+        {
+            std::vector<int> expect;
+            for (size_t i = 0; i < jointParams().size(); ++i)
+                if (jointParams()[i].usedBy(JointType(t)))
+                    expect.push_back(int(i));
+            CHECK(jointParamIndices(JointType(t)) == expect && !expect.empty());
+        }
+        CHECK(jointParamIndices(JointType(-1)).empty() && jointParamIndices(JointType(kJointTypeCount)).empty());
         // Box3D's defaults, in our terms.
         const JointSettings wheel = Box3DWorld::defaultJointSettings(JointType::Wheel);
         CHECK(wheel.enableSuspensionSpring && wheel.suspensionStiffness == 1.0f);

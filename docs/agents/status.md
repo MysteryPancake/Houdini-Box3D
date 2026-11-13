@@ -234,4 +234,7 @@ The one list of what is still to do. Keep it here only (no TODO comments in the 
 * Whole-object bodies without Box3D Data: RBD Object's Create Active Object (`SolverParms/ActiveValue`) for the body
   type, and RBD State's custom inertia tensor.
 * Force DOPs: only `getForce` at the centre of mass (no `getForceOnSphere` / area variants, no per-substep re-evaluation).
+  Evaluation is serial. Computing the forces in parallel (state read serially or from `BodyState`, `getForce` in
+  `UTparallelFor`, the sum applied serially) is possible only if the Force DOPs are thread-safe, which is not known for
+  custom ones; it would need an opt-in or a check of the force classes.
 * Sticky collisions; contact / sensor events beyond Impacts.

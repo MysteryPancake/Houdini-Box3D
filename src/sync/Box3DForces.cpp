@@ -92,20 +92,18 @@ readPointForces(const SIM_Object &obj, Box3DObjectSync &os, std::vector<PointFor
     }
 }
 
-// The sum of the Force DOPs at the body's centre of mass, with its mass and velocities.
+// The sum of the Force DOPs at the body's centre of mass, with its mass and velocities (`bs`, read
+// once for the body).
 void
-addForceDops(const b3dop::Box3DWorld &world, const SIM_Object &obj, const Box3DBodyMirror &e,
+addForceDops(const SIM_Object &obj, const b3dop::BodyState &bs,
              const std::vector<const SIM_Force *> &forces, UT_Vector3 &force, UT_Vector3 &torque)
 {
-    const float mass = world.massByHandle(e.handle);
-    double com[3];
-    float  lin[3], ang[3];
-    if (!(mass > 0.0f && std::isfinite(mass) && world.getCenterOfMassByHandle(e.handle, com) &&
-          world.getVelocityByHandle(e.handle, lin, ang)))
+    const float mass = bs.mass;
+    if (!(mass > 0.0f && std::isfinite(mass)))
         return;
-    const UT_Vector3 pos(static_cast<float>(com[0]), static_cast<float>(com[1]), static_cast<float>(com[2]));
-    const UT_Vector3 vel(lin[0], lin[1], lin[2]);
-    const UT_Vector3 angvel(ang[0], ang[1], ang[2]);
+    const UT_Vector3 pos(static_cast<float>(bs.com[0]), static_cast<float>(bs.com[1]), static_cast<float>(bs.com[2]));
+    const UT_Vector3 vel(bs.lin[0], bs.lin[1], bs.lin[2]);
+    const UT_Vector3 angvel(bs.ang[0], bs.ang[1], bs.ang[2]);
     for (const SIM_Force *sf : forces)
     {
         UT_Vector3 f(0.0f, 0.0f, 0.0f), t(0.0f, 0.0f, 0.0f);
@@ -141,15 +139,24 @@ applyToObjectBodies(Box3DSharedState &st, const SIM_Object &obj, const Box3DObje
     {
         if (!e->handle || !e->dynamic() || !e->props.enabled)
             continue;
-        if (!wake && !world.isAwakeByHandle(e->handle))
-            continue;                       // Box3D would ignore the force anyway
+        // The body's state is read once, and only when a Force DOP needs it.
+        b3dop::BodyState bs;
+        if (!forces.empty())
+        {
+            if (!world.bodyStateByHandle(e->handle, bs))
+                continue;
+            if (!wake && !bs.awake)
+                continue;                   // Box3D would ignore the force anyway
+        }
+        else if (!wake && !world.isAwakeByHandle(e->handle))
+            continue;
 
         UT_Vector3 force(0.0f, 0.0f, 0.0f);
         UT_Vector3 torque(0.0f, 0.0f, 0.0f);
         if (!pointForces.empty())
             addPointForce(pointForces, *e, force, torque);
         if (!forces.empty())
-            addForceDops(world, obj, *e, forces, force, torque);
+            addForceDops(obj, bs, forces, force, torque);
 
         const float fv[3] = { float(force.x()),  float(force.y()),  float(force.z()) };
         const float tv[3] = { float(torque.x()), float(torque.y()), float(torque.z()) };

@@ -124,6 +124,7 @@ struct Box3DPointSlot
     bool              deforming   = false;  // `deforming`
     bool              refitWanted = false;  // bullet_autofit_valid == 0
     bool              rebuild     = false;  // an existing body whose shapes are rebuilt
+    bool              dead        = false;  // `dead` != 0, read once in pass 1 (pass 1b and pass 2 reuse it)
     int32_t           plan        = -1;
 };
 

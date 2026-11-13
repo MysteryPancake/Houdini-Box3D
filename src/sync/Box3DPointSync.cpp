@@ -852,7 +852,8 @@ readSlot(const ScanContext &ctx, int objectId, Box3DPointSlot &s)
     s.deforming   = a.deforming.isValid() && a.deforming.get(s.off) != 0;
     s.refitWanted = a.autofitValid.isValid() && a.autofitValid.get(s.off) == 0;
     s.rebuild     = false;
-    if (!s.ok || (a.dead.isValid() && a.dead.get(s.off) != 0))
+    s.dead        = a.dead.isValid() && a.dead.get(s.off) != 0;
+    if (!s.ok || s.dead)
         return;
     if (!s.entry)
     {
@@ -887,12 +888,11 @@ readSlots(const ScanContext &ctx, int objectId, SlotList &snaps)
 
 // The slots that need a plan: new bodies (unless `dead`) and existing ones being rebuilt.
 std::vector<size_t>
-slotsNeedingPlans(const PointAttrs &a, const SlotList &snaps)
+slotsNeedingPlans(const SlotList &snaps)
 {
     std::vector<size_t> want;
     for (size_t i = 0; i < snaps.size(); ++i)
-        if (snaps[i].ok && (!snaps[i].entry ? !(a.dead.isValid() && a.dead.get(snaps[i].off) != 0)
-                                            : snaps[i].rebuild))
+        if (snaps[i].ok && (!snaps[i].entry ? !snaps[i].dead : snaps[i].rebuild))
             want.push_back(i);
     return want;
 }
@@ -901,7 +901,7 @@ slotsNeedingPlans(const PointAttrs &a, const SlotList &snaps)
 bool
 planSlots(ScanContext &ctx, SlotList &snaps, std::vector<ShapePlan> &plans, StepProgress &progress)
 {
-    const std::vector<size_t> want = slotsNeedingPlans(ctx.a, snaps);
+    const std::vector<size_t> want = slotsNeedingPlans(snaps);
     plans.resize(want.size());
     for (size_t c0 = 0; c0 < want.size(); c0 += kPlanChunk)
     {
@@ -1106,7 +1106,7 @@ private:
             ++myC.badVelocity;          // simulated, with the bad v / w read as zero
 
         // `dead`: deleted after the step. Not stamped, so its body goes with the gone points'.
-        if (a.dead.isValid() && a.dead.get(off) != 0)
+        if (s.dead)
         {
             Box3DDeletion d;
             d.objectId = myObjectId;

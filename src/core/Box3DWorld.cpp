@@ -10,7 +10,6 @@
 #include <cmath>
 #include <cstdio>
 #include <mutex>
-#include <set>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -157,7 +156,7 @@ struct Box3DWorld::Impl
     WorldSettings                         settings;
     std::shared_ptr<TaskRunner>           tasks;              // host threads (null: Box3D's own pool); outlives worldId
     int                                   liveBodies = 0;     // every live body
-    std::set<std::pair<BodyHandle, BodyHandle>> hitPairs;    // updateHitEvents()
+    std::vector<std::pair<BodyHandle, BodyHandle>> hitPairs; // updateHitEvents(): (lower, higher) handle, sorted, unique
 
     // Shared hulls this world found or built since the last pruneHulls() (findHull may run on
     // several threads, hence the lock).
@@ -1168,6 +1167,20 @@ Box3DWorld::getCenterOfMassByHandle(BodyHandle h, double outPos[3]) const
     return true;
 }
 
+bool
+Box3DWorld::bodyStateByHandle(BodyHandle h, BodyState &out) const
+{
+    if (!h)
+        return false;
+    const b3BodyId id = b3LoadBodyId(h);
+    out.awake = b3Body_IsAwake(id);
+    out.mass  = b3Body_GetMass(id);
+    storePos(b3Body_GetWorldCenter(id), out.com);
+    storeVec3(b3Body_GetLinearVelocity(id), out.lin);
+    storeVec3(b3Body_GetAngularVelocity(id), out.ang);
+    return true;
+}
+
 void
 Box3DWorld::applyForceByHandle(BodyHandle h, const float force[3], const float torque[3], bool wake)
 {
@@ -1403,14 +1416,18 @@ Box3DWorld::updateHitEvents()
     {
         const BodyHandle a = b3StoreBodyId(b3Shape_GetBody(ev.hitEvents[i].shapeIdA));
         const BodyHandle b = b3StoreBodyId(b3Shape_GetBody(ev.hitEvents[i].shapeIdB));
-        myImpl->hitPairs.insert({ std::min(a, b), std::max(a, b) });
+        myImpl->hitPairs.push_back({ std::min(a, b), std::max(a, b) });
     }
+    // Sorted once per step (the vector keeps its capacity), so a lookup is a binary search.
+    std::sort(myImpl->hitPairs.begin(), myImpl->hitPairs.end());
+    myImpl->hitPairs.erase(std::unique(myImpl->hitPairs.begin(), myImpl->hitPairs.end()), myImpl->hitPairs.end());
 }
 
 bool
 Box3DWorld::hadHitEvent(BodyHandle a, BodyHandle b) const
 {
-    return myImpl->hitPairs.count({ std::min(a, b), std::max(a, b) }) > 0;
+    return std::binary_search(myImpl->hitPairs.begin(), myImpl->hitPairs.end(),
+                              std::make_pair(std::min(a, b), std::max(a, b)));
 }
 
 bool

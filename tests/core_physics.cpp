@@ -1229,6 +1229,19 @@ int main()
         CHECK(std::fabs(com[0] - 1) < 1e-5 && std::fabs(com[1] - 2) < 1e-5 && std::fabs(com[2] - 3) < 1e-5);
         CHECK(!fw.getCenterOfMassByHandle(0, com));
 
+        // bodyStateByHandle returns what the four single getters do
+        {
+            BodyState bs;
+            float     l0[3], a0[3];
+            CHECK(fw.bodyStateByHandle(b, bs) && fw.getVelocityByHandle(b, l0, a0));
+            CHECK(bs.awake == fw.isAwakeByHandle(b) && bs.mass == fw.massByHandle(b));
+            CHECK(bs.com[0] == com[0] && bs.com[1] == com[1] && bs.com[2] == com[2]);
+            CHECK(bs.lin[0] == l0[0] && bs.lin[1] == l0[1] && bs.lin[2] == l0[2] && bs.ang[1] == a0[1]);
+            BodyState untouched;
+            untouched.mass = 42.0f;
+            CHECK(!fw.bodyStateByHandle(0, untouched) && untouched.mass == 42.0f);
+        }
+
         // a force acts for the coming step only: v = F / m * dt after one step, unchanged after two
         const float dt = 1.0f / 60.0f;
         const float F[3] = { 12.0f, 0, 0 }, none[3] = { 0, 0, 0 };
@@ -1636,6 +1649,7 @@ int main()
                 sawHit = true;
         }
         CHECK(sawHit);                      // fell ~1.5 m: about 5 m/s, above the 3 m/s threshold
+        CHECK(!hw.hadHitEvent(hb, hb + 1000) && !hw.hadHitEvent(hb, hb));     // pairs that never hit
         WorldSettings t2 = ws;
         t2.impactMinSpeed = 0.0f;  t2.frictionMixing = WorldSettings::FrictionMixing::Average;  t2.restitutionMixing = WorldSettings::RestitutionMixing::Average;
         t2.warmStarting = false;  t2.restitutionIterations = 8;

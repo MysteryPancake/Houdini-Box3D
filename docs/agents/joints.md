@@ -28,6 +28,8 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   pointer, help). The constraint relationship nodes, the primitive attribute reader and `sameJointSettings` are all driven by
   it. `angleTypes` marks a Float that is an angle for some types only (`motor_speed`: revolute deg/s, prismatic and
   distance units/s). `Rotation` is Euler XYZ degrees in Houdini and a quaternion in the core.
+  `jointParamIndices(type)` is the table filtered to the rows a type uses (built once, table order); `sameJointSettings`
+  runs for every joint every step and walks only those rows. Per-type loops over the table should use it.
 * `Box3DWorld::defaultJointSettings(type)` copies `b3Default*JointDef`, so the node's defaults are Box3D's.
 * Houdini units in one place: `jointParamSize` (1 or 3 values), `setJointParam` (Houdini values -> settings: degrees
   -> radians, toggles, Euler rotations through a caller-supplied converter, `box3dEulerToQuat`) and `getJointParam`

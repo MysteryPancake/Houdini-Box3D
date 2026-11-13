@@ -10,8 +10,9 @@ SIM_DataFilterNone())` with a `SIM_EachDataCallback` (`ForceCollector`) that cas
 
 Only objects with force DOPs or non-zero point forces are visited, and only their own bodies
 (`Box3DObjectSync::bodies`, rebuilt by each full scan and kept while the object is skipped): skip bodies that are not
-`dynamic()`, are not `props.enabled`, or are asleep while `forceswake` is off. For each remaining body: mass (`massByHandle`), world centre of mass
-(`getCenterOfMassByHandle`) and `v` / `w` (`getVelocityByHandle`) go into `SIM_Force::getForce(object, pos, vel, angvel,
+`dynamic()`, are not `props.enabled`, or are asleep while `forceswake` is off. For each remaining body one `bodyStateByHandle` call reads awake, mass, world centre of mass and `v` / `w`
+(it replaces four separate calls; with only point forces and no Force DOP just `isAwakeByHandle` is read, and only when
+`forceswake` is off). Mass, centre of mass and velocities go into `SIM_Force::getForce(object, pos, vel, angvel,
 mass, force, torque)` for every force on the object, summed, and the sum goes in through `applyForceByHandle`
 (`b3Body_ApplyForceToCenter` + `b3Body_ApplyTorque`).
 
@@ -22,7 +23,8 @@ mass, force, torque)` for every force on the object, summed, and the sum goes in
   bodies, which is what keeps gravity-like forces from holding resting bodies awake; `forceswake` passes `wake = true`.
 * Non-finite sums are skipped and counted (`ForceStats::nonFinite`, one node warning). `applyForceByHandle` also
   sanitizes (`finiteVec3`) because Box3D asserts on non-finite vectors.
-* Evaluation is serial.
+* Evaluation is serial: `SIM_Force::getForce` is user-extensible and nothing guarantees a custom Force DOP is thread-safe. See
+  "Known gaps / TODO" in [status.md](status.md) for the parallel option.
 * Gravity Force DOP + the solver's `gravity` add up (both are applied). `gravityscale` only scales the solver's gravity.
 * Not used: `getForceOnCircle` / `getForceOnSphere` (area and volume variants), `getPointForces`.
 * `useforces` / `forceswake` are plain options read each step; nothing is stored in the world, so they need no rebuild.

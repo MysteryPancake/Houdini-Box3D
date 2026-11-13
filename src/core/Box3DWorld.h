@@ -44,6 +44,16 @@ struct BodyMove
     bool       fellAsleep = false;
 };
 
+// What the external-force pass needs of one body, read in one call (bodyStateByHandle).
+struct BodyState
+{
+    bool   awake   = false;
+    float  mass    = 0.0f;
+    double com[3]  = { 0, 0, 0 };           // world centre of mass
+    float  lin[3]  = { 0, 0, 0 };           // velocities (zero for a body that is not awake)
+    float  ang[3]  = { 0, 0, 0 };
+};
+
 // Lets the host supply the threads Box3D's parallel work runs on, so worlds do not each start an
 // OS thread pool of their own (Box3D's built-in scheduler keeps workerCount - 1 threads alive for
 // the life of every world). Houdini-free: the plugin implements it on Houdini's TBB pool
@@ -267,6 +277,10 @@ public:
     // Only dynamic bodies take them. A sleeping body ignores them unless `wake`, which wakes it
     // first; a constant force with wake = true therefore keeps every body awake.
     void  applyForceByHandle(BodyHandle h, const float force[3], const float torque[3], bool wake);
+    // isAwake, mass, world centre of mass and both velocities in one call: what a force evaluation reads
+    // per body. Same values as isAwakeByHandle / massByHandle / getCenterOfMassByHandle /
+    // getVelocityByHandle. False for no body (out untouched).
+    bool  bodyStateByHandle(BodyHandle h, BodyState &out) const;
 
 
     // Set every shape's density (skipped with setShapeDensity = false, for shapes just created with
