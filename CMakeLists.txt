@@ -99,8 +99,8 @@ add_library(Box3DDOP SHARED
     src/dop/SIM_Box3DWorld.cpp
     src/dop/SIM_Box3DData.h
     src/dop/SIM_Box3DData.cpp
-    src/dop/SIM_Box3DJoints.h
-    src/dop/SIM_Box3DJoints.cpp
+    src/dop/SIM_Box3DConRel.h
+    src/dop/SIM_Box3DConRel.cpp
     src/dop/SIM_SolverBox3D.h
     src/dop/SIM_SolverBox3D.cpp
     src/dop/SIM_Box3DRegister.cpp
@@ -123,7 +123,9 @@ houdini_configure_target(Box3DDOP)
 # Node icons: Houdini picks up config/Icons/DOP_<node name>.svg for each node type.
 # houdini_configure_target builds the plugin straight into houdiniX.Y/dso, so the
 # icons go next to it in houdiniX.Y/config/Icons.
-set(BOX3DDOP_NODES box3d_solver box3d_data box3d_joints)       # internal node names
+set(BOX3DDOP_NODES box3d_solver box3d_data                       # internal node names
+    box3d_weldconrel box3d_sphericalconrel box3d_revoluteconrel box3d_prismaticconrel box3d_distanceconrel
+    box3d_motorconrel box3d_parallelconrel box3d_wheelconrel box3d_filterconrel)
 set(BOX3DDOP_ICON_DIR "$<TARGET_FILE_DIR:Box3DDOP>/../config/Icons")
 set(BOX3DDOP_ICON_COPIES "")
 foreach(node IN LISTS BOX3DDOP_NODES)

@@ -1,18 +1,22 @@
 // Box3DJointSync.cpp
 #include "Box3DJointSync.h"
 #include "core/Box3DDebug.h"
-#include "dop/SIM_Box3DJoints.h"
+#include "dop/SIM_Box3DConRel.h"
 #include "dop/SIM_Box3DWorld.h"
 
 #include <GA/GA_Handle.h>
 #include <GA/GA_Iterator.h>
 #include <GA/GA_Primitive.h>
 #include <GU/GU_Detail.h>
+#include <SIM/SIM_ConstraintNetworkRelationship.h>
 #include <SIM/SIM_Geometry.h>
 #include <SIM/SIM_GeometryCopy.h>
 #include <SIM/SIM_Object.h>
 #include <SIM/SIM_ObjectArray.h>
+#include <SIM/SIM_Relationship.h>
+#include <SIM/SIM_RelationshipArray.h>
 #include <UT/UT_Quaternion.h>
+#include <UT/UT_StringHolder.h>
 #include <UT/UT_Vector3.h>
 
 #include <algorithm>
@@ -24,27 +28,141 @@
 
 namespace {
 
-constexpr float kDegToRad = 0.017453292519943295f;
 constexpr float kRadToDeg = 57.29577951308232f;
 
-const char *const kTypeAttrib  = "joint_type";
-const char *const kBrokenGroup = "broken";
-
-// The joint network's data name on an object: its Box3D Joints node's, else "Joints".
-std::string
-jointsDataName(const SIM_Object &obj, const SIM_Box3DJoints **nodeOut = nullptr)
-{
-    const SIM_Box3DJoints *node = SIM_DATA_GETCONST(obj, kBox3DJointsDataName, SIM_Box3DJoints);
-    if (nodeOut)
-        *nodeOut = node;
-    return node ? node->geometryDataName() : std::string(kDefaultJointsGeometry);
-}
+// The Constraint Network DOP's attribute and group names.
+const char *const kConstraintName     = "constraint_name";
+const char *const kNextConstraintName = "next_constraint_name";
+const char *const kBrokenGroup        = "broken";
+// With Attach Internal Constraints to Object, the network is this data on the object itself.
+const char *const kInternalGeometry   = "ConstraintGeometry";
+// Ours: the length a distance joint made with a negative Rest Length started at.
+const char *const kAutoRestLength     = "auto_restlength";
 
 uint64_t
-networkKey(int objectId, const std::string &dataName)
+hashString(const std::string &s)
 {
-    return b3dop::mixHash(b3dop::hashBytes(b3dop::kHashSeed, dataName.data(), dataName.size()),
-                          uint64_t(uint32_t(objectId)));
+    return b3dop::hashBytes(b3dop::kHashSeed, s.data(), s.size());
+}
+
+std::string
+toString(const UT_String &s)
+{
+    return s.isstring() ? std::string(s.buffer()) : std::string();
+}
+
+// The Constraint Network data a relationship carries, or null for other relationships.
+const SIM_ConstraintNetworkRelationship *
+networkData(const SIM_Relationship *rel)
+{
+    const SIM_Data *type = rel ? rel->getConstRelationshipTypeData() : nullptr;
+    return type ? SIM_DATA_CASTCONST(type, SIM_ConstraintNetworkRelationship) : nullptr;
+}
+
+// Where a network was found: a relationship of `object` (by name), or, with an empty name, the
+// object's ConstraintGeometry.
+struct NetworkSource
+{
+    bool        inGroup = true;
+    std::string relName;
+};
+
+const SIM_Relationship *
+findRelationship(const SIM_Object &obj, const NetworkSource &src)
+{
+    return src.relName.empty() ? nullptr : obj.getRelationship(src.inGroup, src.relName.c_str());
+}
+
+const SIM_Geometry *
+networkGeometry(const SIM_Object &obj, const NetworkSource &src)
+{
+    if (src.relName.empty())
+        return SIM_DATA_GETCONST(obj, kInternalGeometry, SIM_Geometry);
+    const SIM_ConstraintNetworkRelationship *cn = networkData(findRelationship(obj, src));
+    return cn ? cn->getGeometry() : nullptr;
+}
+
+// A writable SIM_GeometryCopy for the object's data `name` (a referenced SOP geometry is replaced
+// once by a copy that adopts it), or null.
+SIM_GeometryCopy *
+writableGeometry(SIM_Object &obj, const char *name)
+{
+    if (SIM_GeometryCopy *geo = SIM_DATA_GET(obj, name, SIM_GeometryCopy))
+        return geo;
+    if (!SIM_DATA_GETCONST(obj, name, SIM_Geometry))
+        return nullptr;
+    return SIM_DATA_CREATE(obj, name, SIM_GeometryCopy, SIM_DATA_RETURN_EXISTING | SIM_DATA_ADOPT_EXISTING_ON_DELETE);
+}
+
+SIM_GeometryCopy *
+writableNetworkGeometry(SIM_Object &obj, const NetworkSource &src)
+{
+    if (src.relName.empty())
+        return writableGeometry(obj, kInternalGeometry);
+    SIM_Relationship *rel = obj.getRelationships(src.inGroup).findRelationshipByName(src.relName.c_str());
+    SIM_Data *type = rel ? rel->getRelationshipTypeData() : nullptr;
+    SIM_ConstraintNetworkRelationship *cn = type ? SIM_DATA_CAST(type, SIM_ConstraintNetworkRelationship) : nullptr;
+    return cn ? cn->getGeometry() : nullptr;
+}
+
+// The Box3D constraint relationships a network's `constraint_name` can refer to, by data name.
+// The Constraint Network DOP attaches the nodes wired into its second input under the network's
+// relationship; the relationship, its Constraint Network data and the geometry are all searched
+// (the first name found wins), and for an internal network the geometry and the object.
+std::unordered_map<std::string, Box3DJointKind>
+networkKinds(const SIM_Object &obj, const NetworkSource &src)
+{
+    std::vector<const SIM_Data *> roots;
+    if (src.relName.empty())
+    {
+        roots.push_back(obj.getConstNamedSubData(kInternalGeometry));
+        roots.push_back(&obj);
+    }
+    else if (const SIM_Relationship *rel = findRelationship(obj, src))
+    {
+        roots.push_back(rel);
+        const SIM_ConstraintNetworkRelationship *cn = networkData(rel);
+        roots.push_back(cn);
+        roots.push_back(cn ? cn->getGeometry() : nullptr);
+    }
+
+    std::unordered_map<std::string, Box3DJointKind> kinds;
+    for (const SIM_Data *root : roots)
+    {
+        if (!root)
+            continue;
+        for (int i = 0; i < root->getNumSubData(); ++i)
+        {
+            const SIM_Data *sub = root->getConstSubData(i);
+            const SIM_Box3DConRel *conrel = sub ? SIM_DATA_CASTCONST(sub, SIM_Box3DConRel) : nullptr;
+            if (!conrel)
+                continue;
+            const UT_StringHolder &name = root->getSubDataName(i);
+            if (!name.isstring() || kinds.count(std::string(name.c_str())))
+                continue;
+            Box3DJointKind k;
+            k.type     = conrel->jointType();
+            k.settings = conrel->settings();
+            kinds.emplace(std::string(name.c_str()), k);
+        }
+    }
+    return kinds;
+}
+
+bool
+sameKinds(const std::unordered_map<std::string, Box3DJointKind> &a,
+          const std::unordered_map<std::string, Box3DJointKind> &b)
+{
+    if (a.size() != b.size())
+        return false;
+    for (const auto &kv : a)
+    {
+        const auto it = b.find(kv.first);
+        if (it == b.end() || it->second.type != kv.second.type ||
+            !b3dop::sameJointSettings(kv.second.type, kv.second.settings, it->second.settings))
+            return false;
+    }
+    return true;
 }
 
 uint64_t
@@ -66,23 +184,12 @@ networkFingerprint(const GU_Detail *gdp)
     h = mixHash(h, uint64_t(gdp->getNumPrimitives()));
     h = mixHash(h, idOf(gdp->findPointAttribute("name")));
     h = mixHash(h, idOf(gdp->findPointAttribute("orient")));
-    h = mixHash(h, idOf(gdp->findPrimitiveAttribute(kTypeAttrib)));
+    h = mixHash(h, idOf(gdp->findPrimitiveAttribute(kConstraintName)));
+    h = mixHash(h, idOf(gdp->findPrimitiveAttribute(kAutoRestLength)));
     for (const b3dop::JointParam &p : b3dop::jointParams())
         h = mixHash(h, idOf(gdp->findPrimitiveAttribute(p.name)));
     const GA_PrimitiveGroup *broken = gdp->findPrimitiveGroup(kBrokenGroup);
     return mixHash(h, broken ? uint64_t(broken->getDataId()) : ~0ull);
-}
-
-// A writable SIM_GeometryCopy for the object's data `name` (a referenced SOP geometry is replaced
-// once by a copy that adopts it), or null.
-SIM_GeometryCopy *
-writableGeometry(SIM_Object &obj, const char *name)
-{
-    if (SIM_GeometryCopy *geo = SIM_DATA_GET(obj, name, SIM_GeometryCopy))
-        return geo;
-    if (!SIM_DATA_GETCONST(obj, name, SIM_Geometry))
-        return nullptr;
-    return SIM_DATA_CREATE(obj, name, SIM_GeometryCopy, SIM_DATA_RETURN_EXISTING | SIM_DATA_ADOPT_EXISTING_ON_DELETE);
 }
 
 SIM_Object *
@@ -199,18 +306,20 @@ bindSettings(const GU_Detail *gdp)
     return out;
 }
 
-// The primitive's overrides on top of the defaults for its type.
+// The primitive's attributes on top of its constraint data's settings, as the Constraint Network
+// DOP documents: a float attribute multiplies the setting (angles too: it is a factor, not
+// degrees), any other kind replaces it (vectors and Euler angles in Houdini units).
 void
 applyOverrides(const std::vector<SettingReader> &readers, b3dop::JointType type, GA_Offset prim,
                b3dop::JointSettings &s)
 {
     using b3dop::JointParam;
+    constexpr float kDegToRad = 0.017453292519943295f;
     for (const SettingReader &r : readers)
     {
         const JointParam &p = *r.param;
         if (!p.usedBy(type))
             continue;
-        const float scale = p.isAngle(type) ? kDegToRad : 1.0f;
         switch (p.kind)
         {
             case JointParam::Toggle:
@@ -218,12 +327,13 @@ applyOverrides(const std::vector<SettingReader> &readers, b3dop::JointType type,
                 break;
             case JointParam::Float:
             case JointParam::Angle:
-                s.*p.f = r.f.get(prim) * scale;
+                s.*p.f *= r.f.get(prim);
                 break;
             case JointParam::Vec3:
             case JointParam::Vec3Angle:
             {
-                const UT_Vector3 v = r.v.get(prim);
+                const float     scale = p.isAngle(type) ? kDegToRad : 1.0f;
+                const UT_Vector3 v    = r.v.get(prim);
                 for (int k = 0; k < 3; ++k)
                     (s.*p.v)[k] = v(k) * scale;
                 break;
@@ -294,11 +404,9 @@ asStored(const b3dop::JointFrame &f)
 
 struct NetworkRef
 {
-    SIM_Object            *carrier  = nullptr;
-    std::string            dataName;
-    const SIM_Box3DJoints *node     = nullptr;
-    uint64_t               key      = 0;
-    int                    carriers = 1;
+    SIM_Object   *object = nullptr;         // an object of this solve the network was found on
+    NetworkSource source;
+    uint64_t      key    = 0;
 };
 
 void
@@ -308,28 +416,19 @@ processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &ancho
     b3dop::Box3DWorld &world = st.world;
 
     Box3DJointNetwork &net = st.jointNetworks[ref.key];
-    net.visited       = st.syncStamp;
-    net.carrier       = ref.carrier->getObjectId();
-    net.carriers      = ref.carriers;
-    net.dataName      = ref.dataName;
-    net.writeFeedback = ref.node ? ref.node->getWriteFeedback() : true;
-    if (ref.carriers > 1)
-        ++counts.shared;
+    net.visited  = st.syncStamp;
+    net.objectId = ref.object->getObjectId();
+    net.relName  = ref.source.relName;
+    net.inGroup  = ref.source.inGroup;
 
-    bool defaultsChanged = !net.defaultsKnown;
-    for (int t = 0; t < b3dop::kJointTypeCount; ++t)
-    {
-        const b3dop::JointSettings d = ref.node ? ref.node->defaults(JointType(t))
-                                                : b3dop::Box3DWorld::defaultJointSettings(JointType(t));
-        if (!net.defaultsKnown || !b3dop::sameJointSettings(JointType(t), d, net.defaults[t]))
-        {
-            net.defaults[t] = d;
-            defaultsChanged = true;
-        }
-    }
-    net.defaultsKnown = true;
+    // The constraint data the network can name; any change re-reads every primitive.
+    std::unordered_map<std::string, Box3DJointKind> kinds = networkKinds(*ref.object, ref.source);
+    const bool kindsChanged = !net.kindsKnown || !sameKinds(kinds, net.kinds);
+    if (kindsChanged)
+        net.kinds = std::move(kinds);
+    net.kindsKnown = true;
 
-    const SIM_Geometry *geo = SIM_DATA_GETCONST(*ref.carrier, ref.dataName.c_str(), SIM_Geometry);
+    const SIM_Geometry *geo = networkGeometry(*ref.object, ref.source);
     if (!geo)
         return;
     SIM_GeometryAutoReadLock lock(geo);
@@ -337,17 +436,18 @@ processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &ancho
     if (!gdp)
         return;
 
-    // Unchanged geometry, bodies and defaults: the joints stay as they are (they keep liveStamp).
+    // Unchanged geometry, bodies and constraint data: the joints stay as they are (they keep liveStamp).
     const uint64_t fp = networkFingerprint(gdp);
-    if (fp == net.fingerprint && net.bodyVersion == st.bodyVersion && !defaultsChanged)
+    if (fp == net.fingerprint && net.bodyVersion == st.bodyVersion && !kindsChanged)
         return;
     net.fingerprint = fp;
     net.bodyVersion = st.bodyVersion;
     net.liveStamp   = st.syncStamp;
 
-    const GA_ROHandleS typeH(gdp, GA_ATTRIB_PRIMITIVE, kTypeAttrib);
-    const GA_ROHandleS nameH(gdp, GA_ATTRIB_POINT, "name");
-    const GA_ROHandleQ orientH(gdp, GA_ATTRIB_POINT, "orient");
+    const GA_ROHandleS  conNameH(gdp, GA_ATTRIB_PRIMITIVE, kConstraintName);
+    const GA_ROHandleF  autoRestH(gdp, GA_ATTRIB_PRIMITIVE, kAutoRestLength);
+    const GA_ROHandleS  nameH(gdp, GA_ATTRIB_POINT, "name");
+    const GA_ROHandleQ  orientH(gdp, GA_ATTRIB_POINT, "orient");
     const GA_ROHandleV3 localPH(gdp, GA_ATTRIB_POINT, "local_P");
     const GA_ROHandleQ  localQH(gdp, GA_ATTRIB_POINT, "local_orient");
     const GA_PrimitiveGroup *brokenGroup = gdp->findPrimitiveGroup(kBrokenGroup);
@@ -369,6 +469,16 @@ processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &ancho
             f.rot[0] = q.x();  f.rot[1] = q.y();  f.rot[2] = q.z();  f.rot[3] = q.w();
         }
         return f;
+    };
+    // The primitive's constraint data (by `constraint_name`), or null.
+    auto kindOf = [&](GA_Offset prim) -> const Box3DJointKind * {
+        if (!conNameH.isValid())
+            return nullptr;
+        const char *n = conNameH.get(prim);
+        if (!n || !*n)
+            return nullptr;
+        const auto it = net.kinds.find(std::string(n));
+        return it == net.kinds.end() ? nullptr : &it->second;
     };
 
     // An anchor's saved local frame (local_P / local_orient), if it has one (a zero quaternion: none).
@@ -408,12 +518,13 @@ processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &ancho
             ++counts.notLines;
             continue;
         }
-        JointType type = JointType::Weld;
-        if (!typeH.isValid() || !b3dop::parseJointType(typeH.get(off), type))
+        const Box3DJointKind *kind = kindOf(off);
+        if (!kind)
         {
             ++counts.unknown;
             continue;
         }
+        const JointType type = kind->type;
 
         auto ins = st.joints.try_emplace(b3dop::mixHash(ref.key, uint64_t(int64_t(off))));
         Box3DJointEntry &e = ins.first->second;
@@ -447,9 +558,16 @@ processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &ancho
         // P / orient are live on a written network (where the pieces are now), so a world rebuilt
         // mid-simulation makes its joints from them exactly as frame 1 does from the authored ones.
         const b3dop::JointFrame fa = anchorFrame(p0), fb = anchorFrame(p1);
-        b3dop::JointSettings s = net.defaults[int(type)];
+        b3dop::JointSettings s = kind->settings;
         applyOverrides(readers, type, off, s);
-        const bool     live   = ref.carriers == 1;
+        // A distance joint that measured its own rest length keeps it (see writeLiveFrames).
+        if (type == JointType::Distance && !(s.restLength >= 0.0f) && autoRestH.isValid())
+        {
+            const float made = autoRestH.get(off);
+            if (made >= 0.0f)
+                s.restLength = made;
+        }
+        const bool     live   = net.writable;
         const uint64_t sig    = jointSignature(type, a, b, fa, fb, !live);
         const bool     edited = live && e.wrote && (frameEdited(fa, e.wroteA) || frameEdited(fb, e.wroteB));
 
@@ -496,8 +614,9 @@ processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &ancho
 
 // After the step, for a written network: every live joint's anchors get P / orient set to where
 // its frames are now, and joints made from P / orient save their local frames to local_P /
-// local_orient (relative to their pieces: exact on a rebuild, wherever the pieces are). A distance joint made with restlength < 0 gets its starting distance
-// written to `restlength`, so a world rebuilt mid-simulation keeps it.
+// local_orient (relative to their pieces: exact on a rebuild, wherever the pieces are). A distance
+// joint made with a negative rest length gets its starting distance written to `auto_restlength`
+// (not `restlength`, which multiplies the node's value), so a world rebuilt mid-simulation keeps it.
 template <class PrimOk>
 void
 writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp, const std::vector<Box3DJointEntry *> &entries,
@@ -544,9 +663,9 @@ writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp, const std::vecto
         {
             if (!restLengthH.isValid())
             {
-                if (!gdp->findPrimitiveAttribute("restlength"))
-                    gdp->addFloatTuple(GA_ATTRIB_PRIMITIVE, "restlength", 1, GA_Defaults(-1.0f));
-                restLengthH = GA_RWHandleF(gdp, GA_ATTRIB_PRIMITIVE, "restlength");
+                if (!gdp->findPrimitiveAttribute(kAutoRestLength))
+                    gdp->addFloatTuple(GA_ATTRIB_PRIMITIVE, kAutoRestLength, 1, GA_Defaults(-1.0f));
+                restLengthH = GA_RWHandleF(gdp, GA_ATTRIB_PRIMITIVE, kAutoRestLength);
             }
             if (restLengthH.isValid())
             {
@@ -585,11 +704,15 @@ writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp, const std::vecto
         }
 
         b3dop::JointFrame fa, fb;
-        if (!world.jointWorldFrames(e->handle, fa, fb))
+        if (world.jointWorldFrames(e->handle, fa, fb))
+        {
+            e->wroteA = asStored(fa);
+            e->wroteB = asStored(fb);
+            e->wrote  = true;
+        }
+        else if (!e->switchFrames)
             continue;                           // broken, or never made
-        e->wroteA = asStored(fa);
-        e->wroteB = asStored(fb);
-        e->wrote  = true;
+        e->switchFrames = false;                // (switched: wroteA / wroteB are set already)
         const b3dop::JointFrame *frames[2] = { &e->wroteA, &e->wroteB };
         for (int k = 0; k < 2; ++k)
         {
@@ -617,8 +740,12 @@ anyJointNetwork(SIM_ObjectArray &objects)
     for (exint i = 0; i < objects.entries(); ++i)
     {
         const SIM_Object *obj = objects(i);
-        if (SIM_DATA_GETCONST(*obj, jointsDataName(*obj).c_str(), SIM_Geometry))
+        if (obj->getConstNamedSubData(kInternalGeometry))
             return true;
+        for (const bool inGroup : { true, false })
+            for (int r = 0; r < obj->getNumRelationships(inGroup); ++r)
+                if (networkData(obj->getRelationship(inGroup, r)))
+                    return true;
     }
     return false;
 }
@@ -626,34 +753,35 @@ anyJointNetwork(SIM_ObjectArray &objects)
 void
 syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects, Box3DJointCounts &counts)
 {
-    // ---- gather: one network per distinct geometry (the same SOP on several objects is one) ----
-    std::vector<NetworkRef>              refs;
-    std::unordered_map<int64_t, size_t>  byDetail;
+    // ---- gather: each Constraint Network relationship once (it is on every object it
+    // constrains), and each object's internal ConstraintGeometry ----
+    std::vector<NetworkRef>         refs;
+    std::unordered_set<std::string> seenRels;
     for (exint i = 0; i < objects.entries(); ++i)
     {
-        SIM_Object            *obj  = objects(i);
-        const SIM_Box3DJoints *node = nullptr;
-        const std::string      name = jointsDataName(*obj, &node);
-        const SIM_Geometry    *geo  = SIM_DATA_GETCONST(*obj, name.c_str(), SIM_Geometry);
-        if (!geo)
-            continue;
-        SIM_GeometryAutoReadLock lock(geo);
-        const GU_Detail *gdp = lock.getGdp();
-        if (!gdp)
-            continue;
-        const auto seen = byDetail.find(int64_t(gdp->getUniqueId()));
-        if (seen != byDetail.end())
+        SIM_Object *obj = objects(i);
+        for (const bool inGroup : { true, false })
+            for (int r = 0; r < obj->getNumRelationships(inGroup); ++r)
+            {
+                const SIM_Relationship *rel = obj->getRelationship(inGroup, r);
+                if (!networkData(rel))
+                    continue;
+                NetworkRef ref;
+                ref.object          = obj;
+                ref.source.inGroup  = inGroup;
+                ref.source.relName  = toString(rel->getName());
+                if (ref.source.relName.empty() || !seenRels.insert(ref.source.relName).second)
+                    continue;
+                ref.key = b3dop::mixHash(hashString(ref.source.relName), 1);
+                refs.push_back(ref);
+            }
+        if (obj->getConstNamedSubData(kInternalGeometry))
         {
-            ++refs[seen->second].carriers;
-            continue;
+            NetworkRef ref;
+            ref.object = obj;
+            ref.key    = b3dop::mixHash(uint64_t(uint32_t(obj->getObjectId())), 2);
+            refs.push_back(ref);
         }
-        byDetail.emplace(int64_t(gdp->getUniqueId()), refs.size());
-        NetworkRef ref;
-        ref.carrier  = obj;
-        ref.dataName = name;
-        ref.node     = node;
-        ref.key      = networkKey(obj->getObjectId(), name);
-        refs.push_back(ref);
     }
     counts.networks = int(refs.size());
 
@@ -702,6 +830,7 @@ jointsAfterStep(Box3DSharedState &st, SIM_ObjectArray &objects)
         Box3DJointEntry *e = static_cast<Box3DJointEntry *>(p);
         if (!e || !e->handle)
             continue;
+        e->brokeLocalKnown = world.jointLocalFrames(e->handle, e->brokeLocalA, e->brokeLocalB);
         world.destroyJoint(e->handle);
         e->handle = 0;
         e->broken = true;
@@ -709,7 +838,7 @@ jointsAfterStep(Box3DSharedState &st, SIM_ObjectArray &objects)
         ++broke;
     }
 
-    // ---- write-back, for networks read from one object ----
+    // ---- write-back: broken group / next_constraint_name, live frames, feedback ----
     std::unordered_map<uint64_t, std::vector<Box3DJointEntry *>> entriesOf;
     bool entriesGathered = false;
     for (auto &kv : st.jointNetworks)
@@ -717,7 +846,7 @@ jointsAfterStep(Box3DSharedState &st, SIM_ObjectArray &objects)
         Box3DJointNetwork &net = kv.second;
         const auto broken = brokeIn.find(kv.first);
         const bool anyBroken = broken != brokeIn.end();
-        if (net.visited != st.syncStamp || net.carriers != 1)
+        if (net.visited != st.syncStamp)
             continue;
         if (!entriesGathered)
         {
@@ -728,12 +857,17 @@ jointsAfterStep(Box3DSharedState &st, SIM_ObjectArray &objects)
         const auto ents = entriesOf.find(kv.first);
         if (ents == entriesOf.end() && !anyBroken)
             continue;                           // no joints to keep live, nothing broke
-        SIM_Object *obj = objectById(objects, net.carrier);
-        SIM_GeometryCopy *geo = obj ? writableGeometry(*obj, net.dataName.c_str()) : nullptr;
+        SIM_Object *obj = objectById(objects, net.objectId);
+        NetworkSource src;
+        src.inGroup = net.inGroup;
+        src.relName = net.relName;
+        SIM_GeometryCopy *geo = obj ? writableNetworkGeometry(*obj, src) : nullptr;
+        net.writable = geo != nullptr;
         if (!geo)
             continue;
         static const std::vector<Box3DJointEntry *> kNone;
         const std::vector<Box3DJointEntry *> &entries = ents != entriesOf.end() ? ents->second : kNone;
+        bool switched = false;
         {
             SIM_GeometryAutoWriteLock lock(geo);
             GU_Detail *gdp = &lock.getGdp();
@@ -742,70 +876,106 @@ jointsAfterStep(Box3DSharedState &st, SIM_ObjectArray &objects)
             };
             if (anyBroken)
             {
-                GA_PrimitiveGroup *grp = gdp->findPrimitiveGroup(kBrokenGroup);
-                if (!grp)
-                    grp = gdp->newPrimitiveGroup(kBrokenGroup);
-                if (grp)
+                // A primitive with a next_constraint_name switches to it (its joint is remade as
+                // that constraint at the next step, from where the pieces are now) and the
+                // attribute is cleared; the rest go into the `broken` group.
+                GA_RWHandleS conNameH(gdp, GA_ATTRIB_PRIMITIVE, kConstraintName);
+                GA_RWHandleS nextH(gdp, GA_ATTRIB_PRIMITIVE, kNextConstraintName);
+                GA_PrimitiveGroup *grp = nullptr;
+                for (Box3DJointEntry *e : broken->second)
                 {
-                    for (const Box3DJointEntry *e : broken->second)
-                        if (primOk(e->prim))
-                            grp->addOffset(e->prim);
+                    if (!primOk(e->prim))
+                        continue;
+                    UT_StringHolder nextName;
+                    if (nextH.isValid() && conNameH.isValid())
+                        nextName = nextH.get(e->prim);
+                    if (nextName.isstring())
+                    {
+                        conNameH.set(e->prim, nextName);
+                        nextH.set(e->prim, UT_StringHolder());
+                        e->broken = false;
+                        switched  = true;
+                        // The anchors go where the broken joint's frames are now (below).
+                        b3dop::JointFrame fa, fb;
+                        if (e->brokeLocalKnown && world.localToWorld(e->bodyA, e->brokeLocalA, fa) &&
+                            world.localToWorld(e->bodyB, e->brokeLocalB, fb))
+                        {
+                            e->wroteA       = asStored(fa);
+                            e->wroteB       = asStored(fb);
+                            e->wrote        = true;
+                            e->switchFrames = true;
+                        }
+                        continue;
+                    }
+                    if (!grp)
+                    {
+                        grp = gdp->findPrimitiveGroup(kBrokenGroup);
+                        if (!grp)
+                            grp = gdp->newPrimitiveGroup(kBrokenGroup);
+                    }
+                    if (grp)
+                        grp->addOffset(e->prim);
+                }
+                if (grp)
                     grp->bumpDataId();
+                if (switched)
+                {
+                    conNameH.getAttribute()->bumpDataId();
+                    nextH.getAttribute()->bumpDataId();
                 }
             }
             writeLiveFrames(world, gdp, entries, primOk);
-            if (net.writeFeedback)
-            {
-                auto vecAttr = [&](const char *name) {
-                    if (!gdp->findPrimitiveAttribute(name))
-                        gdp->addFloatTuple(GA_ATTRIB_PRIMITIVE, name, 3);
-                    return GA_RWHandleV3(gdp, GA_ATTRIB_PRIMITIVE, name);
-                };
-                std::unordered_map<std::string, GA_RWHandleF> scalars;
-                auto scalar = [&](const char *name) -> GA_RWHandleF & {
-                    auto it = scalars.find(name);
-                    if (it == scalars.end())
-                    {
-                        if (!gdp->findPrimitiveAttribute(name))
-                            gdp->addFloatTuple(GA_ATTRIB_PRIMITIVE, name, 1);
-                        it = scalars.emplace(name, GA_RWHandleF(gdp, GA_ATTRIB_PRIMITIVE, name)).first;
-                    }
-                    return it->second;
-                };
-                GA_RWHandleV3 forceH  = vecAttr("force");
-                GA_RWHandleV3 torqueH = vecAttr("torque");
-                GA_RWHandleF &linH    = scalar("linear_separation");
-                GA_RWHandleF &angH    = scalar("angular_separation");
-                for (const Box3DJointEntry *e : entries)
+
+            // Feedback, under the Constraint Network DOP's names: force / distance for the linear
+            // part, torque / angle (radians) for the angular part, plus the per-type readings.
+            std::unordered_map<std::string, GA_RWHandleF> scalars;
+            auto scalar = [&](const char *name) -> GA_RWHandleF & {
+                auto it = scalars.find(name);
+                if (it == scalars.end())
                 {
-                    b3dop::JointFeedback fb;
-                    if (!primOk(e->prim) || !world.jointFeedback(e->handle, e->type, fb))
-                        continue;
-                    if (forceH.isValid())  forceH.set(e->prim, UT_Vector3(fb.force[0], fb.force[1], fb.force[2]));
-                    if (torqueH.isValid()) torqueH.set(e->prim, UT_Vector3(fb.torque[0], fb.torque[1], fb.torque[2]));
-                    if (linH.isValid())    linH.set(e->prim, fb.linearSeparation);
-                    if (angH.isValid())    angH.set(e->prim, fb.angularSeparation * kRadToDeg);
-                    for (int k = 0; k < fb.extraCount; ++k)
-                    {
-                        GA_RWHandleF &h = scalar(fb.extraName[k]);
-                        if (h.isValid())
-                            h.set(e->prim, fb.extraIsAngle[k] ? fb.extra[k] * kRadToDeg : fb.extra[k]);
-                    }
+                    if (!gdp->findPrimitiveAttribute(name))
+                        gdp->addFloatTuple(GA_ATTRIB_PRIMITIVE, name, 1);
+                    it = scalars.emplace(name, GA_RWHandleF(gdp, GA_ATTRIB_PRIMITIVE, name)).first;
                 }
-                if (forceH.isValid())  forceH.getAttribute()->bumpDataId();
-                if (torqueH.isValid()) torqueH.getAttribute()->bumpDataId();
-                for (auto &sc : scalars)
-                    if (sc.second.isValid())
-                        sc.second.getAttribute()->bumpDataId();
+                return it->second;
+            };
+            auto length = [](const float *v) {
+                return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+            };
+            GA_RWHandleF &forceH  = scalar("force");
+            GA_RWHandleF &distH   = scalar("distance");
+            GA_RWHandleF &torqueH = scalar("torque");
+            GA_RWHandleF &angleH  = scalar("angle");
+            for (const Box3DJointEntry *e : entries)
+            {
+                b3dop::JointFeedback fb;
+                if (!primOk(e->prim) || !world.jointFeedback(e->handle, e->type, fb))
+                    continue;
+                if (forceH.isValid())  forceH.set(e->prim, length(fb.force));
+                if (distH.isValid())   distH.set(e->prim, fb.linearSeparation);
+                if (torqueH.isValid()) torqueH.set(e->prim, length(fb.torque));
+                if (angleH.isValid())  angleH.set(e->prim, fb.angularSeparation);
+                for (int k = 0; k < fb.extraCount; ++k)
+                {
+                    GA_RWHandleF &h = scalar(fb.extraName[k]);
+                    if (h.isValid())
+                        h.set(e->prim, fb.extraIsAngle[k] ? fb.extra[k] * kRadToDeg : fb.extra[k]);
+                }
             }
+            for (auto &sc : scalars)
+                if (sc.second.isValid())
+                    sc.second.getAttribute()->bumpDataId();
         }
-        // Our own write is not an edit: re-record the fingerprint (the lock is released).
-        if (const SIM_Geometry *rgeo = SIM_DATA_GETCONST(*obj, net.dataName.c_str(), SIM_Geometry))
+        // Our own write is not an edit: re-record the fingerprint (the lock is released). A
+        // switched constraint_name is ours too, but must be read: force a re-read.
+        if (const SIM_Geometry *rgeo = networkGeometry(*obj, src))
         {
             SIM_GeometryAutoReadLock rlock(rgeo);
             if (const GU_Detail *rgdp = rlock.getGdp())
                 net.fingerprint = networkFingerprint(rgdp);
         }
+        if (switched)
+            net.fingerprint = 0;
     }
     return broke;
 }

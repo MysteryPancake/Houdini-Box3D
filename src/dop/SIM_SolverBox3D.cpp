@@ -3209,18 +3209,13 @@ SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
     {
         auto warnJoints = [&](int n, const char *what) {
             if (n)
-                addError(objects(0), SIM_MESSAGE, ("Box3D: " + std::to_string(n) + " joint primitive(s) " + what).c_str(),
+                addError(objects(0), SIM_MESSAGE, ("Box3D: " + std::to_string(n) + " constraint primitive(s) " + what).c_str(),
                          UT_ERROR_WARNING);
         };
-        warnJoints(jointCounts.unknown, "have a missing or unknown joint_type and are ignored");
+        warnJoints(jointCounts.unknown, "have a constraint_name that names no Box3D constraint relationship and are ignored");
         warnJoints(jointCounts.unresolved, "name a piece or object that does not exist and are ignored");
         warnJoints(jointCounts.notLines, "are not two-point lines and are ignored");
         warnJoints(jointCounts.failed, "could not be made (both ends on the world, or the same body twice)");
-        if (jointCounts.shared)
-            addError(objects(0), SIM_MESSAGE,
-                     "Box3D: a joint network is attached to several objects; it is used once, and feedback and "
-                     "broken joints are not written back to it",
-                     UT_ERROR_WARNING);
         if (jointCounts.created || jointCounts.removed || jointCounts.updated)
             B3D_LOG("  joints: %d network(s), +%d made, %d updated, -%d removed (joints now %d)", jointCounts.networks,
                     jointCounts.created, jointCounts.updated, jointCounts.removed, st->world.jointCount());

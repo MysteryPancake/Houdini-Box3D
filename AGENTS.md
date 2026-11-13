@@ -6,13 +6,14 @@ Build and usage instructions for users are in `README.md`.
 ## What this is
 
 A Houdini DOP plugin (HDK, C++17) wrapping [Box3D](https://github.com/erincatto/box3d) (Erin Catto's 3D rigid
-body engine, C17, a git submodule in `extern/box3d`). It registers three `SIM_Data` classes:
+body engine, C17, a git submodule in `extern/box3d`). It registers these `SIM_Data` classes:
 
 | DOP name | Class | Role |
 |---|---|---|
 | Box3D Solver | `SIM_SolverBox3D` | Multi-object solver: one call per timestep with all its objects |
 | Box3D Data | `SIM_Box3DData` | Per-object defaults (fallbacks for missing point attributes) |
 | (hidden) Box3D World | `SIM_Box3DWorld` | Holds the live Box3D world; not a DOP node |
+| Box3D <Type> Constraint Relationship | `SIM_Box3DConRel<Type>` | One per joint type: the joint's settings, named by `constraint_name` in a Constraint Network |
 
 Design goals: Box3D's native performance (handle-based hot paths, no per-body hash lookups, threaded per-point passes
 where safe) and Houdini Bullet behaviour (same attribute names and rules, as documented on the RBD Packed Object page).
@@ -58,11 +59,11 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
   dop/                Houdini SIM_Data classes: the nodes and the world cache
     SIM_Box3DWorld.*    SIM_Data owning the shared world state (the rebuildable cache)
     SIM_Box3DData.*     Default-settings DOP node
-    SIM_Box3DJoints.*   Box3D Joints DOP node: joint defaults per type, parameters generated from the table
+    SIM_Box3DConRel.*   Box3D <Type> Constraint Relationship DOP nodes (one per joint type), parameters from the table
     SIM_SolverBox3D.*   The solver: sync, step, write-back, post-step passes (the bulk of the plugin)
     SIM_Box3DRegister.cpp  initializeSIM(); includes UT_DSOVersion.h (exactly once, keep it here)
   sync/               Houdini data -> the Box3D world, used by the solver
-    Box3DJointSync.*    Joint networks -> Box3D joints: read, resolve names, create / update / remove, break, feedback
+    Box3DJointSync.*    Constraint networks -> Box3D joints: read, resolve names, create / update / remove, break, feedback
     Box3DAffectors.*    Affector objects (Static Object DOP etc.) -> static colliders
     Box3DHoudiniTasks.h TaskRunner on Houdini's TBB pool (UT_TaskGroup). Only SIM_Box3DWorld.cpp includes it
 tests/
@@ -597,14 +598,16 @@ rebuilt, fallback notes). All macros compile to nothing without `BOX3DDOP_DEBUG`
 
 ## Joints
 
-Box3D's joints first: every Box3D joint type that makes sense for rigid bodies is exposed with Box3D's own
-settings and defaults; Houdini's geometry is only the transport. No SideFX constraint concepts (glue, constraint
-relationships, `constraint_type` position / rotation / all) are used. Character-mover joints (mover, pogo) are left
-out.
+Box3D's joints, set up the way Houdini's old constraint system is: a **Constraint Network** DOP holds the network
+geometry, and constraint relationship nodes wired into its second input hold the settings, one node per kind of
+constraint, named by the primitives' `constraint_name`. Here those nodes are ours, one per Box3D joint type, with Box3D's
+own settings and defaults. SideFX's own constraint data (Glue, Hard, Spring, Soft, Cone Twist) is not read: their
+`constraint_name`s count as unknown. `constraint_type` (position / rotation / all) is ignored: the joint type decides
+what is constrained. Character-mover joints (mover, pogo) are left out.
 
 Naming: attributes holding the state at the initial pose are called `rest*` (`restlength`); attributes the solver
 keeps current are the plain names (`P`, `orient`) or `current_*` readings. The solver writes no attribute it does
-not read itself, except outputs the user asks for (Write Feedback).
+not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `current_*`), as the Bullet solver does.
 
 **Core** (`Box3DJoints.h`, `Box3DWorld`, tested in `tests/core_joints.cpp`):
 * `JointType` (weld, spherical, revolute, prismatic, distance, motor, parallel, wheel, filter) and `JointSettings`:
@@ -615,7 +618,7 @@ not read itself, except outputs the user asks for (Write Feedback).
   `enableAngularSpring` (off = rigid; Box3D's own rule is "hertz 0 = rigid", which reads backwards with the name
   stiffness). Every Box3D "hertz" is called stiffness.
 * `jointParams()`: one row per setting (attribute / parameter name, label, kind, joint types using it, member
-  pointer, help). The Box3D Joints node, the primitive attribute reader and `sameJointSettings` are all driven by
+  pointer, help). The constraint relationship nodes, the primitive attribute reader and `sameJointSettings` are all driven by
   it. `angleTypes` marks a Float that is an angle for some types only (`motor_speed`: revolute deg/s, prismatic and
   distance units/s). `Rotation` is Euler XYZ degrees in Houdini and a quaternion in the core.
 * `Box3DWorld::defaultJointSettings(type)` copies `b3Default*JointDef`, so the node's defaults are Box3D's.
@@ -637,34 +640,53 @@ not read itself, except outputs the user asks for (Write Feedback).
   joint; `brokenJoints` returns the events' user data and the caller destroys them. `b3DestroyBody` destroys a
   body's joints, so handles can go stale: `isJointValid` before use.
 
-**Houdini** (`Box3DJointSync.cpp`, `SIM_Box3DJoints.cpp`):
-* A network is a `SIM_Geometry` on an object named `Joints` (the Box3D Joints node's Geometry Data), attached like
-  the object's own `Geometry`, usually with a SOP Geometry DOP. The node (data name `Box3DJoints`) only holds
-  defaults: Common tab (parameter = attribute name) plus one tab per type (`<type>_<attribute>`). It is optional.
-* `anyJointNetwork` runs first in the sync; while true, each full object scan fills `Box3DObjectSync::byName`
-  (point `name` -> entry, first wins) and an object without `namesKnown` cannot skip. `name` is a prop marker, so a
-  renamed piece rescans.
-* Gather: one network per distinct geometry (`getUniqueId`); the same SOP on several objects is read once
-  (`carriers > 1`: one warning, no write-back, since writing would give each object its own copy and the
-  dedupe would break). Network key = carrier object id + data name.
+**Houdini** (`Box3DJointSync.cpp`, `SIM_Box3DConRel.cpp`):
+* Nodes: `SIM_Box3DConRel` (`SIM_ConRel` + `SIM_OptionsUser`, like SideFX's `SIM_ConRelSpring`; abstract,
+  `DECLARE_CLASSNAME` only) and one subclass per joint type from `BOX3D_DECLARE_CONREL`, each with its own automatic DOP
+  (`box3d_<type>conrel`, label "Box3D <Type> Constraint Relationship", default Data Name `<type>`). `describe(type)`
+  builds the parameters from `jointParams()` once per type: every setting the type uses, common ones first, parameter
+  name = attribute name (no per-type prefixes). `settings()` reads them in Box3D units over Box3D's defaults.
+* Networks: every relationship of a solved object (group and affector side) whose relationship type data is a
+  `SIM_ConstraintNetworkRelationship`, once per relationship name (a relationship is on every object it constrains),
+  geometry from its `getGeometry()`; plus each object's own `ConstraintGeometry` (Attach Internal Constraints to
+  Object). Network key = hash of the relationship name (or the object id). `anyJointNetwork` checks the same, without
+  reading geometry; while true, each full object scan fills `Box3DObjectSync::byName` (point `name` -> entry, first
+  wins) and an object without `namesKnown` cannot skip. `name` is a prop marker, so a renamed piece rescans.
+* Kinds (`networkKinds`): the `SIM_Box3DConRel` subdata, by data name, of the relationship, its
+  `SIM_ConstraintNetworkRelationship` and its geometry (internal: the ConstraintGeometry and the object); the first
+  name found wins. The iterator's doc only says the constraint data's parent is a "data_root" passed in, so all the
+  likely parents are searched. Kinds are re-read every sync (a few subdata); any change reprocesses the network.
+  The HDK's `SIM_ConstraintNetwork` iterators / accessors are not used: the geometry is read directly, which keeps
+  the fingerprinting, live frames and local frames below.
 * A network is reprocessed only when its fingerprint (identity, topology, data ids of `P`, `name`, `orient`,
-  `joint_type`, every table attribute, the `broken` group), the Box3D Joints defaults, or
+  `constraint_name`, `auto_restlength`, every table attribute, the `broken` group), its kinds, or
   `Box3DSharedState::bodyVersion` (bumped when bodies or affectors are added / removed) changed. Otherwise its
   joints keep the network's `liveStamp`, like skipped objects' bodies.
-* Per two-point primitive: `joint_type` (unknown: counted, ignored), anchors resolved (`Anchors::resolve`: empty =
-  world; a piece name in any object in object order; `object/piece`; an object with exactly one body; an affector
-  object's name -> its static mesh body). Unresolved: no joint, retried when bodies change. Settings = the type's
-  defaults + matching primitive attributes (int for toggles, float, vector; angles in degrees). Signature = type,
-  bodies, both frames: equal and the joint valid -> `updateJoint` if settings differ; else recreate.
-  `Box3DJointEntry` (in `st.joints`, key network + primitive offset) is the joint's user data, so nodes must not
-  move (unordered_map). Entries not stamped are destroyed and erased.
+* Per two-point primitive: `constraint_name` -> kind (missing or unknown: counted, ignored), anchors resolved
+  (`Anchors::resolve`: empty = world; a piece name in any object in object order; `object/piece`; an object with
+  exactly one body; an affector object's name -> its static mesh body). Unresolved: no joint, retried when bodies
+  change. Settings = the kind's + matching primitive attributes, the Constraint Network DOP's rule: float attributes
+  multiply the node's value (angles too: the attribute is a factor, so no degree conversion), toggles (int), vectors
+  and Euler rotations (degrees) replace it. So a node value of 0 (most limits and targets) or a negative "never /
+  unlimited" cap cannot be changed per primitive except by setting the node to 1. Signature = type, bodies, both
+  frames: equal and the joint valid -> `updateJoint` if settings differ; else recreate. `Box3DJointEntry` (in
+  `st.joints`, key network + primitive offset) is the joint's user data, so nodes must not move (unordered_map).
+  Entries not stamped are destroyed and erased.
 * After the step (`jointsAfterStep`): broken joints are destroyed and flagged (never remade, even if the
-  primitive changes), and for single-carrier networks written back: `broken` primitive group, and with Write
-  Feedback (default on) `force`, `torque` (vectors), `linear_separation`, `angular_separation` (degrees) and the
-  per-type readings (angles in degrees). The data is converted to a `SIM_GeometryCopy` once (like the object
-  geometry), and the fingerprint is re-recorded after the write so it is not seen as an edit. A network whose SOP
-  Geometry re-applies every step overwrites the group; `Box3DJointEntry::broken` still holds until a world rebuild.
-* **Live frames** (written networks, i.e. one carrier): after every step `writeLiveFrames` sets each live joint's
+  primitive changes), and written back through the relationship's `getGeometry()` (non-const: a `SIM_GeometryCopy`)
+  or the object's ConstraintGeometry (made a `SIM_GeometryCopy` once, like the object geometry): the `broken`
+  primitive group, then `force` / `torque` (magnitudes), `distance` / `angle` (linear / angular separation, angle
+  in radians, the Constraint Network DOP's names and units) and the per-type `current_*` readings (degrees, as
+  before) every step. The fingerprint is re-recorded after the write so it is not seen as an edit. A network that
+  re-imports its SOP every step (Overwrite with SOP) overwrites the group; `Box3DJointEntry::broken` still holds until
+  a world rebuild. `Box3DJointNetwork::writable` is false when the last write found no geometry; such a network keeps
+  its frames in the joint signature (see below).
+* `next_constraint_name`: a broken joint whose primitive has one is not marked broken. Its `constraint_name` is set to
+  it and the attribute cleared (so it switches once), its local frames (read before it was destroyed) put through the
+  bodies' poses give the anchors' `P` / `orient` (`switchFrames`: written by `writeLiveFrames` as if the joint were
+  live), and the fingerprint is zeroed so the next sync reprocesses the network and makes the new joint from the saved
+  local frames, exactly where the old one was. `next_constraint_type` is ignored, like `constraint_type`.
+* **Live frames** (written networks): after every step `writeLiveFrames` sets each live joint's
   anchor points' `P` / `orient` to where its frames are now (`Box3DWorld::jointWorldFrames`: body pose times local
   frame; a world end does not move). The network data is cached with each timestep (SIM_GeometryCopy), so a world
   rebuilt mid-simulation makes its joints from the cached `P` / `orient` against the cached body poses, which gives
@@ -683,15 +705,16 @@ not read itself, except outputs the user asks for (Write Feedback).
     not already unit length). The live `P` / `orient` are still read: to make new joints and to see edits.
   * Edits: the entry remembers what it wrote (`wroteA` / `wroteB`, as stored in float). A reprocessed network whose
     anchor differs (1e-5 relative; q and -q equal) was edited upstream (a SOP Solver): the joint is remade from the
-    new `P` / `orient`. The signature therefore leaves the frames out for written networks; a network that is not
-    written (several carriers) keeps the frames in its signature, so editing them remakes the joint as before.
-  * A distance joint made with `restlength < 0` gets the anchors' distance at that moment written to its
-    `restlength` primitive attribute (created with default -1), so a rebuild keeps the rest length instead of the
-    current, stretched distance.
+    new `P` / `orient`. The signature therefore leaves the frames out for written networks; a network that could not
+    be written (`writable` false) keeps the frames in its signature, so editing them remakes the joint.
+  * A distance joint made with a negative rest length gets the anchors' distance at that moment written to the
+    `auto_restlength` primitive attribute (created with default -1), so a rebuild keeps the rest length instead of
+    the current, stretched distance. Not `restlength`: that attribute multiplies the node's value, and -1 times the
+    distance would be negative again. It is only read while the joint's rest length is negative.
   * Our writes bump `P` / `orient`, which are in the network fingerprint; the fingerprint is re-recorded after the
-    write, so an unchanged network still skips. Writing happens every step regardless of Write Feedback.
-  * Not written: networks on several objects (warning), and a SOP Geometry set to re-apply every step overwrites
-    the live values, so a resim from a cached frame other than the first uses the authored frames there.
+    write, so an unchanged network still skips. Writing happens every step.
+  * A Constraint Network with Overwrite with SOP re-imports the SOP every step and overwrites the live values, so a
+    resim from a cached frame other than the first uses the authored frames there.
 
 ## Tests
 
@@ -720,7 +743,11 @@ Checked against the HDK reference: `GU_PrimPacked::isPackedPrimitive`, `getPacke
 `destroyPrimitive`, `bumpAllDataIds`; `GA_Attribute::getDataId` / `bumpDataId`; `GA_AIFSharedStringTuple::getHandle`
 / `getTableString`; `GEO_Detail::addIntTuple`; `SIM_DATA_CREATE` flags (`SIM_DATA_RETURN_EXISTING` unset = replace);
 `SIM_Impacts::addPointImpact`, `SIM_IMPACTS_DATANAME`; `SIM_RootData::getName`, `removeNamedSubData`;
-`UT_String::isstring`, `buffer`; `UT_Matrix3D::extractScales`, `UT_QuaternionT::getRotationMatrix` /
+`UT_String::isstring`, `buffer`; `SIM_Object::getNumRelationships`, `getRelationship(ingroup, index / name)` (const),
+`getRelationships(ingroup)` (non-const, `SIM_RelationshipArray::findRelationshipByName`);
+`SIM_Relationship::getRelationshipTypeData` / `getConstRelationshipTypeData`; `SIM_ConstraintNetworkRelationship`
+(a `SIM_RelationshipData`) `getGeometry` const / non-const; `SIM_ConRel` (no pure virtuals, protected factory
+constructor); `DECLARE_CLASSNAME` / `DECLARE_DATAFACTORY` expansions (`SIM_DataUtils.h`); `UT_Matrix3D::extractScales`, `UT_QuaternionT::getRotationMatrix` /
 `updateFromRotationMatrix`; node icons as `config/Icons/DOP_<name>.svg`.
 
 Taken from the HDK samples in `DOP.zip` but not compiled against a real HDK: `SIM_Force::getForce` (public, const; arguments
@@ -728,12 +755,16 @@ as in `SIM_ForceOrbit::getForceSubclass`), `SIM_EachDataCallback::callbackConst`
 `SIM_FORCES_DATANAME`, `forEachConstSubData`, `SIM_DATA_CASTCONST`, and which header declares `SIM_EachDataCallback` (the
 solver includes `SIM/SIM_DataFilter.h` and `SIM/SIM_Force.h`). The force code was run against stand-in types for these.
 
-Still unchecked: the timestamp semantics behind `canContinue`, data ids surviving the DOP copy, the impact normal
+Still unchecked: which data the Constraint Network DOP attaches its second input's nodes under (`networkKinds`
+searches the likely parents), that it accepts our own `SIM_ConRel` data there, that writing a relationship's geometry
+from a solver is safe (the Bullet solver writes it back the same way), `GA_RWHandleS::set` taking a
+`UT_StringHolder`; the timestamp semantics behind `canContinue`, data ids surviving the DOP copy, the impact normal
 convention, and Bullet's `bullet_primR` order and `bullet_length` meaning (Bullet docs, not HDK).
 
 ## Known gaps / TODO
 
-* Constraints / joints (constraint networks); Box3D has the joints.
+* SideFX's Glue / Hard / Spring / Soft / Cone Twist constraint data in a network (could map to weld / spherical /
+  distance joints, approximately); point / vertex / agent anchors (`anchor_id`, `anchor_type`); `constraint_type`.
 * Force DOPs: only `getForce` at the centre of mass (no `getForceOnSphere` / area variants, no per-substep re-evaluation).
 * Static triangle-mesh colliders for `concave` points and height-field colliders (see "planned"); `cylinder` / `plane` (no Box3D shape; hull or big
   box approximations possible).

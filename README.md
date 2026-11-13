@@ -42,79 +42,17 @@ Like Houdini's RBD solvers, it works on **points**: every point in the object's 
 
 ## Nodes
 
-### Box3D Solver
-
-Runs the simulation. All parameters except the thread count can be animated.
-
-| Tab | Parameter | What it does |
-|---|---|---|
-| Simulation | Gravity | Acceleration on every dynamic body (default `0, -9.80665, 0`) |
-| | Use Force DOPs | Apply connected Force DOPs (Gravity, Wind, Fan, POP Force, ...) and per-point `force` / `torque` attributes. Set Gravity to 0 when using a Gravity Force, or bodies fall twice as fast |
-| | Forces Wake Bodies | Let forces wake sleeping bodies. Turn on for wind or fans |
-| | Substeps | Solver passes per step (default 4). More is more stable and slower |
-| | Time Scale | Below 1 is slow motion, above 1 is fast motion |
-| | Enable Aging | Adds the time step to each point's `age` and marks it `dead` once it passes `life` |
-| | Max Linear Speed | No body moves faster than this (default 400) |
-| Performance | Use All Threads / Threads | Worker threads. More helps large scenes, small ones can be faster with fewer |
-| | Allow Sleeping | Let resting bodies stop simulating until touched |
-| | Contact Recycle Distance | Reuses contacts for pairs that barely moved (default 0.05). Faster, slightly less exact. 0 turns it off for every body |
-| Contacts | Contact Stiffness / Damping Ratio | How firmly contacts push overlapping bodies apart |
-| | Overlap Push Speed | How fast overlaps are resolved. Lower it if pieces that start overlapping fly apart |
-| | Continuous Collision | Stops fast bodies passing through static ones |
-| Bounce & Friction | Bounce Threshold | Collisions slower than this don't bounce, so resting pieces settle |
-| | Bounce Iterations / Propagation | Extra passes for bounce, and passing it through stacks |
-| | Friction Mixing | How two touching frictions combine: Geometric Mean, Minimum, Maximum, Average, Multiply |
-| | Bounce Mixing | How two touching bounces combine: Maximum, Minimum, Average, Multiply, Geometric Mean |
-| Advanced | Isotropic Inertia Tolerance | Stops near-spherical bodies spinning oddly |
-| | Warm Starting | Leave on. Turning it off makes stacks less stable |
-| | Impact Min Speed | Impact Data ignores collisions slower than this |
-
-### Box3D Data
-
-Default settings for the bodies in an object. Each setting can be overridden per point by the attribute of the same name (see [Point attributes](#point-attributes)). Add it to a **Static Object** to set that collider's material.
-
-| Tab | Parameter | What it does |
-|---|---|---|
-| Shape | Default Shape | Shape for points without `bullet_georep`: Box, Sphere, Convex Hull, Concave / Compound, Capsule, None |
-| | Auto Fit | Fit box, sphere and capsule shapes to the packed geometry's bounds |
-| | Create Convex Hull per Set of Connected Primitives | One hull per connected set instead of one around the whole piece |
-| Body | Body Type | Static never moves, Kinematic follows its animation, Dynamic is simulated |
-| | Compute Mass / Mass / Density | Use a fixed Mass, or work it out from Density and shape volume |
-| | Gravity Scale | Multiplies the solver's Gravity. 0 floats, negative falls upward |
-| Material | Friction, Bounce | Grip and bounciness |
-| | Rolling Resistance | How much round bodies resist rolling, 0 to 1 |
-| | Conveyor Velocity | Turns the surface into a conveyor belt (see below) |
-| | Linear / Angular Damping | Air drag on movement and spin |
-| Sleep & Contacts | Allow Sleeping, Start Asleep | Whether bodies can sleep, and whether they begin asleep |
-| | Sleep Threshold | Speed below which a body may fall asleep |
-| | CCD Threshold | How far a body must move in a step before it is swept to stop tunnelling. Lower it for thin, fast pieces |
-| | Fast Object | Stops a fast body passing through other moving bodies too |
-| | Contact Recycling | Turn off if you see ghost collisions on thin or fast bodies |
-| Output | Flip Static Mesh Winding | For Static Object colliders only: use if bodies fall through from the side you expect to be solid |
-| | Add Impact Data | Record impacts in the object's **Impacts** data (costs time and memory) |
-
-### Box3D Joints
-
-Default settings for joints, used where the joint geometry doesn't override them. See [Joints](#joints).
-
-| Parameter | What it does |
-|---|---|
-| Geometry Data | Name of the joint network on the object (default `Joints`) |
-| Write Feedback | Write each joint's force, torque and readings onto its primitive every step |
-| **Common** tab | Collide Connected, Break Force, Break Torque, Constraint Stiffness, Constraint Damping Ratio |
-| One tab per joint type | Settings for that type: springs, limits and motors (below) |
-
-| Joint | Use it for | Extra settings |
-|---|---|---|
-| Weld | Gluing two pieces together | Linear and angular springs to make it soft |
-| Spherical | Ball joints, shoulders | Cone and twist limits, spring, motor |
-| Revolute | Hinges, doors, wheels | Angle limit, spring, motor |
-| Prismatic | Sliders, pistons | Translation limit, spring, motor |
-| Distance | Ropes, springs, rods | Rest, min and max length, spring, motor |
-| Motor | Driving one body relative to another | Linear and angular velocity and their max force / torque |
-| Parallel | Keeping a body upright (aligns the two z axes) | Spring and max torque |
-| Wheel | Vehicle wheels | Suspension, spin motor, steering |
-| Filter | Stopping two bodies colliding, nothing else | None |
+- Box3D Solver
+- Box3D Data
+- Box3D Weld Constraint Relationship
+- Box3D Spherical Constraint Relationship
+- Box3D Revolute Constraint Relationship
+- Box3D Prismatic Constraint Relationship
+- Box3D Distance Constraint Relationship
+- Box3D Motor Constraint Relationship
+- Box3D Parallel Constraint Relationship
+- Box3D Wheel Constraint Relationship
+- Box3D Filter Constraint Relationship
 
 ## Point attributes
 
@@ -191,13 +129,13 @@ A **Static Object** DOP collides with solved objects when a collision relationsh
 
 ## Joints
 
-Attach a joint network to an object with a **SOP Geometry** DOP, Data Name `Joints`. Each two-point line is one joint:
+Joints use Houdini's **Constraint Network** DOP. Wire Box3D Constraint Relationship nodes into its second input, as with Bullet. Each two-point line in the network geometry is one joint:
 
-- `joint_type` primitive attribute: `weld`, `spherical`, `revolute`, `prismatic`, `distance`, `motor`, `parallel`, `wheel` or `filter`.
+- `constraint_name` primitive attribute: the Data Name of a Box3D Constraint Relationship (by default its type: `weld`, `revolute`, ...). It sets the joint's type and settings.
 - Each end's `name` picks a piece (empty means the world).
 - Each end's `P` and `orient` are that piece's joint frame, so put both ends at the pivot for a hinge or weld.
-- Primitive attributes named like the Box3D Joints parameters (`lower_angle`, `stiffness`, ...) override them. Angles are in degrees.
-- Joints past their Break Force or Break Torque go into the `broken` group.
+- Primitive attributes named like the node's parameters (`lower_angle`, `stiffness`, ...) modify them, as with Bullet: float attributes multiply the node's value, other attributes replace it.
+- Joints past their Break Force or Break Torque go into the `broken` group, or switch to their `next_constraint_name`. Every step the solver writes `force`, `distance`, `torque` and `angle` (radians) onto each line.
 
 ## Things to know
 
@@ -205,7 +143,6 @@ Attach a joint network to an object with a **SOP Geometry** DOP, Data Name `Join
 - Box3D's mover and pogo joints, explosions and wind aren't included. They are game-oriented, and Houdini already has Force DOPs for wind and explosions.
 - Use `id` if you delete points with `dead`, otherwise every later point counts as a new body.
 - Sleeping a body also sleeps the bodies touching it.
-- A joint network attached to several objects isn't updated during the simulation, so resimulating it from a cached frame other than the first puts its joints in the wrong place.
 - Escape cancels a step.
 
 ## Troubleshooting

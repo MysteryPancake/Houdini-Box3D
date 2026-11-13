@@ -245,7 +245,7 @@ struct Box3DAffectorBody
     bool              poseKnown = false;
 };
 
-// One joint made from a primitive of a joint network (Box3DJointSync.cpp).
+// One joint made from a primitive of a constraint network (Box3DJointSync.cpp).
 struct Box3DJointEntry
 {
     b3dop::JointHandle   handle   = 0;       // 0: none (broken, or its anchors did not resolve)
@@ -263,23 +263,38 @@ struct Box3DJointEntry
     // are (written networks only). What was written, to tell our writes from edits upstream.
     b3dop::JointFrame    wroteA, wroteB;
     bool                 wrote      = false;
-    float                madeRestLength = -1.0f;   // distance made with restlength < 0: written to `restlength` once
+    float                madeRestLength = -1.0f;   // distance made with restlength < 0: written to `auto_restlength` once
     bool                 writeLocal = false; // made from P / orient: write local_P / local_orient after the step
+
+    // next_constraint_name: the broken joint's local frames, so the anchors can be put where its
+    // frames were at the break (switchFrames) and the next constraint made exactly from there.
+    b3dop::JointFrame    brokeLocalA, brokeLocalB;
+    bool                 brokeLocalKnown = false;
+    bool                 switchFrames    = false;
 };
 
-// A joint network: a SIM_Geometry of two-point primitives on one or more objects.
+// The constraint data a `constraint_name` refers to (a Box3D constraint relationship node), as
+// last used.
+struct Box3DJointKind
+{
+    b3dop::JointType     type = b3dop::JointType::Weld;
+    b3dop::JointSettings settings;
+};
+
+// A constraint network: the two-point primitives of a Constraint Network DOP's relationship (or
+// an object's ConstraintGeometry, with Attach Internal Constraints to Object).
 struct Box3DJointNetwork
 {
     uint64_t fingerprint = 0;               // geometry identity + data ids of everything read
     uint64_t bodyVersion = 0;               // Box3DSharedState::bodyVersion when last processed
     uint64_t liveStamp   = 0;               // stamp its current entries carry
     uint64_t visited     = 0;               // last sync that saw it
-    int      carrier     = -1;              // object id it is read from (and written back to)
-    int      carriers    = 0;               // objects carrying the same geometry this sync
-    std::string dataName;                   // its data name on the carrier
-    bool     writeFeedback = true;
-    b3dop::JointSettings defaults[b3dop::kJointTypeCount];   // the Box3D Joints node's, as last used
-    bool     defaultsKnown = false;
+    int      objectId    = -1;              // an object it was found on (and is written back through)
+    std::string relName;                    // the relationship's name; empty: the object's ConstraintGeometry
+    bool     inGroup     = true;            // found among the object's group (not affector) relationships
+    bool     writable    = true;            // the last write-back reached the geometry
+    std::unordered_map<std::string, Box3DJointKind> kinds;  // by data name, as last used
+    bool     kindsKnown  = false;
 };
 
 // Everything shared between timestep copies.
@@ -297,8 +312,8 @@ struct Box3DSharedState
 
     // Joints (Box3DJointSync.cpp). Entries are joint user data, so nodes must not move.
     std::unordered_map<uint64_t, Box3DJointEntry>   joints;         // key: network key + primitive offset
-    std::unordered_map<uint64_t, Box3DJointNetwork> jointNetworks;  // key: carrier object id + data name
-    bool     wantNames   = false;           // some object carries a joint network: keep Box3DObjectSync::byName
+    std::unordered_map<uint64_t, Box3DJointNetwork> jointNetworks;  // key: relationship name (or object id)
+    bool     wantNames   = false;           // some object has a constraint network: keep Box3DObjectSync::byName
     uint64_t bodyVersion = 0;               // bumped whenever bodies are added or removed
 
     // Scratch reused every step.

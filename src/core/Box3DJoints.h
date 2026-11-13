@@ -2,8 +2,8 @@
 //
 // Houdini-free description of Box3D joints: the joint types, their settings, and one table of
 // parameters (attribute / parameter names, kinds, which types use them) that the Houdini side
-// uses for the Box3D Joints node, primitive attributes and change detection. Box3DWorld creates
-// the joints. Settings are in Box3D units: radians, radians per second, Hz.
+// uses for the Box3D constraint relationship nodes, primitive attributes and change detection.
+// Box3DWorld creates the joints. Settings are in Box3D units: radians, radians per second, Hz.
 #pragma once
 
 #include <cstring>
@@ -150,8 +150,8 @@ struct JointSettings
     float upperSteeringLimit     = 0.0f;
 };
 
-// One setting as Houdini sees it: attribute name (also the Box3D Joints parameter name, prefixed
-// with the type name per tab), label, kind and the joint types that use it.
+// One setting as Houdini sees it: attribute name (also the parameter name on the type's Box3D
+// constraint relationship node), label, kind and the joint types that use it.
 struct JointParam
 {
     enum Kind
