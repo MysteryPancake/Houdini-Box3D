@@ -42,6 +42,7 @@ add_library(b3dop_core STATIC
     src/core/Box3DJoints.h
     src/core/Box3DSideFX.h
     src/core/Box3DSideFX.cpp
+    src/core/Box3DRbdObject.h
     src/core/Box3DWorld.h
     src/core/Box3DWorld.cpp
     src/core/Box3DAffectorMath.h
@@ -73,6 +74,9 @@ target_link_libraries(b3dop_core_joints PRIVATE b3dop_core)
 
 add_executable(b3dop_core_sidefx tests/core_sidefx.cpp)
 target_link_libraries(b3dop_core_sidefx PRIVATE b3dop_core)
+
+add_executable(b3dop_core_rbdobject tests/core_rbdobject.cpp)
+target_link_libraries(b3dop_core_rbdobject PRIVATE b3dop_core)
 
 add_executable(b3dop_core_threads tests/core_threads.cpp)
 target_link_libraries(b3dop_core_threads PRIVATE b3dop_core)

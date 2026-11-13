@@ -14,9 +14,6 @@
 #include <SIM/SIM_GeometryCopy.h>
 #include <SIM/SIM_Object.h>
 #include <SIM/SIM_ObjectArray.h>
-#include <SIM/SIM_Options.h>
-#include <SIM/SIM_OptionsUser.h>
-#include <SIM/SIM_Query.h>
 #include <SIM/SIM_Relationship.h>
 #include <SIM/SIM_RelationshipArray.h>
 #include <UT/UT_Quaternion.h>
@@ -97,47 +94,31 @@ writableNetworkGeometry(SIM_Object &obj, const NetworkSource &src)
 }
 
 // A SideFX constraint data's options (b3dop::sideFXParams), over Houdini's defaults. Their classes
-// are not in the HDK, but they are SIM_OptionsUser data; failing that, the generic query (the
-// one dopfield() uses) gives the scalar options.
+// are not in the HDK: read by name (box3dDataOption).
 b3dop::SideFXSettings
 readSideFXSettings(const SIM_Data &data, b3dop::SideFXType type)
 {
     using b3dop::SideFXParam;
     b3dop::SideFXSettings s = b3dop::defaultSideFXSettings(type);
-    const SIM_OptionsUser *user = dynamic_cast<const SIM_OptionsUser *>(&data);
     for (const SideFXParam &p : b3dop::sideFXParams())
     {
         if (!p.usedBy(type))
             continue;
-        if (user)
+        if (p.kind == SideFXParam::Vec3)
         {
-            const SIM_Options &opts = user->getOptions();
-            if (p.kind == SideFXParam::Vec3)
-            {
-                UT_Vector3D v;
-                if (opts.importOption(p.name, v))
-                    for (int k = 0; k < 3; ++k)
-                        (s.*p.v)[k] = float(v(k));
-                continue;
-            }
-            fpreal64 v = 0.0;
-            if (!opts.importOption(p.name, v))
-                continue;
-            if (p.kind == SideFXParam::Float)
-                s.*p.f = float(v);
-            else
-                s.*p.i = int(v);
+            UT_Vector3D v;
+            if (box3dDataOption(data, p.name, v))
+                for (int k = 0; k < 3; ++k)
+                    (s.*p.v)[k] = float(v(k));
+            continue;
         }
-        else if (p.kind != SideFXParam::Vec3)
-        {
-            fpreal v = 0.0;
-            if (!data.getQueryObject().getFieldFloat("Options", 0, p.name, v))
-                continue;
-            if (p.kind == SideFXParam::Float)
-                s.*p.f = float(v);
-            else
-                s.*p.i = int(v);
-        }
+        fpreal64 v = 0.0;
+        if (!box3dDataOption(data, p.name, v))
+            continue;
+        if (p.kind == SideFXParam::Float)
+            s.*p.f = float(v);
+        else
+            s.*p.i = int(v);
     }
     return s;
 }

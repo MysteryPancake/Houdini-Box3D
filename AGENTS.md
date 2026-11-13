@@ -56,6 +56,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DShapes.h       Header-only: shape math, packed-prim matrices, hashing
     Box3DJoints.h       Header-only: joint types, JointSettings, the joint parameter table
     Box3DSideFX.h/.cpp  SideFX's Glue / Hard / Spring / Bullet Soft / Cone Twist data -> Box3D joints (mapping, frame offsets)
+    Box3DRbdObject.h    Header-only: an RBD Object's own mass / friction / bounce / Bullet Data shape -> whole-object settings
     Box3DWorld.h/.cpp   Pimpl wrapper over one b3World. The ONLY file that includes Box3D headers; defines TaskRunner
     Box3DAffectorMath.h Header-only: affector (Static Object) transform math
     Box3DDebug.h        B3D_LOG / counters, compiled out unless BOX3DDOP_DEBUG (args still type-checked, never evaluated)
@@ -75,7 +76,8 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DForces.cpp        Force DOPs and point force / torque
     Box3DJointSync.*    Constraint networks -> Box3D joints: read, resolve names, create / update / remove, break, feedback
     Box3DAffectors.*    Affector objects (Static Object DOP etc.) -> static colliders
-    Box3DHoudiniUtil.h  Shared Houdini helpers: writable geometry, object by id, 4x4 to array, Euler to quaternion
+    Box3DHoudiniUtil.h  Shared Houdini helpers: writable geometry, object by id, 4x4 to array, Euler to quaternion,
+                        options of SIM data by name (box3dDataOption)
     Box3DHoudiniTasks.h TaskRunner on Houdini's TBB pool (UT_TaskGroup). Only SIM_Box3DWorld.cpp includes it
 tests/
   KeyedWorld.h        Test-only Box3DWorld subclass: bodies by caller-chosen id, over the handle API
@@ -85,6 +87,7 @@ tests/
   core_taskrunner.cpp Host-supplied TaskRunner shared by 40+ worlds: no extra threads, same results as 1 worker
   core_joints.cpp     Every joint type, world anchors, live updates, breaking, feedback, the parameter table
   core_sidefx.cpp     SideFX constraint data: option table, mapping per type / constraint_type, frame offsets, behaviour
+  core_rbdobject.cpp  RBD Object settings without Box3D Data: defaults, invalid values, Bullet Data shapes, density -> mass
   box3d_test.hiplc    Houdini scene for manual testing (tests/backup/ holds older saves)
 ```
 
@@ -622,8 +625,25 @@ its state in the object's `Position` data instead of point attributes.
   one hull per primitive `name`; unkeyed hulls (by content); `none` or no points: shapeless static. The shape signature
   (`wholeObjectShapeSig`: geometry identity, P / primitive list data ids, counts, own transform, pivot, shape settings)
   changing rebuilds the shapes on the same body.
-* Settings: Box3D Data only (`readDynamicProps` with unbound point attributes); changes go through `applyPropChanges`.
-  Body type is the node's (no `active` / `animated`). Not read: RBD State's own mass / density / inertia, Bullet Data.
+* Settings (`readDynamicProps` with unbound point attributes; changes go through `applyPropChanges`, read every step):
+  Box3D Data whenever it is attached. Without it, the RBD Object's own data (`readRbdObjectSettings`, then
+  `b3dop::rbdObjectSetup` over Box3D Data's defaults; option names from a Houdini 22.0 probe, read by name with
+  `box3dDataOption` since none of the classes is in the HDK):
+  * RBD State (`Position`, `RBD_State`): `computemass`, `density`, `mass` (the parameter, not a computed mass: Box3D
+    computes density x volume from its shapes as for points), `inertialtensorstiffness` (the inertia scale). Its
+    custom inertia tensor (`computeinertialtensortype`, `itensorlocalinv`) and glue options are not read. `p` /
+    `computecom` is the pivot, already read through `getPivot`.
+  * `PhysicalParms` (`SIM_PhysicalParms`): `friction`, `bounce`. `dynamicfriction`, `bounceforward`, `temperature`
+    have no Box3D equivalent.
+  * `Geometry/BulletData` (`SIM_BulletData`): `bullet_georep` (unknown names such as cylinder / plane: box),
+    `bullet_groupconnected`, `bullet_autofit`; with AutoFit off a box / sphere / capsule is built from `bullet_primS`
+    (half extents, as for points), `bullet_primT` (offset from the pivot), `bullet_primR` (Euler XYZ degrees),
+    `bullet_radius`, `bullet_length` instead of being fitted (`wholeObjectShapes`; the spec is in the shape signature).
+    Padding / shrink and Bullet's sleep options stay unread (see "Not supported on purpose"); `bullet_add_impact` is
+    not read either, so Impacts stay opt-in through Box3D Data.
+  Values Box3D cannot use (non-positive mass / density / inertia, negative friction / bounce, non-finite) keep Box3D
+  Data's defaults. Houdini's RBD Object defaults differ from Box3D Data's: density 1000 with Compute Mass (a 1 m box is
+  1000 kg), friction 1, bounce 0.5, convex hull. Body type is the node's (no `active` / `animated`).
 * Mirror: one entry, key `makeBodyKey(objectId, kWholeObjectId = -1)`, `wholeObject = true`, `pivot`, no point
   (`pointOff` -1, `pointIndex` -1 in Impacts). The object scans every step (one body: no fingerprint).
   `Box3DObjectSync::wholeObject` makes aging and point `force` / `torque` skip the object; Force DOPs still apply.
@@ -771,8 +791,9 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
 * Found by data type among the same subdata as our nodes (`networkKinds`): `SIM_ConRelGlue`, `SIM_ConRelHard`,
   `SIM_ConRelSpring`, `SIM_ConRelBulletSoft`, `SIM_ConRelConeTwist` (names from a Houdini 22.0 probe; their default
   Data Names are Glue, Hard, ConRelSpring, Soft, ConeTwist). Only Hard and Spring have HDK headers, so all five are read
-  the same way: `dynamic_cast` to `SIM_OptionsUser` (polymorphic: virtual destructor) and `importOption` per option in
-  `sideFXParams()`, else `SIM_Query::getFieldFloat("Options", 0, name)` (scalars only). Option names are the node
+  the same way, by name (`box3dDataOption` in `Box3DHoudiniUtil.h`: `dynamic_cast` to `SIM_OptionsUser`, polymorphic
+  through its virtual destructor, and `importOption`, else `SIM_Query::getFieldFloat("Options", 0, name)`, scalars
+  only), per option in `sideFXParams()`. Option names are the node
   parameter names, from the same probe. `Box3DJointKind` holds the SideFX type and options instead of a joint type.
 * Per primitive: matching primitive attributes modify the options (floats multiply, ints / vectors replace; our
   `jointParams` overrides are not applied), `constraint_type` is read (missing or unknown: all), then `mapSideFX`
@@ -818,6 +839,7 @@ Built in both configurations (`-DBOX3DDOP_CORE_ONLY=ON` builds only these):
 | `b3dop_core_physics` | Handle API (and the test-side `KeyedWorld`), shape mapping, explicit primitives, mass, body types, resting heights, hulls (limits, caching, instancing), packed matrix math, `sanitizeQuat` / `storedPosition`, setters on existing bodies (material, damping, gravity, sleep, density, enable, shape replacement), live tuning, motion locks (world axes, live changes), fast rotation (the cap, live toggle), CCD threshold (sweep vs tunnel, live, invalid values), collision filtering (bits, positive / negative groups, re-filtering), contacts, mass centring / inertia scaling, sleep threshold, kinematic targets, external forces (force / torque per step, summing, non-finite input, static / kinematic / sleeping bodies, gravity as a force), contact recycling (world distance live, per-body flag at creation and on existing bodies, velocity kept, sleepers not woken) |
 | `b3dop_core_joints` | Every joint type (weld holds, distance keeps length, revolute motor + live speed change, prismatic limit along a rotated frame, motor joint, wheel spin, filter), world anchors, refused joints, clamping (no Box3D asserts), breaking events, frames on moved bodies, live frames (a world rebuilt from `jointWorldFrames` matches the continued one), local frames (a joint remade from `jointLocalFrames` at x = 12000 is bit for bit the same), Box3D defaults, the parameter table, feedback names never equal setting names |
 | `b3dop_core_sidefx` | SideFX data: data types and option table, `constraint_type` parsing, mapping of every type and mode (glue threshold, Spring's Hz conversion, cone twist axes / smaller cone), frame offsets (hold, separation, round trip), and in a world: glue holds the centroid offset and breaks, Soft all keeps its rest length, Soft / Spring sag as their spring constants predict, Hard position is a rigid rod, cone twist stops at the smaller limit |
+| `b3dop_core_rbdobject` | RBD Object settings without Box3D Data (`rbdObjectSetup`): nothing read = Box3D Data's defaults, Houdini's RBD Object defaults, unusable values ignored, Bullet Data shapes (unknown names, none, compound, connected sets, AutoFit off box / sphere / capsule), density 1000 on a 1 m box = 1000 kg |
 | `b3dop_core_taskrunner [workers]` | Worlds on one shared host pool: tasks run, results match 1 worker |
 | `b3dop_core_threads [workers] [side] [steps]` | 1 vs N workers: speedup, fails if positions differ by > 1e-4 |
 
@@ -914,8 +936,13 @@ remove an item once it has been checked, and record anything new here rather tha
   `Position` from a solver needs anything more (Bullet and the RBD solver do it).
 * The viewport and DOP Import SOP follow the written Position data (through the geometry's `positionpath`).
 * Use Object Transform: a scaled or sheared geometry transform is baked into the shapes.
-* Mass: without Box3D Data an RBD Object gets Box3D Data's default mass (1), not its RBD State mass / density / inertia.
-  Default shape is Box3D Data's (Box), where Bullet would use its own Bullet Data settings.
+* Without Box3D Data an RBD Object now uses its own RBD State / PhysicalParms / BulletData (names from a Houdini 22.0
+  probe). Not compiled against the HDK: `getConstNamedSubData("PhysicalParms")` on the object and `"BulletData"` on
+  its `SIM_Geometry`, `importOption` for strings (`bullet_georep`) and bool options read as numbers,
+  `SIM_Query::getFieldString`. Check in Houdini: a default RBD Object weighs density x volume, bounces (0.5), and
+  collides as a convex hull. Whether `bullet_primT` is relative to the pivot (taken so, as for points) and
+  `bullet_primS` a half size for whole objects too. Scenes with RBD Objects and no Box3D Data simulate differently
+  from before (mass 1, friction 0.6, bounce 0, box); attaching Box3D Data gives the old behaviour.
 * Float noise: the mirror takes a read-back after each write; a constant "edited" count (teleports) every step would
   mean the read-back does not match what the next sync reads.
 * Impacts record point -1 for whole objects.
@@ -959,7 +986,8 @@ The one list of what is still to do. Keep it here only (no TODO comments in the 
   motors; Spring's Hz conversion following mass changes.
 * Box3D Weld nodes between anchors at different points (Connect Adjacent Pieces puts each end at its piece's centroid)
   pull the pieces together; `holdSeparation` (see "SideFX constraint data") could be offered as a node option.
-* Whole-object bodies: read RBD State's mass / density / inertia (and Bullet Data) as fallbacks under Box3D Data.
+* Whole-object bodies without Box3D Data: RBD Object's Create Active Object (`SolverParms/ActiveValue`) for the body
+  type, and RBD State's custom inertia tensor.
 * Force DOPs: only `getForce` at the centre of mass (no `getForceOnSphere` / area variants, no per-substep re-evaluation).
 * Sticky collisions; contact / sensor events beyond Impacts.
 

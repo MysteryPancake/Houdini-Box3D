@@ -3,6 +3,9 @@
 // One body per DOP object (RBD Object, RBD Point Object, ...): its pose in the object's
 // Position data. Sync and write-back (AGENTS.md, "Whole-object bodies").
 #include "Box3DSolverInternal.h"
+#include "core/Box3DRbdObject.h"
+
+#include <type_traits>
 
 namespace box3dsolver {
 
@@ -73,11 +76,94 @@ readWholePose(const SIM_Object &obj, double pivot[3], Box3DBodyPose &out)
     return true;
 }
 
-// What a whole object's shapes are built from: the geometry, its own transform, the pivot and the
-// Box3D Data shape settings. Equal: nothing to rebuild.
-uint64_t
-wholeObjectShapeSig(const GU_Detail *gdp, const double m[16], const double pivot[3], const b3dop::BodySettings &node)
+// The RBD Object's own settings (used without Box3D Data): mass from its RBD State (Position),
+// friction and bounce from PhysicalParms, the shape from its geometry's BulletData. Each option is
+// read if the data has it (b3dop::RbdObjectSettings names them).
+b3dop::RbdObjectSettings
+readRbdObjectSettings(const SIM_Object &obj, const SIM_Geometry &geo)
 {
+    b3dop::RbdObjectSettings r;
+    auto number = [](const SIM_Data *d, const char *name, bool &has, auto &out) {
+        fpreal64 v = 0.0;
+        if (d && box3dDataOption(*d, name, v) && std::isfinite(v))
+        {
+            has = true;
+            out = static_cast<std::remove_reference_t<decltype(out)>>(v);
+        }
+    };
+    auto toggle = [](const SIM_Data *d, const char *name, bool &has, bool &out) {
+        fpreal64 v = 0.0;
+        if (d && box3dDataOption(*d, name, v))
+        {
+            has = true;
+            out = v != 0.0;
+        }
+    };
+    auto vec = [](const SIM_Data *d, const char *name, float out[3]) {
+        UT_Vector3D v;
+        if (d && box3dDataOption(*d, name, v) && std::isfinite(v.x()) && std::isfinite(v.y()) && std::isfinite(v.z()))
+            for (int i = 0; i < 3; ++i)
+                out[i] = float(v(i));
+    };
+
+    const SIM_Data *state = obj.getConstNamedSubData(SIM_POSITION_DATANAME);
+    toggle(state, "computemass", r.hasComputeMass, r.computeMass);
+    number(state, "density", r.hasDensity, r.density);
+    number(state, "mass", r.hasMass, r.mass);
+    number(state, "inertialtensorstiffness", r.hasInertia, r.inertiaStiffness);
+
+    const SIM_Data *phys = obj.getConstNamedSubData("PhysicalParms");
+    number(phys, "friction", r.hasFriction, r.friction);
+    number(phys, "bounce", r.hasBounce, r.bounce);
+
+    const SIM_Data *bullet = geo.getConstNamedSubData("BulletData");
+    if (bullet)
+    {
+        UT_StringHolder georep;
+        if (box3dDataOption(*bullet, "bullet_georep", georep) && georep.isstring())
+        {
+            r.hasGeorep = true;
+            r.georep    = std::string(georep.c_str());
+        }
+        toggle(bullet, "bullet_autofit", r.hasAutofit, r.autofit);
+        toggle(bullet, "bullet_groupconnected", r.hasGroupConnected, r.groupConnected);
+        vec(bullet, "bullet_primS", r.primS);
+        vec(bullet, "bullet_primT", r.primT);
+        float deg[3] = { 0, 0, 0 };
+        vec(bullet, "bullet_primR", deg);
+        box3dEulerToQuat(deg, r.primRot);       // Euler XYZ degrees, as for points
+        bool unused = false;
+        number(bullet, "bullet_radius", unused, r.radius);
+        number(bullet, "bullet_length", unused, r.length);
+    }
+    return r;
+}
+
+// A whole object's shapes: the hand-set box / sphere / capsule (Bullet Data with AutoFit off), else
+// built from the geometry.
+BuiltShapes
+wholeObjectShapes(b3dop::Box3DWorld &world, const GU_Detail *gdp, const double m[16], const double pivot[3],
+                  const b3dop::WholeObjectSetup &setup)
+{
+    if (setup.explicitShape)
+    {
+        BuiltShapes out;
+        Piece pc;
+        pc.spec   = setup.spec;
+        pc.volume = b3dop::shapeVolume(pc.spec);
+        out.totalVolume = pc.volume;
+        out.pieces.push_back(pc);
+        return out;
+    }
+    return buildWholeObjectShapes(world, gdp, m, pivot, setup.node.defaultShape, setup.node.hullPerConnectedSet);
+}
+
+// What a whole object's shapes are built from: the geometry, its own transform, the pivot and the
+// shape settings (Box3D Data's, or the RBD Object's Bullet Data). Equal: nothing to rebuild.
+uint64_t
+wholeObjectShapeSig(const GU_Detail *gdp, const double m[16], const double pivot[3], const b3dop::WholeObjectSetup &setup)
+{
+    const b3dop::BodySettings &node = setup.node;
     using b3dop::mixHash;
     uint64_t h = mixHash(b3dop::kHashSeed, uint64_t(gdp->getUniqueId()));
     const GA_Attribute *P = gdp->getP();
@@ -91,13 +177,22 @@ wholeObjectShapeSig(const GU_Detail *gdp, const double m[16], const double pivot
         h = b3dop::mixDouble(h, pivot[i]);
     h = mixHash(h, uint64_t(node.defaultShape));
     h = mixHash(h, node.hullPerConnectedSet ? 1u : 2u);
+    if (setup.explicitShape)
+    {
+        const b3dop::ShapeSpec &sp = setup.spec;
+        const float f[] = { float(int(sp.type)), sp.halfExtents[0], sp.halfExtents[1], sp.halfExtents[2], sp.radius,
+                            sp.halfLength, sp.center[0], sp.center[1], sp.center[2],
+                            sp.rot[0], sp.rot[1], sp.rot[2], sp.rot[3] };
+        h = mixHash(mixHash(h, 3u), b3dop::hashFloats(f, sizeof(f) / sizeof(f[0])));
+    }
     return h ? h : 1;
 }
 
 // Sync an object that is one body (isWholeObject): its geometry gives the shapes, its Position
 // data (RBD State for an RBD Object) the pose, pivot and velocities, Box3D Data the settings
-// (there are no point attributes). Without Position data the object stays where its geometry is,
-// about the centre of its bounding box, until the write-back creates the data.
+// (there are no point attributes). Without Box3D Data the RBD Object's own mass, friction, bounce
+// and Bullet Data shape are used (readRbdObjectSettings). Without Position data the object stays
+// where its geometry is, about the centre of its bounding box, until the write-back creates the data.
 void
 syncWholeObject(Box3DSharedState &st, const SIM_Object &obj, const SIM_Geometry &geo, const GU_Detail *gdp,
                 SyncCounts &c)
@@ -105,7 +200,13 @@ syncWholeObject(Box3DSharedState &st, const SIM_Object &obj, const SIM_Geometry 
     b3dop::Box3DWorld &world = st.world;
     const int objectId = obj.getObjectId();
     const SIM_Box3DData *dataNode = SIM_DATA_GETCONST(obj, kBox3DDataName, SIM_Box3DData);
-    const b3dop::BodySettings node = dataNode ? dataNode->toBodySettings() : b3dop::BodySettings();
+    // Box3D Data wins whenever it is attached; otherwise the RBD Object's own settings.
+    b3dop::WholeObjectSetup setup;
+    if (dataNode)
+        setup.node = dataNode->toBodySettings();
+    else
+        setup = b3dop::rbdObjectSetup(readRbdObjectSettings(obj, geo));
+    const b3dop::BodySettings &node = setup.node;
 
     Box3DObjectSync &os = st.objectSync[objectId];
     os.visited     = st.syncStamp;
@@ -168,12 +269,13 @@ syncWholeObject(Box3DSharedState &st, const SIM_Object &obj, const SIM_Geometry 
     }
 
     PointAttrs none(gdp);           // build attributes left unbound: Box3D Data values only
-    const Box3DBodyProps p = readDynamicProps(node, none, GA_Offset(0));
-    const uint64_t sig = wholeObjectShapeSig(gdp, m, pivot, node);
+    Box3DBodyProps p = readDynamicProps(node, none, GA_Offset(0));
+    p.inertiaScale = setup.inertiaScale;
+    const uint64_t sig = wholeObjectShapeSig(gdp, m, pivot, setup);
 
     if (!entry)
     {
-        BuiltShapes shapes = buildWholeObjectShapes(world, gdp, m, pivot, node.defaultShape, node.hullPerConnectedSet);
+        BuiltShapes shapes = wholeObjectShapes(world, gdp, m, pivot, setup);
         auto res = st.mirror.try_emplace(key);
         entry = &res.first->second;
         entry->props       = p;
@@ -208,7 +310,7 @@ syncWholeObject(Box3DSharedState &st, const SIM_Object &obj, const SIM_Geometry 
         bool rebuilt = false;
         if (entry->shapeSig != sig)
         {
-            BuiltShapes shapes = buildWholeObjectShapes(world, gdp, m, pivot, node.defaultShape, node.hullPerConnectedSet);
+            BuiltShapes shapes = wholeObjectShapes(world, gdp, m, pivot, setup);
             world.destroyShapesByHandle(entry->handle);
             b3dop::BodySettings b = settingsFor(node, p, entry->type);
             b.density = boxDensity(p, shapes.totalVolume);
