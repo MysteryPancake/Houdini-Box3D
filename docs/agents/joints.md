@@ -28,6 +28,10 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   pointer, help). The constraint relationship nodes, the primitive attribute reader and `sameJointSettings` are all driven by
   it. `angleTypes` marks a Float that is an angle for some types only (`motor_speed`: revolute deg/s, prismatic and
   distance units/s). `Rotation` is Euler XYZ degrees in Houdini and a quaternion in the core.
+  `enabledBy` names the toggle that switches a setting on (spring, motor, limit values); `jointParamDisableWhen(p, type)`
+  turns it into the node's disable-when string, following chains (steering limits need Steering) and skipping toggles
+  the type lacks (the parallel joint's spring and the motor joint's springs have none). Only the UI uses it: a disabled
+  parameter is still read, and its primitive attribute still overrides it.
   `jointParamIndices(type)` is the table filtered to the rows a type uses (built once, table order); `sameJointSettings`
   runs for every joint every step and walks only those rows. Per-type loops over the table should use it.
 * `Box3DWorld::defaultJointSettings(type)` copies `b3Default*JointDef`, so the node's defaults are Box3D's.

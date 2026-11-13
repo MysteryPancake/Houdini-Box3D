@@ -44,6 +44,9 @@ remove an item once it has been checked, and record anything new here rather tha
   (taken as clockwise front faces; Flip Static Mesh Winding exists in case it is the other way).
 * The `PRM_SWITCHER` tab layout (`PRM_Default(count, label)` per tab, built by `Box3DParms`) for SIM data classes:
   documented for ordinary nodes only.
+* Disable-when conditions (`PRM_Conditional`, `PRM_CONDTYPE_DISABLE`) on the joint nodes' toggles and on vector
+  parameters (`target_rotation`, `motor_velocity`): not yet seen greying out in Houdini. Space-separated `{ }` groups
+  are taken as OR (Houdini's documented disable-when syntax).
 * The GETSET setters' float / double overloads as listed for `SIM_OptionsUser.h`.
 * Objects in one solve call: Houdini passes several objects to one solver call only when they share the same Solver
   data and are in a mutual relationship; otherwise each object (or group) is solved in its own call, with feedback
@@ -221,7 +224,8 @@ Checked against the HDK reference: `GU_PrimPacked::isPackedPrimitive`, `getPacke
 `SIM_Relationship::getRelationshipTypeData` / `getConstRelationshipTypeData`; `SIM_ConstraintNetworkRelationship`
 (a `SIM_RelationshipData`) `getGeometry` const / non-const; `SIM_ConRel` (no pure virtuals, protected factory
 constructor); `DECLARE_CLASSNAME` / `DECLARE_DATAFACTORY` expansions (`SIM_DataUtils.h`); `UT_Matrix3D::extractScales`, `UT_QuaternionT::getRotationMatrix` /
-`updateFromRotationMatrix`; node icons as `config/Icons/DOP_<name>.svg`.
+`updateFromRotationMatrix`; node icons as `config/Icons/DOP_<name>.svg`; `PRM_Conditional(const char *, PRM_ConditionalType)`
+passed as a `PRM_Template`'s conditional pointer.
 
 ## Known gaps / TODO
 

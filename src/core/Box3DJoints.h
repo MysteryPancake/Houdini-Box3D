@@ -7,6 +7,8 @@
 #pragma once
 
 #include <array>
+#include <cstring>
+#include <string>
 #include <vector>
 
 #include "Box3DMath.h"       // kDegToRad, kRadToDeg
@@ -163,6 +165,7 @@ struct JointParam
     float (JointSettings::*q)[4] = nullptr; // Rotation
 
     unsigned    angleTypes = 0;             // Float only: types for which the value is an angle (speed)
+    const char *enabledBy  = nullptr;       // name of the toggle that switches this setting on, if any
 
     bool usedBy(JointType t) const { return (types & jointBit(t)) != 0; }
     // Degrees in Houdini, radians here, for joint type `t`.
@@ -200,6 +203,12 @@ withAngleTypes(JointParam p, unsigned angleTypes)
     return p;
 }
 inline JointParam
+enabledBy(JointParam p, const char *toggle)
+{
+    p.enabledBy = toggle;
+    return p;
+}
+inline JointParam
 jp(const char *name, const char *label, unsigned types, float (JointSettings::*m)[4], const char *help)
 {
     JointParam p; p.name = name; p.label = label; p.kind = JointParam::Rotation; p.types = types; p.q = m; p.help = help;
@@ -211,6 +220,7 @@ jp(const char *name, const char *label, unsigned types, float (JointSettings::*m
 inline const std::vector<JointParam> &
 jointParams()
 {
+    using detail::enabledBy;
     using detail::jp;
     using detail::withAngleTypes;
     using K = JointParam;
@@ -237,63 +247,63 @@ jointParams()
         // ---- weld ----
         jp("enable_linear_spring", "Linear Spring", W, &S::enableLinearSpring,
            "Off: position is held rigidly. On: a spring with Linear Stiffness."),
-        jp("linear_stiffness", "Linear Stiffness", W | M, &S::linearStiffness,
-           "Stiffness of the position spring, in Hz."),
-        jp("linear_damping_ratio", "Linear Damping Ratio", W | M, &S::linearDampingRatio,
-           "Damping of the position spring. 1 is critical damping."),
+        enabledBy(jp("linear_stiffness", "Linear Stiffness", W | M, &S::linearStiffness,
+                     "Stiffness of the position spring, in Hz."), "enable_linear_spring"),
+        enabledBy(jp("linear_damping_ratio", "Linear Damping Ratio", W | M, &S::linearDampingRatio,
+                     "Damping of the position spring. 1 is critical damping."), "enable_linear_spring"),
         jp("enable_angular_spring", "Angular Spring", W, &S::enableAngularSpring,
            "Off: rotation is held rigidly. On: a spring with Angular Stiffness."),
-        jp("angular_stiffness", "Angular Stiffness", W | M, &S::angularStiffness,
-           "Stiffness of the rotation spring, in Hz."),
-        jp("angular_damping_ratio", "Angular Damping Ratio", W | M, &S::angularDampingRatio,
-           "Damping of the rotation spring. 1 is critical damping."),
+        enabledBy(jp("angular_stiffness", "Angular Stiffness", W | M, &S::angularStiffness,
+                     "Stiffness of the rotation spring, in Hz."), "enable_angular_spring"),
+        enabledBy(jp("angular_damping_ratio", "Angular Damping Ratio", W | M, &S::angularDampingRatio,
+                     "Damping of the rotation spring. 1 is critical damping."), "enable_angular_spring"),
 
         // ---- springs shared by spherical, revolute, prismatic, distance, parallel ----
         jp("enable_spring", "Spring", Sp | R | P | D, &S::enableSpring,
            "Pull toward the target (or rest length) with a spring."),
-        jp("stiffness", "Stiffness", Sp | R | P | D | Pa, &S::stiffness, "Spring stiffness, in Hz. Higher is stiffer."),
-        jp("damping_ratio", "Damping Ratio", Sp | R | P | D | Pa, &S::dampingRatio,
-           "Spring damping. 1 is critical damping."),
+        enabledBy(jp("stiffness", "Stiffness", Sp | R | P | D | Pa, &S::stiffness, "Spring stiffness, in Hz. Higher is stiffer."), "enable_spring"),
+        enabledBy(jp("damping_ratio", "Damping Ratio", Sp | R | P | D | Pa, &S::dampingRatio,
+                     "Spring damping. 1 is critical damping."), "enable_spring"),
 
         // ---- spherical ----
-        jp("target_rotation", "Target Rotation", Sp, &S::targetRotation,
-           "Rotation the spring pulls toward, as XYZ Euler angles in degrees."),
+        enabledBy(jp("target_rotation", "Target Rotation", Sp, &S::targetRotation,
+                     "Rotation the spring pulls toward, as XYZ Euler angles in degrees."), "enable_spring"),
         jp("enable_cone_limit", "Cone Limit", Sp, &S::enableConeLimit, "Limit how far B can swing away from A's z axis."),
-        jp("cone_angle", "Cone Angle", Sp, &S::coneAngle, "Half-angle of the cone, 0 to 90 degrees.", K::Angle),
+        enabledBy(jp("cone_angle", "Cone Angle", Sp, &S::coneAngle, "Half-angle of the cone, 0 to 90 degrees.", K::Angle), "enable_cone_limit"),
         jp("enable_twist_limit", "Twist Limit", Sp, &S::enableTwistLimit, "Limit the twist about B's z axis."),
-        jp("lower_twist_angle", "Lower Twist Angle", Sp, &S::lowerTwistAngle, "Lowest twist angle allowed, in degrees.", K::Angle),
-        jp("upper_twist_angle", "Upper Twist Angle", Sp, &S::upperTwistAngle, "Highest twist angle allowed, in degrees.", K::Angle),
-        jp("motor_velocity", "Motor Velocity", Sp, &S::motorVelocity,
-           "Angular velocity the motor drives toward, in degrees per second.", K::Vec3Angle),
+        enabledBy(jp("lower_twist_angle", "Lower Twist Angle", Sp, &S::lowerTwistAngle, "Lowest twist angle allowed, in degrees.", K::Angle), "enable_twist_limit"),
+        enabledBy(jp("upper_twist_angle", "Upper Twist Angle", Sp, &S::upperTwistAngle, "Highest twist angle allowed, in degrees.", K::Angle), "enable_twist_limit"),
+        enabledBy(jp("motor_velocity", "Motor Velocity", Sp, &S::motorVelocity,
+                     "Angular velocity the motor drives toward, in degrees per second.", K::Vec3Angle), "enable_motor"),
 
         // ---- motors shared ----
         jp("enable_motor", "Motor", Sp | R | P | D, &S::enableMotor, "Drive the joint at a speed with a capped effort."),
-        jp("max_motor_torque", "Max Motor Torque", Sp | R, &S::maxMotorTorque, "Largest torque the motor may use."),
-        jp("max_motor_force", "Max Motor Force", P | D, &S::maxMotorForce, "Largest force the motor may use."),
+        enabledBy(jp("max_motor_torque", "Max Motor Torque", Sp | R, &S::maxMotorTorque, "Largest torque the motor may use."), "enable_motor"),
+        enabledBy(jp("max_motor_force", "Max Motor Force", P | D, &S::maxMotorForce, "Largest force the motor may use."), "enable_motor"),
 
         // ---- revolute ----
-        jp("target_angle", "Target Angle", R, &S::targetAngle,
-           "Angle the spring pulls toward, -180 to 180 degrees.", K::Angle),
+        enabledBy(jp("target_angle", "Target Angle", R, &S::targetAngle,
+                     "Angle the spring pulls toward, -180 to 180 degrees.", K::Angle), "enable_spring"),
         jp("enable_limit", "Limit", R | P | D, &S::enableLimit, "Keep the joint between its lower and upper limits."),
-        jp("lower_angle", "Lower Angle", R, &S::lowerAngle, "Lowest angle allowed, in degrees.", K::Angle),
-        jp("upper_angle", "Upper Angle", R, &S::upperAngle, "Highest angle allowed, in degrees.", K::Angle),
-        withAngleTypes(jp("motor_speed", "Motor Speed", R | P | D, &S::motorSpeed,
-                          "Revolute: degrees per second. Prismatic and distance: units per second."), R),
+        enabledBy(jp("lower_angle", "Lower Angle", R, &S::lowerAngle, "Lowest angle allowed, in degrees.", K::Angle), "enable_limit"),
+        enabledBy(jp("upper_angle", "Upper Angle", R, &S::upperAngle, "Highest angle allowed, in degrees.", K::Angle), "enable_limit"),
+        enabledBy(withAngleTypes(jp("motor_speed", "Motor Speed", R | P | D, &S::motorSpeed,
+                                    "Revolute: degrees per second. Prismatic and distance: units per second."), R), "enable_motor"),
 
         // ---- prismatic ----
-        jp("target_translation", "Target Translation", P, &S::targetTranslation, "Slide position the spring pulls toward."),
-        jp("lower_translation", "Lower Translation", P, &S::lowerTranslation, "Lower slide limit."),
-        jp("upper_translation", "Upper Translation", P, &S::upperTranslation, "Upper slide limit."),
+        enabledBy(jp("target_translation", "Target Translation", P, &S::targetTranslation, "Slide position the spring pulls toward."), "enable_spring"),
+        enabledBy(jp("lower_translation", "Lower Translation", P, &S::lowerTranslation, "Lower slide limit."), "enable_limit"),
+        enabledBy(jp("upper_translation", "Upper Translation", P, &S::upperTranslation, "Upper slide limit."), "enable_limit"),
 
         // ---- distance ----
         jp("restlength", "Rest Length", D, &S::restLength,
            "Length the joint keeps. Negative uses the anchors' distance when the joint is made."),
-        jp("min_length", "Min Length", D, &S::minLength, "Shortest allowed length (with Limit on)."),
-        jp("max_length", "Max Length", D, &S::maxLength, "Longest allowed length (with Limit on). Negative is unlimited."),
-        jp("max_tension_force", "Max Tension Force", D, &S::maxTensionForce,
-           "Largest pulling force the spring may use. Negative is unlimited."),
-        jp("max_compression_force", "Max Compression Force", D, &S::maxCompressionForce,
-           "Largest pushing force the spring may use. Negative is unlimited."),
+        enabledBy(jp("min_length", "Min Length", D, &S::minLength, "Shortest allowed length (with Limit on)."), "enable_limit"),
+        enabledBy(jp("max_length", "Max Length", D, &S::maxLength, "Longest allowed length (with Limit on). Negative is unlimited."), "enable_limit"),
+        enabledBy(jp("max_tension_force", "Max Tension Force", D, &S::maxTensionForce,
+                     "Largest pulling force the spring may use. Negative is unlimited."), "enable_spring"),
+        enabledBy(jp("max_compression_force", "Max Compression Force", D, &S::maxCompressionForce,
+                     "Largest pushing force the spring may use. Negative is unlimited."), "enable_spring"),
 
         // ---- motor joint ----
         jp("linear_velocity", "Linear Velocity", M, &S::linearVelocity, "Velocity of B relative to A to drive toward."),
@@ -311,23 +321,23 @@ jointParams()
         // ---- wheel ----
         jp("enable_suspension_spring", "Suspension Spring", Wh, &S::enableSuspensionSpring,
            "Spring along frame A's x axis."),
-        jp("suspension_stiffness", "Suspension Stiffness", Wh, &S::suspensionStiffness, "Stiffness of the suspension spring, in Hz."),
-        jp("suspension_damping_ratio", "Suspension Damping Ratio", Wh, &S::suspensionDampingRatio,
-           "Damping of the suspension spring. 1 is critical damping."),
+        enabledBy(jp("suspension_stiffness", "Suspension Stiffness", Wh, &S::suspensionStiffness, "Stiffness of the suspension spring, in Hz."), "enable_suspension_spring"),
+        enabledBy(jp("suspension_damping_ratio", "Suspension Damping Ratio", Wh, &S::suspensionDampingRatio,
+                     "Damping of the suspension spring. 1 is critical damping."), "enable_suspension_spring"),
         jp("enable_suspension_limit", "Suspension Limit", Wh, &S::enableSuspensionLimit, "Limit the suspension travel."),
-        jp("lower_suspension_limit", "Lower Suspension Limit", Wh, &S::lowerSuspensionLimit, "Lowest suspension position allowed."),
-        jp("upper_suspension_limit", "Upper Suspension Limit", Wh, &S::upperSuspensionLimit, "Highest suspension position allowed."),
+        enabledBy(jp("lower_suspension_limit", "Lower Suspension Limit", Wh, &S::lowerSuspensionLimit, "Lowest suspension position allowed."), "enable_suspension_limit"),
+        enabledBy(jp("upper_suspension_limit", "Upper Suspension Limit", Wh, &S::upperSuspensionLimit, "Highest suspension position allowed."), "enable_suspension_limit"),
         jp("enable_spin_motor", "Spin Motor", Wh, &S::enableSpinMotor, "Drive the wheel's spin about frame B's z axis."),
-        jp("max_spin_torque", "Max Spin Torque", Wh, &S::maxSpinTorque, "Largest torque the spin motor may use."),
-        jp("spin_speed", "Spin Speed", Wh, &S::spinSpeed, "Speed the spin motor drives toward, in degrees per second.", K::Angle),
+        enabledBy(jp("max_spin_torque", "Max Spin Torque", Wh, &S::maxSpinTorque, "Largest torque the spin motor may use."), "enable_spin_motor"),
+        enabledBy(jp("spin_speed", "Spin Speed", Wh, &S::spinSpeed, "Speed the spin motor drives toward, in degrees per second.", K::Angle), "enable_spin_motor"),
         jp("enable_steering", "Steering", Wh, &S::enableSteering, "Let the wheel steer about frame A's x axis."),
-        jp("steering_stiffness", "Steering Stiffness", Wh, &S::steeringStiffness, "Stiffness of the steering spring, in Hz."),
-        jp("steering_damping_ratio", "Steering Damping Ratio", Wh, &S::steeringDampingRatio, "Damping of the steering spring. 1 is critical damping."),
-        jp("target_steering_angle", "Target Steering Angle", Wh, &S::targetSteeringAngle, "Angle the steering spring pulls toward, in degrees.", K::Angle),
-        jp("max_steering_torque", "Max Steering Torque", Wh, &S::maxSteeringTorque, "Largest torque the steering spring may use."),
-        jp("enable_steering_limit", "Steering Limit", Wh, &S::enableSteeringLimit, "Limit the steering angle."),
-        jp("lower_steering_limit", "Lower Steering Limit", Wh, &S::lowerSteeringLimit, "Lowest steering angle allowed, in degrees.", K::Angle),
-        jp("upper_steering_limit", "Upper Steering Limit", Wh, &S::upperSteeringLimit, "Highest steering angle allowed, in degrees.", K::Angle),
+        enabledBy(jp("steering_stiffness", "Steering Stiffness", Wh, &S::steeringStiffness, "Stiffness of the steering spring, in Hz."), "enable_steering"),
+        enabledBy(jp("steering_damping_ratio", "Steering Damping Ratio", Wh, &S::steeringDampingRatio, "Damping of the steering spring. 1 is critical damping."), "enable_steering"),
+        enabledBy(jp("target_steering_angle", "Target Steering Angle", Wh, &S::targetSteeringAngle, "Angle the steering spring pulls toward, in degrees.", K::Angle), "enable_steering"),
+        enabledBy(jp("max_steering_torque", "Max Steering Torque", Wh, &S::maxSteeringTorque, "Largest torque the steering spring may use."), "enable_steering"),
+        enabledBy(jp("enable_steering_limit", "Steering Limit", Wh, &S::enableSteeringLimit, "Limit the steering angle."), "enable_steering"),
+        enabledBy(jp("lower_steering_limit", "Lower Steering Limit", Wh, &S::lowerSteeringLimit, "Lowest steering angle allowed, in degrees.", K::Angle), "enable_steering_limit"),
+        enabledBy(jp("upper_steering_limit", "Upper Steering Limit", Wh, &S::upperSteeringLimit, "Highest steering angle allowed, in degrees.", K::Angle), "enable_steering_limit"),
     };
     return kParams;
 }
@@ -381,6 +391,36 @@ sameJointSettings(JointType t, const JointSettings &a, const JointSettings &b)
         }
     }
     return true;
+}
+
+// The setting named `name` in jointParams(), or nullptr.
+inline const JointParam *
+findJointParam(const char *name)
+{
+    for (const JointParam &p : jointParams())
+        if (std::strcmp(p.name, name) == 0)
+            return &p;
+    return nullptr;
+}
+
+// When setting `p` has no effect on joint type `t` because a toggle is off, as a Houdini
+// disable-when string ("{ a == 0 } { b == 0 }": disabled if any group holds). Follows the chain
+// of enabling toggles (Steering Limit needs Steering) and skips toggles type `t` does not have
+// (the parallel joint's spring and the motor joint's springs are always on). Empty: never disabled.
+inline std::string
+jointParamDisableWhen(const JointParam &p, JointType t)
+{
+    std::string cond;
+    for (const JointParam *q = &p; q && q->enabledBy; )
+    {
+        const JointParam *toggle = findJointParam(q->enabledBy);
+        if (!toggle || !toggle->usedBy(t))
+            break;
+        cond += cond.empty() ? "" : " ";
+        cond += std::string("{ ") + toggle->name + " == 0 }";
+        q = toggle;
+    }
+    return cond;
 }
 
 // Houdini side of a setting: how many values it has (1, or 3 for vectors and rotations).

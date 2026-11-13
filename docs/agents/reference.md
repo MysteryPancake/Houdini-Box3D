@@ -12,7 +12,8 @@ Solver (read every step; only the thread count rebuilds the world): `gravity`, `
 (`WorldSettings`' default is the same constant), `enablesleep`, `timescale`, `enableaging`, and Box3D's tuning with
 Box3D's defaults: `contactstiffness`, `contactdamping`, `contactpushspeed`, `bouncethreshold`,
 `contactrecycledistance`, `maxlinearspeed`, `enablecontinuous`. Force DOPs: `useforces`, `forceswake` (disabled while
-`useforces` is off).
+`useforces` is off). Box3D Data: `startasleep` and `sleepthreshold` are disabled while `enablesleep` is off,
+`mass` / `density` by `computemass`; joint nodes: see `enabledBy` in [joints.md](joints.md).
 
 Box3D Data (per object): `defaultshape` (menu order: box, sphere, convex hull, concave, capsule, none; the stored value
 is the menu index), `autofit`, `hullperconnected`, `bodytype` (static, kinematic, dynamic), `computemass`, `mass`,

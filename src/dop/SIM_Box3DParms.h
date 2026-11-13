@@ -59,9 +59,9 @@ public:
 
     // Three floats (PRM_XYZ_J lays them out as x / y / z).
     Box3DParms &vector(const char *name, const char *label, std::array<double, 3> def, const char *help,
-                       PRM_Type type = PRM_FLT_J)
+                       PRM_Type type = PRM_FLT_J, const char *disableWhen = nullptr)
     {
-        return add(type, name, label, { def[0], def[1], def[2] }, 3, nullptr, nullptr, help, nullptr);
+        return add(type, name, label, { def[0], def[1], def[2] }, 3, nullptr, nullptr, help, disableWhen);
     }
 
     // A menu whose tokens are "0", "1", ... in the order of `items` (an int option).
@@ -121,10 +121,13 @@ private:
         size_t i = 0;
         for (double v : defs)
             d[i++] = PRM_Default(v);
+        // disableWhen: a Houdini disable-when string ("{ toggle == 0 }"), copied so callers can
+        // pass a temporary. Null or empty: always enabled.
         PRM_Conditional *cond = nullptr;
-        if (disableWhen)
+        if (disableWhen && *disableWhen)
         {
-            myConditions.emplace_back(disableWhen, PRM_CONDTYPE_DISABLE);
+            myStrings.emplace_back(disableWhen);
+            myConditions.emplace_back(myStrings.back().c_str(), PRM_CONDTYPE_DISABLE);
             cond = &myConditions.back();
         }
         myParms.push_back(PRM_Template(type, size, &myNames.back(), d.data(), menu, r, 0, 0, 1, help, cond));

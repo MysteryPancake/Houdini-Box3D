@@ -69,6 +69,7 @@ SIM_Box3DConRel::describe(b3dop::JointType t, const UT_StringHolder &classname)
 
     // Common settings first (jointParams() lists them first), then the type's own, each named
     // like the primitive attribute that modifies it. Defaults are Box3D's, in Houdini units.
+    // Settings a toggle switches on (springs, motors, limits) are disabled while it is off.
     const b3dop::JointSettings d = b3dop::Box3DWorld::defaultJointSettings(t);
     for (const JointParam &p : b3dop::jointParams())
     {
@@ -76,12 +77,13 @@ SIM_Box3DConRel::describe(b3dop::JointType t, const UT_StringHolder &classname)
             continue;
         float v[3];
         b3dop::getJointParam(d, p, t, v);
+        const std::string disableWhen = b3dop::jointParamDisableWhen(p, t);
         if (p.kind == JointParam::Toggle)
-            st.parms.toggle(p.name, p.label, v[0] != 0.0f, p.help);
+            st.parms.toggle(p.name, p.label, v[0] != 0.0f, p.help, disableWhen.c_str());
         else if (b3dop::jointParamSize(p) == 1)
-            st.parms.number(p.name, p.label, v[0], p.help);
+            st.parms.number(p.name, p.label, v[0], p.help, disableWhen.c_str());
         else
-            st.parms.vector(p.name, p.label, { v[0], v[1], v[2] }, p.help);
+            st.parms.vector(p.name, p.label, { v[0], v[1], v[2] }, p.help, PRM_FLT_J, disableWhen.c_str());
     }
 
     const std::string typeName = b3dop::jointTypeName(t);

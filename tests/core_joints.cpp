@@ -82,6 +82,21 @@ int main()
             CHECK(jointParamIndices(JointType(t)) == expect && !expect.empty());
         }
         CHECK(jointParamIndices(JointType(-1)).empty() && jointParamIndices(JointType(kJointTypeCount)).empty());
+        // Enabling toggles: each names a toggle in the table, and the disable string follows the chain
+        // and skips toggles the type does not have.
+        for (const JointParam &p : jointParams())
+            if (p.enabledBy)
+                CHECK(findJointParam(p.enabledBy) && findJointParam(p.enabledBy)->kind == JointParam::Toggle);
+        auto disableWhen = [](const char *name, JointType t) { return jointParamDisableWhen(*findJointParam(name), t); };
+        CHECK(disableWhen("stiffness", JointType::Revolute) == "{ enable_spring == 0 }");
+        CHECK(disableWhen("stiffness", JointType::Parallel).empty());
+        CHECK(disableWhen("linear_stiffness", JointType::Weld) == "{ enable_linear_spring == 0 }");
+        CHECK(disableWhen("linear_stiffness", JointType::Motor).empty());
+        CHECK(disableWhen("motor_speed", JointType::Distance) == "{ enable_motor == 0 }");
+        CHECK(disableWhen("lower_steering_limit", JointType::Wheel)
+              == "{ enable_steering_limit == 0 } { enable_steering == 0 }");
+        CHECK(disableWhen("enable_spring", JointType::Revolute).empty());
+        CHECK(disableWhen("restlength", JointType::Distance).empty());
         // Box3D's defaults, in our terms.
         const JointSettings wheel = Box3DWorld::defaultJointSettings(JointType::Wheel);
         CHECK(wheel.enableSuspensionSpring && wheel.suspensionStiffness == 1.0f);

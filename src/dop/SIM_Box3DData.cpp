@@ -63,10 +63,12 @@ SIM_Box3DData::getDescription()
         .toggle("enablesleep", "Allow Sleeping", true,
                 "Let resting bodies stop simulating until touched. Needs the solver's Allow Sleeping. Overridden by the enablesleep attribute.")
         .toggle("startasleep", "Start Asleep", false,
-                "Bodies begin asleep until touched. Needs Allow Sleeping. Overridden by the awake attribute.")
+                "Bodies begin asleep until touched. Needs Allow Sleeping. Overridden by the awake attribute.",
+                "{ enablesleep == 0 }")
         // Box3D: one threshold, fixed half second to sleep.
         .number("sleepthreshold", "Sleep Threshold", 0.05, R{ 0, 1 },
-                "A body falls asleep once its speed stays below this for half a second. Overridden by the sleepthreshold attribute.")
+                "A body falls asleep once its speed stays below this for half a second. Overridden by the sleepthreshold attribute.",
+                "{ enablesleep == 0 }")
         .number("ccdthreshold", "CCD Threshold", 0.5, R{ 0, 1 },
                 "Move distance per step, as a fraction of the body's thinnest size, above which continuous collision kicks in. "
                 "Lower stops more tunnelling but costs more. Overridden by the ccdthreshold attribute.")
