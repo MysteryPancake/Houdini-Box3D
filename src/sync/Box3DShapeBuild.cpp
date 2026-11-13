@@ -364,8 +364,8 @@ bool pieceFromPoints(b3dop::Box3DWorld &world, uint64_t key,
 
 // A point's shapes (docs/agents/bodies.md, "Pieces and packed geometry"):
 //  box / sphere / capsule: fitted to the packed geometry with autofit, else
-//  pscale * scale
-//                          plus the bullet_prim* / radius / length overrides
+//  pscale * scale; with autofit off, plus the bullet_prim* / radius / length
+//  overrides
 //  convex:  one hull of the packed geometry (hullPerConnected: one per
 //  connected set) concave: one hull per `name` piece
 // Convex / concave without packed geometry fall back to a box.
@@ -485,7 +485,10 @@ BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
     Piece pc;
     pc.spec =
         makeShapeSpec(wantGeometry ? ShapeType::Box : type, pscale, scale);
-    if (!wantGeometry)
+    // The bullet_prim* sizes only with autofit off (Bullet's meaning). RBD
+    // Packed Object puts default bullet_primS / bullet_radius on every point,
+    // so applying them with autofit on would override pscale on plain points.
+    if (!wantGeometry && !autofit)
       applyPrimOverrides(pc.spec, ov);
     pc.volume = shapeVolume(pc.spec);
     add(pc);

@@ -49,6 +49,18 @@ Release/
 Thumbs.db
 desktop.ini
 
+# --- Python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Houdini checks (tests/houdini): each test's saved scene ----------------
+tests/houdini/out/
+
 # --- Houdini ---------------------------------------------------------------
 *.hip.bak
 backup/

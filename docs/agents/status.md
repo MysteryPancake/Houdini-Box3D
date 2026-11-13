@@ -8,40 +8,24 @@ The one list of everything not yet tested in Houdini or confirmed against SideFX
 remove an item once it has been checked, and record anything new here rather than in comments or other sections.
 
 **General**
-* No `SIM_*` code has automated tests or CI; `tests/box3d_test.hiplc` is a manual scene. The core tests pass.
-* The code is written without a Houdini install. Since the constraint networks, whole-object bodies and the split of
-  the solver into `sync/` files, every `SIM_*` and `sync/` file has only been compiled against minimal stand-in HDK
-  headers (plain C++ errors and cross-file symbols checked, not HDK API mistakes). `Box3DHoudiniTasks.h` was not
-  compiled against the HDK when written.
-* The `BodyProps` refactor (`BodyProps` embedded in `BodySettings`, `settingsFor` and `nodeSettingsHash` removed) was
-  compiled and tested only in the Houdini-free core (`BodyProps::operator==` incl. NaN, the core tests). The `sync/` and
-  `SIM_Box3DData` edits were not compiled at all, not even against the stand-in headers: `readDynamicProps` starting
-  from `node.props`, the fingerprint's `nodeProps` / `addImpact`, the `applyPropChanges` early-out, the four body-settings
-  builds in `Box3DPointSync.cpp` / `Box3DWholeObject.cpp`, and `affectorBodySettings`. Check in Houdini: changing a Box3D
-  Data value (friction, damping, Allow Sleeping, Add Impact Data) mid-simulation still updates existing bodies, and an
-  untouched object still skips its scan.
+* No `SIM_*` code has CI; `tests/box3d_test.hiplc` is a manual scene. The core tests pass, and so do the Houdini
+  checks in `tests/houdini/run_tests.py` (Houdini 22.0.479), which settled the items they cover; they are no longer
+  listed here. The plugin builds against the real HDK (Houdini 22.0.479, MSVC, no warnings), so "compiled only
+  against stand-in headers" notes are gone too: what remains is behaviour.
+* The `BodyProps` refactor (`BodyProps` embedded in `BodySettings`): changing a Box3D Data value (friction, damping,
+  Allow Sleeping, Add Impact Data) mid-simulation still updates existing bodies, and an untouched object still skips
+  its scan.
 * `tests/box3d_test.hiplc` still uses the removed Box3D Joints node and needs rebuilding with a Constraint Network.
 
 **HDK and Houdini behaviour**
 * Data ids surviving the DOP copy between timesteps (the sync skip). If they do not, every step scans: correct, no gain.
   The debug log `sync: N of M object(s) unchanged, scan skipped` shows it working.
 * The timestamp semantics behind `canContinue`.
-* `newobjects` (left out of the step, see "Solver step" in [solver.md](solver.md)): whether the engine passes them in
-  `newobjects` only or in both arrays (the code handles both), and that an object is "new" for one timestep only. If
-  the engine kept passing an object as new until a solver handled it, it would never be solved. Check in Houdini: an
-  object created at frame 1 shows its initial state on frame 1 and first moves on frame 2; one created later (a Source
-  or Merge at frame 20) does the same; a Constraint Network created with its pieces gives no "does not exist" warning
-  after the first step; the points' initial `v` / `w` still apply on the object's first solved step.
-* Taken from the HDK samples in `DOP.zip`, not compiled against a real HDK: `SIM_Force::getForce` (public, const;
-  arguments as in `SIM_ForceOrbit::getForceSubclass`), `SIM_EachDataCallback::callbackConst`,
-  `SIM_DataFilterByType("SIM_Force")`, `SIM_FORCES_DATANAME`, `forEachConstSubData`, `SIM_DATA_CASTCONST`, and which
-  header declares `SIM_EachDataCallback` (the solver includes `SIM/SIM_DataFilter.h` and `SIM/SIM_Force.h`). The
-  force code was run against stand-in types. Whether `SIM_Force::getForce` is thread-safe (evaluation is kept serial).
+* Force DOPs (`SIM_Force::getForce`, found with `SIM_DataFilterByType("SIM_Force")`): not yet run in Houdini, and
+  whether `getForce` is thread-safe (evaluation is kept serial).
 * Houdini's impact normal convention (Impacts data).
 * Bullet's `bullet_primR` rotation order (taken as XYZ Euler degrees) and `bullet_length` meaning (taken as the
   capsule's straight section without caps).
-* Static Object affectors: the relationship type string `"SIM_RelationshipCollide"`, and Houdini's polygon winding
-  (taken as clockwise front faces; Flip Static Mesh Winding exists in case it is the other way).
 * The `PRM_SWITCHER` tab layout (`PRM_Default(count, label)` per tab, built by `Box3DParms`) for SIM data classes:
   documented for ordinary nodes only.
 * Disable-when conditions (`PRM_Conditional`, `PRM_CONDTYPE_DISABLE`) on the joint nodes' toggles and on vector
@@ -49,16 +33,6 @@ remove an item once it has been checked, and record anything new here rather tha
   are taken as OR (Houdini's documented disable-when syntax).
 * `Box3DParms::Range::hardMin = false` (`PRM_RANGE_UI` minimum) for the joint nodes' signed sliders, and tabs on the
   joint nodes (switcher from `Box3DParms`): not yet seen in Houdini.
-* The GETSET setters' float / double overloads as listed for `SIM_OptionsUser.h`.
-* Objects in one solve call: Houdini passes several objects to one solver call only when they share the same Solver
-  data and are in a mutual relationship; otherwise each object (or group) is solved in its own call, with feedback
-  loops between them. The world lives on the first object of each call (`findOrCreateWorldData`), so objects that
-  arrive in separate calls get separate worlds and neither collide nor join through constraints. Matters for several
-  packed objects and above all for whole-object bodies (each RBD Object is its own DOP object). Check that the
-  generated Box3D Solver node puts its objects in a mutual relationship (Bullet's does unless Solver Per Object is on):
-  two RBD Objects in one Box3D Solver should affect each other both ways in the Geometry Spreadsheet's Affector
-  Matrix. If not, the solver node has to create the relationship itself.
-
 **Solver step, caching and threads** (debug build: `REBUILD` lines in the log show every world rebuild)
 * `getRequestedCacheSubclass` = 1: with the DOP cache on, off, or past its memory limit, playing forward continues the
   world every frame (no rebuild per frame); scrubbing back inside the cache and playing on resumes from the cached
@@ -82,9 +56,6 @@ remove an item once it has been checked, and record anything new here rather tha
 **Points and packed geometry**
 * Point walk order is point-number order (`GA_Iterator` over `getPointRange()`): the walk position is the body id
   without `id`, and the point number written to Impacts. Check after a Sort SOP upstream, with and without `id`.
-* Plain points (no packed primitive) are sized so the shape fills a box of `pscale * scale` (sphere diameter =
-  `pscale`, `makeShapeSpec`). Compare with Bullet on the same points: if Bullet's sphere radius is `pscale`, ours are
-  half its size.
 * `collision_category` / `collision_mask` read through a 64-bit handle (`GA_ROHandleID`) from a 32-bit `i@` attribute:
   that it binds and that `-1` sign-extends to every bit (README promises it).
 * Packed points: the body's primitive is found through the point's vertex (one point per packed primitive), `P` is the
@@ -140,24 +111,16 @@ remove an item once it has been checked, and record anything new here rather tha
 * `SIMgetGeometryTransform` gives the Static Object's world transform at the right time (start or end of the step),
   including Use Object Transform and an animated object. An animated Static Object is moved, not swept: bodies are not
   pushed (the README says so), and a fast move may pass through them.
-* Ground Plane DOP and Static Objects whose geometry is packed, SDF-only or not polygons: only polygons are used, so
-  they collide with nothing and warn "no usable collision geometry". The Ground Plane is a common setup: check what its
-  geometry is (a finite grid?).
+* Static Objects whose geometry is packed, SDF-only or not polygons: only polygons are used, so they collide with
+  nothing and warn "no usable collision geometry". (The Ground Plane DOP works: a dropped box lands on it.)
 * A Static Object with Use Deforming Geometry bumps `P` every step, so its mesh is rebuilt every step (cost).
 * Objects solved by another solver (Bullet, RBD, POP) that have a collide relationship with ours become static polygon
   meshes, posed each step: one-way interaction. Check the warning count and the behaviour.
 
 **Constraint relationship nodes**
-* The nine DOPs appear (`box3d_<type>conrel`, labels "Box3D <Type> Constraint Relationship") with a Data Name
-  parameter defaulting to the type name, and their icons are picked up.
+* Their icons are picked up.
 
 **Constraint networks**
-* Where the Constraint Network DOP attaches the nodes wired into its second input. The HDK iterator's doc only says the
-  constraint data's parent is a "data_root" passed in, so `networkKinds` searches the relationship, its
-  `SIM_ConstraintNetworkRelationship` and its geometry. If every line warns "names no Box3D, Glue, Hard, ... constraint
-  relationship", look in the DOP Details pane for the real parent. (A Houdini 22.0 probe showed SideFX's data directly
-  under the `SIM_ConstraintNetworkRelationship`.)
-* That the Constraint Network accepts our own `SIM_ConRel` subclasses in that input.
 * Relationships found with `getRelationship(ingroup, i)` for both `ingroup` true and false; deduplicated by name.
 * Writing the relationship's geometry from the solver (non-const `getGeometry()`; the Bullet solver writes it back the
   same way): results must not bleed into earlier cached frames. Overwrite with SOP on re-imports every step and loses
@@ -173,9 +136,8 @@ remove an item once it has been checked, and record anything new here rather tha
   together, so pieces may snap (SideFX Glue / Hard all hold the offset instead).
 
 **SideFX constraint data**
-* Not compiled against the HDK: `dynamic_cast<const SIM_OptionsUser *>` on SideFX's data (cross-cast through RTTI
-  across Houdini's libraries), `SIM_Options::importOption` for `fpreal64` and `UT_Vector3D` (and that it converts int /
-  bool options), `SIM_Data::getDataType()`, `SIM_Query::getFieldFloat`.
+* `SIM_Options::importOption` converting SideFX's int / bool options (Glue with the Box3D Solver holds, so reading
+  SideFX's data works; the individual values are not checked).
 * Glue: Break Force = strength / timestep is our own rule. Compare breakage with Bullet on a typical fracture; Box3D's
   weld also carries weight, so a tall glued wall may break at its base where Bullet's would not.
 * Hard: `all` ignoring the rest length, and `position` with Houdini's default rest length 1 and no `restlength`
@@ -200,10 +162,9 @@ remove an item once it has been checked, and record anything new here rather tha
 * The viewport and DOP Import SOP follow the written Position data (through the geometry's `positionpath`).
 * Use Object Transform: a scaled or sheared geometry transform is baked into the shapes.
 * Without Box3D Data an RBD Object now uses its own RBD State / PhysicalParms / BulletData (names from a Houdini 22.0
-  probe). Not compiled against the HDK: `getConstNamedSubData("PhysicalParms")` on the object and `"BulletData"` on
-  its `SIM_Geometry`, `importOption` for strings (`bullet_georep`) and bool options read as numbers,
-  `SIM_Query::getFieldString`. Check in Houdini: a default RBD Object weighs density x volume, bounces (0.5), and
-  collides as a convex hull. Whether `bullet_primT` is relative to the pivot (taken so, as for points) and
+  probe). Its mass, bounce and shared world are checked; still open: that it collides as its convex hull (a tilted
+  rod falls over, so it is not an axis-aligned fitted box, but was still settling 0.32 tall after 240 frames, where
+  flat is 0.2), whether `bullet_primT` is relative to the pivot (taken so, as for points) and
   `bullet_primS` a half size for whole objects too. Scenes with RBD Objects and no Box3D Data simulate differently
   from before (mass 1, friction 0.6, bounce 0, box); attaching Box3D Data gives the old behaviour.
 * Float noise: the mirror takes a read-back after each write; a constant "edited" count (teleports) every step would

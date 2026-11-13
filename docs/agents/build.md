@@ -44,6 +44,18 @@ How the project is built, tested and packaged. Index and rules: [CLAUDE.md](../.
 
 ## Tests
 
+Houdini checks: `hython tests/houdini/run_tests.py` (`--list` for the tests); on Windows `test_houdini.bat`, which
+finds Houdini the same way as `build.bat` (its search block is copied: change both together) and passes its
+arguments on. Each builds its scene from scratch
+(no dependence on `box3d_test.hiplc`), simulates and prints PASS / FAIL / INFO; scenes are saved to
+`tests/houdini/out/`. They cover items from "Untested and unverified" in [status.md](status.md): when a check passes
+in Houdini, remove its item there. SETUP results mean the script guessed a node or parameter name wrong (the message
+lists the real ones), not a plugin failure. Each test runs in its own hython process, so a crash is reported as CRASH
+and the rest still run; the `probe_*` tests isolate the parts of the `network` scene. Not in CI (needs Houdini).
+Helpers in `tests/houdini/b3dtest.py`.
+
+Core tests:
+
 Built in both configurations (`-DBOX3DDOP_CORE_ONLY=ON` builds only these):
 
 | Target | Checks |

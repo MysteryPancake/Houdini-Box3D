@@ -150,8 +150,10 @@ equal to what its body was built with.
      `findHull` first, body-local points only on a miss, else a fitted box with a note. Convex merges all pieces
      (kind 1) unless hull-per-connected; concave is one hull per piece (kind 2).
   3. Box / sphere / capsule on a packed point with autofit: fitted to the bounds.
-  4. Nothing usable (plain point, autofit off, empty geometry): `makeShapeSpec(pscale * scale)` plus
-     `applyPrimOverrides`; convex / concave fall back to a box with a note.
+  4. Nothing usable (plain point, autofit off, empty geometry): `makeShapeSpec(pscale * scale)`, plus
+     `applyPrimOverrides` only with autofit off; convex / concave fall back to a box with a note. RBD Packed Object
+     writes default `bullet_primS` (1, 1, 1) and `bullet_radius` 1 onto every point (seen in Houdini 22.0), so
+     applying them with autofit on made every plain point a size-2 box whatever its `pscale`.
 * Notes are aggregated into one node warning per kind, on the step a shape is built.
 
 **Explicit primitives** (Bullet Data with AutoFit off; `bullet_autofit` attribute, else the node toggle, default on):

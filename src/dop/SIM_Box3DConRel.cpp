@@ -9,7 +9,7 @@
 #include <UT/UT_Vector3.h>
 #include <UT/UT_XformOrder.h>
 
-#include <memory>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -60,13 +60,23 @@ SIM_Box3DConRel::describe(b3dop::JointType t,
   struct Storage {
     Box3DParms parms;
     std::string nodeName, label, dataName;
-    std::unique_ptr<SIM_DopDescription> description;
+    SIM_DopDescription *description = nullptr;
   };
   static Storage storage[b3dop::kJointTypeCount];
 
+  // Each description is built in zero-filled static memory, never on the heap.
+  // That is how every other description exists (SideFX's and our Solver's and
+  // Box3D Data's are function-local statics, zeroed before their constructor
+  // runs). A heap description crashed Houdini now and then while the joint
+  // node cooked (in DOP_Auto::cookMe, at SIM_DopDescription::computeLiveInput):
+  // consistent with a member the constructor leaves unset, which only static
+  // memory guarantees to be zero. Never destroyed: Houdini keeps the pointer.
+  alignas(SIM_DopDescription) static unsigned char
+      descriptionMemory[b3dop::kJointTypeCount][sizeof(SIM_DopDescription)];
+
   Storage &st = storage[static_cast<int>(t)];
   if (st.description)
-    return st.description.get();
+    return st.description;
 
   // A "Joint" tab with the settings every type has, then a tab with the type's
   // own. Each is named like the primitive attribute that modifies it. Settings
@@ -113,11 +123,11 @@ SIM_Box3DConRel::describe(b3dop::JointType t,
              " Constraint Relationship";
   st.dataName = typeName; // what `constraint_name` refers to by default
 
-  st.description = std::make_unique<SIM_DopDescription>(
-      true,                // also creates a DOP node that applies this data
-      st.nodeName.c_str(), // internal node name
-      st.label.c_str(),    // node label
-      st.dataName.c_str(), // default Data Name
-      classname, st.parms.templates());
-  return st.description.get();
+  st.description = new (descriptionMemory[static_cast<int>(t)])
+      SIM_DopDescription(true, // also creates a DOP node that applies this data
+                         st.nodeName.c_str(), // internal node name
+                         st.label.c_str(),    // node label
+                         st.dataName.c_str(), // default Data Name
+                         classname, st.parms.templates());
+  return st.description;
 }

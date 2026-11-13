@@ -124,6 +124,10 @@ Layering (keep it):
 
 ## Conventions and gotchas
 
+* A `SIM_DopDescription` must live in zero-filled static memory (a function-local static, or placement new into a
+  static buffer as `SIM_Box3DConRel::describe` does), never on the heap: built with `std::make_unique`, the joint
+  nodes' descriptions crashed Houdini 22 now and then while the node cooked (`SIM_DopDescription::computeLiveInput`).
+  Building them in static memory fixed it (60 runs clean), consistent with a member its constructor leaves unset.
 * Box3D headers only in `Box3DWorld.cpp`; `UT/UT_DSOVersion.h` only in `SIM_Box3DRegister.cpp`; new `SIM_Data` classes
   registered in `initializeSIM`.
 * The solver's parts live in `namespace box3dsolver`; anything one part uses from another is declared in
