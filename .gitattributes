@@ -1,0 +1,11 @@
+# Normalize line endings: LF in the repo, native in the working tree.
+* text=auto
+
+# Houdini hip files must never be touched by line-ending conversion.
+*.hiplc binary
+*.hip binary
+*.hipnc binary
+
+# Scripts that must keep their platform-specific endings on checkout.
+*.bat text eol=crlf
+*.sh  text eol=lf

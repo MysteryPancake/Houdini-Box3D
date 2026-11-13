@@ -23,6 +23,9 @@ using HullId = uint64_t;
 // Box3D worker tasks per step when nothing else is asked for (the solver's Threads default too).
 constexpr int kDefaultWorkerCount = 8;
 
+// The most worker tasks a world can use (Box3D's B3_MAX_WORKERS; Box3DWorld.cpp checks they match).
+constexpr int kMaxWorkerCount = 32;
+
 // A body, valid until it is destroyed (or the world is). No hash lookup. 0 is invalid.
 using BodyHandle = uint64_t;
 
@@ -67,9 +70,14 @@ public:
 // except gravity (standard gravity instead of 10).
 struct WorldSettings
 {
+    // How the friction / restitution of two touching materials is combined. The enumerators are in the
+    // order of the solver's menus (SIM_SolverBox3D), so a menu index casts straight to them.
+    enum class FrictionMixing : int { GeometricMean, Minimum, Maximum, Average, Multiply };         // GeometricMean is Box3D's default
+    enum class RestitutionMixing : int { Maximum, Minimum, Average, Multiply, GeometricMean };      // Maximum is Box3D's default
+
     float gravity[3]    = { 0.0f, -9.80665f, 0.0f };
     int   subSteps      = 4;      // Box3D recommends ~4 per step
-    int   workerCount   = kDefaultWorkerCount;   // parallel tasks per step, fixed at creation (max 32). With a TaskRunner these
+    int   workerCount   = kDefaultWorkerCount;   // parallel tasks per step, fixed at creation (1 to kMaxWorkerCount). With a TaskRunner these
                                   // run on the host's pool; without one, on threads Box3D starts for this world
     bool  enableSleep   = true;
     bool  enableContinuous = true;    // continuous collision vs static bodies (fast objects: vs moving ones too)
@@ -90,8 +98,8 @@ struct WorldSettings
     float isotropicInertiaTolerance = 0.2f;   // 0-1; near-spherical bodies lose gyroscopic torque. New bodies / mass changes only
     bool  warmStarting = true;                // off only for comparing against the reference solver
     float impactMinSpeed = 0.0f;              // Box3D hit event threshold (m/s): Impacts only for pairs that hit this fast. 0 = every contact
-    int   frictionMixing = 0;                 // 0 geometric mean (Box3D default), 1 min, 2 max, 3 average, 4 multiply
-    int   restitutionMixing = 0;              // 0 max (Box3D default), 1 min, 2 average, 3 multiply, 4 geometric mean
+    FrictionMixing    frictionMixing    = FrictionMixing::GeometricMean;
+    RestitutionMixing restitutionMixing = RestitutionMixing::Maximum;
 };
 
 // One contact point of a body after a step (getContactsByHandle).

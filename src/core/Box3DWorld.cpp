@@ -17,6 +17,8 @@
 
 namespace b3dop {
 
+static_assert(kMaxWorkerCount == B3_MAX_WORKERS, "kMaxWorkerCount (Box3DWorld.h) must match Box3D's B3_MAX_WORKERS");
+
 namespace {
 
 // ---- the process-wide hull cache --------------------------------------------------------------
@@ -425,29 +427,33 @@ float restitutionGeo(float a, uint64_t, float b, uint64_t) { return std::sqrt(st
 
 // nullptr is Box3D's own rule (geometric mean for friction, maximum for restitution).
 b3FrictionCallback *
-frictionRule(int mode)
+frictionRule(WorldSettings::FrictionMixing mode)
 {
+    using M = WorldSettings::FrictionMixing;
     switch (mode)
     {
-        case 1: return &frictionMin;
-        case 2: return &frictionMax;
-        case 3: return &frictionAvg;
-        case 4: return &frictionMul;
-        default: return nullptr;
+        case M::Minimum:  return &frictionMin;
+        case M::Maximum:  return &frictionMax;
+        case M::Average:  return &frictionAvg;
+        case M::Multiply: return &frictionMul;
+        case M::GeometricMean: break;
     }
+    return nullptr;
 }
 
 b3RestitutionCallback *
-restitutionRule(int mode)
+restitutionRule(WorldSettings::RestitutionMixing mode)
 {
+    using M = WorldSettings::RestitutionMixing;
     switch (mode)
     {
-        case 1: return &restitutionMin;
-        case 2: return &restitutionAvg;
-        case 3: return &restitutionMul;
-        case 4: return &restitutionGeo;
-        default: return nullptr;
+        case M::Minimum:       return &restitutionMin;
+        case M::Average:       return &restitutionAvg;
+        case M::Multiply:      return &restitutionMul;
+        case M::GeometricMean: return &restitutionGeo;
+        case M::Maximum: break;
     }
+    return nullptr;
 }
 
 bool
@@ -504,7 +510,7 @@ Box3DWorld::create(const WorldSettings &s, std::shared_ptr<TaskRunner> tasks)
         def.hitEventThreshold = s.impactMinSpeed;
     def.frictionCallback    = frictionRule(s.frictionMixing);
     def.restitutionCallback = restitutionRule(s.restitutionMixing);
-    def.workerCount = static_cast<uint32_t>(std::min(std::max(1, s.workerCount), int(B3_MAX_WORKERS)));
+    def.workerCount = static_cast<uint32_t>(std::min(std::max(1, s.workerCount), kMaxWorkerCount));
     if (tasks && def.workerCount > 1)
     {
         // The host's threads: Box3D starts none. The runner must outlive the b3World (see destroy).

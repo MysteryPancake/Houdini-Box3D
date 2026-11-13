@@ -21,13 +21,6 @@
 
 using namespace box3dsolver;
 
-namespace {
-
-// Data name of the world (Box3D Data's is kBox3DDataName).
-const char *const kWorldDataName = "Box3DWorld";
-
-} // namespace
-
 // ---------------------------------------------------------------------------
 
 SIM_SolverBox3D::SIM_SolverBox3D(const SIM_DataFactory *factory)
@@ -45,6 +38,9 @@ SIM_SolverBox3D::getDescription()
 {
     // Box3D's solver tuning, with Box3D's defaults (Bullet's ERP / CFM have no equivalent).
     using R = Box3DParms::Range;
+    static const std::string autoThreadsHelp =
+        "Use one worker thread per CPU core (up to " + std::to_string(b3dop::kMaxWorkerCount)
+        + "). Usually only faster for very large scenes.";
     static Box3DParms p;
     static const PRM_Template *templates = p
         .tab("Simulation")
@@ -64,10 +60,8 @@ SIM_SolverBox3D::getDescription()
         .number("maxlinearspeed", "Max Linear Speed", 400.0, R{ 0, 1000 },
                 "Speed limit for every body, in units per second.")
         .tab("Performance")
-        .toggle("autothreads", "Use All Threads", false,
-                "Use one worker thread per CPU core (up to 32). Usually only faster for very large scenes.")
-        // Box3D's limit is 32.
-        .integer("threads", "Threads", b3dop::kDefaultWorkerCount, R{ 1, 32, true },
+        .toggle("autothreads", "Use All Threads", false, autoThreadsHelp.c_str())
+        .integer("threads", "Threads", b3dop::kDefaultWorkerCount, R{ 1, double(b3dop::kMaxWorkerCount), true },
                  "Number of worker threads. More helps large scenes; small ones can run faster with fewer.",
                  "{ autothreads == 1 }")
         .toggle("enablesleep", "Allow Sleeping", true,
@@ -144,7 +138,7 @@ SIM_SolverBox3D::currentWorkerCount() const
     const int houdini = std::max(1, int(UT_Thread::getNumProcessors()));
     int n = getAutoThreads() ? houdini : int(getThreads());
     n = std::min(n, houdini);
-    return n < 1 ? 1 : (n > 32 ? 32 : n);       // Box3D's maximum is 32
+    return std::clamp(n, 1, b3dop::kMaxWorkerCount);
 }
 
 b3dop::WorldSettings
@@ -170,8 +164,8 @@ SIM_SolverBox3D::currentWorldSettings() const
     s.isotropicInertiaTolerance = float(getIsotropicInertia());
     s.warmStarting     = getEnableWarmStarting();
     s.impactMinSpeed   = float(getImpactMinSpeed());
-    s.frictionMixing   = int(getFrictionMixing());
-    s.restitutionMixing = int(getRestitutionMixing());
+    s.frictionMixing   = static_cast<b3dop::WorldSettings::FrictionMixing>(getFrictionMixing());     // menu order = enum order
+    s.restitutionMixing = static_cast<b3dop::WorldSettings::RestitutionMixing>(getRestitutionMixing());
     return s;
 }
 
@@ -321,15 +315,15 @@ SIM_SolverBox3D::findOrCreateWorldData(SIM_ObjectArray &objects)
     for (exint i = 0; i < objects.entries(); ++i)
     {
         SIM_Object *obj = objects(i);
-        if (SIM_DATA_GETCONST(*obj, kWorldDataName, SIM_Box3DWorld))
+        if (SIM_DATA_GETCONST(*obj, kBox3DWorldDataName, SIM_Box3DWorld))
         {
-            SIM_Box3DWorld *w = SIM_DATA_GET(*obj, kWorldDataName, SIM_Box3DWorld);
+            SIM_Box3DWorld *w = SIM_DATA_GET(*obj, kBox3DWorldDataName, SIM_Box3DWorld);
             return w;
         }
     }
 
     SIM_Object *carrier = objects(0);
-    SIM_Box3DWorld *w = SIM_DATA_CREATE(*carrier, kWorldDataName, SIM_Box3DWorld, 0);
+    SIM_Box3DWorld *w = SIM_DATA_CREATE(*carrier, kBox3DWorldDataName, SIM_Box3DWorld, 0);
     return w;
 }
 

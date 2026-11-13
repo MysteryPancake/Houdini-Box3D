@@ -2,12 +2,10 @@
 // ground box, comes to rest, and velocities/transforms round-trip.
 #include "core/Box3DShapes.h"
 #include "KeyedWorld.h"
+#include "TestUtil.h"
 #include <cmath>
 #include <cstdio>
 #include <vector>
-
-static int fails = 0;
-#define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); ++fails; } } while (0)
 
 // Row-vector rotation matrix for unit quaternion q (x, y, z, w); builds test matrices only.
 static void
@@ -1589,7 +1587,7 @@ int main()
         for (int mode = 0; mode < 2; ++mode)
         {
             WorldSettings ws;
-            ws.restitutionMixing = mode;            // 0 max, 1 min
+            ws.restitutionMixing = mode == 0 ? WorldSettings::RestitutionMixing::Maximum : WorldSettings::RestitutionMixing::Minimum;
             ws.warmStarting = (mode == 0);          // also runs with warm starting off
             ws.restitutionIterations = 4;
             ws.restitutionPropagation = true;
@@ -1639,11 +1637,11 @@ int main()
         }
         CHECK(sawHit);                      // fell ~1.5 m: about 5 m/s, above the 3 m/s threshold
         WorldSettings t2 = ws;
-        t2.impactMinSpeed = 0.0f;  t2.frictionMixing = 3;  t2.restitutionMixing = 2;
+        t2.impactMinSpeed = 0.0f;  t2.frictionMixing = WorldSettings::FrictionMixing::Average;  t2.restitutionMixing = WorldSettings::RestitutionMixing::Average;
         t2.warmStarting = false;  t2.restitutionIterations = 8;
         t2.restitutionPropagation = true;  t2.isotropicInertiaTolerance = 0.1f;
         hw.applyTuning(t2);
-        CHECK(hw.settings().frictionMixing == 3 && !hw.settings().warmStarting);
+        CHECK(hw.settings().frictionMixing == WorldSettings::FrictionMixing::Average && !hw.settings().warmStarting);
         hw.step(1.0f / 60.0f);
         std::printf("world settings checks done\n");
     }

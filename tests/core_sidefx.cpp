@@ -3,14 +3,12 @@
 // mapped joints behave like the SideFX ones in a world.
 #include "core/Box3DSideFX.h"
 #include "core/Box3DWorld.h"
+#include "TestUtil.h"
 
 #include <cmath>
 #include <cstdio>
 #include <set>
 #include <string>
-
-static int fails = 0;
-#define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); ++fails; } } while (0)
 
 using namespace b3dop;
 

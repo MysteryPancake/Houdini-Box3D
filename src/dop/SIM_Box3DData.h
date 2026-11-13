@@ -13,6 +13,9 @@
 // The name Box3D Data is attached under on a DOP object.
 inline constexpr const char *kBox3DDataName = "Box3DData";
 
+// The name the Box3D World is attached under on the solver's carrier object.
+inline constexpr const char *kBox3DWorldDataName = "Box3DWorld";
+
 class SIM_Box3DData : public SIM_Data, public SIM_OptionsUser
 {
 public:

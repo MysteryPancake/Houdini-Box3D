@@ -2,12 +2,10 @@
 // and sphere land on a two-triangle floor, and bad input is refused.
 #include "core/Box3DAffectorMath.h"
 #include "KeyedWorld.h"
+#include "TestUtil.h"
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-
-static int fails = 0;
-#define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); ++fails; } } while (0)
 
 int main()
 {

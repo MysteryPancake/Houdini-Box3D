@@ -29,7 +29,7 @@ public:
     GETSET_DATA_FUNCS_B("forceswake",   ForcesWake);    // a force also wakes a sleeping body
     GETSET_DATA_FUNCS_I("substeps",     SubSteps);
     GETSET_DATA_FUNCS_B("autothreads",  AutoThreads);   // every core, ignoring "threads"
-    GETSET_DATA_FUNCS_I("threads",      Threads);       // 1..32
+    GETSET_DATA_FUNCS_I("threads",      Threads);       // 1..b3dop::kMaxWorkerCount
     GETSET_DATA_FUNCS_B("enablesleep",  EnableSleep);
     GETSET_DATA_FUNCS_F("timescale",    TimeScale);
     GETSET_DATA_FUNCS_F("contactpushspeed", ContactPushSpeed);  // Box3D contact speed

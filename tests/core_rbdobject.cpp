@@ -2,12 +2,10 @@
 // settings when it has no Box3D Data: rbdObjectSetup().
 #include "core/Box3DRbdObject.h"
 #include "core/Box3DWorld.h"
+#include "TestUtil.h"
 
 #include <cmath>
 #include <cstdio>
-
-static int fails = 0;
-#define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); ++fails; } } while (0)
 
 using namespace b3dop;
 

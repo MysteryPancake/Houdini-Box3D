@@ -1,5 +1,6 @@
 // SIM_Box3DWorld.cpp
 #include "SIM_Box3DWorld.h"
+#include "SIM_Box3DData.h"
 #include "core/Box3DDebug.h"
 #include "sync/Box3DHoudiniTasks.h"
 
@@ -28,7 +29,7 @@ SIM_Box3DWorld::getDescription()
         false,                  // false: not a DOP node of its own
         "box3d_world",          // internal name
         "Box3D World",          // label
-        "Box3DWorld",           // data name
+        kBox3DWorldDataName,    // data name
         classname(),
         theTemplates);
 

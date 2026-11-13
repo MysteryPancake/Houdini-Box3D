@@ -60,31 +60,29 @@ if(BOX3DDOP_DEBUG)
     target_compile_definitions(b3dop_core PRIVATE BOX3DDOP_DEBUG=1)
 endif()
 
-add_executable(b3dop_core_smoke tests/core_smoke.cpp)
-target_link_libraries(b3dop_core_smoke PRIVATE b3dop_core)
-
-add_executable(b3dop_core_physics tests/core_physics.cpp)
-target_link_libraries(b3dop_core_physics PRIVATE b3dop_core)
-
-add_executable(b3dop_core_mesh tests/core_mesh.cpp)
-target_link_libraries(b3dop_core_mesh PRIVATE b3dop_core)
-
-add_executable(b3dop_core_joints tests/core_joints.cpp)
-target_link_libraries(b3dop_core_joints PRIVATE b3dop_core)
-
-add_executable(b3dop_core_sidefx tests/core_sidefx.cpp)
-target_link_libraries(b3dop_core_sidefx PRIVATE b3dop_core)
-
-add_executable(b3dop_core_rbdobject tests/core_rbdobject.cpp)
-target_link_libraries(b3dop_core_rbdobject PRIVATE b3dop_core)
-
-add_executable(b3dop_core_threads tests/core_threads.cpp)
-target_link_libraries(b3dop_core_threads PRIVATE b3dop_core)
-
-add_executable(b3dop_core_taskrunner tests/core_taskrunner.cpp)
-target_link_libraries(b3dop_core_taskrunner PRIVATE b3dop_core)
+# ---------------------------------------------------------------------------
+# Core tests. Each tests/core_<name>.cpp becomes the executable b3dop_core_<name> and a CTest test
+# of the same name (run with `ctest --test-dir build`, add -C Release on Visual Studio). A test passes
+# when its main() returns 0. Extra arguments are passed to the test as command-line arguments.
+# ---------------------------------------------------------------------------
+enable_testing()
 find_package(Threads REQUIRED)
-target_link_libraries(b3dop_core_taskrunner PRIVATE Threads::Threads)
+
+function(b3dop_add_test name)
+    set(target b3dop_core_${name})
+    add_executable(${target} tests/core_${name}.cpp)
+    target_link_libraries(${target} PRIVATE b3dop_core Threads::Threads)
+    add_test(NAME ${target} COMMAND ${target} ${ARGN})
+endfunction()
+
+b3dop_add_test(smoke)
+b3dop_add_test(physics)
+b3dop_add_test(mesh)
+b3dop_add_test(joints)
+b3dop_add_test(sidefx)
+b3dop_add_test(rbdobject)
+b3dop_add_test(threads)
+b3dop_add_test(taskrunner)
 
 if(BOX3DDOP_CORE_ONLY)
     return()
