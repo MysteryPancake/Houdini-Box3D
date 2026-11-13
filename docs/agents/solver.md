@@ -56,6 +56,18 @@ Feedback, Record Impacts, Point Updates (point writes, aging, dead points). Even
 thread; threaded passes count toward the stage that runs them. When the monitor is not recording, the constructor
 only checks two flags. Box3D's own step breakdown (`b3World_GetProfile`) is not reported.
 
+**Guide geometry** (`Box3DGuide.cpp`; the solver node's Guides tab: Show Collision Shapes, Shape Color). The solver
+overrides `createGuideObjectSubclass` (a `SIM_GuidePerObject`: one guide per object it is attached to) and
+`buildGuideGeometrySubclass`, which calls `buildCollisionGuide`. Guide parameters are `setGuideTemplates` on the DOP
+description, read with `GET_GUIDE_FUNC_B` / `_V3`. The shapes come from the live world
+(`Box3DWorld::bodyShapeOutlines`: hulls with their face loops, spheres, capsules, in body space), found through the
+engine's objects (the `SIM_Box3DWorld` whose state has this object in `objectSync`); each body is placed at the pose
+the object's geometry shows on the displayed frame (point `P` with its packed rotation, else `orient`; whole objects
+from `readWholePose`), keyed as the sync keys it, so cached frames draw where the pieces were. Drawn as open
+polylines with a primitive `Cd` (dimmed for sleeping and for static / kinematic bodies). The state's mutex is only
+tried: a guide asked for while the solver steps is skipped. Bodies the world no longer has are not drawn; static
+colliders from affectors are not drawn.
+
 **New objects.** Objects in `newobjects` (created this timestep) keep their initial state: `solveObjectsSubclass` drops them
 by object id before anything else, so for this step they get no body, no write-back, no aging and no joints, and the
 rest of the step sees only the other objects. They are solved from the next timestep, as ordinary objects. A step whose

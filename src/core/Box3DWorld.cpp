@@ -867,6 +867,74 @@ HullId Box3DWorld::createHullWithKey(HullId key, const float *xyz,
   return key;
 }
 
+bool Box3DWorld::bodyShapeOutlines(BodyHandle h,
+                                   std::vector<ShapeOutline> &out) const {
+  out.clear();
+  if (!h)
+    return false;
+  const b3BodyId body = b3LoadBodyId(h);
+  if (!b3Body_IsValid(body))
+    return false;
+  const int n = b3Body_GetShapeCount(body);
+  std::vector<b3ShapeId> shapes(static_cast<size_t>(std::max(n, 0)));
+  const int got = n > 0 ? b3Body_GetShapes(body, shapes.data(), n) : 0;
+  auto put3 = [](float *dst, b3Vec3 v) {
+    dst[0] = static_cast<float>(v.x);
+    dst[1] = static_cast<float>(v.y);
+    dst[2] = static_cast<float>(v.z);
+  };
+  for (int i = 0; i < got; ++i) {
+    ShapeOutline o;
+    switch (b3Shape_GetType(shapes[static_cast<size_t>(i)])) {
+    case b3_sphereShape: {
+      const b3Sphere sp = b3Shape_GetSphere(shapes[static_cast<size_t>(i)]);
+      o.kind = ShapeOutline::Sphere;
+      put3(o.c1, sp.center);
+      o.radius = sp.radius;
+      break;
+    }
+    case b3_capsuleShape: {
+      const b3Capsule c = b3Shape_GetCapsule(shapes[static_cast<size_t>(i)]);
+      o.kind = ShapeOutline::Capsule;
+      put3(o.c1, c.center1);
+      put3(o.c2, c.center2);
+      o.radius = c.radius;
+      break;
+    }
+    case b3_hullShape: {
+      const b3HullData *hull = b3Shape_GetHull(shapes[static_cast<size_t>(i)]);
+      const b3Vec3 *pts = hull ? b3GetHullPoints(hull) : nullptr;
+      const b3HullFace *faces = hull ? b3GetHullFaces(hull) : nullptr;
+      const b3HullHalfEdge *edges = hull ? b3GetHullEdges(hull) : nullptr;
+      if (!pts || !faces || !edges)
+        continue;
+      o.kind = ShapeOutline::Hull;
+      o.verts.resize(static_cast<size_t>(hull->vertexCount) * 3);
+      for (int v = 0; v < hull->vertexCount; ++v)
+        put3(&o.verts[static_cast<size_t>(v) * 3], pts[v]);
+      for (int f = 0; f < hull->faceCount; ++f) {
+        const size_t countAt = o.loops.size();
+        o.loops.push_back(0);
+        const int first = faces[f].edge;
+        int e = first;
+        for (int guard = 0; guard < hull->edgeCount; ++guard) {
+          o.loops.push_back(edges[e].origin);
+          ++o.loops[countAt];
+          e = edges[e].next;
+          if (e == first)
+            break;
+        }
+      }
+      break;
+    }
+    default:
+      continue; // meshes and compounds: not made for bodies here
+    }
+    out.push_back(std::move(o));
+  }
+  return true;
+}
+
 bool Box3DWorld::fitShapeOriented(ShapeType type, const float *xyz, int count,
                                   ShapeSpec &out) {
   if (!xyz || count < 4)

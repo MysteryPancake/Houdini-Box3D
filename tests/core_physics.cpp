@@ -1076,6 +1076,52 @@ int main() {
     hw.destroyBody(once);
     hw.destroyBody(0);
     CHECK(hw.bodyCount() == before - 4);
+    // Shape outlines (the solver's guide geometry): a box hull and an offset
+    // sphere on one body come back in body space.
+    {
+      BodySettings dyn2;
+      const double at[3] = {5, 5, 5};
+      const BodyHandle two = hw.createBody(dyn2, at, qIdentity);
+      ShapeSpec box;
+      box.type = ShapeType::Box;
+      box.halfExtents[0] = 0.5f;
+      box.halfExtents[1] = 0.25f;
+      box.halfExtents[2] = 1.0f;
+      ShapeSpec ball;
+      ball.type = ShapeType::Sphere;
+      ball.radius = 0.3f;
+      ball.center[1] = 2.0f;
+      CHECK(two != 0 && hw.createShape(two, dyn2, box) &&
+            hw.createShape(two, dyn2, ball));
+      std::vector<Box3DWorld::ShapeOutline> outlines;
+      CHECK(hw.bodyShapeOutlines(two, outlines) && outlines.size() == 2);
+      int hulls = 0, spheres = 0;
+      for (const Box3DWorld::ShapeOutline &o : outlines) {
+        if (o.kind == Box3DWorld::ShapeOutline::Hull) {
+          ++hulls;
+          CHECK(o.verts.size() == 24); // 8 corners
+          float maxZ = 0.0f;
+          for (size_t k = 2; k < o.verts.size(); k += 3)
+            maxZ = std::max(maxZ, std::fabs(o.verts[k]));
+          CHECK(std::fabs(maxZ - 1.0f) < 1e-5f); // body space, not world
+          int faces = 0;
+          for (size_t k = 0; k < o.loops.size();
+               k += 1 + static_cast<size_t>(o.loops[k])) {
+            CHECK(o.loops[k] == 4);
+            ++faces;
+          }
+          CHECK(faces == 6);
+        } else if (o.kind == Box3DWorld::ShapeOutline::Sphere) {
+          ++spheres;
+          CHECK(std::fabs(o.radius - 0.3f) < 1e-6f &&
+                std::fabs(o.c1[1] - 2.0f) < 1e-6f);
+        }
+      }
+      CHECK(hulls == 1 && spheres == 1);
+      std::vector<Box3DWorld::ShapeOutline> none;
+      CHECK(!hw.bodyShapeOutlines(0, none) && none.empty());
+      hw.destroyBody(two);
+    }
     std::printf("handle-build checks done\n");
   }
 

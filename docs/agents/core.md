@@ -47,7 +47,9 @@ puts it on every shape (`toB3Filter`) and Box3D checks pairs inline in its broad
 pass) and is a no-op for an unchanged filter. No custom filter callback, no shape user data.
 
 **Shapes and hull cache.** A box is a Box3D hull (`b3MakeBoxHull` / `b3MakeOffsetBoxHull`; a rotated box is the hull of
-its 8 corners); sphere and capsule (along Y; Box3D turns a too-short one into a sphere) are native. `createHull` keys by
+its 8 corners); sphere and capsule (along Y; Box3D turns a too-short one into a sphere) are native.
+`bodyShapeOutlines` reads a body's shapes back in body space (hull vertices and face loops, sphere, capsule) for the
+solver's guide geometry. `createHull` keys by
 content (`hashFloats` of the points; hashing mixes 8 bytes per round); packed instances pass their own key (`findHull`
 first, build on a miss). Builds try vertex budgets `{B3_MAX_HULL_VERTICES, 44, 32, 16, 8}`: a triangulated hull hits the
 256 half-edge limit at ~44 vertices, so a 64 rung fails whenever the maximum did (measured: on dense round input ~75% of

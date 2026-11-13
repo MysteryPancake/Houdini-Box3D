@@ -6,9 +6,11 @@
 #pragma once
 
 #include <SIM/SIM_DataUtils.h>
+#include <SIM/SIM_Names.h>
 #include <SIM/SIM_OptionsUser.h>
 #include <SIM/SIM_Solver.h>
 #include <UT/UT_Error.h>
+#include <UT/UT_Vector3.h>
 
 #include <string>
 
@@ -17,6 +19,7 @@
 #include "core/Box3DWorld.h"
 
 class SIM_Box3DWorld;
+class SIM_Guide;
 class SIM_Engine;
 struct StepProgress;
 class SIM_Object;
@@ -61,6 +64,10 @@ public:
   GETSET_DATA_FUNCS_B("enableaging",
                       EnableAging); // age += dt; dead = 1 once age > life
 
+  // Guide (the node's Guides tab): every body's collision shapes.
+  GET_GUIDE_FUNC_B(SIM_NAME_SHOWGUIDE, ShowGuide, false);
+  GET_GUIDE_FUNC_V3(SIM_NAME_COLOR, Color, (0.2, 0.8, 1.0));
+
 protected:
   explicit SIM_SolverBox3D(const SIM_DataFactory *factory);
   ~SIM_SolverBox3D() override;
@@ -71,6 +78,14 @@ protected:
                                   const SIM_Time &timestep) override;
 
   int getRequestedCacheSubclass() const override;
+
+  // One guide per object (SIM_GuidePerObject): its bodies' collision shapes.
+  SIM_Guide *createGuideObjectSubclass() const override;
+  void buildGuideGeometrySubclass(const SIM_RootData &root,
+                                  const SIM_Options &options,
+                                  const GU_DetailHandle &gdh,
+                                  UT_DMatrix4 *xform,
+                                  const SIM_Time &t) const override;
 
 private:
   b3dop::WorldSettings currentWorldSettings() const;

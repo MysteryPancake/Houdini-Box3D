@@ -13,9 +13,6 @@ namespace box3dsolver {
 // Whole-object bodies (RBD Object, RBD Point Object, ...)
 // ---------------------------------------------------------------------------
 
-// The point id of a whole object's single body in the mirror key.
-constexpr int64_t kWholeObjectId = -1;
-
 // True for an object that is one rigid body as a whole rather than one body per
 // point: it has a collider label (Colliders data, as RBD Object and its
 // relatives attach) other than PackedObject (RBD Packed Object). An object

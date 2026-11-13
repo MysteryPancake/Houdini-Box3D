@@ -453,7 +453,13 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
 
 // ---- whole-object bodies (Box3DWholeObject.cpp) ----
 
+// The point id of a whole object's single body in the mirror key.
+inline constexpr int64_t kWholeObjectId = -1;
+
 bool isWholeObject(const SIM_Object &obj);
+// The body's pose from the object's Position data (pivot in object space, pose
+// at the pivot). False if the object has none.
+bool readWholePose(const SIM_Object &obj, double pivot[3], Box3DBodyPose &out);
 void syncWholeObject(Box3DSharedState &st, const SIM_Object &obj,
                      const SIM_Geometry &geo, const GU_Detail *gdp,
                      SyncCounts &c);
@@ -480,5 +486,14 @@ struct ForceStats {
 
 ForceStats applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects,
                                bool wake);
+
+// ---- guide geometry (Box3DGuide.cpp) ----
+
+// The Box3D Solver's guide for one object: each of its bodies' collision shapes
+// (as Box3D holds them) as wireframe polylines at the pose the object's
+// geometry shows on this frame, coloured `color` (dimmed for sleeping and
+// static bodies). Nothing if no Box3D world has the object's bodies.
+void buildCollisionGuide(const SIM_Object &obj, GU_Detail &out,
+                         const UT_Vector3 &color);
 
 } // namespace box3dsolver

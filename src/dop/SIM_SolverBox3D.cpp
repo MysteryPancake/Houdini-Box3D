@@ -11,6 +11,7 @@
 #include <SIM/SIM_CacheOptions.h>
 #include <SIM/SIM_DopDescription.h>
 #include <SIM/SIM_Engine.h>
+#include <SIM/SIM_GuidePerObject.h>
 #include <UT/UT_PerfMonAutoEvent.h>
 #include <UT/UT_Thread.h>
 
@@ -129,7 +130,47 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
       "Solver",       // data name
       classname(), templates);
 
+  // Guide parameters (Houdini puts them on the node's Guides tab), read
+  // through GET_GUIDE_FUNC_*. Static memory, like the description.
+  static PRM_Name guideShow(SIM_NAME_SHOWGUIDE, "Show Collision Shapes");
+  static PRM_Name guideColor(SIM_NAME_COLOR, "Shape Color");
+  static PRM_Default guideColorDefault[] = {PRM_Default(0.2), PRM_Default(0.8),
+                                            PRM_Default(1.0)};
+  static PRM_Template guideTemplates[] = {
+      PRM_Template(PRM_TOGGLE, 1, &guideShow, PRMzeroDefaults, nullptr, nullptr,
+                   nullptr, nullptr, 1,
+                   "Draw every body's collision shapes as Box3D sees them. "
+                   "Sleeping and static bodies are drawn darker."),
+      PRM_Template(PRM_RGB, 3, &guideColor, guideColorDefault, nullptr, nullptr,
+                   nullptr, nullptr, 1, "Colour of the collision shapes."),
+      PRM_Template()};
+  static const bool guidesSet =
+      (theDopDescription.setGuideTemplates(guideTemplates), true);
+  (void)guidesSet;
+
   return &theDopDescription;
+}
+
+SIM_Guide *SIM_SolverBox3D::createGuideObjectSubclass() const {
+  return new SIM_GuidePerObject(this);
+}
+
+void SIM_SolverBox3D::buildGuideGeometrySubclass(const SIM_RootData &root,
+                                                 const SIM_Options &options,
+                                                 const GU_DetailHandle &gdh,
+                                                 UT_DMatrix4 *xform,
+                                                 const SIM_Time & /*t*/) const {
+  if (xform)
+    xform->identity(); // the guide is built in world space
+  if (!getShowGuide(options) || gdh.isNull())
+    return;
+  const SIM_Object *obj = dynamic_cast<const SIM_Object *>(&root);
+  if (!obj)
+    return;
+  GU_DetailHandleAutoWriteLock lock(gdh);
+  GU_Detail *gdp = lock.getGdp();
+  if (gdp)
+    buildCollisionGuide(*obj, *gdp, getColor(options));
 }
 
 void SIM_SolverBox3D::message(SIM_ObjectArray &objects, const std::string &text,

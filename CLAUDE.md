@@ -97,6 +97,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DWholeObject.cpp   One body per DOP object (RBD Object etc.): sync and Position write-back
     Box3DPostStep.cpp      After the step: writeResultsBack, Impacts, point writes, aging, dead points
     Box3DForces.cpp        Force DOPs and point force / torque
+    Box3DGuide.cpp         The solver's guide geometry: every body's collision shapes
     Box3DJointSync.*    Constraint networks -> Box3D joints: read, resolve names, create / update / remove, break, feedback
     Box3DAffectors.*    Affector objects (Static Object DOP etc.) -> static colliders
     Box3DHoudiniUtil.h  Shared Houdini helpers: writable geometry, object by id, 4x4 to array, Euler to quaternion,

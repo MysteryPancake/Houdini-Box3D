@@ -135,6 +135,11 @@ remove an item once it has been checked, and record anything new here rather tha
 * Float noise: the mirror takes a read-back after each write; a constant "edited" count (teleports) every step would
   mean the read-back does not match what the next sync reads.
 * Impacts record point -1 for whole objects.
+* Solver guide geometry (Show Collision Shapes, `Box3DGuide.cpp`): written against the HDK reference, not yet
+  built. To check: the Guides tab appears on the Box3D Solver; the shapes draw for packed pieces, plain points and
+  RBD Objects, at the right pose on cached frames; `SIM_GuidePerObject` really gets one guide per solved object from
+  the solver's subdata. Calls used: `createGuideObjectSubclass`, `buildGuideGeometrySubclass`, `setGuideTemplates`,
+  `GET_GUIDE_FUNC_B` / `_V3`, `SIM_Engine::getNumSimulationObjects` / `getSimulationObject`, `GU_PrimPoly::build`.
 * Performance Monitor stage events (`UT_PerfMonAutoSolveEvent`, see solver.md): built, but not yet looked at in the
   profiler (whether they nest under the solver node's entry the way Bullet's do).
 

@@ -521,6 +521,19 @@ public:
   // lets go of the hulls this world holds (the shared cache keeps them)
   void pruneHulls();
 
+  // A body's collision shapes in body space, for drawing (the solver's guide
+  // geometry). Hulls (boxes too) give their vertices and each face as a loop
+  // of vertex indices; spheres a centre (c1) and radius; capsules both centres
+  // and the radius. Other kinds are skipped. False for an invalid handle.
+  struct ShapeOutline {
+    enum Kind { Hull, Sphere, Capsule } kind = Hull;
+    std::vector<float> verts; // hull: xyz per vertex
+    std::vector<int> loops;   // hull: per face, its vertex count then indices
+    float c1[3] = {0, 0, 0}, c2[3] = {0, 0, 0};
+    float radius = 0.0f;
+  };
+  bool bodyShapeOutlines(BodyHandle h, std::vector<ShapeOutline> &out) const;
+
   // AutoFit: a box / sphere / capsule fitted to body-local points along the
   // frame that gives the smallest box (fitShapeInFrame in Box3DShapes.h). The
   // candidates are the body axes and, from a convex hull of the points, each
