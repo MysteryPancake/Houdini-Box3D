@@ -8,12 +8,18 @@ The one list of everything not yet tested in Houdini or confirmed against SideFX
 remove an item once it has been checked, and record anything new here rather than in comments or other sections.
 
 **General**
-* No `SIM_*` code has CI; `tests/box3d_test.hiplc` is a manual scene. The core tests pass, and so do the first
-  Houdini checks (`checks_core.py`, Houdini 22.0.479), which settled the items they cover; they are no longer listed
-  here. `checks_solver.py`, `checks_output.py`, `checks_constraints.py` and `checks_more.py` script most of the items
-  below (UI, caches, scale, threads, masks, packed types, outputs, forces, constraints, SOP Solver edits, attribute
-  toggles, whole objects, comparisons with Bullet and the POP Solver) and have not been run yet. What no script can
-  check: Escape mid-step, the viewport, motion blur, and how greyed-out parameters look. The plugin builds against the real HDK (Houdini 22.0.479, MSVC, no warnings), so "compiled only
+* No `SIM_*` code has CI; `tests/box3d_test.hiplc` is a manual scene. The core tests pass, and so do the Houdini
+  checks in `checks_core.py`, `checks_solver.py`, `checks_output.py`, `checks_constraints.py` and `checks_more.py`
+  (Houdini 22.0.479; the items they settled are no longer listed here). What no script can check: Escape mid-step, the
+  viewport, motion blur, and how greyed-out parameters look.
+* `checks_extra.py` (scripted, not yet run): each joint toggle's effect (revolute limit and motor, prismatic limit,
+  distance spring with Set Rest Length, Breakable at the default thresholds), -1 thresholds with Breakable on (and
+  whether the parameter keeps -1), every Friction / Bounce Mixing item, bounce heights, the friction angle on a slope,
+  CCD against static and moving walls, sleeping (`awake` written, Allow Sleeping, Start Asleep woken by a hit),
+  rolling resistance, box / sphere / capsule sizes, determinism (repeat runs, Reset Simulation, 1 / 4 / all threads),
+  Substeps 1 and 4 and 48 fps, bad input (empty, zero-size, infinite / NaN, duplicate names), rewiring and replacing
+  the solver mid-simulation, a 4800-box timing baseline, and constraints across objects, to the world, to a kinematic
+  piece, and with Breakable keyed mid-simulation. The plugin builds against the real HDK (Houdini 22.0.479, MSVC, no warnings), so "compiled only
   against stand-in headers" notes are gone too: what remains is behaviour.
 * An untouched object still skips its scan after a Box3D Data change elsewhere (debug log: `scan skipped`). (A Box3D
   Data change mid-simulation reaching existing bodies is verified, `data_change_midsim`.)

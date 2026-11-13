@@ -54,7 +54,7 @@ lists the real ones), not a plugin failure. Each test runs in its own hython pro
 and the rest still run; the `probe_*` tests isolate the parts of the `network` scene. Not in CI (needs Houdini).
 The tests are in `tests/houdini/checks_*.py` by area (core, solver / UI / caching,
 outputs / packed geometry, constraints / whole objects, more: SOP Solver / Multiple Solver scenes, Bullet and POP
-comparisons), each with a `TESTS` dict the runner collects; helpers in
+comparisons, extra: joint toggles, mixing, determinism, contacts, bad input, timing), each with a `TESTS` dict the runner collects; helpers in
 `tests/houdini/b3dtest.py`. A test function can carry `.env` (environment variables for its process, e.g.
 `HOUDINI_MAXTHREADS=1`). Each test's latest overall status (the worst of its results) is kept in
 `tests/houdini/out/last_results.json`, updated as each test finishes; `--failed` runs the tests whose last status was
