@@ -700,7 +700,7 @@ nodeSettingsHash(const b3dop::BodySettings &n, bool addImpact)
     return b3dop::mixHash(b3dop::hashFloats(v, sizeof(v) / sizeof(v[0])), addImpact ? 1 : 2);
 }
 
-// The mid-simulation changes of an existing body (AGENTS.md, "Mid-simulation updates"): shape
+// The mid-simulation changes of an existing body (docs/agents/bodies.md, "Mid-simulation updates"): shape
 // rebuild and settings, type, then the animated target or an external edit of its pose.
 // Adds to `writes` the point attributes to write after the step.
 void

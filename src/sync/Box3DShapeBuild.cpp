@@ -387,7 +387,7 @@ pieceFromPoints(b3dop::Box3DWorld &world, uint64_t key, uint64_t budgetGroup, co
     return true;
 }
 
-// A point's shapes (AGENTS.md, "Pieces and packed geometry"):
+// A point's shapes (docs/agents/bodies.md, "Pieces and packed geometry"):
 //  box / sphere / capsule: fitted to the packed geometry with autofit, else pscale * scale
 //                          plus the bullet_prim* / radius / length overrides
 //  convex:  one hull of the packed geometry (hullPerConnected: one per connected set)

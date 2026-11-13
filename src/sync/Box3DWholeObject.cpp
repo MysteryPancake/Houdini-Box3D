@@ -1,7 +1,7 @@
 // Box3DWholeObject.cpp
 //
 // One body per DOP object (RBD Object, RBD Point Object, ...): its pose in the object's
-// Position data. Sync and write-back (AGENTS.md, "Whole-object bodies").
+// Position data. Sync and write-back (docs/agents/whole-object.md).
 #include "Box3DSolverInternal.h"
 #include "core/Box3DRbdObject.h"
 
