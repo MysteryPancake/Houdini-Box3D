@@ -194,7 +194,7 @@ SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
     SIM_ObjectArray objects;
     for (exint i = 0; i < allObjects.entries(); ++i)
         if (newIds.find(allObjects(i)->getObjectId()) == newIds.end())
-            objects.append(allObjects(i));
+            objects.add(allObjects(i));
 
     if (objects.entries() == 0)
         return SIM_SOLVER_SUCCESS;

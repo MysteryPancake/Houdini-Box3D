@@ -18,7 +18,7 @@ addPointAttribIfMissing(GU_Detail *gdp, const char *name, int tupleSize, GA_Type
     if (gdp->findPointAttribute(name))
         return false;
     // addFloatTuple returns the new attribute, so no second lookup.
-    if (GA_Attribute *attr = gdp->addFloatTuple(GA_ATTRIB_POINT, name, tupleSize).getAttribute())
+    if (GA_Attribute *attr = gdp->addFloatTuple(GA_ATTRIB_POINT, name, tupleSize))
         attr->setTypeInfo(typeInfo);
     return true;
 }
