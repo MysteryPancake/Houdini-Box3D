@@ -129,7 +129,7 @@ To set a box, sphere or capsule by hand, turn Auto Fit off (or set `bullet_autof
 
 ## Static Objects
 
-A **Static Object** DOP collides with solved objects when a collision relationship links them, as with Bullet. Only its polygons are used (no SDF or height fields). Meshes are one-sided: if bodies fall through, turn on **Flip Static Mesh Winding** on a Box3D Data node attached to it. An animated Static Object doesn't push bodies; for something that pushes, use a kinematic point (`active = 0`, `animated = 1`).
+A **Static Object** DOP collides with solved objects when a collision relationship links them, as with Bullet. Only its polygons are used (no SDF or height fields). Meshes are one-sided: if bodies fall through, turn on **Flip Static Mesh Winding** on a Box3D Data node attached to it. To move one by its object's animated transform, set its **OBJ Path** (Use Object Transform alone only applies the transform once). An animated Static Object doesn't push bodies; for something that pushes, use a kinematic point (`active = 0`, `animated = 1`).
 
 ## Joints
 

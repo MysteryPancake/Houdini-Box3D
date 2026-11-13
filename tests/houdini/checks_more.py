@@ -363,9 +363,10 @@ def test_dead_with_network():
 
 
 def test_animated_static():
-    """A Static Object grid that rises to y = 1 over the first second (Use Object Transform): a box
-    dropped from y = 8 lands on it and rests at 1.5. Also reports the collider's transform as
-    Houdini gives it, and tries again with Use Deforming Geometry on."""
+    """A Static Object grid that rises to y = 1 over the first second, by its object's transform
+    (followed through OBJ Path, with and without Use Deforming Geometry) and by a Transform SOP:
+    a box dropped from y = 8 lands on it and rests at 1.5. Also reports the collider's transform
+    as Houdini gives it."""
     results = []
     for deforming, sop_level in ((False, False), (True, False), (True, True)):
         tag = ("sop" if sop_level else "deforming") if deforming else "plain"
@@ -385,7 +386,13 @@ def test_animated_static():
         dop = new_dopnet("animated_static_" + tag)
         static = create(dop, "staticobject", "collider")
         set_parm(static, ["soppath"], grid.path())
-        set_parm(static, ["usetransform"], 1)
+        if sop_level:
+            set_parm(static, ["usetransform"], 1)
+        else:
+            # A Static Object follows the animated transform of its OBJ Path object (Use Object
+            # Transform only bakes the transform into the geometry once, per the SideFX docs).
+            set_parm(static, ["usetransform"], 0)
+            set_parm(static, ["objpath", "obj_path"], geo.path())
         if deforming:
             try:
                 set_parm(static, ["animategeo", "usedeforminggeo", "usedeforming"], 1)
@@ -396,23 +403,32 @@ def test_animated_static():
         finish(dop, box3d_solver(dop, merge(dop, [packed_object(dop, "box", path), static])))
 
         def sample(sim, f):
-            box = object_bbox(sim, "collider")  # the collider's geometry, transforms included
-            return packed_positions(sim, "box"), (box[1][1] if box else None)
+            box = object_bbox(sim, "collider")
+            col = sim.findObject("collider")
+            # The DOP object's own transform (Position data): Use Object Transform may move this
+            # and leave the geometry where it is.
+            ty = col.transform().extractTranslates()[1] if col is not None else None
+            return packed_positions(sim, "box"), (box[1][1] if box else None), ty
 
         track = step(dop, 96, sample)
         y = track[96][0][names[0]][1]
-        col_y = {f: track[f][1] for f in (1, 13, 25, 96)}
-        label = {"plain": "object transform animated", "deforming": "object transform animated + animategeo",
+        frames = (1, 13, 25, 96)
+        # The collider's top as Box3D sees it: geometry top plus the object's own translation.
+        col_y = {f: (None if track[f][1] is None else track[f][1] + (track[f][2] or 0.0)) for f in frames}
+        obj_ty = [None if track[f][2] is None else round(track[f][2], 2) for f in frames]
+        label = {"plain": "object transform animated (OBJ Path)",
+                 "deforming": "object transform animated (OBJ Path) + animategeo",
                  "sop": "Transform SOP animated + animategeo"}[tag]
         moved = col_y[25] is not None and col_y[25] > 0.5
         hint = "" if close(y, 1.5, 0.03) else (
             " Houdini moved the collider, so Box3D ignored the move" if moved else
             " Houdini itself did not move the collider object")
-        # Without animategeo Houdini keeps the Static Object at its first transform: not ours to fix.
+        # Houdini did not move the collider: a test setup problem, not Box3D's.
         status = Result.PASS if close(y, 1.5, 0.03) else (Result.FAIL if moved else Result.INFO)
         results.append(Result("animated_static", status,
                               f"{label}: box rests at y={y:.3f} (expected 1.5); the collider's top in the simulation on frames "
-                              f"1, 13, 25, 96: {[None if v is None else round(v, 2) for v in col_y.values()]}.{hint}"))
+                              f"1, 13, 25, 96: {[None if v is None else round(v, 2) for v in col_y.values()]} (object "
+                              f"transform ty {obj_ty}).{hint}"))
     return results
 
 
@@ -497,10 +513,17 @@ def test_sidefx_hard_untyped():
 def test_sidefx_cone_twist():
     """SideFX Cone Twist constraint, piece spinning at the start: rotation after 2 s in Box3D and in
     Bullet. INFO (which end is the goal only matters when the two anchors' frames differ)."""
-    d = sidefx_compare("cone_twist", "conetwistconrel", {}, spin=(0.0, 3.0, 0.0))
-    return [Result("sidefx_cone_twist", Result.INFO,
-                   f"Box3D: distance {d['box3d'][0]:.3f}, turned {d['box3d'][1]:.0f} deg; Bullet: distance "
-                   f"{d['bullet'][0]:.3f}, turned {d['bullet'][1]:.0f} deg")]
+    results = []
+    # Anchors at the two centroids (2.06 apart), then both anchors at one shared point between them.
+    for label, anchors in (("anchors at the centroids", None), ("both anchors at (0.25, 3, 0)",
+                                                                ((0.25, 3, 0), (0.25, 3, 0)))):
+        d = sidefx_compare("cone_twist" + ("_shared" if anchors else ""), "conetwistconrel", {},
+                           spin=(0.0, 3.0, 0.0), anchors=anchors)
+        results.append(Result("sidefx_cone_twist", Result.INFO,
+                              f"{label}: Box3D distance {d['box3d'][0]:.3f}, turned {d['box3d'][1]:.0f} deg; Bullet "
+                              f"distance {d['bullet'][0]:.3f}, turned {d['bullet'][1]:.0f} deg (start 2.06; about 20 "
+                              f"= fell freely)"))
+    return results
 
 
 # ---------------------------------------------------------------------------

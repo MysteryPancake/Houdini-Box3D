@@ -90,9 +90,8 @@ remove an item once it has been checked, and record anything new here rather tha
   adds to the solver's own Gravity (documented in the Gravity tooltip).
 
 **Affectors (Static Object and similar)**
-* Animated Static Objects: without Animated Geometry (`animategeo`) Houdini keeps the object at its first transform (a
-  rising grid stayed at y = 0 in the DOP object itself); with it, scripted (`animated_static`), not yet run. A moved
-  Static Object is moved, not swept: bodies are not pushed (the README says so).
+* A moved Static Object is moved, not swept: bodies are not pushed (the README says so). (Following an animated
+  collider works, verified by `animated_static`, by OBJ Path or a Transform SOP.)
 * Static Objects whose geometry is packed, SDF-only or not polygons: only polygons are used, so they collide with
   nothing and warn "no usable collision geometry". (The Ground Plane DOP works: a dropped box lands on it.)
 * A Static Object with Use Deforming Geometry bumps `P` every step, so its mesh is rebuilt every step (cost).
@@ -114,10 +113,17 @@ remove an item once it has been checked, and record anything new here rather tha
 * (Confirmed, `sidefx_glue`: Box3D's Glue breaks under a hanging piece's weight at Strength 1 and 100 where Bullet's
   holds; both hold at 1e4. Listed under Known gaps.)
 * Which end is Cone Twist's goal (taken as point 1); only matters when goal and constrained axes differ.
+* Cone Twist compared with Bullet (`sidefx_cone_twist`): Bullet's piece falls freely (20.85 apart after 2 s, the
+  same with anchors at the centroids or at one shared point), so there is nothing to compare with. Box3D holds: with
+  one shared anchor the pieces stay 2.015 apart (2.06 at the start); with anchors at the two centroids it pulls them
+  together (0.27), as a ball joint joining two anchor points should.
 * Soft / Spring `all` with a rest length shifts the frames along the anchor line when the joint is made; after a
   world rebuild from a stretched pose the offset direction is re-derived from the anchors and may differ slightly.
 
 **Whole-object bodies**
+* RBD Point Object with the Box3D Solver: check by hand. A scripted setup (Point SOP Path on a 2 x 2 grid of points,
+  Geometry Path on a box) makes no objects at all and gives no errors or warnings (`other_rbd_objects`, which stays
+  INFO for it; RBD Fractured Object passes). It is an older node; RBD Packed Object is the usual choice.
 * The `Colliders` label on RBD Point Object and RBD Fractured Object (only RBD Object and RBD Packed Object were
   checked); its value is not used, only "present and not PackedObject".
 * `SIM_DATA_CREATE(obj, "Position", SIM_Motion, 0)` when the object has no Position data, and whether writing

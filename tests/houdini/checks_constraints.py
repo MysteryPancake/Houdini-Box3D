@@ -192,10 +192,11 @@ def test_centroid_anchors():
                    f"centroids 1.0 apart at the start, {d:.3f} after 2 s (SideFX Glue / Hard would keep 1.0)")]
 
 
-def sidefx_compare(kind, conrel_type, line_attrs, spin=None):
+def sidefx_compare(kind, conrel_type, line_attrs, spin=None, anchors=None):
     """A piece 2 below a fixed one, held by a SideFX constraint with anchors at the centroids,
     in Box3D and in Bullet. Returns {solver: (centroid distance, rotation angle in degrees)}
-    after 2 s. spin: initial w (rad/s) of the hanging piece."""
+    after 2 s. spin: initial w (rad/s) of the hanging piece. anchors: (fixed, hanging) anchor
+    positions (default: the centroids)."""
     from b3dtest import packed_transform
     out = {}
     for solver_kind in ("box3d", "bullet"):
@@ -205,7 +206,7 @@ def sidefx_compare(kind, conrel_type, line_attrs, spin=None):
                   {"size": (1, 1, 1), "center": (0.5, 2, 0), "attrs": hang}]
         dop, names = hanging_pair(f"{kind}_{solver_kind}{'_spin' if spin else ''}", None, line_attrs=line_attrs,
                                   conrels=[(conrel_type, {})], solver_kind=solver_kind, pieces=pieces,
-                                  anchors=((0, 4, 0), (0.5, 2, 0)), keep_velocity=bool(spin))
+                                  anchors=anchors or ((0, 4, 0), (0.5, 2, 0)), keep_velocity=bool(spin))
 
         def sample(sim, f):
             return packed_positions(sim, "pieces"), packed_transform(sim, "pieces", names[1])
@@ -334,9 +335,16 @@ def test_other_rbd_objects():
         dop = new_dopnet(type_name)
         if type_name == "rbdpointobject":
             def build(geo):
+                # Four points (a 2 x 2 grid, 10 apart) at y = 3, run over points so the wrangle
+                # has an input (a detail wrangle with no input made no objects).
+                grid = create(geo, "grid")
+                set_parm(grid, ["size"], (10, 10))
+                set_parm(grid, ["rows"], 2)
+                set_parm(grid, ["cols"], 2)
                 wr = create(geo, "attribwrangle")
-                set_parm(wr, ["class"], 0)
-                set_parm(wr, ["snippet"], "addpoint(0, {0,3,0}); addpoint(0, {3,3,0});")
+                wr.setInput(0, grid)
+                set_parm(wr, ["class"], 2)
+                set_parm(wr, ["snippet"], "@P.y = 3;")
                 return wr
         else:
             def build(geo):
@@ -386,10 +394,26 @@ def test_other_rbd_objects():
             sim = dop.simulation()
             objs = sim.objects()
             kinds = sorted({k for o in objs for k in o.subData().keys()})
+            # Every non-empty string parameter, to see which one RBD Point Object reads its points from.
+            strings = {}
+            for p in obj.parms():
+                try:
+                    if p.parmTemplate().type() == hou.parmTemplateType.String and p.evalAsString():
+                        strings[p.name()] = p.evalAsString()
+                except hou.Error:
+                    pass
+            # Errors and warnings on the node and anything inside it (it is a digital asset).
+            problems = []
+            for n in [obj] + list(obj.allSubChildren()):
+                try:
+                    for m in list(n.errors()) + list(n.warnings()):
+                        problems.append(f"{n.name()}: {m.strip()[:150]}")
+                except hou.Error:
+                    pass
             results.append(Result("other_rbd_objects", Result.INFO,
                                   f"{label}: {len(objs)} object(s) in the simulation, none with geometry; their data: "
-                                  f"{kinds}. Instance geometry parameter set: "
-                                  f"{[p for p in ('geopath', 'instancepath', 'geometrypath', 'instance') if obj.parm(p)]}"))
+                                  f"{kinds}. Its string parameters: {strings}. Node errors / warnings: "
+                                  f"{problems[:4] or 'none'}"))
             continue
         fell = n > 0 and len(track[1]) == n and all(b < a - 0.5 for a, b in zip(track[1], track[24]))
         results.append(Result("other_rbd_objects", Result.PASS if fell else Result.FAIL,
