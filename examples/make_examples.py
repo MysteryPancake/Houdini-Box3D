@@ -14,7 +14,7 @@ Copy to Points, Attribute Wrangle) and one RBD Packed Object, so it doubles as a
 
 Scenes:
   shapes          the collision shapes: box, sphere, capsule and convex hull (Show Collision Shapes on)
-  many_bodies     10,000 boxes poured into a bin; Rows / Columns / Layers on the geometry change the count
+  many_bodies     40,000 boxes poured into a bin; Rows / Columns / Layers on the geometry change the count
   dominoes        a spiral of dominoes knocked over by the first one
   bridge_chain    constraints: a hinged rope bridge (revolute) and a swinging chain (spherical)
   wrecking_ball   a ball on a rigid rope (distance joint) swinging into a brick wall
@@ -380,11 +380,11 @@ def scene_shapes():
     for k, ((tag, rep), shape) in enumerate(zip(kinds, shapes)):
         cd = rainbow(k / len(kinds))
         calls = []
-        for i in range(6):
-            for j in range(6):
-                for layer in range(2):
-                    x, z = (i - 2.5) * 1.6, (j - 2.5) * 1.6
-                    y = 1.0 + (k * 2 + layer) * 1.4
+        for i in range(12):
+            for j in range(12):
+                for layer in range(3):
+                    x, z = (i - 5.5) * 1.6, (j - 5.5) * 1.6
+                    y = 1.0 + (k * 3 + layer) * 1.4
                     spin = quat_about((0.6, 0.0, 0.8), 0.3 * (i + j + layer))  # tumble a little
                     calls.append(mk((x + 0.1 * layer, y, z), f"{tag}{i}_{j}_{layer}", spin, cd, georep=rep))
         p.stream(tag, shape, "\n".join(calls), f"{tag}: bullet_georep '{rep}', fitted to the shape (bullet_autofit 1)")
@@ -401,21 +401,21 @@ the solver collides (dimmed when a body is asleep).
 
 Try: change the shapes in shape_pieces, or add a Box3D Data node after 'pieces' in the
 DOP network to set friction, bounce or the default shape for pieces without bullet_georep."""
-    tidy(144, note, dop)
-    return dop, 144
+    tidy(240, note, dop)
+    return dop, 240
 
 
 def scene_many_bodies():
     p = Pieces("many_pieces")
-    ground(p, 60.0)
-    for tag, size, pos in (("wall_left", (1, 4, 46), (-23.5, 2, 0)), ("wall_right", (1, 4, 46), (23.5, 2, 0)),
-                           ("wall_back", (46, 4, 1), (0, 2, -23.5)), ("wall_front", (46, 4, 1), (0, 2, 23.5))):
+    ground(p, 80.0)
+    for tag, size, pos in (("wall_left", (1, 6, 62), (-30.5, 3, 0)), ("wall_right", (1, 6, 62), (30.5, 3, 0)),
+                           ("wall_back", (62, 6, 1), (0, 3, -30.5)), ("wall_front", (62, 6, 1), (0, 3, 30.5))):
         p.boxes(tag, size, [mk(pos, tag, cd=(0.45, 0.47, 0.5), active=0)], "a static wall of the bin")
     geo = p.geo
     # A "Count" tab on the object, read by the boxes' wrangle with chi("../rows") etc.
     folder = hou.FolderParmTemplate("count", "Count")
-    for n, label, default in (("rows", "Rows (x)", 25), ("columns", "Columns (z)", 25), ("layers", "Layers (y)", 16)):
-        folder.addParmTemplate(hou.IntParmTemplate(n, label, 1, default_value=(default,), min=1, max=40))
+    for n, label, default in (("rows", "Rows (x)", 40), ("columns", "Columns (z)", 40), ("layers", "Layers (y)", 25)):
+        folder.addParmTemplate(hou.IntParmTemplate(n, label, 1, default_value=(default,), min=1, max=80))
     group = geo.parmTemplateGroup()
     group.append(folder)
     geo.setParmTemplateGroup(group)
@@ -442,18 +442,18 @@ Box3D is built for scenes like this: it runs the contact solver on all your core
 puts resting bodies to sleep. The first frame builds the bodies; after that each frame
 only steps the world.
 
-Try: select many_pieces and change Rows / Columns / Layers (up to 34 x 34 fits the bin)
+Try: select many_pieces and change Rows / Columns / Layers (up to 50 x 50 fits the bin)
 and see how the time per frame grows. Windows > Performance Monitor shows where the time
 goes, stage by stage. On the Box3D Solver: Substeps trades speed for stiffer stacks;
 Allow Sleeping is on Box3D Data. With Bullet the same scene is usually much slower."""
-    tidy(240, note, dop)
-    return dop, 240
+    tidy(360, note, dop)
+    return dop, 360
 
 
 def scene_dominoes():
     p = Pieces("domino_pieces")
     ground(p, 60.0)
-    count, spacing, turn_gap, r0 = 260, 0.55, 1.6, 3.0
+    count, spacing, turn_gap, r0 = 1000, 0.55, 1.6, 3.0
     b = turn_gap / (2 * math.pi)
     theta, calls, first = 0.0, [], None
     for i in range(count):
@@ -481,8 +481,8 @@ domino is a packed box whose rotation comes from the orient point attribute.
 Try: change spacing in the dominoes_points wrangle's code (this script's 'spacing'),
 or set friction on RBD Packed Object (it writes friction onto every piece) and watch
 the dominoes slip instead of topple."""
-    tidy(480, note, dop)
-    return dop, 480
+    tidy(1800, note, dop)
+    return dop, 1800
 
 
 def bridge_hinges(span=14.0, links=16, length=1.0, height=5.0):
@@ -534,22 +534,28 @@ def scene_bridge_chain():
     names = ["post_left"] + [f"plank{i}" for i in range(len(hinges) - 1)] + ["post_right"]
     for i, (x, y) in enumerate(hinges):
         lines.append((names[i], (x, y, 0), names[i + 1], (x, y, 0), "revolute"))
-    crates = [mk((-5 + 10 * ((i * 0.618) % 1), 8 + i * 0.9, -0.4 + 0.8 * ((i * 0.37) % 1)), f"crate{i}",
-                 quat_about((0, 1, 0), i), rainbow(i / 12)) for i in range(12)]
+    # 20 layers of 12 crates (6 across, 2 deep), each layer 0.8 higher and shifted a little
+    ncrates = 240
+    crates = [mk((-5 + 2 * (i % 6) + 0.1 * ((i * 0.618) % 1), 8 + (i // 12) * 0.8, -0.35 + 0.7 * ((i // 6) % 2)
+                  + 0.05 * ((i * 0.37) % 1)), f"crate{i}", quat_about((0, 1, 0), i), rainbow(i / ncrates))
+              for i in range(ncrates)]
     p.boxes("crates", (0.6, 0.6, 0.6), crates, "crates dropped onto the bridge")
 
     # Chain: links joined end to end by spherical joints, pinned to the world at one end,
     # starting straight out so it swings down into a small tower.
-    pivot, pitch, n = (-6.0, 13.0, -6.0), 0.5, 24
-    links = [mk((pivot[0] + (i + 0.5) * pitch, pivot[1], pivot[2]), f"link{i}", cd=(0.8, 0.8, 0.85))
-             for i in range(n)]
-    p.boxes("links", (0.44, 0.12, 0.12), links, "chain links")
-    lines.append(("", pivot, "link0", pivot, "spherical"))
-    for i in range(1, n):
-        at = (pivot[0] + i * pitch, pivot[1], pivot[2])
-        lines.append((f"link{i - 1}", at, f"link{i}", at, "spherical"))
-    tower = [mk((-7.5, 0.5 + k * 1.001, pivot[2]), f"tower{k}", cd=rainbow(0.6 + k * 0.1)) for k in range(3)]
-    p.boxes("tower", (1, 1, 1), tower, "a small tower in the chain's path")
+    chains, n, pitch = 4, 24, 0.5
+    links, tower = [], []
+    for c in range(chains):
+        pivot = (-6.0, 13.0, -6.0 - 3.0 * c)
+        links += [mk((pivot[0] + (i + 0.5) * pitch, pivot[1], pivot[2]), f"link{c}_{i}", cd=(0.8, 0.8, 0.85))
+                  for i in range(n)]
+        lines.append(("", pivot, f"link{c}_0", pivot, "spherical"))
+        for i in range(1, n):
+            at = (pivot[0] + i * pitch, pivot[1], pivot[2])
+            lines.append((f"link{c}_{i - 1}", at, f"link{c}_{i}", at, "spherical"))
+        tower += [mk((-7.5, 0.5 + k * 1.001, pivot[2]), f"tower{c}_{k}", cd=rainbow(0.6 + k * 0.1)) for k in range(3)]
+    p.boxes("links", (0.44, 0.12, 0.12), links, "chain links, four chains side by side")
+    p.boxes("tower", (1, 1, 1), tower, "a small tower in each chain's path")
 
     path = p.finish()
     network = network_sop("bridge_chain_network", lines)
@@ -557,13 +563,14 @@ def scene_bridge_chain():
                                     joints=[("box3d_revoluteconrel", "hinges", {}),
                                             ("box3d_sphericalconrel", "ball_joints", {})])
     fix_constraint_names(network, names_used, {"revolute": "hinges", "spherical": "ball_joints"})
-    note = f"""BRIDGE AND CHAIN: {p.count - 1} bodies joined by {len(lines)} constraints.
+    note = f"""BRIDGE AND CHAINS: {p.count - 1} bodies, {len(lines)} of them joined by constraints.
 
 A constraint network (bridge_chain_network) is a polyline per joint: each end names the
 piece it holds and sits where the joint is. An empty name pins the piece to the world.
 The polyline's constraint_name picks the relationship node in the DOP network:
   - the bridge planks use 'Box3D Revolute' (hinges turning about the joint's z axis);
-  - the chain links use 'Box3D Spherical' (ball joints).
+  - the chain links use 'Box3D Spherical' (ball joints), in four chains side by side.
+The crates dropped onto the bridge are free bodies.
 
 Try: on the hinges node, turn on Enable Spring or limits; turn on Breakable on the
 ball joints with a low Break Force and the chain snaps when it hits the tower."""
@@ -586,16 +593,18 @@ def fix_constraint_names(network_path, data_names, wanted):
 def scene_wrecking_ball():
     p = Pieces("wrecking_pieces")
     ground(p)
-    bricks, rows, per_row = [], 16, 14
-    for row in range(rows):
-        offset = 0.5 if row % 2 else 0.0
-        count = per_row - (1 if row % 2 else 0)
-        for i in range(count):
-            z = (i - (per_row - 1) / 2) * 1.002 + offset
-            y = 0.25 + row * 0.501
-            shade = 0.85 + 0.15 * ((i * 7 + row * 3) % 5) / 4
-            bricks.append(mk((1.5, y, z), f"brick{row}_{i}", cd=(0.7 * shade, 0.32 * shade, 0.22 * shade)))
-    p.boxes("bricks", (0.5, 0.5, 1.0), bricks, "a running-bond brick wall")
+    bricks, rows, per_row, depth = [], 30, 24, 3
+    for d in range(depth):
+        for row in range(rows):
+            offset = 0.5 if row % 2 else 0.0
+            count = per_row - (1 if row % 2 else 0)
+            for i in range(count):
+                z = (i - (per_row - 1) / 2) * 1.002 + offset
+                y = 0.25 + row * 0.501
+                shade = 0.85 + 0.15 * ((i * 7 + row * 3 + d * 2) % 5) / 4
+                bricks.append(mk((1.5 + d * 0.501, y, z), f"brick{d}_{row}_{i}",
+                                 cd=(0.7 * shade, 0.32 * shade, 0.22 * shade)))
+    p.boxes("bricks", (0.5, 0.5, 1.0), bricks, "a running-bond brick wall, three bricks thick")
     pivot, ball_start = (0.0, 14.0, 0.0), (-9.0, 14.0, 0.0)
     p.stream("ball", p.shape_sphere("ball", 1.0, freq=4),
              mk(ball_start, "ball", cd=(0.2, 0.2, 0.22), density=8000.0, georep="sphere"),
@@ -621,17 +630,17 @@ def scene_paddle_mixer():
     p = Pieces("mixer_pieces")
     ground(p)
     hub = (0.0, 2.8, 0.0)
-    tank = [("tank_left", (0.3, 6, 2.2), (-3.35, 3, 0)), ("tank_right", (0.3, 6, 2.2), (3.35, 3, 0)),
-            ("tank_back", (7.0, 6, 0.3), (0, 3, -1.25)), ("tank_front", (7.0, 6, 0.3), (0, 3, 1.25))]
+    tank = [("tank_left", (0.3, 10, 4.6), (-3.35, 5, 0)), ("tank_right", (0.3, 10, 4.6), (3.35, 5, 0)),
+            ("tank_back", (7.0, 10, 0.3), (0, 5, -2.45)), ("tank_front", (7.0, 10, 0.3), (0, 5, 2.45))]
     for tag, size, pos in tank:
         p.boxes(tag, size, [mk(pos, tag, cd=(0.55, 0.65, 0.75), active=0)], "a static wall of the tank")
-    p.boxes("paddle", (5.2, 0.35, 1.4), [mk(hub, "paddle", cd=(0.9, 0.5, 0.15))],
+    p.boxes("paddle", (5.2, 0.35, 4.4), [mk(hub, "paddle", cd=(0.9, 0.5, 0.15))],
             "the paddle, hinged to the world at its middle")
     vex = """\
 // Balls in a lattice above the paddle.
 int n = 0;
-for (int k = 0; k < 7; k++) for (int j = 0; j < 4; j++) for (int i = 0; i < 15; i++) {
-    vector p = set(-2.8 + i * 0.4, 3.4 + k * 0.4, -0.6 + j * 0.4) + 0.02 * (vector(rand(n)) - 0.5);
+for (int k = 0; k < 16; k++) for (int j = 0; j < 8; j++) for (int i = 0; i < 15; i++) {
+    vector p = set(-2.8 + i * 0.4, 3.4 + k * 0.4, -1.4 + j * 0.4) + 0.02 * (vector(rand(n)) - 0.5);
     mk(p, sprintf("ball%d", n), identity, hsvtorgb(set(rand(n + 0.3), 0.6, 0.95)), 1, 1000.0, "sphere");
     n++;
 }
