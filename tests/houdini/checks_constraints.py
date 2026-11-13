@@ -362,6 +362,12 @@ def test_other_rbd_objects():
             results.append(Result("other_rbd_objects", Result.INFO, f"{label}: not available ({e})"))
             continue
         set_parm(obj, ["soppath"], single_object_geo(type_name + "_geo", build))
+        if type_name == "rbdpointobject":
+            # Each point instances this geometry (else its objects have none to collide with).
+            def unit_box(geo):
+                return create(geo, "box")
+            set_parm(obj, ["geopath", "instancepath", "geometrypath", "instance"],
+                     single_object_geo("point_instance_box", unit_box))
         finish(dop, box3d_solver(dop, obj))
 
         def heights(sim, f):

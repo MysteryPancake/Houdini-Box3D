@@ -143,8 +143,15 @@ int main() {
     // Hard, by constraint_type.
     s = SideFXSettings();
     j = mapSideFX(SideFXType::Hard, s, ConstraintMode::All, ctx);
-    CHECK(j.type == JointType::Weld && j.holdSeparation &&
-          j.settings.collideConnected);
+    CHECK(j.type == JointType::Weld && !j.holdSeparation &&
+          j.separation == 1.0f && j.settings.collideConnected);
+    {
+      SideFXSettings noRest;
+      noRest.restLength = 0.0f; // no rest length: held where the anchors are
+      const SideFXJoint h =
+          mapSideFX(SideFXType::Hard, noRest, ConstraintMode::All, ctx);
+      CHECK(h.type == JointType::Weld && h.holdSeparation);
+    }
     j = mapSideFX(SideFXType::Hard, s, ConstraintMode::Position, ctx);
     CHECK(j.type == JointType::Distance && j.settings.restLength == 1.0f &&
           !j.settings.enableSpring);

@@ -200,11 +200,17 @@ SideFXJoint mapSideFX(SideFXType t, const SideFXSettings &s,
   case SideFXType::Hard:
     switch (mode) {
     case ConstraintMode::All:
+      // Rigid. Like Bullet's (checked in Houdini 22.0: a piece held 2.06 away
+      // ends up at the rest length, 1 by default), the anchors are kept the
+      // rest length apart; without one, where they are.
       j.type = JointType::Weld;
       j.settings = Box3DWorld::defaultJointSettings(JointType::Weld);
       j.settings.enableLinearSpring = false;
       j.settings.enableAngularSpring = false;
-      j.holdSeparation = true;
+      if (s.restLength > kSideFXMinRestLength)
+        j.separation = s.restLength;
+      else
+        j.holdSeparation = true;
       break;
     case ConstraintMode::Position:
       if (s.restLength > kSideFXMinRestLength) {

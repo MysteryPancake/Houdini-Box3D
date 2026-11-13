@@ -160,7 +160,8 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   * Glue: rigid weld holding the pieces where they are, never colliding. Bullet's strength is an accumulated impulse;
     here Break Force = strength / DOP timestep (the force that gives that impulse over one step), < 0 never. Half-life
     and propagation are ignored, and the weld also sees steady loads (weight), not only impacts.
-  * Hard: all -> rigid weld holding the current offset (rest length ignored); position -> rigid distance joint at the
+  * Hard: all -> rigid weld with the anchors kept the rest length apart (as Bullet does; held where they are when there
+    is no rest length); position -> rigid distance joint at the
     rest length, or spherical when it is ~0; rotation -> motor joint, angular spring only at 60 Hz / ratio 2 with
     unlimited torque (Box3D has no rigid rotation-only joint). CFM, ERP, iterations and the angular motors are ignored.
   * Bullet Soft: stiffness is already Hz. all -> motor joint with linear and angular springs (enableangular picks the
@@ -178,8 +179,9 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   * Hard / Spring / Soft / Cone Twist: Collide Connected = !disablecollisions.
 * **Frame offsets**: a SideFX joint's frames need not sit on its anchors. `sideFXFrameOffsets` gives each anchor an
   offset in its own axes (`adjA` / `adjB` on `Box3DJointEntry`): a rotation (cone twist) and/or a shift along the anchor
-  line so the frames meet when the anchors are `separation` apart (Soft / Spring all with a rest length), or are as
-  far apart as now (`holdSeparation`: Glue, Hard all; anchors from Connect Adjacent Pieces sit at the centroids, and
+  line so the frames meet when the anchors are `separation` apart (Soft / Spring / Hard all with a rest length), or are
+  as far apart as now (`holdSeparation`: Glue, Hard all without one; anchors from Connect Adjacent Pieces sit at the
+  centroids, and
   a plain weld there would pull the pieces together). The joint is made from `applyFrameOffset(anchor, adj)`;
   `writeLiveFrames` and the `next_constraint_name` switch write `removeFrameOffset(frame, adj)` back as P / orient,
   so the anchors stay anchors, and `local_P` / `local_orient` hold the joint's own frames (compared with the

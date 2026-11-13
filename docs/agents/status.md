@@ -15,9 +15,8 @@ remove an item once it has been checked, and record anything new here rather tha
   toggles, whole objects, comparisons with Bullet and the POP Solver) and have not been run yet. What no script can
   check: Escape mid-step, the viewport, motion blur, and how greyed-out parameters look. The plugin builds against the real HDK (Houdini 22.0.479, MSVC, no warnings), so "compiled only
   against stand-in headers" notes are gone too: what remains is behaviour.
-* The `BodyProps` refactor (`BodyProps` embedded in `BodySettings`): changing a Box3D Data value (friction, damping,
-  Allow Sleeping, Add Impact Data) mid-simulation still updates existing bodies, and an untouched object still skips
-  its scan.
+* An untouched object still skips its scan after a Box3D Data change elsewhere (debug log: `scan skipped`). (A Box3D
+  Data change mid-simulation reaching existing bodies is verified, `data_change_midsim`.)
 * `tests/box3d_test.hiplc` still uses the removed Box3D Joints node and needs rebuilding with a Constraint Network.
 
 **HDK and Houdini behaviour**
@@ -40,10 +39,6 @@ remove an item once it has been checked, and record anything new here rather tha
 * An Escape mid-step (`SIM_SOLVER_FAIL`, world unstamped): Houdini discards that step and re-cooks it, the frames before
   it stay cached and correct, the re-cook rebuilds once. Also that Escape reaches `opInterrupt()` at all with no
   `opStart` of ours, during a long first-frame sync of many convex hulls.
-* The world data rides on the first object that has it (else `objects(0)`): removing that object mid-simulation (a
-  Delete Objects DOP, a changed solver group) loses the world, which should mean one rebuild, not a crash or a stall.
-* Node messages: they appear on the Box3D Solver node (verified); that they clear on the next step once the problem
-  is gone is scripted (`messages_clear`) but not yet run.
 * `objects` sorted by object id (`box3dObjectById` binary search, a miss is final). Checked once per solve (`st.objectsSorted`); an array that is not sorted falls back to a linear scan, so only speed is at stake.
 * Box3D's tasks on Houdini's TBB pool (`Box3DHoudiniTasks`): no stall when several DOP networks or threaded SOPs cook
   at once, or where threading is disabled for the cooking thread (tasks run inline). `HOUDINI_MAXTHREADS=1` is fine.
@@ -65,13 +60,13 @@ remove an item once it has been checked, and record anything new here rather tha
   session and every edit to a packed source bumping its `P` or primitive-list data id. Edit a packed source in place
   (no new id) and rebuild: a stale summary would give the old hull.
 * Fingerprint skip: a packed transform edited by another node (Transform Pieces in a SOP Solver, a wrangle on the
-  `transform` intrinsic) bumps the primitive list data id; if not, the edit is only seen at the next full scan.
-  Packed points added or deleted bump `P` or `id` (packed topology is not counted).
-* `animated` bodies: upstream nodes update the point's `P` / `orient` before the solver runs each step (RBD Packed
-  Object's SOP re-import, a SOP Solver), and the target is reached over `dt * Time Scale`. With Time Scale != 1 the
-  kinematic body pushes faster or slower than its animation looks; compare with Bullet.
-* Bullet's attribute semantics as we copied them: `active`, `animated`, `deforming`, `bullet_autofit_valid` (written
-  back as 1) and `awake`. Run one scene that toggles each mid-simulation in both solvers.
+  `transform` intrinsic) bumps the primitive list data id. (Moving `P` from a SOP Solver is picked up and the body
+  teleports, verified by `sop_solver_edit`.) Packed points added or deleted bump `P` or `id`.
+* `animated` bodies: a kinematic body tracks its animation at Time Scale 1 and 2 (verified, `time_scale_kinematic`);
+  at Time Scale 2 it pushes a box the same distance in DOP time. Not compared with Bullet.
+* Bullet's attribute semantics: `active` 0 -> 1 mid-simulation starts the body falling within a frame of Bullet, and
+  `awake` 0 -> 1 wakes it (verified, `attribute_toggles`). `animated`, `deforming` and `bullet_autofit_valid` toggles
+  are not compared with Bullet.
 * Shared-string handles (`GA_AIFSharedStringTuple::getHandle`) are stable for one scan of one detail (`bullet_georep`
   and `name` are memoised by handle).
 
@@ -83,23 +78,21 @@ remove an item once it has been checked, and record anything new here rather tha
   writes still look like edits, every object scans every step: watch for `full scan, changed:` lines in a debug build.
 * Downstream readers: DOP Import (Fetch) matches the simulation, `v` is -g t for a falling body and `w` is in radians
   per second (verified). Still open: motion blur, and that a body falling asleep keeps its last small `v` / `w`.
-* `addPointImpact` arguments: impulse in N*s, the point number, the other object id and point, primitive -1, and time =
-  `engine.getSimulationTime()` at the end of the step. Check against Houdini's impact tools (DOP Import of Impacts, a
-  SOP Solver reading them), and that a fresh `SIM_Impacts` each step (removed when there are none) is what they want.
-  No Feedback data: other solvers in a Multi Solver do not see our impacts.
-* `mass` is written only with `computemass` (the computed value). Bullet's write-back may differ.
+* `addPointImpact`: the point number and the time (end of the step) are right (verified, `impacts`); the impulse size
+  is checked against m*v (re-run with a bounce-0 ground pending). Whether a fresh `SIM_Impacts` each step suits
+  Houdini's impact tools, and no Feedback data for other solvers in a Multi Solver.
 * Aging: `age` counts seconds, life 0 never dies, and a dead packed piece is deleted (verified, also inside a
   constraint network without errors). Compared with the POP Solver's timing: scripted (`aging_vs_pop`), not yet run.
-* Point `force` / `torque`: world-space newtons and newton-metres (what POP Force writes), applied at the centre of mass
-  for one step, then zeroed by the solver. A POP Force must cook before the Box3D Solver in the same step; the zeroing
-  may clash with another solver reading `force` in a Multi Solver.
+* Point `force` / `torque`: applied for one step and zeroed (verified, `point_force`: F/m and torque/I exact). A POP
+  Force must cook before the Box3D Solver in the same step; the zeroing may clash with another solver reading `force`
+  in a Multi Solver.
 * Force DOPs are evaluated once per DOP step, at the start-of-step state (not per Box3D substep). A Gravity Force DOP
   adds to the solver's own Gravity (documented in the Gravity tooltip).
 
 **Affectors (Static Object and similar)**
-* `SIMgetGeometryTransform` gives the Static Object's world transform at the right time (start or end of the step),
-  including Use Object Transform and an animated object. An animated Static Object is moved, not swept: bodies are not
-  pushed (the README says so), and a fast move may pass through them.
+* Animated Static Objects: without Animated Geometry (`animategeo`) Houdini keeps the object at its first transform (a
+  rising grid stayed at y = 0 in the DOP object itself); with it, scripted (`animated_static`), not yet run. A moved
+  Static Object is moved, not swept: bodies are not pushed (the README says so).
 * Static Objects whose geometry is packed, SDF-only or not polygons: only polygons are used, so they collide with
   nothing and warn "no usable collision geometry". (The Ground Plane DOP works: a dropped box lands on it.)
 * A Static Object with Use Deforming Geometry bumps `P` every step, so its mesh is rebuilt every step (cost).
@@ -120,9 +113,9 @@ remove an item once it has been checked, and record anything new here rather tha
   SideFX's data works; the individual values are not checked).
 * (Confirmed, `sidefx_glue`: Box3D's Glue breaks under a hanging piece's weight at Strength 1 and 100 where Bullet's
   holds; both hold at 1e4. Listed under Known gaps.)
-* Hard: `all` ignoring the rest length, and `position` with Houdini's default rest length 1 and no `restlength`
-  attribute giving a rod of length 1 (the documented meaning), are guesses about Bullet's behaviour.
-* `constraint_type` missing = all.
+* Hard compared with Bullet (Houdini 22.0): `position` matches (both hold the rest length, 1 by default), and Bullet's
+  `all` and a missing `constraint_type` also hold the rest length, where ours held the starting offset. Fixed (`all`
+  now keeps the anchors the rest length apart); re-run `sidefx_hard_all` / `sidefx_hard_untyped` to confirm.
 * Which end is Cone Twist's goal (taken as point 1); only matters when goal and constrained axes differ.
 * Soft / Spring `all` with a rest length shifts the frames along the anchor line when the joint is made; after a
   world rebuild from a stretched pose the offset direction is re-derived from the anchors and may differ slightly.
@@ -133,7 +126,6 @@ remove an item once it has been checked, and record anything new here rather tha
 * `SIM_DATA_CREATE(obj, "Position", SIM_Motion, 0)` when the object has no Position data, and whether writing
   `Position` from a solver needs anything more (Bullet and the RBD solver do it).
 * The viewport and DOP Import SOP follow the written Position data (through the geometry's `positionpath`).
-* Use Object Transform: a scaled or sheared geometry transform is baked into the shapes.
 * Without Box3D Data an RBD Object now uses its own RBD State / PhysicalParms / BulletData (names from a Houdini 22.0
   probe). Its mass, bounce and shared world are checked; still open: that it collides as its convex hull (a tilted
   rod falls over, so it is not an axis-aligned fitted box, but was still settling 0.32 tall after 240 frames, where

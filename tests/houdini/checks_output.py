@@ -37,9 +37,11 @@ GROUND = {"size": (20, 1, 20), "center": (0, -0.5, 0), "attrs": {"active": 0}}
 G = 9.80665
 
 
-def ground_object(dop, name):
+def ground_object(dop, name, **parms):
+    """A static packed ground box (top at y = 0). parms: RBD Packed Object parameters, e.g.
+    bounce=0.0 (its default 0.5 is written onto the point and mixes as the maximum)."""
     path, _ = packed_boxes(name + "_geo", [GROUND])
-    return packed_object(dop, name, path)
+    return packed_object(dop, name, path, **parms)
 
 
 def drop_one(name, sop_path, frames=72, extra=None):
@@ -106,8 +108,8 @@ def test_offset_pivot():
     wr.setInput(0, asm)
     set_parm(wr, ["class"], 1)  # primitives
     set_parm(wr, ["snippet"], """
-vector piv = {0.4, 0.4, 0.0};
-vector old = primintrinsic(0, "pivot", @primnum);
+vector old = primintrinsic(0, "pivot", @primnum);  // Assemble: the centroid, in world space
+vector piv = old + {0.4, 0.4, 0.0};                  // off-centre, still inside the box
 matrix3 m = primintrinsic(0, "transform", @primnum);
 setprimintrinsic(0, "pivot", @primnum, piv);
 int pt = primpoint(0, @primnum, 0);
@@ -322,7 +324,7 @@ def test_impacts():
     dop = new_dopnet("impacts")
     obj = packed_object(dop, "piece", path, computemass=0, mass=1.0, bounce=0.0)
     data = box3d_data(dop, obj, "data", addimpact=1)
-    finish(dop, box3d_solver(dop, merge(dop, [ground_object(dop, "impacts_ground"), data])))
+    finish(dop, box3d_solver(dop, merge(dop, [ground_object(dop, "impacts_ground", bounce=0.0), data])))
     track = step(dop, 30, lambda sim, f: impact_records(sim, "piece"))
     first = next((f for f in sorted(track) if track[f]), None)
     if first is None:
