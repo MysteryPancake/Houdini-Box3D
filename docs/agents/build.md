@@ -12,8 +12,8 @@ How the project is built, tested and packaged. Index and rules: [CLAUDE.md](../.
   the automatic DOPs don't expose to us). Renaming a node's internal name means renaming its icon.
 * Warnings: `b3dop_warnings(target)` adds `-Wall -Wextra` (`/W4` on MSVC) to `b3dop_core`, the tests and the plugin,
   never to Box3D. Houdini's headers come through an imported target, so they are system includes and not checked.
-  `BOX3DDOP_WARNINGS_AS_ERRORS` (default OFF) adds `-Werror` / `/WX`; CI sets it on Linux only (MSVC `/W4` not yet
-  checked clean).
+  `BOX3DDOP_WARNINGS_AS_ERRORS` (default OFF) adds `-Werror` / `/WX`; CI sets it on both platforms. A full MSVC
+  build (plugin included, Houdini 22) was clean apart from test shadowing, since fixed.
 * `CMAKE_EXPORT_COMPILE_COMMANDS` is on: `build/compile_commands.json` feeds clang-tidy (`.clang-tidy`) and IDEs. The
   plugin's sources only appear in it from a plugin (HDK) build.
 * `format` / `format-check` targets run clang-format over `src/` and `tests/` (only when clang-format is found).

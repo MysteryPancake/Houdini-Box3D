@@ -1,7 +1,6 @@
 # Checks every push and pull request: formatting, the docs checker, and the Houdini-free core
-# (Box3D + b3dop_core + the core tests). Warnings are errors on Linux (GCC, -Wall -Wextra);
-# Windows (MSVC /W4) builds and tests with warnings reported but not fatal. The Houdini plugin
-# needs an HDK install, so it is not built here.
+# (Box3D + b3dop_core + the core tests), with warnings as errors (GCC -Wall -Wextra on Linux,
+# MSVC /W4 on Windows). The Houdini plugin needs an HDK install, so it is not built here.
 name: CI
 
 on:
@@ -35,7 +34,7 @@ jobs:
           - os: ubuntu-latest
             werror: "ON"
           - os: windows-latest
-            werror: "OFF"
+            werror: "ON"
     steps:
       - uses: actions/checkout@v4
         with:

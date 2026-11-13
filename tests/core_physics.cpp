@@ -26,51 +26,51 @@ int main() {
   b3dop::KeyedWorld w;
   CHECK(w.create(b3dop::WorldSettings()));
 
-  const float qid[4] = {0, 0, 0, 1};
+  const float qIdentity[4] = {0, 0, 0, 1};
   const double groundPos[3] = {0, -0.5, 0};
   const double boxPos[3] = {0, 3.0, 0};
 
-  b3dop::BodySettings ground;
-  ground.type = b3dop::BodySettings::Type::Static;
-  b3dop::BodySettings box; // dynamic
+  b3dop::BodySettings groundBody;
+  groundBody.type = b3dop::BodySettings::Type::Static;
+  b3dop::BodySettings dynamicBox; // dynamic
 
-  CHECK(w.addBody(1, ground, groundPos, qid));
-  const float gh[3] = {10, 0.5f, 10};
-  CHECK(w.addBoxShape(1, gh));
-  CHECK(w.addBody(2, box, boxPos, qid));
-  const float bh[3] = {0.5f, 0.5f, 0.5f};
-  CHECK(w.addBoxShape(2, bh));
-  CHECK(w.addBody(3, box, boxPos, qid));
+  CHECK(w.addBody(1, groundBody, groundPos, qIdentity));
+  const float groundHalf[3] = {10, 0.5f, 10};
+  CHECK(w.addBoxShape(1, groundHalf));
+  CHECK(w.addBody(2, dynamicBox, boxPos, qIdentity));
+  const float boxHalf[3] = {0.5f, 0.5f, 0.5f};
+  CHECK(w.addBoxShape(2, boxHalf));
+  CHECK(w.addBody(3, dynamicBox, boxPos, qIdentity));
   CHECK(w.addSphereShape(3, 0.5f));
-  CHECK(!w.addBody(2, box, boxPos, qid)); // duplicate id rejected
+  CHECK(!w.addBody(2, dynamicBox, boxPos, qIdentity)); // duplicate id rejected
   CHECK(w.bodyCount() == 3);
 
   for (int i = 0; i < 240; ++i)
     w.step(1.0f / 60.0f);
 
-  double p[3];
-  float q[4], lin[3], ang[3];
-  CHECK(w.getTransform(2, p, q));
-  CHECK(w.getVelocity(2, lin, ang));
-  std::printf("box    rest y=%.4f  |v|=%.5f\n", p[1], std::fabs(lin[1]));
-  CHECK(std::fabs(p[1] - 0.5) <
+  double outP[3];
+  float outQ[4], outLin[3], outAng[3];
+  CHECK(w.getTransform(2, outP, outQ));
+  CHECK(w.getVelocity(2, outLin, outAng));
+  std::printf("box    rest y=%.4f  |v|=%.5f\n", outP[1], std::fabs(outLin[1]));
+  CHECK(std::fabs(outP[1] - 0.5) <
         0.05); // resting on ground top (y=0) + half extent
-  CHECK(std::fabs(lin[1]) < 0.1);
-  CHECK(w.getTransform(3, p, q));
-  std::printf("sphere rest y=%.4f\n", p[1]);
-  CHECK(std::fabs(p[1] - 0.5) < 0.05);
+  CHECK(std::fabs(outLin[1]) < 0.1);
+  CHECK(w.getTransform(3, outP, outQ));
+  std::printf("sphere rest y=%.4f\n", outP[1]);
+  CHECK(std::fabs(outP[1] - 0.5) < 0.05);
 
   // push state in and read it back (what the solver does for external edits)
-  const double np[3] = {5, 7, -2};
-  CHECK(w.setTransform(2, np, qid));
-  const float v[3] = {1, 2, 3}, a[3] = {0.5f, 0, 0};
-  CHECK(w.setVelocity(2, v, a));
-  CHECK(w.getTransform(2, p, q));
-  CHECK(std::fabs(p[0] - 5) < 1e-5 && std::fabs(p[1] - 7) < 1e-5 &&
-        std::fabs(p[2] + 2) < 1e-5);
-  CHECK(w.getVelocity(2, lin, ang));
-  CHECK(std::fabs(lin[0] - 1) < 1e-5 && std::fabs(lin[2] - 3) < 1e-5 &&
-        std::fabs(ang[0] - 0.5f) < 1e-5);
+  const double newPos[3] = {5, 7, -2};
+  CHECK(w.setTransform(2, newPos, qIdentity));
+  const float setLin[3] = {1, 2, 3}, setAng[3] = {0.5f, 0, 0};
+  CHECK(w.setVelocity(2, setLin, setAng));
+  CHECK(w.getTransform(2, outP, outQ));
+  CHECK(std::fabs(outP[0] - 5) < 1e-5 && std::fabs(outP[1] - 7) < 1e-5 &&
+        std::fabs(outP[2] + 2) < 1e-5);
+  CHECK(w.getVelocity(2, outLin, outAng));
+  CHECK(std::fabs(outLin[0] - 1) < 1e-5 && std::fabs(outLin[2] - 3) < 1e-5 &&
+        std::fabs(outAng[0] - 0.5f) < 1e-5);
 
   // handle access gives the same answers as keyed access
   {
@@ -80,18 +80,19 @@ int main() {
     double hp[3];
     float hq[4], hlin[3], hang[3];
     CHECK(w.getTransformByHandle(h, hp, hq));
-    CHECK(w.getTransform(2, p, q));
-    CHECK(hp[0] == p[0] && hp[1] == p[1] && hp[2] == p[2] && hq[3] == q[3]);
+    CHECK(w.getTransform(2, outP, outQ));
+    CHECK(hp[0] == outP[0] && hp[1] == outP[1] && hp[2] == outP[2] &&
+          hq[3] == outQ[3]);
     CHECK(w.getVelocityByHandle(h, hlin, hang));
-    CHECK(hlin[0] == lin[0] && hlin[2] == lin[2] && hang[0] == ang[0]);
+    CHECK(hlin[0] == outLin[0] && hlin[2] == outLin[2] && hang[0] == outAng[0]);
     const double np2[3] = {-4, 8, 1};
     const float v2[3] = {0, 1, 0}, a2[3] = {0, 0, 2};
-    CHECK(w.setTransformByHandle(h, np2, qid));
+    CHECK(w.setTransformByHandle(h, np2, qIdentity));
     CHECK(w.setVelocityByHandle(h, v2, a2));
-    CHECK(w.getTransform(2, p, q));
-    CHECK(std::fabs(p[0] + 4) < 1e-5 && std::fabs(p[1] - 8) < 1e-5);
-    CHECK(w.getVelocity(2, lin, ang));
-    CHECK(std::fabs(lin[1] - 1) < 1e-5 && std::fabs(ang[2] - 2) < 1e-5);
+    CHECK(w.getTransform(2, outP, outQ));
+    CHECK(std::fabs(outP[0] + 4) < 1e-5 && std::fabs(outP[1] - 8) < 1e-5);
+    CHECK(w.getVelocity(2, outLin, outAng));
+    CHECK(std::fabs(outLin[1] - 1) < 1e-5 && std::fabs(outAng[2] - 2) < 1e-5);
     CHECK(!w.getTransformByHandle(0, hp, hq));
     // distinct bodies get distinct handles
     CHECK(w.bodyHandle(3) != h);
@@ -99,7 +100,7 @@ int main() {
 
   w.removeBody(2);
   CHECK(!w.hasBody(2) && w.bodyCount() == 2);
-  CHECK(!w.getTransform(2, p, q));
+  CHECK(!w.getTransform(2, outP, outQ));
 
   // ---- point-attribute mapping (Box3DShapes.h) + addShape/setBodyType ----
   {
@@ -139,32 +140,32 @@ int main() {
     stat.type = BodySettings::Type::Static;
     const double gp[3] = {0, -0.5, 0};
     const float gsc[3] = {20, 1, 20};
-    CHECK(pw.addBody(makeBodyKey(1, 0), stat, gp, qid));
+    CHECK(pw.addBody(makeBodyKey(1, 0), stat, gp, qIdentity));
     CHECK(pw.addShape(makeBodyKey(1, 0),
                       makeShapeSpec(ShapeType::Box, 1.0f, gsc)));
 
     BodySettings dyn;
     const ShapeSpec heavy = makeShapeSpec(ShapeType::Box, 1.0f, one);
     dyn.props.density = 50.0f / shapeVolume(heavy);
-    const double hp[3] = {-2, 3, 0}, sp[3] = {2, 3, 0};
-    CHECK(pw.addBody(makeBodyKey(1, 1), dyn, hp, qid));
+    const double hp[3] = {-2, 3, 0}, spherePos[3] = {2, 3, 0};
+    CHECK(pw.addBody(makeBodyKey(1, 1), dyn, hp, qIdentity));
     CHECK(pw.addShape(makeBodyKey(1, 1), heavy));
-    CHECK(pw.addBody(makeBodyKey(1, 2), dyn, sp, qid));
+    CHECK(pw.addBody(makeBodyKey(1, 2), dyn, spherePos, qIdentity));
     CHECK(pw.addShape(makeBodyKey(1, 2),
                       makeShapeSpec(ShapeType::Sphere, 1.0f, one)));
     const float v0[3] = {1, 0, 0}, w0[3] = {0, 0, 0};
     CHECK(pw.setVelocity(makeBodyKey(1, 1), v0, w0)); // initial `v`
 
     pw.step(1.0f / 60.0f);
-    CHECK(pw.getVelocity(makeBodyKey(1, 1), lin, ang));
-    CHECK(lin[0] > 0.9f); // v attribute honoured
+    CHECK(pw.getVelocity(makeBodyKey(1, 1), outLin, outAng));
+    CHECK(outLin[0] > 0.9f); // v attribute honoured
 
     for (int i = 0; i < 300; ++i)
       pw.step(1.0f / 60.0f);
-    CHECK(pw.getTransform(makeBodyKey(1, 1), p, q));
-    CHECK(std::fabs(p[1] - 0.5) < 0.05); // rests on ground
-    CHECK(pw.getTransform(makeBodyKey(1, 2), p, q));
-    CHECK(std::fabs(p[1] - 0.5) < 0.05);
+    CHECK(pw.getTransform(makeBodyKey(1, 1), outP, outQ));
+    CHECK(std::fabs(outP[1] - 0.5) < 0.05); // rests on ground
+    CHECK(pw.getTransform(makeBodyKey(1, 2), outP, outQ));
+    CHECK(std::fabs(outP[1] - 0.5) < 0.05);
 
     // active 1 -> 0: becomes static and stops moving.
     BodySettings::Type ty;
@@ -174,10 +175,10 @@ int main() {
     CHECK(pw.getBodyType(makeBodyKey(1, 2), ty) &&
           ty == BodySettings::Type::Static);
     const double lift[3] = {2, 5, 0};
-    CHECK(pw.setTransform(makeBodyKey(1, 2), lift, qid));
+    CHECK(pw.setTransform(makeBodyKey(1, 2), lift, qIdentity));
     pw.step(1.0f / 60.0f);
-    CHECK(pw.getTransform(makeBodyKey(1, 2), p, q));
-    CHECK(std::fabs(p[1] - 5.0) < 1e-4); // static: gravity ignored
+    CHECK(pw.getTransform(makeBodyKey(1, 2), outP, outQ));
+    CHECK(std::fabs(outP[1] - 5.0) < 1e-4); // static: gravity ignored
 
     // Point removed -> body removed, others untouched.
     pw.removeBody(makeBodyKey(1, 2));
@@ -187,13 +188,13 @@ int main() {
     // comes to rest at half its height.
     const float stand[3] = {1, 3, 1};
     const double capP[3] = {-6, 4, 0};
-    CHECK(pw.addBody(makeBodyKey(1, 10), dyn, capP, qid));
+    CHECK(pw.addBody(makeBodyKey(1, 10), dyn, capP, qIdentity));
     CHECK(pw.addShape(makeBodyKey(1, 10),
                       makeShapeSpec(ShapeType::Capsule, 1.0f, stand)));
     for (int i = 0; i < 300; ++i)
       pw.step(1.0f / 60.0f);
-    CHECK(pw.getTransform(makeBodyKey(1, 10), p, q));
-    CHECK(std::fabs(p[1] - 1.5) < 0.06); // capsule: 3 tall
+    CHECK(pw.getTransform(makeBodyKey(1, 10), outP, outQ));
+    CHECK(std::fabs(outP[1] - 1.5) < 0.06); // capsule: 3 tall
     CHECK(pw.bodyMass(makeBodyKey(1, 10)) > 0.0f);
 
     // a capsule placed off-centre via ShapeSpec::center moves the shape, not
@@ -202,7 +203,7 @@ int main() {
       KeyedWorld w3;
       CHECK(w3.create(WorldSettings()));
       const double o[3] = {0, 0, 0};
-      CHECK(w3.addBody(makeBodyKey(1, 1), dyn, o, qid));
+      CHECK(w3.addBody(makeBodyKey(1, 1), dyn, o, qIdentity));
       ShapeSpec sp = makeShapeSpec(ShapeType::Capsule, 1.0f, stand);
       sp.center[0] = 5.0f;
       CHECK(w3.addShape(makeBodyKey(1, 1), sp));
@@ -239,12 +240,12 @@ int main() {
     // test fixture: S(2,3,4) * R(0.7 rad about Y), row-vector layout
     const float s45 = std::sin(0.5f * 0.7f), c45 = std::cos(0.5f * 0.7f);
     const float qa[4] = {0.0f, s45, 0.0f, c45};
-    double m[9];
-    quatToMatrix3(qa, m);
+    double rotM[9];
+    quatToMatrix3(qa, rotM);
     double ms[9];
     for (int r = 0; r < 3; ++r)
       for (int c = 0; c < 3; ++c)
-        ms[r * 3 + c] = (2.0 + r) * m[r * 3 + c];
+        ms[r * 3 + c] = (2.0 + r) * rotM[r * 3 + c];
     {
       double sc[3];
       CHECK(matrixRowLengths(ms, sc));
@@ -286,14 +287,14 @@ int main() {
                   pivot[2] * ms[2 * 3 + c]);
     m4[15] = 1;
     const std::vector<float> inner = {1, 2, 3, 2, 2, 3, 1, 4, 3, 1, 2, 6};
-    std::vector<float> loc;
-    packedPointsToBodyLocal(inner.data(), 4, m4, pivot, loc);
-    CHECK(std::fabs(loc[0]) < 1e-4f && std::fabs(loc[1]) < 1e-4f &&
-          std::fabs(loc[2]) < 1e-4f); // the pivot is the origin
-    CHECK(std::fabs(loc[3] - 2.0f) < 1e-4f &&
-          std::fabs(loc[4]) < 1e-4f);          // +1 in x, S = 2
-    CHECK(std::fabs(loc[7] - 6.0f) < 1e-4f);   // +2 in y, S = 3
-    CHECK(std::fabs(loc[11] - 12.0f) < 1e-4f); // +3 in z, S = 4
+    std::vector<float> localPts;
+    packedPointsToBodyLocal(inner.data(), 4, m4, pivot, localPts);
+    CHECK(std::fabs(localPts[0]) < 1e-4f && std::fabs(localPts[1]) < 1e-4f &&
+          std::fabs(localPts[2]) < 1e-4f); // the pivot is the origin
+    CHECK(std::fabs(localPts[3] - 2.0f) < 1e-4f &&
+          std::fabs(localPts[4]) < 1e-4f);          // +1 in x, S = 2
+    CHECK(std::fabs(localPts[7] - 6.0f) < 1e-4f);   // +2 in y, S = 3
+    CHECK(std::fabs(localPts[11] - 12.0f) < 1e-4f); // +3 in z, S = 4
 
     // Same source, 3 different rotations / positions (float noise in m4 and P):
     // the body-local points must come out byte-identical so the hull cache
@@ -496,7 +497,7 @@ int main() {
     stat.type = BodySettings::Type::Static;
     const double gp[3] = {0, -0.5, 0};
     const float gh[3] = {30, 0.5f, 30};
-    CHECK(hw.addBody(1, stat, gp, qid) && hw.addBoxShape(1, gh));
+    CHECK(hw.addBody(1, stat, gp, qIdentity) && hw.addBoxShape(1, gh));
 
     // (a) cube centred at x = +2 from the body origin, dropped with the origin
     // at x = 0.
@@ -507,7 +508,7 @@ int main() {
     BodySettings db;
     db.props.density = 4.0f;
     const double sp[3] = {0, 3, 0};
-    CHECK(hw.addBody(10, db, sp, qid));
+    CHECK(hw.addBody(10, db, sp, qIdentity));
     CHECK(
         hw.setBodyDensity(10, 40.0f / offVol)); // mass attribute 40 -> density
     CHECK(hw.addHullShape(10, ho));
@@ -521,7 +522,7 @@ int main() {
                  hB = hw.createHull(pB.data(), 8, &vB);
     CHECK(hA != 0 && hB != 0 && hA != hB);
     const double lp[3] = {6, 3, 0};
-    CHECK(hw.addBody(11, db, lp, qid));
+    CHECK(hw.addBody(11, db, lp, qIdentity));
     CHECK(hw.setBodyDensity(11, 10.0f / (vA + vB)));
     CHECK(hw.addHullShape(11, hA) && hw.addHullShape(11, hB));
     CHECK(hw.shapeCount(11) == 2 && std::fabs(hw.bodyMass(11) - 10.0f) < 0.05f);
@@ -529,7 +530,7 @@ int main() {
     // (c) instancing: 50 bodies, one hull build
     for (int i = 0; i < 50; ++i) {
       const double ip[3] = {-20.0 + i * 0.8, 3, 8};
-      CHECK(hw.addBody(100 + i, db, ip, qid) &&
+      CHECK(hw.addBody(100 + i, db, ip, qIdentity) &&
             hw.addHullShape(100 + i, hw.createHull(unitCube.data(), 8)));
     }
     // pruneHulls lets go of what this world holds; the shared cache keeps the
@@ -567,12 +568,12 @@ int main() {
     CHECK(hw.hullCacheSize() == 0);
 
     // box / sphere with a centre offset (fitted to packed bounds)
-    CHECK(hw.addBody(20, db, sp, qid));
+    CHECK(hw.addBody(20, db, sp, qIdentity));
     ShapeSpec offBox;
     offBox.type = ShapeType::Box;
     offBox.center[0] = 3.0f;
     CHECK(hw.addShape(20, offBox));
-    CHECK(hw.addBody(21, db, sp, qid));
+    CHECK(hw.addBody(21, db, sp, qIdentity));
     ShapeSpec offSph;
     offSph.type = ShapeType::Sphere;
     offSph.center[1] = 2.0f;
@@ -834,7 +835,10 @@ int main() {
     CHECK(b3dop::storedPosition(out, out2)); // idempotent: no drift on re-store
     for (int i = 0; i < 3; ++i)
       CHECK(out2[i] == out[i]);
-    const double huge[3] = {1e300, 0, 0};
+    // volatile: decided at run time, so MSVC doesn't flag the float overflow
+    // the check is about (C4756).
+    volatile double hugeX = 1e300;
+    const double huge[3] = {hugeX, 0, 0};
     CHECK(!b3dop::storedPosition(huge, out)); // overflows float -> not finite
     std::printf("stored-pose checks done\n");
   }
@@ -874,7 +878,7 @@ int main() {
     groundBox.halfExtents[0] = gh[0];
     groundBox.halfExtents[1] = gh[1];
     groundBox.halfExtents[2] = gh[2];
-    const BodyHandle ground = hw.createBody(stat, gp, qid);
+    const BodyHandle ground = hw.createBody(stat, gp, qIdentity);
     CHECK(ground != 0 && hw.createShape(ground, stat, groundBox));
     CHECK(hw.bodyCount() == 1);
 
@@ -884,7 +888,7 @@ int main() {
     BodySettings dyn;
     dyn.props.density = 2.0f;
     const double dp[3] = {0, 3, 0};
-    const BodyHandle falling = hw.createBody(dyn, dp, qid, &tag);
+    const BodyHandle falling = hw.createBody(dyn, dp, qIdentity, &tag);
     ShapeSpec cubeSpec;
     cubeSpec.type = ShapeType::Box;
     cubeSpec.halfExtents[0] = cubeSpec.halfExtents[1] =
@@ -929,9 +933,9 @@ int main() {
     dense.props.density = 5.0f;
     const double lp[3] = {6, 3, 0};
 
-    CHECK(hw.addBody(500, dense, lp, qid) && hw.addHullShape(500, hA) &&
+    CHECK(hw.addBody(500, dense, lp, qIdentity) && hw.addHullShape(500, hA) &&
           hw.addHullShape(500, hB) && hw.addHullShape(500, hC));
-    const BodyHandle once = hw.createBody(dense, lp, qid);
+    const BodyHandle once = hw.createBody(dense, lp, qIdentity);
     CHECK(once != 0);
     CHECK(hw.createHullShape(once, dense, hA, false) &&
           hw.createHullShape(once, dense, hB, false) &&
@@ -942,13 +946,13 @@ int main() {
     // run both for a while: identical behaviour (they sit apart, on the ground)
     const double lp2[3] = {-6, 3, 0};
     const BodyHandle once2 =
-        hw.createBody(dense, lp2, qid); // same body, other place
+        hw.createBody(dense, lp2, qIdentity); // same body, other place
     CHECK(hw.createHullShape(once2, dense, hA, false) &&
           hw.createHullShape(once2, dense, hB, false) &&
           hw.createHullShape(once2, dense, hC, false));
     hw.applyMassFromShapes(once2);
     const double lp3[3] = {-6, 3, 20};
-    CHECK(hw.addBody(501, dense, lp3, qid) && hw.addHullShape(501, hA) &&
+    CHECK(hw.addBody(501, dense, lp3, qIdentity) && hw.addHullShape(501, hA) &&
           hw.addHullShape(501, hB) && hw.addHullShape(501, hC));
     for (int i = 0; i < 240; ++i)
       hw.step(1.0f / 60.0f);
@@ -962,7 +966,7 @@ int main() {
 
     // setTypeByHandle: a dynamic body made static stops falling
     const double fp[3] = {20, 5, 0};
-    const BodyHandle hover = hw.createBody(dyn, fp, qid);
+    const BodyHandle hover = hw.createBody(dyn, fp, qIdentity);
     CHECK(hover != 0 && hw.createShape(hover, dyn, cubeSpec));
     CHECK(hw.setTypeByHandle(hover, BodySettings::Type::Static));
     for (int i = 0; i < 30; ++i)
@@ -1328,8 +1332,8 @@ int main() {
       if (liveSet)
         cw.setCcdThresholdByHandle(c, threshold);
       CHECK(std::fabs(cw.ccdThresholdByHandle(c) - threshold) < 1e-6f);
-      const float v[3] = {300, 0, 0}, w[3] = {0, 0, 0}; // 5 m per 1/60 step
-      CHECK(cw.setVelocityByHandle(c, v, w));
+      const float v[3] = {300, 0, 0}, spin[3] = {0, 0, 0}; // 5 m per 1/60 step
+      CHECK(cw.setVelocityByHandle(c, v, spin));
       for (int i = 0; i < 3; ++i)
         cw.step(1.0f / 60.0f);
       double p[3];

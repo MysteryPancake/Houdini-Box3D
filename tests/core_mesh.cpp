@@ -60,11 +60,11 @@ int main() {
     w.step(1.0f / 60.0f);
 
   double p[3];
-  float q[4];
-  CHECK(w.getTransformByHandle(box, p, q));
+  float outQ[4];
+  CHECK(w.getTransformByHandle(box, p, outQ));
   std::printf("box on mesh    y=%.4f\n", p[1]);
   CHECK(std::fabs(p[1] - 0.5) < 0.05);
-  CHECK(w.getTransformByHandle(sph, p, q));
+  CHECK(w.getTransformByHandle(sph, p, outQ));
   std::printf("sphere on mesh y=%.4f\n", p[1]);
   CHECK(std::fabs(p[1] - 0.5) < 0.05);
 
@@ -92,13 +92,13 @@ int main() {
     CHECK(sw.createShape(bx, dyn, bs));
     for (int i = 0; i < 240; ++i)
       sw.step(1.0f / 60.0f);
-    CHECK(sw.getTransformByHandle(bx, p, q));
+    CHECK(sw.getTransformByHandle(bx, p, outQ));
     std::printf("box on scaled mesh   y=%.4f\n", p[1]);
     CHECK(std::fabs(p[1] - 2.5) < 0.05);
     sw.setMeshScaleByHandle(fl, s1); // wakes what touches it
     for (int i = 0; i < 240; ++i)
       sw.step(1.0f / 60.0f);
-    CHECK(sw.getTransformByHandle(bx, p, q));
+    CHECK(sw.getTransformByHandle(bx, p, outQ));
     std::printf("box on rescaled mesh y=%.4f\n", p[1]);
     CHECK(std::fabs(p[1] - 1.5) < 0.05);
   }
