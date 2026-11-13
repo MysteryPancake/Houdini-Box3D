@@ -262,11 +262,15 @@ struct Box3DJointEntry {
   uint64_t stamp = 0;  // its network's liveStamp when last seen
   bool broken = false; // broke (force / torque threshold): never remade
 
-  // Live frames: after each step the anchors' P / orient are set to where the
-  // joint's frames are (written networks only). What was written, to tell our
-  // writes from edits upstream.
+  // Live frames: after each step the anchors' current_P / current_orient are
+  // set to where the joint's frames are (written networks only). What was
+  // written, to tell our writes from edits upstream.
   b3dop::JointFrame wroteA, wroteB;
   bool wrote = false;
+  // The authored anchors (P / orient, as stored) the joint was made from: an
+  // upstream edit of them remakes the joint.
+  b3dop::JointFrame authA, authB;
+  bool made = false;
   // distance made with restlength < 0: written to `auto_restlength` once
   float madeRestLength = -1.0f;
   // made from P / orient: write local_P / local_orient after the step

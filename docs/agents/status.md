@@ -101,6 +101,9 @@ remove an item once it has been checked, and record anything new here rather tha
 * Their icons are picked up.
 
 **Constraint networks**
+* Live anchors now in `current_P` / `current_orient`, `P` / `orient` left as authored (`anchor_positions`, not yet
+  run): the constraint guide should follow the pieces without running past them (seen in `joint_prismatic_limit`,
+  `joint_spring_rest_length`, `kinematic_anchor`), and rebuilds, `next_constraint` and `saved_cache` still pass.
 * Relationships found with `getRelationship(ingroup, i)` for both `ingroup` true and false; deduplicated by name.
 * Float attributes multiply the node's value (Houdini's rule): confirm it is wanted, since zero defaults (limits,
   targets) and -1 caps cannot be changed per primitive unless the node is set to 1.

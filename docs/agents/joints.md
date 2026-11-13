@@ -12,8 +12,9 @@ Box3D joints, approximately (see "SideFX constraint data" below). `constraint_ty
 for SideFX data only; for our nodes the joint type decides what is constrained. Character-mover joints (mover, pogo)
 are left out.
 
-Naming: attributes holding the state at the initial pose are called `rest*` (`restlength`); attributes the solver
-keeps current are the plain names (`P`, `orient`) or `current_*` readings. The solver writes no attribute it does
+Naming: attributes holding the state at the initial pose are called `rest*` (`restlength`), or are Houdini's own
+(a network point's `P` / `orient`: the anchor's initial world frame, never written); attributes the solver keeps
+current are `current_*` (`current_P` / `current_orient` on network points, and the per-type readings). The solver writes no attribute it does
 not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `current_*`), as the Bullet solver does.
 
 **Core** (`Box3DJoints.h`, `Box3DWorld`, tested in `tests/core_joints.cpp`):
@@ -113,38 +114,44 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   its frames in the joint signature (see below).
 * `next_constraint_name`: a broken joint whose primitive has one is not marked broken. Its `constraint_name` is set to
   it and the attribute cleared (so it switches once), its local frames (read before it was destroyed) put through the
-  bodies' poses give the anchors' `P` / `orient` (`switchFrames`: written by `writeLiveFrames` as if the joint were
+  bodies' poses give the anchors' `current_P` / `current_orient` (`switchFrames`: written by `writeLiveFrames` as if the joint were
   live), and the fingerprint is zeroed so the next sync reprocesses the network and makes the new joint from the saved
   local frames, exactly where the old one was. `next_constraint_type` is ignored, like `constraint_type`.
 * **Live frames** (written networks): after every step `writeLiveFrames` sets each live joint's
-  anchor points' `P` / `orient` to where its frames are now (`Box3DWorld::jointWorldFrames`: body pose times local
-  frame; a world end does not move). The network data is cached with each timestep (SIM_GeometryCopy), so a world
-  rebuilt mid-simulation makes its joints from the cached `P` / `orient` against the cached body poses, which gives
-  exactly the same local frames as continuing (`tests/core_joints.cpp` compares a rebuilt world with the original).
-  * The authored frames are not kept (no attribute is written that the solver does not read): the network's
-    `P` / `orient` are the authored values only until the first step.
+  anchor points' `current_P` / `current_orient` to where its frames are now (`Box3DWorld::jointWorldFrames`: body
+  pose times local frame; a world end does not move). `P` / `orient` are never written: the Constraint Network DOP
+  documents `P` as the anchor's initial world position, and Houdini's constraint guide moves each anchor with its piece
+  itself, so writing the live frame into `P` (as this solver once did) drew every moving anchor twice as far as its
+  piece (`anchor_positions` checks both). `NetworkReader::frame` reads `current_*` when written (a zero
+  `current_orient`, the value of a point added later, means not written), else `P` / `orient`. The network data is
+  cached with each timestep (SIM_GeometryCopy), so a world rebuilt mid-simulation makes its joints from the cached
+  `current_*` against the cached body poses, which gives exactly the same local frames as continuing
+  (`tests/core_joints.cpp` compares a rebuilt world with the original).
   * **Local frames** (`local_P` / `local_orient`, point attributes, the names SideFX's Constraint Network uses for an
     anchor in its transform's local space): a joint made from `P` / `orient` saves the frames Box3D keeps
     (`jointLocalFrames`: relative to the piece, position in its axes, in scene units) after the step. A joint made
     later (a world rebuilt mid-simulation) is made from them (`createJoint(..., framesAreLocal)`) when they still
-    agree with the live values: `localToWorld(body, local)` must land on the point's `P` / `orient` (1e-5
+    agree with the live values: `localToWorld(body, local)` must land on the point's `current_P` / `current_orient` (1e-5
     relative, quaternion dot 1 - 1e-6), which holds when all three were written after the same step and fails for
     a renamed, moved or new anchor (a zero `local_orient` means none). This makes rebuilds exact: going through
     float world positions loses ~1 float step at the coordinates' size per rebuild (4.6e-4 at x = 12000 in the
     test), the local frames are small offsets kept bit for bit (`asLocal` only renormalises a quaternion that is
-    not already unit length). The live `P` / `orient` are still read: to make new joints and to see edits.
-  * Edits: the entry remembers what it wrote (`wroteA` / `wroteB`, as stored in float). A reprocessed network whose
-    anchor differs (1e-5 relative; q and -q equal) was edited upstream (a SOP Solver): the joint is remade from the
-    new `P` / `orient`. The signature therefore leaves the frames out for written networks; a network that could not
+    not already unit length). The live `current_*` are still read: to make new joints and to see edits.
+  * Edits: the entry remembers the authored anchors it was made from (`authA` / `authB`) and what it wrote
+    (`wroteA` / `wroteB`), as stored in float. A reprocessed network whose `P` / `orient` differ from the first, or
+    whose `current_*` differ from the second (1e-5 relative; q and -q equal), was edited upstream (a SOP Solver): the
+    joint is remade from the authored `P` / `orient` (an edit of the authored anchors made just before a world rebuild
+    is not seen: the rebuild trusts `current_*`). The signature therefore leaves the frames out for written networks; a network that could not
     be written (`writable` false) keeps the frames in its signature, so editing them remakes the joint.
   * A distance joint made with a negative rest length gets the anchors' distance at that moment written to the
     `auto_restlength` primitive attribute (created with default -1), so a rebuild keeps the rest length instead of
     the current, stretched distance. Not `restlength`: that attribute multiplies the node's value, and -1 times the
     distance would be negative again. It is only read while the joint's rest length is negative.
-  * Our writes bump `P` / `orient`, which are in the network fingerprint; the fingerprint is re-recorded after the
+  * Our writes bump `current_P` / `current_orient`, which are in the network fingerprint; the fingerprint is re-recorded after the
     write, so an unchanged network still skips. Writing happens every step.
-  * A Constraint Network with Overwrite with SOP re-imports the SOP every step and overwrites the live values, so a
-    resim from a cached frame other than the first uses the authored frames there.
+  * A Constraint Network with Overwrite with SOP re-imports the SOP every step, dropping `current_*`: the joints
+    carry on (their signature leaves the frames out), but a world rebuilt from a cached frame other than the first
+    makes them from the authored anchors there.
 
 **SideFX constraint data** (`core/Box3DSideFX.*`, tested in `tests/core_sidefx.cpp`; read in `Box3DJointSync.cpp`):
 * Found by data type among the same subdata as our nodes (`networkKinds`): `SIM_ConRelGlue`, `SIM_ConRelHard`,
@@ -183,7 +190,7 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   as far apart as now (`holdSeparation`: Glue, Hard all without one; anchors from Connect Adjacent Pieces sit at the
   centroids, and
   a plain weld there would pull the pieces together). The joint is made from `applyFrameOffset(anchor, adj)`;
-  `writeLiveFrames` and the `next_constraint_name` switch write `removeFrameOffset(frame, adj)` back as P / orient,
+  `writeLiveFrames` and the `next_constraint_name` switch write `removeFrameOffset(frame, adj)` back as `current_P` / `current_orient`,
   so the anchors stay anchors, and `local_P` / `local_orient` hold the joint's own frames (compared with the
   offset anchors in `localFrameAgrees`). Offsets are fixed when the joint is made; their inputs (rotations,
   separation, the hold flag, not the anchor positions) are in the joint signature. Identity offsets (our nodes)

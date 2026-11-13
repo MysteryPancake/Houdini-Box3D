@@ -20,6 +20,7 @@ from b3dtest import (
     close,
     constraint_lines,
     create,
+    find_network_geometry,
     display,
     finish,
     merge,
@@ -224,6 +225,39 @@ def test_joint_types():
     return results
 
 
+def test_anchor_positions():
+    """The constraint network's anchors after a prismatic piece slides 0.5 along x (to its limit):
+    P stays the authored anchor (Houdini reads P as the anchor's initial position and moves its
+    constraint guide with the piece itself; a live P was drawn twice as far), and current_P holds
+    where the anchor is now, 0.5 further along."""
+    dop, n = pair("anchors", "box3d_prismaticconrel", gravity=(5, 0, 0),
+                  parms={"enable_limit": 1, "lower_translation": -0.5, "upper_translation": 0.5})
+
+    def sample(sim, f):
+        if f != 48:
+            return None
+        geo = find_network_geometry(sim)
+        if geo is None:
+            return None
+        pt = next((q for q in geo.points() if q.attribValue("name") == n[1]), None)
+        if pt is None:
+            return None
+        cur = pt.attribValue("current_P") if geo.findPointAttrib("current_P") is not None else None
+        return tuple(pt.position()), cur
+
+    got = step(dop, 48, sample)[48]
+    if got is None:
+        return [Result("anchor_positions", Result.FAIL, "no constraint network geometry with the moving piece's anchor")]
+    p, cur = got
+    slid = (FACE[0] + 0.5, FACE[1], FACE[2])
+    ok_p = dist(p, FACE) < 1e-4
+    ok_cur = cur is not None and dist(cur, slid) < 0.02
+    cur_txt = f"({cur[0]:.3f}, {cur[1]:.3f}, {cur[2]:.3f})" if cur is not None else "missing"
+    return [Result("anchor_positions", Result.PASS if ok_p and ok_cur else Result.FAIL,
+                   f"moving piece's anchor: P ({p[0]:.3f}, {p[1]:.3f}, {p[2]:.3f}) (expected the authored "
+                   f"{FACE}), current_P {cur_txt} (expected about {slid})")]
+
+
 def test_sidefx_soft():
     """SideFX's Bullet Soft Constraint Relationship (10 Hz, damping ratio 1; Rest Length set to 0,
     since its default 1 pushes the anchors a unit apart) holding a hanging piece, in Box3D and in
@@ -418,6 +452,7 @@ def test_baseline():
 
 TESTS = {
     "joint_types": test_joint_types,
+    "anchor_positions": test_anchor_positions,
     "sidefx_soft": test_sidefx_soft,
     "body_types": test_body_types,
     "shape_kinds": test_shape_kinds,

@@ -40,6 +40,12 @@ const char *const kInternalGeometry = "ConstraintGeometry";
 // Ours: the length a distance joint made with a negative Rest Length started
 // at.
 const char *const kAutoRestLength = "auto_restlength";
+// Where each live joint's anchors are after the last step (point attributes).
+// P / orient stay the authored anchors: Houdini reads them as the anchors'
+// initial world frames and moves its constraint guide with the pieces itself,
+// so writing the live frames there drew every moving anchor twice as far.
+const char *const kCurrentP = "current_P";
+const char *const kCurrentOrient = "current_orient";
 
 uint64_t hashString(const std::string &s) {
   return b3dop::hashBytes(b3dop::kHashSeed, s.data(), s.size());
@@ -207,6 +213,8 @@ uint64_t networkFingerprint(const GU_Detail *gdp) {
   uint64_t h = geometryIdentity(gdp);
   h = mixHash(h, idOf(gdp->findPointAttribute("name")));
   h = mixHash(h, idOf(gdp->findPointAttribute("orient")));
+  h = mixHash(h, idOf(gdp->findPointAttribute(kCurrentP)));
+  h = mixHash(h, idOf(gdp->findPointAttribute(kCurrentOrient)));
   h = mixHash(h, idOf(gdp->findPrimitiveAttribute(kConstraintName)));
   h = mixHash(h, idOf(gdp->findPrimitiveAttribute(kAutoRestLength)));
   h = mixHash(h, idOf(gdp->findPrimitiveAttribute(kConstraintType)));
@@ -521,8 +529,8 @@ struct NetworkReader {
   const GU_Detail *gdp;
   const GA_ROHandleS conName, conType, name;
   const GA_ROHandleF autoRest;
-  const GA_ROHandleQ orient, localQ;
-  const GA_ROHandleV3 localP;
+  const GA_ROHandleQ orient, localQ, currentQ;
+  const GA_ROHandleV3 localP, currentP;
   const GA_PrimitiveGroup *broken;
 
   explicit NetworkReader(const GU_Detail *g)
@@ -532,7 +540,9 @@ struct NetworkReader {
         autoRest(g, GA_ATTRIB_PRIMITIVE, kAutoRestLength),
         orient(g, GA_ATTRIB_POINT, "orient"),
         localQ(g, GA_ATTRIB_POINT, "local_orient"),
+        currentQ(g, GA_ATTRIB_POINT, kCurrentOrient),
         localP(g, GA_ATTRIB_POINT, "local_P"),
+        currentP(g, GA_ATTRIB_POINT, kCurrentP),
         broken(g->findPrimitiveGroup(kBrokenGroup)) {}
 
   std::string anchorName(GA_Offset pt) const {
@@ -541,8 +551,9 @@ struct NetworkReader {
     return n ? std::string(n) : std::string();
   }
 
-  // The anchor's P / orient: its frame in world space.
-  b3dop::JointFrame frame(GA_Offset pt) const {
+  // The anchor as authored: its P / orient, world space (the solver never
+  // writes them).
+  b3dop::JointFrame authored(GA_Offset pt) const {
     b3dop::JointFrame f;
     const UT_Vector3 p = gdp->getPos3(pt);
     f.pos[0] = p.x();
@@ -556,6 +567,32 @@ struct NetworkReader {
       f.rot[3] = q.w();
     }
     return f;
+  }
+
+  // Where the anchor was after the last step (current_P / current_orient, a
+  // zero quaternion: none), if the solver wrote it.
+  bool live(GA_Offset pt, b3dop::JointFrame &out) const {
+    if (!currentP.isValid() || !currentQ.isValid())
+      return false;
+    const UT_Vector3 p = currentP.get(pt);
+    const UT_QuaternionF q = currentQ.get(pt);
+    if ((q.x() == 0.0f && q.y() == 0.0f && q.z() == 0.0f && q.w() == 0.0f) ||
+        !std::isfinite(p.x()) || !std::isfinite(p.y()) || !std::isfinite(p.z()))
+      return false;
+    out.pos[0] = p.x();
+    out.pos[1] = p.y();
+    out.pos[2] = p.z();
+    out.rot[0] = q.x();
+    out.rot[1] = q.y();
+    out.rot[2] = q.z();
+    out.rot[3] = q.w();
+    return true;
+  }
+
+  // The anchor's frame now: live if written, else as authored.
+  b3dop::JointFrame frame(GA_Offset pt) const {
+    b3dop::JointFrame f;
+    return live(pt, f) ? f : authored(pt);
   }
 
   // The primitive's constraint_type (SideFX data only; missing: all).
@@ -779,19 +816,31 @@ private:
       dropJoint(e);
       return; // not stamped: removed; retried when bodies change
     }
-    // P / orient are live on a written network (where the pieces are now), so a
-    // world rebuilt mid-simulation makes its joints from them exactly as frame
-    // 1 does from the authored ones.
-    const b3dop::JointFrame fa = myRd.frame(p0), fb = myRd.frame(p1);
+    // On a written network current_P / current_orient say where the anchors
+    // are now, so a world rebuilt mid-simulation makes its joints from them
+    // exactly as frame 1 does from the authored P / orient.
+    const b3dop::JointFrame authA = asStored(myRd.authored(p0)),
+                            authB = asStored(myRd.authored(p1));
+    b3dop::JointFrame la, lb;
+    const bool hasLive = myRd.live(p0, la) && myRd.live(p1, lb);
+    // Edited upstream (a SOP Solver): the authored anchors differ from the ones
+    // the joint was made from, or the live ones from what was written. Remade
+    // from the authored anchors then (current_P is the old joint's).
+    const bool authoredEdited =
+        e.made && (frameEdited(authA, e.authA) || frameEdited(authB, e.authB));
+    const bool liveEdited =
+        hasLive && e.wrote &&
+        (frameEdited(la, e.wroteA) || frameEdited(lb, e.wroteB));
+    const bool useLive = hasLive && !authoredEdited;
+    const b3dop::JointFrame fa = useLive ? la : authA,
+                            fb = useLive ? lb : authB;
     const JointSpec j = specFor(*kind, off, a, b, fa, fb);
 
     const bool live = myNet.writable;
     uint64_t sig = jointSignature(j.type, a, b, fa, fb, !live);
     if (j.frameSig)
       sig = b3dop::mixHash(sig, j.frameSig) | 1;
-    const bool edited =
-        live && e.wrote &&
-        (frameEdited(fa, e.wroteA) || frameEdited(fb, e.wroteB));
+    const bool edited = live && (authoredEdited || liveEdited);
 
     if (myWorld.isJointValid(e.handle) && e.sig == sig && e.type == j.type &&
         !edited) {
@@ -800,8 +849,12 @@ private:
         e.settings = j.s;
         ++myCounts.updated;
       }
-    } else
+    } else {
       makeJoint(e, j, a, b, p0, p1, fa, fb, sig, edited);
+      e.authA = authA;
+      e.authB = authB;
+      e.made = true;
+    }
     e.stamp = myNet.liveStamp;
   }
 
@@ -857,8 +910,9 @@ void processNetwork(Box3DSharedState &st, const NetworkRef &ref,
   NetworkPass(st, ref, net, anchors, gdp, timeStep, counts).run();
 }
 
-// After the step, for a written network: every live joint's anchors get P /
-// orient set to where its frames are now, and joints made from P / orient save
+// After the step, for a written network: every live joint's anchors get
+// current_P / current_orient set to where its frames are now (P / orient stay
+// as authored), and joints made from P / orient save
 // their local frames to local_P / local_orient (relative to their pieces: exact
 // on a rebuild, wherever the pieces are). A distance joint made with a negative
 // rest length gets its starting distance written to `auto_restlength` (not
@@ -880,17 +934,15 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp,
           attr->setTypeInfo(GA_TYPE_QUATERNION);
     }
   };
-  bool orientNew = false;
-  ensure("orient", 4, true, orientNew);
-  GA_RWHandleV3 pH(gdp, GA_ATTRIB_POINT, "P");
-  GA_RWHandleQ orientH(gdp, GA_ATTRIB_POINT, "orient");
+  // A new current_orient is 0,0,0,0 on every point: "not written" for the
+  // points of joints that are not live (see NetworkReader::live).
+  bool created = false;
+  ensure(kCurrentP, 3, false, created);
+  ensure(kCurrentOrient, 4, true, created);
+  GA_RWHandleV3 pH(gdp, GA_ATTRIB_POINT, kCurrentP);
+  GA_RWHandleQ orientH(gdp, GA_ATTRIB_POINT, kCurrentOrient);
   if (!pH.isValid() || !orientH.isValid())
     return;
-  // A new quaternion attribute is 0,0,0,0: start every point at identity, as
-  // the solver's ensureResultAttribs does.
-  if (orientNew)
-    for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it)
-      orientH.set(*it, UT_QuaternionF(0.0f, 0.0f, 0.0f, 1.0f));
   bool wroteRestLength = false, wroteLocal = false;
   GA_RWHandleF restLengthH;
   GA_RWHandleV3 localPH;
@@ -921,7 +973,6 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp,
       b3dop::JointFrame la, lb;
       if (world.jointLocalFrames(e->handle, la, lb)) {
         if (!localPH.isValid()) {
-          bool created = false;
           ensure("local_P", 3, false, created);
           ensure("local_orient", 4, true, created);
           localPH = GA_RWHandleV3(gdp, GA_ATTRIB_POINT, "local_P");
