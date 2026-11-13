@@ -146,6 +146,17 @@ addpointattrib(0, "bullet_autofit", 1);
 """
 
 
+COPY_ATTRIBUTES = """\
+// The body attributes from the template point this packed copy was made from.
+s@name = point(1, "name", @ptnum);
+i@active = point(1, "active", @ptnum);
+f@density = point(1, "density", @ptnum);
+s@bullet_georep = point(1, "bullet_georep", @ptnum);
+i@bullet_autofit = point(1, "bullet_autofit", @ptnum);
+v@Cd = point(1, "Cd", @ptnum);
+"""
+
+
 def mk(p, name, orient=(0, 0, 0, 1), cd=(0.7, 0.7, 0.7), active=1, density=1000.0, georep="box"):
     """One mk(...) call for a stream's VEX."""
     return (f'mk({vec(p)}, "{name}", {vec(orient)}, {vec(cd)}, {int(active)}, '
@@ -198,8 +209,14 @@ class Pieces:
         copy.setInput(0, shape)
         copy.setInput(1, pts)
         set_parm(copy, ["pack", "packgeo"], 1)
-        self.merge.setInput(len(self.merge.inputs()), copy)
-        return copy
+        # Copy to Points leaves some point attributes behind when it packs (active was lost, so
+        # static pieces fell), so copy them explicitly: copy i is made from template point i.
+        attrs = create(self.geo, "attribwrangle", f"{tag}_attributes")
+        attrs.setInput(0, copy)
+        attrs.setInput(1, pts)
+        set_parm(attrs, "snippet", COPY_ATTRIBUTES)
+        self.merge.setInput(len(self.merge.inputs()), attrs)
+        return attrs
 
     def boxes(self, tag, size, calls, note=""):
         return self.stream(tag, self.shape_box(tag, size), "\n".join(calls), note)
@@ -217,6 +234,12 @@ class Pieces:
         display(null)
         geo = cooked_geometry(null)
         self.count = len(geo.points())
+        for attr in ("name", "active", "density", "bullet_georep"):
+            if geo.findPointAttrib(attr) is None:
+                raise SetupError(f"{null.path()}: the pieces have no '{attr}' attribute")
+        static = [pt.attribValue("name") for pt in geo.points() if pt.attribValue("active") == 0]
+        if "ground" in [pt.attribValue("name") for pt in geo.points()] and "ground" not in static:
+            raise SetupError(f"{null.path()}: the ground piece is not static (active 0)")
         return null.path()
 
 
