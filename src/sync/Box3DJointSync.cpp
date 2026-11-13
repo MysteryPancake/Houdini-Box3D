@@ -14,6 +14,9 @@
 #include <SIM/SIM_GeometryCopy.h>
 #include <SIM/SIM_Object.h>
 #include <SIM/SIM_ObjectArray.h>
+#include <SIM/SIM_Options.h>
+#include <SIM/SIM_OptionsUser.h>
+#include <SIM/SIM_Query.h>
 #include <SIM/SIM_Relationship.h>
 #include <SIM/SIM_RelationshipArray.h>
 #include <UT/UT_Quaternion.h>
@@ -31,6 +34,7 @@ namespace {
 
 // The Constraint Network DOP's attribute and group names.
 const char *const kConstraintName     = "constraint_name";
+const char *const kConstraintType     = "constraint_type";     // SideFX data only
 const char *const kNextConstraintName = "next_constraint_name";
 const char *const kBrokenGroup        = "broken";
 // With Attach Internal Constraints to Object, the network is this data on the object itself.
@@ -92,10 +96,57 @@ writableNetworkGeometry(SIM_Object &obj, const NetworkSource &src)
     return cn ? cn->getGeometry() : nullptr;
 }
 
+// A SideFX constraint data's options (b3dop::sideFXParams), over Houdini's defaults. Their classes
+// are not in the HDK, but they are SIM_OptionsUser data; failing that, the generic query (the
+// one dopfield() uses) gives the scalar options.
+b3dop::SideFXSettings
+readSideFXSettings(const SIM_Data &data, b3dop::SideFXType type)
+{
+    using b3dop::SideFXParam;
+    b3dop::SideFXSettings s = b3dop::defaultSideFXSettings(type);
+    const SIM_OptionsUser *user = dynamic_cast<const SIM_OptionsUser *>(&data);
+    for (const SideFXParam &p : b3dop::sideFXParams())
+    {
+        if (!p.usedBy(type))
+            continue;
+        if (user)
+        {
+            const SIM_Options &opts = user->getOptions();
+            if (p.kind == SideFXParam::Vec3)
+            {
+                UT_Vector3D v;
+                if (opts.importOption(p.name, v))
+                    for (int k = 0; k < 3; ++k)
+                        (s.*p.v)[k] = float(v(k));
+                continue;
+            }
+            fpreal64 v = 0.0;
+            if (!opts.importOption(p.name, v))
+                continue;
+            if (p.kind == SideFXParam::Float)
+                s.*p.f = float(v);
+            else
+                s.*p.i = int(v);
+        }
+        else if (p.kind != SideFXParam::Vec3)
+        {
+            fpreal v = 0.0;
+            if (!data.getQueryObject().getFieldFloat("Options", 0, p.name, v))
+                continue;
+            if (p.kind == SideFXParam::Float)
+                s.*p.f = float(v);
+            else
+                s.*p.i = int(v);
+        }
+    }
+    return s;
+}
+
 // The Box3D constraint relationships a network's `constraint_name` can refer to, by data name.
 // The Constraint Network DOP attaches the nodes wired into its second input under the network's
 // relationship; the relationship, its Constraint Network data and the geometry are all searched
-// (the first name found wins), and for an internal network the geometry and the object.
+// (the first name found wins), and for an internal network the geometry and the object. SideFX's
+// Glue / Hard / Spring / Bullet Soft / Cone Twist data count too (mapped per primitive).
 std::unordered_map<std::string, Box3DJointKind>
 networkKinds(const SIM_Object &obj, const NetworkSource &src)
 {
@@ -121,15 +172,28 @@ networkKinds(const SIM_Object &obj, const NetworkSource &src)
         for (int i = 0; i < root->getNumSubData(); ++i)
         {
             const SIM_Data *sub = root->getConstSubData(i);
-            const SIM_Box3DConRel *conrel = sub ? SIM_DATA_CASTCONST(sub, SIM_Box3DConRel) : nullptr;
-            if (!conrel)
+            if (!sub)
+                continue;
+            const SIM_Box3DConRel *conrel = SIM_DATA_CASTCONST(sub, SIM_Box3DConRel);
+            b3dop::SideFXType sideFXType = b3dop::SideFXType::Glue;
+            const bool sideFX = !conrel && b3dop::sideFXTypeFromDataType(sub->getDataType().c_str(), sideFXType);
+            if (!conrel && !sideFX)
                 continue;
             const UT_StringHolder &name = root->getSubDataName(i);
             if (!name.isstring() || kinds.count(std::string(name.c_str())))
                 continue;
             Box3DJointKind k;
-            k.type     = conrel->jointType();
-            k.settings = conrel->settings();
+            if (conrel)
+            {
+                k.type     = conrel->jointType();
+                k.settings = conrel->settings();
+            }
+            else
+            {
+                k.sideFX         = true;
+                k.sideFXType     = sideFXType;
+                k.sideFXSettings = readSideFXSettings(*sub, sideFXType);
+            }
             kinds.emplace(std::string(name.c_str()), k);
         }
     }
@@ -145,8 +209,16 @@ sameKinds(const std::unordered_map<std::string, Box3DJointKind> &a,
     for (const auto &kv : a)
     {
         const auto it = b.find(kv.first);
-        if (it == b.end() || it->second.type != kv.second.type ||
-            !b3dop::sameJointSettings(kv.second.type, kv.second.settings, it->second.settings))
+        if (it == b.end() || it->second.sideFX != kv.second.sideFX)
+            return false;
+        if (kv.second.sideFX)
+        {
+            if (it->second.sideFXType != kv.second.sideFXType ||
+                !b3dop::sameSideFXSettings(kv.second.sideFXType, kv.second.sideFXSettings, it->second.sideFXSettings))
+                return false;
+        }
+        else if (it->second.type != kv.second.type ||
+                 !b3dop::sameJointSettings(kv.second.type, kv.second.settings, it->second.settings))
             return false;
     }
     return true;
@@ -173,7 +245,10 @@ networkFingerprint(const GU_Detail *gdp)
     h = mixHash(h, idOf(gdp->findPointAttribute("orient")));
     h = mixHash(h, idOf(gdp->findPrimitiveAttribute(kConstraintName)));
     h = mixHash(h, idOf(gdp->findPrimitiveAttribute(kAutoRestLength)));
+    h = mixHash(h, idOf(gdp->findPrimitiveAttribute(kConstraintType)));
     for (const b3dop::JointParam &p : b3dop::jointParams())
+        h = mixHash(h, idOf(gdp->findPrimitiveAttribute(p.name)));
+    for (const b3dop::SideFXParam &p : b3dop::sideFXParams())
         h = mixHash(h, idOf(gdp->findPrimitiveAttribute(p.name)));
     const GA_PrimitiveGroup *broken = gdp->findPrimitiveGroup(kBrokenGroup);
     return mixHash(h, broken ? uint64_t(broken->getDataId()) : ~0ull);
@@ -314,6 +389,105 @@ applyOverrides(const std::vector<SettingReader> &readers, b3dop::JointType type,
     }
 }
 
+// The primitive attributes that modify a SideFX data's options (b3dop::sideFXParams), bound once
+// per network.
+struct SideFXReader
+{
+    const b3dop::SideFXParam *param = nullptr;
+    GA_ROHandleF              f;
+    GA_ROHandleI              i;
+    GA_ROHandleV3             v;
+};
+
+std::vector<SideFXReader>
+bindSideFX(const GU_Detail *gdp)
+{
+    using b3dop::SideFXParam;
+    std::vector<SideFXReader> out;
+    for (const SideFXParam &p : b3dop::sideFXParams())
+    {
+        if (!gdp->findPrimitiveAttribute(p.name))
+            continue;
+        SideFXReader r;
+        r.param = &p;
+        bool ok = false;
+        switch (p.kind)
+        {
+            case SideFXParam::Float: r.f = GA_ROHandleF(gdp, GA_ATTRIB_PRIMITIVE, p.name);  ok = r.f.isValid(); break;
+            case SideFXParam::Int:   r.i = GA_ROHandleI(gdp, GA_ATTRIB_PRIMITIVE, p.name);  ok = r.i.isValid(); break;
+            case SideFXParam::Vec3:  r.v = GA_ROHandleV3(gdp, GA_ATTRIB_PRIMITIVE, p.name); ok = r.v.isValid(); break;
+        }
+        if (ok)
+            out.push_back(r);
+    }
+    return out;
+}
+
+// The Constraint Network DOP's rule on SideFX data too: floats multiply, the rest replace.
+void
+applySideFXOverrides(const std::vector<SideFXReader> &readers, b3dop::SideFXType type, GA_Offset prim,
+                     b3dop::SideFXSettings &s)
+{
+    using b3dop::SideFXParam;
+    for (const SideFXReader &r : readers)
+    {
+        const SideFXParam &p = *r.param;
+        if (!p.usedBy(type))
+            continue;
+        switch (p.kind)
+        {
+            case SideFXParam::Float: s.*p.f *= r.f.get(prim); break;
+            case SideFXParam::Int:   s.*p.i = r.i.get(prim);  break;
+            case SideFXParam::Vec3:
+            {
+                const UT_Vector3 a = r.v.get(prim);
+                (s.*p.v)[0] = a.x();  (s.*p.v)[1] = a.y();  (s.*p.v)[2] = a.z();
+                break;
+            }
+        }
+    }
+}
+
+// A body as the SideFX mapping needs it: Spring converts its stiffness from the masses.
+b3dop::SideFXBody
+sideFXBody(const b3dop::Box3DWorld &world, b3dop::BodyHandle h)
+{
+    b3dop::SideFXBody body;
+    if (!h || world.typeByHandle(h) != b3dop::BodySettings::Type::Dynamic)
+        return body;                            // the world, static or kinematic
+    float center[3], inertia[3];
+    if (world.getMassDataByHandle(h, body.mass, center, inertia))
+    {
+        body.dynamic = body.mass > 0.0f;
+        body.inertia = (inertia[0] + inertia[1] + inertia[2]) / 3.0f;
+    }
+    return body;
+}
+
+// What decides where a SideFX joint's frames sit (not the anchors' positions: those are live).
+uint64_t
+sideFXFrameSignature(const b3dop::SideFXJoint &m)
+{
+    uint64_t h = b3dop::hashBytes(b3dop::kHashSeed, m.rotA, sizeof(m.rotA));
+    h = b3dop::hashBytes(h, m.rotB, sizeof(m.rotB));
+    h = b3dop::hashBytes(h, &m.separation, sizeof(m.separation));
+    return b3dop::mixHash(h, m.holdSeparation ? 1 : 0);
+}
+
+// A joint frame from its anchor and offset, and back. Identity offsets (Box3D nodes) pass the
+// frame through untouched, bit for bit.
+b3dop::JointFrame
+jointFrameOf(const b3dop::JointFrame &anchor, const b3dop::JointFrame &adj)
+{
+    return b3dop::isIdentityOffset(adj) ? anchor : b3dop::applyFrameOffset(anchor, adj);
+}
+
+b3dop::JointFrame
+anchorFrameOf(const b3dop::JointFrame &joint, const b3dop::JointFrame &adj)
+{
+    return b3dop::isIdentityOffset(adj) ? joint : b3dop::removeFrameOffset(joint, adj);
+}
+
 // What a joint is made from: its type and bodies, plus its frames when they are not live (a
 // network that is not written back keeps the authored frames, so a change there is an edit).
 uint64_t
@@ -356,7 +530,7 @@ asStored(const b3dop::JointFrame &f)
 struct NetworkReader
 {
     const GU_Detail         *gdp;
-    const GA_ROHandleS       conName, name;
+    const GA_ROHandleS       conName, conType, name;
     const GA_ROHandleF       autoRest;
     const GA_ROHandleQ       orient, localQ;
     const GA_ROHandleV3      localP;
@@ -365,6 +539,7 @@ struct NetworkReader
     explicit NetworkReader(const GU_Detail *g)
         : gdp(g),
           conName(g, GA_ATTRIB_PRIMITIVE, kConstraintName),
+          conType(g, GA_ATTRIB_PRIMITIVE, kConstraintType),
           name(g, GA_ATTRIB_POINT, "name"),
           autoRest(g, GA_ATTRIB_PRIMITIVE, kAutoRestLength),
           orient(g, GA_ATTRIB_POINT, "orient"),
@@ -392,6 +567,13 @@ struct NetworkReader
             f.rot[0] = q.x();  f.rot[1] = q.y();  f.rot[2] = q.z();  f.rot[3] = q.w();
         }
         return f;
+    }
+
+    // The primitive's constraint_type (SideFX data only; missing: all).
+    b3dop::ConstraintMode mode(GA_Offset prim) const
+    {
+        const char *t = conType.isValid() ? static_cast<const char *>(conType.get(prim)) : nullptr;
+        return b3dop::constraintModeFromString(t);
     }
 
     // The primitive's constraint data (by `constraint_name`), or null.
@@ -444,7 +626,8 @@ struct NetworkRef
 };
 
 void
-processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &anchors, Box3DJointCounts &counts)
+processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &anchors, float timeStep,
+               Box3DJointCounts &counts)
 {
     using b3dop::JointType;
     b3dop::Box3DWorld &world = st.world;
@@ -479,7 +662,8 @@ processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &ancho
     net.liveStamp   = st.syncStamp;
 
     const NetworkReader              rd(gdp);
-    const std::vector<SettingReader> readers = bindSettings(gdp);
+    const std::vector<SettingReader> readers   = bindSettings(gdp);
+    const std::vector<SideFXReader>  sfReaders = bindSideFX(gdp);
 
     for (GA_Iterator it(gdp->getPrimitiveRange()); !it.atEnd(); ++it)
     {
@@ -498,7 +682,6 @@ processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &ancho
             ++counts.unknown;
             continue;
         }
-        const JointType type = kind->type;
 
         auto ins = st.joints.try_emplace(b3dop::mixHash(ref.key, uint64_t(int64_t(off))));
         Box3DJointEntry &e = ins.first->second;
@@ -532,17 +715,42 @@ processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &ancho
         // P / orient are live on a written network (where the pieces are now), so a world rebuilt
         // mid-simulation makes its joints from them exactly as frame 1 does from the authored ones.
         const b3dop::JointFrame fa = rd.frame(p0), fb = rd.frame(p1);
-        b3dop::JointSettings s = kind->settings;
-        applyOverrides(readers, type, off, s);
-        // A distance joint that measured its own rest length keeps it (see writeLiveFrames).
-        if (type == JointType::Distance && !(s.restLength >= 0.0f) && rd.autoRest.isValid())
+        JointType            type;
+        b3dop::JointSettings s;
+        b3dop::JointFrame    adjA, adjB;        // the frames relative to the anchors: identity but for SideFX data
+        uint64_t             frameSig = 0;
+        if (kind->sideFX)
         {
-            const float made = rd.autoRest.get(off);
-            if (made >= 0.0f)
-                s.restLength = made;
+            // SideFX data: the primitive's overrides on its options, then mapped onto a Box3D joint.
+            b3dop::SideFXSettings sf = kind->sideFXSettings;
+            applySideFXOverrides(sfReaders, kind->sideFXType, off, sf);
+            b3dop::SideFXContext ctx;
+            ctx.timeStep = timeStep;
+            ctx.a        = sideFXBody(world, a);
+            ctx.b        = sideFXBody(world, b);
+            const b3dop::SideFXJoint m = b3dop::mapSideFX(kind->sideFXType, sf, rd.mode(off), ctx);
+            type     = m.type;
+            s        = m.settings;
+            frameSig = sideFXFrameSignature(m);
+            b3dop::sideFXFrameOffsets(m, fa, fb, adjA, adjB);
+        }
+        else
+        {
+            type = kind->type;
+            s    = kind->settings;
+            applyOverrides(readers, type, off, s);
+            // A distance joint that measured its own rest length keeps it (see writeLiveFrames).
+            if (type == JointType::Distance && !(s.restLength >= 0.0f) && rd.autoRest.isValid())
+            {
+                const float made = rd.autoRest.get(off);
+                if (made >= 0.0f)
+                    s.restLength = made;
+            }
         }
         const bool     live   = net.writable;
-        const uint64_t sig    = jointSignature(type, a, b, fa, fb, !live);
+        uint64_t       sig    = jointSignature(type, a, b, fa, fb, !live);
+        if (frameSig)
+            sig = b3dop::mixHash(sig, frameSig) | 1;
         const bool     edited = live && e.wrote && (frameEdited(fa, e.wroteA) || frameEdited(fb, e.wroteB));
 
         if (world.isJointValid(e.handle) && e.sig == sig && e.type == type && !edited)
@@ -563,6 +771,8 @@ processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &ancho
             e.sig      = sig;
             e.settings = s;
             e.wrote    = false;
+            e.adjA     = adjA;
+            e.adjB     = adjB;
             e.madeRestLength = -1.0f;
             if (type == JointType::Distance && !(s.restLength >= 0.0f))
             {
@@ -571,11 +781,14 @@ processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &ancho
             }
             // Exactly as before from the saved local frames when they still apply (a world rebuilt
             // mid-simulation); else from P / orient, and the local frames are saved after the step.
+            // The local frames are the joint's (with any SideFX offset), so they are compared with
+            // the frames the anchors give now.
+            const b3dop::JointFrame ja = jointFrameOf(fa, adjA), jb = jointFrameOf(fb, adjB);
             b3dop::JointFrame la, lb;
-            const bool useLocal = !edited && rd.savedLocal(p0, la) && rd.savedLocal(p1, lb) && localFrameAgrees(world, a, la, fa) &&
-                                  localFrameAgrees(world, b, lb, fb);
+            const bool useLocal = !edited && rd.savedLocal(p0, la) && rd.savedLocal(p1, lb) && localFrameAgrees(world, a, la, ja) &&
+                                  localFrameAgrees(world, b, lb, jb);
             e.handle     = useLocal ? world.createJoint(type, a, b, la, lb, s, &e, true)
-                                    : world.createJoint(type, a, b, fa, fb, s, &e);
+                                    : world.createJoint(type, a, b, ja, jb, s, &e);
             e.writeLocal = !useLocal;
             if (e.handle)
                 ++counts.created;
@@ -680,8 +893,9 @@ writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp, const std::vecto
         b3dop::JointFrame fa, fb;
         if (world.jointWorldFrames(e->handle, fa, fb))
         {
-            e->wroteA = asStored(fa);
-            e->wroteB = asStored(fb);
+            // The anchors, not the frames (SideFX data may offset the frames from them).
+            e->wroteA = asStored(anchorFrameOf(fa, e->adjA));
+            e->wroteB = asStored(anchorFrameOf(fb, e->adjB));
             e->wrote  = true;
         }
         else if (!e->switchFrames)
@@ -725,7 +939,7 @@ anyJointNetwork(SIM_ObjectArray &objects)
 }
 
 void
-syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects, Box3DJointCounts &counts)
+syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects, float timeStep, Box3DJointCounts &counts)
 {
     // ---- gather: each Constraint Network relationship once (it is on every object it
     // constrains), and each object's internal ConstraintGeometry ----
@@ -763,7 +977,7 @@ syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects, Box3DJointCounts &cou
     {
         const Anchors anchors(st, objects);
         for (const NetworkRef &ref : refs)
-            processNetwork(st, ref, anchors, counts);
+            processNetwork(st, ref, anchors, timeStep, counts);
     }
 
     // ---- remove: joints whose primitive or network went away ----
@@ -874,8 +1088,8 @@ jointsAfterStep(Box3DSharedState &st, SIM_ObjectArray &objects)
                         if (e->brokeLocalKnown && world.localToWorld(e->bodyA, e->brokeLocalA, fa) &&
                             world.localToWorld(e->bodyB, e->brokeLocalB, fb))
                         {
-                            e->wroteA       = asStored(fa);
-                            e->wroteB       = asStored(fb);
+                            e->wroteA       = asStored(anchorFrameOf(fa, e->adjA));
+                            e->wroteB       = asStored(anchorFrameOf(fb, e->adjB));
                             e->wrote        = true;
                             e->switchFrames = true;
                         }

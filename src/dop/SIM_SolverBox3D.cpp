@@ -279,7 +279,7 @@ SIM_SolverBox3D::solveObjectsSubclass(SIM_Engine &engine,
         message(objects, "step cancelled", UT_ERROR_MESSAGE);
         return SIM_SOLVER_FAIL;
     };
-    if (!syncFromGeometry(*worldData, objects, progress))
+    if (!syncFromGeometry(*worldData, objects, float(dt), progress))
         return cancel();
     if (progress.check())
         return cancel();
@@ -362,7 +362,7 @@ SIM_SolverBox3D::reportWorldCreationFailure(SIM_ObjectArray &objects)
 }
 
 bool
-SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects,
+SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects, float timeStep,
                                   StepProgress &progress)
 {
     Box3DSharedState *st = worldData.state();
@@ -427,10 +427,10 @@ SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
     if (counts.added || removed || affectorCounts.added || affectorCounts.removed)
         ++st->bodyVersion;
     Box3DJointCounts jointCounts;
-    syncJoints(*st, objects, jointCounts);
+    syncJoints(*st, objects, timeStep, jointCounts);
     {
         warnCount(objects, jointCounts.unknown,
-                  "constraint primitive(s) have a constraint_name that names no Box3D constraint relationship and are ignored");
+                  "constraint primitive(s) have a constraint_name that names no Box3D, Glue, Hard, Spring, Soft or Cone Twist constraint relationship and are ignored");
         warnCount(objects, jointCounts.unresolved, "constraint primitive(s) name a piece or object that does not exist and are ignored");
         warnCount(objects, jointCounts.notLines, "constraint primitive(s) are not two-point lines and are ignored");
         warnCount(objects, jointCounts.failed,

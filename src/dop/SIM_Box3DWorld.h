@@ -22,6 +22,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "core/Box3DSideFX.h"
 #include "core/Box3DWorld.h"
 
 // One body's pose and velocity as last given to / read from Box3D (DOP terms). Compared with
@@ -277,14 +278,21 @@ struct Box3DJointEntry
     b3dop::JointFrame    brokeLocalA, brokeLocalB;
     bool                 brokeLocalKnown = false;
     bool                 switchFrames    = false;
+
+    // SideFX data only: the joint's frames relative to its anchors (b3dop::sideFXFrameOffsets),
+    // so the anchors written back are the anchors, not the frames. Identity for Box3D nodes.
+    b3dop::JointFrame    adjA, adjB;
 };
 
-// The constraint data a `constraint_name` refers to (a Box3D constraint relationship node), as
-// last used.
+// The constraint data a `constraint_name` refers to (a Box3D constraint relationship node, or
+// SideFX constraint data mapped onto a Box3D joint per primitive), as last used.
 struct Box3DJointKind
 {
-    b3dop::JointType     type = b3dop::JointType::Weld;
-    b3dop::JointSettings settings;
+    b3dop::JointType      type = b3dop::JointType::Weld;
+    b3dop::JointSettings  settings;
+    bool                  sideFX = false;   // SideFX data: type / settings come from mapSideFX per primitive
+    b3dop::SideFXType     sideFXType = b3dop::SideFXType::Glue;
+    b3dop::SideFXSettings sideFXSettings;
 };
 
 // A constraint network: the two-point primitives of a Constraint Network DOP's relationship (or

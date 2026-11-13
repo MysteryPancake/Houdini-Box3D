@@ -47,7 +47,7 @@ attributes, no restating how the sibling controls work.
 ## Layout
 
 ```
-CMakeLists.txt        Targets: b3dop_core, 3 test exes, Box3DDOP (plugin)
+CMakeLists.txt        Targets: b3dop_core, the core test exes, Box3DDOP (plugin)
 build.sh / build.bat  Convenience wrappers (HFS discovery, submodule fetch, stale build/ reset)
 extern/box3d/         Box3D submodule (never edit; static lib, EXCLUDE_FROM_ALL)
 icons/box3d.svg     Node icon; the build copies it to config/Icons as DOP_<node name>.svg for every node
@@ -55,6 +55,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
   core/               Houdini-free; built as b3dop_core and covered by the tests
     Box3DShapes.h       Header-only: shape math, packed-prim matrices, hashing
     Box3DJoints.h       Header-only: joint types, JointSettings, the joint parameter table
+    Box3DSideFX.h/.cpp  SideFX's Glue / Hard / Spring / Bullet Soft / Cone Twist data -> Box3D joints (mapping, frame offsets)
     Box3DWorld.h/.cpp   Pimpl wrapper over one b3World. The ONLY file that includes Box3D headers; defines TaskRunner
     Box3DAffectorMath.h Header-only: affector (Static Object) transform math
     Box3DDebug.h        B3D_LOG / counters, compiled out unless BOX3DDOP_DEBUG (args still type-checked, never evaluated)
@@ -83,6 +84,7 @@ tests/
   core_threads.cpp    1 worker vs N workers: timing + determinism
   core_taskrunner.cpp Host-supplied TaskRunner shared by 40+ worlds: no extra threads, same results as 1 worker
   core_joints.cpp     Every joint type, world anchors, live updates, breaking, feedback, the parameter table
+  core_sidefx.cpp     SideFX constraint data: option table, mapping per type / constraint_type, frame offsets, behaviour
   box3d_test.hiplc    Houdini scene for manual testing (tests/backup/ holds older saves)
 ```
 
@@ -645,9 +647,10 @@ its state in the object's `Position` data instead of point attributes.
 Box3D's joints, set up the way Houdini's old constraint system is: a **Constraint Network** DOP holds the network
 geometry, and constraint relationship nodes wired into its second input hold the settings, one node per kind of
 constraint, named by the primitives' `constraint_name`. Here those nodes are ours, one per Box3D joint type, with Box3D's
-own settings and defaults. SideFX's own constraint data (Glue, Hard, Spring, Soft, Cone Twist) is not read: their
-`constraint_name`s count as unknown. `constraint_type` (position / rotation / all) is ignored: the joint type decides
-what is constrained. Character-mover joints (mover, pogo) are left out.
+own settings and defaults. SideFX's own constraint data (Glue, Hard, Spring, Bullet Soft, Cone Twist) is mapped onto
+Box3D joints, approximately (see "SideFX constraint data" below). `constraint_type` (position / rotation / all) is read
+for SideFX data only; for our nodes the joint type decides what is constrained. Character-mover joints (mover, pogo)
+are left out.
 
 Naming: attributes holding the state at the initial pose are called `rest*` (`restlength`); attributes the solver
 keeps current are the plain names (`P`, `orient`) or `current_*` readings. The solver writes no attribute it does
@@ -764,6 +767,47 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   * A Constraint Network with Overwrite with SOP re-imports the SOP every step and overwrites the live values, so a
     resim from a cached frame other than the first uses the authored frames there.
 
+**SideFX constraint data** (`core/Box3DSideFX.*`, tested in `tests/core_sidefx.cpp`; read in `Box3DJointSync.cpp`):
+* Found by data type among the same subdata as our nodes (`networkKinds`): `SIM_ConRelGlue`, `SIM_ConRelHard`,
+  `SIM_ConRelSpring`, `SIM_ConRelBulletSoft`, `SIM_ConRelConeTwist` (names from a Houdini 22.0 probe; their default
+  Data Names are Glue, Hard, ConRelSpring, Soft, ConeTwist). Only Hard and Spring have HDK headers, so all five are read
+  the same way: `dynamic_cast` to `SIM_OptionsUser` (polymorphic: virtual destructor) and `importOption` per option in
+  `sideFXParams()`, else `SIM_Query::getFieldFloat("Options", 0, name)` (scalars only). Option names are the node
+  parameter names, from the same probe. `Box3DJointKind` holds the SideFX type and options instead of a joint type.
+* Per primitive: matching primitive attributes modify the options (floats multiply, ints / vectors replace; our
+  `jointParams` overrides are not applied), `constraint_type` is read (missing or unknown: all), then `mapSideFX`
+  picks the joint:
+  * Glue: rigid weld holding the pieces where they are, never colliding. Bullet's strength is an accumulated impulse;
+    here Break Force = strength / DOP timestep (the force that gives that impulse over one step), < 0 never. Half-life
+    and propagation are ignored, and the weld also sees steady loads (weight), not only impacts.
+  * Hard: all -> rigid weld holding the current offset (rest length ignored); position -> rigid distance joint at the
+    rest length, or spherical when it is ~0; rotation -> motor joint, angular spring only at 60 Hz / ratio 2 with
+    unlimited torque (Box3D has no rigid rotation-only joint). CFM, ERP, iterations and the angular motors are ignored.
+  * Bullet Soft: stiffness is already Hz. all -> motor joint with linear and angular springs (enableangular picks the
+    angular stiffness / damping), frames offset by the rest length; position -> sprung distance joint at the rest
+    length, or a linear-only motor joint when it is ~0; rotation -> angular-only motor joint. Plasticity is ignored.
+  * Spring: as Soft, after converting Hooke's constant and absolute damping per joint: Hz = sqrt(k / m) / 2 pi,
+    ratio = c / (2 sqrt(k m)), with m the reduced mass of the dynamic bodies (one dynamic body: its mass) for the
+    linear spring, and the mean principal inertia the same way for the angular one. Read when the network is
+    reprocessed, so a mass change alone does not update it.
+  * Cone Twist: spherical joint. Box3D's cone is round: the smaller of Max Up / Max Out, clamped to Box3D's 90 degree
+    maximum; 180 or more turns it off (Houdini's default). Twist limit +-Max Twist (180 or more: none). Bullet twists
+    about x, Box3D about z, so each frame is turned so z = the twist axis and x = the up axis (constrained axes on
+    point 0, goal axes on point 1). Softness, the soft-constraint options, translation ranges, rest length and the
+    motor are ignored.
+  * Hard / Spring / Soft / Cone Twist: Collide Connected = !disablecollisions.
+* **Frame offsets**: a SideFX joint's frames need not sit on its anchors. `sideFXFrameOffsets` gives each anchor an
+  offset in its own axes (`adjA` / `adjB` on `Box3DJointEntry`): a rotation (cone twist) and/or a shift along the anchor
+  line so the frames meet when the anchors are `separation` apart (Soft / Spring all with a rest length), or are as
+  far apart as now (`holdSeparation`: Glue, Hard all; anchors from Connect Adjacent Pieces sit at the centroids, and
+  a plain weld there would pull the pieces together). The joint is made from `applyFrameOffset(anchor, adj)`;
+  `writeLiveFrames` and the `next_constraint_name` switch write `removeFrameOffset(frame, adj)` back as P / orient,
+  so the anchors stay anchors, and `local_P` / `local_orient` hold the joint's own frames (compared with the
+  offset anchors in `localFrameAgrees`). Offsets are fixed when the joint is made; their inputs (rotations,
+  separation, the hold flag, not the anchor positions) are in the joint signature. Identity offsets (our nodes)
+  bypass the math, so those joints are bit for bit as before.
+* The DOP timestep reaches `syncJoints` through `syncFromGeometry` (for Glue).
+
 ## Tests
 
 Built in both configurations (`-DBOX3DDOP_CORE_ONLY=ON` builds only these):
@@ -773,6 +817,7 @@ Built in both configurations (`-DBOX3DDOP_CORE_ONLY=ON` builds only these):
 | `b3dop_core_smoke` | Box3D version, create / destroy; expects `OK` |
 | `b3dop_core_physics` | Handle API (and the test-side `KeyedWorld`), shape mapping, explicit primitives, mass, body types, resting heights, hulls (limits, caching, instancing), packed matrix math, `sanitizeQuat` / `storedPosition`, setters on existing bodies (material, damping, gravity, sleep, density, enable, shape replacement), live tuning, motion locks (world axes, live changes), fast rotation (the cap, live toggle), CCD threshold (sweep vs tunnel, live, invalid values), collision filtering (bits, positive / negative groups, re-filtering), contacts, mass centring / inertia scaling, sleep threshold, kinematic targets, external forces (force / torque per step, summing, non-finite input, static / kinematic / sleeping bodies, gravity as a force), contact recycling (world distance live, per-body flag at creation and on existing bodies, velocity kept, sleepers not woken) |
 | `b3dop_core_joints` | Every joint type (weld holds, distance keeps length, revolute motor + live speed change, prismatic limit along a rotated frame, motor joint, wheel spin, filter), world anchors, refused joints, clamping (no Box3D asserts), breaking events, frames on moved bodies, live frames (a world rebuilt from `jointWorldFrames` matches the continued one), local frames (a joint remade from `jointLocalFrames` at x = 12000 is bit for bit the same), Box3D defaults, the parameter table, feedback names never equal setting names |
+| `b3dop_core_sidefx` | SideFX data: data types and option table, `constraint_type` parsing, mapping of every type and mode (glue threshold, Spring's Hz conversion, cone twist axes / smaller cone), frame offsets (hold, separation, round trip), and in a world: glue holds the centroid offset and breaks, Soft all keeps its rest length, Soft / Spring sag as their spring constants predict, Hard position is a rigid rod, cone twist stops at the smaller limit |
 | `b3dop_core_taskrunner [workers]` | Worlds on one shared host pool: tasks run, results match 1 worker |
 | `b3dop_core_threads [workers] [side] [steps]` | 1 vs N workers: speedup, fails if positions differ by > 1e-4 |
 
@@ -824,8 +869,9 @@ remove an item once it has been checked, and record anything new here rather tha
 **Constraint networks**
 * Where the Constraint Network DOP attaches the nodes wired into its second input. The HDK iterator's doc only says the
   constraint data's parent is a "data_root" passed in, so `networkKinds` searches the relationship, its
-  `SIM_ConstraintNetworkRelationship` and its geometry. If every line warns "names no Box3D constraint relationship",
-  look in the DOP Details pane for the real parent.
+  `SIM_ConstraintNetworkRelationship` and its geometry. If every line warns "names no Box3D, Glue, Hard, ... constraint
+  relationship", look in the DOP Details pane for the real parent. (A Houdini 22.0 probe showed SideFX's data directly
+  under the `SIM_ConstraintNetworkRelationship`.)
 * That the Constraint Network accepts our own `SIM_ConRel` subclasses in that input.
 * Relationships found with `getRelationship(ingroup, i)` for both `ingroup` true and false; deduplicated by name.
 * Writing the relationship's geometry from the solver (non-const `getGeometry()`; the Bullet solver writes it back the
@@ -838,8 +884,23 @@ remove an item once it has been checked, and record anything new here rather tha
   network writes only component 0. `distance` / `angle` (radians) match Bullet's names.
 * Float attributes multiply the node's value (Houdini's rule): confirm it is wanted, since zero defaults (limits,
   targets) and -1 caps cannot be changed per primitive unless the node is set to 1.
-* Networks from Connect Adjacent Pieces put each end at its piece's centroid; a weld pulls the two ends together, so
-  pieces may snap. Possible fix: weld frames at the midpoint (or at end A) so the current offset is held.
+* Networks from Connect Adjacent Pieces put each end at its piece's centroid; a Box3D Weld node pulls the two ends
+  together, so pieces may snap (SideFX Glue / Hard all hold the offset instead).
+
+**SideFX constraint data**
+* Not compiled against the HDK: `dynamic_cast<const SIM_OptionsUser *>` on SideFX's data (cross-cast through RTTI
+  across Houdini's libraries), `SIM_Options::importOption` for `fpreal64` and `UT_Vector3D` (and that it converts int /
+  bool options), `SIM_Data::getDataType()`, `SIM_Query::getFieldFloat`.
+* Glue: Break Force = strength / timestep is our own rule. Compare breakage with Bullet on a typical fracture; Box3D's
+  weld also carries weight, so a tall glued wall may break at its base where Bullet's would not.
+* Hard: `all` ignoring the rest length, and `position` with Houdini's default rest length 1 and no `restlength`
+  attribute giving a rod of length 1 (the documented meaning), are guesses about Bullet's behaviour.
+* `constraint_type` missing = all.
+* Which end is Cone Twist's goal (taken as point 1); only matters when goal and constrained axes differ.
+* Spring: whether Bullet's Spring applies an angular spring with the same strength (assumed, from the HDK's
+  `SIM_ConRelSpring::getTorque`).
+* Soft / Spring `all` with a rest length shifts the frames along the anchor line when the joint is made; after a
+  world rebuild from a stretched pose the offset direction is re-derived from the anchors and may differ slightly.
 
 **Whole-object bodies**
 * `SIM_PositionSimple`'s translation convention: written as the pivot's displacement, then checked through
@@ -890,11 +951,14 @@ The one list of what is still to do. Keep it here only (no TODO comments in the 
   compound. Mind the mesh's own memory (not the hull cache), `deforming` rebuilds, and that a mesh body cannot become
   dynamic without rebuilding its shape.
 * Height-field colliders; `cylinder` / `plane` shapes (no Box3D shape; hull or big box approximations possible).
-* Constraint networks: SideFX's Glue / Hard / Spring / Soft / Cone Twist constraint data (could map to weld /
-  spherical / distance joints, approximately); point / vertex / agent anchors (`anchor_id`, `anchor_type`);
-  `constraint_type` (e.g. on the weld node: `position` -> spherical, `rotation` -> rotation only, `all` -> weld).
-* Welds between anchors at different points (Connect Adjacent Pieces puts each end at its piece's centroid) pull the
-  pieces together; frames at the midpoint (or at end A) would hold the current offset.
+* Constraint networks: point / vertex / agent anchors (`anchor_id`, `anchor_type`); `constraint_type` on our own nodes
+  (e.g. on the weld node: `position` -> spherical, `rotation` -> rotation only, `all` -> weld; SideFX data reads it).
+* SideFX constraint data, the parts not mapped: Glue half-life / propagation (impulse accumulation); Soft
+  plasticity (would move the joint frames over time); Cone Twist's elliptical cone (only the smaller limit), cones
+  between 90 and 180 degrees (clamped to 90), softness / soft limits, motor and translation ranges; Hard's angular
+  motors; Spring's Hz conversion following mass changes.
+* Box3D Weld nodes between anchors at different points (Connect Adjacent Pieces puts each end at its piece's centroid)
+  pull the pieces together; `holdSeparation` (see "SideFX constraint data") could be offered as a node option.
 * Whole-object bodies: read RBD State's mass / density / inertia (and Bullet Data) as fallbacks under Box3D Data.
 * Force DOPs: only `getForce` at the centre of mass (no `getForceOnSphere` / area variants, no per-substep re-evaluation).
 * Sticky collisions; contact / sensor events beyond Impacts.

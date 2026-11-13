@@ -4,9 +4,13 @@
 // ConstraintGeometry, with Attach Internal Constraints to Object). Each two-point primitive is
 // one Box3D joint:
 //   prim  constraint_name   the Data Name of a Box3D constraint relationship wired into the
-//                           Constraint Network: it gives the joint type and settings
-//   prim  <setting>         modifies that node's value (b3dop::jointParams names): floats
-//                           multiply, toggles / vectors / Euler angles (degrees) replace
+//                           Constraint Network: it gives the joint type and settings. SideFX's
+//                           Glue / Hard / Spring / Bullet Soft / Cone Twist data are mapped onto
+//                           Box3D joints (b3dop::mapSideFX)
+//   prim  constraint_type   position / rotation / all: SideFX data only
+//   prim  <setting>         modifies that node's value (b3dop::jointParams names, or
+//                           b3dop::sideFXParams for SideFX data): floats multiply, toggles /
+//                           vectors / Euler angles (degrees) replace
 //   prim  next_constraint_name   switched to when the joint breaks
 //   point name              the body: a piece's `name` in any solved object, "object/piece", an
 //                           object with one body, or an affector object; empty: the world
@@ -24,7 +28,7 @@ struct Box3DJointCounts
     int created    = 0;     // joints made (new, or remade after a change)
     int updated    = 0;     // live setting changes
     int removed    = 0;     // joints whose primitive (or network) went away
-    int unknown    = 0;     // primitives whose constraint_name names no Box3D constraint relationship
+    int unknown    = 0;     // primitives whose constraint_name names no Box3D or supported SideFX constraint relationship
     int unresolved = 0;     // an anchor name that matches no body
     int notLines   = 0;     // primitives that are not two-point lines
     int failed     = 0;     // Box3D refused (both ends the world, the same body twice, ...)
@@ -34,7 +38,8 @@ struct Box3DJointCounts
 // per-object name lookups only while this is true.
 bool anyJointNetwork(SIM_ObjectArray &objects);
 
-void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects, Box3DJointCounts &counts);
+// timeStep: the DOP timestep (a Glue's strength is an impulse over it).
+void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects, float timeStep, Box3DJointCounts &counts);
 
 // After the step: joints over their force / torque threshold are destroyed and marked broken
 // (`broken` primitive group, or switched to their next_constraint_name), and the live frames and
