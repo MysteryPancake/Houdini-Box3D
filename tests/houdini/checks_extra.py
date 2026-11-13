@@ -374,9 +374,13 @@ def test_substeps_fps():
         track = step(dop, frames, lambda sim, f: packed_positions(sim, "pieces")[names[3]])
         rest = track[frames][1]
         jitter = max((track[f] - track[f - 1]).length() for f in range(frames - fps // 2, frames + 1)) * fps
-        good = close(rest, 2.5, 0.03) and jitter < 0.05
+        # Box3D caps contact stiffness at 1/8 of the substep rate (3 Hz at 24 fps x 1), so the stack
+        # sinks into soft contacts there; it only has to stay stable and not sink far.
+        soft = fps * substeps < 48
+        good = close(rest, 2.5, 0.25 if soft else 0.03) and jitter < 0.05
         ok = ok and good
-        rows.append(f"{fps} fps, Substeps {substeps}: top box at {rest:.3f} (2.5 = stacked), jitter {jitter:.4f}/s")
+        rows.append(f"{fps} fps, Substeps {substeps}: top box at {rest:.3f} (2.5 = stacked"
+                    f"{', soft contacts expected' if soft else ''}), jitter {jitter:.4f}/s")
     hou.setFps(24)
     return [Result("substeps_fps", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
 
@@ -394,9 +398,9 @@ def test_friction_slope():
         t = math.radians(angle)
         n = (-math.sin(t), math.cos(t), 0.0)  # the ramp's surface normal
         pieces = [{"size": (20, 1, 20), "center": tuple(-0.5 * c for c in n), "rotate": (0, 0, angle),
-                   "attrs": {"active": 0, "friction": 0.5, "bounce": 0.0}},
+                   "attrs": {"active": 0, "friction": 0.5, "bounce": 0.0, "bullet_georep": "convexhull"}},
                   {"size": (1, 1, 1), "center": tuple(0.501 * c for c in n), "rotate": (0, 0, angle),
-                   "attrs": {"active": 1, "friction": 0.5, "bounce": 0.0}}]
+                   "attrs": {"active": 1, "friction": 0.5, "bounce": 0.0, "bullet_georep": "convexhull"}}]
         path, names = packed_boxes(f"slope_{int(angle)}_pieces", pieces)
         dop = new_dopnet(f"slope_{int(angle)}")
         finish(dop, box3d_solver(dop, packed_object(dop, "pieces", path)))
@@ -503,26 +507,31 @@ def test_rolling_resistance():
 
 
 SHAPES = (
-    # label, size, rotate, georep, autofit, primS (half extents), radius, length, rest height
-    ("box, autofit", (1, 1, 1), (0, 0, 0), "box", 1, (1.0, 1.0, 1.0), 1.0, 1.0, 0.5),
-    ("sphere, autofit", (1, 1, 1), (0, 0, 0), "sphere", 1, (1.0, 1.0, 1.0), 1.0, 1.0, 0.5),
-    ("capsule, autofit (lying)", (1, 2, 1), (0, 0, 90), "capsule", 1, (1.0, 1.0, 1.0), 1.0, 1.0, 0.5),
-    ("box, bullet_primS 0.5 0.25 0.5", (1, 1, 1), (0, 0, 0), "box", 0, (0.5, 0.25, 0.5), 1.0, 1.0, 0.25),
-    ("sphere, bullet_radius 0.3", (1, 1, 1), (0, 0, 0), "sphere", 0, (1.0, 1.0, 1.0), 0.3, 1.0, 0.3),
-    ("capsule, radius 0.25 length 1 (lying)", (1, 1, 1), (0, 0, 90), "capsule", 0, (1.0, 1.0, 1.0), 0.25, 1.0, 0.25),
+    # label, size, georep, autofit, primS (half extents), radius, length, primR (Euler degrees), rest height
+    ("box, autofit", (1, 1, 1), "box", 1, (1.0, 1.0, 1.0), 1.0, 1.0, (0, 0, 0), 0.5),
+    ("sphere, autofit", (1, 1, 1), "sphere", 1, (1.0, 1.0, 1.0), 1.0, 1.0, (0, 0, 0), 0.5),
+    ("capsule, autofit (standing, 1 x 2)", (1, 2, 1), "capsule", 1, (1.0, 1.0, 1.0), 1.0, 1.0, (0, 0, 0), 1.0),
+    ("box, bullet_primS 0.5 0.25 0.5", (1, 1, 1), "box", 0, (0.5, 0.25, 0.5), 1.0, 1.0, (0, 0, 0), 0.25),
+    ("sphere, bullet_radius 0.3", (1, 1, 1), "sphere", 0, (1.0, 1.0, 1.0), 0.3, 1.0, (0, 0, 0), 0.3),
+    ("capsule, radius 0.25 length 1 (standing)", (1, 1, 1), "capsule", 0, (1.0, 1.0, 1.0), 0.25, 1.0,
+     (0, 0, 0), 0.75),
+    ("capsule, radius 0.25 length 1, bullet_primR 0 0 90 (lying)", (1, 1, 1), "capsule", 0, (1.0, 1.0, 1.0),
+     0.25, 1.0, (0, 0, 90), 0.25),
 )
 
 
 def test_shape_types():
     """Box, sphere and capsule bullet_georep, fitted to the piece and sized by bullet_primS /
-    bullet_radius / bullet_length with bullet_autofit 0: each rests at its own half height."""
+    bullet_radius / bullet_length with bullet_autofit 0: each rests at its own half height. A
+    capsule's axis is the body's Y; bullet_primR turns it to lie down."""
     pieces = [dict(GROUND, attrs={"active": 0, "bullet_georep": "box", "bullet_autofit": 1,
                                   "bullet_primS": (1.0, 1.0, 1.0), "bullet_radius": 1.0, "bullet_length": 1.0,
-                                  "bounce": 0.0})]
-    for i, (_, size, rot, rep, fit, prim_s, radius, length, _) in enumerate(SHAPES):
-        pieces.append({"size": size, "rotate": rot, "center": (0, 1.5, (i - 2.5) * 3),
+                                  "bullet_primR": (0.0, 0.0, 0.0), "bounce": 0.0})]
+    for i, (_, size, rep, fit, prim_s, radius, length, prim_r, _) in enumerate(SHAPES):
+        pieces.append({"size": size, "center": (0, 1.5, (i - 3) * 3),
                        "attrs": {"active": 1, "bullet_georep": rep, "bullet_autofit": fit, "bullet_primS": prim_s,
-                                 "bullet_radius": radius, "bullet_length": length, "bounce": 0.0}})
+                                 "bullet_radius": radius, "bullet_length": length,
+                                 "bullet_primR": tuple(float(a) for a in prim_r), "bounce": 0.0}})
     path, names = packed_boxes("shapes_pieces", pieces)
     dop = new_dopnet("shapes")
     finish(dop, box3d_solver(dop, packed_object(dop, "pieces", path)))

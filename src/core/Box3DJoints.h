@@ -620,8 +620,8 @@ inline JointRange jointParamRange(const JointParam &p, JointType t) {
     JointRange r;
   };
   static const Entry kRanges[] = {
-      {"force_threshold", {0, 10000, true}},
-      {"torque_threshold", {0, 10000, true}},
+      {"force_threshold", {0, 10000, false}}, // < 0 means never (see cap())
+      {"torque_threshold", {0, 10000, false}},
       {"constraint_stiffness", {0, 120, true}},
       {"constraint_damping_ratio", {0, 10, true}},
       {"stiffness", {0, 30, true}},
