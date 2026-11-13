@@ -37,14 +37,16 @@ public:
                       StartAsleep); // point attribute: awake (0 = asleep)
   GETSET_DATA_FUNCS_B("fastobject", FastObject); // Box3D "bullet"
   GETSET_DATA_FUNCS_B("contactrecycling",
-                      ContactRecycling); // contacts may be recycled (solver's
-                                         // Contact Recycle Distance)
+                      // contacts may be recycled (solver's Contact Recycle
+                      // Distance)
+                      ContactRecycling);
   GETSET_DATA_FUNCS_F("sleepthreshold", SleepThreshold);
   GETSET_DATA_FUNCS_F("ccdthreshold", CcdThreshold);
   GETSET_DATA_FUNCS_B("addimpact", AddImpact); // Impacts data
   GETSET_DATA_FUNCS_I("defaultshape",
-                      DefaultShape); // 0 box, 1 sphere, 2 convexhull, 3
-                                     // concave/compound, 4 capsule, 5 none
+                      // 0 box, 1 sphere, 2 convexhull, 3 concave/compound, 4
+                      // capsule, 5 none
+                      DefaultShape);
   GETSET_DATA_FUNCS_B("hullperconnected", HullPerConnected);
   GETSET_DATA_FUNCS_B("autofit", AutoFit); // point attribute: bullet_autofit
   GETSET_DATA_FUNCS_B("flipwinding",

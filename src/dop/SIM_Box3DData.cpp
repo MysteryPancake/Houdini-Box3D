@@ -125,26 +125,26 @@ const SIM_DopDescription *SIM_Box3DData::getDescription() {
 }
 
 // The menus list the enums in order.
-static_assert(int(b3dop::BodySettings::Type::Static) == 0 &&
-                  int(b3dop::BodySettings::Type::Kinematic) == 1 &&
-                  int(b3dop::BodySettings::Type::Dynamic) == 2,
+static_assert(static_cast<int>(b3dop::BodySettings::Type::Static) == 0 &&
+                  static_cast<int>(b3dop::BodySettings::Type::Kinematic) == 1 &&
+                  static_cast<int>(b3dop::BodySettings::Type::Dynamic) == 2,
               "bodytype menu order");
-static_assert(int(b3dop::ShapeType::Box) == 0 &&
-                  int(b3dop::ShapeType::Sphere) == 1 &&
-                  int(b3dop::ShapeType::Convex) == 2 &&
-                  int(b3dop::ShapeType::Concave) == 3 &&
-                  int(b3dop::ShapeType::Capsule) == 4 &&
-                  int(b3dop::ShapeType::None) == 5,
+static_assert(static_cast<int>(b3dop::ShapeType::Box) == 0 &&
+                  static_cast<int>(b3dop::ShapeType::Sphere) == 1 &&
+                  static_cast<int>(b3dop::ShapeType::Convex) == 2 &&
+                  static_cast<int>(b3dop::ShapeType::Concave) == 3 &&
+                  static_cast<int>(b3dop::ShapeType::Capsule) == 4 &&
+                  static_cast<int>(b3dop::ShapeType::None) == 5,
               "defaultshape menu order");
 
 b3dop::BodySettings SIM_Box3DData::toBodySettings() const {
   b3dop::BodySettings s;
 
   // Out-of-range menu values (set from a script) fall back to the defaults.
-  const int bodyType = int(getBodyType());
+  const int bodyType = static_cast<int>(getBodyType());
   if (bodyType >= 0 && bodyType <= 2)
     s.type = b3dop::BodySettings::Type(bodyType);
-  const int shape = int(getDefaultShape());
+  const int shape = static_cast<int>(getDefaultShape());
   if (shape >= 0 && shape <= 5)
     s.defaultShape = b3dop::ShapeType(shape);
 

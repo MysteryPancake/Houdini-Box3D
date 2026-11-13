@@ -4,6 +4,9 @@ project(Box3DDOP LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# compile_commands.json in the build folder, for clang-tidy and IDEs.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # ---------------------------------------------------------------------------
 # Options
 # ---------------------------------------------------------------------------
@@ -16,6 +19,9 @@ option(BOX3DDOP_CORE_ONLY "Build only the Houdini-free core and smoke test" OFF)
 # configure with -DBOX3DDOP_DEBUG=ON to log to Houdini's console.
 option(BOX3DDOP_DEBUG "Compile debug logging into the Houdini plugin" OFF)
 
+# Compiler warnings on our own targets (never Box3D's). CI turns warnings into errors.
+option(BOX3DDOP_WARNINGS_AS_ERRORS "Treat compiler warnings in our code as errors" OFF)
+
 # Where the Box3D source tree lives (the folder containing its CMakeLists.txt,
 # i.e. the INNER box3d folder if your zip unpacks as box3d/box3d/...).
 set(BOX3D_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/box3d" CACHE PATH "Path to Box3D source")
@@ -27,6 +33,39 @@ set(BOX3D_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/box3d" CACHE PATH "Path to Box
 set(BUILD_SHARED_LIBS OFF)
 add_subdirectory("${BOX3D_DIR}" "${CMAKE_BINARY_DIR}/box3d" EXCLUDE_FROM_ALL)
 set_target_properties(box3d PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# Warning flags for one of our targets. Headers of imported targets (Houdini) are system
+# includes, so only our own code is checked.
+function(b3dop_warnings target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4)
+        if(BOX3DDOP_WARNINGS_AS_ERRORS)
+            target_compile_options(${target} PRIVATE /WX)
+        endif()
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra)
+        if(BOX3DDOP_WARNINGS_AS_ERRORS)
+            target_compile_options(${target} PRIVATE -Werror)
+        endif()
+    endif()
+endfunction()
+
+# ---------------------------------------------------------------------------
+# Formatting: `cmake --build build --target format` rewrites our sources with
+# clang-format (LLVM style, .clang-format); `format-check` only reports.
+# ---------------------------------------------------------------------------
+find_program(CLANG_FORMAT_EXE NAMES clang-format)
+if(CLANG_FORMAT_EXE)
+    file(GLOB_RECURSE B3DOP_FORMAT_SOURCES CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.h")
+    add_custom_target(format
+        COMMAND ${CLANG_FORMAT_EXE} -i --style=file ${B3DOP_FORMAT_SOURCES}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} VERBATIM)
+    add_custom_target(format-check
+        COMMAND ${CLANG_FORMAT_EXE} --dry-run -Werror --style=file ${B3DOP_FORMAT_SOURCES}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} VERBATIM)
+endif()
 
 # How many Box3D worlds may exist at once (Box3D's own default is 128). Every rebuild makes a
 # new world and the old one lives on while cached frames use it, so long sessions and several
@@ -53,6 +92,7 @@ target_include_directories(b3dop_core PUBLIC src)
 # PRIVATE: Box3D's headers/defines stay out of the Houdini plugin's translation
 # units. It's a static lib, so CMake still links it into anything using b3dop_core.
 target_link_libraries(b3dop_core PRIVATE box3d::box3d)
+b3dop_warnings(b3dop_core)
 set_target_properties(b3dop_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # The core's own console output (Box3D asserts and log messages) is compiled in only with the debug
 # option; otherwise nothing is ever printed (on Windows that would open a console window).
@@ -72,6 +112,7 @@ function(b3dop_add_test name)
     set(target b3dop_core_${name})
     add_executable(${target} tests/core_${name}.cpp)
     target_link_libraries(${target} PRIVATE b3dop_core Threads::Threads)
+    b3dop_warnings(${target})
     add_test(NAME ${target} COMMAND ${target} ${ARGN})
 endfunction()
 
@@ -129,6 +170,7 @@ add_library(Box3DDOP SHARED
     src/sync/Box3DHoudiniUtil.h
 )
 target_link_libraries(Box3DDOP PRIVATE Houdini b3dop_core)
+b3dop_warnings(Box3DDOP)
 if(BOX3DDOP_DEBUG)
     target_compile_definitions(Box3DDOP PRIVATE BOX3DDOP_DEBUG=1)
 endif()

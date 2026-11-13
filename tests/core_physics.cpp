@@ -78,12 +78,12 @@ int main() {
     CHECK(h != 0);
     CHECK(w.bodyHandle(9999) == 0);
     double hp[3];
-    float hq[4], hl[3], ha[3];
+    float hq[4], hlin[3], hang[3];
     CHECK(w.getTransformByHandle(h, hp, hq));
     CHECK(w.getTransform(2, p, q));
     CHECK(hp[0] == p[0] && hp[1] == p[1] && hp[2] == p[2] && hq[3] == q[3]);
-    CHECK(w.getVelocityByHandle(h, hl, ha));
-    CHECK(hl[0] == lin[0] && hl[2] == lin[2] && ha[0] == ang[0]);
+    CHECK(w.getVelocityByHandle(h, hlin, hang));
+    CHECK(hlin[0] == lin[0] && hlin[2] == lin[2] && hang[0] == ang[0]);
     const double np2[3] = {-4, 8, 1};
     const float v2[3] = {0, 1, 0}, a2[3] = {0, 0, 2};
     CHECK(w.setTransformByHandle(h, np2, qid));
@@ -303,9 +303,12 @@ int main() {
       CHECK(iw.create(WorldSettings()));
       std::vector<float> src; // an off-centre cube around the pivot
       for (int i = 0; i < 8; ++i) {
-        src.push_back(float(pivot[0]) + ((i & 1) ? 0.37f : -0.61f));
-        src.push_back(float(pivot[1]) + ((i & 2) ? 0.52f : -0.23f));
-        src.push_back(float(pivot[2]) + ((i & 4) ? 0.91f : -0.44f));
+        src.push_back(static_cast<float>(pivot[0]) +
+                      ((i & 1) ? 0.37f : -0.61f));
+        src.push_back(static_cast<float>(pivot[1]) +
+                      ((i & 2) ? 0.52f : -0.23f));
+        src.push_back(static_cast<float>(pivot[2]) +
+                      ((i & 4) ? 0.91f : -0.44f));
       }
       HullId first = 0;
       for (int k = 0; k < 3; ++k) {
@@ -351,9 +354,12 @@ int main() {
       CHECK(kw.create(WorldSettings()));
       std::vector<float> src;
       for (int i = 0; i < 8; ++i) {
-        src.push_back(float(pivot[0]) + ((i & 1) ? 0.37f : -0.61f));
-        src.push_back(float(pivot[1]) + ((i & 2) ? 0.52f : -0.23f));
-        src.push_back(float(pivot[2]) + ((i & 4) ? 0.91f : -0.44f));
+        src.push_back(static_cast<float>(pivot[0]) +
+                      ((i & 1) ? 0.37f : -0.61f));
+        src.push_back(static_cast<float>(pivot[1]) +
+                      ((i & 2) ? 0.52f : -0.23f));
+        src.push_back(static_cast<float>(pivot[2]) +
+                      ((i & 4) ? 0.91f : -0.44f));
       }
       const uint64_t sh = hashFloats(src.data(), src.size());
       auto instanceM4 = [&](int k, double sk, double *m) {
@@ -362,8 +368,8 @@ int main() {
                       0.1f * std::sin(0.5f * ang), std::cos(0.5f * ang)};
         const float ln =
             std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
-        for (int c = 0; c < 4; ++c)
-          q[c] /= ln;
+        for (float &c : q)
+          c /= ln;
         double r[9];
         quatToMatrix3(q, r);
         for (int i = 0; i < 16; ++i)
@@ -479,9 +485,9 @@ int main() {
     }
     float cvol = 0.0f;
     CHECK(hw.createHull(cloud.data(), 500, &cvol) != 0 && cvol > 3.3f &&
-          cvol < 4.2f); // unit sphere is 4.19; the hull is cut down to fit the
-                        // limits
-    hw.pruneHulls();    // nothing used them yet
+          // unit sphere is 4.19; the hull is cut down to fit the limits
+          cvol < 4.2f);
+    hw.pruneHulls(); // nothing used them yet
     CHECK(hw.hullCacheSize() == 0);
 
     // Ground, then: (a) a hull whose pivot is NOT its centre, (b) a two-piece
@@ -809,21 +815,21 @@ int main() {
     float off[4] = {0.1f, 0.2f, 0.3f, 1.7f};
     b3dop::sanitizeQuat(off);
     double l2 = 0;
-    for (int i = 0; i < 4; ++i)
-      l2 += double(off[i]) * off[i];
+    for (float o : off)
+      l2 += static_cast<double>(o) * o;
     CHECK(std::fabs(l2 - 1.0) < 1e-6); // normalised
     float again[4] = {off[0], off[1], off[2], off[3]};
     b3dop::sanitizeQuat(again);
     double drift = 0;
     for (int i = 0; i < 4; ++i)
-      drift += std::fabs(double(again[i]) - off[i]);
+      drift += std::fabs(static_cast<double>(again[i]) - off[i]);
     CHECK(drift < 1e-6); // idempotent to float noise
 
     const double in[3] = {0.1, -12345.678901234, 1e-9};
     double out[3];
     CHECK(b3dop::storedPosition(in, out));
     for (int i = 0; i < 3; ++i)
-      CHECK(out[i] == double(float(in[i])));
+      CHECK(out[i] == static_cast<double>(static_cast<float>(in[i])));
     double out2[3];
     CHECK(b3dop::storedPosition(out, out2)); // idempotent: no drift on re-store
     for (int i = 0; i < 3; ++i)
@@ -1070,9 +1076,9 @@ int main() {
     for (int sx = -1; sx <= 1; sx += 2)
       for (int sy = -1; sy <= 1; sy += 2)
         for (int sz = -1; sz <= 1; sz += 2) {
-          pts[k++] = float(sx);
-          pts[k++] = float(sy);
-          pts[k++] = float(sz);
+          pts[k++] = static_cast<float>(sx);
+          pts[k++] = static_cast<float>(sy);
+          pts[k++] = static_cast<float>(sz);
         }
     float hv = 0;
     const HullId big = dw.createHull(pts, 8, &hv); // 2x2x2, volume 8
@@ -1356,11 +1362,11 @@ int main() {
   {
     using namespace b3dop;
     CollisionFilter def;
-    CHECK(def.category == ~uint64_t(0) && def.mask == ~uint64_t(0) &&
-          def.group == 0);
+    CHECK(def.category == ~static_cast<uint64_t>(0) &&
+          def.mask == ~static_cast<uint64_t>(0) && def.group == 0);
     CollisionFilter debris;
     debris.category = 2;
-    debris.mask = ~uint64_t(2); // ignores other debris
+    debris.mask = ~static_cast<uint64_t>(2); // ignores other debris
     CHECK(debris != def && debris == debris);
 
     // In a world: two debris boxes dropped on each other fall through, a third
@@ -1639,8 +1645,8 @@ int main() {
 
     // sleeping: without wake the force is ignored, with wake it wakes the body
     // and acts
-    const double sl[3] = {-10, 0, 0};
-    const BodyHandle sleeper = fw.createBody(dyn, sl, qid);
+    const double sleeperPos[3] = {-10, 0, 0};
+    const BodyHandle sleeper = fw.createBody(dyn, sleeperPos, qid);
     CHECK(sleeper && fw.createShape(sleeper, dyn, cube));
     for (int i = 0; i < 300 && fw.isAwakeByHandle(sleeper); ++i)
       fw.step(dt);
@@ -2014,9 +2020,9 @@ int main() {
         double bp[3];
         float bq[4];
         if (sw.getTransform(2, bp, bq) && hit)
-          peak[mode] = std::max(peak[mode], float(bp[1]));
-        float bl[3], ba[3];
-        if (sw.getVelocity(2, bl, ba) && bl[1] > 1.0f)
+          peak[mode] = std::max(peak[mode], static_cast<float>(bp[1]));
+        float blin[3], bang[3];
+        if (sw.getVelocity(2, blin, bang) && blin[1] > 1.0f)
           hit = true;
       }
     }
@@ -2110,7 +2116,7 @@ int main() {
 
       // Eviction: past the budget, least recently used entries go; held hulls
       // stay usable.
-      const size_t oldBudget = size_t(256) << 20;
+      const size_t oldBudget = static_cast<size_t>(256) << 20;
       Box3DWorld::setSharedHullBudget(1);
       CHECK(Box3DWorld::sharedHullBytes() <= 1);
       const double p2[3] = {3, 2, 0};

@@ -279,7 +279,8 @@ void sideFXFrameOffsets(const SideFXJoint &j, const JointFrame &anchorA,
                        anchorB.pos[1] - anchorA.pos[1],
                        anchorB.pos[2] - anchorA.pos[2]};
   const double dist = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-  const double sep = j.holdSeparation ? dist : double(j.separation);
+  const double sep =
+      j.holdSeparation ? dist : static_cast<double>(j.separation);
   if (!(sep > 0.0) || !std::isfinite(sep))
     return;
 
@@ -287,12 +288,12 @@ void sideFXFrameOffsets(const SideFXJoint &j, const JointFrame &anchorA,
   float u[3];
   if (dist > 1e-9)
     for (int k = 0; k < 3; ++k)
-      u[k] = float(d[k] / dist);
+      u[k] = static_cast<float>(d[k] / dist);
   else {
     const float x[3] = {1, 0, 0};
     quatRotate(anchorA.rot, x, u);
   }
-  const float half = float(0.5 * sep);
+  const float half = static_cast<float>(0.5 * sep);
   float qa[4], qb[4];
   quatConj(anchorA.rot, qa);
   quatConj(anchorB.rot, qb);
@@ -309,11 +310,13 @@ void sideFXFrameOffsets(const SideFXJoint &j, const JointFrame &anchorA,
 
 JointFrame applyFrameOffset(const JointFrame &anchor, const JointFrame &adj) {
   JointFrame out;
-  const float p[3] = {float(adj.pos[0]), float(adj.pos[1]), float(adj.pos[2])};
+  const float p[3] = {static_cast<float>(adj.pos[0]),
+                      static_cast<float>(adj.pos[1]),
+                      static_cast<float>(adj.pos[2])};
   float w[3];
   quatRotate(anchor.rot, p, w);
   for (int k = 0; k < 3; ++k)
-    out.pos[k] = anchor.pos[k] + double(w[k]);
+    out.pos[k] = anchor.pos[k] + static_cast<double>(w[k]);
   quatMul(anchor.rot, adj.rot, out.rot);
   sanitizeQuat(out.rot);
   return out;
@@ -325,11 +328,13 @@ JointFrame removeFrameOffset(const JointFrame &joint, const JointFrame &adj) {
   quatConj(adj.rot, inv);
   quatMul(joint.rot, inv, out.rot);
   sanitizeQuat(out.rot);
-  const float p[3] = {float(adj.pos[0]), float(adj.pos[1]), float(adj.pos[2])};
+  const float p[3] = {static_cast<float>(adj.pos[0]),
+                      static_cast<float>(adj.pos[1]),
+                      static_cast<float>(adj.pos[2])};
   float w[3];
   quatRotate(out.rot, p, w);
   for (int k = 0; k < 3; ++k)
-    out.pos[k] = joint.pos[k] - double(w[k]);
+    out.pos[k] = joint.pos[k] - static_cast<double>(w[k]);
   return out;
 }
 

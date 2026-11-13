@@ -1,0 +1,22 @@
+# clang-tidy checks for our code (src/, tests/). Kept small: likely bugs, performance, a few
+# modernisations, and one cast style (static_cast; no C-style or float(x) casts).
+# Run: clang-tidy -p build <file>   (needs build/compile_commands.json; the Houdini sources
+# need a plugin build, the core and tests a core-only one).
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-misplaced-widening-cast,
+  performance-*,
+  -performance-enum-size,
+  modernize-use-nullptr,
+  modernize-use-override,
+  modernize-use-emplace,
+  modernize-loop-convert,
+  google-readability-casting,
+  readability-inconsistent-declaration-parameter-name,
+  misc-confusable-identifiers
+HeaderFilterRegex: '/(src/(core|dop|sync)|tests)/'
+FormatStyle: file

@@ -26,10 +26,10 @@ bool splitPackedMatrix(const double m3[9], float q[4], double scale[3]) {
   UT_QuaternionD rq;
   rq.updateFromRotationMatrix(m);
   rq.normalize();
-  q[0] = float(rq.x());
-  q[1] = float(rq.y());
-  q[2] = float(rq.z());
-  q[3] = float(rq.w());
+  q[0] = static_cast<float>(rq.x());
+  q[1] = static_cast<float>(rq.y());
+  q[2] = static_cast<float>(rq.z());
+  q[3] = static_cast<float>(rq.w());
   scale[0] = std::fabs(s.x());
   scale[1] = std::fabs(s.y());
   scale[2] = std::fabs(s.z());
@@ -243,7 +243,8 @@ private:
 uint64_t sourceIdentity(const GU_Detail *gdp, GA_Offset fragmentFirst,
                         bool connected) {
   uint64_t h = geometryIdentity(gdp);
-  h = b3dop::mixHash(h, uint64_t(int64_t(fragmentFirst)));
+  h = b3dop::mixHash(
+      h, static_cast<uint64_t>(static_cast<int64_t>(fragmentFirst)));
   return b3dop::mixHash(h, connected ? 1 : 2);
 }
 
@@ -279,7 +280,8 @@ const PieceGroup *ShapeSources::innerPieces(const GU_PrimPacked &prim,
       InnerEntry e;
       e.handle = handle;
       collectFragmentPiece(gdp, frag->getPrimitiveRange(),
-                           std::to_string(int64_t(firstOff)), e.pieces);
+                           std::to_string(static_cast<int64_t>(firstOff)),
+                           e.pieces);
       fit = fragments.emplace(key, std::move(e)).first;
       fresh = true;
     }
@@ -339,7 +341,7 @@ bool pieceFromPoints(b3dop::Box3DWorld &world, uint64_t key,
   b3dop::HullId h = key ? world.findHull(key, &vol) : 0;
   if (!h) {
     fill(pts);
-    const int n = int(pts.size() / 3);
+    const int n = static_cast<int>(pts.size() / 3);
     h = key ? world.createHullWithKey(key, pts.data(), n, &vol, budgetGroup)
             : world.createHull(pts.data(), n, &vol);
     if (!h) {
@@ -439,7 +441,8 @@ BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
                          std::vector<float> &dst) {
     dst.clear();
     for (const NamedPiece *np : from) {
-      packedPointsToBodyLocal(np->xyz.data(), int(np->xyz.size() / 3), pk.m4,
+      packedPointsToBodyLocal(np->xyz.data(),
+                              static_cast<int>(np->xyz.size() / 3), pk.m4,
                               pk.pivot, local);
       dst.insert(dst.end(), local.begin(), local.end());
     }
@@ -466,7 +469,8 @@ BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
     // Box / sphere / capsule on a packed point with autofit: fit to the bounds.
     toBodyLocal(used, pts);
     Piece pc;
-    if (fitShapeToPoints(type, pts.data(), int(pts.size() / 3), pc.spec)) {
+    if (fitShapeToPoints(type, pts.data(), static_cast<int>(pts.size() / 3),
+                         pc.spec)) {
       pc.volume = shapeVolume(pc.spec);
       add(pc);
     }
@@ -515,7 +519,7 @@ BuiltShapes buildWholeObjectShapes(b3dop::Box3DWorld &world,
       double o[3];
       b3dop::xformPoint(m, p, o);
       for (int c = 0; c < 3; ++c)
-        dst.push_back(float(o[c] - pivot[c]));
+        dst.push_back(static_cast<float>(o[c] - pivot[c]));
     }
   };
   std::vector<float> pts;
@@ -551,8 +555,8 @@ BuiltShapes buildWholeObjectShapes(b3dop::Box3DWorld &world,
     for (const NamedPiece *np : all)
       toBody(*np, pts);
     Piece pc;
-    if (b3dop::fitShapeToPoints(type, pts.data(), int(pts.size() / 3),
-                                pc.spec)) {
+    if (b3dop::fitShapeToPoints(type, pts.data(),
+                                static_cast<int>(pts.size() / 3), pc.spec)) {
       pc.volume = b3dop::shapeVolume(pc.spec);
       out.totalVolume += pc.volume;
       out.pieces.push_back(pc);

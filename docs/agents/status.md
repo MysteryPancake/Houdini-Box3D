@@ -231,6 +231,11 @@ passed as a `PRM_Template`'s conditional pointer.
 
 ## Known gaps / TODO
 
+* MSVC `/W4` on our code has never been built: CI builds Windows without warnings as errors until it is clean.
+  `-Wshadow` (about 110 hits) and `-Wconversion` (about 12) are off.
+* The Houdini-side files (`src/dop`, `src/sync`) have not been through clang-tidy (needs an HDK build's
+  compile_commands.json); their casts were converted to `static_cast` by script, checked to change nothing else.
+
 * Scenes saved before the joint nodes' Breakable / Set Rest Length / Limit Spring Force / Limit Max Length / Limit
   Torque toggles load with them off, so a Break Force, Rest Length etc. typed in such a scene is ignored until the
   toggle is turned on. Bounce Mixing's menu was reordered: a non-default choice saved before then reads as a

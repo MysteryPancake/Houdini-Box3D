@@ -74,7 +74,7 @@ int main() {
       std::vector<int> expect;
       for (size_t i = 0; i < jointParams().size(); ++i)
         if (jointParams()[i].usedBy(JointType(t)))
-          expect.push_back(int(i));
+          expect.push_back(static_cast<int>(i));
       CHECK(jointParamIndices(JointType(t)) == expect && !expect.empty());
     }
     CHECK(jointParamIndices(JointType(-1)).empty() &&
@@ -621,8 +621,8 @@ int main() {
     v.setTransformByHandle(vb, pb, qb);
     JointFrame fwa = wa, fwb = wb;
     for (int k = 0; k < 3; ++k) {
-      fwa.pos[k] = double(float(wa.pos[k]));
-      fwb.pos[k] = double(float(wb.pos[k]));
+      fwa.pos[k] = static_cast<double>(static_cast<float>(wa.pos[k]));
+      fwb.pos[k] = static_cast<double>(static_cast<float>(wb.pos[k]));
     }
     const JointHandle vj =
         v.createJoint(JointType::Revolute, va, vb, fwa, fwb,

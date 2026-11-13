@@ -56,10 +56,10 @@ bool readWholePose(const SIM_Object &obj, double pivot[3], Box3DBodyPose &out) {
   }
   UT_Quaternion q;
   pos->getOrientation(q);
-  out.rot[0] = float(q.x());
-  out.rot[1] = float(q.y());
-  out.rot[2] = float(q.z());
-  out.rot[3] = float(q.w());
+  out.rot[0] = static_cast<float>(q.x());
+  out.rot[1] = static_cast<float>(q.y());
+  out.rot[2] = static_cast<float>(q.z());
+  out.rot[3] = static_cast<float>(q.w());
   b3dop::sanitizeQuat(out.rot);
   for (int i = 0; i < 3; ++i)
     out.lin[i] = out.ang[i] = 0.0f;
@@ -103,7 +103,7 @@ b3dop::RbdObjectSettings readRbdObjectSettings(const SIM_Object &obj,
     if (d && box3dDataOption(*d, name, v) && std::isfinite(v.x()) &&
         std::isfinite(v.y()) && std::isfinite(v.z()))
       for (int i = 0; i < 3; ++i)
-        out[i] = float(v(i));
+        out[i] = static_cast<float>(v(i));
   };
 
   const SIM_Data *state = obj.getConstNamedSubData(SIM_POSITION_DATANAME);
@@ -170,11 +170,11 @@ uint64_t wholeObjectShapeSig(const GU_Detail *gdp, const double m[16],
     h = b3dop::mixDouble(h, m[i]);
   for (int i = 0; i < 3; ++i)
     h = b3dop::mixDouble(h, pivot[i]);
-  h = mixHash(h, uint64_t(node.defaultShape));
+  h = mixHash(h, static_cast<uint64_t>(node.defaultShape));
   h = mixHash(h, node.hullPerConnectedSet ? 1u : 2u);
   if (setup.explicitShape) {
     const b3dop::ShapeSpec &sp = setup.spec;
-    const float f[] = {float(int(sp.type)),
+    const float f[] = {static_cast<float>(static_cast<int>(sp.type)),
                        sp.halfExtents[0],
                        sp.halfExtents[1],
                        sp.halfExtents[2],

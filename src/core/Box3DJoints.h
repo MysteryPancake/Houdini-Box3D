@@ -25,22 +25,24 @@ enum class JointType : int {
   Revolute,  // hinge about frame z: limits, spring, motor
   Prismatic, // slider along frame A's x: limits, spring, motor
   Distance,  // keeps two points at a distance: length range, spring, motor
-  Motor, // drives B relative to A by velocity and springs, with capped force /
-         // torque
+  // drives B relative to A by velocity and springs, with capped force / torque
+  Motor,
   Parallel, // keeps the frames' z axes parallel with a spring
   Wheel,    // wheel on a chassis: suspension, spin motor, steering
   Filter,   // no constraint: the two bodies do not collide
 };
 constexpr int kJointTypeCount = 9;
 
-constexpr unsigned jointBit(JointType t) { return 1u << unsigned(t); }
+constexpr unsigned jointBit(JointType t) {
+  return 1u << static_cast<unsigned>(t);
+}
 constexpr unsigned kAllJoints = (1u << kJointTypeCount) - 1u;
 
 inline const char *jointTypeName(JointType t) {
   static const char *const kNames[kJointTypeCount] = {
       "weld",  "spherical", "revolute", "prismatic", "distance",
       "motor", "parallel",  "wheel",    "filter"};
-  const int i = int(t);
+  const int i = static_cast<int>(t);
   return (i >= 0 && i < kJointTypeCount) ? kNames[i] : "";
 }
 
@@ -48,7 +50,7 @@ inline const char *jointTypeLabel(JointType t) {
   static const char *const kLabels[kJointTypeCount] = {
       "Weld",  "Spherical", "Revolute", "Prismatic", "Distance",
       "Motor", "Parallel",  "Wheel",    "Filter"};
-  const int i = int(t);
+  const int i = static_cast<int>(t);
   return (i >= 0 && i < kJointTypeCount) ? kLabels[i] : "";
 }
 
@@ -149,9 +151,9 @@ struct JointParam {
   enum Kind {
     Toggle, // int attribute / toggle
     Float,  // float, Box3D units
-    Angle, // float, degrees in Houdini (degrees per second for speeds), radians
-           // here
-    Vec3,  // vector
+    // float, degrees in Houdini (degrees per second for speeds), radians here
+    Angle,
+    Vec3,      // vector
     Vec3Angle, // vector of angles / angular speeds: degrees in Houdini
     Rotation,  // Euler angles in degrees (XYZ) in Houdini, a quaternion here
   };
@@ -497,12 +499,13 @@ inline const std::vector<int> &jointParamIndices(JointType t) {
     for (int ty = 0; ty < kJointTypeCount; ++ty)
       for (size_t i = 0; i < params.size(); ++i)
         if (params[i].usedBy(JointType(ty)))
-          idx[size_t(ty)].push_back(int(i));
+          idx[static_cast<size_t>(ty)].push_back(static_cast<int>(i));
     return idx;
   }();
   static const std::vector<int> kNone;
-  const int i = int(t);
-  return (i >= 0 && i < kJointTypeCount) ? kIndices[size_t(i)] : kNone;
+  const int i = static_cast<int>(t);
+  return (i >= 0 && i < kJointTypeCount) ? kIndices[static_cast<size_t>(i)]
+                                         : kNone;
 }
 
 // The settings type `t` uses are equal (exact compare; the rest is ignored).
@@ -510,7 +513,7 @@ inline bool sameJointSettings(JointType t, const JointSettings &a,
                               const JointSettings &b) {
   const std::vector<JointParam> &params = jointParams();
   for (const int idx : jointParamIndices(t)) {
-    const JointParam &p = params[size_t(idx)];
+    const JointParam &p = params[static_cast<size_t>(idx)];
     switch (p.kind) {
     case JointParam::Toggle:
       if (a.*p.b != b.*p.b)

@@ -43,7 +43,7 @@ using HullRef = std::shared_ptr<const SharedHull>;
 size_t hullBytes(const b3HullData *h) {
   // The hull's whole allocation: header, vertex / point / edge / plane / face
   // arrays, the SoA vertex and normal arrays and the edge cosines.
-  return size_t(h->byteCount);
+  return static_cast<size_t>(h->byteCount);
 }
 
 class HullLibrary {
@@ -101,7 +101,7 @@ public:
 
   int count() {
     std::lock_guard<std::mutex> lock(myMutex);
-    return int(myEntries.size());
+    return static_cast<int>(myEntries.size());
   }
   size_t bytes() {
     std::lock_guard<std::mutex> lock(myMutex);
@@ -144,7 +144,7 @@ private:
   std::unordered_map<HullId, Entry> myEntries;
   std::unordered_map<uint64_t, int> myHints;
   size_t myBytes = 0;
-  size_t myBudget = size_t(256) << 20;
+  size_t myBudget = static_cast<size_t>(256) << 20;
   uint64_t myTick = 0;
 };
 
@@ -315,7 +315,7 @@ b3BodyType toB3Type(BodySettings::Type t) {
 
 // A content key for body-local points. Never 0.
 HullId hashPoints(const float *xyz, int count) {
-  const uint64_t h = hashFloats(xyz, size_t(count) * 3);
+  const uint64_t h = hashFloats(xyz, static_cast<size_t>(count) * 3);
   return h ? h : 1ull;
 }
 
@@ -654,14 +654,14 @@ bool Box3DWorld::createMeshShape(BodyHandle h, const BodySettings &body,
   // Reject bad input here: Box3D asserts on non-finite vertices or out-of-range
   // indices.
   std::vector<b3Vec3> verts;
-  verts.resize(size_t(vertexCount));
+  verts.resize(static_cast<size_t>(vertexCount));
   for (int i = 0; i < vertexCount; ++i) {
     if (!finite3(xyz + 3 * i))
       return false;
-    verts[size_t(i)] = makeVec3(xyz + 3 * i);
+    verts[static_cast<size_t>(i)] = makeVec3(xyz + 3 * i);
   }
   std::vector<int32_t> idx;
-  idx.assign(triangles, triangles + 3 * size_t(triangleCount));
+  idx.assign(triangles, triangles + 3 * static_cast<size_t>(triangleCount));
   for (int32_t v : idx)
     if (v < 0 || v >= vertexCount)
       return false;
@@ -825,7 +825,7 @@ HullId Box3DWorld::createHullWithKey(HullId key, const float *xyz,
 
   std::vector<b3Vec3> pts(static_cast<size_t>(pointCount));
   for (int i = 0; i < pointCount; ++i)
-    pts[size_t(i)] = makeVec3(xyz + 3 * i);
+    pts[static_cast<size_t>(i)] = makeVec3(xyz + 3 * i);
 
   // b3CreateHull fails for degenerate input or when the result would exceed
   // Box3D's vertex / face / edge limits; a smaller vertex budget keeps fewer
@@ -911,7 +911,7 @@ namespace {
 // Every shape of a body, into a reused scratch vector.
 int bodyShapes(b3BodyId id, std::vector<b3ShapeId> &out) {
   const int n = b3Body_GetShapeCount(id);
-  out.resize(size_t(n > 0 ? n : 0));
+  out.resize(static_cast<size_t>(n > 0 ? n : 0));
   return n > 0 ? b3Body_GetShapes(id, out.data(), n) : 0;
 }
 
@@ -925,7 +925,7 @@ void Box3DWorld::setMeshScaleByHandle(BodyHandle h, const float scale[3]) {
   const b3Vec3 sc = makeVec3(scale);
   const int n = bodyShapes(b3LoadBodyId(h), tShapes);
   for (int i = 0; i < n; ++i) {
-    const b3ShapeId sid = tShapes[size_t(i)];
+    const b3ShapeId sid = tShapes[static_cast<size_t>(i)];
     if (b3Shape_GetType(sid) != b3_meshShape)
       continue;
     const b3Mesh mesh = b3Shape_GetMesh(sid);
@@ -940,10 +940,10 @@ void Box3DWorld::setMaterialByHandle(BodyHandle h, float friction,
     return;
   const int n = bodyShapes(b3LoadBodyId(h), tShapes);
   for (int i = 0; i < n; ++i) {
-    if (b3Shape_GetType(tShapes[size_t(i)]) == b3_compoundShape)
+    if (b3Shape_GetType(tShapes[static_cast<size_t>(i)]) == b3_compoundShape)
       continue; // never made here; Box3D asserts on it
-    b3Shape_SetFriction(tShapes[size_t(i)], friction);
-    b3Shape_SetRestitution(tShapes[size_t(i)], restitution);
+    b3Shape_SetFriction(tShapes[static_cast<size_t>(i)], friction);
+    b3Shape_SetRestitution(tShapes[static_cast<size_t>(i)], restitution);
   }
 }
 
@@ -1028,7 +1028,7 @@ void Box3DWorld::setSurfaceByHandle(BodyHandle h, float rollingResistance,
   bool changed = false;
   const int n = bodyShapes(id, tShapes);
   for (int i = 0; i < n; ++i) {
-    const b3ShapeId s = tShapes[size_t(i)];
+    const b3ShapeId s = tShapes[static_cast<size_t>(i)];
     if (b3Shape_GetType(s) == b3_compoundShape)
       continue; // never made here; Box3D asserts on it
     b3SurfaceMaterial m = b3Shape_GetSurfaceMaterial(s);
@@ -1072,7 +1072,7 @@ void Box3DWorld::setDensityByHandle(BodyHandle h, float density) {
   const b3BodyId id = b3LoadBodyId(h);
   const int n = bodyShapes(id, tShapes);
   for (int i = 0; i < n; ++i)
-    b3Shape_SetDensity(tShapes[size_t(i)], density, false);
+    b3Shape_SetDensity(tShapes[static_cast<size_t>(i)], density, false);
   if (n > 0)
     b3Body_ApplyMassFromShapes(id);
 }
@@ -1099,7 +1099,7 @@ void Box3DWorld::destroyShapesByHandle(BodyHandle h) {
   const b3BodyId id = b3LoadBodyId(h);
   const int n = bodyShapes(id, tShapes);
   for (int i = 0; i < n; ++i)
-    b3DestroyShape(tShapes[size_t(i)],
+    b3DestroyShape(tShapes[static_cast<size_t>(i)],
                    false); // the caller applies the mass afterwards
   myImpl->releaseBodyResources(h);
 }
@@ -1168,7 +1168,7 @@ void Box3DWorld::applyMassByHandle(BodyHandle h, float density,
       setShapeDensity ? bodyShapes(id, tShapes) : b3Body_GetShapeCount(id);
   if (setShapeDensity)
     for (int i = 0; i < n; ++i)
-      b3Shape_SetDensity(tShapes[size_t(i)], density, false);
+      b3Shape_SetDensity(tShapes[static_cast<size_t>(i)], density, false);
   b3Body_ApplyMassFromShapes(id);
 
   const bool scale = inertiaScale > 0.0f && std::isfinite(inertiaScale) &&
@@ -1266,10 +1266,10 @@ int Box3DWorld::getContactsByHandle(BodyHandle h,
   if (cap <= 0)
     return 0;
   thread_local std::vector<b3ContactData> data;
-  data.resize(size_t(cap));
+  data.resize(static_cast<size_t>(cap));
   const int n = b3Body_GetContactData(id, data.data(), cap);
   for (int i = 0; i < n; ++i) {
-    const b3ContactData &cd = data[size_t(i)];
+    const b3ContactData &cd = data[static_cast<size_t>(i)];
     const b3BodyId a = b3Shape_GetBody(cd.shapeIdA);
     const b3BodyId b = b3Shape_GetBody(cd.shapeIdB);
     const bool thisIsA = sameBody(a, id);
@@ -1285,9 +1285,12 @@ int Box3DWorld::getContactsByHandle(BodyHandle h,
         ContactPoint cp;
         cp.other = b3StoreBodyId(other);
         cp.otherUserData = b3Body_GetUserData(other);
-        cp.pos[0] = double(centerA.x) + double(mp.anchorA.x);
-        cp.pos[1] = double(centerA.y) + double(mp.anchorA.y);
-        cp.pos[2] = double(centerA.z) + double(mp.anchorA.z);
+        cp.pos[0] =
+            static_cast<double>(centerA.x) + static_cast<double>(mp.anchorA.x);
+        cp.pos[1] =
+            static_cast<double>(centerA.y) + static_cast<double>(mp.anchorA.y);
+        cp.pos[2] =
+            static_cast<double>(centerA.z) + static_cast<double>(mp.anchorA.z);
         const float sgn =
             thisIsA ? 1.0f : -1.0f; // the manifold normal points from A to B
         cp.normal[0] = sgn * man.normal.x;
@@ -1298,7 +1301,7 @@ int Box3DWorld::getContactsByHandle(BodyHandle h,
       }
     }
   }
-  return int(out.size());
+  return static_cast<int>(out.size());
 }
 
 void Box3DWorld::setFilterByHandle(BodyHandle h, const CollisionFilter &f) {
@@ -1307,7 +1310,8 @@ void Box3DWorld::setFilterByHandle(BodyHandle h, const CollisionFilter &f) {
   const b3Filter bf = toB3Filter(f);
   const int n = bodyShapes(b3LoadBodyId(h), tShapes);
   for (int i = 0; i < n; ++i)
-    b3Shape_SetFilter(tShapes[size_t(i)], bf, true); // no-op when unchanged
+    b3Shape_SetFilter(tShapes[static_cast<size_t>(i)], bf,
+                      true); // no-op when unchanged
 }
 
 void Box3DWorld::applyTuning(const WorldSettings &s) {
@@ -1377,7 +1381,7 @@ void Box3DWorld::updateHitEvents() {
         b3StoreBodyId(b3Shape_GetBody(ev.hitEvents[i].shapeIdA));
     const BodyHandle b =
         b3StoreBodyId(b3Shape_GetBody(ev.hitEvents[i].shapeIdB));
-    myImpl->hitPairs.push_back({std::min(a, b), std::max(a, b)});
+    myImpl->hitPairs.emplace_back(std::min(a, b), std::max(a, b));
   }
   // Sorted once per step (the vector keeps its capacity), so a lookup is a
   // binary search.
@@ -1513,10 +1517,10 @@ int Box3DWorld::getMoveEvents(std::vector<BodyMove> &out) const {
   const b3BodyEvents ev = b3World_GetBodyEvents(myImpl->worldId);
   // Every element is overwritten, so only resize (clear + resize would zero it
   // every step).
-  if (out.size() != size_t(ev.moveCount))
-    out.resize(size_t(ev.moveCount));
+  if (out.size() != static_cast<size_t>(ev.moveCount))
+    out.resize(static_cast<size_t>(ev.moveCount));
   for (int i = 0; i < ev.moveCount; ++i)
-    toBodyMove(ev.moveEvents[i], out[size_t(i)]);
+    toBodyMove(ev.moveEvents[i], out[static_cast<size_t>(i)]);
   return ev.moveCount;
 }
 
@@ -1569,9 +1573,9 @@ float distanceMaxLength(const JointSettings &s) {
 void frameToWorld(const b3WorldTransform &bodyXf, const b3Transform &local,
                   JointFrame &out) {
   const b3Vec3 d = b3RotateVector(bodyXf.q, local.p);
-  out.pos[0] = double(bodyXf.p.x) + double(d.x);
-  out.pos[1] = double(bodyXf.p.y) + double(d.y);
-  out.pos[2] = double(bodyXf.p.z) + double(d.z);
+  out.pos[0] = static_cast<double>(bodyXf.p.x) + static_cast<double>(d.x);
+  out.pos[1] = static_cast<double>(bodyXf.p.y) + static_cast<double>(d.y);
+  out.pos[2] = static_cast<double>(bodyXf.p.z) + static_cast<double>(d.z);
   storeQuat(b3NormalizeQuat(b3MulQuat(bodyXf.q, local.q)), out.rot);
 }
 
@@ -1646,9 +1650,9 @@ b3Transform toLocal(b3BodyId body, const JointFrame &f) {
   sanitizeQuat(q);
   const b3WorldTransform t = b3Body_GetTransform(body);
   b3Vec3 d;
-  d.x = float(f.pos[0] - double(t.p.x));
-  d.y = float(f.pos[1] - double(t.p.y));
-  d.z = float(f.pos[2] - double(t.p.z));
+  d.x = static_cast<float>(f.pos[0] - static_cast<double>(t.p.x));
+  d.y = static_cast<float>(f.pos[1] - static_cast<double>(t.p.y));
+  d.z = static_cast<float>(f.pos[2] - static_cast<double>(t.p.z));
   b3Transform out;
   out.p = b3InvRotateVector(t.q, d);
   out.q = b3NormalizeQuat(b3InvMulQuat(t.q, makeQuat(q)));
@@ -1659,14 +1663,15 @@ b3Transform toLocal(b3BodyId body, const JointFrame &f) {
 // length (a stored local frame must come back exact).
 b3Transform asLocalFrame(const JointFrame &f) {
   float q[4] = {f.rot[0], f.rot[1], f.rot[2], f.rot[3]};
-  const double len2 = double(q[0]) * q[0] + double(q[1]) * q[1] +
-                      double(q[2]) * q[2] + double(q[3]) * q[3];
+  const double len2 =
+      static_cast<double>(q[0]) * q[0] + static_cast<double>(q[1]) * q[1] +
+      static_cast<double>(q[2]) * q[2] + static_cast<double>(q[3]) * q[3];
   if (!(std::fabs(len2 - 1.0) < 1e-6))
     sanitizeQuat(q);
   b3Transform t;
-  t.p.x = float(f.pos[0]);
-  t.p.y = float(f.pos[1]);
-  t.p.z = float(f.pos[2]);
+  t.p.x = static_cast<float>(f.pos[0]);
+  t.p.y = static_cast<float>(f.pos[1]);
+  t.p.z = static_cast<float>(f.pos[2]);
   t.q = makeQuat(q);
   return t;
 }
@@ -2047,7 +2052,7 @@ JointHandle Box3DWorld::createJoint(JointType type, BodyHandle a, BodyHandle b,
       }
       const double dx = wb.pos[0] - wa.pos[0], dy = wb.pos[1] - wa.pos[1],
                    dz = wb.pos[2] - wa.pos[2];
-      len = float(std::sqrt(dx * dx + dy * dy + dz * dz));
+      len = static_cast<float>(std::sqrt(dx * dx + dy * dy + dz * dz));
     }
     build.distanceLength = len;
   }
@@ -2271,9 +2276,9 @@ bool Box3DWorld::localToWorld(BodyHandle h, const JointFrame &local,
   float q[4] = {local.rot[0], local.rot[1], local.rot[2], local.rot[3]};
   sanitizeQuat(q);
   b3Transform lt;
-  lt.p.x = float(local.pos[0]);
-  lt.p.y = float(local.pos[1]);
-  lt.p.z = float(local.pos[2]);
+  lt.p.x = static_cast<float>(local.pos[0]);
+  lt.p.y = static_cast<float>(local.pos[1]);
+  lt.p.z = static_cast<float>(local.pos[2]);
   lt.q = makeQuat(q);
   frameToWorld(b3Body_GetTransform(id), lt, out);
   return true;
@@ -2286,7 +2291,7 @@ int Box3DWorld::brokenJoints(std::vector<void *> &userData) const {
   const b3JointEvents ev = b3World_GetJointEvents(myImpl->worldId);
   for (int i = 0; i < ev.count; ++i)
     userData.push_back(ev.jointEvents[i].userData);
-  return int(userData.size());
+  return static_cast<int>(userData.size());
 }
 
 int Box3DWorld::jointCount() const {

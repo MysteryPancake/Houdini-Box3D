@@ -10,6 +10,17 @@ How the project is built, tested and packaged. Index and rules: [CLAUDE.md](../.
 * A post-build step copies `icons/box3d.svg` to `<dso>/../config/Icons/DOP_<node name>.svg` (Houdini's default icon
   name for a node type is `<TABLE>_<name>`; the HDK alternative, `OP_Operator::setIconName`, needs the operator, which
   the automatic DOPs don't expose to us). Renaming a node's internal name means renaming its icon.
+* Warnings: `b3dop_warnings(target)` adds `-Wall -Wextra` (`/W4` on MSVC) to `b3dop_core`, the tests and the plugin,
+  never to Box3D. Houdini's headers come through an imported target, so they are system includes and not checked.
+  `BOX3DDOP_WARNINGS_AS_ERRORS` (default OFF) adds `-Werror` / `/WX`; CI sets it on Linux only (MSVC `/W4` not yet
+  checked clean).
+* `CMAKE_EXPORT_COMPILE_COMMANDS` is on: `build/compile_commands.json` feeds clang-tidy (`.clang-tidy`) and IDEs. The
+  plugin's sources only appear in it from a plugin (HDK) build.
+* `format` / `format-check` targets run clang-format over `src/` and `tests/` (only when clang-format is found).
+  `.githooks/pre-commit` rejects unformatted staged files once enabled with `git config core.hooksPath .githooks`.
+* CI (`.github/workflows/ci.yml`): format check (clang-format pinned to 18.1.3; the default style shifts between
+  versions), `tools/check_docs.py`, and the core-only build plus `ctest` on Linux and Windows. No HDK there, so no
+  plugin build.
 * `BOX3DDOP_DEBUG` (default OFF) defines `BOX3DDOP_DEBUG=1` for the plugin and `b3dop_core` (not Box3D). With it OFF nothing writes to stdout/stderr: `Box3DWorld` replaces Box3D's printf log handler and its own assert handler with `B3D_LOG`. The option is cached in `build/`, so a stale ON survives `build.bat`; reconfigure with `-DBOX3DDOP_DEBUG=OFF` or delete `build/`.
 * `BOX3D_DIR` (default `extern/box3d`) must point at Box3D's own `CMakeLists.txt`.
 * `BOX3DDOP_MAX_WORLDS` (default set in `CMakeLists.txt`, above Box3D's own) is passed to the `box3d` target as PUBLIC

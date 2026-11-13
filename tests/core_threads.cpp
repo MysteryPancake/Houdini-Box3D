@@ -36,14 +36,15 @@ static bool run(int workers, int side, int steps, Result &r) {
   for (int y = 0; y < side; ++y)
     for (int x = 0; x < side; ++x)
       for (int z = 0; z < side; ++z) {
-        const double p[3] = {(x - side / 2) * 1.05 + (rand() % 100) * 0.0004,
+        const int centre = side / 2; // whole cells: the grid sits on integers
+        const double p[3] = {(x - centre) * 1.05 + (rand() % 100) * 0.0004,
                              0.5 + y * 1.02,
-                             (z - side / 2) * 1.05 + (rand() % 100) * 0.0004};
+                             (z - centre) * 1.05 + (rand() % 100) * 0.0004};
         w.addBody(id, b3dop::BodySettings(), p, qid);
         w.addBoxShape(id, bh);
         ++id;
       }
-  r.bodies = int(id - 100);
+  r.bodies = static_cast<int>(id - 100);
 
   const auto t0 = std::chrono::steady_clock::now();
   for (int i = 0; i < steps; ++i)

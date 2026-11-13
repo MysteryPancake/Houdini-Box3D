@@ -17,26 +17,31 @@
 namespace b3dop {
 
 enum class SideFXType : int {
-  Glue = 0, // SIM_ConRelGlue        -> rigid weld that holds the pieces'
-            // offset, breaks on strength
-  Hard,   // SIM_ConRelHard        -> weld / spherical / rigid distance / motor
-          // (by constraint_type)
-  Spring, // SIM_ConRelSpring      -> like Soft, stiffness and damping converted
-          // from the masses
-  Soft,   // SIM_ConRelBulletSoft  -> motor joint springs, or a sprung distance
-          // joint
+  // SIM_ConRelGlue -> rigid weld that holds the pieces' offset, breaks on
+  // strength
+  Glue = 0,
+  // SIM_ConRelHard -> weld / spherical / rigid distance / motor (by
+  // constraint_type)
+  Hard,
+  // SIM_ConRelSpring -> like Soft, stiffness and damping converted from the
+  // masses
+  Spring,
+  // SIM_ConRelBulletSoft -> motor joint springs, or a sprung distance joint
+  Soft,
   ConeTwist, // SIM_ConRelConeTwist   -> spherical with cone and twist limits
 };
 constexpr int kSideFXTypeCount = 5;
 
-constexpr unsigned sideFXBit(SideFXType t) { return 1u << unsigned(t); }
+constexpr unsigned sideFXBit(SideFXType t) {
+  return 1u << static_cast<unsigned>(t);
+}
 
 // The SIM data type of each (what SIM_Data::getDataType() returns).
 inline const char *sideFXDataType(SideFXType t) {
   static const char *const kNames[kSideFXTypeCount] = {
       "SIM_ConRelGlue", "SIM_ConRelHard", "SIM_ConRelSpring",
       "SIM_ConRelBulletSoft", "SIM_ConRelConeTwist"};
-  const int i = int(t);
+  const int i = static_cast<int>(t);
   return (i >= 0 && i < kSideFXTypeCount) ? kNames[i] : "";
 }
 
@@ -53,8 +58,8 @@ inline bool sideFXTypeFromDataType(const char *dataType, SideFXType &out) {
 
 // The Constraint Network's `constraint_type` primitive attribute.
 enum class ConstraintMode : int {
-  All = 0, // position and rotation (also when the attribute is missing or
-           // unknown)
+  // position and rotation (also when the attribute is missing or unknown)
+  All = 0,
   Position,
   Rotation,
 };

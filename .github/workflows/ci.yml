@@ -1,0 +1,50 @@
+# Checks every push and pull request: formatting, the docs checker, and the Houdini-free core
+# (Box3D + b3dop_core + the core tests). Warnings are errors on Linux (GCC, -Wall -Wextra);
+# Windows (MSVC /W4) builds and tests with warnings reported but not fatal. The Houdini plugin
+# needs an HDK install, so it is not built here.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  format-and-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Pinned: clang-format's default style shifts slightly between versions.
+      - name: Install clang-format
+        run: pip install clang-format==18.1.3
+      - name: Check formatting
+        run: |
+          find src tests \( -name '*.cpp' -o -name '*.h' \) -print0 \
+            | xargs -0 clang-format --dry-run -Werror --style=file
+      - name: Check docs
+        run: python tools/check_docs.py
+
+  core:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            werror: "ON"
+          - os: windows-latest
+            werror: "OFF"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Configure
+        run: >
+          cmake -S . -B build -DBOX3DDOP_CORE_ONLY=ON -DBOX3DDOP_WARNINGS_AS_ERRORS=${{ matrix.werror }}
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      - name: Build
+        run: cmake --build build --config RelWithDebInfo --parallel
+      - name: Test
+        run: ctest --test-dir build -C RelWithDebInfo --output-on-failure

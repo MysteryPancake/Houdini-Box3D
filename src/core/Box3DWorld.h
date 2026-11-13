@@ -110,13 +110,13 @@ struct WorldSettings {
   float gravity[3] = {0.0f, -9.80665f, 0.0f};
   int subSteps = 4; // Box3D recommends ~4 per step
   int workerCount =
-      kDefaultWorkerCount; // parallel tasks per step, fixed at creation (1 to
-                           // kMaxWorkerCount). With a TaskRunner these run on
-                           // the host's pool; without one, on threads Box3D
-                           // starts for this world
+      // parallel tasks per step, fixed at creation (1 to kMaxWorkerCount). With
+      // a TaskRunner these run on the host's pool; without one, on threads
+      // Box3D starts for this world
+      kDefaultWorkerCount;
   bool enableSleep = true;
-  bool enableContinuous = true;   // continuous collision vs static bodies (fast
-                                  // objects: vs moving ones too)
+  // continuous collision vs static bodies (fast objects: vs moving ones too)
+  bool enableContinuous = true;
   float contactStiffness = 30.0f; // contact stiffness in Hz (cycles per second)
   float contactDampingRatio = 10.0f; // contact damping (non-dimensional)
   float contactPushSpeed =
@@ -134,13 +134,15 @@ struct WorldSettings {
   int restitutionIterations = 2;       // extra solver passes for bounce (0-63)
   bool restitutionPropagation = false; // bounce passes on through stacks
   float isotropicInertiaTolerance =
-      0.2f; // 0-1; near-spherical bodies lose gyroscopic torque. New bodies /
-            // mass changes only
+      // 0-1; near-spherical bodies lose gyroscopic torque. New bodies / mass
+      // changes only
+      0.2f;
   bool warmStarting =
       true; // off only for comparing against the reference solver
   float impactMinSpeed =
-      0.0f; // Box3D hit event threshold (m/s): Impacts only for pairs that hit
-            // this fast. 0 = every contact
+      // Box3D hit event threshold (m/s): Impacts only for pairs that hit this
+      // fast. 0 = every contact
+      0.0f;
   FrictionMixing frictionMixing = FrictionMixing::GeometricMean;
   RestitutionMixing restitutionMixing = RestitutionMixing::Maximum;
 };
@@ -159,8 +161,8 @@ struct ContactPoint {
 // collide only when each one's mask has a bit of the other's category. The
 // defaults (every bit, group 0) collide with all.
 struct CollisionFilter {
-  uint64_t category = ~uint64_t(0); // B3_DEFAULT_CATEGORY_BITS
-  uint64_t mask = ~uint64_t(0);     // B3_DEFAULT_MASK_BITS
+  uint64_t category = ~static_cast<uint64_t>(0); // B3_DEFAULT_CATEGORY_BITS
+  uint64_t mask = ~static_cast<uint64_t>(0);     // B3_DEFAULT_MASK_BITS
   int group = 0;
 
   bool operator==(const CollisionFilter &o) const {
@@ -193,36 +195,40 @@ struct MotionLocks {
 struct BodyProps {
   float mass = 1.0f; // `mass`; solver only: density = mass / shape volume
   float density =
-      1.0f; // `density`: the shape density Box3DWorld uses (the solver passes
-            // mass / volume instead, unless computeMass)
+      // `density`: the shape density Box3DWorld uses (the solver passes mass /
+      // volume instead, unless computeMass)
+      1.0f;
   bool computeMass =
       false; // `computemass`; solver only: mass = density * volume instead
-  float inertiaScale = 1.0f; // `inertialtensorstiffness`; solver only: scales
-                             // the inertia of the mass
+  // `inertialtensorstiffness`; solver only: scales the inertia of the mass
+  float inertiaScale = 1.0f;
   float friction = 0.6f;
-  float restitution = 0.0f;       // `bounce`
-  float rollingResistance = 0.0f; // `rollingresistance`: 0 .. 1, slows rolling
-                                  // (see b3SurfaceMaterial)
+  float restitution = 0.0f; // `bounce`
+  // `rollingresistance`: 0 .. 1, slows rolling (see b3SurfaceMaterial)
+  float rollingResistance = 0.0f;
   float tangentVelocity[3] = {
       0, 0,
       0}; // `tangentvelocity`: conveyor belt speed, in the body's local space
   float linearDamping = 0.0f;
   float angularDamping = 0.0f;
   float gravityScale = 1.0f;
-  bool contactRecycling = true; // `contactrecycling`: this body's contacts may
-                                // be recycled (see WorldSettings)
-  bool enableSleep = true;      // `enablesleep`: this body may fall asleep
-  bool enabled = true; // `enabled`: a disabled body does not move or collide,
-                       // and is never awake
-  bool fastObject = false; // `fastobject`: Box3D "bullet", continuous collision
-                           // vs moving bodies too
-  bool fastRotation = false;    // `fastrotation`: no angular speed cap
-                                // (B3_MAX_ROTATION per step); round bodies only
+  // `contactrecycling`: this body's contacts may be recycled (see
+  // WorldSettings)
+  bool contactRecycling = true;
+  bool enableSleep = true; // `enablesleep`: this body may fall asleep
+  // `enabled`: a disabled body does not move or collide, and is never awake
+  bool enabled = true;
+  // `fastobject`: Box3D "bullet", continuous collision vs moving bodies too
+  bool fastObject = false;
+  // `fastrotation`: no angular speed cap (B3_MAX_ROTATION per step); round
+  // bodies only
+  bool fastRotation = false;
   float sleepThreshold = 0.05f; // m/s
   float ccdThreshold =
-      0.5f; // `ccdthreshold` (Box3D safetyFactor): continuous collision once a
-            // step's motion exceeds this times the body's thinnest extent.
-            // Box3D recommends 0.01 .. 0.5
+      // `ccdthreshold` (Box3D safetyFactor): continuous collision once a step's
+      // motion exceeds this times the body's thinnest extent. Box3D recommends
+      // 0.01 .. 0.5
+      0.5f;
   CollisionFilter
       filter; // `collision_category` / `collision_mask` / `collision_group`
   MotionLocks locks; // `lock_linear` / `lock_angular`
@@ -264,8 +270,8 @@ struct BodySettings {
       true; // box / sphere / capsule fit the packed geometry's bounds
   bool hullPerConnectedSet =
       false; // convex: one hull per set of connected primitives
-  bool flipMeshWinding = false; // affector (Static Object) meshes: use the
-                                // opposite triangle winding
+  // affector (Static Object) meshes: use the opposite triangle winding
+  bool flipMeshWinding = false;
 };
 
 class Box3DWorld {
@@ -429,14 +435,14 @@ public:
   // through world positions.
   JointHandle createJoint(JointType type, BodyHandle a, BodyHandle b,
                           const JointFrame &frameA, const JointFrame &frameB,
-                          const JointSettings &s, void *userData = nullptr,
+                          const JointSettings &in, void *userData = nullptr,
                           bool framesAreLocal = false);
   void
   destroyJoint(JointHandle h); // harmless on a joint already gone with its body
   bool isJointValid(JointHandle h) const;
   // Push every setting of the type into a live joint (frames and bodies stay);
   // wakes its bodies.
-  void updateJoint(JointHandle h, JointType type, const JointSettings &s);
+  void updateJoint(JointHandle h, JointType type, const JointSettings &in);
   bool jointFeedback(JointHandle h, JointType type, JointFeedback &out) const;
   // Where the joint's two frames are now, in world space (each body's pose
   // times its local frame; the world end does not move). Making a joint from
@@ -511,8 +517,8 @@ public:
   HullId createHullWithKey(HullId key, const float *xyz, int pointCount,
                            float *outVolume = nullptr,
                            uint64_t budgetGroup = 0);
-  void pruneHulls(); // lets go of the hulls this world holds (the shared cache
-                     // keeps them)
+  // lets go of the hulls this world holds (the shared cache keeps them)
+  void pruneHulls();
   int hullCacheSize() const; // hulls this world holds
 
   // The shared cache: entries, bytes, and the byte budget past which the least
@@ -552,8 +558,8 @@ public:
   // built without asserts, e.g. Release). They are logged to stderr and ignored
   // rather than breaking.
   static int assertCount();
-  static int maxWorldCount(); // B3_MAX_WORLDS: create() fails once
-                              // liveWorldCount() reaches it
+  // B3_MAX_WORLDS: create() fails once liveWorldCount() reaches it
+  static int maxWorldCount();
 
 private:
   // The shape builders behind createShape.

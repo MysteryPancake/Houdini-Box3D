@@ -107,7 +107,7 @@ inline size_t tunedMinParallel(const char *envName, size_t fallback) {
     char *end = nullptr;
     const unsigned long long n = std::strtoull(v, &end, 10);
     if (end != v)
-      return size_t(n);
+      return static_cast<size_t>(n);
   }
 #endif
   (void)envName;
@@ -340,11 +340,11 @@ struct GeorepLookup {
     if (handle == GA_INVALID_STRING_INDEX)
       return false;
     std::lock_guard<std::mutex> lock(mutex);
-    auto it = byHandle.find(int64_t(handle));
+    auto it = byHandle.find(static_cast<int64_t>(handle));
     if (it == byHandle.end()) {
       Parsed p;
       p.ok = b3dop::parseShapeType(aif->getTableString(attr, handle), p.type);
-      it = byHandle.emplace(int64_t(handle), p).first;
+      it = byHandle.emplace(static_cast<int64_t>(handle), p).first;
     }
     if (it->second.ok)
       out = it->second.type;

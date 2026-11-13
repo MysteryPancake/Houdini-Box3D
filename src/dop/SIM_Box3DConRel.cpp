@@ -29,11 +29,11 @@ b3dop::JointSettings SIM_Box3DConRel::settings() const {
     if (p.kind == b3dop::JointParam::Toggle)
       v[0] = opts.getOptionB(p.name) ? 1.0f : 0.0f;
     else if (b3dop::jointParamSize(p) == 1)
-      v[0] = float(opts.getOptionF(p.name));
+      v[0] = static_cast<float>(opts.getOptionF(p.name));
     else {
       const UT_Vector3D o = opts.getOptionV3(p.name);
       for (int i = 0; i < 3; ++i)
-        v[i] = float(o(i));
+        v[i] = static_cast<float>(o(i));
     }
     b3dop::setJointParam(s, p, type, v, box3dEulerToQuat);
   }
@@ -64,7 +64,7 @@ SIM_Box3DConRel::describe(b3dop::JointType t,
   };
   static Storage storage[b3dop::kJointTypeCount];
 
-  Storage &st = storage[int(t)];
+  Storage &st = storage[static_cast<int>(t)];
   if (st.description)
     return st.description.get();
 

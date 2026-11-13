@@ -106,16 +106,16 @@ b3dop::SideFXSettings readSideFXSettings(const SIM_Data &data,
       UT_Vector3D v;
       if (box3dDataOption(data, p.name, v))
         for (int k = 0; k < 3; ++k)
-          (s.*p.v)[k] = float(v(k));
+          (s.*p.v)[k] = static_cast<float>(v(k));
       continue;
     }
     fpreal64 v = 0.0;
     if (!box3dDataOption(data, p.name, v))
       continue;
     if (p.kind == SideFXParam::Float)
-      s.*p.f = float(v);
+      s.*p.f = static_cast<float>(v);
     else
-      s.*p.i = int(v);
+      s.*p.i = static_cast<int>(v);
   }
   return s;
 }
@@ -196,7 +196,7 @@ bool sameKinds(const std::unordered_map<std::string, Box3DJointKind> &a,
 }
 
 uint64_t idOf(const GA_Attribute *a) {
-  return a ? uint64_t(a->getDataId()) : ~0ull;
+  return a ? static_cast<uint64_t>(a->getDataId()) : ~0ull;
 }
 
 // Everything the joints are read from: the geometry's identity, topology, and
@@ -215,7 +215,8 @@ uint64_t networkFingerprint(const GU_Detail *gdp) {
   for (const b3dop::SideFXParam &p : b3dop::sideFXParams())
     h = mixHash(h, idOf(gdp->findPrimitiveAttribute(p.name)));
   const GA_PrimitiveGroup *broken = gdp->findPrimitiveGroup(kBrokenGroup);
-  return mixHash(h, broken ? uint64_t(broken->getDataId()) : ~0ull);
+  return mixHash(h,
+                 broken ? static_cast<uint64_t>(broken->getDataId()) : ~0ull);
 }
 
 // Anchor names -> bodies, over the objects of this solve (in their order) and
@@ -363,7 +364,7 @@ void applyOverrides(const std::vector<SettingReader> &readers,
     }
     float v[3] = {0, 0, 0};
     if (p.kind == JointParam::Toggle)
-      v[0] = float(r.i.get(prim));
+      v[0] = static_cast<float>(r.i.get(prim));
     else {
       const UT_Vector3 a = r.v.get(prim);
       v[0] = a.x();
@@ -485,8 +486,8 @@ uint64_t jointSignature(b3dop::JointType type, b3dop::BodyHandle a,
                         b3dop::BodyHandle b, const b3dop::JointFrame &fa,
                         const b3dop::JointFrame &fb, bool withFrames) {
   using b3dop::mixHash;
-  uint64_t h =
-      mixHash(mixHash(mixHash(b3dop::kHashSeed, uint64_t(type)), a), b);
+  uint64_t h = mixHash(
+      mixHash(mixHash(b3dop::kHashSeed, static_cast<uint64_t>(type)), a), b);
   if (withFrames)
     for (const b3dop::JointFrame *f : {&fa, &fb}) {
       for (int k = 0; k < 3; ++k)
@@ -511,7 +512,7 @@ bool frameEdited(const b3dop::JointFrame &now, const b3dop::JointFrame &wrote) {
 b3dop::JointFrame asStored(const b3dop::JointFrame &f) {
   b3dop::JointFrame out = f;
   for (int k = 0; k < 3; ++k)
-    out.pos[k] = double(float(f.pos[k]));
+    out.pos[k] = static_cast<double>(static_cast<float>(f.pos[k]));
   return out;
 }
 
@@ -660,8 +661,8 @@ private:
 
   // The joint entry of a primitive (made on first sight).
   Box3DJointEntry &entryFor(GA_Offset off) {
-    auto ins = mySt.joints.try_emplace(
-        b3dop::mixHash(myRef.key, uint64_t(int64_t(off))));
+    auto ins = mySt.joints.try_emplace(b3dop::mixHash(
+        myRef.key, static_cast<uint64_t>(static_cast<int64_t>(off))));
     Box3DJointEntry &e = ins.first->second;
     if (ins.second) {
       e.network = myRef.key;
@@ -729,7 +730,8 @@ private:
     if (j.type == b3dop::JointType::Distance && !(j.s.restLength >= 0.0f)) {
       const double dx = fb.pos[0] - fa.pos[0], dy = fb.pos[1] - fa.pos[1],
                    dz = fb.pos[2] - fa.pos[2];
-      e.madeRestLength = float(std::sqrt(dx * dx + dy * dy + dz * dz));
+      e.madeRestLength =
+          static_cast<float>(std::sqrt(dx * dx + dy * dy + dz * dz));
     }
     const b3dop::JointFrame ja = jointFrameOf(fa, j.adjA),
                             jb = jointFrameOf(fb, j.adjB);
@@ -929,8 +931,9 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp,
           const b3dop::JointFrame *frames[2] = {&la, &lb};
           for (int k = 0; k < 2; ++k) {
             const b3dop::JointFrame &f = *frames[k];
-            localPH.set(pts[k], UT_Vector3(float(f.pos[0]), float(f.pos[1]),
-                                           float(f.pos[2])));
+            localPH.set(pts[k], UT_Vector3(static_cast<float>(f.pos[0]),
+                                           static_cast<float>(f.pos[1]),
+                                           static_cast<float>(f.pos[2])));
             localQH.set(pts[k],
                         UT_QuaternionF(f.rot[0], f.rot[1], f.rot[2], f.rot[3]));
           }
@@ -953,8 +956,9 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp,
     const b3dop::JointFrame *frames[2] = {&e->wroteA, &e->wroteB};
     for (int k = 0; k < 2; ++k) {
       const b3dop::JointFrame &f = *frames[k];
-      pH.set(pts[k],
-             UT_Vector3(float(f.pos[0]), float(f.pos[1]), float(f.pos[2])));
+      pH.set(pts[k], UT_Vector3(static_cast<float>(f.pos[0]),
+                                static_cast<float>(f.pos[1]),
+                                static_cast<float>(f.pos[2])));
       orientH.set(pts[k],
                   UT_QuaternionF(f.rot[0], f.rot[1], f.rot[2], f.rot[3]));
     }
@@ -1010,11 +1014,12 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects, float timeStep,
     if (obj->getConstNamedSubData(kInternalGeometry)) {
       NetworkRef ref;
       ref.object = obj;
-      ref.key = b3dop::mixHash(uint64_t(uint32_t(obj->getObjectId())), 2);
+      ref.key = b3dop::mixHash(
+          static_cast<uint64_t>(static_cast<uint32_t>(obj->getObjectId())), 2);
       refs.push_back(ref);
     }
   }
-  counts.networks = int(refs.size());
+  counts.networks = static_cast<int>(refs.size());
 
   if (!refs.empty()) {
     const Anchors anchors(st, objects);

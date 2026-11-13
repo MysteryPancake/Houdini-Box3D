@@ -42,10 +42,11 @@ constexpr float kRadToDeg = 57.29577951308232f;
 inline bool quatsDiffer(const float a[4], const float b[4], double eps = 1e-5) {
   double dot = 0.0;
   for (int i = 0; i < 4; ++i)
-    dot += double(a[i]) * double(b[i]);
+    dot += static_cast<double>(a[i]) * static_cast<double>(b[i]);
   const double sign = dot < 0.0 ? -1.0 : 1.0;
   for (int i = 0; i < 4; ++i)
-    if (std::fabs(double(a[i]) - sign * double(b[i])) > eps)
+    if (std::fabs(static_cast<double>(a[i]) -
+                  sign * static_cast<double>(b[i])) > eps)
       return true;
   return false;
 }
@@ -62,13 +63,13 @@ inline void xformPoint(const double m[16], const double p[3], double out[3]) {
 inline void sanitizeQuat(float q[4]) {
   double len2 = 0.0;
   for (int i = 0; i < 4; ++i)
-    len2 += double(q[i]) * double(q[i]);
+    len2 += static_cast<double>(q[i]) * static_cast<double>(q[i]);
   if (!(len2 > 1e-12) || !std::isfinite(len2)) {
     q[0] = q[1] = q[2] = 0.0f;
     q[3] = 1.0f;
     return;
   }
-  const float inv = float(1.0 / std::sqrt(len2));
+  const float inv = static_cast<float>(1.0 / std::sqrt(len2));
   for (int i = 0; i < 4; ++i)
     q[i] *= inv;
 }
@@ -76,7 +77,7 @@ inline void sanitizeQuat(float q[4]) {
 // P is stored as float: double -> float -> double. False if not finite.
 inline bool storedPosition(const double in[3], double out[3]) {
   for (int i = 0; i < 3; ++i)
-    out[i] = double(float(in[i]));
+    out[i] = static_cast<double>(static_cast<float>(in[i]));
   return std::isfinite(out[0]) && std::isfinite(out[1]) &&
          std::isfinite(out[2]);
 }

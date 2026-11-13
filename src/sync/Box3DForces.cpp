@@ -156,9 +156,12 @@ void applyToObjectBodies(Box3DSharedState &st, const SIM_Object &obj,
     if (!forces.empty())
       addForceDops(obj, bs, forces, force, torque);
 
-    const float fv[3] = {float(force.x()), float(force.y()), float(force.z())};
-    const float tv[3] = {float(torque.x()), float(torque.y()),
-                         float(torque.z())};
+    const float fv[3] = {static_cast<float>(force.x()),
+                         static_cast<float>(force.y()),
+                         static_cast<float>(force.z())};
+    const float tv[3] = {static_cast<float>(torque.x()),
+                         static_cast<float>(torque.y()),
+                         static_cast<float>(torque.z())};
     if (!b3dop::finite3(fv) || !b3dop::finite3(tv)) {
       ++stats.nonFinite;
       continue;

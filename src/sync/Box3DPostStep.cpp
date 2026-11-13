@@ -40,16 +40,18 @@ void hardenWrittenPages(const GU_Detail *gdp,
                         size_t end,
                         const std::array<GA_Attribute *, 5> &attrs) {
   constexpr int64_t kBucketBits = 10; // 1024 offsets
-  const int64_t numOffsets = int64_t(gdp->getNumPointOffsets());
-  const size_t numBuckets = size_t((numOffsets >> kBucketBits) + 1);
+  const int64_t numOffsets = static_cast<int64_t>(gdp->getNumPointOffsets());
+  const size_t numBuckets =
+      static_cast<size_t>((numOffsets >> kBucketBits) + 1);
   std::vector<char> hit(numBuckets, 0);
   size_t hitCount = 0;
   for (size_t k = begin; k < end; ++k) {
     const GA_Offset off = items[k].off;
-    if (off == GA_INVALID_OFFSET || int64_t(off) < 0 ||
-        int64_t(off) >= numOffsets)
+    if (off == GA_INVALID_OFFSET || static_cast<int64_t>(off) < 0 ||
+        static_cast<int64_t>(off) >= numOffsets)
       continue;
-    char &h = hit[size_t(int64_t(off) >> kBucketBits)];
+    char &h =
+        hit[static_cast<size_t>(static_cast<int64_t>(off) >> kBucketBits)];
     hitCount += h ? 0 : 1;
     h = 1;
   }
@@ -72,8 +74,9 @@ void hardenWrittenPages(const GU_Detail *gdp,
       size_t e = b;
       while (e + 1 < numBuckets && hit[e + 1])
         ++e;
-      attr->hardenAllPages(GA_Offset(int64_t(b) << kBucketBits),
-                           GA_Offset(int64_t(e + 1) << kBucketBits));
+      attr->hardenAllPages(
+          GA_Offset(static_cast<int64_t>(b) << kBucketBits),
+          GA_Offset(static_cast<int64_t>(e + 1) << kBucketBits));
       b = e + 1;
     }
   }
@@ -96,8 +99,9 @@ void resolvePointOffsets(const GU_Detail *gdp, const PointAttrs &a,
     bool ok = stored >= 0 && stored < gdp->getNumPointOffsets() &&
               !gdp->getPointMap().isOffsetVacant(stored);
     if (ok)
-      ok = a.id.isValid() ? int64_t(a.id.get(stored)) == m.pointId
-                          : int64_t(gdp->pointIndex(stored)) == m.pointId;
+      ok = a.id.isValid()
+               ? static_cast<int64_t>(a.id.get(stored)) == m.pointId
+               : static_cast<int64_t>(gdp->pointIndex(stored)) == m.pointId;
     if (ok) {
       w.off = stored;
       continue;
@@ -105,14 +109,15 @@ void resolvePointOffsets(const GU_Detail *gdp, const PointAttrs &a,
 
     w.off = GA_INVALID_OFFSET;
     if (!a.id.isValid()) {
-      if (m.pointId >= 0 && m.pointId < int64_t(gdp->getNumPoints()))
+      if (m.pointId >= 0 &&
+          m.pointId < static_cast<int64_t>(gdp->getNumPoints()))
         w.off = gdp->pointOffset(GA_Index(m.pointId));
       continue;
     }
     if (!builtById) {
       builtById = true;
       for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it)
-        byId.emplace(int64_t(a.id.get(*it)),
+        byId.emplace(static_cast<int64_t>(a.id.get(*it)),
                      *it); // first point of a duplicate id wins
     }
     const auto f = byId.find(m.pointId);
@@ -179,14 +184,15 @@ void forEachObjectRun(std::vector<Item> &items, const F &f) {
   for (size_t i = 0; i < n; ++i) {
     const int id = items[i].objectId;
     if (!haveLast || id != lastId) {
-      const auto ins = bucketOf.try_emplace(id, uint32_t(bucketOf.size()));
+      const auto ins =
+          bucketOf.try_emplace(id, static_cast<uint32_t>(bucketOf.size()));
       lastBucket = ins.first->second;
       lastId = id;
       haveLast = true;
       ++runs;
     }
     if (lastBucket >= start.size())
-      start.resize(size_t(lastBucket) + 1, 0);
+      start.resize(static_cast<size_t>(lastBucket) + 1, 0);
     ++start[lastBucket];
     bucket[i] = lastBucket;
   }
@@ -282,12 +288,15 @@ void recordImpacts(Box3DSharedState &st, SIM_ObjectArray &objects,
       // cp.normal points from the body it was read from into the other one.
       const b3dop::ContactPoint &cp = h.cp;
       const float sgn = h.fromOther ? 1.0f : -1.0f;
-      imp->addPointImpact(
-          UT_Vector3(float(cp.pos[0]), float(cp.pos[1]), float(cp.pos[2])),
-          UT_Vector3(sgn * cp.normal[0], sgn * cp.normal[1],
-                     sgn * cp.normal[2]),
-          cp.impulse, int(h.self->pointIndex), h.other ? h.other->objectId : -1,
-          h.other ? int(h.other->pointIndex) : -1, -1, 0.0, 0.0, 0.0, now, 0);
+      imp->addPointImpact(UT_Vector3(static_cast<float>(cp.pos[0]),
+                                     static_cast<float>(cp.pos[1]),
+                                     static_cast<float>(cp.pos[2])),
+                          UT_Vector3(sgn * cp.normal[0], sgn * cp.normal[1],
+                                     sgn * cp.normal[2]),
+                          cp.impulse, static_cast<int>(h.self->pointIndex),
+                          h.other ? h.other->objectId : -1,
+                          h.other ? static_cast<int>(h.other->pointIndex) : -1,
+                          -1, 0.0, 0.0, 0.0, now, 0);
     }
   }
   // Had Impacts last step, none now (or the option is off).
@@ -397,7 +406,7 @@ void ageObjects(Box3DSharedState &st, SIM_ObjectArray &objects, float dt) {
           }
         }
       };
-      if (size_t(range.getEntries()) < minParallelPoints()) {
+      if (static_cast<size_t>(range.getEntries()) < minParallelPoints()) {
         for (GA_Iterator it(range); !it.atEnd(); ++it)
           agePoint(*it);
       } else {
@@ -453,8 +462,10 @@ void deleteDeadPoints(Box3DSharedState &st, SIM_ObjectArray &objects) {
         bool ok = off >= 0 && off < gdp->getNumPointOffsets() &&
                   !gdp->getPointMap().isOffsetVacant(off);
         if (ok)
-          ok = id.isValid() ? int64_t(id.get(off)) == items[k].pointId
-                            : int64_t(gdp->pointIndex(off)) == items[k].pointId;
+          ok = id.isValid()
+                   ? static_cast<int64_t>(id.get(off)) == items[k].pointId
+                   : static_cast<int64_t>(gdp->pointIndex(off)) ==
+                         items[k].pointId;
         if (ok)
           doomed.push_back(off);
       }
@@ -494,13 +505,13 @@ struct MovedBodies {
 // Fills st.writeItems and st.packedWrites with the point bodies to write.
 MovedBodies collectMovedBodies(Box3DSharedState &st) {
   MovedBodies out;
-  const int moveCount = int(st.moves.size());
+  const int moveCount = static_cast<int>(st.moves.size());
   std::vector<Box3DWriteItem> &items = st.writeItems;
   items.clear();
-  items.reserve(size_t(moveCount));
+  items.reserve(static_cast<size_t>(moveCount));
   st.packedWrites.clear();
   for (int mi = 0; mi < moveCount; ++mi) {
-    const b3dop::BodyMove &mv = st.moves[size_t(mi)];
+    const b3dop::BodyMove &mv = st.moves[static_cast<size_t>(mi)];
     if (!mv.userData)
       continue;
     Box3DBodyMirror *entry = static_cast<Box3DBodyMirror *>(mv.userData);
@@ -520,7 +531,7 @@ MovedBodies collectMovedBodies(Box3DSharedState &st) {
     w.move = mi;
     w.objectId = entry->objectId;
     if (entry->packed) {
-      w.packedIdx = int(st.packedWrites.size());
+      w.packedIdx = static_cast<int>(st.packedWrites.size());
       st.packedWrites.emplace_back();
     }
     // `awake`: only changes are written (and only if the attribute exists).
@@ -539,7 +550,7 @@ int writeWholeObjects(Box3DSharedState &st, SIM_ObjectArray &objects,
                       const std::vector<int> &wholeMoves) {
   int notWritten = 0;
   for (const int mi : wholeMoves) {
-    const b3dop::BodyMove &mv = st.moves[size_t(mi)];
+    const b3dop::BodyMove &mv = st.moves[static_cast<size_t>(mi)];
     Box3DBodyMirror *entry = static_cast<Box3DBodyMirror *>(mv.userData);
     SIM_Object *obj =
         box3dObjectById(objects, entry->objectId, st.objectsSorted);
@@ -612,7 +623,7 @@ public:
   void write(Box3DWriteItem &w) const {
     if (w.off == GA_INVALID_OFFSET)
       return;
-    const b3dop::BodyMove &mv = myMoves[size_t(w.move)];
+    const b3dop::BodyMove &mv = myMoves[static_cast<size_t>(w.move)];
     writeAttributes(w, mv);
     Box3DPackedWrite *pw = composePacked(w, mv);
     updateMirror(w, mv, pw != nullptr);
@@ -627,8 +638,9 @@ private:
                        const b3dop::BodyMove &mv) const {
     const GA_Offset off = w.off;
     if (myP.isValid())
-      myP.set(off,
-              UT_Vector3(float(mv.pos[0]), float(mv.pos[1]), float(mv.pos[2])));
+      myP.set(off, UT_Vector3(static_cast<float>(mv.pos[0]),
+                              static_cast<float>(mv.pos[1]),
+                              static_cast<float>(mv.pos[2])));
     if (myQ.isValid())
       myQ.set(off, UT_QuaternionF(mv.rot[0], mv.rot[1], mv.rot[2], mv.rot[3]));
     if (myV.isValid())
@@ -636,7 +648,7 @@ private:
     if (myW.isValid())
       myW.set(off, UT_Vector3(w.ang[0], w.ang[1], w.ang[2]));
     if (myAnyAwakeWrite && w.awakeState >= 0) {
-      myAwake.set(off, int(w.awakeState));
+      myAwake.set(off, static_cast<int>(w.awakeState));
       w.entry->awake = (w.awakeState != 0);
     }
   }
@@ -648,7 +660,8 @@ private:
                                   const b3dop::BodyMove &mv) const {
     Box3DBodyMirror &me = *w.entry;
     Box3DPackedWrite *pw =
-        w.packedIdx >= 0 ? &myPackedWrites[size_t(w.packedIdx)] : nullptr;
+        w.packedIdx >= 0 ? &myPackedWrites[static_cast<size_t>(w.packedIdx)]
+                         : nullptr;
     if (!(myAnyPrims && me.packed && pw))
       return nullptr;
     composePackedMatrix(mv.rot, me.rowScale, pw->newM3);
@@ -734,9 +747,9 @@ int writePackedRotations(GU_Detail *gdp,
   bool wrotePacked = false;
   for (size_t k = begin; k < end; ++k) {
     const Box3DWriteItem &w = items[k];
-    if (w.packedIdx < 0 || !packedWrites[size_t(w.packedIdx)].has)
+    if (w.packedIdx < 0 || !packedWrites[static_cast<size_t>(w.packedIdx)].has)
       continue;
-    const Box3DPackedWrite &pw = packedWrites[size_t(w.packedIdx)];
+    const Box3DPackedWrite &pw = packedWrites[static_cast<size_t>(w.packedIdx)];
     const GA_Primitive *raw =
         (pw.primOff >= 0 && pw.primOff < gdp->getNumPrimitiveOffsets())
             ? gdp->getPrimitive(pw.primOff)

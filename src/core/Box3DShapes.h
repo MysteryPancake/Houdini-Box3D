@@ -21,9 +21,10 @@ namespace b3dop {
 enum class ShapeType : int {
   Box = 0,
   Sphere = 1,
-  Convex = 2,  // one convex hull of the packed geometry
-  Concave = 3, // several convex hulls on ONE body (packed geometry pieces,
-               // grouped by `name`)
+  Convex = 2, // one convex hull of the packed geometry
+  // several convex hulls on ONE body (packed geometry pieces, grouped by
+  // `name`)
+  Concave = 3,
   Capsule = 4, // axis along the body's Y
   None = 5,    // no collision shape: a static body that nothing collides with
 };
@@ -38,8 +39,9 @@ struct ShapeSpec {
   float halfLength = 0.5f; // Capsule: half the straight section, along Y
   float center[3] = {0.0f, 0.0f, 0.0f}; // every primitive
   float rot[4] = {0.0f, 0.0f, 0.0f,
-                  1.0f}; // x, y, z, w: orientation in body space. Box and
-                         // capsule; a sphere ignores it
+                  // x, y, z, w: orientation in body space. Box and capsule; a
+                  // sphere ignores it
+                  1.0f};
 };
 
 // `bullet_georep` -> ShapeType, Houdini's lowercase names, exact match.
@@ -176,7 +178,8 @@ inline float shapeVolume(const ShapeSpec &s) {
 // Object id in the high 32 bits, the point's `id` (else its number) in the
 // low 32.
 inline uint64_t makeBodyKey(int objectId, int64_t pointId) {
-  return (uint64_t(uint32_t(objectId)) << 32) | uint64_t(uint32_t(pointId));
+  return (static_cast<uint64_t>(static_cast<uint32_t>(objectId)) << 32) |
+         static_cast<uint64_t>(static_cast<uint32_t>(pointId));
 }
 
 // ---------------------------------------------------------------------------
@@ -255,13 +258,13 @@ inline uint64_t hashBytes(uint64_t h, const void *data, size_t byteCount) {
   }
   uint64_t tail = 0;
   for (size_t k = 0; i < byteCount; ++i, ++k)
-    tail |= uint64_t(b[i]) << (8 * k);
-  return mixHash(h, tail ^ (uint64_t(byteCount) << 56));
+    tail |= static_cast<uint64_t>(b[i]) << (8 * k);
+  return mixHash(h, tail ^ (static_cast<uint64_t>(byteCount) << 56));
 }
 
 // The raw bytes of `floatCount` floats, with the count mixed in.
 inline uint64_t hashFloats(const float *xyz, size_t floatCount) {
-  return hashBytes(kHashSeed ^ uint64_t(floatCount), xyz,
+  return hashBytes(kHashSeed ^ static_cast<uint64_t>(floatCount), xyz,
                    floatCount * sizeof(float));
 }
 
@@ -290,7 +293,7 @@ inline uint64_t packedHullKey(uint64_t sourceHash, const double pivot[3],
 template <class PointId>
 std::vector<int>
 connectedSets(const std::vector<std::vector<PointId>> &primPoints) {
-  const int n = int(primPoints.size());
+  const int n = static_cast<int>(primPoints.size());
   std::vector<int> parent(n);
   for (int i = 0; i < n; ++i)
     parent[i] = i;
@@ -332,7 +335,7 @@ inline void packedPointsToBodyLocal(const float *xyz, int count,
                                     const double m4[16],
                                     const double pivotIn[3],
                                     std::vector<float> &out) {
-  out.assign(xyz, xyz + size_t(count) * 3);
+  out.assign(xyz, xyz + static_cast<size_t>(count) * 3);
   if (count <= 0)
     return;
 
@@ -342,8 +345,8 @@ inline void packedPointsToBodyLocal(const float *xyz, int count,
 
   for (int i = 0; i < count; ++i)
     for (int j = 0; j < 3; ++j)
-      out[size_t(3 * i + j)] =
-          float((double(xyz[3 * i + j]) - pivotIn[j]) * S[j]);
+      out[static_cast<size_t>(3 * i + j)] = static_cast<float>(
+          (static_cast<double>(xyz[3 * i + j]) - pivotIn[j]) * S[j]);
 }
 
 // A box / sphere / capsule fitted to the points' bounds: auto-fit on packed

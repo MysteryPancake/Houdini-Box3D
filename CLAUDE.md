@@ -138,4 +138,10 @@ Layering (keep it):
 * Style: clang-format's default (LLVM) style, pinned by the root `.clang-format`. Run `clang-format -i` on every
   `.cpp` / `.h` file you create or change under `src/` and `tests/` before finishing, and don't hand-format or
   hand-align around it. Never format `extern/` (it has its own `.clang-format` and is never edited). Keep comments
-  inside macros on their own line: a trailing comment after a `\` continuation gets wrapped into the macro.
+  inside macros on their own line: a trailing comment after a `\` continuation gets wrapped into the macro. A
+  comment too long to sit after its code goes on its own line above it.
+* Casts: `static_cast<T>(x)`, never `T(x)` or `(T)x` (clang-tidy's `google-readability-casting`).
+* Before finishing a change: the core builds with no warnings (`-Wall -Wextra`), `ctest` passes, `clang-tidy -p build`
+  is clean on the files you touched (`.clang-tidy`), and `python tools/check_docs.py` passes. CI
+  (`.github/workflows/ci.yml`) runs the same checks except clang-tidy. Text files are UTF-8 with LF line endings
+  (`.editorconfig`).

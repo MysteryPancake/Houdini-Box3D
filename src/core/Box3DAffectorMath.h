@@ -75,10 +75,10 @@ inline bool decomposeRigid(const double m[16], double pos[3], float quat[4],
   const double n = std::sqrt(x * x + y * y + z * z + w * w);
   if (!(n > 0.0) || !std::isfinite(n))
     return false;
-  quat[0] = float(x / n);
-  quat[1] = float(y / n);
-  quat[2] = float(z / n);
-  quat[3] = float(w / n);
+  quat[0] = static_cast<float>(x / n);
+  quat[1] = static_cast<float>(y / n);
+  quat[2] = static_cast<float>(z / n);
+  quat[3] = static_cast<float>(w / n);
   return true;
 }
 
@@ -100,7 +100,7 @@ inline bool decomposeScaledRigid(const double m[16], double pos[3],
       return false;
     for (int c = 0; c < 3; ++c)
       row[c] /= len;
-    scale[r] = float(len);
+    scale[r] = static_cast<float>(len);
   }
   return decomposeRigid(n, pos, quat, tol);
 }

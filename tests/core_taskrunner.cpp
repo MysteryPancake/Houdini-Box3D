@@ -131,7 +131,7 @@ int main(int argc, char **argv) {
   Pool pool(workers - 1);
   // Many worlds alive at once on the one pool: the case that used to pile up
   // threads.
-  const int before = int(pool.threads.size());
+  const int before = static_cast<int>(pool.threads.size());
   if (!run(workers, &pool, shared))
     return 1;
   for (int i = 0; i < 40; ++i) {
@@ -145,7 +145,8 @@ int main(int argc, char **argv) {
     maxDiff = std::max(maxDiff, std::fabs(serial[i] - shared[i]));
   std::printf("pool threads %d (before %d), tasks run %ld, max position diff "
               "vs 1 worker %.3g\n",
-              int(pool.threads.size()), before, pool.executed.load(), maxDiff);
+              static_cast<int>(pool.threads.size()), before,
+              pool.executed.load(), maxDiff);
   if (pool.executed.load() == 0 || maxDiff > 1e-4) {
     std::printf("FAIL\n");
     return 1;

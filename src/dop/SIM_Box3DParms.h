@@ -52,8 +52,8 @@ public:
 
   Box3DParms &integer(const char *name, const char *label, int def, Range r,
                       const char *help, const char *disableWhen = nullptr) {
-    return add(PRM_INT_J, name, label, {double(def)}, 1, range(r), nullptr,
-               help, disableWhen);
+    return add(PRM_INT_J, name, label, {static_cast<double>(def)}, 1, range(r),
+               nullptr, help, disableWhen);
   }
 
   // Three floats (PRM_XYZ_J lays them out as x / y / z).
@@ -79,8 +79,8 @@ public:
     }
     choices.emplace_back(); // terminator
     myMenus.emplace_back(PRM_CHOICELIST_SINGLE, choices.data());
-    return add(PRM_ORD, name, label, {double(def)}, 1, nullptr, &myMenus.back(),
-               help, nullptr);
+    return add(PRM_ORD, name, label, {static_cast<double>(def)}, 1, nullptr,
+               &myMenus.back(), help, nullptr);
   }
 
   // The finished list (switcher first if there are tabs), terminated.
@@ -88,8 +88,9 @@ public:
     if (myBuilt.empty()) {
       if (!myTabs.empty()) {
         for (const Tab &t : myTabs)
-          myTabDefaults.emplace_back(fpreal(t.count), t.label);
-        myBuilt.push_back(PRM_Template(PRM_SWITCHER, int(myTabDefaults.size()),
+          myTabDefaults.emplace_back(static_cast<fpreal>(t.count), t.label);
+        myBuilt.push_back(PRM_Template(PRM_SWITCHER,
+                                       static_cast<int>(myTabDefaults.size()),
                                        &myTabsName, myTabDefaults.data()));
       }
       myBuilt.insert(myBuilt.end(), myParms.begin(), myParms.end());

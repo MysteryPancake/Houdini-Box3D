@@ -43,14 +43,14 @@ struct TriMesh {
 void buildMesh(const GU_Detail *gdp, bool houdiniWinding, TriMesh &out) {
   out.xyz.clear();
   out.tris.clear();
-  std::vector<int32_t> remap(size_t(gdp->getNumPointOffsets()),
+  std::vector<int32_t> remap(static_cast<size_t>(gdp->getNumPointOffsets()),
                              -1); // point offset -> vertex
 
   auto vertexOf = [&](GA_Offset pt) -> int32_t {
-    int32_t &idx = remap[size_t(pt)];
+    int32_t &idx = remap[static_cast<size_t>(pt)];
     if (idx < 0) {
       const UT_Vector3 p = gdp->getPos3(pt);
-      idx = int32_t(out.xyz.size() / 3);
+      idx = static_cast<int32_t>(out.xyz.size() / 3);
       out.xyz.push_back(p.x());
       out.xyz.push_back(p.y());
       out.xyz.push_back(p.z());
@@ -217,9 +217,8 @@ void updateAffector(Box3DSharedState &st, Box3DAffectorBody &ab,
 // ---- build
 // ----------------------------------------------------------------------------------
 // Shear or mirroring cannot be a body transform plus mesh scale: bake the
-// matrix into the vertices
-// (`baked`) and keep the body at the origin. (Mirroring flips the winding, so
-// flip the triangles back.)
+// matrix into the vertices (`baked`) and keep the body at the origin.
+// (Mirroring flips the winding, so flip the triangles back.)
 void bakeTransform(const double m[16], TriMesh &mesh,
                    std::vector<float> &baked) {
   const size_t n = mesh.xyz.size() / 3;
@@ -230,7 +229,7 @@ void bakeTransform(const double m[16], TriMesh &mesh,
     double q[3];
     b3dop::transformPoint(m, p, q);
     for (int j = 0; j < 3; ++j)
-      baked[3 * i + size_t(j)] = float(q[j]);
+      baked[3 * i + static_cast<size_t>(j)] = static_cast<float>(q[j]);
   }
   const double det = m[0] * (m[5] * m[10] - m[6] * m[9]) -
                      m[1] * (m[4] * m[10] - m[6] * m[8]) +
@@ -274,9 +273,10 @@ void buildAffector(Box3DSharedState &st, Box3DAffectorBody &ab, int objectId,
     ++counts.failed;
     return;
   }
-  if (!st.world.createMeshShape(h, body, verts, int(mesh.xyz.size() / 3),
-                                mesh.tris.data(), int(mesh.tris.size() / 3),
-                                0.0f, bodyScale)) {
+  if (!st.world.createMeshShape(
+          h, body, verts, static_cast<int>(mesh.xyz.size() / 3),
+          mesh.tris.data(), static_cast<int>(mesh.tris.size() / 3), 0.0f,
+          bodyScale)) {
     st.world.destroyBody(h);
     ++counts.failed;
     return;
@@ -289,7 +289,8 @@ void buildAffector(Box3DSharedState &st, Box3DAffectorBody &ab, int objectId,
   b3dop::copy3(ab.scale, bodyScale);
   ++counts.added;
   B3D_LOG("  affector id=%d: static mesh built, %d triangle(s)%s", objectId,
-          int(mesh.tris.size() / 3), in.rigid ? "" : " (transform baked)");
+          static_cast<int>(mesh.tris.size() / 3),
+          in.rigid ? "" : " (transform baked)");
 }
 
 // ---- remove: objects that are no longer affectors
@@ -311,7 +312,7 @@ void removeStaleAffectors(Box3DSharedState &st, Box3DAffectorCounts &counts) {
 void syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects,
                         Box3DAffectorCounts &counts) {
   const std::vector<const SIM_Object *> affectors = gatherAffectors(objects);
-  counts.total = int(affectors.size());
+  counts.total = static_cast<int>(affectors.size());
 
   // Build or update each one.
   TriMesh mesh;

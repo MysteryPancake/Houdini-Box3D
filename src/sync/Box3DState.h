@@ -164,7 +164,7 @@ struct Box3DSyncFingerprint {
   // addImpact): when any changed, the scan also compares every body's settings.
   // The count comes from that table.
   static constexpr int kNumPropIds =
-      int(std::size(box3dsolver::kPropAttribNames));
+      static_cast<int>(std::size(box3dsolver::kPropAttribNames));
   using PropIds = std::array<GA_DataId, kNumPropIds>;
 
   int64_t numPoints =
@@ -264,10 +264,10 @@ struct Box3DJointEntry {
   // writes from edits upstream.
   b3dop::JointFrame wroteA, wroteB;
   bool wrote = false;
-  float madeRestLength = -1.0f; // distance made with restlength < 0: written to
-                                // `auto_restlength` once
-  bool writeLocal = false; // made from P / orient: write local_P / local_orient
-                           // after the step
+  // distance made with restlength < 0: written to `auto_restlength` once
+  float madeRestLength = -1.0f;
+  // made from P / orient: write local_P / local_orient after the step
+  bool writeLocal = false;
 
   // next_constraint_name: the broken joint's local frames, so the anchors can
   // be put where its frames were at the break (switchFrames) and the next
@@ -303,8 +303,8 @@ struct Box3DJointNetwork {
   uint64_t liveStamp = 0;   // stamp its current entries carry
   uint64_t visited = 0;     // last sync that saw it
   int objectId = -1; // an object it was found on (and is written back through)
-  std::string relName; // the relationship's name; empty: the object's
-                       // ConstraintGeometry
+  // the relationship's name; empty: the object's ConstraintGeometry
+  std::string relName;
   bool inGroup =
       true; // found among the object's group (not affector) relationships
   bool writable = true; // the last write-back reached the geometry
@@ -334,12 +334,12 @@ struct Box3DSharedState {
   std::unordered_map<uint64_t, Box3DJointEntry>
       joints; // key: network key + primitive offset
   std::unordered_map<uint64_t, Box3DJointNetwork>
-      jointNetworks;          // key: relationship name (or object id)
-  bool wantNames = false;     // some object has a constraint network: keep
-                              // Box3DObjectSync::byName
-  bool objectsSorted = false; // this solve's objects are in id order
-                              // (box3dObjectById may binary search)
-  uint64_t bodyVersion = 0;   // bumped whenever bodies are added or removed
+      jointNetworks; // key: relationship name (or object id)
+  // some object has a constraint network: keep Box3DObjectSync::byName
+  bool wantNames = false;
+  // this solve's objects are in id order (box3dObjectById may binary search)
+  bool objectsSorted = false;
+  uint64_t bodyVersion = 0; // bumped whenever bodies are added or removed
 
   // Scratch reused every step.
   std::unordered_map<int, std::vector<Box3DPointSlot>> slots; // key: object id

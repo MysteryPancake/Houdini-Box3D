@@ -79,14 +79,15 @@ inline uint64_t geometryIdentity(const GU_Detail *gdp,
   using b3dop::mixHash;
   uint64_t h = b3dop::kHashSeed;
   if (withUniqueId)
-    h = mixHash(h, uint64_t(gdp->getUniqueId()));
+    h = mixHash(h, static_cast<uint64_t>(gdp->getUniqueId()));
   const GA_Attribute *P = gdp->getP();
-  h = mixHash(h, P ? uint64_t(P->getDataId()) : ~0ull);
-  h = mixHash(h, gdp->getNumPrimitives() > 0
-                     ? uint64_t(gdp->getPrimitiveList().getDataId())
-                     : ~0ull);
-  h = mixHash(h, uint64_t(gdp->getNumPoints()));
-  return mixHash(h, uint64_t(gdp->getNumPrimitives()));
+  h = mixHash(h, P ? static_cast<uint64_t>(P->getDataId()) : ~0ull);
+  h = mixHash(h,
+              gdp->getNumPrimitives() > 0
+                  ? static_cast<uint64_t>(gdp->getPrimitiveList().getDataId())
+                  : ~0ull);
+  h = mixHash(h, static_cast<uint64_t>(gdp->getNumPoints()));
+  return mixHash(h, static_cast<uint64_t>(gdp->getNumPrimitives()));
 }
 
 // A Houdini 4x4 (row-vector layout) as 16 doubles, row by row.
@@ -94,7 +95,7 @@ template <class Matrix4>
 inline void box3dToArray(const Matrix4 &m, double out[16]) {
   for (int r = 0; r < 4; ++r)
     for (int c = 0; c < 4; ++c)
-      out[4 * r + c] = double(m(r, c));
+      out[4 * r + c] = static_cast<double>(m(r, c));
 }
 
 // Euler angles in degrees (Houdini's XYZ rotate order) -> quaternion x, y, z,

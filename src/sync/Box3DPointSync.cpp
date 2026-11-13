@@ -104,8 +104,9 @@ Box3DSyncFingerprint makeFingerprint(const GU_Detail *gdp, const PointAttrs &a,
                        : Box3DSyncFingerprint::kNoId;
   };
   Box3DSyncFingerprint fp;
-  fp.numPoints = trustTopology ? -1 : int64_t(gdp->getNumPoints());
-  fp.numOffsets = trustTopology ? -1 : int64_t(gdp->getNumPointOffsets());
+  fp.numPoints = trustTopology ? -1 : static_cast<int64_t>(gdp->getNumPoints());
+  fp.numOffsets =
+      trustTopology ? -1 : static_cast<int64_t>(gdp->getNumPointOffsets());
   const GA_Attribute *P = gdp->getP();
   fp.pId = P ? P->getDataId() : Box3DSyncFingerprint::kNoId;
   fp.orientId = idOf(a.orient);
@@ -174,7 +175,7 @@ b3dop::BodyProps readDynamicProps(const b3dop::BodySettings &node,
                                   const PointAttrs &a, GA_Offset off) {
   b3dop::BodyProps p = node.props;
   if (a.mass.isValid()) {
-    const float m = float(a.mass.get(off));
+    const float m = static_cast<float>(a.mass.get(off));
     if (m > 0.0f && std::isfinite(m))
       p.mass = m;
   }
@@ -189,7 +190,7 @@ b3dop::BodyProps readDynamicProps(const b3dop::BodySettings &node,
     const UT_Vector3 t = a.tangentVelocity.get(off);
     if (std::isfinite(t.x()) && std::isfinite(t.y()) && std::isfinite(t.z()))
       for (int i = 0; i < 3; ++i)
-        p.tangentVelocity[i] = float(t(i));
+        p.tangentVelocity[i] = static_cast<float>(t(i));
   }
   if (a.lineardamping.isValid())
     p.linearDamping = clampNonNeg(a.lineardamping.get(off), p.linearDamping);
@@ -240,9 +241,9 @@ b3dop::BodyProps readDynamicProps(const b3dop::BodySettings &node,
   if (a.contactRecycling.isValid())
     p.contactRecycling = a.contactRecycling.get(off) != 0;
   if (a.collisionCategory.isValid())
-    p.filter.category = uint64_t(a.collisionCategory.get(off));
+    p.filter.category = static_cast<uint64_t>(a.collisionCategory.get(off));
   if (a.collisionMask.isValid())
-    p.filter.mask = uint64_t(a.collisionMask.get(off));
+    p.filter.mask = static_cast<uint64_t>(a.collisionMask.get(off));
   if (a.collisionGroup.isValid())
     p.filter.group = a.collisionGroup.get(off);
   if (a.lockLinear.isValid()) {
@@ -279,7 +280,7 @@ struct StringAttr {
     if (!attr)
       return -1;
     const GA_StringIndexType h = aif->getHandle(attr, off, 0);
-    return h == GA_INVALID_STRING_INDEX ? -1 : int64_t(h);
+    return h == GA_INVALID_STRING_INDEX ? -1 : static_cast<int64_t>(h);
   }
   std::string str(GA_Offset off) const {
     if (!attr)
@@ -340,7 +341,7 @@ bool startAwakeFor(const b3dop::BodySettings &node, const PointAttrs &a,
 // fallback box).
 void readPscaleScale(const PointAttrs &a, GA_Offset off, float &ps,
                      float sc[3]) {
-  ps = a.pscale.isValid() ? float(a.pscale.get(off)) : 1.0f;
+  ps = a.pscale.isValid() ? static_cast<float>(a.pscale.get(off)) : 1.0f;
   sc[0] = sc[1] = sc[2] = 1.0f;
   if (a.scale.isValid()) {
     const UT_Vector3 s = a.scale.get(off);
@@ -368,20 +369,21 @@ bool sizeKey(bool packed, const double m3[9], float ps, const float sc[3],
   if (packed)
     return b3dop::matrixRowLengths(m3, out);
   for (int i = 0; i < 3; ++i)
-    out[i] = double(ps) * double(sc[i]);
+    out[i] = static_cast<double>(ps) * static_cast<double>(sc[i]);
   return true;
 }
 
 // Equal signatures mean identical shapes (hull keys, primitive numbers): skip
 // the rebuild.
 uint64_t shapeSignature(b3dop::ShapeType type, const BuiltShapes &s) {
-  uint64_t h = b3dop::mixHash(0x9e3779b97f4a7c15ull, uint64_t(int(type)) + 1);
+  uint64_t h = b3dop::mixHash(
+      0x9e3779b97f4a7c15ull, static_cast<uint64_t>(static_cast<int>(type)) + 1);
   for (const Piece &pc : s.pieces) {
     if (pc.isHull)
       h = b3dop::mixHash(b3dop::mixHash(h, 1), pc.hull);
     else {
       const b3dop::ShapeSpec &sp = pc.spec;
-      const float f[] = {float(int(sp.type)),
+      const float f[] = {static_cast<float>(static_cast<int>(sp.type)),
                          sp.halfExtents[0],
                          sp.halfExtents[1],
                          sp.halfExtents[2],
@@ -527,7 +529,7 @@ void storePlan(Box3DBodyMirror &m, const ShapePlan &plan) {
 ShapePlan takePlan(ScanContext &ctx, const Box3DPointSlot &s,
                    std::vector<ShapePlan> &plans) {
   if (s.plan >= 0)
-    return std::move(plans[size_t(s.plan)]);
+    return std::move(plans[static_cast<size_t>(s.plan)]);
   return planShapes(ctx, s.off, s.bid, ctx.packedInfo(s.off));
 }
 
@@ -606,10 +608,10 @@ unsigned applyPropChanges(b3dop::Box3DWorld &world, Box3DBodyMirror &e,
                           const b3dop::BodyProps &p, bool shapesRebuilt) {
   const b3dop::BodyProps &o = e.props;
   if (!shapesRebuilt && p == o)
-    return 0; // nothing differs (the field compares below would call setters
-              // for a NaN)
+    // nothing differs (the field compares below would call setters for a NaN)
+    return 0;
   const b3dop::BodyHandle h = e.handle;
-  unsigned changed = shapesRebuilt ? unsigned(kPropsChanged) : 0u;
+  unsigned changed = shapesRebuilt ? static_cast<unsigned>(kPropsChanged) : 0u;
   // Runs `set` and records a props change when `differs`.
   auto apply = [&](bool differs, auto &&set) {
     if (differs) {
@@ -658,8 +660,8 @@ unsigned applyPropChanges(b3dop::Box3DWorld &world, Box3DBodyMirror &e,
   apply(p.enabled != o.enabled, [&] {
     world.setEnabledByHandle(h, p.enabled);
     if (p.enabled)
-      e.awake = true; // Box3D enables a body awake; the awake check after this
-                      // applies a 0
+      // Box3D enables a body awake; the awake check after this applies a 0
+      e.awake = true;
   });
   e.props = p;
   return changed;
@@ -798,8 +800,8 @@ void collectSlots(const GU_Detail *gdp, SlotList &snaps) {
     if (s.off != *it)
       s.entry = nullptr;
     s.off = *it;
-    s.bid = int64_t(n);
-    s.index = int64_t(n);
+    s.bid = static_cast<int64_t>(n);
+    s.index = static_cast<int64_t>(n);
   }
   snaps.resize(n);
 }
@@ -813,7 +815,7 @@ void collectSlots(const GU_Detail *gdp, SlotList &snaps) {
 void readSlot(const ScanContext &ctx, int objectId, Box3DPointSlot &s) {
   const PointAttrs &a = ctx.a;
   if (a.id.isValid())
-    s.bid = int64_t(a.id.get(s.off));
+    s.bid = static_cast<int64_t>(a.id.get(s.off));
   const uint64_t key = b3dop::makeBodyKey(objectId, s.bid);
   if (key != s.key)
     s.entry = nullptr;
@@ -824,7 +826,7 @@ void readSlot(const ScanContext &ctx, int objectId, Box3DPointSlot &s) {
   s.active = !a.active.isValid() || a.active.get(s.off) != 0;
   s.packed = pk.prim != nullptr;
   if (s.packed) {
-    s.primOff = int64_t(pk.primOff);
+    s.primOff = static_cast<int64_t>(pk.primOff);
     std::copy(pk.m3, pk.m3 + 9, s.m3);
     std::copy(pk.scale, pk.scale + 3, s.rowScale);
   }
@@ -889,7 +891,7 @@ bool planSlots(ScanContext &ctx, SlotList &snaps, std::vector<ShapePlan> &plans,
         [&](size_t j) {
           Box3DPointSlot &s = snaps[want[c0 + j]];
           plans[c0 + j] = planShapes(ctx, s.off, s.bid, ctx.packedInfo(s.off));
-          s.plan = int32_t(c0 + j);
+          s.plan = static_cast<int32_t>(c0 + j);
         },
         2);
   }
@@ -1152,8 +1154,8 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
   os.visited = st.syncStamp;
   os.addImpact = addImpact;
   os.wholeObject = false;
-  const Box3DSyncFingerprint fpNow =
-      makeFingerprint(gdp, a, int(node.type), node.props, addImpact);
+  const Box3DSyncFingerprint fpNow = makeFingerprint(
+      gdp, a, static_cast<int>(node.type), node.props, addImpact);
   if (os.canSkip && fpNow == os.fp && (!st.wantNames || os.namesKnown)) {
     ++c.skipped;
     st.stampedCount += os.entryCount;

@@ -66,7 +66,7 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
           .toggle("autothreads", "Use All Threads", false,
                   autoThreadsHelp.c_str())
           .integer("threads", "Threads", b3dop::kDefaultWorkerCount,
-                   R{1, double(b3dop::kMaxWorkerCount), true},
+                   R{1, static_cast<double>(b3dop::kMaxWorkerCount), true},
                    "Number of worker threads. More helps large scenes; small "
                    "ones can run faster with fewer.",
                    "{ autothreads == 1 }")
@@ -154,8 +154,9 @@ int SIM_SolverBox3D::currentWorkerCount() const {
   // Parallel tasks per step, run on Houdini's TBB pool: all Houdini threads
   // (honours HOUDINI_MAXTHREADS), or the Threads parm, never more than Houdini
   // allows.
-  const int houdini = std::max(1, int(UT_Thread::getNumProcessors()));
-  int n = getAutoThreads() ? houdini : int(getThreads());
+  const int houdini =
+      std::max(1, static_cast<int>(UT_Thread::getNumProcessors()));
+  int n = getAutoThreads() ? houdini : static_cast<int>(getThreads());
   n = std::min(n, houdini);
   return std::clamp(n, 1, b3dop::kMaxWorkerCount);
 }
@@ -169,18 +170,18 @@ b3dop::WorldSettings SIM_SolverBox3D::currentWorldSettings() const {
   s.subSteps = static_cast<int>(getSubSteps());
   s.workerCount = currentWorkerCount();
   s.enableSleep = getEnableSleep();
-  s.contactPushSpeed = float(getContactPushSpeed());
-  s.contactStiffness = float(getContactStiffness());
-  s.contactDampingRatio = float(getContactDamping());
-  s.restitutionThreshold = float(getBounceThreshold());
-  s.contactRecycleDistance = float(getContactRecycleDistance());
-  s.maxLinearSpeed = float(getMaxLinearSpeed());
+  s.contactPushSpeed = static_cast<float>(getContactPushSpeed());
+  s.contactStiffness = static_cast<float>(getContactStiffness());
+  s.contactDampingRatio = static_cast<float>(getContactDamping());
+  s.restitutionThreshold = static_cast<float>(getBounceThreshold());
+  s.contactRecycleDistance = static_cast<float>(getContactRecycleDistance());
+  s.maxLinearSpeed = static_cast<float>(getMaxLinearSpeed());
   s.enableContinuous = getEnableContinuous();
-  s.restitutionIterations = int(getRestitutionIterations());
+  s.restitutionIterations = static_cast<int>(getRestitutionIterations());
   s.restitutionPropagation = getRestitutionPropagation();
-  s.isotropicInertiaTolerance = float(getIsotropicInertia());
+  s.isotropicInertiaTolerance = static_cast<float>(getIsotropicInertia());
   s.warmStarting = getEnableWarmStarting();
-  s.impactMinSpeed = float(getImpactMinSpeed());
+  s.impactMinSpeed = static_cast<float>(getImpactMinSpeed());
   // Menu index -> rule. Both menus: Geometric Mean, Minimum, Maximum, Average,
   // Multiply. Out of range (set from a script): Box3D's defaults.
   using FM = b3dop::WorldSettings::FrictionMixing;
@@ -189,7 +190,8 @@ b3dop::WorldSettings SIM_SolverBox3D::currentWorldSettings() const {
                                  FM::Average, FM::Multiply};
   static const RM kRestitution[] = {RM::GeometricMean, RM::Minimum, RM::Maximum,
                                     RM::Average, RM::Multiply};
-  const int fm = int(getFrictionMixing()), rm = int(getRestitutionMixing());
+  const int fm = static_cast<int>(getFrictionMixing()),
+            rm = static_cast<int>(getRestitutionMixing());
   s.frictionMixing = (fm >= 0 && fm < 5) ? kFriction[fm] : FM::GeometricMean;
   s.restitutionMixing = (rm >= 0 && rm < 5) ? kRestitution[rm] : RM::Maximum;
   return s;
@@ -287,8 +289,8 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   std::lock_guard<std::mutex> lock(st->mutex);
 
   // The physics advances by dt * Time Scale.
-  const double timeScale = std::max(0.0, double(getTimeScale()));
-  st->stepDt = float(dt * timeScale);
+  const double timeScale = std::max(0.0, static_cast<double>(getTimeScale()));
+  st->stepDt = static_cast<float>(dt * timeScale);
   // Solver parameters may be animated; only the thread count needs a new world.
   const b3dop::WorldSettings tuning = currentWorldSettings();
   if (!std::isfinite(tuning.gravity[0]) || !std::isfinite(tuning.gravity[1]) ||
@@ -306,7 +308,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
     message(objects, "step cancelled", UT_ERROR_MESSAGE);
     return SIM_SOLVER_FAIL;
   };
-  if (!syncFromGeometry(*worldData, objects, float(dt), progress))
+  if (!syncFromGeometry(*worldData, objects, static_cast<float>(dt), progress))
     return cancel();
   if (progress.check())
     return cancel();
@@ -334,7 +336,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   recordImpacts(*st, objects, engine.getSimulationTime());
   writePointAttrs(*st, objects);
   if (getEnableAging())
-    ageObjects(*st, objects, float(dt));
+    ageObjects(*st, objects, static_cast<float>(dt));
   deleteDeadPoints(*st, objects);
 
   st->stampTime = now;
@@ -504,7 +506,7 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
 
   if (counts.skipped)
     B3D_LOG_VERBOSE("  sync: %d of %d object(s) unchanged, scan skipped",
-                    counts.skipped, int(objects.entries()));
+                    counts.skipped, static_cast<int>(objects.entries()));
   // Adds, removals and rebuilds are logged; the rest can repeat every step
   // (BOX3DDOP_VERBOSE=1).
   if (counts.added || counts.edited || counts.retyped || counts.failed ||

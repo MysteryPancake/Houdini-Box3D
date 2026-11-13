@@ -31,12 +31,13 @@ class SIM_ObjectArray;
 struct Box3DSharedState;
 
 struct Box3DJointCounts {
-  int networks = 0;   // networks seen
-  int created = 0;    // joints made (new, or remade after a change)
-  int updated = 0;    // live setting changes
-  int removed = 0;    // joints whose primitive (or network) went away
-  int unknown = 0;    // primitives whose constraint_name names no Box3D or
-                      // supported SideFX constraint relationship
+  int networks = 0; // networks seen
+  int created = 0;  // joints made (new, or remade after a change)
+  int updated = 0;  // live setting changes
+  int removed = 0;  // joints whose primitive (or network) went away
+  // primitives whose constraint_name names no Box3D or supported SideFX
+  // constraint relationship
+  int unknown = 0;
   int unresolved = 0; // an anchor name that matches no body
   int notLines = 0;   // primitives that are not two-point lines
   int failed =
@@ -52,8 +53,7 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects, float timeStep,
                 Box3DJointCounts &counts);
 
 // After the step: joints over their force / torque threshold are destroyed and
-// marked broken
-// (`broken` primitive group, or switched to their next_constraint_name), and
-// the live frames and feedback attributes are written onto the networks.
-// Returns the number of joints that broke.
+// marked broken (`broken` primitive group, or switched to their
+// next_constraint_name), and the live frames and feedback attributes are
+// written onto the networks. Returns the number of joints that broke.
 int jointsAfterStep(Box3DSharedState &st, SIM_ObjectArray &objects);
