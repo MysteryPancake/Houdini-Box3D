@@ -103,6 +103,8 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DHoudiniUtil.h  Shared Houdini helpers: writable geometry, object by id, 4x4 to array, Euler to quaternion,
                         options of SIM data by name (box3dDataOption)
     Box3DHoudiniTasks.h TaskRunner on Houdini's TBB pool (UT_TaskGroup). Only SIM_Box3DWorld.cpp includes it
+examples/            make_examples.py (+ .bat): builds demo scenes into examples/scenes (git-ignored)
+  box3d_test.hiplc    Houdini scene for manual testing
 docs/agents/         Technical notes by area; CLAUDE.md is the index ("Where to look")
 tests/
   KeyedWorld.h        Test-only Box3DWorld subclass: bodies by caller-chosen id, over the handle API
@@ -113,7 +115,7 @@ tests/
   core_joints.cpp     Every joint type, world anchors, live updates, breaking, feedback, the parameter table
   core_sidefx.cpp     SideFX constraint data: option table, mapping per type / constraint_type, frame offsets, behaviour
   core_rbdobject.cpp  RBD Object settings without Box3D Data: defaults, invalid values, Bullet Data shapes, density -> mass
-  box3d_test.hiplc    Houdini scene for manual testing (tests/backup/ holds older saves)
+  test_houdini.bat    Runs the Houdini checks (tests/houdini/run_tests.py) with hython
 ```
 
 Layering (keep it):

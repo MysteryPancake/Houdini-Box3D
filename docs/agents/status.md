@@ -8,7 +8,7 @@ The one list of everything not yet tested in Houdini or confirmed against SideFX
 remove an item once it has been checked, and record anything new here rather than in comments or other sections.
 
 **General**
-* No `SIM_*` code has CI; `tests/box3d_test.hiplc` is a manual scene. The plugin builds against the real HDK (Houdini
+* No `SIM_*` code has CI; `examples/box3d_test.hiplc` is a manual scene. The plugin builds against the real HDK (Houdini
   22.0.479, MSVC, no warnings). The core tests pass, and so does every Houdini check (`checks_core.py`,
   `checks_solver.py`, `checks_output.py`, `checks_constraints.py`, `checks_more.py`, `checks_extra.py`,
   `checks_regress.py` with its baseline.json; Houdini
@@ -16,7 +16,7 @@ remove an item once it has been checked, and record anything new here rather tha
   viewport, motion blur, and how greyed-out parameters look.
 * An untouched object still skips its scan after a Box3D Data change elsewhere (debug log: `scan skipped`). (A Box3D
   Data change mid-simulation reaching existing bodies is verified, `data_change_midsim`.)
-* `tests/box3d_test.hiplc` still uses the removed Box3D Joints node and needs rebuilding with a Constraint Network.
+* `examples/box3d_test.hiplc` still uses the removed Box3D Joints node and needs rebuilding with a Constraint Network.
 
 **HDK and Houdini behaviour**
 * Data ids surviving the DOP copy between timesteps (the sync skip). If they do not, every step scans: correct, no gain.

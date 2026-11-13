@@ -42,6 +42,8 @@ Like Houdini's RBD solvers, it works on **points**: every point in the object's 
 
 Objects from **RBD Object** and similar nodes are one rigid body each instead, as with the older RBD workflow. Their settings come from Box3D Data if attached, otherwise from the RBD Object's own mass, friction, bounce and Bullet collision shape, and their results go to the object's Position data.
 
+For example scenes, run `examples\make_examples.bat` (Linux: `hython examples/make_examples.py`), then open `examples/scenes`.
+
 ## Nodes
 
 - Box3D Solver

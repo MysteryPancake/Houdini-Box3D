@@ -44,8 +44,8 @@ How the project is built, tested and packaged. Index and rules: [CLAUDE.md](../.
 
 ## Tests
 
-Houdini checks: `hython tests/houdini/run_tests.py` (`--list` for the tests); on Windows `test_houdini.bat`, which
-finds Houdini the same way as `build.bat` (its search block is copied: change both together) and passes its
+Houdini checks: `hython tests/houdini/run_tests.py` (`--list` for the tests); on Windows `tests\test_houdini.bat`, which
+finds Houdini the same way as `build.bat` (its search block is copied, also into `examples\make_examples.bat`: change all three together) and passes its
 arguments on. Each builds its scene from scratch
 (no dependence on `box3d_test.hiplc`), simulates and prints PASS / FAIL / INFO; scenes are saved to
 `tests/houdini/out/`, tidied for opening by hand first (`review.py`: every network laid out, input geometry hidden,
@@ -84,7 +84,7 @@ Built in both configurations (`-DBOX3DDOP_CORE_ONLY=ON` builds only these):
 | `b3dop_core_taskrunner [workers]` | Worlds on one shared host pool: tasks run, results match 1 worker |
 | `b3dop_core_threads [workers] [side] [steps]` | 1 vs N workers: speedup, fails if positions differ by > 1e-4 |
 
-`tests/box3d_test.hiplc` is a manual scene; the `SIM_*` code is covered by the Houdini checks above, not by CI.
+`examples/box3d_test.hiplc` is a manual scene; the `SIM_*` code is covered by the Houdini checks above, not by CI.
 
 ## Debug logging (`Box3DDebug.h`)
 
