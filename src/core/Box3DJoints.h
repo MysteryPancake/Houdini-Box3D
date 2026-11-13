@@ -8,7 +8,7 @@
 
 #include <vector>
 
-#include "Box3DShapes.h"     // kDegToRad, kRadToDeg
+#include "Box3DMath.h"       // kDegToRad, kRadToDeg
 
 namespace b3dop {
 

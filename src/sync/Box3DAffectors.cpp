@@ -201,7 +201,7 @@ syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects, Box3DAffector
                 {
                     st.world.setSurfaceByHandle(ab.handle, body.rollingResistance, body.tangentVelocity);
                     ab.rolling = body.rollingResistance;
-                    for (int i = 0; i < 3; ++i) ab.tangent[i] = body.tangentVelocity[i];
+                    b3dop::copy3(ab.tangent, body.tangentVelocity);
                 }
             }
             if (ab.handle && rigid)
@@ -214,13 +214,13 @@ syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects, Box3DAffector
                 if (!samePose)
                 {
                     st.world.setTransformByHandle(ab.handle, pos, rot);
-                    for (int i = 0; i < 3; ++i) ab.pos[i] = pos[i];
-                    for (int i = 0; i < 4; ++i) ab.rot[i] = rot[i];
+                    b3dop::copy3(ab.pos, pos);
+                    b3dop::copy4(ab.rot, rot);
                 }
                 if (!sameScale)
                 {
                     st.world.setMeshScaleByHandle(ab.handle, scale);
-                    for (int i = 0; i < 3; ++i) ab.scale[i] = scale[i];
+                    b3dop::copy3(ab.scale, scale);
                 }
                 if (!samePose || !sameScale)
                     ++counts.moved;
@@ -247,9 +247,9 @@ syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects, Box3DAffector
         float  bodyScale[3] = { 1, 1, 1 };
         if (rigid)
         {
-            for (int i = 0; i < 3; ++i) bodyPos[i] = pos[i];
-            for (int i = 0; i < 4; ++i) bodyRot[i] = rot[i];
-            for (int i = 0; i < 3; ++i) bodyScale[i] = scale[i];
+            b3dop::copy3(bodyPos, pos);
+            b3dop::copy4(bodyRot, rot);
+            b3dop::copy3(bodyScale, scale);
         }
         else
         {
@@ -289,10 +289,10 @@ syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects, Box3DAffector
         }
         ab.handle = h;
         ab.rolling = body.rollingResistance;
-        for (int i = 0; i < 3; ++i) ab.tangent[i] = body.tangentVelocity[i];
-        for (int i = 0; i < 3; ++i) ab.pos[i] = bodyPos[i];
-        for (int i = 0; i < 4; ++i) ab.rot[i] = bodyRot[i];
-        for (int i = 0; i < 3; ++i) ab.scale[i] = bodyScale[i];
+        b3dop::copy3(ab.tangent, body.tangentVelocity);
+        b3dop::copy3(ab.pos, bodyPos);
+        b3dop::copy4(ab.rot, bodyRot);
+        b3dop::copy3(ab.scale, bodyScale);
         ++counts.added;
         B3D_LOG("  affector id=%d: static mesh built, %d triangle(s)%s", objectId, int(mesh.tris.size() / 3),
                 rigid ? "" : " (transform baked)");

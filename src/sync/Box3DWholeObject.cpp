@@ -299,7 +299,7 @@ syncWholeObject(Box3DSharedState &st, const SIM_Object &obj, const SIM_Geometry 
         }
         if (shapes.note)
             ++c.objectFallbacks[shapes.note];
-        static_cast<Box3DBodyPose &>(*entry) = cur;
+        entry->setPose(cur);
         entry->handle = h;
         entry->type   = type;
         ++c.added;
@@ -343,7 +343,7 @@ syncWholeObject(Box3DSharedState &st, const SIM_Object &obj, const SIM_Geometry 
         {
             world.setTransformByHandle(entry->handle, cur.pos, cur.rot);
             world.setVelocityByHandle(entry->handle, cur.lin, cur.ang);
-            static_cast<Box3DBodyPose &>(*entry) = cur;
+            entry->setPose(cur);
             ++c.edited;
         }
     }
@@ -405,7 +405,7 @@ writeWholeObject(SIM_Object &obj, Box3DBodyMirror &e, const double pos[3], const
     double pv[3];
     Box3DBodyPose back;
     if (readWholePose(obj, pv, back))
-        static_cast<Box3DBodyPose &>(e) = back;
+        e.setPose(back);
     return true;
 }
 

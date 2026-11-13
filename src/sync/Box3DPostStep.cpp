@@ -5,34 +5,29 @@
 #include "Box3DSolverInternal.h"
 #include "dop/SIM_SolverBox3D.h"
 
+#include <array>
+
 namespace box3dsolver {
+
+// Adds the float point attribute `name` with the given type info unless it exists. True if added.
+static bool
+addPointAttribIfMissing(GU_Detail *gdp, const char *name, int tupleSize, GA_TypeInfo typeInfo)
+{
+    if (gdp->findPointAttribute(name))
+        return false;
+    // addFloatTuple returns the new attribute, so no second lookup.
+    if (GA_Attribute *attr = gdp->addFloatTuple(GA_ATTRIB_POINT, name, tupleSize).getAttribute())
+        attr->setTypeInfo(typeInfo);
+    return true;
+}
 
 // Creates `orient`, `v`, `w` if missing. True if `orient` was created.
 bool
 ensureResultAttribs(GU_Detail *gdp)
 {
-    bool createdOrient = false;
-
-    if (!gdp->findPointAttribute("v"))
-    {
-        gdp->addFloatTuple(GA_ATTRIB_POINT, "v", 3);
-        if (GA_Attribute *attr = gdp->findPointAttribute("v"))
-            attr->setTypeInfo(GA_TYPE_VECTOR);
-    }
-    if (!gdp->findPointAttribute("w"))
-    {
-        gdp->addFloatTuple(GA_ATTRIB_POINT, "w", 3);
-        if (GA_Attribute *attr = gdp->findPointAttribute("w"))
-            attr->setTypeInfo(GA_TYPE_VECTOR);
-    }
-    if (!gdp->findPointAttribute("orient"))
-    {
-        gdp->addFloatTuple(GA_ATTRIB_POINT, "orient", 4);
-        if (GA_Attribute *attr = gdp->findPointAttribute("orient"))
-            attr->setTypeInfo(GA_TYPE_QUATERNION);
-        createdOrient = true;
-    }
-    return createdOrient;
+    addPointAttribIfMissing(gdp, "v", 3, GA_TYPE_VECTOR);
+    addPointAttribIfMissing(gdp, "w", 3, GA_TYPE_VECTOR);
+    return addPointAttribIfMissing(gdp, "orient", 4, GA_TYPE_QUATERNION);
 }
 
 // Harden only the offset ranges the parallel write pass touches (hardenAllPages takes a range).
@@ -40,7 +35,7 @@ ensureResultAttribs(GU_Detail *gdp)
 // call. `end` is the first offset after a run, right whether the HDK reads it as exclusive or not.
 void
 hardenWrittenPages(const GU_Detail *gdp, const std::vector<Box3DWriteItem> &items, size_t begin, size_t end,
-                   std::initializer_list<GA_Attribute *> attrs)
+                   const std::array<GA_Attribute *, 5> &attrs)
 {
     constexpr int64_t kBucketBits = 10;                     // 1024 offsets
     const int64_t numOffsets = int64_t(gdp->getNumPointOffsets());
@@ -582,14 +577,16 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
 #ifdef BOX3DDOP_DEBUG
         const bool verifyReadback = B3D_ENV_INT("BOX3DDOP_VERIFY_READBACK", 0) != 0;
 #endif
+        // The attributes pass 2 writes (null: not written).
+        const std::array<GA_Attribute *, 5> written = {
+            pOut.isValid() ? pOut.getAttribute() : nullptr,
+            qOut.isValid() ? qOut.getAttribute() : nullptr,
+            vOut.isValid() ? vOut.getAttribute() : nullptr,
+            wOut.isValid() ? wOut.getAttribute() : nullptr,
+            anyAwakeWrite ? awakeOut.getAttribute() : nullptr };
         // Shared copy-on-write pages would race: a parallel pass hardens what it writes first.
         if (end - begin >= kMinParallelWrite)
-            hardenWrittenPages(gdp, items, begin, end,
-                               { pOut.isValid() ? pOut.getAttribute() : nullptr,
-                                 qOut.isValid() ? qOut.getAttribute() : nullptr,
-                                 vOut.isValid() ? vOut.getAttribute() : nullptr,
-                                 wOut.isValid() ? wOut.getAttribute() : nullptr,
-                                 anyAwakeWrite ? awakeOut.getAttribute() : nullptr });
+            hardenWrittenPages(gdp, items, begin, end, written);
 
         parallelForEach(end - begin, [&](size_t j) {
             Box3DWriteItem &w = items[begin + j];
@@ -664,11 +661,7 @@ SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &ob
 #endif
         }, kMinParallelWrite);
 
-        for (GA_Attribute *attr : { pOut.isValid() ? pOut.getAttribute() : nullptr,
-                                    qOut.isValid() ? qOut.getAttribute() : nullptr,
-                                    vOut.isValid() ? vOut.getAttribute() : nullptr,
-                                    wOut.isValid() ? wOut.getAttribute() : nullptr,
-                                    anyAwakeWrite ? awakeOut.getAttribute() : nullptr })
+        for (GA_Attribute *attr : written)
             if (attr)
                 attr->bumpDataId();
 

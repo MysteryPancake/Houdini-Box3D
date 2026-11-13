@@ -1,8 +1,8 @@
 // Box3DShapes.h
 //
 // Houdini-free, header-only helpers: shape parameters from point attributes, packed-prim
-// matrix math, hashing, collision-group patterns. No Box3D or HDK includes, so
-// tests/core_physics.cpp covers them without Houdini.
+// matrix math, hashing, collision-group patterns. (Plain vector / quaternion math: Box3DMath.h.)
+// No Box3D or HDK includes, so tests/core_physics.cpp covers them without Houdini.
 #pragma once
 
 #include <algorithm>
@@ -12,6 +12,8 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#include "Box3DMath.h"     // finite3, copy3 / copy4, kDegToRad, quaternion helpers
 
 namespace b3dop {
 
@@ -74,12 +76,6 @@ clampExtent(float v)
 {
     v = std::fabs(v);
     return (std::isfinite(v) && v > kMinExtent) ? v : kMinExtent;
-}
-
-inline bool
-finite3(const float v[3])
-{
-    return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
 }
 
 // The shape fills a box of size pscale * scale (Copy to Points on a unit primitive). Sphere:
@@ -160,12 +156,10 @@ applyPrimOverrides(ShapeSpec &s, const PrimOverrides &o)
         s.halfLength = std::max(0.5f * o.length, 0.0f);
 
     if (o.hasPos && finite3(o.pos))
-        for (int i = 0; i < 3; ++i)
-            s.center[i] = o.pos[i];
+        copy3(s.center, o.pos);
 
     if (o.hasRot && finite3(o.rot) && std::isfinite(o.rot[3]))
-        for (int i = 0; i < 4; ++i)
-            s.rot[i] = o.rot[i];
+        copy4(s.rot, o.rot);
 }
 
 inline float
@@ -392,7 +386,7 @@ fitShapeToPoints(ShapeType type, const float *xyz, int count, ShapeSpec &out)
     }
 
     out = ShapeSpec();
-    for (int j = 0; j < 3; ++j) out.center[j] = mid[j];
+    copy3(out.center, mid);
     if (type == ShapeType::Sphere)
     {
         out.type   = ShapeType::Sphere;
@@ -408,62 +402,9 @@ fitShapeToPoints(ShapeType type, const float *xyz, int count, ShapeSpec &out)
     else
     {
         out.type = ShapeType::Box;
-        for (int j = 0; j < 3; ++j) out.halfExtents[j] = half[j];
+        copy3(out.halfExtents, half);
     }
     return true;
-}
-
-// ---------------------------------------------------------------------------
-// How values change on their way into and out of the geometry. Shared by the read path and
-// the write-back's prediction, so the solver can tell its own writes from other edits.
-// ---------------------------------------------------------------------------
-
-constexpr float kDegToRad = 0.017453292519943295f;
-constexpr float kRadToDeg = 57.29577951308232f;
-
-// Two rotations differ beyond float noise (q and -q are the same rotation): components compared
-// after aligning signs. A dot-product test would only see rotations above ~0.16 degrees.
-inline bool
-quatsDiffer(const float a[4], const float b[4], double eps = 1e-5)
-{
-    double dot = 0.0;
-    for (int i = 0; i < 4; ++i)
-        dot += double(a[i]) * double(b[i]);
-    const double sign = dot < 0.0 ? -1.0 : 1.0;
-    for (int i = 0; i < 4; ++i)
-        if (std::fabs(double(a[i]) - sign * double(b[i])) > eps)
-            return true;
-    return false;
-}
-
-// A point through a row-vector 4x4 (Houdini layout: p' = [p 1] * M, translation in row 3).
-inline void
-xformPoint(const double m[16], const double p[3], double out[3])
-{
-    for (int c = 0; c < 3; ++c)
-        out[c] = p[0] * m[c] + p[1] * m[4 + c] + p[2] * m[8 + c] + m[12 + c];
-}
-
-// Box3D asserts on non-unit quaternions; attributes may hold zeros or off-unit values.
-inline void sanitizeQuat(float q[4])
-{
-    double len2 = 0.0;
-    for (int i = 0; i < 4; ++i) len2 += double(q[i]) * double(q[i]);
-    if (!(len2 > 1e-12) || !std::isfinite(len2))
-    {
-        q[0] = q[1] = q[2] = 0.0f;  q[3] = 1.0f;
-        return;
-    }
-    const float inv = float(1.0 / std::sqrt(len2));
-    for (int i = 0; i < 4; ++i) q[i] *= inv;
-}
-
-// P is stored as float: double -> float -> double. False if not finite.
-inline bool storedPosition(const double in[3], double out[3])
-{
-    for (int i = 0; i < 3; ++i)
-        out[i] = double(float(in[i]));
-    return std::isfinite(out[0]) && std::isfinite(out[1]) && std::isfinite(out[2]);
 }
 
 } // namespace b3dop

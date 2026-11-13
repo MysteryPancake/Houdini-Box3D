@@ -65,6 +65,9 @@ struct Box3DObjectSync;
 
 struct Box3DBodyMirror : Box3DBodyPose
 {
+    // Overwrites the pose part only (position, orientation, velocities), leaving the rest as is.
+    void setPose(const Box3DBodyPose &pose) { static_cast<Box3DBodyPose &>(*this) = pose; }
+
     // What the body was built with, so a scan can tell what changed.
     Box3DBodyProps props;
     float    volume    = 0.0f;        // total shape volume

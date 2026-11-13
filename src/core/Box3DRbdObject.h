@@ -54,21 +54,21 @@ rbdObjectSetup(const RbdObjectSettings &r)
 {
     WholeObjectSetup out;
     BodySettings &n = out.node;
-    auto positive = [](float v) { return v > 0.0f && std::isfinite(v); };
-    auto nonNeg   = [](float v) { return v >= 0.0f && std::isfinite(v); };
+    auto isPositive = [](float v) { return v > 0.0f && std::isfinite(v); };
+    auto isNonNeg   = [](float v) { return v >= 0.0f && std::isfinite(v); };
 
     if (r.hasComputeMass)
         n.computeMass = r.computeMass;
-    if (r.hasDensity && positive(r.density))
+    if (r.hasDensity && isPositive(r.density))
         n.density = r.density;
-    if (r.hasMass && positive(r.mass))
+    if (r.hasMass && isPositive(r.mass))
         n.mass = r.mass;
-    if (r.hasInertia && positive(r.inertiaStiffness))
+    if (r.hasInertia && isPositive(r.inertiaStiffness))
         out.inertiaScale = r.inertiaStiffness;
 
-    if (r.hasFriction && nonNeg(r.friction))
+    if (r.hasFriction && isNonNeg(r.friction))
         n.friction = r.friction;
-    if (r.hasBounce && nonNeg(r.bounce))
+    if (r.hasBounce && isNonNeg(r.bounce))
         n.restitution = r.bounce;
 
     // Unknown names (cylinder, plane) keep the default shape, as for points.
@@ -94,8 +94,7 @@ rbdObjectSetup(const RbdObjectSettings &r)
             ov.pos[i]  = r.primT[i];
         }
         ov.hasRot = true;
-        for (int i = 0; i < 4; ++i)
-            ov.rot[i] = r.primRot[i];
+        copy4(ov.rot, r.primRot);
         sanitizeQuat(ov.rot);
         ov.radius = r.radius;
         ov.length = r.length;

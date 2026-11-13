@@ -44,7 +44,7 @@ readPointState(const GU_Detail *gdp, const PointAttrs &a, GA_Offset off,
     out.rot[0] = out.rot[1] = out.rot[2] = 0.0f;  out.rot[3] = 1.0f;
     if (pk.prim)
     {
-        for (int i = 0; i < 4; ++i) out.rot[i] = pk.rot[i];
+        b3dop::copy4(out.rot, pk.rot);
         b3dop::sanitizeQuat(out.rot);
     }
     else if (a.orient.isValid())
@@ -56,13 +56,10 @@ readPointState(const GU_Detail *gdp, const PointAttrs &a, GA_Offset off,
 
     out.lin[0] = out.lin[1] = out.lin[2] = 0.0f;
     out.ang[0] = out.ang[1] = out.ang[2] = 0.0f;
-    auto finite3 = [](const UT_Vector3 &v) {
-        return std::isfinite(v.x()) && std::isfinite(v.y()) && std::isfinite(v.z());
-    };
     if (a.v.isValid())
     {
         const UT_Vector3 v = a.v.get(off);
-        if (finite3(v))
+        if (b3dop::finite3(v.data()))
         {
             out.lin[0] = v.x();  out.lin[1] = v.y();  out.lin[2] = v.z();
         }
@@ -72,7 +69,7 @@ readPointState(const GU_Detail *gdp, const PointAttrs &a, GA_Offset off,
     if (a.w.isValid())
     {
         const UT_Vector3 w = a.w.get(off);
-        if (finite3(w))
+        if (b3dop::finite3(w.data()))
         {
             out.ang[0] = w.x();  out.ang[1] = w.y();  out.ang[2] = w.z();
         }
@@ -173,9 +170,9 @@ describeFingerprintDifference(const Box3DSyncFingerprint &was, const Box3DSyncFi
 // Body settings, shape planning, and mid-simulation updates
 // ---------------------------------------------------------------------------
 
-// Box3D asserts on negatives: clamp at 0, ignore non-finite.
+// Box3D asserts on negatives: a negative value is clamped to 0, a non-finite one becomes `fallback`.
 float
-nonNegative(float v, float fallback)
+clampNonNeg(float v, float fallback)
 {
     return std::isfinite(v) ? std::max(v, 0.0f) : fallback;
 }
@@ -193,12 +190,11 @@ readDynamicProps(const b3dop::BodySettings &node, const PointAttrs &a, GA_Offset
         if (m > 0.0f && std::isfinite(m))
             p.mass = m;
     }
-    p.friction       = a.friction.isValid()       ? nonNegative(a.friction.get(off),       node.friction)       : node.friction;
-    p.restitution    = a.bounce.isValid()         ? nonNegative(a.bounce.get(off),         node.restitution)    : node.restitution;
-    p.rollingResistance = a.rollingResistance.isValid() ? nonNegative(a.rollingResistance.get(off), node.rollingResistance)
+    p.friction       = a.friction.isValid()       ? clampNonNeg(a.friction.get(off),       node.friction)       : node.friction;
+    p.restitution    = a.bounce.isValid()         ? clampNonNeg(a.bounce.get(off),         node.restitution)    : node.restitution;
+    p.rollingResistance = a.rollingResistance.isValid() ? clampNonNeg(a.rollingResistance.get(off), node.rollingResistance)
                                                         : node.rollingResistance;
-    for (int i = 0; i < 3; ++i)
-        p.tangentVelocity[i] = node.tangentVelocity[i];
+    b3dop::copy3(p.tangentVelocity, node.tangentVelocity);
     if (a.tangentVelocity.isValid())
     {
         const UT_Vector3 t = a.tangentVelocity.get(off);
@@ -206,8 +202,8 @@ readDynamicProps(const b3dop::BodySettings &node, const PointAttrs &a, GA_Offset
             for (int i = 0; i < 3; ++i)
                 p.tangentVelocity[i] = float(t(i));
     }
-    p.linearDamping  = a.lineardamping.isValid()  ? nonNegative(a.lineardamping.get(off),  node.linearDamping)  : node.linearDamping;
-    p.angularDamping = a.angulardamping.isValid() ? nonNegative(a.angulardamping.get(off), node.angularDamping) : node.angularDamping;
+    p.linearDamping  = a.lineardamping.isValid()  ? clampNonNeg(a.lineardamping.get(off),  node.linearDamping)  : node.linearDamping;
+    p.angularDamping = a.angulardamping.isValid() ? clampNonNeg(a.angulardamping.get(off), node.angularDamping) : node.angularDamping;
     p.gravityScale   = node.gravityScale;
     if (a.gravityscale.isValid())
     {
@@ -358,8 +354,7 @@ settingsFor(const b3dop::BodySettings &node, const Box3DBodyProps &p, b3dop::Bod
     b.friction       = p.friction;
     b.restitution    = p.restitution;
     b.rollingResistance = p.rollingResistance;
-    for (int i = 0; i < 3; ++i)
-        b.tangentVelocity[i] = p.tangentVelocity[i];
+    b3dop::copy3(b.tangentVelocity, p.tangentVelocity);
     b.linearDamping  = p.linearDamping;
     b.angularDamping = p.angularDamping;
     b.gravityScale   = p.gravityScale;
@@ -543,8 +538,7 @@ storePlan(Box3DBodyMirror &m, const ShapePlan &plan)
     m.shapeSig  = plan.sig;
     m.volume    = plan.shapes.totalVolume;
     m.autoScale = plan.autoScale;
-    for (int i = 0; i < 3; ++i)
-        m.sizeKey[i] = plan.sizeKey[i];
+    b3dop::copy3(m.sizeKey, plan.sizeKey);
 }
 
 // The slot's plan from the parallel pre-pass (moved out), else made now.
@@ -626,85 +620,46 @@ applyPropChanges(b3dop::Box3DWorld &world, Box3DBodyMirror &e, const Box3DBodyPr
     const Box3DBodyProps &o = e.props;
     const b3dop::BodyHandle h = e.handle;
     unsigned changed = shapesRebuilt ? unsigned(kPropsChanged) : 0u;
+    // Runs `set` and records a props change when `differs`.
+    auto apply = [&](bool differs, auto &&set) {
+        if (differs)
+        {
+            set();
+            changed |= kPropsChanged;
+        }
+    };
     const bool massChanged = p.mass != o.mass || p.computeMass != o.computeMass || p.density != o.density ||
                              p.inertiaScale != o.inertiaScale;
     if (!shapesRebuilt)
     {
-        if (p.friction != o.friction || p.restitution != o.restitution)
-        {
-            world.setMaterialByHandle(h, p.friction, p.restitution);
-            changed |= kPropsChanged;
-        }
+        apply(p.friction != o.friction || p.restitution != o.restitution,
+              [&] { world.setMaterialByHandle(h, p.friction, p.restitution); });
         if (massChanged)
         {
             applyBodyMass(world, h, p, e.volume);
             changed |= kPropsChanged | kMassChanged;
         }
-        if (p.filter != o.filter)
-        {
-            world.setFilterByHandle(h, p.filter);
-            changed |= kPropsChanged;
-        }
+        apply(p.filter != o.filter, [&] { world.setFilterByHandle(h, p.filter); });
     }
     else if (massChanged)
         changed |= kMassChanged;
-    if (p.linearDamping != o.linearDamping || p.angularDamping != o.angularDamping)
-    {
-        world.setDampingByHandle(h, p.linearDamping, p.angularDamping);
-        changed |= kPropsChanged;
-    }
-    if (p.gravityScale != o.gravityScale)
-    {
-        world.setGravityScaleByHandle(h, p.gravityScale);
-        changed |= kPropsChanged;
-    }
-    if (p.ccdThreshold != o.ccdThreshold)
-    {
-        world.setCcdThresholdByHandle(h, p.ccdThreshold);
-        changed |= kPropsChanged;
-    }
-    if (p.sleepThreshold != o.sleepThreshold)
-    {
-        world.setSleepThresholdByHandle(h, p.sleepThreshold);
-        changed |= kPropsChanged;
-    }
-    if (p.fastRotation != o.fastRotation)
-    {
-        world.setFastRotationByHandle(h, p.fastRotation);
-        changed |= kPropsChanged;
-    }
-    if (p.fastObject != o.fastObject)
-    {
-        world.setBulletByHandle(h, p.fastObject);
-        changed |= kPropsChanged;
-    }
-    if (p.rollingResistance != o.rollingResistance || !std::equal(p.tangentVelocity, p.tangentVelocity + 3, o.tangentVelocity))
-    {
-        world.setSurfaceByHandle(h, p.rollingResistance, p.tangentVelocity);
-        changed |= kPropsChanged;
-    }
-    if (p.locks != o.locks)
-    {
-        world.setMotionLocksByHandle(h, p.locks);
-        changed |= kPropsChanged;
-    }
-    if (p.contactRecycling != o.contactRecycling)
-    {
-        world.setContactRecyclingByHandle(h, p.contactRecycling);
-        changed |= kPropsChanged;
-    }
-    if (p.enableSleep != o.enableSleep)
-    {
-        world.setSleepEnabledByHandle(h, p.enableSleep);
-        changed |= kPropsChanged;
-    }
-    if (p.enabled != o.enabled)
-    {
+    apply(p.linearDamping != o.linearDamping || p.angularDamping != o.angularDamping,
+          [&] { world.setDampingByHandle(h, p.linearDamping, p.angularDamping); });
+    apply(p.gravityScale != o.gravityScale, [&] { world.setGravityScaleByHandle(h, p.gravityScale); });
+    apply(p.ccdThreshold != o.ccdThreshold, [&] { world.setCcdThresholdByHandle(h, p.ccdThreshold); });
+    apply(p.sleepThreshold != o.sleepThreshold, [&] { world.setSleepThresholdByHandle(h, p.sleepThreshold); });
+    apply(p.fastRotation != o.fastRotation, [&] { world.setFastRotationByHandle(h, p.fastRotation); });
+    apply(p.fastObject != o.fastObject, [&] { world.setBulletByHandle(h, p.fastObject); });
+    apply(p.rollingResistance != o.rollingResistance || !std::equal(p.tangentVelocity, p.tangentVelocity + 3, o.tangentVelocity),
+          [&] { world.setSurfaceByHandle(h, p.rollingResistance, p.tangentVelocity); });
+    apply(p.locks != o.locks, [&] { world.setMotionLocksByHandle(h, p.locks); });
+    apply(p.contactRecycling != o.contactRecycling, [&] { world.setContactRecyclingByHandle(h, p.contactRecycling); });
+    apply(p.enableSleep != o.enableSleep, [&] { world.setSleepEnabledByHandle(h, p.enableSleep); });
+    apply(p.enabled != o.enabled, [&] {
         world.setEnabledByHandle(h, p.enabled);
         if (p.enabled)
             e.awake = true;             // Box3D enables a body awake; the awake check after this applies a 0
-        changed |= kPropsChanged;
-    }
+    });
     e.props = p;
     return changed;
 }
@@ -820,7 +775,7 @@ updateExistingBody(ScanContext &ctx, Box3DSharedState &st, Box3DPointSlot &s, Bo
         if (poseDiffers(cur, entry))
         {
             world.setTargetTransformByHandle(entry.handle, cur.pos, cur.rot, st.stepDt);
-            static_cast<Box3DBodyPose &>(entry) = cur;
+            entry.setPose(cur);
             entry.driven = true;
             ++c.edited;
         }
@@ -837,7 +792,7 @@ updateExistingBody(ScanContext &ctx, Box3DSharedState &st, Box3DPointSlot &s, Bo
     {
         world.setTransformByHandle(entry.handle, cur.pos, cur.rot);
         world.setVelocityByHandle(entry.handle, cur.lin, cur.ang);
-        static_cast<Box3DBodyPose &>(entry) = cur;
+        entry.setPose(cur);
         ++c.edited;
     }
 }
@@ -1106,7 +1061,7 @@ syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c, StepProgr
             }
             if (!fallbackNote.empty())
                 ++c.fallbacks[fallbackNote];
-            static_cast<Box3DBodyPose &>(*entry) = s.cur;
+            entry->setPose(s.cur);
             entry->type     = wantedType(node, s.active, animated, entry->shapeless);
             entry->handle   = handle;
             entry->driven   = false;
