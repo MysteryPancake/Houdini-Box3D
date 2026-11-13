@@ -140,6 +140,7 @@ remove an item once it has been checked, and record anything new here rather tha
   RBD Objects, at the right pose on cached frames; `SIM_GuidePerObject` really gets one guide per solved object from
   the solver's subdata. Calls used: `createGuideObjectSubclass`, `buildGuideGeometrySubclass`, `setGuideTemplates`,
   `GET_GUIDE_FUNC_B` / `_V3`, `SIM_Engine::getNumSimulationObjects` / `getSimulationObject`, `GU_PrimPoly::build`.
+  Built and drawing (confirmed by eye). It draws nothing on an object's creation frame: see Known gaps.
 * Performance Monitor stage events (`UT_PerfMonAutoSolveEvent`, see solver.md): built, but not yet looked at in the
   profiler (whether they nest under the solver node's entry the way Bullet's do).
 
@@ -173,6 +174,11 @@ passed as a `PRM_Template`'s conditional pointer.
 * Mirrored packed pieces lose their mirror once they move (the write-back writes a non-mirrored transform).
 * Packed primitive spheres and nested packed primitives collide as one point (hulls from points only): unpack or warn.
 * SideFX Glue breaks under static load (Break Force = strength / timestep) where Bullet's Glue holds.
+* The solver's collision-shape guide draws nothing on an object's creation frame (frame 1 for most scenes): new
+  objects are first solved a step later, and a step whose objects are all new builds no world, so there are no
+  bodies to draw. A preview world built just for the guide was tried and dropped. Solve On Creation Frame on the
+  object (`SIM_Object::getSolveFirstFrame()`) is not read either: the solver drops every new object; honouring it
+  would also give such objects a guide on their first frame.
 
 * GCC/Clang `-Wshadow` (shadowing members and outer scopes, beyond the local shadowing MSVC `/W4` reports) and
   `-Wconversion` (about 12) are off.
