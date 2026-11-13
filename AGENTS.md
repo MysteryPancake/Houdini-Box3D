@@ -50,7 +50,7 @@ attributes, no restating how the sibling controls work.
 CMakeLists.txt        Targets: b3dop_core, 3 test exes, Box3DDOP (plugin)
 build.sh / build.bat  Convenience wrappers (HFS discovery, submodule fetch, stale build/ reset)
 extern/box3d/         Box3D submodule (never edit; static lib, EXCLUDE_FROM_ALL)
-icons/box3d.svg     Node icon; the build copies it to config/Icons as DOP_box3d_solver.svg and DOP_box3d_data.svg
+icons/box3d.svg     Node icon; the build copies it to config/Icons as DOP_<node name>.svg for every node
 src/                  The include root: includes are written "core/Box3DWorld.h" (bare name within a folder)
   core/               Houdini-free; built as b3dop_core and covered by the tests
     Box3DShapes.h       Header-only: shape math, packed-prim matrices, hashing
@@ -62,11 +62,19 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     SIM_Box3DWorld.*    SIM_Data owning the shared world state (the rebuildable cache)
     SIM_Box3DData.*     Default-settings DOP node
     SIM_Box3DConRel.*   Box3D <Type> Constraint Relationship DOP nodes (one per joint type), parameters from the table
-    SIM_SolverBox3D.*   The solver: sync, step, write-back, post-step passes (the bulk of the plugin)
+    SIM_Box3DParms.h    Box3DParms: builds a node's parameter templates (tabs, ranges, menus) from a table
+    SIM_SolverBox3D.*   The solver node: parameters, node messages and the solve loop (the parts are in sync/)
     SIM_Box3DRegister.cpp  initializeSIM(); includes UT_DSOVersion.h (exactly once, keep it here)
   sync/               Houdini data -> the Box3D world, used by the solver
+    Box3DSolverInternal.h  What the solver's parts share (namespace box3dsolver); only the solver's files include it
+    Box3DShapeBuild.cpp    Packed primitives, collision source geometry (pieces, summary cache), buildShapes
+    Box3DPointSync.cpp     One body per point: point state, fingerprint, body settings, shape plans, syncObject
+    Box3DWholeObject.cpp   One body per DOP object (RBD Object etc.): sync and Position write-back
+    Box3DPostStep.cpp      After the step: writeResultsBack, Impacts, point writes, aging, dead points
+    Box3DForces.cpp        Force DOPs and point force / torque
     Box3DJointSync.*    Constraint networks -> Box3D joints: read, resolve names, create / update / remove, break, feedback
     Box3DAffectors.*    Affector objects (Static Object DOP etc.) -> static colliders
+    Box3DHoudiniUtil.h  Shared Houdini helpers: writable geometry, object by id, 4x4 to array, Euler to quaternion
     Box3DHoudiniTasks.h TaskRunner on Houdini's TBB pool (UT_TaskGroup). Only SIM_Box3DWorld.cpp includes it
 tests/
   KeyedWorld.h        Test-only Box3DWorld subclass: bodies by caller-chosen id, over the handle API
@@ -172,7 +180,7 @@ budget (`setSharedHullBudget`, default 256 MB) the least recently used entries a
 `findHull`, `createHull` and `createHullWithKey` are thread-safe (the solver's shape pre-pass); nothing else is.
 `hullCacheSize()` is the hulls a world holds; `sharedHullCount/Bytes`, `hullBuildCount/Attempts` report on the cache.
 
-Packed sources also get a **source summary** (`SourceSummaryCache` in SIM_SolverBox3D.cpp, process-wide): the group and
+Packed sources also get a **source summary** (`SourceSummaryCache` in Box3DShapeBuild.cpp, process-wide): the group and
 piece hashes, keyed by the source detail's identity (`getUniqueId`, `P` and primitive-list data ids, counts, fragment,
 connected or not). `buildShapes` tries it first for packed convex / concave points: when every hull key it gives is still
 cached, the source geometry is not read or hashed at all. This relies on whoever edits a source bumping its data ids.
@@ -242,7 +250,7 @@ points, so no half-built body), and once before the step. A cancel latches. Canc
 `st->stamped = false` (the half-synced world can never be continued; the next solve that would continue it rebuilds),
 a `UT_ERROR_MESSAGE` "Box3D: step cancelled", and `SIM_SOLVER_FAIL`. `b3World_Step` itself is not interruptible, and
 once it has run the step always finishes (write-back etc. are quick), so a cached step is always whole.
-`StepProgress` is at file scope (the header forward-declares it), not in the anonymous namespace.
+`StepProgress` is at global scope in `Box3DSolverInternal.h` (the solver header forward-declares it).
 
 Data names: `"Box3DWorld"`, `kBox3DDataName` (`"Box3DData"`, SIM_Box3DData.h), `SIM_GEOMETRY_DATANAME`.
 
@@ -324,7 +332,7 @@ equal to what its body was built with.
   `autoScale` (convex / concave only, as in Houdini), a size-key change beyond 1e-4 relative (`sizeKey` = packed row
   lengths or `pscale * scale`; the tolerance absorbs our own write-back's float noise). `planShapes` (the same code as a
   new body) gives a `shapeSignature` (hull keys + primitive numbers); equal -> nothing touched. Otherwise
-  `destroyShapesByHandle`, `addPlannedShapes`, `applyBodyMass` (even with no shapes, to clear Box3D's dirty mass),
+  `destroyShapesByHandle`, `addShapes`, `applyBodyMass` (even with no shapes, to clear Box3D's dirty mass),
   `wakeByHandle`. The body keeps its handle, pose, velocity and identity. A plan of `none`, or shapes that all fail,
   leaves the body `shapeless`, hence static.
 * Editing `bullet_georep`, `bullet_autofit`, `bullet_prim*`, `bullet_radius`, `bullet_length` or a primitive's size
@@ -442,8 +450,9 @@ equal to what its body was built with.
 
 * Type: `wantedType` (active -> node type; inactive -> static, or kinematic if animated; shapeless -> static).
 * `readDynamicProps` + `settingsFor` give the settings; `planShapes` the shape type (`bullet_georep`, else node
-  `defaultShape`) and pieces; `addPlannedShapes` adds them; `applyBodyMass`; then the initial `v` / `w` (after the mass,
-  because a moving centre of mass shifts the velocity; not for static or animated bodies, nor for one that is not awake).
+  `defaultShape`) and pieces; `createBodyWithShapes` (shared with whole objects) makes the body, adds them
+  (`addShapes`), `applyBodyMass`, then the initial `v` / `w` (after the mass, because a moving centre of mass shifts the
+  velocity; not for static or animated bodies, nor for one that is not awake).
 * The mirror entry is inserted (`try_emplace`) before the body exists and becomes its user data; it is erased again if
   the body cannot be built. A body is never left without shapes, except `none`. 64+ new bodies in one scan reserve the
   mirror once.
@@ -657,6 +666,10 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   it. `angleTypes` marks a Float that is an angle for some types only (`motor_speed`: revolute deg/s, prismatic and
   distance units/s). `Rotation` is Euler XYZ degrees in Houdini and a quaternion in the core.
 * `Box3DWorld::defaultJointSettings(type)` copies `b3Default*JointDef`, so the node's defaults are Box3D's.
+* Houdini units in one place: `jointParamSize` (1 or 3 values), `setJointParam` (Houdini values -> settings: degrees
+  -> radians, toggles, Euler rotations through a caller-supplied converter, `box3dEulerToQuat`) and `getJointParam`
+  (the inverse, for node defaults). Used by the nodes and by the primitive overrides (for everything but floats,
+  which multiply); a test round-trips every setting.
 * `createJoint(type, bodyA, bodyB, frameA, frameB, settings, userData)`: frames are world space (anchor P +
   orient) and converted to each body's local frame from its current transform (`toLocal`). A null BodyHandle is the
   world: one shapeless static body per world, made on first use (`Impl::anchor`, not in `bodyCount`). Settings are
@@ -679,8 +692,9 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
 * Nodes: `SIM_Box3DConRel` (`SIM_ConRel` + `SIM_OptionsUser`, like SideFX's `SIM_ConRelSpring`; abstract,
   `DECLARE_CLASSNAME` only) and one subclass per joint type from `BOX3D_DECLARE_CONREL`, each with its own automatic DOP
   (`box3d_<type>conrel`, label "Box3D <Type> Constraint Relationship", default Data Name `<type>`). `describe(type)`
-  builds the parameters from `jointParams()` once per type: every setting the type uses, common ones first, parameter
-  name = attribute name (no per-type prefixes). `settings()` reads them in Box3D units over Box3D's defaults.
+  builds the parameters (`Box3DParms`, defaults from `getJointParam`) once per type: every setting the type uses,
+  common ones first, parameter name = attribute name (no per-type prefixes). `settings()` reads them through
+  `setJointParam` in Box3D units over Box3D's defaults.
 * Networks: every relationship of a solved object (group and affector side) whose relationship type data is a
   `SIM_ConstraintNetworkRelationship`, once per relationship name (a relationship is on every object it constrains),
   geometry from its `getGeometry()`; plus each object's own `ConstraintGeometry` (Attach Internal Constraints to
@@ -771,10 +785,10 @@ remove an item once it has been checked, and record anything new here rather tha
 
 **General**
 * No `SIM_*` code has automated tests or CI; `tests/box3d_test.hiplc` is a manual scene. The core tests pass.
-* The code is written without a Houdini install. `SIM_Box3DConRel.*`, `Box3DJointSync.cpp` and the whole-object code
-  in `SIM_SolverBox3D.cpp` were only compiled against minimal stand-in HDK headers (plain C++ errors caught, not HDK
-  API mistakes); the edits for whole objects in `syncObject`, `writeResultsBack`, `ageObjects` and
-  `applyExternalForces` were not even stub-checked. `Box3DHoudiniTasks.h` was not compiled against the HDK when written.
+* The code is written without a Houdini install. Since the constraint networks, whole-object bodies and the split of
+  the solver into `sync/` files, every `SIM_*` and `sync/` file has only been compiled against minimal stand-in HDK
+  headers (plain C++ errors and cross-file symbols checked, not HDK API mistakes). `Box3DHoudiniTasks.h` was not
+  compiled against the HDK when written.
 * `tests/box3d_test.hiplc` still uses the removed Box3D Joints node and needs rebuilding with a Constraint Network.
 
 **HDK and Houdini behaviour**
@@ -791,9 +805,17 @@ remove an item once it has been checked, and record anything new here rather tha
   capsule's straight section without caps).
 * Static Object affectors: the relationship type string `"SIM_RelationshipCollide"`, and Houdini's polygon winding
   (taken as clockwise front faces; Flip Static Mesh Winding exists in case it is the other way).
-* The `PRM_SWITCHER` tab layout (`PRM_Default(count, label)` per tab) for SIM data classes: documented for ordinary
-  nodes only.
+* The `PRM_SWITCHER` tab layout (`PRM_Default(count, label)` per tab, built by `Box3DParms`) for SIM data classes:
+  documented for ordinary nodes only.
 * The GETSET setters' float / double overloads as listed for `SIM_OptionsUser.h`.
+* Objects in one solve call: Houdini passes several objects to one solver call only when they share the same Solver
+  data and are in a mutual relationship; otherwise each object (or group) is solved in its own call, with feedback
+  loops between them. The world lives on the first object of each call (`findOrCreateWorldData`), so objects that
+  arrive in separate calls get separate worlds and neither collide nor join through constraints. Matters for several
+  packed objects and above all for whole-object bodies (each RBD Object is its own DOP object). Check that the
+  generated Box3D Solver node puts its objects in a mutual relationship (Bullet's does unless Solver Per Object is on):
+  two RBD Objects in one Box3D Solver should affect each other both ways in the Geometry Spreadsheet's Affector
+  Matrix. If not, the solver node has to create the relationship itself.
 
 **Constraint relationship nodes**
 * The nine DOPs appear (`box3d_<type>conrel`, labels "Box3D <Type> Constraint Relationship") with a Data Name
@@ -881,6 +903,11 @@ The one list of what is still to do. Keep it here only (no TODO comments in the 
 
 * Box3D headers only in `Box3DWorld.cpp`; `UT/UT_DSOVersion.h` only in `SIM_Box3DRegister.cpp`; new `SIM_Data` classes
   registered in `initializeSIM`.
+* The solver's parts live in `namespace box3dsolver`; anything one part uses from another is declared in
+  `Box3DSolverInternal.h` (default arguments there, not on the definitions). Small Houdini helpers used by several
+  files go in `Box3DHoudiniUtil.h`, Houdini-free math (`kDegToRad`, `quatsDiffer`, `xformPoint`) in `Box3DShapes.h`.
+* Node messages go through `SIM_SolverBox3D::message` / `warnCount` ("Box3D: " prefix, first object; counts only when
+  non-zero). Whole objects count separately from points (`failedObjects`, `objectFallbacks`).
 * Anything kept in the world must be reconstructible from point attributes, or a scrub / reload loses it.
 * Hull keys must always imply identical body-local points (`createHullWithKey` trusts them).
 * Sanitize every new input path: Box3D asserts on non-unit quaternions and negative material values.
@@ -909,9 +936,11 @@ callbacks get no context, so each rule is its own plain function chosen by `fric
 
 ## Parameter tabs
 
-Both nodes group their parameters with a `PRM_SWITCHER` template first in the list. Each `PRM_Default(count, label)` is
-one tab and `count` must equal the number of templates listed under it, so keep the two in step when adding a
-parameter.
+Every node's parameters come from `Box3DParms` (SIM_Box3DParms.h): one call per tab and per parameter (`toggle`,
+`number`, `integer`, `vector`, `menu`; ranges as `Range{ min, max, hardMax }` with a hard minimum; an optional
+disable condition). It keeps the names, defaults, ranges, menus and conditions alive, counts each tab's parameters for
+the `PRM_SWITCHER` (`PRM_Default(count, label)` per tab) and terminates the list. A function-local static, because
+Houdini keeps pointers into it. Menu tokens are "0", "1", ... in item order (read as ints).
 
 ## Package
 

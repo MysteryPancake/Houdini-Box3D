@@ -64,15 +64,11 @@ int main()
     {
         for (int t = 0; t < kJointTypeCount; ++t)
         {
-            JointType back = JointType::Filter;
-            CHECK(parseJointType(jointTypeName(JointType(t)), back) && back == JointType(t));
             std::set<std::string> names;
             for (const JointParam &p : jointParams())
                 if (p.usedBy(JointType(t)))
                     CHECK(names.insert(p.name).second);         // a name means one thing per type
         }
-        JointType unchanged = JointType::Wheel;
-        CHECK(!parseJointType("hinge", unchanged) && !parseJointType("", unchanged) && unchanged == JointType::Wheel);
         for (const JointParam &p : jointParams())
         {
             const int members = (p.b ? 1 : 0) + (p.f ? 1 : 0) + (p.v ? 1 : 0) + (p.q ? 1 : 0);
@@ -93,6 +89,25 @@ int main()
         JointSettings a = weld, b = weld;
         b.motorSpeed = 5.0f;                                    // not a weld setting
         CHECK(sameJointSettings(JointType::Weld, a, b) && !sameJointSettings(JointType::Revolute, a, b));
+        // Houdini values: getJointParam then setJointParam gives the same settings (degrees round trip).
+        for (int t = 0; t < kJointTypeCount; ++t)
+        {
+            const JointType     type = JointType(t);
+            const JointSettings d    = Box3DWorld::defaultJointSettings(type);
+            JointSettings       r    = d;
+            for (const JointParam &p : jointParams())
+            {
+                if (!p.usedBy(type) || p.kind == JointParam::Rotation)
+                    continue;
+                float v[3];
+                getJointParam(d, p, type, v);
+                setJointParam(r, p, type, v, nullptr);
+            }
+            for (const JointParam &p : jointParams())
+                if (p.usedBy(type) && (p.kind == JointParam::Float || p.kind == JointParam::Angle))
+                    CHECK(std::fabs(r.*p.f - d.*p.f) <= 1e-6f * std::max(1.0f, std::fabs(d.*p.f)));
+            CHECK(jointParamSize(jointParams()[0]) == 1);
+        }
         b.linearStiffness = 3.0f;
         CHECK(!sameJointSettings(JointType::Weld, a, b));
     }
@@ -434,7 +449,7 @@ int main()
         std::set<std::string> settings;
         for (const JointParam &p : jointParams())
             settings.insert(p.name);
-        for (const char *n : { "force", "torque", "linear_separation", "angular_separation" })
+        for (const char *n : { "force", "torque", "distance", "angle" })
             CHECK(!settings.count(n));
         for (int t = 0; t < kJointTypeCount; ++t)
         {

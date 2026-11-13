@@ -7,6 +7,9 @@
 #include <SIM/SIM_Solver.h>
 #include <SIM/SIM_OptionsUser.h>
 #include <SIM/SIM_DataUtils.h>
+#include <UT/UT_Error.h>
+
+#include <string>
 
 #include <vector>
 
@@ -78,6 +81,11 @@ private:
     // P, orient, v, w (and packed transforms) of the awake dynamic bodies. A rebuild only has
     // the geometry to work from.
     void writeResultsBack(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects);
+
+    // A node message on the first object: "Box3D: <text>". warnCount: "Box3D: <n> <text>", only
+    // when n > 0.
+    void message(SIM_ObjectArray &objects, const std::string &text, UT_ErrorSeverity severity = UT_ERROR_WARNING);
+    void warnCount(SIM_ObjectArray &objects, int n, const std::string &text);
 
     static const SIM_DopDescription *getDescription();
 

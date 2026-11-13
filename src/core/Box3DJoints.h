@@ -6,8 +6,9 @@
 // Box3DWorld creates the joints. Settings are in Box3D units: radians, radians per second, Hz.
 #pragma once
 
-#include <cstring>
 #include <vector>
+
+#include "Box3DShapes.h"     // kDegToRad, kRadToDeg
 
 namespace b3dop {
 
@@ -45,21 +46,6 @@ jointTypeLabel(JointType t)
                                                            "Motor", "Parallel", "Wheel", "Filter" };
     const int i = int(t);
     return (i >= 0 && i < kJointTypeCount) ? kLabels[i] : "";
-}
-
-// `joint_type` -> JointType, exact lowercase names. False (out untouched) for null, empty or unknown.
-inline bool
-parseJointType(const char *name, JointType &out)
-{
-    if (!name || !*name)
-        return false;
-    for (int i = 0; i < kJointTypeCount; ++i)
-        if (std::strcmp(name, jointTypeName(JointType(i))) == 0)
-        {
-            out = JointType(i);
-            return true;
-        }
-    return false;
 }
 
 // Every setting of every joint type, in Box3D units. Caps marked "< 0: unlimited" use a negative
@@ -374,6 +360,67 @@ sameJointSettings(JointType t, const JointSettings &a, const JointSettings &b)
         }
     }
     return true;
+}
+
+// Houdini side of a setting: how many values it has (1, or 3 for vectors and rotations).
+inline int
+jointParamSize(const JointParam &p)
+{
+    return (p.kind == JointParam::Toggle || p.kind == JointParam::Float || p.kind == JointParam::Angle) ? 1 : 3;
+}
+
+// Setting `p` of type `t` from its Houdini value(s): toggles non-zero = on, angles in degrees
+// (degrees per second for speeds), rotations as Euler XYZ degrees through `eulerToQuat` (a Houdini
+// call, so the core does not depend on Houdini's rotate order).
+inline void
+setJointParam(JointSettings &s, const JointParam &p, JointType t, const float v[3],
+              void (*eulerToQuat)(const float degrees[3], float q[4]))
+{
+    const float scale = p.isAngle(t) ? kDegToRad : 1.0f;
+    switch (p.kind)
+    {
+        case JointParam::Toggle:
+            s.*p.b = v[0] != 0.0f;
+            break;
+        case JointParam::Float:
+        case JointParam::Angle:
+            s.*p.f = v[0] * scale;
+            break;
+        case JointParam::Vec3:
+        case JointParam::Vec3Angle:
+            for (int i = 0; i < 3; ++i)
+                (s.*p.v)[i] = v[i] * scale;
+            break;
+        case JointParam::Rotation:
+            eulerToQuat(v, s.*p.q);
+            break;
+    }
+}
+
+// The Houdini value(s) of setting `p` of type `t` (the inverse of setJointParam). Rotations read
+// as zero Euler angles: only used for defaults, and Box3D's default targets are the identity.
+inline void
+getJointParam(const JointSettings &s, const JointParam &p, JointType t, float out[3])
+{
+    const float scale = p.isAngle(t) ? kRadToDeg : 1.0f;
+    out[0] = out[1] = out[2] = 0.0f;
+    switch (p.kind)
+    {
+        case JointParam::Toggle:
+            out[0] = (s.*p.b) ? 1.0f : 0.0f;
+            break;
+        case JointParam::Float:
+        case JointParam::Angle:
+            out[0] = s.*p.f * scale;
+            break;
+        case JointParam::Vec3:
+        case JointParam::Vec3Angle:
+            for (int i = 0; i < 3; ++i)
+                out[i] = (s.*p.v)[i] * scale;
+            break;
+        case JointParam::Rotation:
+            break;
+    }
 }
 
 // A joint frame in world space (an anchor point's P and orient).

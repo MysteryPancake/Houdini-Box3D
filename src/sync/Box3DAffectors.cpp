@@ -1,5 +1,6 @@
 // Box3DAffectors.cpp
 #include "Box3DAffectors.h"
+#include "Box3DHoudiniUtil.h"
 #include "core/Box3DAffectorMath.h"
 #include "core/Box3DDebug.h"
 #include "dop/SIM_Box3DData.h"
@@ -149,9 +150,7 @@ syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects, Box3DAffector
         UT_DMatrix4 xf;
         SIMgetGeometryTransform(xf, *obj);
         double m[16];
-        for (int r = 0; r < 4; ++r)
-            for (int c = 0; c < 4; ++c)
-                m[4 * r + c] = xf(r, c);
+        box3dToArray(xf, m);
         bool finite = true;
         for (double d : m)
             finite = finite && std::isfinite(d);

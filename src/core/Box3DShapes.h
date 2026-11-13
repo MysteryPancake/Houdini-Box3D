@@ -418,6 +418,32 @@ fitShapeToPoints(ShapeType type, const float *xyz, int count, ShapeSpec &out)
 // the write-back's prediction, so the solver can tell its own writes from other edits.
 // ---------------------------------------------------------------------------
 
+constexpr float kDegToRad = 0.017453292519943295f;
+constexpr float kRadToDeg = 57.29577951308232f;
+
+// Two rotations differ beyond float noise (q and -q are the same rotation): components compared
+// after aligning signs. A dot-product test would only see rotations above ~0.16 degrees.
+inline bool
+quatsDiffer(const float a[4], const float b[4], double eps = 1e-5)
+{
+    double dot = 0.0;
+    for (int i = 0; i < 4; ++i)
+        dot += double(a[i]) * double(b[i]);
+    const double sign = dot < 0.0 ? -1.0 : 1.0;
+    for (int i = 0; i < 4; ++i)
+        if (std::fabs(double(a[i]) - sign * double(b[i])) > eps)
+            return true;
+    return false;
+}
+
+// A point through a row-vector 4x4 (Houdini layout: p' = [p 1] * M, translation in row 3).
+inline void
+xformPoint(const double m[16], const double p[3], double out[3])
+{
+    for (int c = 0; c < 3; ++c)
+        out[c] = p[0] * m[c] + p[1] * m[4 + c] + p[2] * m[8 + c] + m[12 + c];
+}
+
 // Box3D asserts on non-unit quaternions; attributes may hold zeros or off-unit values.
 inline void sanitizeQuat(float q[4])
 {

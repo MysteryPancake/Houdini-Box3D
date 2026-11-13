@@ -3,6 +3,7 @@
 #include "core/Box3DDebug.h"
 #include "dop/SIM_Box3DConRel.h"
 #include "dop/SIM_Box3DWorld.h"
+#include "Box3DHoudiniUtil.h"
 
 #include <GA/GA_Handle.h>
 #include <GA/GA_Iterator.h>
@@ -27,8 +28,6 @@
 #include <vector>
 
 namespace {
-
-constexpr float kRadToDeg = 57.29577951308232f;
 
 // The Constraint Network DOP's attribute and group names.
 const char *const kConstraintName     = "constraint_name";
@@ -82,23 +81,11 @@ networkGeometry(const SIM_Object &obj, const NetworkSource &src)
     return cn ? cn->getGeometry() : nullptr;
 }
 
-// A writable SIM_GeometryCopy for the object's data `name` (a referenced SOP geometry is replaced
-// once by a copy that adopts it), or null.
-SIM_GeometryCopy *
-writableGeometry(SIM_Object &obj, const char *name)
-{
-    if (SIM_GeometryCopy *geo = SIM_DATA_GET(obj, name, SIM_GeometryCopy))
-        return geo;
-    if (!SIM_DATA_GETCONST(obj, name, SIM_Geometry))
-        return nullptr;
-    return SIM_DATA_CREATE(obj, name, SIM_GeometryCopy, SIM_DATA_RETURN_EXISTING | SIM_DATA_ADOPT_EXISTING_ON_DELETE);
-}
-
 SIM_GeometryCopy *
 writableNetworkGeometry(SIM_Object &obj, const NetworkSource &src)
 {
     if (src.relName.empty())
-        return writableGeometry(obj, kInternalGeometry);
+        return box3dWritableGeometry(obj, kInternalGeometry);
     SIM_Relationship *rel = obj.getRelationships(src.inGroup).findRelationshipByName(src.relName.c_str());
     SIM_Data *type = rel ? rel->getRelationshipTypeData() : nullptr;
     SIM_ConstraintNetworkRelationship *cn = type ? SIM_DATA_CAST(type, SIM_ConstraintNetworkRelationship) : nullptr;
@@ -190,15 +177,6 @@ networkFingerprint(const GU_Detail *gdp)
         h = mixHash(h, idOf(gdp->findPrimitiveAttribute(p.name)));
     const GA_PrimitiveGroup *broken = gdp->findPrimitiveGroup(kBrokenGroup);
     return mixHash(h, broken ? uint64_t(broken->getDataId()) : ~0ull);
-}
-
-SIM_Object *
-objectById(SIM_ObjectArray &objects, int id)
-{
-    for (exint i = 0; i < objects.entries(); ++i)
-        if (objects(i)->getObjectId() == id)
-            return objects(i);
-    return nullptr;
 }
 
 // Anchor names -> bodies, over the objects of this solve (in their order) and the affectors.
@@ -314,38 +292,25 @@ applyOverrides(const std::vector<SettingReader> &readers, b3dop::JointType type,
                b3dop::JointSettings &s)
 {
     using b3dop::JointParam;
-    constexpr float kDegToRad = 0.017453292519943295f;
     for (const SettingReader &r : readers)
     {
         const JointParam &p = *r.param;
         if (!p.usedBy(type))
             continue;
-        switch (p.kind)
+        if (p.kind == JointParam::Float || p.kind == JointParam::Angle)
         {
-            case JointParam::Toggle:
-                s.*p.b = r.i.get(prim) != 0;
-                break;
-            case JointParam::Float:
-            case JointParam::Angle:
-                s.*p.f *= r.f.get(prim);
-                break;
-            case JointParam::Vec3:
-            case JointParam::Vec3Angle:
-            {
-                const float     scale = p.isAngle(type) ? kDegToRad : 1.0f;
-                const UT_Vector3 v    = r.v.get(prim);
-                for (int k = 0; k < 3; ++k)
-                    (s.*p.v)[k] = v(k) * scale;
-                break;
-            }
-            case JointParam::Rotation:
-            {
-                const UT_Vector3 v = r.v.get(prim);
-                const float deg[3] = { v(0), v(1), v(2) };
-                box3dEulerToQuat(deg, s.*p.q);
-                break;
-            }
+            s.*p.f *= r.f.get(prim);
+            continue;
         }
+        float v[3] = { 0, 0, 0 };
+        if (p.kind == JointParam::Toggle)
+            v[0] = float(r.i.get(prim));
+        else
+        {
+            const UT_Vector3 a = r.v.get(prim);
+            v[0] = a.x();  v[1] = a.y();  v[2] = a.z();
+        }
+        b3dop::setJointParam(s, p, type, v, box3dEulerToQuat);
     }
 }
 
@@ -367,21 +332,6 @@ jointSignature(b3dop::JointType type, b3dop::BodyHandle a, b3dop::BodyHandle b, 
     return h ? h : 1;
 }
 
-// Two quaternions differ beyond float noise: components compared after aligning signs (q and -q
-// are the same rotation). A dot-product test would miss rotations under ~0.16 degrees.
-bool
-quatDiffers(const float *a, const float *b, double eps = 1e-5)
-{
-    double dot = 0.0;
-    for (int k = 0; k < 4; ++k)
-        dot += double(a[k]) * double(b[k]);
-    const double sign = dot < 0.0 ? -1.0 : 1.0;
-    for (int k = 0; k < 4; ++k)
-        if (std::fabs(double(a[k]) - sign * double(b[k])) > eps)
-            return true;
-    return false;
-}
-
 // An anchor moved away from what the solver last wrote: edited upstream (q and -q are equal).
 bool
 frameEdited(const b3dop::JointFrame &now, const b3dop::JointFrame &wrote)
@@ -389,7 +339,7 @@ frameEdited(const b3dop::JointFrame &now, const b3dop::JointFrame &wrote)
     for (int k = 0; k < 3; ++k)
         if (std::fabs(now.pos[k] - wrote.pos[k]) > 1e-5 * std::max(1.0, std::fabs(wrote.pos[k])))
             return true;
-    return quatDiffers(now.rot, wrote.rot);
+    return b3dop::quatsDiffer(now.rot, wrote.rot);
 }
 
 // A frame as the geometry stores it (float P), so it compares equal when read back.
@@ -400,6 +350,90 @@ asStored(const b3dop::JointFrame &f)
     for (int k = 0; k < 3; ++k)
         out.pos[k] = double(float(f.pos[k]));
     return out;
+}
+
+// What processNetwork() reads from a network's geometry, bound once.
+struct NetworkReader
+{
+    const GU_Detail         *gdp;
+    const GA_ROHandleS       conName, name;
+    const GA_ROHandleF       autoRest;
+    const GA_ROHandleQ       orient, localQ;
+    const GA_ROHandleV3      localP;
+    const GA_PrimitiveGroup *broken;
+
+    explicit NetworkReader(const GU_Detail *g)
+        : gdp(g),
+          conName(g, GA_ATTRIB_PRIMITIVE, kConstraintName),
+          name(g, GA_ATTRIB_POINT, "name"),
+          autoRest(g, GA_ATTRIB_PRIMITIVE, kAutoRestLength),
+          orient(g, GA_ATTRIB_POINT, "orient"),
+          localQ(g, GA_ATTRIB_POINT, "local_orient"),
+          localP(g, GA_ATTRIB_POINT, "local_P"),
+          broken(g->findPrimitiveGroup(kBrokenGroup))
+    {
+    }
+
+    std::string anchorName(GA_Offset pt) const
+    {
+        const char *n = name.isValid() ? static_cast<const char *>(name.get(pt)) : nullptr;
+        return n ? std::string(n) : std::string();
+    }
+
+    // The anchor's P / orient: its frame in world space.
+    b3dop::JointFrame frame(GA_Offset pt) const
+    {
+        b3dop::JointFrame f;
+        const UT_Vector3 p = gdp->getPos3(pt);
+        f.pos[0] = p.x();  f.pos[1] = p.y();  f.pos[2] = p.z();
+        if (orient.isValid())
+        {
+            const UT_QuaternionF q = orient.get(pt);
+            f.rot[0] = q.x();  f.rot[1] = q.y();  f.rot[2] = q.z();  f.rot[3] = q.w();
+        }
+        return f;
+    }
+
+    // The primitive's constraint data (by `constraint_name`), or null.
+    const Box3DJointKind *kind(GA_Offset prim, const std::unordered_map<std::string, Box3DJointKind> &kinds) const
+    {
+        const char *n = conName.isValid() ? static_cast<const char *>(conName.get(prim)) : nullptr;
+        if (!n || !*n)
+            return nullptr;
+        const auto it = kinds.find(std::string(n));
+        return it == kinds.end() ? nullptr : &it->second;
+    }
+
+    // The anchor's saved local frame (local_P / local_orient), if it has one (a zero quaternion: none).
+    bool savedLocal(GA_Offset pt, b3dop::JointFrame &out) const
+    {
+        if (!localP.isValid() || !localQ.isValid())
+            return false;
+        const UT_Vector3     p = localP.get(pt);
+        const UT_QuaternionF q = localQ.get(pt);
+        if ((q.x() == 0.0f && q.y() == 0.0f && q.z() == 0.0f && q.w() == 0.0f) ||
+            !std::isfinite(p.x()) || !std::isfinite(p.y()) || !std::isfinite(p.z()))
+            return false;
+        out.pos[0] = p.x();  out.pos[1] = p.y();  out.pos[2] = p.z();
+        out.rot[0] = q.x();  out.rot[1] = q.y();  out.rot[2] = q.z();  out.rot[3] = q.w();
+        return true;
+    }
+};
+
+// A saved local frame still describes its anchor: through the body's pose now it lands on the
+// anchor's P / orient (written together after the same step). A renamed, moved or new anchor
+// does not, and is made from P / orient instead.
+bool
+localFrameAgrees(const b3dop::Box3DWorld &world, b3dop::BodyHandle body, const b3dop::JointFrame &local,
+                 const b3dop::JointFrame &live)
+{
+    b3dop::JointFrame w;
+    if (!world.localToWorld(body, local, w))
+        return false;
+    for (int k = 0; k < 3; ++k)
+        if (std::fabs(w.pos[k] - live.pos[k]) > 1e-5 * std::max(1.0, std::fabs(live.pos[k])))
+            return false;
+    return !b3dop::quatsDiffer(w.rot, live.rot);
 }
 
 struct NetworkRef
@@ -444,68 +478,8 @@ processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &ancho
     net.bodyVersion = st.bodyVersion;
     net.liveStamp   = st.syncStamp;
 
-    const GA_ROHandleS  conNameH(gdp, GA_ATTRIB_PRIMITIVE, kConstraintName);
-    const GA_ROHandleF  autoRestH(gdp, GA_ATTRIB_PRIMITIVE, kAutoRestLength);
-    const GA_ROHandleS  nameH(gdp, GA_ATTRIB_POINT, "name");
-    const GA_ROHandleQ  orientH(gdp, GA_ATTRIB_POINT, "orient");
-    const GA_ROHandleV3 localPH(gdp, GA_ATTRIB_POINT, "local_P");
-    const GA_ROHandleQ  localQH(gdp, GA_ATTRIB_POINT, "local_orient");
-    const GA_PrimitiveGroup *brokenGroup = gdp->findPrimitiveGroup(kBrokenGroup);
+    const NetworkReader              rd(gdp);
     const std::vector<SettingReader> readers = bindSettings(gdp);
-
-    auto anchorName = [&](GA_Offset pt) {
-        if (!nameH.isValid())
-            return std::string();
-        const char *n = nameH.get(pt);
-        return n ? std::string(n) : std::string();
-    };
-    auto anchorFrame = [&](GA_Offset pt) {
-        b3dop::JointFrame f;
-        const UT_Vector3 p = gdp->getPos3(pt);
-        f.pos[0] = p.x();  f.pos[1] = p.y();  f.pos[2] = p.z();
-        if (orientH.isValid())
-        {
-            const UT_QuaternionF q = orientH.get(pt);
-            f.rot[0] = q.x();  f.rot[1] = q.y();  f.rot[2] = q.z();  f.rot[3] = q.w();
-        }
-        return f;
-    };
-    // The primitive's constraint data (by `constraint_name`), or null.
-    auto kindOf = [&](GA_Offset prim) -> const Box3DJointKind * {
-        if (!conNameH.isValid())
-            return nullptr;
-        const char *n = conNameH.get(prim);
-        if (!n || !*n)
-            return nullptr;
-        const auto it = net.kinds.find(std::string(n));
-        return it == net.kinds.end() ? nullptr : &it->second;
-    };
-
-    // An anchor's saved local frame (local_P / local_orient), if it has one (a zero quaternion: none).
-    auto savedLocal = [&](GA_Offset pt, b3dop::JointFrame &out) {
-        if (!localPH.isValid() || !localQH.isValid())
-            return false;
-        const UT_Vector3     p = localPH.get(pt);
-        const UT_QuaternionF q = localQH.get(pt);
-        if ((q.x() == 0.0f && q.y() == 0.0f && q.z() == 0.0f && q.w() == 0.0f) ||
-            !std::isfinite(p.x()) || !std::isfinite(p.y()) || !std::isfinite(p.z()))
-            return false;
-        out.pos[0] = p.x();  out.pos[1] = p.y();  out.pos[2] = p.z();
-        out.rot[0] = q.x();  out.rot[1] = q.y();  out.rot[2] = q.z();  out.rot[3] = q.w();
-        return true;
-    };
-    // The saved local frame still describes this anchor: through the body's pose now it lands on
-    // the anchor's P / orient (written together after the same step). A renamed, moved or new
-    // anchor does not, and is made from P / orient instead.
-    auto agrees = [&](b3dop::BodyHandle body, const b3dop::JointFrame &local, const b3dop::JointFrame &live) {
-        b3dop::JointFrame w;
-        if (!world.localToWorld(body, local, w))
-            return false;
-        for (int k = 0; k < 3; ++k)
-            if (std::fabs(w.pos[k] - live.pos[k]) > 1e-5 * std::max(1.0, std::fabs(live.pos[k])))
-                return false;
-        return !quatDiffers(w.rot, live.rot);
-    };
 
     for (GA_Iterator it(gdp->getPrimitiveRange()); !it.atEnd(); ++it)
     {
@@ -518,7 +492,7 @@ processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &ancho
             ++counts.notLines;
             continue;
         }
-        const Box3DJointKind *kind = kindOf(off);
+        const Box3DJointKind *kind = rd.kind(off, net.kinds);
         if (!kind)
         {
             ++counts.unknown;
@@ -539,7 +513,7 @@ processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &ancho
         };
 
         // Broken (by us, or marked in the geometry): never remade.
-        if (e.broken || (brokenGroup && brokenGroup->containsOffset(off)))
+        if (e.broken || (rd.broken && rd.broken->containsOffset(off)))
         {
             e.broken = true;
             drop();
@@ -549,7 +523,7 @@ processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &ancho
 
         const GA_Offset   p0 = prim->getPointOffset(0), p1 = prim->getPointOffset(1);
         b3dop::BodyHandle a = 0, b = 0;
-        if (!anchors.resolve(anchorName(p0), a) || !anchors.resolve(anchorName(p1), b))
+        if (!anchors.resolve(rd.anchorName(p0), a) || !anchors.resolve(rd.anchorName(p1), b))
         {
             ++counts.unresolved;
             drop();
@@ -557,13 +531,13 @@ processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &ancho
         }
         // P / orient are live on a written network (where the pieces are now), so a world rebuilt
         // mid-simulation makes its joints from them exactly as frame 1 does from the authored ones.
-        const b3dop::JointFrame fa = anchorFrame(p0), fb = anchorFrame(p1);
+        const b3dop::JointFrame fa = rd.frame(p0), fb = rd.frame(p1);
         b3dop::JointSettings s = kind->settings;
         applyOverrides(readers, type, off, s);
         // A distance joint that measured its own rest length keeps it (see writeLiveFrames).
-        if (type == JointType::Distance && !(s.restLength >= 0.0f) && autoRestH.isValid())
+        if (type == JointType::Distance && !(s.restLength >= 0.0f) && rd.autoRest.isValid())
         {
-            const float made = autoRestH.get(off);
+            const float made = rd.autoRest.get(off);
             if (made >= 0.0f)
                 s.restLength = made;
         }
@@ -598,8 +572,8 @@ processNetwork(Box3DSharedState &st, const NetworkRef &ref, const Anchors &ancho
             // Exactly as before from the saved local frames when they still apply (a world rebuilt
             // mid-simulation); else from P / orient, and the local frames are saved after the step.
             b3dop::JointFrame la, lb;
-            const bool useLocal = !edited && savedLocal(p0, la) && savedLocal(p1, lb) && agrees(a, la, fa) &&
-                                  agrees(b, lb, fb);
+            const bool useLocal = !edited && rd.savedLocal(p0, la) && rd.savedLocal(p1, lb) && localFrameAgrees(world, a, la, fa) &&
+                                  localFrameAgrees(world, b, lb, fb);
             e.handle     = useLocal ? world.createJoint(type, a, b, la, lb, s, &e, true)
                                     : world.createJoint(type, a, b, fa, fb, s, &e);
             e.writeLocal = !useLocal;
@@ -857,7 +831,7 @@ jointsAfterStep(Box3DSharedState &st, SIM_ObjectArray &objects)
         const auto ents = entriesOf.find(kv.first);
         if (ents == entriesOf.end() && !anyBroken)
             continue;                           // no joints to keep live, nothing broke
-        SIM_Object *obj = objectById(objects, net.objectId);
+        SIM_Object *obj = box3dObjectById(objects, net.objectId);
         NetworkSource src;
         src.inGroup = net.inGroup;
         src.relName = net.relName;
@@ -959,7 +933,7 @@ jointsAfterStep(Box3DSharedState &st, SIM_ObjectArray &objects)
                 {
                     GA_RWHandleF &h = scalar(fb.extraName[k]);
                     if (h.isValid())
-                        h.set(e->prim, fb.extraIsAngle[k] ? fb.extra[k] * kRadToDeg : fb.extra[k]);
+                        h.set(e->prim, fb.extraIsAngle[k] ? fb.extra[k] * b3dop::kRadToDeg : fb.extra[k]);
                 }
             }
             for (auto &sc : scalars)

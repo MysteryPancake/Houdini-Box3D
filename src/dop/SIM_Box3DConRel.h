@@ -68,5 +68,3 @@ BOX3D_DECLARE_CONREL(SIM_Box3DConRelParallel,  b3dop::JointType::Parallel,  "Box
 BOX3D_DECLARE_CONREL(SIM_Box3DConRelWheel,     b3dop::JointType::Wheel,     "Box3D Wheel Constraint Relationship");
 BOX3D_DECLARE_CONREL(SIM_Box3DConRelFilter,    b3dop::JointType::Filter,    "Box3D Filter Constraint Relationship");
 
-// Euler angles in degrees (Houdini's XYZ rotate order) -> quaternion x, y, z, w.
-void box3dEulerToQuat(const float degrees[3], float q[4]);

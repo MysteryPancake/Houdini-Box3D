@@ -101,15 +101,23 @@ add_library(Box3DDOP SHARED
     src/dop/SIM_Box3DData.cpp
     src/dop/SIM_Box3DConRel.h
     src/dop/SIM_Box3DConRel.cpp
+    src/dop/SIM_Box3DParms.h
     src/dop/SIM_SolverBox3D.h
     src/dop/SIM_SolverBox3D.cpp
     src/dop/SIM_Box3DRegister.cpp
-    # sync/: Houdini data -> Box3D world (joints, affector colliders, Houdini's task scheduler)
+    # sync/: Houdini data -> Box3D world, the solver's parts (Box3DSolverInternal.h)
+    src/sync/Box3DSolverInternal.h
+    src/sync/Box3DShapeBuild.cpp
+    src/sync/Box3DPointSync.cpp
+    src/sync/Box3DWholeObject.cpp
+    src/sync/Box3DPostStep.cpp
+    src/sync/Box3DForces.cpp
     src/sync/Box3DJointSync.h
     src/sync/Box3DJointSync.cpp
     src/sync/Box3DAffectors.h
     src/sync/Box3DAffectors.cpp
     src/sync/Box3DHoudiniTasks.h
+    src/sync/Box3DHoudiniUtil.h
 )
 target_link_libraries(Box3DDOP PRIVATE Houdini b3dop_core)
 if(BOX3DDOP_DEBUG)

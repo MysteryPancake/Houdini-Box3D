@@ -1,8 +1,8 @@
 // SIM_Box3DData.cpp
 #include "SIM_Box3DData.h"
 
-#include <PRM/PRM_Conditional.h>   // PRM_Template.h only forward-declares PRM_Conditional
-#include <PRM/PRM_Include.h>
+#include "SIM_Box3DParms.h"
+
 #include <SIM/SIM_DopDescription.h>
 
 SIM_Box3DData::SIM_Box3DData(const SIM_DataFactory *factory)
@@ -18,171 +18,70 @@ SIM_Box3DData::~SIM_Box3DData()
 const SIM_DopDescription *
 SIM_Box3DData::getDescription()
 {
-    static PRM_Name theBodyTypeName("bodytype", "Body Type");
-    static PRM_Name theBodyTypeChoices[] = {
-        PRM_Name("0", "Static"),
-        PRM_Name("1", "Kinematic"),
-        PRM_Name("2", "Dynamic"),
-        PRM_Name(0)
-    };
-    static PRM_ChoiceList theBodyTypeMenu(PRM_CHOICELIST_SINGLE, theBodyTypeChoices);
-    static PRM_Default    theBodyTypeDefault(2);              // dynamic
-
-    // Box3D asserts on negatives: hard minimum 0 (larger values than the slider can be typed).
-    // Parameter names match the point attributes that override them.
-    static PRM_Range theMassRange       (PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 10);
-    static PRM_Range theFrictionRange   (PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 1);
-    static PRM_Range theBounceRange     (PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 1);
-    static PRM_Range theDampingRange    (PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 10);
-
-    static PRM_Name    theMassName("mass", "Mass");
-    static PRM_Default theMassDefault(1.0);
-
-    static PRM_Name    theComputeMassName("computemass", "Compute Mass");
-    static PRM_Default theComputeMassDefault(0);
-    static PRM_Conditional theMassDisable("{ computemass == 1 }", PRM_CONDTYPE_DISABLE);
-    static PRM_Conditional theDensityDisable("{ computemass == 0 }", PRM_CONDTYPE_DISABLE);
-    static PRM_Name    theDensityName("density", "Density");
-    static PRM_Default theDensityDefault(1000.0);
-    static PRM_Range   theDensityRange(PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 2000);
-
-    static PRM_Name    theFrictionName("friction", "Friction");
-    static PRM_Default theFrictionDefault(0.6);
-
-    static PRM_Name    theBounceName("bounce", "Bounce");
-    static PRM_Default theBounceDefault(0.0);
-
-    static PRM_Name    theRollingName("rollingresistance", "Rolling Resistance");
-    static PRM_Default theRollingDefault(0.0);
-    static PRM_Range   theRollingRange(PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 1);
-
-    static PRM_Name    theTangentName("tangentvelocity", "Conveyor Velocity");
-    static PRM_Default theTangentDefaults[] = { PRM_Default(0), PRM_Default(0), PRM_Default(0) };
-
-    static PRM_Name    theLinDampName("lineardamping", "Linear Damping");
-    static PRM_Default theLinDampDefault(0.0);
-
-    static PRM_Name    theAngDampName("angulardamping", "Angular Damping");
-    static PRM_Default theAngDampDefault(0.0);
-
-    static PRM_Name    theGravScaleName("gravityscale", "Gravity Scale");
-    static PRM_Default theGravScaleDefault(1.0);
-
-    static PRM_Name    theSleepName("enablesleep", "Allow Sleeping");
-    static PRM_Default theSleepDefault(1);
-
-    static PRM_Name    theStartAsleepName("startasleep", "Start Asleep");
-    static PRM_Default theStartAsleepDefault(0);
-
-    // Box3D's "bullet" flag (Houdini's `isbullet` means something else).
-    static PRM_Name    theFastObjectName("fastobject", "Fast Object");
-    static PRM_Default theFastObjectDefault(0);
-
-    static PRM_Name    theRecyclingName("contactrecycling", "Contact Recycling");
-    static PRM_Default theRecyclingDefault(1);
-
-    // Box3D: one threshold, fixed half second to sleep.
-    static PRM_Name    theCcdThresholdName("ccdthreshold", "CCD Threshold");
-    static PRM_Default theCcdThresholdDefault(0.5);
-    static PRM_Range   theCcdThresholdRange(PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 1);
-    static PRM_Name    theSleepThresholdName("sleepthreshold", "Sleep Threshold");
-    static PRM_Default theSleepThresholdDefault(0.05);
-    static PRM_Range   theSleepThresholdRange(PRM_RANGE_RESTRICTED, 0, PRM_RANGE_UI, 1);
-
-    static PRM_Name    theAddImpactName("addimpact", "Add Impact Data");
-    static PRM_Default theAddImpactDefault(0);
-
-    static PRM_Name theShapeName("defaultshape", "Default Shape");
-    static PRM_Name theShapeChoices[] = {
-        PRM_Name("0", "Box"),
-        PRM_Name("1", "Sphere"),
-        PRM_Name("2", "Convex Hull"),
-        PRM_Name("3", "Concave / Compound (Hull per Piece)"),
-        PRM_Name("4", "Capsule"),
-        PRM_Name("5", "None (No Collision)"),
-        PRM_Name(0)
-    };
-    static PRM_ChoiceList theShapeMenu(PRM_CHOICELIST_SINGLE, theShapeChoices);
-    static PRM_Default    theShapeDefault(0);                 // box
-
-    static PRM_Name    theHullPerConnectedName("hullperconnected",
-                                               "Create Convex Hull per Set of Connected Primitives");
-    static PRM_Default theHullPerConnectedDefault(0);
-
-    // Off: box / sphere / capsule from bullet_primS / radius / length / primT / primR.
-    static PRM_Name    theAutoFitName("autofit", "Auto Fit Box / Sphere / Capsule to Geometry");
-    static PRM_Default theAutoFitDefault(1);
-
-    // Only read when this node sits on an affector object (a Static Object DOP) that collides with the solver.
-    static PRM_Name    theFlipWindingName("flipwinding", "Flip Static Mesh Winding");
-    static PRM_Default theFlipWindingDefault(0);
-
-    // Tabs: each PRM_Default is (number of parameters that follow, tab label).
-    static PRM_Name    theTabsName("b3dtabs");
-    static PRM_Default theTabsDefaults[] = {
-        PRM_Default(3, "Shape"),
-        PRM_Default(5, "Body"),
-        PRM_Default(6, "Material"),
-        PRM_Default(6, "Sleep & Contacts"),
-        PRM_Default(2, "Output")
-    };
-
-    static PRM_Template theTemplates[] = {
-        PRM_Template(PRM_SWITCHER, int(sizeof(theTabsDefaults) / sizeof(PRM_Default)), &theTabsName, theTabsDefaults),
-        // --- Shape ---
-        PRM_Template(PRM_ORD,    1, &theShapeName,       &theShapeDefault, &theShapeMenu, 0, 0, 0, 1,
-                     "Collision shape for points without a bullet_georep attribute. Concave builds one convex hull per piece."),
-        PRM_Template(PRM_TOGGLE, 1, &theAutoFitName,     &theAutoFitDefault, 0, 0, 0, 0, 1,
-                     "Fit Box, Sphere and Capsule shapes to each piece's geometry. Off uses pscale / scale and the bullet_prim* attributes."),
-        PRM_Template(PRM_TOGGLE, 1, &theHullPerConnectedName, &theHullPerConnectedDefault, 0, 0, 0, 0, 1,
-                     "Build one convex hull per set of connected primitives, instead of one hull around the whole piece."),
-        // --- Body ---
-        PRM_Template(PRM_ORD,    1, &theBodyTypeName,    &theBodyTypeDefault, &theBodyTypeMenu, 0, 0, 0, 1,
-                     "Static never moves, Kinematic follows its animation, Dynamic is fully simulated. Points with active = 0 are static."),
-        PRM_Template(PRM_TOGGLE, 1, &theComputeMassName, &theComputeMassDefault, 0, 0, 0, 0, 1,
-                     "Work out mass from Density and shape volume instead of using Mass. Overridden by the computemass attribute."),
-        PRM_Template(PRM_FLT_J,  1, &theMassName, &theMassDefault, 0, &theMassRange, 0, 0, 1,
-                     "Mass of each body (used when Compute Mass is off). Overridden by the mass point attribute.",
-                     &theMassDisable),
-        PRM_Template(PRM_FLT_J,  1, &theDensityName, &theDensityDefault, 0, &theDensityRange, 0, 0, 1,
-                     "Mass per unit volume, used when Compute Mass is on (1000 is about water). Overridden by the density attribute.", &theDensityDisable),
-        PRM_Template(PRM_FLT_J,  1, &theGravScaleName,   &theGravScaleDefault, 0, 0, 0, 0, 1,
-                     "Multiplies the solver's Gravity: 0 floats, negative falls upward. Overridden by the gravityscale attribute."),
-        // --- Material ---
-        PRM_Template(PRM_FLT_J,  1, &theFrictionName, &theFrictionDefault, 0, &theFrictionRange, 0, 0, 1,
-                     "How much surfaces resist sliding; 0 is ice-slick. Overridden by the friction attribute."),
-        PRM_Template(PRM_FLT_J,  1, &theBounceName, &theBounceDefault, 0, &theBounceRange, 0, 0, 1,
-                     "Speed kept after a collision: 0 doesn't bounce, 1 bounces at full speed. Overridden by the bounce attribute."),
-        PRM_Template(PRM_FLT_J,  1, &theRollingName, &theRollingDefault, 0, &theRollingRange, 0, 0, 1,
-                     "How much round bodies resist rolling; 0 rolls freely. Overridden by the rollingresistance attribute."),
-        PRM_Template(PRM_XYZ_J,  3, &theTangentName, theTangentDefaults, 0, 0, 0, 0, 1,
-                     "Makes this body a conveyor belt: touching bodies are dragged along this velocity, in the body's own axes. "
-                     "Needs friction above 0. Overridden by the tangentvelocity attribute."),
-        PRM_Template(PRM_FLT_J,  1, &theLinDampName, &theLinDampDefault, 0, &theDampingRange, 0, 0, 1,
-                     "Slows movement like air drag; 0 is none. Overridden by the lineardamping attribute."),
-        PRM_Template(PRM_FLT_J,  1, &theAngDampName, &theAngDampDefault, 0, &theDampingRange, 0, 0, 1,
-                     "Slows spinning; 0 is none. Overridden by the angulardamping attribute."),
-        // --- Sleep & Contacts ---
-        PRM_Template(PRM_TOGGLE, 1, &theSleepName,       &theSleepDefault, 0, 0, 0, 0, 1,
-                     "Let resting bodies stop simulating until touched. Needs the solver's Allow Sleeping. Overridden by the enablesleep attribute."),
-        PRM_Template(PRM_TOGGLE, 1, &theStartAsleepName, &theStartAsleepDefault, 0, 0, 0, 0, 1,
-                     "Bodies begin asleep until touched. Needs Allow Sleeping. Overridden by the awake attribute."),
-        PRM_Template(PRM_FLT_J,  1, &theSleepThresholdName, &theSleepThresholdDefault, 0, &theSleepThresholdRange, 0, 0, 1,
-                     "A body falls asleep once its speed stays below this for half a second. Overridden by the sleepthreshold attribute."),
-        PRM_Template(PRM_FLT_J,  1, &theCcdThresholdName, &theCcdThresholdDefault, 0, &theCcdThresholdRange, 0, 0, 1,
-                     "Move distance per step, as a fraction of the body's thinnest size, above which continuous collision kicks in. "
-                     "Lower stops more tunnelling but costs more. Overridden by the ccdthreshold attribute."),
-        PRM_Template(PRM_TOGGLE, 1, &theFastObjectName,  &theFastObjectDefault, 0, 0, 0, 0, 1,
-                     "Also run continuous collision against moving bodies, so fast bodies can't pass through them."),
-        PRM_Template(PRM_TOGGLE, 1, &theRecyclingName,   &theRecyclingDefault, 0, 0, 0, 0, 1,
-                     "Reuse contacts between steps for speed. Turn off if thin or fast bodies show ghost collisions."),
-        // --- Output ---
-        PRM_Template(PRM_TOGGLE, 1, &theFlipWindingName, &theFlipWindingDefault, 0, 0, 0, 0, 1,
-                     "Static meshes are one-sided. Turn on if bodies fall through from the side that should be solid."),
-        PRM_Template(PRM_TOGGLE, 1, &theAddImpactName,   &theAddImpactDefault, 0, 0, 0, 0, 1,
-                     "Record impacts in Impacts data on the object. Costs extra time and memory."),
-        PRM_Template()
-    };
+    // Parameter names match the point attributes that override them. Box3D asserts on negative
+    // values, so ranges have a hard minimum of 0 (larger values than the slider can be typed).
+    using R = Box3DParms::Range;
+    static Box3DParms p;
+    static const PRM_Template *templates = p
+        .tab("Shape")
+        .menu("defaultshape", "Default Shape", 0,
+              { "Box", "Sphere", "Convex Hull", "Concave / Compound (Hull per Piece)", "Capsule", "None (No Collision)" },
+              "Collision shape for points without a bullet_georep attribute. Concave builds one convex hull per piece.")
+        // Off: box / sphere / capsule from bullet_primS / radius / length / primT / primR.
+        .toggle("autofit", "Auto Fit Box / Sphere / Capsule to Geometry", true,
+                "Fit Box, Sphere and Capsule shapes to each piece's geometry. Off uses pscale / scale and the bullet_prim* attributes.")
+        .toggle("hullperconnected", "Create Convex Hull per Set of Connected Primitives", false,
+                "Build one convex hull per set of connected primitives, instead of one hull around the whole piece.")
+        .tab("Body")
+        .menu("bodytype", "Body Type", 2, { "Static", "Kinematic", "Dynamic" },
+              "Static never moves, Kinematic follows its animation, Dynamic is fully simulated. Points with active = 0 are static.")
+        .toggle("computemass", "Compute Mass", false,
+                "Work out mass from Density and shape volume instead of using Mass. Overridden by the computemass attribute.")
+        .number("mass", "Mass", 1.0, R{ 0, 10 },
+                "Mass of each body (used when Compute Mass is off). Overridden by the mass point attribute.",
+                "{ computemass == 1 }")
+        .number("density", "Density", 1000.0, R{ 0, 2000 },
+                "Mass per unit volume, used when Compute Mass is on (1000 is about water). Overridden by the density attribute.",
+                "{ computemass == 0 }")
+        .number("gravityscale", "Gravity Scale", 1.0,
+                "Multiplies the solver's Gravity: 0 floats, negative falls upward. Overridden by the gravityscale attribute.")
+        .tab("Material")
+        .number("friction", "Friction", 0.6, R{ 0, 1 },
+                "How much surfaces resist sliding; 0 is ice-slick. Overridden by the friction attribute.")
+        .number("bounce", "Bounce", 0.0, R{ 0, 1 },
+                "Speed kept after a collision: 0 doesn't bounce, 1 bounces at full speed. Overridden by the bounce attribute.")
+        .number("rollingresistance", "Rolling Resistance", 0.0, R{ 0, 1 },
+                "How much round bodies resist rolling; 0 rolls freely. Overridden by the rollingresistance attribute.")
+        .vector("tangentvelocity", "Conveyor Velocity", { 0, 0, 0 },
+                "Makes this body a conveyor belt: touching bodies are dragged along this velocity, in the body's own axes. "
+                "Needs friction above 0. Overridden by the tangentvelocity attribute.", PRM_XYZ_J)
+        .number("lineardamping", "Linear Damping", 0.0, R{ 0, 10 },
+                "Slows movement like air drag; 0 is none. Overridden by the lineardamping attribute.")
+        .number("angulardamping", "Angular Damping", 0.0, R{ 0, 10 },
+                "Slows spinning; 0 is none. Overridden by the angulardamping attribute.")
+        .tab("Sleep & Contacts")
+        .toggle("enablesleep", "Allow Sleeping", true,
+                "Let resting bodies stop simulating until touched. Needs the solver's Allow Sleeping. Overridden by the enablesleep attribute.")
+        .toggle("startasleep", "Start Asleep", false,
+                "Bodies begin asleep until touched. Needs Allow Sleeping. Overridden by the awake attribute.")
+        // Box3D: one threshold, fixed half second to sleep.
+        .number("sleepthreshold", "Sleep Threshold", 0.05, R{ 0, 1 },
+                "A body falls asleep once its speed stays below this for half a second. Overridden by the sleepthreshold attribute.")
+        .number("ccdthreshold", "CCD Threshold", 0.5, R{ 0, 1 },
+                "Move distance per step, as a fraction of the body's thinnest size, above which continuous collision kicks in. "
+                "Lower stops more tunnelling but costs more. Overridden by the ccdthreshold attribute.")
+        // Box3D's "bullet" flag (Houdini's `isbullet` means something else).
+        .toggle("fastobject", "Fast Object", false,
+                "Also run continuous collision against moving bodies, so fast bodies can't pass through them.")
+        .toggle("contactrecycling", "Contact Recycling", true,
+                "Reuse contacts between steps for speed. Turn off if thin or fast bodies show ghost collisions.")
+        .tab("Output")
+        // Only read when this node sits on an affector object (a Static Object DOP) that collides with the solver.
+        .toggle("flipwinding", "Flip Static Mesh Winding", false,
+                "Static meshes are one-sided. Turn on if bodies fall through from the side that should be solid.")
+        .toggle("addimpact", "Add Impact Data", false,
+                "Record impacts in Impacts data on the object. Costs extra time and memory.")
+        .templates();
 
     static SIM_DopDescription theDopDescription(
         true,                   // true: also creates a DOP node that applies this data
@@ -190,7 +89,7 @@ SIM_Box3DData::getDescription()
         "Box3D Data",           // node label
         kBox3DDataName,         // data name on the object
         classname(),
-        theTemplates);
+        templates);
 
     return &theDopDescription;
 }
