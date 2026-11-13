@@ -337,6 +337,19 @@ def build_dops(name, pieces_path, joints=None, network_path=None, solver_parms=N
     return dop, solver, data_names
 
 
+def place_note_left(net, note, gap=1.0):
+    """Puts a sticky note to the left of every node in net, its top level with the highest node.
+    Uses the bounding box of all the nodes, so it never lands on one (children()[0] is not the
+    leftmost node)."""
+    nodes = net.children()
+    if not nodes:
+        note.setPosition(hou.Vector2(-gap - note.size()[0], 0))
+        return
+    left = min(n.position()[0] for n in nodes)
+    top = max(n.position()[1] + n.size()[1] for n in nodes)
+    note.setPosition(hou.Vector2(left - gap - note.size()[0], top - note.size()[1]))
+
+
 def tidy(frames, note, dop):
     """Frame range, layout, hide the source geometry and add the sticky notes."""
     try:
@@ -355,13 +368,13 @@ def tidy(frames, note, dop):
     sticky = obj.createStickyNote("about_this_scene")
     sticky.setText(note.strip())
     sticky.setSize(hou.Vector2(9, 6))
-    sticky.setPosition(obj.children()[0].position() + hou.Vector2(-11, 0) if obj.children() else hou.Vector2(-11, 0))
+    place_note_left(obj, sticky)
     inner = dop.createStickyNote("how_it_works")
     inner.setText("RBD Packed Object reads the pieces from the geometry object (one packed primitive per "
                   "body). The Box3D Solver simulates them; its tabs hold the world settings "
                   "(substeps, gravity, sleeping, friction / bounce mixing).")
     inner.setSize(hou.Vector2(6, 2.5))
-    inner.setPosition(dop.children()[0].position() + hou.Vector2(-8, 0))
+    place_note_left(dop, inner)
 
 
 # ---------------------------------------------------------------------------
