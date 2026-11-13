@@ -48,13 +48,16 @@ Houdini checks: `hython tests/houdini/run_tests.py` (`--list` for the tests); on
 finds Houdini the same way as `build.bat` (its search block is copied: change both together) and passes its
 arguments on. Each builds its scene from scratch
 (no dependence on `box3d_test.hiplc`), simulates and prints PASS / FAIL / INFO; scenes are saved to
-`tests/houdini/out/`. They cover items from "Untested and unverified" in [status.md](status.md): when a check passes
+`tests/houdini/out/`, tidied for opening by hand first (`review.py`: every network laid out, input geometry hidden,
+the visible objects spaced along +X by moving whole DOP network objects, a sticky note at `/obj` with the test's
+docstring and results and one in each DOP network; any error there is printed and ignored, so it cannot change a
+result). A test's docstring is what that note shows as its expected behaviour, so write it for a reader of the scene. They cover items from "Untested and unverified" in [status.md](status.md): when a check passes
 in Houdini, remove its item there. SETUP results mean the script guessed a node or parameter name wrong (the message
 lists the real ones), not a plugin failure. Each test runs in its own hython process, so a crash is reported as CRASH
 and the rest still run; the `probe_*` tests isolate the parts of the `network` scene. Not in CI (needs Houdini).
 The tests are in `tests/houdini/checks_*.py` by area (core, solver / UI / caching,
 outputs / packed geometry, constraints / whole objects, more: SOP Solver / Multiple Solver scenes, Bullet and POP
-comparisons, extra: joint toggles, mixing, determinism, contacts, bad input, timing), each with a `TESTS` dict the runner collects; helpers in
+comparisons, extra: joint toggles, mixing, determinism, contacts, shapes and AutoFit against Bullet, bad input, timing), each with a `TESTS` dict the runner collects; helpers in
 `tests/houdini/b3dtest.py`. A test function can carry `.env` (environment variables for its process, e.g.
 `HOUDINI_MAXTHREADS=1`). Each test's latest overall status (the worst of its results) is kept in
 `tests/houdini/out/last_results.json`, updated as each test finishes; `--failed` runs the tests whose last status was
@@ -67,14 +70,14 @@ Built in both configurations (`-DBOX3DDOP_CORE_ONLY=ON` builds only these):
 | Target | Checks |
 |---|---|
 | `b3dop_core_smoke` | Box3D version, create / destroy; expects `OK` |
-| `b3dop_core_physics` | Handle API (and the test-side `KeyedWorld`), shape mapping, explicit primitives, mass, body types, resting heights, hulls (limits, caching, instancing), packed matrix math, `sanitizeQuat` / `storedPosition`, setters on existing bodies (material, damping, gravity, sleep, density, enable, shape replacement), live tuning, motion locks (world axes, live changes), fast rotation (the cap, live toggle), CCD threshold (sweep vs tunnel, live, invalid values), collision filtering (bits, positive / negative groups, re-filtering), contacts, mass centring / inertia scaling, sleep threshold, kinematic targets, external forces (force / torque per step, summing, non-finite input, static / kinematic / sleeping bodies, gravity as a force), contact recycling (world distance live, per-body flag at creation and on existing bodies, velocity kept, sleepers not woken) |
+| `b3dop_core_physics` | Handle API (and the test-side `KeyedWorld`), shape mapping, explicit primitives, mass, body types, resting heights, hulls (limits, caching, instancing), packed matrix math, AutoFit (`fitShapeOriented` on a turned box, `fitShapeInFrame` sphere / capsule sizes, `quatFromAxes`, `canonicalFrame`), `sanitizeQuat` / `storedPosition`, setters on existing bodies (material, damping, gravity, sleep, density, enable, shape replacement), live tuning, motion locks (world axes, live changes), fast rotation (the cap, live toggle), CCD threshold (sweep vs tunnel, live, invalid values), collision filtering (bits, positive / negative groups, re-filtering), contacts, mass centring / inertia scaling, sleep threshold, kinematic targets, external forces (force / torque per step, summing, non-finite input, static / kinematic / sleeping bodies, gravity as a force), contact recycling (world distance live, per-body flag at creation and on existing bodies, velocity kept, sleepers not woken) |
 | `b3dop_core_joints` | Every joint type (weld holds, distance keeps length, revolute motor + live speed change, prismatic limit along a rotated frame, motor joint, wheel spin, filter), world anchors, refused joints, clamping (no Box3D asserts), breaking events, frames on moved bodies, live frames (a world rebuilt from `jointWorldFrames` matches the continued one), local frames (a joint remade from `jointLocalFrames` at x = 12000 is bit for bit the same), Box3D defaults, the parameter table, feedback names never equal setting names |
 | `b3dop_core_sidefx` | SideFX data: data types and option table, `constraint_type` parsing, mapping of every type and mode (glue threshold, Spring's Hz conversion, cone twist axes / smaller cone), frame offsets (hold, separation, round trip), and in a world: glue holds the centroid offset and breaks, Soft all keeps its rest length, Soft / Spring sag as their spring constants predict, Hard position is a rigid rod, cone twist stops at the smaller limit |
 | `b3dop_core_rbdobject` | RBD Object settings without Box3D Data (`rbdObjectSetup`): nothing read = Box3D Data's defaults, Houdini's RBD Object defaults, unusable values ignored, Bullet Data shapes (unknown names, none, compound, connected sets, AutoFit off box / sphere / capsule), density 1000 on a 1 m box = 1000 kg |
 | `b3dop_core_taskrunner [workers]` | Worlds on one shared host pool: tasks run, results match 1 worker |
 | `b3dop_core_threads [workers] [side] [steps]` | 1 vs N workers: speedup, fails if positions differ by > 1e-4 |
 
-`tests/box3d_test.hiplc` is a manual scene for the `SIM_*` code, which has no automated tests. No CI.
+`tests/box3d_test.hiplc` is a manual scene; the `SIM_*` code is covered by the Houdini checks above, not by CI.
 
 ## Debug logging (`Box3DDebug.h`)
 

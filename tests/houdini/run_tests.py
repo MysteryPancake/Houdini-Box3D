@@ -15,7 +15,8 @@ Run from the repository root, with the plugin built (build.bat copies it to the 
 On Windows, test_houdini.bat in the repository root finds Houdini and runs this.
 
 Each test runs in its own hython process, so a crash (CRASH) doesn't stop the others. Each
-test's scene is saved to tests/houdini/out/<test>.hip to open and inspect afterwards, and each
+test's scene is saved to tests/houdini/out/<test>.hip to open and inspect afterwards (laid out,
+spaced apart in the viewport and annotated with sticky notes: review.py), and each
 test's latest result to tests/houdini/out/last_results.json (what --failed reads).
 Exit code 1 if anything failed, errored or crashed.
 """
@@ -41,6 +42,7 @@ import checks_extra  # noqa: E402
 import checks_more  # noqa: E402
 import checks_output  # noqa: E402
 import checks_solver  # noqa: E402
+import review  # noqa: E402
 from b3dtest import Result, SetupError  # noqa: E402
 
 # Every test, in run order: module by module.
@@ -61,6 +63,11 @@ def run_child(name, out_dir, result_file):
         got = [Result(name, Result.SETUP, str(e))]
     except Exception:
         got = [Result(name, Result.ERROR, traceback.format_exc())]
+    try:
+        # Laid out, spaced and annotated for a person to open; never allowed to affect the result.
+        review.tidy_for_review(name, TESTS[name], [(r.status, r.message) for r in got])
+    except Exception:
+        traceback.print_exc()
     try:
         hou.hipFile.save(os.path.join(out_dir, f"{name}.hip"))
     except hou.OperationFailed:

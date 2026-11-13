@@ -9,7 +9,6 @@ import hou
 from b3dtest import (
     Result,
     SetupError,
-    box3d_data,
     box3d_solver,
     create,
     finish,
@@ -21,7 +20,6 @@ from b3dtest import (
     packed_positions,
     plain_points,
     set_expression,
-    set_menu_by_label,
     set_parm,
     step,
 )
@@ -147,13 +145,12 @@ def test_ui():
 
 def test_messages():
     """A problem (a convex shape asked for on plain points) shows as a "Box3D: ..." message on the
-    Box3D Solver node itself."""
+    Box3D Solver node itself. Asked for with bullet_georep: a hull from the Default Shape (the
+    default) quietly gives plain points their pscale box."""
     dop = new_dopnet("messages")
-    pts = plain_points("messages_points", [{"P": (0, 3, 0), "pscale": 1.0}])
+    pts = plain_points("messages_points", [{"P": (0, 3, 0), "pscale": 1.0, "bullet_georep": "convexhull"}])
     obj = packed_object(dop, "points", pts)
-    data = box3d_data(dop, obj, "data")
-    set_menu_by_label(data, ["defaultshape"], "Convex Hull")
-    solver = box3d_solver(dop, data)
+    solver = box3d_solver(dop, obj)
     finish(dop, solver)
     seen = []
     step(dop, 4, lambda sim, f: seen.extend(node_messages(solver)))

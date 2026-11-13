@@ -8,19 +8,11 @@ The one list of everything not yet tested in Houdini or confirmed against SideFX
 remove an item once it has been checked, and record anything new here rather than in comments or other sections.
 
 **General**
-* No `SIM_*` code has CI; `tests/box3d_test.hiplc` is a manual scene. The core tests pass, and so do the Houdini
-  checks in `checks_core.py`, `checks_solver.py`, `checks_output.py`, `checks_constraints.py` and `checks_more.py`
-  (Houdini 22.0.479; the items they settled are no longer listed here). What no script can check: Escape mid-step, the
+* No `SIM_*` code has CI; `tests/box3d_test.hiplc` is a manual scene. The plugin builds against the real HDK (Houdini
+  22.0.479, MSVC, no warnings). The core tests pass, and so does every Houdini check (`checks_core.py`,
+  `checks_solver.py`, `checks_output.py`, `checks_constraints.py`, `checks_more.py`, `checks_extra.py`; Houdini
+  22.0.479; the items they settled are no longer listed here). What no script can check: Escape mid-step, the
   viewport, motion blur, and how greyed-out parameters look.
-* `checks_extra.py` (scripted, not yet run): each joint toggle's effect (revolute limit and motor, prismatic limit,
-  distance spring with Set Rest Length, Breakable at the default thresholds), -1 thresholds with Breakable on (and
-  whether the parameter keeps -1), every Friction / Bounce Mixing item, bounce heights, the friction angle on a slope,
-  CCD against static and moving walls, sleeping (`awake` written, Allow Sleeping, Start Asleep woken by a hit),
-  rolling resistance, box / sphere / capsule sizes, determinism (repeat runs, Reset Simulation, 1 / 4 / all threads),
-  Substeps 1 and 4 and 48 fps, bad input (empty, zero-size, infinite / NaN, duplicate names), rewiring and replacing
-  the solver mid-simulation, a 4800-box timing baseline, and constraints across objects, to the world, to a kinematic
-  piece, and with Breakable keyed mid-simulation. The plugin builds against the real HDK (Houdini 22.0.479, MSVC, no warnings), so "compiled only
-  against stand-in headers" notes are gone too: what remains is behaviour.
 * An untouched object still skips its scan after a Box3D Data change elsewhere (debug log: `scan skipped`). (A Box3D
   Data change mid-simulation reaching existing bodies is verified, `data_change_midsim`.)
 * `tests/box3d_test.hiplc` still uses the removed Box3D Joints node and needs rebuilding with a Constraint Network.
@@ -34,13 +26,6 @@ remove an item once it has been checked, and record anything new here rather tha
 * Houdini's impact normal convention (Impacts data).
 * Bullet's `bullet_primR` rotation order (taken as XYZ Euler degrees) and `bullet_length` meaning (taken as the
   capsule's straight section without caps).
-* The `PRM_SWITCHER` tab layout (`PRM_Default(count, label)` per tab, built by `Box3DParms`) for SIM data classes:
-  documented for ordinary nodes only.
-* Disable-when conditions (`PRM_Conditional`, `PRM_CONDTYPE_DISABLE`) on the joint nodes' toggles and on vector
-  parameters (`target_rotation`, `motor_velocity`): not yet seen greying out in Houdini. Space-separated `{ }` groups
-  are taken as OR (Houdini's documented disable-when syntax).
-* `Box3DParms::Range::hardMin = false` (`PRM_RANGE_UI` minimum) for the joint nodes' signed sliders, and tabs on the
-  joint nodes (switcher from `Box3DParms`): not yet seen in Houdini.
 **Solver step, caching and threads** (debug build: `REBUILD` lines in the log show every world rebuild)
 * An Escape mid-step (`SIM_SOLVER_FAIL`, world unstamped): Houdini discards that step and re-cooks it, the frames before
   it stay cached and correct, the re-cook rebuilds once. Also that Escape reaches `opInterrupt()` at all with no
@@ -48,8 +33,8 @@ remove an item once it has been checked, and record anything new here rather tha
 * `objects` sorted by object id (`box3dObjectById` binary search, a miss is final). Checked once per solve (`st.objectsSorted`); an array that is not sorted falls back to a linear scan, so only speed is at stake.
 * Box3D's tasks on Houdini's TBB pool (`Box3DHoudiniTasks`): no stall when several DOP networks or threaded SOPs cook
   at once, or where threading is disabled for the cooking thread (tasks run inline). `HOUDINI_MAXTHREADS=1` is fine.
-* Scene scale: Box3D's tolerances assume metres. Measured (`scale`): a three-box stack rests 2.495 / 2.490 / 2.417 box
-  sizes tall at 0.01x / 1x / 100x (2.5 ideal), with slight jitter at 100x: centimetre-scale scenes sink about 3%.
+* Scene scale: Box3D's tolerances assume metres. Measured (`scale`): a three-box stack rests 2.494 / 2.488 / 2.417 box
+  sizes tall at 0.01x / 1x / 100x (2.5 ideal), with slight jitter at 100x: scenes 100 times too large sink about 3%.
 
 **Points and packed geometry**
 * Point order: reversing the points upstream (Sort SOP) keeps every body's identity, with and without `id` (verified,
@@ -74,10 +59,10 @@ remove an item once it has been checked, and record anything new here rather tha
   are not compared with Bullet.
 * Shared-string handles (`GA_AIFSharedStringTuple::getHandle`) are stable for one scan of one detail (`bullet_georep`
   and `name` are memoised by handle).
-* AutoFit (`fitShapeOriented`): boxes, hulls, the convex-hull Default Shape, spheres and capsule radii rest as in
-  Bullet (`autofit_bullet`, `shape_types`). Capsule length now follows Bullet's measured 0.6 (caps end where the piece
-  does; the enclosing length gave 0.883), not yet re-run. A free standing capsule topples differently in each solver
-  (Bullet's fell, Box3D's balanced), which is why that check drops a plate on a static one.
+* (Confirmed, `autofit_bullet` and `shape_types`: AutoFit boxes, spheres and capsules and the convex-hull Default
+  Shape rest as in Bullet, with the tilt baked into the packed geometry or on the packed transform; capsule top 0.595
+  vs Bullet's 0.602. A free standing capsule topples differently in each solver, so the length check drops a plate on
+  a static one.) Not compared with Bullet: AutoFit on whole objects (RBD Object) and on irregular (fractured) pieces.
 * Scenes saved with a Box3D Data node before the Default Shape became Convex Hull: whether Houdini kept the old menu
   value (Box) in the file or the node now shows the new default.
 
@@ -128,7 +113,7 @@ remove an item once it has been checked, and record anything new here rather tha
 * Cone Twist compared with Bullet (`sidefx_cone_twist`): Bullet's piece falls freely (20.85 apart after 2 s, the
   same with anchors at the centroids or at one shared point), so there is nothing to compare with. Box3D holds: with
   one shared anchor the pieces stay 2.015 apart (2.06 at the start); with anchors at the two centroids it pulls them
-  together (0.27), as a ball joint joining two anchor points should.
+  together (0.26), as a ball joint joining two anchor points should.
 * Soft / Spring `all` with a rest length shifts the frames along the anchor line when the joint is made; after a
   world rebuild from a stretched pose the offset direction is re-derived from the anchors and may differ slightly.
 
@@ -145,13 +130,12 @@ remove an item once it has been checked, and record anything new here rather tha
   probe). Its mass, bounce and shared world are checked; still open: that it collides as its convex hull (a tilted
   rod falls over, so it is not an axis-aligned fitted box, but was still settling 0.32 tall after 240 frames, where
   flat is 0.2), whether `bullet_primT` is relative to the pivot (taken so, as for points) and
-  `bullet_primS` a half size for whole objects too. Scenes with RBD Objects and no Box3D Data simulate differently
-  from before (mass 1, friction 0.6, bounce 0, box); attaching Box3D Data gives the old behaviour.
+  `bullet_primS` a half size for whole objects too.
 * Float noise: the mirror takes a read-back after each write; a constant "edited" count (teleports) every step would
   mean the read-back does not match what the next sync reads.
 * Impacts record point -1 for whole objects.
-* Performance Monitor stage events (`UT_PerfMonAutoSolveEvent`, see solver.md): not yet built or checked in Houdini
-  that they nest under the solver node's entry the way Bullet's do.
+* Performance Monitor stage events (`UT_PerfMonAutoSolveEvent`, see solver.md): built, but not yet looked at in the
+  profiler (whether they nest under the solver node's entry the way Bullet's do).
 
 ## HDK calls
 
