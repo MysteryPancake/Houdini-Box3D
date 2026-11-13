@@ -112,7 +112,7 @@ Set `bullet_georep` to the same lowercase names Houdini's RBD tools use:
 
 | Value | Result |
 |---|---|
-| `box`, `sphere`, `capsule` | A simple shape fitted to the packed geometry (turned to follow it; a capsule lies along the longest side), or sized from `pscale` / `scale` |
+| `box`, `sphere`, `capsule` | A simple shape fitted to the packed geometry (turned to follow it, sized as Bullet's), or sized from `pscale` / `scale` |
 | `convexhull` | One convex hull around the packed geometry |
 | `concave`, `compound` | Several convex hulls on one body, one per `name` piece of the packed geometry |
 | `none` | A static body with no collision |

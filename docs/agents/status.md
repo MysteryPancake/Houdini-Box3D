@@ -74,11 +74,10 @@ remove an item once it has been checked, and record anything new here rather tha
   are not compared with Bullet.
 * Shared-string handles (`GA_AIFSharedStringTuple::getHandle`) are stable for one scan of one detail (`bullet_georep`
   and `name` are memoised by handle).
-* AutoFit follows turned geometry and the Default Shape is a convex hull (`fitShapeOriented`; core tests pass) but
-  `autofit_bullet` has not been re-run in Houdini since. Before the change it showed convex hulls and AutoFit boxes on
-  a rotated packed transform resting as in Bullet, and a box tilted in SOPs before packing (or with no `bullet_georep`)
-  resting tilted 30 degrees on an edge where Bullet's lies flat. Its sphere and capsule cases are new: Bullet's own
-  sphere / capsule AutoFit is unknown (here a capsule lies along the longest side; Bullet's capsule is along Y).
+* AutoFit (`fitShapeOriented`): boxes, hulls, the convex-hull Default Shape, spheres and capsule radii rest as in
+  Bullet (`autofit_bullet`, `shape_types`). Capsule length now follows Bullet's measured 0.6 (caps end where the piece
+  does; the enclosing length gave 0.883), not yet re-run. A free standing capsule topples differently in each solver
+  (Bullet's fell, Box3D's balanced), which is why that check drops a plate on a static one.
 * Scenes saved with a Box3D Data node before the Default Shape became Convex Hull: whether Houdini kept the old menu
   value (Box) in the file or the node now shows the new default.
 

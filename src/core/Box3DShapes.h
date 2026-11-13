@@ -355,12 +355,16 @@ inline const float (&identityFrame())[3][3] {
   return kIdentity;
 }
 
-// A box / sphere / capsule fitted to the points' bounds measured along `axes`
-// (three orthonormal, right-handed rows in body space). Box: those bounds,
-// turned by the frame. Sphere: centred on them, radius the largest half
-// extent. Capsule: along the frame axis with the largest extent, radius the
-// larger of the other two half extents, caps inside the bounds. Extents are
-// clamped like makeShapeSpec. False for no points or a non-finite one.
+// A box / sphere / capsule fitted to the points along `axes` (three
+// orthonormal, right-handed rows in body space), as Bullet's AutoFit does
+// (measured against it, test autofit_bullet). Box: the points' bounds along
+// the axes, turned with them. Sphere: centred on those bounds, just enclosing
+// every point. Capsule: along the second axis (the one closest to the body's
+// Y after canonicalFrame), centred on the bounds, radius just enclosing every
+// point around that axis, ending where the bounds end along it (measured:
+// Bullet's capsule on a standing 0.4 x 1.2 x 0.4 piece tops out at 0.6).
+// Extents are clamped like makeShapeSpec. False for no points or a non-finite
+// one.
 inline bool fitShapeInFrame(ShapeType type, const float *xyz, int count,
                             const float axes[3][3], ShapeSpec &out) {
   if (count <= 0)
@@ -391,23 +395,41 @@ inline bool fitShapeInFrame(ShapeType type, const float *xyz, int count,
         mid[0] * axes[0][j] + mid[1] * axes[1][j] + mid[2] * axes[2][j];
   const bool turned = !(axes[0][0] == 1.0f && axes[1][1] == 1.0f &&
                         axes[2][2] == 1.0f); // keeps an exact identity
+
+  // Per point, relative to the centre: along the second axis, and the squared
+  // distance from that axis (in doubles: r^2 - d^2 cancels at the rim).
+  auto relative = [&](int i, double &along, double &dist2) {
+    double v[3];
+    for (int j = 0; j < 3; ++j)
+      v[j] = static_cast<double>(xyz[3 * i + j]) - out.center[j];
+    along = v[0] * axes[1][0] + v[1] * axes[1][1] + v[2] * axes[1][2];
+    dist2 =
+        std::max(0.0, v[0] * v[0] + v[1] * v[1] + v[2] * v[2] - along * along);
+  };
+
   if (type == ShapeType::Sphere) {
+    double r2 = 0.0;
+    for (int i = 0; i < count; ++i) {
+      double along, dist2;
+      relative(i, along, dist2);
+      r2 = std::max(r2, dist2 + along * along);
+    }
     out.type = ShapeType::Sphere;
-    out.radius = std::max({half[0], half[1], half[2]});
+    out.radius = clampExtent(static_cast<float>(std::sqrt(r2)));
   } else if (type == ShapeType::Capsule) {
-    // The shape's Y is the long axis: a cyclic permutation keeps the frame
-    // right-handed.
-    int l = 1;
-    if (half[0] > half[l])
-      l = 0;
-    if (half[2] > half[l])
-      l = 2;
-    const int a = (l + 2) % 3, b = (l + 1) % 3;
+    double r2 = 0.0;
+    for (int i = 0; i < count; ++i) {
+      double along, dist2;
+      relative(i, along, dist2);
+      r2 = std::max(r2, dist2);
+    }
     out.type = ShapeType::Capsule;
-    out.radius = std::max(half[a], half[b]);
-    out.halfLength = std::max(half[l] - out.radius, 0.0f);
-    if (turned || l != 1)
-      quatFromAxes(axes[a], axes[l], axes[b], out.rot);
+    out.radius = clampExtent(static_cast<float>(std::sqrt(r2)));
+    // Bullet keeps the whole capsule within the bounds along the axis: the
+    // caps end where the piece does (a sphere when the radius is larger).
+    out.halfLength = std::max(half[1] - out.radius, 0.0f);
+    if (turned)
+      quatFromAxes(axes[0], axes[1], axes[2], out.rot);
   } else {
     out.type = ShapeType::Box;
     copy3(out.halfExtents, half);

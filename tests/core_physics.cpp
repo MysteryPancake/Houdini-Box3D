@@ -421,31 +421,34 @@ int main() {
     CHECK(fitShapeToPoints(ShapeType::Box, off.data(), 4, fit));
     CHECK(fit.type == ShapeType::Box && std::fabs(fit.center[0] - 3) < 1e-6f &&
           std::fabs(fit.halfExtents[2] - 3) < 1e-6f);
+    // Sphere: encloses every point (each is sqrt(11) from the centre 3 1 3).
     CHECK(fitShapeToPoints(ShapeType::Sphere, off.data(), 4, fit) &&
-          std::fabs(fit.radius - 3) < 1e-6f);
+          std::fabs(fit.radius - std::sqrt(11.0f)) < 1e-5f);
     const std::vector<float> flat = {0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1};
     CHECK(fitShapeToPoints(ShapeType::Box, flat.data(), 4, fit) &&
           fit.halfExtents[1] > 0.0f); // clamped
     CHECK(!fitShapeToPoints(ShapeType::Box, off.data(), 0, fit));
 
-    // capsule fits: bounds are x 2..4, y 0..2, z 0..6, so the axis is z
+    // Capsule: along Y through the bounds' centre (3 1 3), radius through the
+    // points (each sqrt(10) from the axis), ending where the bounds end: the 2
+    // tall bounds are shorter than the radius, so no straight section.
     CHECK(fitShapeToPoints(ShapeType::Capsule, off.data(), 4, fit));
     CHECK(fit.type == ShapeType::Capsule &&
-          std::fabs(fit.radius - 1.0f) < 1e-6f // wider of x / y
-          && std::fabs(fit.halfLength - 2.0f) < 1e-6f &&
-          std::fabs(fit.center[0] - 3.0f) < 1e-6f &&
-          std::fabs(fit.center[2] - 3.0f) < 1e-6f);
-    {
-      float axis[3];
-      const float up[3] = {0, 1, 0};
-      quatRotate(fit.rot, up, axis);
-      CHECK(std::fabs(std::fabs(axis[2]) - 1.0f) < 1e-5f);
-    }
+          std::fabs(fit.radius - std::sqrt(10.0f)) < 1e-5f &&
+          fit.halfLength == 0.0f && std::fabs(fit.center[0] - 3.0f) < 1e-6f &&
+          std::fabs(fit.center[2] - 3.0f) < 1e-6f && fit.rot[3] == 1.0f);
     const std::vector<float> tall = {-1, 0, -1, 1, 0, -1, -1, 10, 1, 1, 0, 1};
     CHECK(fitShapeToPoints(ShapeType::Capsule, tall.data(), 4, fit));
-    CHECK(std::fabs(fit.radius - 1.0f) < 1e-6f &&
-          std::fabs(fit.halfLength - 4.0f) < 1e-6f); // 10 tall = 4 + 4 + 2 caps
-    CHECK(fit.rot[3] == 1.0f); // along Y already: not turned
+    CHECK(std::fabs(fit.radius - std::sqrt(2.0f)) < 1e-5f &&
+          std::fabs(fit.halfLength - (5.0f - std::sqrt(2.0f))) <
+              1e-5f); // 10 tall, caps included
+    // A ring of radius sqrt(2) at y 0 and tips at y +-3: 6 tall, caps
+    // included.
+    const std::vector<float> tips = {-1, 0, -1, 1, 0, -1, -1, 0,  1,
+                                     1,  0, 1,  0, 3, 0,  0,  -3, 0};
+    CHECK(fitShapeToPoints(ShapeType::Capsule, tips.data(), 6, fit));
+    CHECK(std::fabs(fit.radius - std::sqrt(2.0f)) < 1e-5f &&
+          std::fabs(fit.halfLength - (3.0f - std::sqrt(2.0f))) < 1e-4f);
 
     // AutoFit follows geometry turned inside the packed piece: a 0.6 x 0.4 x
     // 0.8 box turned 30 degrees about z gets that box back, turned 30 degrees.
@@ -476,35 +479,18 @@ int main() {
       CHECK(fitShapeToPoints(ShapeType::Box, box.data(), 8, aabb));
       CHECK(shapeVolume(o) < 0.7f * shapeVolume(aabb));
 
-      // Sphere: centred on the turned box, radius its largest half extent.
+      // Sphere: centred on the turned box, through its corners (Bullet: 0.538).
       CHECK(Box3DWorld::fitShapeOriented(ShapeType::Sphere, box.data(), 8, o));
-      CHECK(std::fabs(o.radius - 0.4f) < 1e-4f &&
+      CHECK(std::fabs(o.radius - std::sqrt(0.29f)) < 1e-4f &&
             std::fabs(o.center[0] - 1.0f) < 1e-4f);
-      // Capsule: along the longest side (z, 0.8), radius the wider of the rest.
+      // Capsule: along the box's own y, around its 0.6 x 0.8 cross-section
+      // (Bullet: radius 0.5); the box is only 0.4 tall, so a sphere.
       CHECK(Box3DWorld::fitShapeOriented(ShapeType::Capsule, box.data(), 8, o));
-      CHECK(std::fabs(o.radius - 0.3f) < 1e-4f &&
-            std::fabs(o.halfLength - 0.1f) < 1e-4f);
-    }
-    // A rod turned 30 degrees about z: the capsule lies along the rod.
-    {
-      const float c = std::cos(30.0f * kDegToRad),
-                  sn = std::sin(30.0f * kDegToRad);
-      std::vector<float> rod;
-      for (int sx = -1; sx <= 1; sx += 2)
-        for (int sy = -1; sy <= 1; sy += 2)
-          for (int sz = -1; sz <= 1; sz += 2) {
-            const float x = 1.0f * sx, y = 0.2f * sy, z = 0.2f * sz;
-            rod.insert(rod.end(), {x * c - y * sn, x * sn + y * c, z});
-          }
-      ShapeSpec o;
-      CHECK(Box3DWorld::fitShapeOriented(ShapeType::Capsule, rod.data(), 8, o));
-      float axis[3];
+      CHECK(std::fabs(o.radius - 0.5f) < 1e-4f && o.halfLength == 0.0f);
+      float ax[3];
       const float up[3] = {0, 1, 0};
-      quatRotate(o.rot, up, axis);
-      CHECK(std::fabs(std::fabs(axis[0]) - c) < 1e-4f &&
-            std::fabs(std::fabs(axis[1]) - sn) < 1e-4f);
-      CHECK(std::fabs(o.radius - 0.2f) < 1e-4f &&
-            std::fabs(o.halfLength - 0.8f) < 1e-4f);
+      quatRotate(o.rot, up, ax);
+      CHECK(std::fabs(ax[0] + sn) < 1e-4f && std::fabs(ax[1] - c) < 1e-4f);
     }
     // Geometry along the body axes keeps them exactly (no turn from float
     // noise).

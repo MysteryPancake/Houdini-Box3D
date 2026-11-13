@@ -167,10 +167,13 @@ equal to what its body was built with.
 axes and, from a throwaway `b3CreateHull` of the points, each face normal paired with each of that face's edges (exact
 for boxes and prisms; a fractured piece gets a face of its hull flush). A turned frame must beat the body axes by
 `kTurnedFitGain` (Box3DWorld.cpp), so geometry along the body axes keeps them exactly; `canonicalFrame` picks the
-equivalent frame closest to the body axes. In that frame (`fitShapeInFrame`, Box3DShapes.h): box = the bounds, turned
-(a turned box is an 8-corner hull, as for `bullet_primR`); sphere = centred on them, radius the largest half extent;
-capsule = along the frame axis with the largest extent, radius the larger other half extent, caps inside the bounds
-(Bullet's capsule runs along Y; here a lying piece gets a lying capsule). Extents are measured over every point. Not
+equivalent frame closest to the body axes. In that frame (`fitShapeInFrame`, Box3DShapes.h), as measured against
+Bullet (`autofit_bullet`: its sphere on a 0.6 x 0.4 x 0.8 box has radius 0.538, the half diagonal; its capsule radius
+0.5, around the box's own x-z section): box = the bounds, turned (a turned box is an 8-corner hull, as for
+`bullet_primR`); sphere = centred on them, through the farthest point; capsule = along the frame's second axis (the
+one nearest the body's Y), centred on the bounds, radius through the point farthest from the axis, caps ending where
+the bounds end along it (a sphere when the radius is larger; Bullet's capsule on a standing 0.4 x 1.2 x 0.4 piece tops
+out 0.6 above its centre). Extents use every point. Not
 cached: each AutoFit body builds one hull at creation. `fitShapeToPoints` (body axes only) is the fallback when a
 piece cannot be hulled.
 
