@@ -162,7 +162,7 @@ Joints use Houdini's **Constraint Network** DOP. Wire Box3D Constraint Relations
 - Sleeping a body also sleeps the bodies touching it.
 - Escape cancels a step.
 - An object node's Solve On Creation Frame works as with Bullet: off, a new object starts moving one frame after it appears.
-- The Box3D Solver's Guides tab has Show Collision Shapes, which draws each body's collision shapes in the viewport.
+- The Box3D Solver's Guide Options have Show Collision Shapes, which draws each body's collision shapes in the viewport.
 - The Performance Monitor shows each solver stage (sync, step, write-back, ...) as its own entry.
 
 ## Troubleshooting

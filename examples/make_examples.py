@@ -14,7 +14,7 @@ Copy to Points, Attribute Wrangle; the building also RBD Material Fracture) and 
 Object, so it doubles as a template.
 
 Scenes:
-  shapes          the collision shapes: box, sphere, capsule and convex hull (Show Collision Shapes on)
+  shapes          the collision shapes: box, sphere, capsule and convex hull
   many_bodies     40,000 boxes poured into a bin; Rows / Columns / Layers on the geometry change the count
   building        breaking constraints: a concrete building (RBD Material Fracture) glued together, hit by a ball
   bridge_chain    constraints: a hinged rope bridge (revolute) and a swinging chain (spherical)
@@ -408,15 +408,15 @@ def scene_shapes():
                     calls.append(mk((x + 0.1 * layer, y, z), f"{tag}{i}_{j}_{layer}", spin, cd, georep=rep))
         p.stream(tag, shape, "\n".join(calls), f"{tag}: bullet_georep '{rep}', fitted to the shape (bullet_autofit 1)")
     path = p.finish()
-    dop, _, _ = build_dops("shapes_sim", path, solver_parms={"showguide": 1})
+    dop, _, _ = build_dops("shapes_sim", path)
     note = f"""SHAPES: {p.count - 1} bodies in five shapes fall onto a static floor.
 
 Each piece's bullet_georep point attribute picks its collision shape, as with Bullet:
 box, sphere, capsule, convexhull (the dodecahedra and teapots). bullet_autofit 1 fits it
 to the piece. The default for a piece without bullet_georep is convexhull.
 
-The Box3D Solver's Guides tab has Show Collision Shapes on: the cyan outlines are what
-the solver collides (dimmed when a body is asleep).
+To see what the solver collides, turn on Show Collision Shapes in the Box3D Solver's
+Guide Options: cyan outlines, dimmed when a body is asleep.
 
 Try: change the shapes in shape_pieces, or add a Box3D Data node after 'pieces' in the
 DOP network to set friction, bounce or the default shape for pieces without bullet_georep."""

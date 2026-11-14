@@ -57,10 +57,10 @@ Results, Updating Constraint States, Recording Impacts, Updating Points: point w
 thread; threaded passes count toward the stage that runs them. When the monitor is not recording, the constructor
 only checks two flags. Box3D's own step breakdown (`b3World_GetProfile`) is not reported.
 
-**Guide geometry** (`Box3DGuide.cpp`; the solver node's Guides tab: Show Collision Shapes, Shape Color). The solver
+**Guide geometry** (`Box3DGuide.cpp`; the solver node's Guide Options: Show Collision Shapes, Shape Color). The solver
 overrides `createGuideObjectSubclass` (a `SIM_GuidePerObject`: one guide per object it is attached to) and
 `buildGuideGeometrySubclass`, which calls `buildCollisionGuide`. Guide parameters are `setGuideTemplates` on the DOP
-description, read with `GET_GUIDE_FUNC_B` / `_V3`. The shapes come from the live world
+description, read with `GET_GUIDE_FUNC_B` / `_V3`; being guide parameters, changing them never re-simulates. The shapes come from the live world
 (`Box3DWorld::bodyShapeOutlines`: hulls with their face loops, spheres, capsules, in body space), found through the
 engine's objects (the `SIM_Box3DWorld` whose state has this object in `objectSync`); each body is placed at the pose
 the object's geometry shows on the displayed frame (point `P` with its packed rotation, else `orient`; whole objects
