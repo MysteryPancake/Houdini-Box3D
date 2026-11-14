@@ -23,10 +23,11 @@ remove an item once it has been checked, and record anything new here rather tha
   Data change mid-simulation reaching existing bodies is verified, `data_change_midsim`.)
 
 **HDK and Houdini behaviour**
-* Height-field affectors (new, not yet built or run in Houdini): the HDK calls compile, `heightfield_flat`,
-  `heightfield_terrain` and `heightfield_animated` pass, and two assumptions hold: heights run along the volume's
-  thin axis, normalised and unscaled by the volume's own transform; and a HeightField SOP edit changes
-  `geometryIdentity(gdp, true)` (else the heights are not re-read until something else changes).
+* Height-field affectors: built and checked on 22.0.502 (`heightfield_flat`, `heightfield_terrain`,
+  `heightfield_animated` pass: a HeightField SOP's volume maps index x to world z and index y to world x, so the
+  transposed frame is the one used). The `terrain` example plays, and editing the HeightField SOP mid-simulation
+  reaches the collider when the Static Object has Use Deforming Geometry on (without it Houdini does not re-import
+  the geometry, as for meshes).
 * Data ids surviving the DOP copy between timesteps (the sync skip). If they do not, every step scans: correct, no gain.
   The debug log `sync: N of M object(s) unchanged, scan skipped` shows it working.
 * The timestamp semantics behind `canContinue`.

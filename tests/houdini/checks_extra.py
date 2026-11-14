@@ -1018,19 +1018,11 @@ def _height_volume(sop):
 
 
 def _sim_geometry_transform(sim):
-    """The collider's geometry-to-world matrix as the simulation holds it: the Geometry data's own
-    Transform record, then the object's Position (what SIMgetGeometryTransform combines)."""
+    """The collider's geometry-to-world matrix as the simulation holds it. hou.DopObject.transform()
+    already includes the Geometry data's own Transform (Use Object Transform puts the object's
+    matrix there and the Position shows it too), so it is not multiplied in again."""
     obj = sim.findObject("collider")
-    m = hou.Matrix4(1)
-    data = obj.findSubData("Geometry") if obj is not None else None
-    if data is not None:
-        try:
-            gx = data.record("Transform").field("transform")
-            if isinstance(gx, hou.Matrix4):
-                m = gx
-        except Exception:  # noqa: BLE001 - no record: identity
-            pass
-    return m * obj.transform() if obj is not None else m
+    return obj.transform() if obj is not None else hou.Matrix4(1)
 
 
 def _terrain_y(m, vol, world_pos):

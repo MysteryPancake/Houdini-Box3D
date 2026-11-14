@@ -90,6 +90,8 @@ primitives are ignored (`findHeightVolume`, `prepareHeightField`, `buildHeightFi
   change its scale in place, so the scale is in the signature (a change rebuilds it). Shear (or a scale along a
   slanted axis) falls back to the field's triangles as a mesh (`buildHeightMesh`, counter-clockwise from above,
   through the mesh path's pose / bake).
+* Live edits (verified): a SOP edit mid-simulation reaches the solver only with the Static Object's Use Deforming
+  Geometry on (Houdini re-imports the geometry; the changed detail re-reads and re-hashes the heights).
 * Signature: a hash of the heights, the grid, friction / bounce, the mode and the scale (or the baked matrix). The
   heights are read and hashed (`UT_VoxelArrayIteratorF` over `getVoxelHandle()`) only when `geometryIdentity(gdp,
   true)` changes (kept in `Box3DAffectorBody::heightSource` / `heightHash`), and read again for a rebuild.
@@ -102,3 +104,8 @@ primitives are ignored (`findHeightVolume`, `prepareHeightField`, `buildHeightFi
 * HDK calls (from the HDK docs): `GEO_PrimVolume::getRes(int&, int&, int&)`, `getStorageType()`,
   `indexToPos(exint, exint, exint, UT_Vector3D&)`, `getTransform()` (`const UT_Matrix3 &`), `getVoxelHandle()`;
   `UT_VoxelArrayIterator::setConstArray / rewind / atEnd / advance / x / y / z / getValue`.
+* How the transform arrives (measured): Static Object's Use Object Transform (`usetransform`, off by default) puts the
+  object's whole world matrix, scale and shear included, in the Geometry data's `Transform` record, and
+  `SIMgetGeometryTransform` returns it (applied once; `hou.DopObject.transform()` already includes it). OBJ Path
+  instead drives the Position data: translation and rotation only, so an object-level scale is lost, for meshes
+  too. With neither, the collider stays in SOP space.

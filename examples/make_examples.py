@@ -939,7 +939,8 @@ grid and heights, no polygons needed. A Static Object with polygons instead beco
 triangle mesh.
 
 The object's transform poses the height field; moving it with an animated OBJ Path moves
-the collider without rebuilding it. Shear falls back to the field's triangles.
+the collider without rebuilding it. Shear falls back to the field's triangles. To change
+the terrain while the simulation runs, turn on Use Deforming Geometry on 'terrain'.
 
 Try: change the hills wrangle, or add a HeightField Noise or HeightField Erode SOP before
 OUT_terrain; add a Box3D Data node after 'terrain' in the DOP network to set its friction
