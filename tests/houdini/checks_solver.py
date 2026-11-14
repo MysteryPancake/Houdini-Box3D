@@ -122,6 +122,10 @@ def test_ui():
     expect("Solver Reap Dead Points default (off)", solver.parm("reapdead").parmTemplate().defaultValue(), False)
     expect("Solver Reap At Frame End default (on, as POP)",
            solver.parm("reapatframeend").parmTemplate().defaultValue(), True)
+    t = solver.parm("substeps").parmTemplate()
+    expect("Solver Substeps default", t.defaultValue()[0], 10)
+    expect("Solver Substeps slider 1..100 (hard minimum only)",
+           (t.minValue(), t.minIsStrict(), t.maxValue(), t.maxIsStrict()), (1, True, 100, False))
     # Threads defaults to the machine's physical performance cores (Box3DCpu.cpp), 1..32.
     threads_default = solver.parm("threads").parmTemplate().defaultValue()[0]
     expect("Solver Threads default in 1..32", 1 <= threads_default <= 32, True)

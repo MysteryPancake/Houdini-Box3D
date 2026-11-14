@@ -156,7 +156,7 @@ Joints use Houdini's **Constraint Network** DOP. Wire Box3D Constraint Relations
 
 ## Things to know
 
-- Bullet's collision padding and solver settings (ERP, CFM, iterations) are ignored. Use Substeps and the contact settings; Substeps 1 at 24 fps gives very soft contacts, so keep 4. `bullet_want_deactivate`, `bullet_sleeping`, `bullet_ignore` and `min_activation_impulse` are not read; use `enablesleep`, `awake` and `enabled`.
+- Bullet's collision padding and solver settings (ERP, CFM, iterations) are ignored. Use Substeps (default 10) and the contact settings; Substeps 1 at 24 fps gives very soft contacts. `bullet_want_deactivate`, `bullet_sleeping`, `bullet_ignore` and `min_activation_impulse` are not read; use `enablesleep`, `awake` and `enabled`.
 - Box3D's mover and pogo joints, explosions and wind aren't included. They are game-oriented, and Houdini already has Force DOPs for wind and explosions.
 - Use `id` if you delete points with `dead`, otherwise every later point counts as a new body.
 - Sleeping a body also sleeps the bodies touching it.

@@ -41,6 +41,9 @@ remove an item once it has been checked, and record anything new here rather tha
 * The Threads default (`performanceCoreCount`, `Box3DCpu.cpp`): builds and runs on Windows (the `ui` check only
   asks for 1 to 32); that it equals the physical performance core count is not checked there, nor on macOS
   (`hw.perflevel0`) or ARM Linux (`cpu_capacity`).
+* Solver Substeps default 10 (was 4), slider 1 to 100 (hard minimum 1, more can be typed): the full Houdini suite has not been run since. Tests
+  that leave Substeps at its default (most) now step 10 times per frame; `baseline` pins 4, as recorded. A scene
+  saved with the old default may come back with 10, if Houdini did not store the unchanged value.
 * Scene scale: Box3D's tolerances assume metres. Measured (`scale`): a three-box stack rests 2.494 / 2.488 / 2.417 box
   sizes tall at 0.01x / 1x / 100x (2.5 ideal), with slight jitter at 100x: scenes 100 times too large sink about 3%.
 

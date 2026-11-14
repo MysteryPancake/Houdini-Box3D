@@ -53,8 +53,8 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                   "Let forces wake sleeping bodies, e.g. wind that should blow "
                   "resting pieces away.",
                   "{ useforces == 0 }")
-          // Minimum 1 (Box3D clamps to it); larger than 16 can be typed.
-          .integer("substeps", "Substeps", 4, R{1, 16},
+          // Slider 1 to 100; minimum 1 (Box3D clamps to it), more can be typed.
+          .integer("substeps", "Substeps", 10, R{1, 100},
                    "Solver passes per time step. More is more stable for "
                    "stacks and fast collisions, but slower.")
           .number("timescale", "Time Scale", 1.0, R{0, 2},

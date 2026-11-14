@@ -3,19 +3,20 @@
 Run from the repository root with the plugin built and installed (build.bat):
 
     hython examples/make_examples.py              # every scene
-    hython examples/make_examples.py dominoes     # some scenes (names below)
+    hython examples/make_examples.py building     # some scenes (names below)
     hython examples/make_examples.py --check      # also simulate each scene and print timings
 
 On Windows, make_examples.bat (in the repository root) finds Houdini and runs this.
 
 Each scene is saved to examples/scenes/<number>_<name>.hip. Open one and press play: a sticky
 note in /obj says what it shows and what to try. Every scene is built from ordinary SOPs (Box,
-Copy to Points, Attribute Wrangle) and one RBD Packed Object, so it doubles as a template.
+Copy to Points, Attribute Wrangle; the building also RBD Material Fracture) and one RBD Packed
+Object, so it doubles as a template.
 
 Scenes:
   shapes          the collision shapes: box, sphere, capsule and convex hull (Show Collision Shapes on)
   many_bodies     40,000 boxes poured into a bin; Rows / Columns / Layers on the geometry change the count
-  dominoes        a spiral of dominoes knocked over by the first one
+  building        breaking constraints: a concrete building (RBD Material Fracture) glued together, hit by a ball
   bridge_chain    constraints: a hinged rope bridge (revolute) and a swinging chain (spherical)
   wrecking_ball   a ball on a rigid rope (distance joint) swinging into a brick wall
   paddle_mixer    a motor: a paddle driven by a revolute motor churning a tank of balls
@@ -237,6 +238,10 @@ class Pieces:
         for attr in ("name", "active", "density", "bullet_georep"):
             if geo.findPointAttrib(attr) is None:
                 raise SetupError(f"{null.path()}: the pieces have no '{attr}' attribute")
+        # Packing can drop attributes it is not told to keep: an unnamed piece matches no constraint.
+        unnamed = sum(1 for pt in geo.points() if not pt.attribValue("name"))
+        if unnamed:
+            raise SetupError(f"{null.path()}: {unnamed} piece(s) have an empty name (an attribute lost when packing?)")
         static = [pt.attribValue("name") for pt in geo.points() if pt.attribValue("active") == 0]
         if "ground" in [pt.attribValue("name") for pt in geo.points()] and "ground" not in static:
             raise SetupError(f"{null.path()}: the ground piece is not static (active 0)")
@@ -463,39 +468,120 @@ Allow Sleeping is on Box3D Data. With Bullet the same scene is usually much slow
     return dop, 360
 
 
-def scene_dominoes():
-    p = Pieces("domino_pieces")
-    ground(p, 60.0)
-    count, spacing, turn_gap, r0 = 1000, 0.55, 1.6, 3.0
-    b = turn_gap / (2 * math.pi)
-    theta, calls, first = 0.0, [], None
-    for i in range(count):
-        r = r0 + b * theta
-        pos = (r * math.cos(theta), 0.5005, r * math.sin(theta))
-        # tangent of the spiral (direction of travel)
-        tx, tz = b * math.cos(theta) - r * math.sin(theta), b * math.sin(theta) + r * math.cos(theta)
-        tl = math.hypot(tx, tz)
-        tx, tz = tx / tl, tz / tl
-        q = quat_about((0, 1, 0), math.atan2(-tz, tx))  # the domino's thin side (x) along the path
-        calls.append(mk(pos, f"domino{i}", q, rainbow(i / count * 1.5)))
-        if first is None:
-            first = (tx, tz)
-        theta += spacing / math.sqrt(r * r + b * b)
-    p.boxes("dominoes", (0.12, 1.0, 0.5), calls, "dominoes along a spiral, thin side along the path")
+def scene_building():
+    p = Pieces("building_pieces")
+    ground(p, 80.0)
+    geo = p.geo
+
+    # --- The building, from Box SOPs only: per floor a slab and the walls, split into panels.
+    # Parts touch but never overlap (overlapping convex hulls would push apart on frame 1).
+    floors, width, storey, slab, wall, bays = 8, 12.0, 3.0, 0.3, 0.4, 3
+    half = width / 2
+    parts = []  # (centre, size)
+    for f in range(floors):
+        base = f * storey
+        parts.append(((0.0, base + slab / 2, 0.0), (width, slab, width)))
+        h = storey - slab
+        y = base + slab + h / 2
+        for b in range(bays):  # walls along x (front / back), full width, split into bays
+            length = width / bays
+            x = -half + length * (b + 0.5)
+            for z in (-half + wall / 2, half - wall / 2):
+                parts.append(((x, y, z), (length, h, wall)))
+        inner = width - 2 * wall
+        for b in range(bays):  # walls along z (sides), between the front and back walls
+            length = inner / bays
+            z = -half + wall + length * (b + 0.5)
+            for x in (-half + wall / 2, half - wall / 2):
+                parts.append(((x, y, z), (wall, h, length)))
+    parts.append(((0.0, floors * storey + slab / 2, 0.0), (width, slab, width)))  # the roof
+    unit = create(geo, "box", "building_unit_box")  # a 1 m polygon box, scaled per part
+    set_parm(unit, "size", (1.0, 1.0, 1.0))
+    layout = create(geo, "attribwrangle", "building_parts")
+    set_parm(layout, "class", 0)
+    lines = ["// One point per building part (slab or wall panel): its centre, and its size as 'scale',",
+             "// which Copy to Points applies to the unit box."]
+    for c, s in parts:
+        lines.append(f'{{ int pt = addpoint(0, {vec(c)}); setpointattrib(0, "scale", pt, {vec(s)}); }}')
+    set_parm(layout, "snippet", "\n".join(lines))
+    copies = create(geo, "copytopoints", "building_copy")
+    copies.setInput(0, unit)
+    copies.setInput(1, layout)
+    set_parm(copies, ["pack", "packgeo"], 0)
+    named = create(geo, "attribwrangle", "name_parts")
+    named.setInput(0, copies)
+    set_parm(named, "class", 1)  # primitives
+    set_parm(named, "snippet", "// Each copy is a 6-face box: name every part, so each is fractured on its own.\n"
+                               's@name = sprintf("part%d", @primnum / 6);')
+    fracture = create(geo, "rbdmaterialfracture", "fracture")
+    fracture.setInput(0, named)
+    # Concrete (the default material) breaks every named part into chunks.
+    pack = create(geo, "pack", "pack_pieces")
+    pack.setInput(0, fracture, 0)
+    set_parm(pack, ["packbyname"], 1)
+    set_parm(pack, ["nameattribute"], "name")
+    # Pack drops every attribute it is not told to transfer, the piece names included.
+    set_parm(pack, ["transfer_attributes", "transferattributes", "transferattribs", "transfer"], "name")
+    body = create(geo, "attribwrangle", "piece_attributes")
+    body.setInput(0, pack)
+    set_parm(body, "snippet", """\
+// The body attributes every stream has: the packed piece's name on its point, dynamic, concrete.
+int prims[] = pointprims(0, @ptnum);
+s@name = prim(0, "name", prims[0]);
+i@active = 1;
+f@density = 2400.0;
+s@bullet_georep = "convexhull";
+float shade = 0.62 + 0.12 * rand(@ptnum + 0.5);
+v@Cd = set(shade, shade * 0.98, shade * 0.93);
+""")
+    p.merge.setInput(len(p.merge.inputs()), body)
+
+    # --- Glue between touching pieces, across cracks and between parts.
+    connect = create(geo, "connectadjacentpieces", "connect_pieces")
+    connect.setInput(0, fracture, 0)
+    glue_lines = create(geo, "attribwrangle", "glue_name")
+    glue_lines.setInput(0, connect)
+    set_parm(glue_lines, "class", 1)  # primitives
+    constraints = create(geo, "null", "OUT_constraints")
+    constraints.setInput(0, glue_lines)
+
+    # --- A heavy ball thrown at the third floor.
+    radius, speed, target_y, start_x = 1.5, 30.0, 7.5, -32.0
+    flight = (half - start_x) / speed
+    start_y = target_y + 0.5 * 9.80665 * flight * flight  # falls to the third floor by the time it arrives
+    p.stream("ball", p.shape_sphere("ball", radius, freq=4),
+             mk((start_x, start_y, 0.0), "ball", cd=(0.2, 0.2, 0.22), density=8000.0, georep="sphere"),
+             "the ball: steel density, so about 110 tonnes")
     path = p.finish(
-        "// The first domino gets a push along the path (RBD Packed Object keeps v: Inherit Velocity on).\n"
-        f'v@v = s@name == "domino0" ? {vec((first[0] * 2.0, 0, first[1] * 2.0))} : {{0, 0, 0}};')
-    dop, _, _ = build_dops("dominoes_sim", path, keep_velocity=True)
-    note = f"""DOMINOES: {count} dominoes on a spiral; the first is pushed into the next.
+        "// The ball is thrown at the building (RBD Packed Object keeps v: Inherit Velocity on).\n"
+        f'v@v = s@name == "ball" ? {vec((speed, 0, 0))} : {{0, 0, 0}};')
 
-Thin, tall boxes standing on their ends test contact stability and friction. Each
-domino is a packed box whose rotation comes from the orient point attribute.
+    strength = 5.0e4
+    dop, _, names_used = build_dops(
+        "building_sim", path, network_path=constraints.path(), keep_velocity=True,
+        joints=[("glueconrel", "glue", {"strength": strength})])
+    glue_name = names_used.get("glue") or "Glue"
+    set_parm(glue_lines, "snippet", "// Every line is a glue bond: constraint_name picks the Glue relationship by "
+                                    f'its Data Name.\ns@constraint_name = "{glue_name}";')
+    pieces = p.count - 2  # the ground and the ball
+    bonds = len(cooked_geometry(constraints).prims())
+    note = f"""BUILDING: an {floors}-storey concrete building in {pieces} pieces, held by {bonds}
+glue bonds, hit by a 110-tonne ball.
 
-Try: change spacing in the dominoes_points wrangle's code (this script's 'spacing'),
-or set friction on RBD Packed Object (it writes friction onto every piece) and watch
-the dominoes slip instead of topple."""
-    tidy(1800, note, dop)
-    return dop, 1800
+building_pieces makes the floors and wall panels from Box SOPs, RBD Material Fracture
+(Concrete) breaks each one into chunks, and Connect Adjacent Pieces joins every pair of
+touching chunks with a line: one glue bond each.
+
+Breaking: the Glue Constraint Relationship's Strength ({strength:g}) sets how hard a bond is
+to break. Box3D makes each bond a weld that breaks once the force on it passes
+Strength / timestep in one step (Bullet's half-life and propagation are not used). Broken
+bonds go into the constraint geometry's 'broken' group, so a SOP Solver can react to them.
+
+Try: lower Strength on 'glue' for a weaker building (too low and it falls under its own
+weight); raise it until the ball only dents it; change the ball's speed or height in
+building_pieces; on 'fracture', change the number of chunks."""
+    tidy(240, note, dop)
+    return dop, 240
 
 
 def bridge_hinges(span=14.0, links=16, length=1.0, height=5.0):
@@ -641,49 +727,65 @@ height in wrecking_pieces; add a Box3D Weld relationship and weld the bricks tog
 
 def scene_paddle_mixer():
     p = Pieces("mixer_pieces")
-    ground(p)
-    hub = (0.0, 2.8, 0.0)
-    tank = [("tank_left", (0.3, 10, 4.6), (-3.35, 5, 0)), ("tank_right", (0.3, 10, 4.6), (3.35, 5, 0)),
-            ("tank_back", (7.0, 10, 0.3), (0, 5, -2.45)), ("tank_front", (7.0, 10, 0.3), (0, 5, 2.45))]
+    ground(p, 60.0)
+    # Tank inside: 2 * half_x wide (x), 2 * half_z deep (z), `height` tall. The paddle turns about z
+    # through the hub, so it must clear the floor and the side walls: hub height > half its length.
+    half_x, half_z, height, wall = 8.0, 5.75, 22.0, 0.3
+    paddle = (2 * half_x - 3.0, 0.6, 2 * half_z - 0.5)  # length (x), thickness, depth (z)
+    hub = (0.0, paddle[0] / 2 + 0.3, 0.0)
+    outer_x, outer_z = half_x + wall, half_z + wall
+    tank = [("tank_left", (wall, height, 2 * half_z), (-half_x - wall / 2, height / 2, 0)),
+            ("tank_right", (wall, height, 2 * half_z), (half_x + wall / 2, height / 2, 0)),
+            ("tank_back", (2 * outer_x, height, wall), (0, height / 2, -half_z - wall / 2)),
+            ("tank_front", (2 * outer_x, height, wall), (0, height / 2, half_z + wall / 2))]
     for tag, size, pos in tank:
         p.boxes(tag, size, [mk(pos, tag, cd=(0.55, 0.65, 0.75), active=0)], "a static wall of the tank")
-    p.boxes("paddle", (5.2, 0.35, 4.4), [mk(hub, "paddle", cd=(0.9, 0.5, 0.15))],
+    p.boxes("paddle", paddle, [mk(hub, "paddle", cd=(0.9, 0.5, 0.15))],
             "the paddle, hinged to the world at its middle")
-    vex = """\
-// Balls in a lattice above the paddle.
+    radius, pitch = 0.17, 0.4
+    nx = int((2 * half_x - 0.4) / pitch)
+    nz = int((2 * half_z - 0.4) / pitch)
+    y0 = hub[1] + paddle[1] / 2 + 0.3
+    ny = int((height - 1.0 - y0) / pitch)
+    vex = f"""\
+// Balls in a lattice above the paddle, filling the tank.
+int nx = {nx}, nz = {nz}, ny = {ny};
 int n = 0;
-for (int k = 0; k < 16; k++) for (int j = 0; j < 8; j++) for (int i = 0; i < 15; i++) {
-    vector p = set(-2.8 + i * 0.4, 3.4 + k * 0.4, -1.4 + j * 0.4) + 0.02 * (vector(rand(n)) - 0.5);
+for (int k = 0; k < ny; k++) for (int j = 0; j < nz; j++) for (int i = 0; i < nx; i++) {{
+    vector p = set((i - (nx - 1) * 0.5) * {num(pitch)}, {num(y0)} + k * {num(pitch)}, (j - (nz - 1) * 0.5) * {num(pitch)});
+    p += 0.02 * (vector(rand(n)) - 0.5);
     mk(p, sprintf("ball%d", n), identity, hsvtorgb(set(rand(n + 0.3), 0.6, 0.95)), 1, 1000.0, "sphere");
     n++;
-}
+}}
 """
-    p.stream("balls", p.shape_sphere("balls", 0.17, freq=2), vex, "the balls")
+    p.stream("balls", p.shape_sphere("balls", radius, freq=2), vex, "the balls")
     path = p.finish(
         "// See-through front wall (packed primitives draw with their point's Alpha).\n"
         'f@Alpha = s@name == "tank_front" ? 0.15 : 1.0;')
     network = network_sop("mixer_network", [("", hub, "paddle", hub, "revolute")])
+    speed = 60.0
     dop, _, names_used = build_dops(
         "paddle_mixer_sim", path, network_path=network,
         joints=[("box3d_revoluteconrel", "motor_hinge",
-                 {"enable_motor": 1, "motor_speed": 120.0, "max_motor_torque": 1.0e6})])
+                 {"enable_motor": 1, "motor_speed": speed, "max_motor_torque": 1.0e9})])
     fix_constraint_names(network, names_used, {"revolute": "motor_hinge"})
     note = f"""PADDLE MIXER: a motor-driven paddle churning {p.count - 6} balls.
 
-The paddle is hinged to the world by a 'Box3D Revolute' joint (axis along z, out of
-the tank) with Enable Motor on: Motor Speed 120 degrees/second, and Max Motor Torque
-high enough to push through the balls. The front wall is drawn see-through.
+The paddle ({paddle[0]:g} m long) is hinged to the world by a 'Box3D Revolute' joint (axis
+along z, out of the tank) with Enable Motor on: Motor Speed {speed:g} degrees/second, and Max
+Motor Torque high enough to push through hundreds of tonnes of balls. The front wall is
+drawn see-through.
 
 Try: on motor_hinge, lower Max Motor Torque until the balls stall the paddle, reverse
-Motor Speed, or turn on Enable Limit to make it rock between two angles."""
+Motor Speed, or turn on Enable Limit to make it rock between two angles. In this script,
+half_x / half_z / height size the tank and the ball count follows."""
     tidy(480, note, dop)
     return dop, 480
-
 
 SCENES = {
     "shapes": scene_shapes,
     "many_bodies": scene_many_bodies,
-    "dominoes": scene_dominoes,
+    "building": scene_building,
     "bridge_chain": scene_bridge_chain,
     "wrecking_ball": scene_wrecking_ball,
     "paddle_mixer": scene_paddle_mixer,

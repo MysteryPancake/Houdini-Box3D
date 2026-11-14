@@ -463,7 +463,10 @@ def baseline_scene():
     net.setInput(0, obj)
     set_parm(net, ["soppath", "constraintsoppath", "geosoppath"], constraint_lines("baseline_network", lines))
     net.setInput(1, hinge)
-    finish(dop, box3d_solver(dop, net))
+    solver = box3d_solver(dop, net)
+    # Pinned: the recorded baseline was made with 4 substeps (the solver's default is now 10).
+    set_parm(solver, ["substeps"], 4)
+    finish(dop, solver)
     return dop, label_of
 
 

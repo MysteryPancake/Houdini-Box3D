@@ -3,7 +3,7 @@ setlocal enabledelayedexpansion
 
 rem Builds the example scenes (examples\make_examples.py) with hython, into examples\scenes.
 rem   make_examples.bat                   every scene
-rem   make_examples.bat dominoes shapes   some scenes
+rem   make_examples.bat building shapes   some scenes
 rem   make_examples.bat --check           also simulate each scene and print timings
 rem Build the plugin first (build.bat): the scenes need it loaded.
 rem Finds Houdini the same way as build.bat.
