@@ -2,13 +2,17 @@
 //
 // Builds a SIM data node's parameter templates from a table: one call per
 // parameter (name, label, default, range, help, optional disable condition) and
-// one per tab, so the PRM boilerplate, the tab counts and the storage the
-// templates point at are handled in one place. Keep the builder alive for the
-// life of the plugin (a function-local static): Houdini keeps pointers into it.
+// one per tab or folder, so the PRM boilerplate, the counts and the storage the
+// templates point at are handled in one place. Groups are either tabs (one
+// switcher) or simple folders (a one-folder switcher each, with
+// PRM_SpareData::groupTypeSimple); a builder uses one kind only. Keep the
+// builder alive for the life of the plugin (a function-local static): Houdini
+// keeps pointers into it.
 #pragma once
 
 #include <PRM/PRM_Conditional.h> // PRM_Template.h only forward-declares PRM_Conditional
 #include <PRM/PRM_Include.h>
+#include <PRM/PRM_SpareData.h>
 
 #include <array>
 #include <deque>
@@ -26,9 +30,22 @@ public:
     bool hardMin = true;
   };
 
-  // Starts a tab; parameters added after it go on it. No tabs: a flat list.
+  // folderPrefix names the simple folders' switchers (<prefix>0, <prefix>1,
+  // ...); tabs share one switcher, "b3dtabs".
+  explicit Box3DParms(const char *folderPrefix = "b3dfolder")
+      : myFolderPrefix(folderPrefix) {}
+
+  // Starts a tab; parameters added after it go on it. No groups: a flat list.
   Box3DParms &tab(const char *label) {
-    myTabs.push_back({label, 0});
+    myGroups.push_back({label, myParms.size(), 0});
+    mySimple = false;
+    return *this;
+  }
+
+  // Starts a simple folder instead (don't mix with tab()).
+  Box3DParms &folder(const char *label) {
+    myGroups.push_back({label, myParms.size(), 0});
+    mySimple = true;
     return *this;
   }
 
@@ -83,25 +100,47 @@ public:
                &myMenus.back(), help, nullptr);
   }
 
-  // The finished list (switcher first if there are tabs), terminated.
+  // The finished list, terminated: tabs' switcher first, or each simple
+  // folder's switcher before its parameters.
   const PRM_Template *templates() {
-    if (myBuilt.empty()) {
-      if (!myTabs.empty()) {
-        for (const Tab &t : myTabs)
-          myTabDefaults.emplace_back(static_cast<fpreal>(t.count), t.label);
+    if (!myBuilt.empty())
+      return myBuilt.data();
+    if (!mySimple) {
+      if (!myGroups.empty()) {
+        for (const Group &g : myGroups)
+          myTabDefaults.emplace_back(static_cast<fpreal>(g.count), g.label);
         myBuilt.push_back(PRM_Template(PRM_SWITCHER,
                                        static_cast<int>(myTabDefaults.size()),
                                        &myTabsName, myTabDefaults.data()));
       }
       myBuilt.insert(myBuilt.end(), myParms.begin(), myParms.end());
-      myBuilt.emplace_back();
+    } else {
+      size_t next = 0; // first parameter not yet placed
+      for (size_t i = 0; i < myGroups.size(); ++i) {
+        const Group &g = myGroups[i];
+        // Parameters added before the first folder stay above it.
+        myBuilt.insert(myBuilt.end(), myParms.begin() + next,
+                       myParms.begin() + g.start);
+        myStrings.push_back(myFolderPrefix + std::to_string(i));
+        myNames.emplace_back(myStrings.back().c_str());
+        myFolderDefaults.emplace_back(static_cast<fpreal>(g.count), g.label);
+        myBuilt.push_back(PRM_Template(
+            PRM_SWITCHER, 1, &myNames.back(), &myFolderDefaults.back(), nullptr,
+            nullptr, nullptr, &PRM_SpareData::groupTypeSimple));
+        myBuilt.insert(myBuilt.end(), myParms.begin() + g.start,
+                       myParms.begin() + g.start + g.count);
+        next = g.start + static_cast<size_t>(g.count);
+      }
+      myBuilt.insert(myBuilt.end(), myParms.begin() + next, myParms.end());
     }
+    myBuilt.emplace_back();
     return myBuilt.data();
   }
 
 private:
-  struct Tab {
+  struct Group {
     const char *label;
+    size_t start; // index in myParms of its first parameter
     int count;
   };
 
@@ -132,8 +171,8 @@ private:
     }
     myParms.push_back(PRM_Template(type, size, &myNames.back(), d.data(), menu,
                                    r, 0, 0, 1, help, cond));
-    if (!myTabs.empty())
-      ++myTabs.back().count;
+    if (!myGroups.empty())
+      ++myGroups.back().count;
     return *this;
   }
 
@@ -145,8 +184,13 @@ private:
   std::deque<std::vector<PRM_Name>> myChoices;
   std::deque<PRM_ChoiceList> myMenus;
   std::deque<PRM_Conditional> myConditions;
-  std::vector<Tab> myTabs;
+  std::vector<Group> myGroups;
+  bool mySimple = false;
+  // Tabs: one array, filled before the switcher points at it. Folders: one
+  // each, in a deque so earlier ones keep their addresses.
   std::vector<PRM_Default> myTabDefaults;
+  std::deque<PRM_Default> myFolderDefaults;
+  std::string myFolderPrefix;
   PRM_Name myTabsName{"b3dtabs"};
   std::vector<PRM_Template> myParms;
   std::vector<PRM_Template> myBuilt;

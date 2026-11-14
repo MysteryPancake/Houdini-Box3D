@@ -32,6 +32,16 @@ GROUND = {"size": (20, 1, 20), "center": (0, -0.5, 0), "attrs": {"active": 0}}
 # ---------------------------------------------------------------------------
 
 
+def all_folders(entries):
+    """Every folder template among entries, nested ones included, in order."""
+    out = []
+    for t in entries:
+        if isinstance(t, hou.FolderParmTemplate):
+            out.append(t)
+            out.extend(all_folders(t.parmTemplates()))
+    return out
+
+
 def folder_labels(group):
     labels = []
 
@@ -71,7 +81,7 @@ def disabled(node, parm, toggles):
 
 def test_ui():
     """Joint, Box3D Data and Solver UI: disable conditions grey out the right parameters, slider
-    ranges and defaults are as designed, the joint nodes have their two tabs."""
+    ranges and defaults are as designed, the joint nodes have their two simple folders and the solver its four tabs."""
     dop = new_dopnet("ui")
     problems, checked = [], 0
 
@@ -141,9 +151,19 @@ def test_ui():
     expect("Breakable default", rev.parm("breakable").eval(), 0)
 
     labels = folder_labels(rev.parmTemplateGroup())
-    expect("Revolute tabs present", all(x in labels for x in ("Joint", "Revolute")), True)
+    expect("Revolute folders present", all(x in labels for x in ("Joint", "Revolute")), True)
+    ours = [f for f in all_folders(rev.parmTemplateGroup().entries()) if f.label() in ("Joint", "Revolute")]
+    expect("Revolute's Joint and Revolute folders are simple",
+           (len(ours), all(f.folderType() == hou.folderType.Simple for f in ours)), (2, True))
+    solver_tabs = [f for f in all_folders(solver.parmTemplateGroup().entries())
+                   if f.label() in ("Setup", "Collision", "Forces", "Advanced")]
+    expect("Solver tabs present, as tabs",
+           ([f.label() for f in solver_tabs], all(f.folderType() == hou.folderType.Tabs for f in solver_tabs)),
+           (["Setup", "Collision", "Forces", "Advanced"], True))
+    expect("Solver Contact Stiffness default", solver.parm("contactstiffness").parmTemplate().defaultValue()[0], 60.0)
+    expect("Solver Contact Damping Ratio default", solver.parm("contactdamping").parmTemplate().defaultValue()[0], 3.0)
     expect("Enable Spring label", rev.parm("enable_spring").parmTemplate().label(), "Enable Spring")
-    expect("Solver sleep label", solver.parm("enablesleep").parmTemplate().label(), "Allow Sleeping (All Objects)")
+    expect("Solver sleep label", solver.parm("enablesleep").parmTemplate().label(), "Allow Sleeping")
 
     if problems:
         return [Result("ui", Result.FAIL, f"{len(problems)} of {checked} checks: " + "; ".join(problems))]

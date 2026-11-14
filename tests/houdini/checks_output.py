@@ -492,8 +492,40 @@ def test_rbd_packed_attributes():
     return results
 
 
+def test_data_override_attributes():
+    """Box3D Data's Override Existing Attributes: RBD Packed Object stamps friction 1 on every piece, Box3D
+    Data asks for friction 0. A box pushed along the ground at 3 m/s stops quickly with the toggle off
+    (the stamped friction wins, and the solver warns) and slides about 3 m in 1 s with it on (Box3D
+    Data wins, no warning)."""
+    rows, ok = [], True
+    for override in (False, True):
+        tag = "on" if override else "off"
+        path, names = packed_boxes(f"override_{tag}", [GROUND, {"size": (1, 1, 1), "center": (0, 0.5, 0),
+                                                               "attrs": {"v": (3.0, 0.0, 0.0)}}])
+        dop = new_dopnet(f"override_{tag}")
+        obj = packed_object(dop, "pieces", path, keep_velocity=True)
+        data = box3d_data(dop, obj, "data", friction=0.0, overrideattribs=int(override))
+        solver = box3d_solver(dop, data)
+        finish(dop, solver)
+        warned = []
+
+        def sample(sim, f):
+            warned.extend(m for m in node_messages(solver) if "override Box3D Data" in m)
+            a = point_attributes(sim, "pieces", names[1], ["P"])
+            return a["P"][0] if a else None
+
+        x = step(dop, 25, sample)[25]
+        slid = x is not None and x > 2.5
+        good = (slid and not warned) if override else (not slid and bool(warned))
+        ok = ok and good
+        rows.append(f"Override {tag}: box at x={x:.2f} after 1 s ({'slid' if slid else 'stopped'}), "
+                    f"warning {'shown' if warned else 'none'} (expected {'slid, none' if override else 'stopped, shown'})")
+    return [Result("data_override_attributes", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
 TESTS = {
     "rbd_packed_attributes": test_rbd_packed_attributes,
+    "data_override_attributes": test_data_override_attributes,
     "collision_masks": test_collision_masks,
     "offset_pivot": test_offset_pivot,
     "packed_disk": test_packed_disk,

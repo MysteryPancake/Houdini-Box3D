@@ -78,22 +78,22 @@ SIM_Box3DConRel::describe(b3dop::JointType t,
   if (st.description)
     return st.description;
 
-  // A "Joint" tab with the settings every type has, then a tab with the type's
-  // own. Each is named like the primitive attribute that modifies it. Settings
-  // a toggle switches on (springs, motors, limits) come right after it and are
-  // disabled while it is off. Parameters are saved by name, so the order is
-  // free to change. Defaults: nodeJointDefaults, in Houdini units; node toggles
-  // (Breakable, ...) start off.
+  // A "Joint" folder with the settings every type has, then a folder with the
+  // type's own. Each is named like the primitive attribute that modifies it.
+  // Settings a toggle switches on (springs, motors, limits) come right after it
+  // and are disabled while it is off. Parameters are saved by name, so the
+  // order is free to change. Defaults: nodeJointDefaults, in Houdini units;
+  // node toggles (Breakable, ...) start off.
   constexpr unsigned kCommon =
       b3dop::kAllJoints & ~b3dop::jointBit(b3dop::JointType::Filter);
   const b3dop::JointSettings d =
       b3dop::nodeJointDefaults(t, b3dop::Box3DWorld::defaultJointSettings(t));
-  st.parms.tab("Joint");
+  st.parms.folder("Joint");
   bool ownTab = false;
   for (const JointParam *pp : b3dop::jointParamUiOrder(t)) {
     const JointParam &p = *pp;
     if (!ownTab && (p.types & kCommon) != kCommon) {
-      st.parms.tab(b3dop::jointTypeLabel(t));
+      st.parms.folder(b3dop::jointTypeLabel(t));
       ownTab = true;
     }
     const std::string disableWhen = b3dop::jointParamDisableWhen(p, t);

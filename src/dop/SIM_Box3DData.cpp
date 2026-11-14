@@ -19,7 +19,11 @@ const SIM_DopDescription *SIM_Box3DData::getDescription() {
   static const b3dop::BodySettings kDefaults = b3dop::nodeBodyDefaults();
   static Box3DParms p;
   static const PRM_Template *templates =
-      p.tab("Shape")
+      // Above the folders: it decides whether everything below is used.
+      p.toggle("overrideattribs", "Override Existing Attributes", false,
+               "Use these settings even where points have their own, such as "
+               "the mass, density, friction and bounce RBD Packed Object adds.")
+          .folder("Shape")
           .menu("defaultshape", "Default Shape",
                 static_cast<int>(b3dop::ShapeType::Convex),
                 {"Box", "Sphere", "Convex Hull",
@@ -42,7 +46,7 @@ const SIM_DopDescription *SIM_Box3DData::getDescription() {
           .toggle("flipwinding", "Flip Static Mesh Winding", false,
                   "Static meshes are one-sided. Turn on if bodies fall through "
                   "from the side that should be solid.")
-          .tab("Body")
+          .folder("Body")
           .menu("bodytype", "Body Type", 2, {"Static", "Kinematic", "Dynamic"},
                 "Static never moves, Kinematic follows its animation, Dynamic "
                 "is fully simulated. Points with active = 0 are static.")
@@ -63,7 +67,7 @@ const SIM_DopDescription *SIM_Box3DData::getDescription() {
           .number("gravityscale", "Gravity Scale", 1.0,
                   "Multiplies the solver's Gravity: 0 floats, negative falls "
                   "upward. Overridden by the gravityscale attribute.")
-          .tab("Material")
+          .folder("Material")
           .number("friction", "Friction", kDefaults.props.friction, R{0, 1},
                   "How much surfaces resist sliding; 0 is ice-slick. A "
                   "friction attribute wins; RBD Packed Object always writes "
@@ -87,21 +91,7 @@ const SIM_DopDescription *SIM_Box3DData::getDescription() {
           .number("angulardamping", "Angular Damping", 0.0, R{0, 10},
                   "Slows spinning; 0 is none. Overridden by the angulardamping "
                   "attribute.")
-          .tab("Sleep & Contacts")
-          .toggle("enablesleep", "Allow Sleeping", true,
-                  "Let resting bodies stop simulating until touched. Needs the "
-                  "solver's Allow Sleeping (All Objects). Overridden by the "
-                  "enablesleep attribute.")
-          .toggle(
-              "startasleep", "Start Asleep", false,
-              "Bodies begin asleep until touched. Needs Allow Sleeping. "
-              "Overridden by the awake attribute (awake = 0 starts asleep).",
-              "{ enablesleep == 0 }")
-          // Box3D: one threshold, fixed half second to sleep.
-          .number("sleepthreshold", "Sleep Threshold", 0.05, R{0, 1},
-                  "A body falls asleep once its speed stays below this for "
-                  "half a second. Overridden by the sleepthreshold attribute.",
-                  "{ enablesleep == 0 }")
+          .folder("Sleep & Contacts")
           .number("ccdthreshold", "CCD Threshold", 0.5, R{0, 1},
                   "Continuous collision starts when a body moves more than "
                   "this fraction of its thinnest size per step. "
@@ -115,7 +105,20 @@ const SIM_DopDescription *SIM_Box3DData::getDescription() {
                   "Reuse contacts between steps (within the solver's Contact "
                   "Recycle Distance). Turn off if thin or fast bodies show "
                   "ghost collisions.")
-          .tab("Output")
+          .toggle("enablesleep", "Allow Sleeping", true,
+                  "Let resting bodies stop simulating until touched. Needs the "
+                  "solver's Allow Sleeping. Overridden by the "
+                  "enablesleep attribute.")
+          .toggle(
+              "startasleep", "Start Asleep", false,
+              "Bodies begin asleep until touched. Needs Allow Sleeping. "
+              "Overridden by the awake attribute (awake = 0 starts asleep).",
+              "{ enablesleep == 0 }")
+          // Box3D: one threshold, fixed half second to sleep.
+          .number("sleepthreshold", "Sleep Threshold", 0.05, R{0, 1},
+                  "A body falls asleep once its speed stays below this for "
+                  "half a second. Overridden by the sleepthreshold attribute.",
+                  "{ enablesleep == 0 }")
           .toggle(
               "addimpact", "Add Impact Data", false,
               "Record impacts in Impacts data on the object. Costs extra time "

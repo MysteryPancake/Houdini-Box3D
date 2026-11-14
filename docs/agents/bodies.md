@@ -121,6 +121,12 @@ equal to what its body was built with.
   0, time, 0)` per point (normal of the surface hit, pointing at the body that gets the impact; ptnum = its `pointIndex`). An object
   with Impacts last step and none now loses the data (`removeNamedSubData`, `impactObjects`). No Feedback data (that is
   for mutual interaction with other solvers).
+* **Override Existing Attributes** (Box3D Data `overrideattribs`, off by default): after `bindBuildAttrs`,
+  `overriddenPointAttribs` resets the handles of the attributes that mirror Box3D Data settings (mass, density,
+  computemass, friction, bounce, rolling resistance, tangent velocity, damping, gravity scale, enablesleep, sleep / CCD
+  thresholds, fastobject, contactrecycling), so every body takes the node's values and `noteOverriddenData` stays
+  quiet. Shape attributes, `active`, `awake`, filters and locks still apply. `Box3DObjectSync::overrideAttribs`
+  records the last value: a change forces a full scan with `checkProps`. Shapes are not rebuilt by it.
 * **Dead** (`dead`): never stamped, so its body goes like a gone point's. With solver Reap Dead Points
   (`st.reapDead`, off by default; POP's Reaping is on by default) it is also queued as a `Box3DDeletion`; off, the
   point stays where it died with `dead = 1` (its `v` / `w` keep their last values). `deleteDeadPoints` checks every queued point (offset, `id` or number)

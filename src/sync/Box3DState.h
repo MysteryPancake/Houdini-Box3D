@@ -212,6 +212,9 @@ struct Box3DObjectSync {
   // The point attributes last reported as overriding this object's Box3D Data
   // (noteOverriddenData): reported again only when the set changes.
   std::string overridesReported;
+  // Box3D Data's Override Existing Attributes, as last scanned: a change forces
+  // a full scan that compares every body's settings.
+  bool overrideAttribs = false;
   std::vector<Box3DBodyMirror *>
       bodies; // every body of the object (rebuilt by each full scan)
   // `force` / `torque` data ids right after the solver last zeroed them (or

@@ -216,7 +216,7 @@ def test_probe_weld_alone():
 
 
 def test_probe_data_alone():
-    """Probe (control): a Box3D Data node, which also has tabs, cooked on its own."""
+    """Probe (control): a Box3D Data node, which also has folders, cooked on its own."""
     cook_data_node_alone("box3d_data")
     return [Result("probe_data_alone", Result.PASS, "the Box3D Data node cooks on its own")]
 

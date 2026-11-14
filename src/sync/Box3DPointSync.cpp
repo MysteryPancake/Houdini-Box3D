@@ -380,6 +380,29 @@ void noteOverriddenData(const GU_Detail *gdp, Box3DObjectSync &os,
       ++c.overriddenData[name];
 }
 
+// Box3D Data's Override Existing Attributes: forget the point attributes that
+// mirror its settings, so every body takes the node's values. Shape attributes
+// (bullet_georep, bullet_prim*, ...), `active`, `awake`, collision filters and
+// locks are kept: they are per-piece choices, not settings RBD Packed Object
+// copies from its parameters.
+void overriddenPointAttribs(PointAttrs &a) {
+  a.mass = GA_ROHandleF();
+  a.density = GA_ROHandleF();
+  a.computeMass = GA_ROHandleI();
+  a.friction = GA_ROHandleF();
+  a.bounce = GA_ROHandleF();
+  a.rollingResistance = GA_ROHandleF();
+  a.tangentVelocity = GA_ROHandleV3();
+  a.lineardamping = GA_ROHandleF();
+  a.angulardamping = GA_ROHandleF();
+  a.gravityscale = GA_ROHandleF();
+  a.enablesleep = GA_ROHandleI();
+  a.sleepThreshold = GA_ROHandleF();
+  a.ccdThreshold = GA_ROHandleF();
+  a.fastObject = GA_ROHandleI();
+  a.contactRecycling = GA_ROHandleI();
+}
+
 // pscale / scale (a packed point's size is its transform; these only size its
 // fallback box).
 void readPscaleScale(const PointAttrs &a, GA_Offset off, float &ps,
@@ -1197,6 +1220,7 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
   const b3dop::BodySettings node =
       dataNode ? dataNode->toBodySettings() : b3dop::nodeBodyDefaults();
   const bool addImpact = dataNode && dataNode->getAddImpact();
+  const bool overrideAttribs = dataNode && dataNode->getOverrideAttribs();
 
   // ---- unchanged since we last finished with it? ---------------------------
   // Markers are recorded after a scan and again after our own writes. Same
@@ -1208,7 +1232,10 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
   os.wholeObject = false;
   const Box3DSyncFingerprint fpNow = makeFingerprint(
       gdp, a, static_cast<int>(node.type), node.props, addImpact);
-  if (os.canSkip && fpNow == os.fp && (!st.wantNames || os.namesKnown)) {
+  const bool overrideChanged = overrideAttribs != os.overrideAttribs;
+  os.overrideAttribs = overrideAttribs;
+  if (os.canSkip && fpNow == os.fp && !overrideChanged &&
+      (!st.wantNames || os.namesKnown)) {
     ++c.skipped;
     st.stampedCount += os.entryCount;
     return;
@@ -1221,17 +1248,21 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
   os.canSkip = false;
   os.liveStamp = st.syncStamp;
   const int problems0 = c.failed + c.duplicates + c.badP;
-  if (dataNode)
+  if (dataNode && !overrideAttribs)
     noteOverriddenData(gdp, os, c);
+  else
+    os.overridesReported.clear(); // reported afresh if the toggle goes off
 
   a.bindBuildAttrs(gdp);
+  if (overrideAttribs)
+    overriddenPointAttribs(a);
   ScanContext ctx(st, gdp, a, node);
 
   // Settings are compared only when a prop marker changed (or deforming bodies
   // need a rebuild anyway); otherwise the scan syncs pose, velocity and type.
   // Convex / concave scale is checked on every scan.
-  const bool checkProps =
-      !os.propsKnown || !os.fp.samePropMarkers(fpNow) || os.anyDeforming;
+  const bool checkProps = !os.propsKnown || !os.fp.samePropMarkers(fpNow) ||
+                          os.anyDeforming || overrideChanged;
 
   // For the post-step passes; kept as they are while the object is skipped.
   os.bodies.clear();

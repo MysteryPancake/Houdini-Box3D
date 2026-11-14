@@ -18,6 +18,9 @@ inline constexpr const char *kBox3DWorldDataName = "Box3DWorld";
 
 class SIM_Box3DData : public SIM_Data, public SIM_OptionsUser {
 public:
+  // Box3D Data's material, mass, damping, sleep and contact settings win over
+  // the same point attributes (overriddenPointAttribs in Box3DPointSync.cpp).
+  GETSET_DATA_FUNCS_B("overrideattribs", OverrideAttribs);
   GETSET_DATA_FUNCS_I("bodytype", BodyType); // 0 static, 1 kinematic, 2 dynamic
   GETSET_DATA_FUNCS_F("mass", Mass);
   GETSET_DATA_FUNCS_B("computemass",

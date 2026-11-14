@@ -42,24 +42,17 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
       "). Usually only faster for very large scenes.";
   static Box3DParms p;
   static const PRM_Template *templates =
-      p.tab("Simulation")
-          .vector("gravity", "Gravity", {0.0, -9.80665, 0.0},
-                  "Acceleration of every dynamic body, in units per second "
-                  "squared. Scale per body with Gravity Scale on Box3D Data.")
-          .toggle("useforces", "Use Force DOPs", true,
-                  "Apply Force DOPs connected to the objects (Wind, Fan, "
-                  "etc.). Set Gravity to 0 when using a Gravity Force.")
-          .toggle("forceswake", "Forces Wake Bodies", false,
-                  "Let forces wake sleeping bodies, e.g. wind that should blow "
-                  "resting pieces away.",
-                  "{ useforces == 0 }")
+      p.tab("Setup")
+          .number("timescale", "Time Scale", 1.0, R{0, 2},
+                  "Multiplies the time step: below 1 is slow motion, above 1 "
+                  "fast motion.")
           // Slider 1 to 100; minimum 1 (Box3D clamps to it), more can be typed.
           .integer("substeps", "Substeps", 10, R{1, 100},
                    "Solver passes per time step. More is more stable for "
                    "stacks and fast collisions, but slower.")
-          .number("timescale", "Time Scale", 1.0, R{0, 2},
-                  "Multiplies the time step: below 1 is slow motion, above 1 "
-                  "fast motion.")
+          .vector("gravity", "Gravity", {0.0, -9.80665, 0.0},
+                  "Acceleration of every dynamic body, in units per second "
+                  "squared. Scale per body with Gravity Scale on Box3D Data.")
           .toggle("enableaging", "Enable Aging", false,
                   "Add the frame time step (not Time Scale-adjusted) to each "
                   "point's age, and mark points dead once age exceeds life.")
@@ -70,47 +63,43 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                   "Delete points that die during a step at its end, so dead "
                   "points are never seen. Off keeps them for one frame.",
                   "{ reapdead == 0 }")
-          .number("maxlinearspeed", "Max Linear Speed", 400.0, R{0, 1000},
-                  "Speed limit for every body, in units per second.")
-          .tab("Performance")
-          .toggle("autothreads", "Use All Threads", false,
-                  autoThreadsHelp.c_str())
-          .integer("threads", "Threads", b3dop::defaultWorkerCount(),
-                   R{1, static_cast<double>(b3dop::kMaxWorkerCount), true},
-                   "Number of worker threads. Defaults to this computer's "
-                   "physical performance cores; small scenes can run faster "
-                   "with fewer.",
-                   "{ autothreads == 1 }")
-          .toggle("enablesleep", "Allow Sleeping (All Objects)", true,
-                  "Let resting bodies stop simulating until touched. Off keeps "
-                  "every body awake, whatever Box3D Data says.")
-          .number("contactrecycledistance", "Contact Recycle Distance", 0.05,
-                  R{0, 0.2},
-                  "Reuse contacts for pairs that barely moved: faster but "
-                  "slightly less exact. 0 turns it off. "
-                  "Box3D Data's Contact Recycling turns it off per object.")
-          .tab("Contacts")
-          .number("contactstiffness", "Contact Stiffness", 30.0, R{0, 120},
+          .tab("Collision")
+          // Stiffer and less damped than Box3D's own defaults (30 Hz, 10):
+          // a more rigid look. Box3D caps the stiffness at 1/8 of the substep
+          // rate, so 60 Hz needs 20 substeps at 24 fps; 10 give 30 Hz.
+          .number("contactstiffness", "Contact Stiffness", 60.0, R{0, 120},
                   "How stiff contacts are (cycles per second). Higher values "
                   "recover from overlap faster but can jitter.")
-          .number("contactdamping", "Contact Damping Ratio", 10.0, R{0, 20},
+          .number("contactdamping", "Contact Damping Ratio", 3.0, R{0, 20},
                   "How much contacts damp overlap recovery. Lower values "
                   "recover faster but more energetically.")
           .number("contactpushspeed", "Overlap Push Speed", 3.0, R{0, 10},
                   "How fast overlapping pieces are pushed apart. Lower it if "
                   "pieces that start out overlapping fly apart.")
+          .number("contactrecycledistance", "Contact Recycle Distance", 0.05,
+                  R{0, 0.2},
+                  "Reuse contacts for pairs that barely moved: faster but "
+                  "slightly less exact. 0 turns it off. "
+                  "Box3D Data's Contact Recycling turns it off per object.")
           .toggle("enablecontinuous", "Continuous Collision", true,
                   "Stop fast bodies passing through static ones (and through "
                   "moving ones, for Box3D Data's Fast Object).")
-          .tab("Bounce & Friction")
+          .tab("Forces")
+          .toggle("useforces", "Use Force DOPs", true,
+                  "Apply Force DOPs connected to the objects (Wind, Fan, "
+                  "etc.). Set Gravity to 0 when using a Gravity Force.")
+          .toggle("forceswake", "Forces Wake Bodies", false,
+                  "Let forces wake sleeping bodies, e.g. wind that should blow "
+                  "resting pieces away.",
+                  "{ useforces == 0 }")
+          .toggle("restitutionpropagation", "Bounce Propagation", false,
+                  "Pass bounce on through stacks of touching pieces.")
           .number("bouncethreshold", "Bounce Threshold", 1.0, R{0, 5},
                   "Collisions slower than this speed don't bounce, so resting "
                   "pieces settle instead of jittering.")
           .integer("restitutioniterations", "Bounce Iterations", 2, R{0, 10},
                    "Extra solver passes that compute bounce. More passes give "
                    "better bounce on stacked pieces.")
-          .toggle("restitutionpropagation", "Bounce Propagation", false,
-                  "Pass bounce on through stacks of touching pieces.")
           // Both menus list the rules in the same order (kMixingMenu*); the
           // stored value is the menu index. Defaults are Bullet's rules as
           // measured in Houdini (test bullet_mixing): multiply friction, take
@@ -122,13 +111,26 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                 {"Geometric Mean", "Minimum", "Maximum", "Average", "Multiply"},
                 "How the bounce of two touching bodies is combined.")
           .tab("Advanced")
+          .toggle("enablewarmstarting", "Warm Starting", true,
+                  "Reuse last step's contact forces. Leave on; off makes "
+                  "stacks less stable.")
+          .toggle("enablesleep", "Allow Sleeping", true,
+                  "Let resting bodies stop simulating until touched. Off keeps "
+                  "every body awake, whatever Box3D Data says.")
+          .toggle("autothreads", "Use All Threads", false,
+                  autoThreadsHelp.c_str())
+          .integer("threads", "Threads", b3dop::defaultWorkerCount(),
+                   R{1, static_cast<double>(b3dop::kMaxWorkerCount), true},
+                   "Number of worker threads. Defaults to this computer's "
+                   "physical performance cores; small scenes can run faster "
+                   "with fewer.",
+                   "{ autothreads == 1 }")
+          .number("maxlinearspeed", "Max Linear Speed", 400.0, R{0, 1000},
+                  "Speed limit for every body, in units per second.")
           .number("isotropicinertia", "Isotropic Inertia Tolerance", 0.2,
                   R{0, 1, true},
                   "Treats nearly spherical bodies as spheres for spin. Applies "
                   "to new bodies and mass changes.")
-          .toggle("enablewarmstarting", "Warm Starting", true,
-                  "Reuse last step's contact forces. Leave on; off makes "
-                  "stacks less stable.")
           .number("impactminspeed", "Impact Min Speed", 0.0, R{0, 10},
                   "Impact data (Box3D Data's Add Impact Data) only includes "
                   "collisions faster than this. 0 includes every contact.")
@@ -141,22 +143,21 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
       "Solver",       // data name
       classname(), templates);
 
-  // Guide parameters (Houdini puts them on the node's Guides tab), read
-  // through GET_GUIDE_FUNC_*. Static memory, like the description.
-  static PRM_Name guideShow(SIM_NAME_SHOWGUIDE, "Show Collision Shapes");
-  static PRM_Name guideColor(SIM_NAME_COLOR, "Shape Color");
-  static PRM_Default guideColorDefault[] = {PRM_Default(0.2), PRM_Default(0.8),
-                                            PRM_Default(1.0)};
-  static PRM_Template guideTemplates[] = {
-      PRM_Template(PRM_TOGGLE, 1, &guideShow, PRMzeroDefaults, nullptr, nullptr,
-                   nullptr, nullptr, 1,
-                   "Draw every body's collision shapes as Box3D sees them. "
-                   "Sleeping and static bodies are drawn darker."),
-      PRM_Template(PRM_RGB, 3, &guideColor, guideColorDefault, nullptr, nullptr,
-                   nullptr, nullptr, 1, "Colour of the collision shapes."),
-      PRM_Template()};
+  // Guide parameters (Houdini puts them on the node's Guide Options tab, kept
+  // out of the simulation so changing them never re-simulates), read through
+  // GET_GUIDE_FUNC_*. Static memory, like the description.
+  static Box3DParms g;
+  static const PRM_Template *guideTemplates =
+      g.toggle(SIM_NAME_SHOWGUIDE, "Show Collision Shapes", false,
+               "Draw every body's collision shapes as Box3D sees them. "
+               "Sleeping and static bodies are drawn darker.")
+          .vector(SIM_NAME_COLOR, "Shape Color", {0.2, 0.8, 1.0},
+                  "Colour of the collision shapes.", PRM_RGB)
+          .templates();
   static const bool guidesSet =
-      (theDopDescription.setGuideTemplates(guideTemplates), true);
+      (theDopDescription.setGuideTemplates(
+           const_cast<PRM_Template *>(guideTemplates)),
+       true);
   (void)guidesSet;
 
   return &theDopDescription;
@@ -590,7 +591,8 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
                          " override Box3D Data on " +
                          std::to_string(counts.overriddenObjects) +
                          " object(s). RBD Packed Object writes these from its "
-                         "own parameters: set the values there");
+                         "own parameters: set the values there, or turn on "
+                         "Box3D Data's Override Existing Attributes");
   }
   warnCount(objects, counts.failed,
             "point(s) could not be turned into a body and are not simulated");

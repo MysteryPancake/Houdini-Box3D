@@ -89,7 +89,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     SIM_Box3DWorld.*    SIM_Data owning the shared world state (the rebuildable cache); the state itself is sync/Box3DState.h
     SIM_Box3DData.*     Default-settings DOP node
     SIM_Box3DConRel.*   Box3D <Type> Constraint Relationship DOP nodes (one per joint type), parameters from the table
-    SIM_Box3DParms.h    Box3DParms: builds a node's parameter templates (tabs, ranges, menus) from a table
+    SIM_Box3DParms.h    Box3DParms: builds a node's parameter templates (tabs or simple folders, ranges, menus) from a table
     SIM_SolverBox3D.*   The solver node: parameters, node messages and the solve loop (the parts are in sync/)
     SIM_Box3DRegister.cpp  initializeSIM(); includes UT_DSOVersion.h (exactly once, keep it here)
   sync/               Houdini data -> the Box3D world, used by the solver

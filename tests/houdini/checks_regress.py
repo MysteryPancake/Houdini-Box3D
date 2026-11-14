@@ -464,8 +464,11 @@ def baseline_scene():
     set_parm(net, ["soppath", "constraintsoppath", "geosoppath"], constraint_lines("baseline_network", lines))
     net.setInput(1, hinge)
     solver = box3d_solver(dop, net)
-    # Pinned: the recorded baseline was made with 4 substeps (the solver's default is now 10).
+    # Pinned: the recorded baseline was made with 4 substeps and Box3D's contact tuning (the solver's
+    # defaults are now 10 substeps, stiffness 60, damping ratio 3).
     set_parm(solver, ["substeps"], 4)
+    set_parm(solver, ["contactstiffness"], 30.0)
+    set_parm(solver, ["contactdamping"], 10.0)
     finish(dop, solver)
     return dop, label_of
 

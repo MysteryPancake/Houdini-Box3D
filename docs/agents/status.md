@@ -44,6 +44,11 @@ remove an item once it has been checked, and record anything new here rather tha
 * Solver Substeps default 10 (was 4), slider 1 to 100 (hard minimum 1, more can be typed): the full Houdini suite has not been run since. Tests
   that leave Substeps at its default (most) now step 10 times per frame; `baseline` pins 4, as recorded. A scene
   saved with the old default may come back with 10, if Houdini did not store the unchanged value.
+* Parameter layout: the solver in tabs (Setup / Collision / Forces / Advanced, guide parameters on Houdini's
+  Guide Options tab), Box3D Data and the joint nodes in simple folders (`PRM_SpareData::groupTypeSimple`), Box3D
+  Data's Output folder folded into Sleep & Contacts; not yet built or looked at in Houdini. Solver defaults Contact
+  Stiffness 60 and Contact Damping Ratio 3 (were Box3D's 30 / 10): tests that leave them at their defaults may move;
+  `baseline` pins the old values.
 * Scene scale: Box3D's tolerances assume metres. Measured (`scale`): a three-box stack rests 2.494 / 2.488 / 2.417 box
   sizes tall at 0.01x / 1x / 100x (2.5 ideal), with slight jitter at 100x: scenes 100 times too large sink about 3%.
 
@@ -185,7 +190,8 @@ passed as a `PRM_Template`'s conditional pointer.
 
 * RBD Packed Object writes its own physical attributes onto every point and point attributes win, so Box3D Data's
   mass / density / compute mass / friction / bounce do nothing there (as with Bullet). Decided: keep Bullet's rule,
-  document it (README, tooltips) and warn once per object. A Box3D Packed Object node (an asset: Empty Object, SOP
+  document it (README, tooltips) and warn once per object; Box3D Data's Override Existing Attributes (off by default)
+  makes the node's values win instead (`data_override_attributes`, not yet run). A Box3D Packed Object node (an asset: Empty Object, SOP
   Geometry, Box3D Data, no stamped attributes) would give Box3D Data its full role on packed geometry.
 * Mirrored packed pieces lose their mirror once they move (the write-back writes a non-mirrored transform).
 * Packed primitive spheres and nested packed primitives collide as one point (hulls from points only): unpack or warn.

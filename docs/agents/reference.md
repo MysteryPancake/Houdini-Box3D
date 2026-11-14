@@ -10,8 +10,9 @@ are `b3dop::kDefaultWorkerCount` / `kMaxWorkerCount` (`Box3DWorld.h`).
 
 Solver (read every step; only the thread count rebuilds the world): `gravity`, `substeps`, `autothreads`, `threads`
 (default `b3dop::defaultWorkerCount()` in `Box3DCpu.h`: the machine's physical performance cores, as Box3D recommends;
-`WorldSettings` keeps `kDefaultWorkerCount`), `enablesleep`, `timescale`, `enableaging`, `reapdead`, `reapatframeend` (disabled while `reapdead` is off), and Box3D's tuning with
-Box3D's defaults: `contactstiffness`, `contactdamping`, `contactpushspeed`, `bouncethreshold`,
+`WorldSettings` keeps `kDefaultWorkerCount`), `enablesleep`, `timescale`, `enableaging`, `reapdead`, `reapatframeend` (disabled while `reapdead` is off), and Box3D's tuning
+(Box3D's defaults except `contactstiffness` 60 and `contactdamping` 3, stiffer than Box3D's 30 / 10 for a more rigid
+look): `contactstiffness`, `contactdamping`, `contactpushspeed`, `bouncethreshold`,
 `contactrecycledistance`, `maxlinearspeed`, `enablecontinuous`. Force DOPs: `useforces`, `forceswake` (disabled while
 `useforces` is off). Box3D Data: `startasleep` and `sleepthreshold` are disabled while `enablesleep` is off,
 `mass` / `density` by `computemass`; joint nodes: see `enabledBy` in [joints.md](joints.md). Solver
@@ -60,10 +61,16 @@ reported by a scope guard in `solveObjectsSubclass`).
 * Bullet's two sleep thresholds, Sleeping Time and `deactivation_time` are replaced by Box3D's one threshold.
 * `min_activation_impulse` (inactive bodies that activate when hit) was removed: Box3D has no equivalent, and it needed a contact scan after every step.
 
-## Parameter tabs
+## Parameter tabs and folders
 
-Every node's parameters come from `Box3DParms` (SIM_Box3DParms.h): one call per tab and per parameter (`toggle`,
-`number`, `integer`, `vector`, `menu`; ranges as `Range{ min, max, hardMax }` with a hard minimum; an optional
-disable condition). It keeps the names, defaults, ranges, menus and conditions alive, counts each tab's parameters for
-the `PRM_SWITCHER` (`PRM_Default(count, label)` per tab) and terminates the list. A function-local static, because
-Houdini keeps pointers into it. Menu tokens are "0", "1", ... in item order (read as ints).
+Every node's parameters come from `Box3DParms` (SIM_Box3DParms.h): one call per tab or folder and per parameter
+(`toggle`, `number`, `integer`, `vector`, `menu`; ranges as `Range{ min, max, hardMax }` with a hard minimum; an
+optional disable condition). It keeps the names, defaults, ranges, menus and conditions alive and terminates the list.
+`tab()` groups share one `PRM_SWITCHER` (`PRM_Default(count, label)` per tab, switcher `b3dtabs`); `folder()` groups
+are simple folders, each a one-folder switcher with `PRM_SpareData::groupTypeSimple` named `<prefix><index>`. A builder
+uses one kind. The solver uses tabs: Setup (time scale, substeps, gravity, aging and reaping), Collision (contact tuning, recycling,
+Continuous Collision), Forces (Force DOPs, bounce, friction / bounce mixing), Advanced (Warm Starting, Allow
+Sleeping, threads, speed limit, ...); its guide parameters are a plain list on Houdini's own Guide Options tab (so the
+solver's tabs sit inside Data Options). Box3D Data and the joint nodes use simple folders: Box3D Data's Override Existing Attributes
+above the folders, then Shape, Body, Material, Sleep & Contacts (CCD Threshold, Fast Object, Contact Recycling, the
+sleep settings, Add Impact Data last). A function-local static, because Houdini keeps pointers into it. Menu tokens are "0", "1", ... in item order (read as ints).
