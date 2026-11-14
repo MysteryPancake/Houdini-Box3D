@@ -388,7 +388,8 @@ struct Box3DSharedState {
   std::vector<void *> brokenThisFrame;
   bool brokenCollected = false;
   // The same for hit events (Impact Min Speed): hitPairs already holds every
-  // Box3D step of this frame, so recordImpacts must not refill it from the last.
+  // Box3D step of this frame, so recordImpacts must not refill it from the
+  // last.
   bool hitsCollected = false;
 
   double stampTime = 0.0; // SIM_Engine::getSimulationTime() at the last solve
