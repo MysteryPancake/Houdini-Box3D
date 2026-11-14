@@ -7,11 +7,9 @@ My goal with this project is to maintain Box3D's great performance inside Houdin
 I made design decisions based on the RBD Bullet Solver where possible, so it should feel familiar to use.
 
 > [!CAUTION]
-> This is heavily AI generated, as it was made for fun! This isn't normally how I develop software.
+> This is heavily LLM generated, as it was made for fun! This isn't normally how I develop software.
 >
-> However, it's not complete slop. I regularly test all the features in Houdini.
->
-> I've tried my best to keep the code organized, clean and bug free.
+> However, it's not complete slop. I've tested all the features and cleaned up as much as possible.
 
 ## Installing
 
