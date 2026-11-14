@@ -29,6 +29,9 @@ matches exactly. What no script checks: Escape mid-step, the viewport, motion bl
 * `Box3DParms::subfolder()` (the solver's Misc tab): a nested simple folder counted as one parameter of its tab, as
   Houdini's switcher counts expect (the `ui` test checks the result).
 
+**Box3D Configure** (`tools/make_configure_sop.py`, test `configure`: not run in Houdini yet)
+* The generated VEX, the group selection button, labels hidden on the checkboxes.
+
 **Bullet semantics not compared**
 * `animated`, `deforming` and `bullet_autofit_valid` toggles; `bullet_primR` rotation order (taken as XYZ Euler
   degrees) and `bullet_length` (taken as the capsule's straight part); AutoFit on whole objects and fractured pieces.
@@ -45,6 +48,8 @@ matches exactly. What no script checks: Escape mid-step, the viewport, motion bl
   and the solver's cost of a full rescan of the collider each step.
 * `dopcontextgeo` through the Packed Object's channel reference.
 * Transform Pieces with packed transforms that carry scale or shear.
+* FORCES: the Multiple Solver with nothing wired into PRESOLVE / POSTSOLVE (no warning expected); that diving into
+  the asset lands in FORCES (the build's check passes); FORCES editable in a locked instance (`EditableNodes`).
 
 ## Known gaps
 
@@ -70,6 +75,9 @@ matches exactly. What no script checks: Escape mid-step, the viewport, motion bl
 * RBD Object without Box3D Data: Create Active Object (`SolverParms/ActiveValue`), RBD State's custom inertia.
 * Force DOPs: sphere / area variants, per-substep evaluation, parallel evaluation (needs thread-safe forces).
 * Sticky collisions; contact / sensor events beyond Impacts.
+* Box3D Configure: settings with no Box3D Data counterpart (`inertialtensorstiffness`, `fastrotation`, locks,
+  collision filtering, `enabled`, initial `v` / `w`, `deforming`, hand-set `bullet_prim*` shapes), a Pin / animated
+  shortcut like RBD Configure's, viewport group selection.
 * Box3D Solver SOP:
   * Unpacked input: pack Geometry, Proxy and Collision by `name` (RBD Bullet Solver does); now each point of unpacked
     geometry is a body, and collision geometry must be packed.
@@ -79,7 +87,7 @@ matches exactly. What no script checks: Escape mid-step, the viewport, motion bl
     1 so primitive attributes are absolute.
   * Output tab: Import Constraints / Proxy toggles, attributes to keep, `v` / `w` on Geometry; Transform Pieces
     options; hires geometry for pieces the solver deleted (dead).
-  * Guide Options (Show Collision Shapes), a Forces / POP subnet to dive into, initial velocity controls,
+  * Guide Options (Show Collision Shapes), initial velocity controls,
     Set Always for animated solver parameters, a Tab submenu, a help card, Solve on Creation Frame.
 
 ## HDK calls checked

@@ -202,10 +202,10 @@ add_custom_command(TARGET Box3DDOP POST_BUILD
     VERBATIM)
 
 # The digital assets, built with hython after the plugin into houdiniX.Y/otls next to dso/:
-# Box3D Packed Object (tools/make_packed_object.py), then the Box3D Solver SOP
-# (tools/make_solver_sop.py), which contains it. Both copy parameters from the plugin just built, so
+# Box3D Packed Object (tools/make_packed_object.py), Box3D Configure (tools/make_configure_sop.py),
+# then the Box3D Solver SOP (tools/make_solver_sop.py), which contains the Packed Object. Both copy parameters from the plugin just built, so
 # they are remade every time the plugin is. Problems print a warning and never fail the build.
-option(BOX3DDOP_MAKE_HDA "Build the Box3D Packed Object and Box3D Solver SOP assets with hython after the plugin" ON)
+option(BOX3DDOP_MAKE_HDA "Build the Box3D digital assets (Packed Object, Configure, Solver SOP) with hython after the plugin" ON)
 if(BOX3DDOP_MAKE_HDA)
     find_program(BOX3DDOP_HYTHON NAMES hython
         HINTS "${Houdini_DIR}/../../bin" "$ENV{HFS}/bin" NO_DEFAULT_PATH)
@@ -214,6 +214,10 @@ if(BOX3DDOP_MAKE_HDA)
         add_custom_command(TARGET Box3DDOP POST_BUILD
             COMMAND "${BOX3DDOP_HYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/make_packed_object.py" "${BOX3DDOP_HDA}"
             VERBATIM)
+        add_custom_command(TARGET Box3DDOP POST_BUILD
+            COMMAND "${BOX3DDOP_HYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/make_configure_sop.py"
+                    "$<TARGET_FILE_DIR:Box3DDOP>/../otls/box3d_configure.hda"
+            VERBATIM)
         # After the Packed Object (POST_BUILD commands run in the order they are added).
         set(BOX3DDOP_SOP_HDA "$<TARGET_FILE_DIR:Box3DDOP>/../otls/box3d_solver_sop.hda")
         add_custom_command(TARGET Box3DDOP POST_BUILD
@@ -221,8 +225,8 @@ if(BOX3DDOP_MAKE_HDA)
                     "${BOX3DDOP_HDA}"
             VERBATIM)
     else()
-        message(WARNING "hython not found next to the Houdini toolkit: the Box3D Packed Object and Box3D "
-                        "Solver SOP assets will not be built (run tools/make_packed_object.py, then "
+        message(WARNING "hython not found next to the Houdini toolkit: the Box3D digital assets will not "
+                        "be built (run tools/make_packed_object.py, tools/make_configure_sop.py, then "
                         "tools/make_solver_sop.py, with hython yourself)")
     endif()
 endif()
@@ -252,6 +256,7 @@ if(BOX3DDOP_MAKE_HDA AND BOX3DDOP_HYTHON)
     # The asset the post-build step made (absent if it failed: OPTIONAL).
     install(FILES "$<TARGET_FILE_DIR:Box3DDOP>/../otls/box3d_packedobject.hda" DESTINATION Box3D/otls OPTIONAL)
     install(FILES "$<TARGET_FILE_DIR:Box3DDOP>/../otls/box3d_solver_sop.hda" DESTINATION Box3D/otls OPTIONAL)
+    install(FILES "$<TARGET_FILE_DIR:Box3DDOP>/../otls/box3d_configure.hda" DESTINATION Box3D/otls OPTIONAL)
 endif()
 
 set(CPACK_GENERATOR ZIP)

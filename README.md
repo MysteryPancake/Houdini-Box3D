@@ -72,6 +72,7 @@ Example scenes: run `make_examples.bat` (Linux: `hython examples/make_examples.p
 | Box3D Solver | The solver |
 | Box3D Packed Object | Packed geometry as a Box3D object, with Box3D Data's settings on the node |
 | Box3D Solver (SOP) | Like RBD Bullet Solver: packed geometry, constraints, proxy and collision in, simulated out |
+| Box3D Configure (SOP) | Like RBD Configure: Box3D Data's settings as point attributes on a group of pieces |
 | Box3D Data | Per-object settings, for objects made by other nodes |
 | Box3D Weld / Spherical / Revolute / Prismatic / Distance / Motor / Parallel / Wheel / Filter Constraint Relationship | Joint types, used with a Constraint Network |
 

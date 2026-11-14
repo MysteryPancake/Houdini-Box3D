@@ -76,13 +76,20 @@ Four inputs, four matching outputs: Geometry, Constraints, Proxy, Collision.
   object is merged after: a second object would get its own copy and make every joint twice. Every relationship in
   `RELATIONSHIPS` (ours and SideFX's) is merged into it with default Data Names, so any `constraint_name` finds one.
   Their parameters are not promoted: set values per primitive (floats multiply the node's).
+* Forces: a DOP subnet `FORCES` (the asset's dive target and an editable node: the `DiveTarget` and `EditableNodes`
+  sections) with `subnetoutput` nodes `PRESOLVE`
+  and `POSTSOLVE` (Output Index 0 and 1), nothing wired in, PRESOLVE left and
+  POSTSOLVE right with a sticky note on each outer side (`FORCES_NOTES`), the subnet's inputs moved above. Not `output`: in DOPs that is the Output DOP that saves to
+  disk. A DOP subnet always shows four outputs. A Multiple Solver takes the objects and runs PRESOLVE, the Box3D Solver, POSTSOLVE.
+  A POP Force on PRESOLVE writes `force`, applied and cleared by the solver in the same step; on POSTSOLVE it is
+  applied the next step (see [forces-affectors.md](forces-affectors.md)).
 * Proxy: Transform Pieces moves Geometry by `name` from the proxy as connected (rest) to the simulated proxy, wired
   straight in (it reads packed transforms itself).
 * Constraints output: DOP Import of the pieces object, Geometry Data Path `ConstraintGeometry`, so it carries `broken`,
   `force` and the rest.
 * Parameters: Reset Simulation and Start Frame above the tabs, then the solver's tabs (folders found under its Data
   Options, a tab of simple folders such as Misc kept whole; Guide Options skipped; `TAB_RENAMES` / `TAB_MOVES` cover older plugins). Tab order: Solver, Collision, Forces,
-  Pieces, the solver's other tabs (Misc), Advanced last. Solver: the solver's own settings, Cache Simulation, then the
+  Pieces, any other solver tabs, then Misc and Advanced always last. Solver: the solver's own settings, Cache Simulation, then the
   solver's Collision tab (contact settings) as a Contacts folder. Collision: Use External Collisions
   (`usecollisions`), Animated Collision and the collision object's Shape, Material and Sleep & Contacts folders (`COLLIDER_FOLDERS`,
   all named `collision_*`). Pieces: the pieces' Box3D Data folders; names the solver uses get `piece_`
@@ -91,6 +98,20 @@ Four inputs, four matching outputs: Geometry, Constraints, Proxy, Collision.
 * Input / output labels are written into the DialogScript after the last `updateFromNode` (no hou setter). Wire
   colours come from the subnet's indirect input nodes (`INPUT_COLORS`: the constraints input pink, and its IN /
   OUT nodes).
+
+## Box3D Configure asset
+
+`tools/make_configure_sop.py <out.hda>` builds `box3d_configure` (SOP): Box3D Data's settings, copied from the node
+(labels, defaults, ranges, conditions), each with a `set_<name>` checkbox, written as point attributes on the points in
+Group. Names map one to one except `MAPPING`: Default Shape -> `bullet_georep` (`GEOREP_VALUES`, menu order), Auto Fit
+-> `bullet_autofit`, Body Type -> `active` / `animated`, Start Asleep -> `awake` (inverted); `SKIP` holds the
+object-level ones (Hull per Connected, Flip Winding, Add Impact Data). Disable conditions also need the referenced
+setting ticked (`rewrite_condition`).
+* Two wrangles: a detail one creates each ticked attribute with Box3D Data's default, then a point one sets the group.
+  VEX would give points outside the group 0 (`active` 0 is static).
+* The point wrangle uses `setpointattrib`, never `@` bindings: a binding creates its attribute on every point at
+  compile time, even inside an `if` that never runs.
+* The build checks a fresh instance: a group of one of two points gets friction and Static, the other keeps defaults.
 
 ## Tests
 

@@ -1,6 +1,6 @@
 """The Box3D Solver SOP (tools/make_solver_sop.py): pieces falling onto a collision input, an
-animated collider lifting a piece, a proxy driving the geometry through Transform Pieces, and the
-constraint output."""
+animated collider lifting a piece, POP forces in FORCES, a proxy driving the geometry through Transform Pieces, and the
+constraint output; Box3D Configure."""
 
 import hou
 
@@ -104,6 +104,32 @@ def test_solver_sop_animated_collision():
     return results
 
 
+def test_solver_sop_forces():
+    """A POP Force inside the FORCES subnet (the asset's dive target and an editable node, so the
+    asset stays locked) wired to PRESOLVE pushes a
+    box sideways (Gravity 0): the Multiple Solver runs it before the Box3D Solver, which applies its
+    `force`. Wired to POSTSOLVE instead it still pushes, a step later."""
+    results = []
+    for output in ("PRESOLVE", "POSTSOLVE"):
+        pieces, names = packed_boxes(f"sop_force_pieces_{output}", [{"size": (1, 1, 1), "center": (0, 3, 0)}])
+        sop = solver_sop(f"sop_force_{output}", geometry=pieces)
+        set_parm(sop, ["gravity"], (0.0, 0.0, 0.0))
+        forces = sop.node("dopnet/FORCES")  # an editable node: no need to unlock the asset
+        out = forces.node(output) if forces is not None else None
+        if out is None:
+            results.append(Result("solver_sop_forces", Result.FAIL, f"no FORCES/{output} inside the asset"))
+            continue
+        pop = create(forces, "popforce", "push")
+        set_parm(pop, ["force"], (5000.0, 0.0, 0.0))
+        out.setInput(0, pop)
+        pos = play(sop, 24, lambda s, f: named_positions(s.geometry(0)).get(names[0]) if f == 24 else None)[24]
+        ok = pos is not None and pos[0] > 0.01 and close(pos[1], 3.0, 1e-3)
+        results.append(Result("solver_sop_forces", Result.PASS if ok else Result.FAIL,
+                              f"POP Force on {output}: box at {tuple(round(c, 4) for c in pos) if pos else None} "
+                              f"after 1 s (expected x above 0, y 3: pushed sideways, no gravity)"))
+    return results
+
+
 def test_solver_sop_proxy():
     """With a proxy, the proxy is simulated and the geometry follows it: an unpacked polygon box
     named like a packed proxy box falls with it, its centre on the proxy's point every frame, while
@@ -157,9 +183,40 @@ def test_solver_sop_constraints():
                    f"{nprims} primitive(s), force attribute {'present' if has_force else 'missing'}")]
 
 
+def test_configure():
+    """Box3D Configure (tools/make_configure_sop.py) writes ticked settings onto the pieces in its
+    group only: Body Type Static and Friction 0.25 on one of two boxes. Into the Box3D Solver SOP,
+    that box stays put and the other falls (it keeps active 1, not the 0 VEX would give it)."""
+    pieces, names = packed_boxes("cfg_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0)},
+                                                {"size": (1, 1, 1), "center": (3, 3, 0)}])
+    geo = new_geo("cfg")
+    src = create(geo, "object_merge", "pieces")
+    set_parm(src, ["objpath1"], pieces)
+    cfg = create(geo, "box3d_configure", "configure")
+    cfg.setInput(0, src)
+    set_parm(cfg, ["group"], f"@name={names[0]}")
+    for n, v in (("set_bodytype", 1), ("bodytype", 0), ("set_friction", 1), ("friction", 0.25)):
+        set_parm(cfg, [n], v)
+    g = cfg.geometry()
+    attrs = {p.attribValue("name"): (p.attribValue("active"), round(p.attribValue("friction"), 4)) for p in g.points()}
+    solver = create(geo, "box3d_solver", "box3d_solver")
+    solver.setInput(0, cfg)
+    display(solver)
+    pos = play(solver, 24, lambda s, f: named_positions(s.geometry(0)) if f == 24 else None)[24]
+    y_static, y_free = pos[names[0]][1], pos[names[1]][1]
+    ok = (attrs.get(names[0], (None, None)) == (0, 0.25) and attrs.get(names[1], (None,))[0] == 1
+          and close(y_static, 3.0, 1e-3) and y_free < 2.0)
+    return [Result("configure", Result.PASS if ok else Result.FAIL,
+                   f"(active, friction) per piece {attrs} (expected {names[0]}: (0, 0.25), {names[1]}: active 1); "
+                   f"after 1 s the static box is at y={y_static:.3f} (expected 3), the other at {y_free:.3f} "
+                   f"(expected below 2: fell)")]
+
+
 TESTS = {
     "solver_sop_collision": test_solver_sop_collision,
     "solver_sop_animated_collision": test_solver_sop_animated_collision,
+    "solver_sop_forces": test_solver_sop_forces,
     "solver_sop_proxy": test_solver_sop_proxy,
     "solver_sop_constraints": test_solver_sop_constraints,
+    "configure": test_configure,
 }

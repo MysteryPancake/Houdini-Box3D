@@ -16,6 +16,7 @@ body engine, C17, a git submodule in `extern/box3d`). It registers these `SIM_Da
 | Box3D <Type> Constraint Relationship | `SIM_Box3DConRel<Type>` | One per joint type: the joint's settings, named by `constraint_name` in a Constraint Network |
 | Box3D Packed Object | (digital asset) | Empty Object + SOP Geometry + Box3D Data, built by `tools/make_packed_object.py` |
 | Box3D Solver (SOP) | (digital asset) | SOP wrapping a DOP network with the nodes above, built by `tools/make_solver_sop.py` |
+| Box3D Configure (SOP) | (digital asset) | Box3D Data's settings as point attributes, built by `tools/make_configure_sop.py` |
 
 Design goals: Box3D's native performance (handle-based hot paths, no per-body hash lookups, threaded per-point passes
 where safe) and Houdini Bullet behaviour (same attribute names and rules, as documented on the RBD Packed Object page).
@@ -117,7 +118,8 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
                         options of SIM data by name (box3dDataOption)
     Box3DHoudiniTasks.h TaskRunner on Houdini's TBB pool (UT_TaskGroup). Only SIM_Box3DWorld.cpp includes it
 examples/            make_examples.py: builds demo scenes into examples/scenes (git-ignored)
-tools/               make_packed_object.py, make_solver_sop.py (the assets, run by the build with hython), check_docs.py
+tools/               make_packed_object.py, make_configure_sop.py, make_solver_sop.py (the assets, run by the build with
+                     hython), check_docs.py
 docs/agents/         Technical notes by area; CLAUDE.md is the index ("Where to look")
 tests/
   KeyedWorld.h        Test-only Box3DWorld subclass: bodies by caller-chosen id, over the handle API

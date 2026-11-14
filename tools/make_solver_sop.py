@@ -24,7 +24,10 @@ Inside:
               collision (Box3D Packed Object, convex hulls, `dopcontextgeo(".", 2)`, only when Use External
                          Collisions is on and input 3 has points; Animated Collision: Kinematic and re-imported every step, else Static)
                          merged in after the constraint network
-              -> box3d_solver -> output
+              -> multisolver (FORCES/PRESOLVE, box3d_solver, FORCES/POSTSOLVE) -> output
+              FORCES: DOP subnet, the asset's dive target, with Output DOPs PRESOLVE (output 0) and
+                      POSTSOLVE (output 1) for POP forces and other microsolvers run before / after
+                      the Box3D Solver
     import_sim (DOP Import) -> proxy output, and Transform Pieces onto Geometry when a proxy is used
     import_constraints (DOP Import of the pieces' ConstraintGeometry) -> constraints output
     IN_collision -> collision output
@@ -58,6 +61,19 @@ USE_COLLISIONS = "usecollisions"
 COLLIDER_FOLDERS = ["Shape", "Material", "Sleep & Contacts"]  # the collision object's Box3D Data folders on the Collision tab
 TAB_RENAMES = {"Setup": "Solver"}  # older plugins name the solver's first tab Setup
 TAB_MOVES = {"gravity": "Forces"}  # solver parameters shown first in another tab (older plugins: Setup)
+
+# The DOP subnet for forces, the asset's dive target, and its outputs in the order the Multiple
+# Solver runs them around the Box3D Solver.
+FORCES = "FORCES"
+FORCES_OUTPUTS = ["PRESOLVE", "POSTSOLVE"]
+DIVE_TARGET = f"dopnet/{FORCES}"
+# Sticky notes beside PRESOLVE (left) and POSTSOLVE (right).
+FORCES_NOTES = [
+    "Wire POP Forces into PRESOLVE to apply per-point forces.\n\n"
+    "If scaling the sim, remember to apply scale accordingly.",
+    "Wire post-solve operations into POSTSOLVE.\n\n"
+    "If scaling the sim, remember to apply scale accordingly.",
+]
 
 INPUT_LABELS = ["Geometry", "Constraint Geometry", "Proxy Geometry", "Collision Geometry"]
 OUTPUT_LABELS = ["Geometry", "Constraint Geometry", "Proxy Geometry", "Collision Geometry"]
@@ -446,13 +462,64 @@ def build_dops(dopnet):
         p.setExpression(f'ch("../../{USE_COLLISIONS}") && (npoints(opinputpath("..", {DOP_COLLISION})) > 0)',
                         hou.exprLanguage.Hscript)
 
+    # Forces: a FORCES subnet (the asset's dive target) with PRESOLVE and POSTSOLVE outputs, run by
+    # a Multiple Solver around the Box3D Solver: PRESOLVE, Box3D Solver, POSTSOLVE. POP forces
+    # wired to PRESOLVE write `force`, which the solver applies and clears in the same step.
+    forces = build_forces(dopnet)
     solver = create(dopnet, "box3d_solver", "box3d_solver")
-    solver.setInput(0, objects)
+    multi = create(dopnet, "multisolver", "multisolver")
+    multi.setInput(0, objects)
+    multi.setInput(1, forces, FORCES_OUTPUTS.index("PRESOLVE"))
+    multi.setInput(2, solver)
+    multi.setInput(3, forces, FORCES_OUTPUTS.index("POSTSOLVE"))
     out = create(dopnet, "output", "output")
-    out.setInput(0, solver)
+    out.setInput(0, multi)
     out.setDisplayFlag(True)
     dopnet.layoutChildren()
     return solver
+
+
+# The DOP node marking a subnet output (DOP_SubNetOutput). Not "output": in DOPs that is the Output
+# DOP that saves the simulation to disk.
+SUBNET_OUTPUT_TYPE = "subnetoutput"
+
+
+def build_forces(dopnet):
+    """The FORCES DOP subnet: one subnet-output node per FORCES_OUTPUTS entry, named after it, its
+    Output Index its position, with nothing wired in. The user wires POP forces and other
+    microsolvers into them."""
+    forces = create(dopnet, "subnet", FORCES)
+    for child in forces.children():
+        child.destroy()
+    outs = []
+    for i, name in enumerate(FORCES_OUTPUTS):
+        out = create(forces, SUBNET_OUTPUT_TYPE, name)
+        outs.append(out)
+        if out.parm("outputidx") is None:
+            warn(f"{out.path()} has no Output Index: FORCES outputs are not set")
+            continue
+        out.parm("outputidx").set(i)
+    layout_forces(forces, outs)
+    return forces
+
+
+def layout_forces(forces, outs):
+    """PRESOLVE on the left, POSTSOLVE on the right, each with its sticky note on its outer side;
+    the subnet's inputs moved up out of the way."""
+    # Node names are drawn to the right of a node, so the right-hand note sits further out.
+    gap_left, gap_right, spacing = 1.0, 3.0, 6.0
+    for i, out in enumerate(outs):
+        out.setPosition(hou.Vector2(i * spacing, 0.0))
+    for i, item in enumerate(forces.indirectInputs()):
+        item.setPosition(hou.Vector2(i * 1.5, 4.0))
+    for i, (out, text) in enumerate(zip(outs, FORCES_NOTES)):
+        note = forces.createStickyNote(f"{out.name().lower()}_note")
+        note.setText(text)
+        note.setSize(hou.Vector2(4.5, 1.6))
+        w, h = note.size()[0], note.size()[1]
+        nw, nh = out.size()[0], out.size()[1]
+        x = out.position()[0] - gap_left - w if i == 0 else out.position()[0] + nw + gap_right
+        note.setPosition(hou.Vector2(x, out.position()[1] + nh / 2 - h / 2))
 
 
 def edit_dialog_script(definition):
@@ -626,6 +693,11 @@ def build(out_path, packed_hda=None):
     definition.setIcon(ICON)
     definition.setComment("Simulates packed pieces with Box3D, like RBD Bullet Solver: geometry, "
                           "constraints, proxy and collision in, the same four out.")
+    # Diving into the asset lands in FORCES (the DiveTarget section holds the relative path), and
+    # FORCES is an editable node, so forces can be added without unlocking the asset (the
+    # EditableNodes section: space-separated relative paths).
+    definition.addSection("DiveTarget", DIVE_TARGET)
+    definition.addSection("EditableNodes", DIVE_TARGET)
 
     asset.allowEditingOfContents()
     for inner_path, inner_name, outer_name in links:
@@ -657,6 +729,12 @@ def check(out_path):
     hou.hda.installFile(out_path, force_use_assets=True)
     geo = hou.node("/obj").createNode("geo", "probe_geo")
     probe = geo.createNode(TYPE_NAME, "probe")
+    dive = probe.type().definition().sections().get("DiveTarget")
+    if dive is None or dive.contents().strip() != DIVE_TARGET or probe.node(DIVE_TARGET) is None:
+        warn(f"dive target {dive.contents() if dive else None!r} does not lead to {DIVE_TARGET}")
+    forces = probe.node(DIVE_TARGET)
+    if forces is not None and not forces.isEditable():
+        warn(f"{DIVE_TARGET} is not editable inside a locked instance (EditableNodes section)")
     labels_now = list(probe.inputLabels())
     if labels_now[:4] != INPUT_LABELS:
         warn(f"input labels are {labels_now}, expected {INPUT_LABELS}")
