@@ -49,6 +49,10 @@ remove an item once it has been checked, and record anything new here rather tha
   Data's Output folder folded into Sleep & Contacts; not yet built or looked at in Houdini. Solver defaults Contact
   Stiffness 60 and Contact Damping Ratio 3 (were Box3D's 30 / 10): tests that leave them at their defaults may move;
   `baseline` pins the old values.
+* Box3D Data attached under the object's Geometry (`Geometry/Box3DData`, as Bullet Data) instead of at the top
+  level: not yet built or checked in Houdini. To check: the Box3D Data node creates it there (including on Static
+  Objects and RBD Objects), it survives the solver's geometry replacement (`SIM_DATA_ADOPT_EXISTING_ON_DELETE`) and
+  RBD Packed Object's Overwrite with SOP, and old scenes with the top-level name still apply.
 * Scene scale: Box3D's tolerances assume metres. Measured (`scale`): a three-box stack rests 2.494 / 2.488 / 2.417 box
   sizes tall at 0.01x / 1x / 100x (2.5 ideal), with slight jitter at 100x: scenes 100 times too large sink about 3%.
 

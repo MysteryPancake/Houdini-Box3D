@@ -17,6 +17,7 @@
 #include <SIM/SIM_Relationship.h>
 #include <SIM/SIM_RelationshipArray.h>
 #include <UT/UT_Quaternion.h>
+#include <UT/UT_String.h>
 #include <UT/UT_StringHolder.h>
 #include <UT/UT_Vector3.h>
 
@@ -613,7 +614,14 @@ struct NetworkReader {
     if (!n || !*n)
       return nullptr;
     const auto it = kinds.find(std::string(n));
-    return it == kinds.end() ? nullptr : &it->second;
+    if (it != kinds.end())
+      return &it->second;
+    // No exact match: ignore case, so lowercase names (the joint nodes' Data
+    // Names before they were capitalised, e.g. "weld") still find "Weld".
+    for (const auto &kv : kinds)
+      if (UT_String(kv.first.c_str()).equal(n, false))
+        return &kv.second;
+    return nullptr;
   }
 
   // The anchor's saved local frame (local_P / local_orient), if it has one (a

@@ -74,7 +74,7 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
 **Houdini** (`Box3DJointSync.cpp`, `SIM_Box3DConRel.cpp`):
 * Nodes: `SIM_Box3DConRel` (`SIM_ConRel` + `SIM_OptionsUser`, like SideFX's `SIM_ConRelSpring`; abstract,
   `DECLARE_CLASSNAME` only) and one subclass per joint type from `BOX3D_DECLARE_CONREL`, each with its own automatic DOP
-  (`box3d_<type>conrel`, label "Box3D <Type> Constraint Relationship", default Data Name `<type>`). `describe(type)`
+  (`box3d_<type>conrel`, label "Box3D <Type> Constraint Relationship", default Data Name the type label, `Weld` etc., capitalised like SideFX's). `describe(type)`
   builds the parameters (`Box3DParms`, defaults from `getJointParam` over `nodeJointDefaults`) once per type: a "Joint"
   tab with the settings every type has (and Breakable), then a tab named after the type, in `jointParamUiOrder`,
   parameter name = attribute name (no per-type prefixes). `settings()` reads them through `setJointParam` in Box3D
@@ -85,7 +85,8 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   Object). Network key = hash of the relationship name (or the object id). `anyJointNetwork` checks the same, without
   reading geometry; while true, each full object scan fills `Box3DObjectSync::byName` (point `name` -> entry, first
   wins) and an object without `namesKnown` cannot skip. `name` is a prop marker, so a renamed piece rescans.
-* Kinds (`networkKinds`): the `SIM_Box3DConRel` subdata, by data name, of the relationship, its
+* Kinds (`networkKinds`): `constraint_name` matches a data name exactly, else ignoring case (so the old lowercase
+  defaults, `weld` etc., still find `Weld`). The `SIM_Box3DConRel` subdata, by data name, of the relationship, its
   `SIM_ConstraintNetworkRelationship` and its geometry (internal: the ConstraintGeometry and the object); the first
   name found wins. Kinds are re-read every sync (a few subdata); any change reprocesses the network.
   The HDK's `SIM_ConstraintNetwork` iterators / accessors are not used: the geometry is read directly, which keeps

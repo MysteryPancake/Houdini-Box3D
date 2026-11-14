@@ -10,8 +10,12 @@
 
 #include "core/Box3DWorld.h"
 
-// The name Box3D Data is attached under on a DOP object.
-inline constexpr const char *kBox3DDataName = "Box3DData";
+// Where Box3D Data is attached on a DOP object: under its Geometry, as Bullet
+// Data is (Geometry/BulletData). Read through findBox3DData, which also finds
+// it at the object's top level, where scenes made before this kept it (the
+// node's Data Name parameter is saved with the scene).
+inline constexpr const char *kBox3DDataName = "Geometry/Box3DData";
+inline constexpr const char *kBox3DDataLegacyName = "Box3DData";
 
 // The name the Box3D World is attached under on the solver's carrier object.
 inline constexpr const char *kBox3DWorldDataName = "Box3DWorld";
@@ -67,3 +71,12 @@ private:
   DECLARE_STANDARD_GETCASTTOTYPE();
   DECLARE_DATAFACTORY(SIM_Box3DData, SIM_Data, "Box3D Data", getDescription());
 };
+
+// The object's Box3D Data, under its Geometry or (older scenes) at its top
+// level; null if it has none.
+inline const SIM_Box3DData *findBox3DData(const SIM_Data &obj) {
+  if (const SIM_Box3DData *d =
+          SIM_DATA_GETCONST(obj, kBox3DDataName, SIM_Box3DData))
+    return d;
+  return SIM_DATA_GETCONST(obj, kBox3DDataLegacyName, SIM_Box3DData);
+}

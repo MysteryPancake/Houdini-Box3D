@@ -121,7 +121,9 @@ SIM_Box3DConRel::describe(b3dop::JointType t,
   st.nodeName = "box3d_" + typeName + "conrel";
   st.label = std::string("Box3D ") + b3dop::jointTypeLabel(t) +
              " Constraint Relationship";
-  st.dataName = typeName; // what `constraint_name` refers to by default
+  // What `constraint_name` refers to by default: capitalised, like SideFX's own
+  // relationship nodes (Glue, Hard, ConeTwist).
+  st.dataName = b3dop::jointTypeLabel(t);
 
   st.description = new (descriptionMemory[static_cast<int>(t)])
       SIM_DopDescription(true, // also creates a DOP node that applies this data

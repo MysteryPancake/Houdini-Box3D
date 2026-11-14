@@ -523,8 +523,36 @@ def test_data_override_attributes():
     return [Result("data_override_attributes", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
 
 
+def test_data_under_geometry():
+    """Box3D Data attaches under the object's Geometry (Geometry/Box3DData), as Bullet Data does
+    (Geometry/BulletData), not at the object's top level; it is still there after the solver has
+    replaced the geometry with its own writable copy, and its settings still reach the bodies
+    (Friction 0: a pushed box slides)."""
+    path, names = packed_boxes("data_geo", [GROUND, {"size": (1, 1, 1), "center": (0, 0.5, 0),
+                                                     "attrs": {"v": (3.0, 0.0, 0.0)}}])
+    dop = new_dopnet("data_geo")
+    obj = packed_object(dop, "pieces", path, keep_velocity=True)
+    data = box3d_data(dop, obj, "data", friction=0.0, overrideattribs=1)
+    finish(dop, box3d_solver(dop, data))
+
+    def sample(sim, f):
+        o = sim.findObject("pieces")
+        a = point_attributes(sim, "pieces", names[1], ["P"])
+        return (o.findSubData("Geometry/Box3DData") is not None, o.findSubData("Box3DData") is not None,
+                a["P"][0] if a else None)
+
+    track = step(dop, 25, sample)
+    under1, top1, _ = track[1]
+    under25, top25, x = track[25]
+    ok = under1 and under25 and not top1 and not top25 and x is not None and x > 2.5
+    return [Result("data_under_geometry", Result.PASS if ok else Result.FAIL,
+                   f"Geometry/Box3DData present on frame 1: {under1}, frame 25: {under25}; top-level Box3DData: "
+                   f"{top1} / {top25} (expected False); box at x={x:.2f} after 1 s (slides with Friction 0)")]
+
+
 TESTS = {
     "rbd_packed_attributes": test_rbd_packed_attributes,
+    "data_under_geometry": test_data_under_geometry,
     "data_override_attributes": test_data_override_attributes,
     "collision_masks": test_collision_masks,
     "offset_pivot": test_offset_pivot,

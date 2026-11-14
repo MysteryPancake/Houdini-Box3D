@@ -838,8 +838,9 @@ def test_rewire_midsim():
 
 def test_large_scene():
     """About 5000 boxes dropped in a lattice: time to the first frame and per frame over 48
-    frames (INFO, a baseline to catch slowdowns), plus a sanity check that the pile fell and stayed
-    finite."""
+    frames (INFO, a baseline to catch slowdowns), plus a sanity check that the pile came down and
+    stayed finite. The solver's default contacts are bouncy (damping ratio 3), so a box may rebound
+    above where it started; only one flung far (over twice the lattice's height) fails."""
     nx, ny, nz = 20, 12, 20
     geo = new_geo("large_points")
     pts = create(geo, "attribwrangle", "lattice")
@@ -872,10 +873,14 @@ def test_large_scene():
     ys = [pt.position()[1] for pt in dop.simulation().findObject("pieces").geometry().points()]
     finite = all(math.isfinite(y) for y in ys)
     top = max(ys) if ys else float("nan")
-    ok = finite and count == nx * ny * nz and top < 0.6 + (ny - 1) * 1.05
+    mean = sum(ys) / len(ys) if ys else float("nan")
+    start_top = 0.6 + (ny - 1) * 1.05
+    start_mean = 0.6 + (ny - 1) * 1.05 / 2
+    ok = finite and count == nx * ny * nz and mean < start_mean and top < 2 * start_top
     return [Result("large_scene", Result.INFO if ok else Result.FAIL,
                    f"{count} boxes: first frame {first:.2f} s, then {per_frame * 1000:.0f} ms per frame over 47 frames; "
-                   f"highest box at y={top:.2f} on frame 48 (started up to {0.6 + (ny - 1) * 1.05:.2f})"
+                   f"on frame 48 mean height {mean:.2f} (started {start_mean:.2f}: should be lower), highest box "
+                   f"y={top:.2f} (started up to {start_top:.2f}; fails above {2 * start_top:.2f})"
                    + ("" if finite else "; NON-FINITE POSITIONS"))]
 
 

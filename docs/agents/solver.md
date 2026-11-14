@@ -87,7 +87,8 @@ a `UT_ERROR_MESSAGE` "Box3D: step cancelled", and `SIM_SOLVER_FAIL`. `b3World_St
 once it has run the step always finishes (write-back etc. are quick), so a cached step is always whole.
 `StepProgress` is at global scope in `Box3DSolverInternal.h` (the solver header forward-declares it).
 
-Data names: `"Box3DWorld"`, `kBox3DDataName` (`"Box3DData"`, SIM_Box3DData.h), `SIM_GEOMETRY_DATANAME`.
+Data names: `"Box3DWorld"`, `kBox3DDataName` (`"Geometry/Box3DData"`, under the object's Geometry like Bullet Data; `findBox3DData` also
+finds `kBox3DDataLegacyName`, the top-level `"Box3DData"` of older scenes; SIM_Box3DData.h), `SIM_GEOMETRY_DATANAME`.
 
 ### syncObject (per object)
 

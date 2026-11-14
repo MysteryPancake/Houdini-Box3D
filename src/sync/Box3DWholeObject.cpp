@@ -363,8 +363,7 @@ void syncWholeObject(Box3DSharedState &st, const SIM_Object &obj,
                      const SIM_Geometry &geo, const GU_Detail *gdp,
                      SyncCounts &c) {
   const int objectId = obj.getObjectId();
-  const SIM_Box3DData *dataNode =
-      SIM_DATA_GETCONST(obj, kBox3DDataName, SIM_Box3DData);
+  const SIM_Box3DData *dataNode = findBox3DData(obj);
   // Box3D Data wins whenever it is attached; otherwise the RBD Object's own
   // settings.
   b3dop::WholeObjectSetup setup;

@@ -1215,8 +1215,7 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
 
   PointAttrs a(gdp);
   const int objectId = obj.getObjectId();
-  const SIM_Box3DData *dataNode =
-      SIM_DATA_GETCONST(obj, kBox3DDataName, SIM_Box3DData);
+  const SIM_Box3DData *dataNode = findBox3DData(obj);
   const b3dop::BodySettings node =
       dataNode ? dataNode->toBodySettings() : b3dop::nodeBodyDefaults();
   const bool addImpact = dataNode && dataNode->getAddImpact();

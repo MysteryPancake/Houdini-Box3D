@@ -145,8 +145,7 @@ bool readAffectorTransform(const SIM_Object &obj, AffectorInput &in) {
 // Object's are read), else Box3D Data's defaults.
 b3dop::BodySettings affectorBodySettings(const SIM_Object &obj) {
   b3dop::BodySettings body = b3dop::nodeBodyDefaults();
-  if (const SIM_Box3DData *node =
-          SIM_DATA_GETCONST(obj, kBox3DDataName, SIM_Box3DData))
+  if (const SIM_Box3DData *node = findBox3DData(obj))
     body = node->toBodySettings();
   else if (const SIM_Data *phys = obj.getConstNamedSubData("PhysicalParms")) {
     // Box3D asserts on negative material values: those keep the default.

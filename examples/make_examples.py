@@ -20,6 +20,7 @@ Scenes:
   bridge_chain    constraints: a hinged rope bridge (revolute) and a swinging chain (spherical)
   wrecking_ball   a ball on a rigid rope (distance joint) swinging into a brick wall
   paddle_mixer    a motor: a paddle driven by a revolute motor churning a tank of balls
+  forces          a Fan Force DOP and a POP Force (in a Multiple Solver) pushing a field of boxes
 """
 
 import argparse
@@ -782,6 +783,100 @@ half_x / half_z / height size the tank and the ball count follows."""
     tidy(480, note, dop)
     return dop, 480
 
+
+def create_any(parent, type_names, name):
+    """The first of type_names that exists (node type names vary between Houdini versions)."""
+    for t in type_names:
+        try:
+            return parent.createNode(t, name)
+        except hou.OperationFailed:
+            continue
+    raise SetupError(f"none of the node types {type_names} exist in {parent.path()}")
+
+
+def set_by_label(node, labels, value):
+    """Sets the first parameter whose label contains one of `labels` (case-insensitive): internal
+    names are not documented for every node. A tuple value sets a whole parameter tuple."""
+    tuples = node.parmTuples()
+    for want in labels:
+        for pt in tuples:
+            if want.lower() in pt.parmTemplate().label().lower():
+                if isinstance(value, (tuple, list)):
+                    if len(pt) == len(value):
+                        pt.deleteAllKeyframes()
+                        pt.set(value)
+                        return
+                elif len(pt) == 1:
+                    pt[0].deleteAllKeyframes()
+                    pt[0].set(value)
+                    return
+    have = ", ".join(sorted({pt.parmTemplate().label() for pt in tuples}))
+    raise SetupError(f"{node.path()}: no parameter labelled like {labels}. Its labels: {have}")
+
+
+def scene_forces():
+    p = Pieces("forces_pieces")
+    ground(p, 80.0)
+    # Light boxes (density 50, so about 1.4 kg each) on the ground, in a square field.
+    rows, size, pitch = 40, 0.3, 0.55
+    vex = f"""\
+// A {rows} x {rows} field of light boxes resting on the ground, coloured by position.
+int n = 0;
+for (int j = 0; j < {rows}; j++) for (int i = 0; i < {rows}; i++) {{
+    vector p = set((i - ({rows} - 1) * 0.5) * {num(pitch)}, {num(size / 2 + 0.001)}, (j - ({rows} - 1) * 0.5) * {num(pitch)});
+    vector cd = hsvtorgb(set(0.08 + 0.5 * j / ({rows} - 1.0), 0.7, 0.95));
+    mk(p, sprintf("box%d", n), identity, cd, 1, 50.0, "box");
+    n++;
+}}
+"""
+    p.stream("boxes", p.shape_box("boxes", (size, size, size)), vex, "the boxes")
+    path = p.finish()
+
+    dop = create(hou.node("/obj"), "dopnet", "forces_sim")
+    obj = create(dop, "rbdpackedobject", "pieces")
+    set_parm(obj, "soppath", path)
+
+    # DOP force: a Fan Force DOP attaches force data to the objects; the Box3D Solver evaluates it
+    # at every body's centre of mass, every step.
+    half = (rows - 1) * pitch / 2
+    fan = create_any(dop, ["fan", "fanforce"], "fan_force")
+    fan.setInput(0, obj)
+    set_by_label(fan, ["Position", "Center"], (-half - 4.0, 0.5, 0.0))
+    set_by_label(fan, ["Direction"], (1.0, 0.35, 0.0))
+
+    # POP force: a POP Force adds turbulence to each piece's `force` point attribute. In a Multiple
+    # Solver it runs first; the Box3D Solver then applies `force` for one step and clears it.
+    popforce = create(dop, "popforce", "pop_turbulence")
+    set_by_label(popforce, ["Amplitude"], 25.0)
+    set_by_label(popforce, ["Swirl Size"], 2.0)
+    solver = create(dop, "box3d_solver", "box3d_solver")
+    set_parm(solver, "forceswake", 1)  # resting boxes wake up when a force reaches them
+    multi = create(dop, "multisolver", "pop_then_box3d")
+    multi.setInput(0, fan)
+    multi.setInput(1, popforce)
+    multi.setInput(2, solver)
+    out = create(dop, "output", "output")
+    out.setInput(0, multi)
+    display(out)
+
+    note = f"""FORCES: {p.count - 1} light boxes pushed by a DOP force and a POP force.
+
+fan_force (Fan Force DOP): blows from the left edge of the field. Force DOPs attach force
+data to the objects; the Box3D Solver evaluates each at every body's centre of mass, every
+step (Use Force DOPs, on the solver's Forces tab).
+
+pop_turbulence (POP Force): adds noise to each box's 'force' point attribute. It runs before
+the Box3D Solver in the Multiple Solver; the solver applies 'force' (and 'torque') for one
+step and then clears it, so POP forces don't pile up.
+
+Forces Wake Bodies is on, so boxes that have fallen asleep wake when a force reaches them.
+
+Try: change the fan's Direction or strength; raise the POP Force's Amplitude, or set its
+Force for a steady push; add a Wind, Vortex or Gravity Force DOP after fan_force; turn off
+Use Force DOPs on the solver to see only the POP force."""
+    tidy(240, note, dop)
+    return dop, 240
+
 SCENES = {
     "shapes": scene_shapes,
     "many_bodies": scene_many_bodies,
@@ -789,6 +884,7 @@ SCENES = {
     "bridge_chain": scene_bridge_chain,
     "wrecking_ball": scene_wrecking_ball,
     "paddle_mixer": scene_paddle_mixer,
+    "forces": scene_forces,
 }
 
 

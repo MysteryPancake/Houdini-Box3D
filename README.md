@@ -147,7 +147,7 @@ A **Static Object** DOP collides with solved objects when a collision relationsh
 
 Joints use Houdini's **Constraint Network** DOP. Wire Box3D Constraint Relationship nodes into its second input, as with Bullet. Each two-point line in the network geometry is one joint:
 
-- `constraint_name` primitive attribute: the Data Name of a Box3D Constraint Relationship (by default its type: `weld`, `revolute`, ...). It sets the joint's type and settings.
+- `constraint_name` primitive attribute: the Data Name of a Box3D Constraint Relationship (by default its type, capitalised: `Weld`, `Revolute`, ...; case is ignored when nothing matches exactly). It sets the joint's type and settings.
 - Each end's `name` picks a piece (empty means the world).
 - Each end's `P` and `orient` are that piece's joint frame, so put both ends at the pivot for a hinge or weld.
 - Primitive attributes named like the node's parameters (`lower_angle`, `stiffness`, ...) modify them, as with Bullet: float attributes multiply the node's value, other attributes replace it.
