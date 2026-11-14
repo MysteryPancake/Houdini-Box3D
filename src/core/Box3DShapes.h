@@ -293,32 +293,32 @@ inline uint64_t packedHullKey(uint64_t sourceHash, const double pivot[3],
 template <class PointId>
 std::vector<int>
 connectedSets(const std::vector<std::vector<PointId>> &primPoints) {
-  const int n = static_cast<int>(primPoints.size());
-  std::vector<int> parent(n);
-  for (int i = 0; i < n; ++i)
+  const size_t n = primPoints.size();
+  std::vector<size_t> parent(n);
+  for (size_t i = 0; i < n; ++i)
     parent[i] = i;
-  auto root = [&](int i) {
+  auto root = [&](size_t i) {
     while (parent[i] != i)
       i = parent[i] = parent[parent[i]];
     return i;
   };
 
-  std::unordered_map<PointId, int>
+  std::unordered_map<PointId, size_t>
       firstUser; // point -> first primitive that uses it
-  for (int i = 0; i < n; ++i)
+  for (size_t i = 0; i < n; ++i)
     for (const PointId &pt : primPoints[i]) {
       const auto ins = firstUser.emplace(pt, i);
       if (ins.second)
         continue;
-      const int a = root(ins.first->second), b = root(i);
+      const size_t a = root(ins.first->second), b = root(i);
       if (a != b)
         parent[a > b ? a : b] = a > b ? b : a;
     }
 
   std::vector<int> label(n, -1), sets(n);
   int next = 0;
-  for (int i = 0; i < n; ++i) {
-    const int r = root(i);
+  for (size_t i = 0; i < n; ++i) {
+    const size_t r = root(i);
     if (label[r] < 0)
       label[r] = next++;
     sets[i] = label[r];

@@ -715,8 +715,9 @@ bool Box3DWorld::boxShape(BodyHandle h, const BodySettings &b,
     for (int sx = -1; sx <= 1; sx += 2)
       for (int sy = -1; sy <= 1; sy += 2)
         for (int sz = -1; sz <= 1; sz += 2) {
-          const float corner[3] = {sx * halfExtents[0], sy * halfExtents[1],
-                                   sz * halfExtents[2]};
+          const float corner[3] = {static_cast<float>(sx) * halfExtents[0],
+                                   static_cast<float>(sy) * halfExtents[1],
+                                   static_cast<float>(sz) * halfExtents[2]};
           float r[3];
           quatRotate(rotationXYZW, corner, r);
           for (int j = 0; j < 3; ++j)

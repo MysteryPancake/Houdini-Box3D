@@ -313,7 +313,7 @@ int main() {
       }
       HullId first = 0;
       for (int k = 0; k < 3; ++k) {
-        const float ang = 0.9f + 1.7f * k;
+        const float ang = 0.9f + 1.7f * static_cast<float>(k);
         const float qk[4] = {0.3f * std::sin(0.5f * ang),
                              std::sin(0.5f * ang) * 0.8f,
                              0.1f * std::sin(0.5f * ang), std::cos(0.5f * ang)};
@@ -364,7 +364,7 @@ int main() {
       }
       const uint64_t sh = hashFloats(src.data(), src.size());
       auto instanceM4 = [&](int k, double sk, double *m) {
-        const float ang = 0.9f + 1.7f * k;
+        const float ang = 0.9f + 1.7f * static_cast<float>(k);
         float q[4] = {0.3f * std::sin(0.5f * ang), std::sin(0.5f * ang) * 0.8f,
                       0.1f * std::sin(0.5f * ang), std::cos(0.5f * ang)};
         const float ln =
@@ -459,7 +459,9 @@ int main() {
       for (int sx = -1; sx <= 1; sx += 2)
         for (int sy = -1; sy <= 1; sy += 2)
           for (int sz = -1; sz <= 1; sz += 2) {
-            const float x = 0.3f * sx, y = 0.2f * sy, z = 0.4f * sz;
+            const float x = 0.3f * static_cast<float>(sx),
+                        y = 0.2f * static_cast<float>(sy),
+                        z = 0.4f * static_cast<float>(sz);
             box.insert(box.end(), {x * c - y * sn + 1.0f, x * sn + y * c, z});
           }
       ShapeSpec o;
@@ -563,8 +565,9 @@ int main() {
     // a dense cloud (500 points on a sphere) still gives a valid hull
     std::vector<float> cloud;
     for (int i = 0; i < 500; ++i) {
-      const float zz = 1.0f - 2.0f * (i + 0.5f) / 500.0f,
-                  rr = std::sqrt(1.0f - zz * zz), a = 2.39996323f * i;
+      const float fi = static_cast<float>(i);
+      const float zz = 1.0f - 2.0f * (fi + 0.5f) / 500.0f,
+                  rr = std::sqrt(1.0f - zz * zz), a = 2.39996323f * fi;
       cloud.push_back(rr * std::cos(a));
       cloud.push_back(rr * std::sin(a));
       cloud.push_back(zz);
@@ -613,8 +616,8 @@ int main() {
     CHECK(hw.shapeCount(11) == 2 && std::fabs(hw.bodyMass(11) - 10.0f) < 0.05f);
 
     // (c) instancing: 50 bodies, one hull build
-    for (int i = 0; i < 50; ++i) {
-      const double ip[3] = {-20.0 + i * 0.8, 3, 8};
+    for (uint64_t i = 0; i < 50; ++i) {
+      const double ip[3] = {-20.0 + static_cast<double>(i) * 0.8, 3, 8};
       CHECK(hw.addBody(100 + i, db, ip, qIdentity) &&
             hw.addHullShape(100 + i, hw.createHull(unitCube.data(), 8)));
     }
@@ -645,7 +648,7 @@ int main() {
     CHECK(std::fabs(hp[1] - 0.5) < 0.06);
 
     // Removing bodies releases their hulls.
-    for (int i = 0; i < 50; ++i)
+    for (uint64_t i = 0; i < 50; ++i)
       hw.removeBody(100 + i);
     hw.removeBody(10);
     hw.removeBody(11);
@@ -1001,9 +1004,9 @@ int main() {
       for (int sx = -1; sx <= 1; sx += 2)
         for (int sy = -1; sy <= 1; sy += 2)
           for (int sz = -1; sz <= 1; sz += 2) {
-            v.push_back(cx + sx * h);
-            v.push_back(cy + sy * h);
-            v.push_back(cz + sz * h);
+            v.push_back(cx + static_cast<float>(sx) * h);
+            v.push_back(cy + static_cast<float>(sy) * h);
+            v.push_back(cz + static_cast<float>(sz) * h);
           }
       return v;
     };
@@ -2208,8 +2211,9 @@ int main() {
     using namespace b3dop;
     std::vector<float> sphere; // dense and round: the full vertex budget fails
     for (int i = 0; i < 2000; ++i) {
-      const float zz = 1.0f - 2.0f * (i + 0.5f) / 2000.0f,
-                  rr = std::sqrt(1.0f - zz * zz), a = 2.39996323f * i;
+      const float fi = static_cast<float>(i);
+      const float zz = 1.0f - 2.0f * (fi + 0.5f) / 2000.0f,
+                  rr = std::sqrt(1.0f - zz * zz), a = 2.39996323f * fi;
       sphere.push_back(rr * std::cos(a));
       sphere.push_back(rr * std::sin(a));
       sphere.push_back(zz);

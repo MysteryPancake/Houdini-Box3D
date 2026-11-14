@@ -12,15 +12,15 @@ remove an item once it has been checked, and record anything new here rather tha
   CMake plugin section follow SideFX's HDK pages but are untested there: compiler warnings under gcc
   `-Wall -Wextra` in `src/dop` / `src/sync`, the dso and icon copies, and the Houdini checks via
   `hython tests/houdini/run_tests.py` (there is no Linux wrapper like `test.bat`).
-* No `SIM_*` code has CI; `examples/box3d_test.hiplc` is a manual scene. The plugin builds against the real HDK (Houdini
+* No `SIM_*` code has CI. The plugin builds against the real HDK (Houdini
   22.0.502, MSVC). The core tests pass, and so does every Houdini check (`checks_core.py`,
   `checks_solver.py`, `checks_output.py`, `checks_constraints.py`, `checks_more.py`, `checks_extra.py`,
-  `checks_regress.py` with its baseline.json, recorded on 22.0.479 and matched exactly on 22.0.502: 129 PASS, 17 INFO;
-  the items they settled are no longer listed here). What no script can check: Escape mid-step, the
+  `checks_regress.py` with its baseline.json, recorded on 22.0.479 and matched exactly on 22.0.502: 131 PASS, 17 INFO,
+  and `large_scene`, whose sanity check has since been relaxed for bouncy contacts and not re-run; the items they
+  settled are no longer listed here). What no script can check: Escape mid-step, the
   viewport, motion blur, and how greyed-out parameters look.
 * An untouched object still skips its scan after a Box3D Data change elsewhere (debug log: `scan skipped`). (A Box3D
   Data change mid-simulation reaching existing bodies is verified, `data_change_midsim`.)
-* `examples/box3d_test.hiplc` still uses the removed Box3D Joints node and needs rebuilding with a Constraint Network.
 
 **HDK and Houdini behaviour**
 * Data ids surviving the DOP copy between timesteps (the sync skip). If they do not, every step scans: correct, no gain.
@@ -38,23 +38,19 @@ remove an item once it has been checked, and record anything new here rather tha
 * `objects` sorted by object id (`box3dObjectById` binary search, a miss is final). Checked once per solve (`st.objectsSorted`); an array that is not sorted falls back to a linear scan, so only speed is at stake.
 * Box3D's tasks on Houdini's TBB pool (`Box3DHoudiniTasks`): no stall when several DOP networks or threaded SOPs cook
   at once, or where threading is disabled for the cooking thread (tasks run inline). `HOUDINI_MAXTHREADS=1` is fine.
-* The Threads default (`performanceCoreCount`, `Box3DCpu.cpp`): builds and runs on Windows (the `ui` check only
-  asks for 1 to 32); that it equals the physical performance core count is not checked there, nor on macOS
+* The Threads default (`performanceCoreCount`, `Box3DCpu.cpp`): confirmed by hand on Windows. Not checked on macOS
   (`hw.perflevel0`) or ARM Linux (`cpu_capacity`).
-* Solver Substeps default 10 (was 4), slider 1 to 100 (hard minimum 1, more can be typed): the full Houdini suite has not been run since. Tests
-  that leave Substeps at its default (most) now step 10 times per frame; `baseline` pins 4, as recorded. A scene
-  saved with the old default may come back with 10, if Houdini did not store the unchanged value.
-* Parameter layout: the solver in tabs (Setup / Collision / Forces / Advanced, guide parameters on Houdini's
-  Guide Options tab), Box3D Data and the joint nodes in simple folders (`PRM_SpareData::groupTypeSimple`), Box3D
-  Data's Output folder folded into Sleep & Contacts; not yet built or looked at in Houdini. Solver defaults Contact
-  Stiffness 60 and Contact Damping Ratio 3 (were Box3D's 30 / 10): tests that leave them at their defaults may move;
-  `baseline` pins the old values.
-* Box3D Data attached under the object's Geometry (`Geometry/Box3DData`, as Bullet Data) instead of at the top
-  level: not yet built or checked in Houdini. To check: the Box3D Data node creates it there (including on Static
-  Objects and RBD Objects), it survives the solver's geometry replacement (`SIM_DATA_ADOPT_EXISTING_ON_DELETE`) and
-  RBD Packed Object's Overwrite with SOP, and old scenes with the top-level name still apply.
-* Scene scale: Box3D's tolerances assume metres. Measured (`scale`): a three-box stack rests 2.494 / 2.488 / 2.417 box
-  sizes tall at 0.01x / 1x / 100x (2.5 ideal), with slight jitter at 100x: scenes 100 times too large sink about 3%.
+* Solver defaults Substeps 10 (slider 1 to 100), Contact Stiffness 60, Contact Damping Ratio 3 (were 4 / 30 / 10;
+  `baseline` pins the old values) pass the full suite. Contacts are bouncier by choice: pieces settle less (the
+  `rbd_defaults` rod still rocks after 10 s and rests on an edge; an RBD Object box still moves 0.15 / s after 6 s)
+  and a box in `large_scene` rebounded above the lattice. A scene saved with the old defaults may come back with the
+  new ones, if Houdini did not store the unchanged values.
+* Box3D Data under the object's Geometry (`Geometry/Box3DData`): verified on an RBD Packed Object, present on frame 1
+  and 25 and still applied (`data_under_geometry`). Still open: Static Objects and RBD Objects, RBD Packed Object's
+  Overwrite with SOP, and old scenes with the top-level name (`findBox3DData`'s fallback).
+* Scene scale: Box3D's tolerances assume metres. Measured (`scale`, current defaults): a three-box stack rests 2.498 /
+  2.498 / 2.418 box sizes tall at 0.01x / 1x / 100x (2.5 ideal), with slight jitter at 100x: scenes 100 times too
+  large sink about 3%.
 
 **Points and packed geometry**
 * Point order: reversing the points upstream (Sort SOP) keeps every body's identity, with and without `id` (verified,
@@ -166,8 +162,9 @@ remove an item once it has been checked, and record anything new here rather tha
 * Bullet mixing defaults: Friction Mixing Multiply, Bounce Mixing Minimum (Bullet in Houdini 22.0 measured friction
   0.16 and bounce 0.198 for 0.2 against 0.8: `bullet_mixing`), Box3D Data Bounce 0.5. Built; `friction_mixing`,
   `bounce_mixing`, `rbd_defaults`, `bounce_heights` and `friction_slope` pass and the baseline matches.
-* Performance Monitor stage events (`UT_PerfMonAutoSolveEvent`, see solver.md): built, but not yet looked at in the
-  profiler (whether they nest under the solver node's entry the way Bullet's do).
+* Performance Monitor stage events (`UT_PerfMonAutoSolveEvent`, see solver.md): renamed like Bullet's and grouped in
+  nested Pre-Solve / Stepping Simulation / Post-Solve events; not yet looked at in the profiler (whether the stages
+  nest under their group, and the groups under the solver node, as Bullet's do).
 
 ## HDK calls
 
@@ -195,7 +192,7 @@ passed as a `PRM_Template`'s conditional pointer.
 * RBD Packed Object writes its own physical attributes onto every point and point attributes win, so Box3D Data's
   mass / density / compute mass / friction / bounce do nothing there (as with Bullet). Decided: keep Bullet's rule,
   document it (README, tooltips) and warn once per object; Box3D Data's Override Existing Attributes (off by default)
-  makes the node's values win instead (`data_override_attributes`, not yet run). A Box3D Packed Object node (an asset: Empty Object, SOP
+  makes the node's values win instead (verified, `data_override_attributes`). A Box3D Packed Object node (an asset: Empty Object, SOP
   Geometry, Box3D Data, no stamped attributes) would give Box3D Data its full role on packed geometry.
 * Mirrored packed pieces lose their mirror once they move (the write-back writes a non-mirrored transform).
 * Packed primitive spheres and nested packed primitives collide as one point (hulls from points only): unpack or warn.
@@ -205,10 +202,13 @@ passed as a `PRM_Template`'s conditional pointer.
   objects are all new builds no world, so there are no bodies to draw. A preview world built just for the guide was
   tried and dropped.
 
-* GCC/Clang `-Wshadow` (shadowing members and outer scopes, beyond the local shadowing MSVC `/W4` reports) and
-  `-Wconversion` (about 12) are off.
-* The Houdini-side files (`src/dop`, `src/sync`) have not been through clang-tidy (needs an HDK build's
-  compile_commands.json); their casts were converted to `static_cast` by script, checked to change nothing else.
+* GCC/Clang `-Wshadow` and `-Wconversion` are on (`b3dop_warnings`). The core and tests build clean with both
+  compilers, also as errors (Clang's `-Wconversion` includes `-Wsign-conversion`). The Houdini-side files
+  (`src/dop`, `src/sync`) have not been compiled with them: a Linux plugin build may show warnings there (MSVC's
+  `/W4` is unchanged).
+* clang-tidy (`.clang-tidy`) is clean on the core and tests. The Houdini-side files have not been through it (needs an
+  HDK build's compile_commands.json, e.g. `clang-tidy -p build` after a plugin build); their casts were converted to
+  `static_cast` by script, checked to change nothing else.
 
 * Scenes saved before the joint nodes' Breakable / Set Rest Length / Limit Spring Force / Limit Max Length / Limit
   Torque toggles load with them off, so a Break Force, Rest Length etc. typed in such a scene is ignored until the

@@ -10,7 +10,7 @@ How the project is built, tested and packaged. Index and rules: [CLAUDE.md](../.
 * A post-build step copies `icons/box3d.svg` to `<dso>/../config/Icons/DOP_<node name>.svg` (Houdini's default icon
   name for a node type is `<TABLE>_<name>`; the HDK alternative, `OP_Operator::setIconName`, needs the operator, which
   the automatic DOPs don't expose to us). Renaming a node's internal name means renaming its icon.
-* Warnings: `b3dop_warnings(target)` adds `-Wall -Wextra` (`/W4` on MSVC) to `b3dop_core`, the tests and the plugin,
+* Warnings: `b3dop_warnings(target)` adds `-Wall -Wextra -Wshadow -Wconversion` (`/W4` on MSVC) to `b3dop_core`, the tests and the plugin,
   never to Box3D. Houdini's headers come through an imported target, so they are system includes and not checked.
   `BOX3DDOP_WARNINGS_AS_ERRORS` (default OFF) adds `-Werror` / `/WX`; CI sets it on both platforms. A full MSVC
   build (plugin included, Houdini 22) was clean apart from test shadowing, since fixed.
@@ -56,7 +56,7 @@ How the project is built, tested and packaged. Index and rules: [CLAUDE.md](../.
 Houdini checks: `hython tests/houdini/run_tests.py` (`--list` for the tests); on Windows `test.bat` (repository root), which
 finds Houdini the same way as `build.bat` (its search block is copied, also into `make_examples.bat`, both in the root: change all three together) and passes its
 arguments on. Each builds its scene from scratch
-(no dependence on `box3d_test.hiplc`), simulates and prints PASS / FAIL / INFO; scenes are saved to
+(no saved scene needed), simulates and prints PASS / FAIL / INFO; scenes are saved to
 `tests/houdini/out/`, tidied for opening by hand first (`review.py`: every network laid out, input geometry hidden,
 the visible objects spaced along +X by moving whole DOP network objects, a sticky note at `/obj` with the test's
 docstring and results and one in each DOP network; any error there is printed and ignored, so it cannot change a
@@ -93,7 +93,7 @@ Built in both configurations (`-DBOX3DDOP_CORE_ONLY=ON` builds only these):
 | `b3dop_core_taskrunner [workers]` | Worlds on one shared host pool: tasks run, results match 1 worker |
 | `b3dop_core_threads [workers] [side] [steps]` | 1 vs N workers: speedup, fails if positions differ by > 1e-4 |
 
-`examples/box3d_test.hiplc` is a manual scene; the `SIM_*` code is covered by the Houdini checks above, not by CI.
+The `SIM_*` code is covered by the Houdini checks above, not by CI.
 
 ## Debug logging (`Box3DDebug.h`)
 

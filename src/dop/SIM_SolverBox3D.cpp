@@ -20,6 +20,7 @@
 #include <cmath>
 #include <cstdio>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_set>
 
@@ -336,10 +337,16 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
     }
   }
 
+  // Profiler groups, as Bullet's: Pre-Solve (rebuild, sync), Stepping
+  // Simulation (forces, the Box3D step), Post-Solve (write-back). Each stage is
+  // an event nested in its group.
+  std::optional<UT_PerfMonAutoSolveEvent> group;
+  group.emplace(this, "Pre-Solve");
+
   // A failed rebuild leaves the old state in place, valid but from another
   // time: never continue it.
   if (reason) {
-    UT_PerfMonAutoSolveEvent perf(this, "Box3D: Rebuild World");
+    UT_PerfMonAutoSolveEvent perf(this, "Rebuilding World");
     if (!createFreshWorld(*worldData, reason)) {
       reportWorldCreationFailure(objects);
       return SIM_SOLVER_FAIL;
@@ -378,10 +385,13 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   if (progress.check())
     return cancel();
 
+  group.reset();
+  group.emplace(this, "Stepping Simulation");
+
   // Force DOPs go into the bodies now, for this step only (Box3D clears them
   // afterwards).
   if (getUseForces()) {
-    UT_PerfMonAutoSolveEvent perf(this, "Box3D: Apply Forces");
+    UT_PerfMonAutoSolveEvent perf(this, "Applying Forces");
     const ForceStats fs = applyExternalForces(*st, objects, getForcesWake());
     warnCount(objects, fs.nonFinite,
               "body(ies) got a non-finite force or torque from a Force DOP; it "
@@ -391,29 +401,31 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   // From here the step runs to the end (the write-back is quick), so the cached
   // result is always a whole step.
   {
-    UT_PerfMonAutoSolveEvent perf(this, "Box3D: Step World");
+    UT_PerfMonAutoSolveEvent perf(this, "Stepping World");
     st->world.step(st->stepDt);
     st->world.getMoveEvents(
         st->moves); // read once: the write-back and impacts use them
   }
   B3D_LOG_VERBOSE("  step: %d contact(s) recycled",
                   st->world.recycledContactCount());
+  group.reset();
+  group.emplace(this, "Post-Solve");
   {
-    UT_PerfMonAutoSolveEvent perf(this, "Box3D: Write Results");
+    UT_PerfMonAutoSolveEvent perf(this, "Exporting Simulation Results");
     writeResultsBack(*worldData, objects);
   }
   {
-    UT_PerfMonAutoSolveEvent perf(this, "Box3D: Constraint Feedback");
+    UT_PerfMonAutoSolveEvent perf(this, "Updating Constraint States");
     if (const int broke = jointsAfterStep(*st, objects))
       B3D_LOG("  joints: %d broke", broke);
   }
   // Contacts are read before the queued point writes, aging and deletions.
   {
-    UT_PerfMonAutoSolveEvent perf(this, "Box3D: Record Impacts");
+    UT_PerfMonAutoSolveEvent perf(this, "Recording Impacts");
     recordImpacts(*st, objects, engine.getSimulationTime());
   }
   {
-    UT_PerfMonAutoSolveEvent perf(this, "Box3D: Point Updates");
+    UT_PerfMonAutoSolveEvent perf(this, "Updating Points");
     writePointAttrs(*st, objects);
     if (getEnableAging())
       ageObjects(*st, objects, static_cast<float>(dt));
@@ -489,7 +501,7 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
   st->pointWrites.clear();
   st->deletions.clear();
   {
-    UT_PerfMonAutoSolveEvent perf(this, "Box3D: Sync Bodies");
+    UT_PerfMonAutoSolveEvent perf(this, "Updating Bodies");
     for (exint i = 0; i < objects.entries(); ++i) {
       if (progress.check())
         return false;
@@ -503,7 +515,7 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
   // collision relationship).
   Box3DAffectorCounts affectorCounts;
   {
-    UT_PerfMonAutoSolveEvent perf(this, "Box3D: Sync Affectors");
+    UT_PerfMonAutoSolveEvent perf(this, "Updating Colliders");
     syncAffectorBodies(*st, objects, affectorCounts);
   }
   warnCount(objects, affectorCounts.failed + affectorCounts.noGeo,
@@ -517,7 +529,7 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
   // Remove bodies whose point (or object) is gone: the unstamped entries.
   int removed = 0;
   if (st->stampedCount != st->mirror.size()) {
-    UT_PerfMonAutoSolveEvent perf(this, "Box3D: Remove Bodies");
+    UT_PerfMonAutoSolveEvent perf(this, "Removing Bodies");
     std::unordered_set<int> touched; // objects that lost bodies
     for (auto it = st->mirror.begin(); it != st->mirror.end();) {
       if (!st->isLive(it->second)) {
@@ -549,7 +561,7 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
     ++st->bodyVersion;
   Box3DJointCounts jointCounts;
   {
-    UT_PerfMonAutoSolveEvent perf(this, "Box3D: Sync Constraints");
+    UT_PerfMonAutoSolveEvent perf(this, "Updating Constraints");
     syncJoints(*st, objects, timeStep, jointCounts);
   }
   {

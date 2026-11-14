@@ -49,10 +49,11 @@ deleteDeadPoints   `dead` points
 stamp = now
 ```
 
-**Performance Monitor.** Each stage opens a `UT_PerfMonAutoSolveEvent(this, "Box3D: <stage>")` (as Bullet does), so
-the profiler lists the stages under the solver node instead of one entry: Rebuild World, Sync Bodies, Sync Affectors,
-Remove Bodies, Sync Constraints, Apply Forces, Step World (`world.step` + move events), Write Results, Constraint
-Feedback, Record Impacts, Point Updates (point writes, aging, dead points). Events are opened only on the solve
+**Performance Monitor.** As Bullet does, each stage opens a `UT_PerfMonAutoSolveEvent(this, "<stage>")` named like
+Bullet's (no solver prefix: the profiler shows the node), nested in a group event held in a `std::optional` across the
+solve: Pre-Solve (Rebuilding World, Updating Bodies, Updating Colliders, Removing Bodies, Updating Constraints),
+Stepping Simulation (Applying Forces, Stepping World: `world.step` + move events), Post-Solve (Exporting Simulation
+Results, Updating Constraint States, Recording Impacts, Updating Points: point writes, aging, dead points). Events are opened only on the solve
 thread; threaded passes count toward the stage that runs them. When the monitor is not recording, the constructor
 only checks two flags. Box3D's own step breakdown (`b3World_GetProfile`) is not reported.
 
