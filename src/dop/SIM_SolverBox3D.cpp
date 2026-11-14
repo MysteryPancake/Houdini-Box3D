@@ -21,7 +21,9 @@
 #include <cstdio>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 using namespace box3dsolver;
 
@@ -46,10 +48,23 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
           .number("timescale", "Time Scale", 1.0, R{0, 2},
                   "Multiplies the time step: below 1 is slow motion, above 1 "
                   "fast motion.")
-          // Slider 1 to 100; minimum 1 (Box3D clamps to it), more can be typed.
-          .integer("substeps", "Substeps", 10, R{1, 100},
-                   "Solver passes per time step. More is more stable for "
-                   "stacks and fast collisions, but slower.")
+          // Outer loop: whole Box3D steps, each with its own collision
+          // detection. Slider 1 to 10; minimum 1, more can be typed (capped 64).
+          .integer("stepsperframe", "Substeps", 1, R{1, 10},
+                   "Box3D steps per time step. 1 steps once per frame (the "
+                   "scene FPS), 2 twice, and so on. Each step detects "
+                   "collisions again and runs its own Solver Passes, so more "
+                   "catches fast or thin objects better, at a cost of "
+                   "roughly Substeps x Solver Passes.")
+          // Inner loop. Slider 1 to 100; minimum 1 (Box3D clamps to it), more
+          // can be typed. Name kept as \"substeps\" for saved scenes.
+          .integer("substeps", "Solver Passes", 10, R{1, 100},
+                   "Contact and joint solver passes per Box3D step (Box3D's "
+                   "counterpart to Constraint Iterations). Each pass is a "
+                   "smaller time step, not another pass at the same "
+                   "positions. More is stiffer and more stable for stacks "
+                   "and chains, but slower. Raise Substeps instead for "
+                   "collisions missed between frames.")
           .vector("gravity", "Gravity", {0.0, -9.80665, 0.0},
                   "Acceleration of every dynamic body, in units per second "
                   "squared. Scale per body with Gravity Scale on Box3D Data.")
@@ -65,11 +80,13 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                   "{ reapdead == 0 }")
           .tab("Collision")
           // Stiffer and less damped than Box3D's own defaults (30 Hz, 10):
-          // a more rigid look. Box3D caps the stiffness at 1/8 of the substep
-          // rate, so 60 Hz needs 20 substeps at 24 fps; 10 give 30 Hz.
+          // a more rigid look. Box3D caps the stiffness at 1/8 of the pass
+          // rate (fps x Substeps x Solver Passes), so 60 Hz needs 20 in total
+          // at 24 fps; 10 give 30 Hz.
           .number("contactstiffness", "Contact Stiffness", 60.0, R{0, 120},
                   "How stiff contacts are (cycles per second). Higher values "
-                  "recover from overlap faster but can jitter.")
+                  "recover from overlap faster but can jitter. Capped at 1/8 "
+                  "of FPS x Substeps x Solver Passes.")
           .number("contactdamping", "Contact Damping Ratio", 3.0, R{0, 20},
                   "How much contacts damp overlap recovery. Lower values "
                   "recover faster but more energetically.")
@@ -381,23 +398,59 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   if (progress.check())
     return cancel();
 
-  // Force DOPs go into the bodies now, for this step only (Box3D clears them
-  // afterwards).
-  if (getUseForces()) {
-    UT_PerfMonAutoSolveEvent perf(this, "Applying Forces");
-    const ForceStats fs = applyExternalForces(*st, objects, getForcesWake());
-    warnCount(objects, fs.nonFinite,
-              "body(ies) got a non-finite force or torque from a Force DOP; it "
-              "was ignored");
-  }
+  // Substeps: the frame is split into n whole Box3D steps of subDt, each with
+  // its own collision detection and Solver Passes. st->stepDt stays the whole
+  // frame's time: a kinematic target and a Glue's break force are per frame.
+  const int n = st->stepDt > 0.0f
+                    ? std::clamp(static_cast<int>(getStepsPerFrame()), 1, 64)
+                    : 1;
+  const float subDt = st->stepDt / static_cast<float>(n);
 
   // From here the step runs to the end (the write-back is quick), so the cached
   // result is always a whole step.
-  {
+  if (n == 1) { // the usual case: one step, nothing to merge
+    if (getUseForces()) {
+      UT_PerfMonAutoSolveEvent perf(this, "Applying Forces");
+      const ForceStats fs = applyExternalForces(*st, objects, getForcesWake());
+      warnCount(objects, fs.nonFinite,
+                "body(ies) got a non-finite force or torque from a Force DOP; "
+                "it was ignored");
+    }
     UT_PerfMonAutoSolveEvent perf(this, "Stepping World");
-    st->world.step(st->stepDt);
-    st->world.getMoveEvents(
-        st->moves); // read once: the write-back and impacts use them
+    st->world.step(subDt);
+    st->world.getMoveEvents(st->moves); // read once: write-back and impacts
+  } else {
+    st->moves.clear();
+    std::unordered_map<b3dop::BodyHandle, size_t> slot;
+    std::vector<b3dop::BodyMove> events;
+    ForceStats forceStats;
+    for (int i = 0; i < n; ++i) {
+      // Force DOPs go into the bodies for one Box3D step only (it clears them
+      // afterwards), so every step applies them again.
+      if (getUseForces()) {
+        UT_PerfMonAutoSolveEvent perf(this, "Applying Forces");
+        const ForceStats fs =
+            applyExternalForces(*st, objects, getForcesWake());
+        forceStats.nonFinite = std::max(forceStats.nonFinite, fs.nonFinite);
+      }
+      {
+        UT_PerfMonAutoSolveEvent perf(this, "Stepping World");
+        st->world.step(subDt);
+        st->world.getMoveEvents(events);
+      }
+      // Box3D clears its move events every step, so merge them: the last
+      // event of a body is its final pose (and its fell-asleep flag).
+      for (const b3dop::BodyMove &mv : events) {
+        const auto ins = slot.try_emplace(mv.handle, st->moves.size());
+        if (ins.second)
+          st->moves.push_back(mv);
+        else
+          st->moves[ins.first->second] = mv;
+      }
+    }
+    warnCount(objects, forceStats.nonFinite,
+              "body(ies) got a non-finite force or torque from a Force DOP; it "
+              "was ignored");
   }
   B3D_LOG_VERBOSE("  step: %d contact(s) recycled",
                   st->world.recycledContactCount());

@@ -8,7 +8,7 @@ Defaults, ranges and menus are defined once, in the `Box3DParms` tables: the sol
 Box3D Data's in `src/dop/SIM_Box3DData.cpp`. Look values up there; do not copy them into docs. The worker-count bounds
 are `b3dop::kDefaultWorkerCount` / `kMaxWorkerCount` (`Box3DWorld.h`).
 
-Solver (read every step; only the thread count rebuilds the world): `gravity`, `substeps`, `autothreads`, `threads`
+Solver (read every step; only the thread count rebuilds the world): `gravity`, `stepsperframe` (Substeps), `substeps` (Solver Passes), `autothreads`, `threads`
 (default `b3dop::defaultWorkerCount()` in `Box3DCpu.h`: the machine's physical performance cores, as Box3D recommends;
 `WorldSettings` keeps `kDefaultWorkerCount`), `enablesleep`, `timescale`, `enableaging`, `reapdead`, `reapatframeend` (disabled while `reapdead` is off), and Box3D's tuning
 (Box3D's defaults except the contact stiffness and damping, tuned for bouncier, more rigid contacts): `contactstiffness`, `contactdamping`, `contactpushspeed`, `bouncethreshold`,
@@ -66,7 +66,7 @@ Every node's parameters come from `Box3DParms` (SIM_Box3DParms.h): one call per 
 optional disable condition). It keeps the names, defaults, ranges, menus and conditions alive and terminates the list.
 `tab()` groups share one `PRM_SWITCHER` (`PRM_Default(count, label)` per tab, switcher `b3dtabs`); `folder()` groups
 are simple folders, each a one-folder switcher with `PRM_SpareData::groupTypeSimple` named `<prefix><index>`. A builder
-uses one kind. The solver uses tabs: Setup (time scale, substeps, gravity, aging and reaping), Collision (contact tuning, recycling,
+uses one kind. The solver uses tabs: Setup (time scale, Substeps, Solver Passes, gravity, aging and reaping), Collision (contact tuning, recycling,
 Continuous Collision), Forces (Force DOPs, bounce, friction / bounce mixing), Advanced (Warm Starting, Allow
 Sleeping, threads, speed limit, ...); its guide parameters are a plain list on Houdini's own Guide Options tab (so the
 solver's tabs sit inside Data Options). Box3D Data and the joint nodes use simple folders: Box3D Data's are Shape, Body, Material, Sleep & Contacts (CCD Threshold, Fast Object, Contact Recycling, the

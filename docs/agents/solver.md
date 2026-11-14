@@ -32,15 +32,26 @@ pointer to its object's record (`sync`), valid because records are erased only a
 
 ## Solver step (`solveObjectsSubclass`)
 
+**Two step counts.** *Substeps* (`stepsperframe`, default 1) splits the DOP step into whole Box3D steps, each with its
+own `b3Collide` (contact detection), so collisions are found `fps * Substeps` times a second. *Solver Passes*
+(`substeps`, default 10; the parm keeps its old name so saved scenes and scripts still work) is Box3D's own
+`subStepCount`: each pass is a smaller time step for the contact / joint solve, not another iteration at the same
+positions (Box3D runs one solve and one relax per pass). Not to be confused with `restitutionIterations`. Kinematic
+targets (`setTargetTransformByHandle`) and the Glue break force use the whole frame's `stepDt`, so they hold for any
+Substeps. Recording Impacts and Updating Constraint States (Glue breaking) run once per frame and only see the last
+Box3D step.
+
 ```
 StepProgress (UTgetInterrupt)                  Escape checks; Houdini's own "Stepping simulation" bar stays
 worldData = findOrCreateWorldData(objects)     first object carrying "Box3DWorld", else created on objects(0)
 rebuild if invalid / thread count changed / stamp mismatch -> createFreshWorld
 lock st->mutex
-stepDt = dt * timescale; world.applyTuning(currentWorldSettings())
+stepDt = dt * timescale; world.applyTuning(currentWorldSettings())   (stepDt stays the whole frame's time)
 syncFromGeometry   per object syncObject(); remove gone bodies; pruneHulls; warnings
 applyExternalForces  Use Force DOPs: SIM_Force data per object -> getForce at each dynamic body's centre of mass -> applyForceByHandle
-world.step         b3World_Step(stepDt, subSteps); then the move events are read once into st.moves
+world.step         n = Substeps (`stepsperframe`, 1..64; 1 when stepDt is 0). Each of the n steps: applyExternalForces (Box3D clears
+                   forces every step), b3World_Step(stepDt / n, subSteps = Solver Passes), then its move events are merged
+                   into st.moves by body (Box3D clears them every step; the last event wins, so fell-asleep survives)
 writeResultsBack   awake dynamic bodies (move events): P / orient / v / w / packed transform / awake
 recordImpacts      Add Impact Data -> SIM_Impacts (only on steps with an impact)
 writePointAttrs    queued point writes: bullet_autofit_valid = 1, computed mass

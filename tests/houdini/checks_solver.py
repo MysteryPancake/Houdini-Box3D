@@ -133,9 +133,15 @@ def test_ui():
     expect("Solver Reap At Frame End default (on, as POP)",
            solver.parm("reapatframeend").parmTemplate().defaultValue(), True)
     t = solver.parm("substeps").parmTemplate()
-    expect("Solver Substeps default", t.defaultValue()[0], 10)
-    expect("Solver Substeps slider 1..100 (hard minimum only)",
+    expect("Solver Passes (parm substeps) label", t.label(), "Solver Passes")
+    expect("Solver Passes default", t.defaultValue()[0], 10)
+    expect("Solver Passes slider 1..100 (hard minimum only)",
            (t.minValue(), t.minIsStrict(), t.maxValue(), t.maxIsStrict()), (1, True, 100, False))
+    t = solver.parm("stepsperframe").parmTemplate()
+    expect("Solver Substeps (parm stepsperframe) label", t.label(), "Substeps")
+    expect("Solver Substeps default (1 = one Box3D step per frame)", t.defaultValue()[0], 1)
+    expect("Solver Substeps slider 1..10 (hard minimum only)",
+           (t.minValue(), t.minIsStrict(), t.maxValue(), t.maxIsStrict()), (1, True, 10, False))
     # Threads defaults to the machine's physical performance cores (Box3DCpu.cpp), 1..32.
     threads_default = solver.parm("threads").parmTemplate().defaultValue()[0]
     expect("Solver Threads default in 1..32", 1 <= threads_default <= 32, True)
