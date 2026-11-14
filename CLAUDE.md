@@ -78,6 +78,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DShapes.h       Header-only: shape math, packed-prim matrices, hashing
     Box3DJoints.h       Header-only: joint types, JointSettings, the joint parameter table
     Box3DSideFX.h/.cpp  SideFX's Glue / Hard / Spring / Bullet Soft / Cone Twist data -> Box3D joints (mapping, frame offsets)
+    Box3DCpu.h/.cpp     Physical performance core count (the solver's Threads default)
     Box3DRbdObject.h    Header-only: an RBD Object's own mass / friction / bounce / Bullet Data shape -> whole-object settings
     Box3DWorld.h/.cpp   Pimpl wrapper over one b3World. The ONLY file that includes Box3D headers; defines TaskRunner
     Box3DAffectorMath.h Header-only: affector (Static Object) transform math

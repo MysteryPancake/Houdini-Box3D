@@ -82,6 +82,8 @@ add_library(b3dop_core STATIC
     src/core/Box3DSideFX.h
     src/core/Box3DSideFX.cpp
     src/core/Box3DRbdObject.h
+    src/core/Box3DCpu.h
+    src/core/Box3DCpu.cpp
     src/core/Box3DWorld.h
     src/core/Box3DWorld.cpp
     src/core/Box3DAffectorMath.h

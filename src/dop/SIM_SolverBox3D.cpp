@@ -3,6 +3,7 @@
 #include "SIM_Box3DData.h"
 #include "SIM_Box3DParms.h"
 #include "SIM_Box3DWorld.h"
+#include "core/Box3DCpu.h"
 #include "core/Box3DDebug.h"
 #include "sync/Box3DAffectors.h"
 #include "sync/Box3DJointSync.h"
@@ -67,10 +68,11 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
           .tab("Performance")
           .toggle("autothreads", "Use All Threads", false,
                   autoThreadsHelp.c_str())
-          .integer("threads", "Threads", b3dop::kDefaultWorkerCount,
+          .integer("threads", "Threads", b3dop::defaultWorkerCount(),
                    R{1, static_cast<double>(b3dop::kMaxWorkerCount), true},
-                   "Number of worker threads. More helps large scenes; small "
-                   "ones can run faster with fewer.",
+                   "Number of worker threads. Defaults to this computer's "
+                   "physical performance cores; small scenes can run faster "
+                   "with fewer.",
                    "{ autothreads == 1 }")
           .toggle("enablesleep", "Allow Sleeping (All Objects)", true,
                   "Let resting bodies stop simulating until touched. Off keeps "

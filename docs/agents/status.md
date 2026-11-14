@@ -34,6 +34,8 @@ remove an item once it has been checked, and record anything new here rather tha
 * `objects` sorted by object id (`box3dObjectById` binary search, a miss is final). Checked once per solve (`st.objectsSorted`); an array that is not sorted falls back to a linear scan, so only speed is at stake.
 * Box3D's tasks on Houdini's TBB pool (`Box3DHoudiniTasks`): no stall when several DOP networks or threaded SOPs cook
   at once, or where threading is disabled for the cooking thread (tasks run inline). `HOUDINI_MAXTHREADS=1` is fine.
+* The Threads default (`performanceCoreCount`, `Box3DCpu.cpp`): only the Linux path has run (CI / dev box). Windows
+  (`EfficiencyClass` on Intel hybrid), macOS (`hw.perflevel0`) and ARM Linux (`cpu_capacity`) are untested.
 * Scene scale: Box3D's tolerances assume metres. Measured (`scale`): a three-box stack rests 2.494 / 2.488 / 2.417 box
   sizes tall at 0.01x / 1x / 100x (2.5 ideal), with slight jitter at 100x: scenes 100 times too large sink about 3%.
 

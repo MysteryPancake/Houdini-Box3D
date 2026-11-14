@@ -9,7 +9,8 @@ Box3D Data's in `src/dop/SIM_Box3DData.cpp`. Look values up there; do not copy t
 are `b3dop::kDefaultWorkerCount` / `kMaxWorkerCount` (`Box3DWorld.h`).
 
 Solver (read every step; only the thread count rebuilds the world): `gravity`, `substeps`, `autothreads`, `threads`
-(`WorldSettings`' default is the same constant), `enablesleep`, `timescale`, `enableaging`, and Box3D's tuning with
+(default `b3dop::defaultWorkerCount()` in `Box3DCpu.h`: the machine's physical performance cores, as Box3D recommends;
+`WorldSettings` keeps `kDefaultWorkerCount`), `enablesleep`, `timescale`, `enableaging`, and Box3D's tuning with
 Box3D's defaults: `contactstiffness`, `contactdamping`, `contactpushspeed`, `bouncethreshold`,
 `contactrecycledistance`, `maxlinearspeed`, `enablecontinuous`. Force DOPs: `useforces`, `forceswake` (disabled while
 `useforces` is off). Box3D Data: `startasleep` and `sleepthreshold` are disabled while `enablesleep` is off,

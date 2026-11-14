@@ -23,8 +23,9 @@ namespace b3dop {
 // key). 0 is invalid.
 using HullId = uint64_t;
 
-// Box3D worker tasks per step when nothing else is asked for (the solver's
-// Threads default too).
+// Box3D worker tasks per step when nothing else is asked for. The solver's
+// Threads default is the machine's core count instead (defaultWorkerCount in
+// Box3DCpu.h), falling back to this when it cannot be detected.
 constexpr int kDefaultWorkerCount = 8;
 
 // The most worker tasks a world can use (Box3D's B3_MAX_WORKERS; Box3DWorld.cpp
