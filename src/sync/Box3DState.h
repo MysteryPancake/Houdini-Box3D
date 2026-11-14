@@ -49,6 +49,13 @@ struct Box3DBodyMirror : Box3DBodyPose {
   bool shapeless = false; // `none`, or a rebuild left no shape: always static
   bool autoScale = false; // convex / concave: rebuilt when the scale changes
   double sizeKey[3] = {1, 1, 1}; // the scale the shapes were built at
+  // `concave` shapes depend on the body type: a static body gets a triangle
+  // mesh, any other hulls. plannedStatic is the type they were built for;
+  // meshShapes says a mesh was built (the body must then stay static until its
+  // shapes are rebuilt).
+  bool concave = false;
+  bool plannedStatic = false;
+  bool meshShapes = false;
 
   bool animated = false; // inactive + `animated`: kinematic, follows its point
   bool driven = false;   // given a target last step (velocity to clear)
@@ -110,6 +117,7 @@ struct Box3DPointSlot {
   bool deforming = false;   // `deforming`
   bool refitWanted = false; // bullet_autofit_valid == 0
   bool rebuild = false;     // an existing body whose shapes are rebuilt
+  bool staticBody = false;  // the body wanted is static (concave: a mesh)
   bool dead =
       false; // `dead` != 0, read once in pass 1 (pass 1b and pass 2 reuse it)
   int32_t plan = -1;
@@ -212,9 +220,6 @@ struct Box3DObjectSync {
   // The point attributes last reported as overriding this object's Box3D Data
   // (noteOverriddenData): reported again only when the set changes.
   std::string overridesReported;
-  // Box3D Data's Override Existing Attributes, as last scanned: a change forces
-  // a full scan that compares every body's settings.
-  bool overrideAttribs = false;
   std::vector<Box3DBodyMirror *>
       bodies; // every body of the object (rebuilt by each full scan)
   // `force` / `torque` data ids right after the solver last zeroed them (or

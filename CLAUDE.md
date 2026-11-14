@@ -107,6 +107,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
                         options of SIM data by name (box3dDataOption)
     Box3DHoudiniTasks.h TaskRunner on Houdini's TBB pool (UT_TaskGroup). Only SIM_Box3DWorld.cpp includes it
 examples/            make_examples.py: builds demo scenes into examples/scenes (git-ignored)
+tools/               make_packed_object.py (the Box3D Packed Object asset, run by the build with hython), check_docs.py
 docs/agents/         Technical notes by area; CLAUDE.md is the index ("Where to look")
 tests/
   KeyedWorld.h        Test-only Box3DWorld subclass: bodies by caller-chosen id, over the handle API

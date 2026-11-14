@@ -23,6 +23,11 @@ remove an item once it has been checked, and record anything new here rather tha
   Data change mid-simulation reaching existing bodies is verified, `data_change_midsim`.)
 
 **HDK and Houdini behaviour**
+* The Box3D Packed Object asset: built by the post-build step and checked on 22.0.502 (`box3d_packed_object`,
+  `data_under_geometry` pass: Box3D Data's Friction on the asset reaches the bodies, a point's own value still wins,
+  the fall matches RBD Packed Object, Creation Frame works). Two traps found on the way, both in build.md: the inner
+  `parmop_*` menus start at Use Default (a reference does not switch them), and Box3D Data's DOP settings outside its
+  folders (Activation, Group, Data Name) must not be promoted.
 * Height-field affectors: built and checked on 22.0.502 (`heightfield_flat`, `heightfield_terrain`,
   `heightfield_animated` pass: a HeightField SOP's volume maps index x to world z and index y to world x, so the
   transposed frame is the one used). The `terrain` example plays, and editing the HeightField SOP mid-simulation
@@ -167,9 +172,6 @@ remove an item once it has been checked, and record anything new here rather tha
 * Bullet mixing defaults: Friction Mixing Multiply, Bounce Mixing Minimum (Bullet in Houdini 22.0 measured friction
   0.16 and bounce 0.198 for 0.2 against 0.8: `bullet_mixing`), Box3D Data Bounce 0.5. Built; `friction_mixing`,
   `bounce_mixing`, `rbd_defaults`, `bounce_heights` and `friction_slope` pass and the baseline matches.
-* Performance Monitor stage events (`UT_PerfMonAutoSolveEvent`, see solver.md): renamed like Bullet's and grouped in
-  nested Pre-Solve / Stepping Simulation / Post-Solve events; not yet looked at in the profiler (whether the stages
-  nest under their group, and the groups under the solver node, as Bullet's do).
 
 ## HDK calls
 
@@ -194,18 +196,12 @@ passed as a `PRM_Template`'s conditional pointer.
 
 ## Known gaps / TODO
 
-* RBD Packed Object writes its own physical attributes onto every point and point attributes win, so Box3D Data's
-  mass / density / compute mass / friction / bounce do nothing there (as with Bullet). Decided: keep Bullet's rule,
-  document it (README, tooltips) and warn once per object; Box3D Data's Override Existing Attributes (off by default)
-  makes the node's values win instead (verified, `data_override_attributes`). A Box3D Packed Object node (an asset: Empty Object, SOP
-  Geometry, Box3D Data, no stamped attributes) would give Box3D Data its full role on packed geometry.
+* Box3D Packed Object, not done: RBD Packed Object's Overwrite with SOP / deforming import, its initial velocity
+  controls, a `Colliders` label (RBD Packed Object attaches "PackedObject", which other solvers use to collide with
+  it), a Tab menu entry under a Box3D submenu (it is under Digital Assets).
 * Mirrored packed pieces lose their mirror once they move (the write-back writes a non-mirrored transform).
 * Packed primitive spheres and nested packed primitives collide as one point (hulls from points only): unpack or warn.
 * SideFX Glue breaks under static load (Break Force = strength / timestep) where Bullet's Glue holds.
-* The solver's collision-shape guide draws nothing on an object's creation frame (frame 1 for most scenes) unless
-  the object has Solve On Creation Frame on: other new objects are first solved a step later, and a step whose
-  objects are all new builds no world, so there are no bodies to draw. A preview world built just for the guide was
-  tried and dropped.
 
 * GCC/Clang `-Wshadow` and `-Wconversion` are on (`b3dop_warnings`). The core and tests build clean with both
   compilers, also as errors (Clang's `-Wconversion` includes `-Wsign-conversion`). The Houdini-side files
@@ -223,12 +219,8 @@ passed as a `PRM_Template`'s conditional pointer.
 
 The one list of what is still to do. Keep it here only (no TODO comments in the code).
 
-* Static triangle-mesh colliders for the concave *point* case (not started; affector meshes exist, see "Affector static
-  colliders" in [forces-affectors.md](forces-affectors.md)). Box3D meshes (`b3CreateMeshShape`) and height fields only collide as static, which is why `concave` /
-  `compound` are one hull per piece (Bullet's concave is a triangle mesh and may move). Intended split: a static
-  (inactive, non-animated) `concave` point becomes a Box3D mesh of its packed geometry; a dynamic one keeps the
-  compound. Mind the mesh's own memory (not the hull cache), `deforming` rebuilds, and that a mesh body cannot become
-  dynamic without rebuilding its shape.
+* Concave meshes: sharing one mesh between instances of the same packed geometry (each static body builds its own);
+  static concave whole objects (RBD Object) as meshes; drawing meshes in the collision guide.
 * Height fields for points (only affectors have them; see "Height fields" in [forces-affectors.md](forces-affectors.md)); holes from a mask layer; `cylinder` / `plane` shapes (no Box3D shape; hull or big box approximations possible).
 * Constraint networks: point / vertex / agent anchors (`anchor_id`, `anchor_type`); `constraint_type` on our own nodes
   (e.g. on the weld node: `position` -> spherical, `rotation` -> rotation only, `all` -> weld; SideFX data reads it).

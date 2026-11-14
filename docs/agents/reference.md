@@ -71,6 +71,5 @@ are simple folders, each a one-folder switcher with `PRM_SpareData::groupTypeSim
 uses one kind. The solver uses tabs: Setup (time scale, substeps, gravity, aging and reaping), Collision (contact tuning, recycling,
 Continuous Collision), Forces (Force DOPs, bounce, friction / bounce mixing), Advanced (Warm Starting, Allow
 Sleeping, threads, speed limit, ...); its guide parameters are a plain list on Houdini's own Guide Options tab (so the
-solver's tabs sit inside Data Options). Box3D Data and the joint nodes use simple folders: Box3D Data's Override Existing Attributes
-above the folders, then Shape, Body, Material, Sleep & Contacts (CCD Threshold, Fast Object, Contact Recycling, the
+solver's tabs sit inside Data Options). Box3D Data and the joint nodes use simple folders: Box3D Data's are Shape, Body, Material, Sleep & Contacts (CCD Threshold, Fast Object, Contact Recycling, the
 sleep settings, Add Impact Data last). A function-local static, because Houdini keeps pointers into it. Menu tokens are "0", "1", ... in item order (read as ints).

@@ -58,6 +58,7 @@ For example scenes, run `make_examples.bat` (Linux: `hython examples/make_exampl
 
 - Box3D Solver
 - Box3D Data
+- Box3D Packed Object (a digital asset the build makes: packed geometry as one Box3D object, with Box3D Data's settings on the node and no stamped attributes)
 - Box3D Weld Constraint Relationship
 - Box3D Spherical Constraint Relationship
 - Box3D Revolute Constraint Relationship
@@ -72,7 +73,7 @@ SideFX's Glue, Hard, Spring, Bullet Soft and Cone Twist Constraint Relationships
 
 ## Point attributes
 
-All attributes are optional except `P`. A missing one uses the Box3D Data value. RBD Packed Object writes its own `mass`, `density`, `computemass`, `friction` and `bounce` onto every point, as for Bullet, so set those on RBD Packed Object (the solver warns when they override Box3D Data), or turn on Box3D Data's **Override Existing Attributes** to make its values win. Every step the solver writes `P`, `orient`, `v` and `w` back to the dynamic points.
+All attributes are optional except `P`. A missing one uses the Box3D Data value. RBD Packed Object writes its own `mass`, `density`, `computemass`, `friction` and `bounce` onto every point, as for Bullet, so with it set those on RBD Packed Object (the solver warns when they override Box3D Data). The **Box3D Packed Object** node writes none: its Box3D Data settings apply to every piece that doesn't set the attribute itself. Every step the solver writes `P`, `orient`, `v` and `w` back to the dynamic points.
 
 | Attribute | Type | Meaning |
 |---|---|---|
@@ -126,10 +127,12 @@ Set `bullet_georep` to the same lowercase names Houdini's RBD tools use:
 |---|---|
 | `box`, `sphere`, `capsule` | A simple shape fitted to the packed geometry (turned to follow it, sized as Bullet's), or sized from `pscale` / `scale` |
 | `convexhull` | One convex hull around the packed geometry |
-| `concave`, `compound` | Several convex hulls on one body, one per `name` piece of the packed geometry |
+| `concave`, `compound` | On a static piece (`active = 0`, not animated): the exact polygons of the packed geometry, as a triangle mesh. On a moving piece: several convex hulls on one body, one per `name` piece of the packed geometry (Box3D meshes can't move) |
 | `none` | A static body with no collision |
 
 Anything else (including `cylinder` and `plane`) uses Box3D Data's Default Shape, a convex hull unless changed. Convex and concave shapes need **packed primitives**, one point plus one packed primitive per body (for example from the Pack SOP or RBD Packed Objects). Pack a simplified proxy for best performance.
+
+A static concave mesh is one-sided like a Static Object's: its polygons must face outwards (Houdini's usual winding), or turn on **Flip Static Mesh Winding** on Box3D Data. A piece that turns active mid-simulation is rebuilt as hulls, and back to a mesh if it turns static again. Show Collision Shapes doesn't draw meshes.
 
 To set a box, sphere or capsule by hand, turn Auto Fit off (or set `bullet_autofit = 0`) and use `bullet_primS` (box half extents), `bullet_radius`, `bullet_length` (capsule, along Y), `bullet_primT` (offset) and `bullet_primR` (rotation, Euler degrees).
 

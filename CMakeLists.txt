@@ -188,7 +188,8 @@ houdini_configure_target(Box3DDOP)
 # icons go next to it in houdiniX.Y/config/Icons.
 set(BOX3DDOP_NODES box3d_solver box3d_data                       # internal node names
     box3d_weldconrel box3d_sphericalconrel box3d_revoluteconrel box3d_prismaticconrel box3d_distanceconrel
-    box3d_motorconrel box3d_parallelconrel box3d_wheelconrel box3d_filterconrel)
+    box3d_motorconrel box3d_parallelconrel box3d_wheelconrel box3d_filterconrel
+    box3d_packedobject)                                          # the asset below
 set(BOX3DDOP_ICON_DIR "$<TARGET_FILE_DIR:Box3DDOP>/../config/Icons")
 set(BOX3DDOP_ICON_COPIES "")
 foreach(node IN LISTS BOX3DDOP_NODES)
@@ -199,6 +200,24 @@ add_custom_command(TARGET Box3DDOP POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "${BOX3DDOP_ICON_DIR}"
     ${BOX3DDOP_ICON_COPIES}
     VERBATIM)
+
+# The Box3D Packed Object digital asset (tools/make_packed_object.py): built with hython after the
+# plugin, into houdiniX.Y/otls next to dso/. It copies Box3D Data's parameters from the plugin just
+# built, so it is remade every time the plugin is. Problems print a warning and never fail the build.
+option(BOX3DDOP_MAKE_HDA "Build the Box3D Packed Object asset with hython after the plugin" ON)
+if(BOX3DDOP_MAKE_HDA)
+    find_program(BOX3DDOP_HYTHON NAMES hython
+        HINTS "${Houdini_DIR}/../../bin" "$ENV{HFS}/bin" NO_DEFAULT_PATH)
+    if(BOX3DDOP_HYTHON)
+        set(BOX3DDOP_HDA "$<TARGET_FILE_DIR:Box3DDOP>/../otls/box3d_packedobject.hda")
+        add_custom_command(TARGET Box3DDOP POST_BUILD
+            COMMAND "${BOX3DDOP_HYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/make_packed_object.py" "${BOX3DDOP_HDA}"
+            VERBATIM)
+    else()
+        message(WARNING "hython not found next to the Houdini toolkit: the Box3D Packed Object asset "
+                        "will not be built (run tools/make_packed_object.py with hython yourself)")
+    endif()
+endif()
 
 # ---------------------------------------------------------------------------
 # Houdini package. `cmake --build build --target package` (or `cpack -G ZIP` in the build folder)
@@ -221,6 +240,10 @@ foreach(node IN LISTS BOX3DDOP_NODES)
     install(FILES icons/box3d.svg DESTINATION Box3D/config/Icons RENAME DOP_${node}.svg)
 endforeach()
 install(FILES "${CMAKE_BINARY_DIR}/package/Box3D.json" DESTINATION .)
+if(BOX3DDOP_MAKE_HDA AND BOX3DDOP_HYTHON)
+    # The asset the post-build step made (absent if it failed: OPTIONAL).
+    install(FILES "$<TARGET_FILE_DIR:Box3DDOP>/../otls/box3d_packedobject.hda" DESTINATION Box3D/otls OPTIONAL)
+endif()
 
 set(CPACK_GENERATOR ZIP)
 set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)

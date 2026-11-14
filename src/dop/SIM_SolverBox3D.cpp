@@ -20,7 +20,6 @@
 #include <cmath>
 #include <cstdio>
 #include <mutex>
-#include <optional>
 #include <string>
 #include <unordered_set>
 
@@ -337,11 +336,8 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
     }
   }
 
-  // Profiler groups, as Bullet's: Pre-Solve (rebuild, sync), Stepping
-  // Simulation (forces, the Box3D step), Post-Solve (write-back). Each stage is
-  // an event nested in its group.
-  std::optional<UT_PerfMonAutoSolveEvent> group;
-  group.emplace(this, "Pre-Solve");
+  // Performance Monitor: one solve event per stage (below), named like
+  // Bullet's.
 
   // A failed rebuild leaves the old state in place, valid but from another
   // time: never continue it.
@@ -385,9 +381,6 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   if (progress.check())
     return cancel();
 
-  group.reset();
-  group.emplace(this, "Stepping Simulation");
-
   // Force DOPs go into the bodies now, for this step only (Box3D clears them
   // afterwards).
   if (getUseForces()) {
@@ -408,8 +401,6 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   }
   B3D_LOG_VERBOSE("  step: %d contact(s) recycled",
                   st->world.recycledContactCount());
-  group.reset();
-  group.emplace(this, "Post-Solve");
   {
     UT_PerfMonAutoSolveEvent perf(this, "Exporting Simulation Results");
     writeResultsBack(*worldData, objects);
@@ -605,8 +596,8 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
                          " override Box3D Data on " +
                          std::to_string(counts.overriddenObjects) +
                          " object(s). RBD Packed Object writes these from its "
-                         "own parameters: set the values there, or turn on "
-                         "Box3D Data's Override Existing Attributes");
+                         "own parameters: set the values there, or use a "
+                         "Box3D Packed Object, which writes none");
   }
   warnCount(objects, counts.failed,
             "point(s) could not be turned into a body and are not simulated");

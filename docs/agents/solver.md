@@ -50,10 +50,12 @@ stamp = now
 ```
 
 **Performance Monitor.** As Bullet does, each stage opens a `UT_PerfMonAutoSolveEvent(this, "<stage>")` named like
-Bullet's (no solver prefix: the profiler shows the node), nested in a group event held in a `std::optional` across the
-solve: Pre-Solve (Rebuilding World, Updating Bodies, Updating Colliders, Removing Bodies, Updating Constraints),
-Stepping Simulation (Applying Forces, Stepping World: `world.step` + move events), Post-Solve (Exporting Simulation
-Results, Updating Constraint States, Recording Impacts, Updating Points: point writes, aging, dead points). Events are opened only on the solve
+Bullet's (no solver prefix: the profiler shows the node), listed side by side under the node and its solver class. No
+group events: the Stats view shows each event's own time, so groups holding only stages read < 0.001 s (they were
+removed), and the HDK has no way to show stages under a group there (general events with a path-like object, tried,
+showed only the groups). Stages, in solve order: Rebuilding World, Updating Bodies, Updating Colliders, Removing Bodies,
+Updating Constraints, Applying Forces, Stepping World (`world.step` + move events), Exporting Simulation
+Results, Updating Constraint States, Recording Impacts, Updating Points (point writes, aging, dead points). Events are opened only on the solve
 thread; threaded passes count toward the stage that runs them. When the monitor is not recording, the constructor
 only checks two flags. Box3D's own step breakdown (`b3World_GetProfile`) is not reported.
 
@@ -67,7 +69,8 @@ the object's geometry shows on the displayed frame (point `P` with its packed ro
 from `readWholePose`), keyed as the sync keys it, so cached frames draw where the pieces were. Drawn as open
 polylines with a primitive `Cd` (dimmed for sleeping and for static / kinematic bodies). The state's mutex is only
 tried: a guide asked for while the solver steps is skipped. Bodies the world no longer has are not drawn; static
-colliders from affectors are not drawn.
+colliders from affectors are not drawn. On an object's creation frame there is nothing to draw unless it has Solve
+On Creation Frame on (it is first solved a step later, so it has no body yet): expected, not a gap.
 
 **New objects.** Objects in `newobjects` (created this timestep) keep their initial state unless their object node has
 Solve On Creation Frame on (`SIM_Object::getSolveFirstFrame()`, as Bullet): `solveObjectsSubclass` drops the others

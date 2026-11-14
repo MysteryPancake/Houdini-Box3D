@@ -380,29 +380,6 @@ void noteOverriddenData(const GU_Detail *gdp, Box3DObjectSync &os,
       ++c.overriddenData[name];
 }
 
-// Box3D Data's Override Existing Attributes: forget the point attributes that
-// mirror its settings, so every body takes the node's values. Shape attributes
-// (bullet_georep, bullet_prim*, ...), `active`, `awake`, collision filters and
-// locks are kept: they are per-piece choices, not settings RBD Packed Object
-// copies from its parameters.
-void overriddenPointAttribs(PointAttrs &a) {
-  a.mass = GA_ROHandleF();
-  a.density = GA_ROHandleF();
-  a.computeMass = GA_ROHandleI();
-  a.friction = GA_ROHandleF();
-  a.bounce = GA_ROHandleF();
-  a.rollingResistance = GA_ROHandleF();
-  a.tangentVelocity = GA_ROHandleV3();
-  a.lineardamping = GA_ROHandleF();
-  a.angulardamping = GA_ROHandleF();
-  a.gravityscale = GA_ROHandleF();
-  a.enablesleep = GA_ROHandleI();
-  a.sleepThreshold = GA_ROHandleF();
-  a.ccdThreshold = GA_ROHandleF();
-  a.fastObject = GA_ROHandleI();
-  a.contactRecycling = GA_ROHandleI();
-}
-
 // pscale / scale (a packed point's size is its transform; these only size its
 // fallback box).
 void readPscaleScale(const PointAttrs &a, GA_Offset off, float &ps,
@@ -445,7 +422,13 @@ uint64_t shapeSignature(b3dop::ShapeType type, const BuiltShapes &s) {
   uint64_t h = b3dop::mixHash(
       0x9e3779b97f4a7c15ull, static_cast<uint64_t>(static_cast<int>(type)) + 1);
   for (const Piece &pc : s.pieces) {
-    if (pc.isHull)
+    if (pc.mesh) {
+      h = b3dop::mixHash(
+          b3dop::mixHash(h, 3),
+          b3dop::hashFloats(pc.mesh->xyz.data(), pc.mesh->xyz.size()));
+      for (const int32_t t : pc.mesh->tris)
+        h = b3dop::mixHash(h, static_cast<uint64_t>(static_cast<uint32_t>(t)));
+    } else if (pc.isHull)
       h = b3dop::mixHash(b3dop::mixHash(h, 1), pc.hull);
     else {
       const b3dop::ShapeSpec &sp = pc.spec;
@@ -510,7 +493,7 @@ b3dop::PrimOverrides readPrimOverrides(const PointAttrs &a, GA_Offset off) {
 // A point's shapes from its current attributes and packed geometry. Only the
 // hull cache is touched, no body.
 ShapePlan planShapes(ScanContext &ctx, GA_Offset off, int64_t bodyId,
-                     const PackedInfo &pk) {
+                     const PackedInfo &pk, bool staticBody) {
   const PointAttrs &a = ctx.a;
   ShapePlan plan;
 
@@ -535,9 +518,11 @@ ShapePlan planShapes(ScanContext &ctx, GA_Offset off, int64_t bodyId,
   readPscaleScale(a, off, ps, sc);
   const bool autofit =
       a.autofit.isValid() ? (a.autofit.get(off) != 0) : ctx.node.autoFit;
+  plan.plannedStatic = staticBody;
   plan.shapes = buildShapes(ctx.world, ctx.sources, plan.type,
                             ctx.node.hullPerConnectedSet, ps, sc, pk, autofit,
-                            readPrimOverrides(a, off));
+                            readPrimOverrides(a, off), staticBody,
+                            !ctx.node.flipMeshWinding);
   if (plan.shapes.note)
     B3D_LOG("  body id=%lld: %s", (long long)bodyId, plan.shapes.note);
   plan.sig = shapeSignature(plan.type, plan.shapes);
@@ -554,11 +539,18 @@ ShapePlan planShapes(ScanContext &ctx, GA_Offset off, int64_t bodyId,
 int addShapes(b3dop::Box3DWorld &world, b3dop::BodyHandle h,
               const b3dop::BodySettings &b, const BuiltShapes &shapes) {
   int added = 0;
-  for (const Piece &pc : shapes.pieces)
-    added += (pc.isHull ? world.createHullShape(h, b, pc.hull, false)
-                        : world.createShape(h, b, pc.spec, false))
-                 ? 1
-                 : 0;
+  for (const Piece &pc : shapes.pieces) {
+    bool ok = false;
+    if (pc.mesh) // static bodies only (Box3DWorld refuses any other)
+      ok = world.createMeshShape(
+          h, b, pc.mesh->xyz.data(), static_cast<int>(pc.mesh->xyz.size() / 3),
+          pc.mesh->tris.data(), static_cast<int>(pc.mesh->tris.size() / 3));
+    else if (pc.isHull)
+      ok = world.createHullShape(h, b, pc.hull, false);
+    else
+      ok = world.createShape(h, b, pc.spec, false);
+    added += ok ? 1 : 0;
+  }
   return added;
 }
 
@@ -594,6 +586,9 @@ createBodyWithShapes(b3dop::Box3DWorld &world, const b3dop::BodySettings &b,
 void storePlan(Box3DBodyMirror &m, const ShapePlan &plan) {
   m.shapeSig = plan.sig;
   m.volume = plan.shapes.totalVolume;
+  m.concave = plan.type == b3dop::ShapeType::Concave;
+  m.plannedStatic = plan.plannedStatic;
+  m.meshShapes = plan.shapes.mesh;
   m.autoScale = plan.autoScale;
   b3dop::copy3(m.sizeKey, plan.sizeKey);
 }
@@ -603,7 +598,7 @@ ShapePlan takePlan(ScanContext &ctx, const Box3DPointSlot &s,
                    std::vector<ShapePlan> &plans) {
   if (s.plan >= 0)
     return std::move(plans[static_cast<size_t>(s.plan)]);
-  return planShapes(ctx, s.off, s.bid, ctx.packedInfo(s.off));
+  return planShapes(ctx, s.off, s.bid, ctx.packedInfo(s.off), s.staticBody);
 }
 
 // Create the body for slot `s` (settings `p`), its shapes and initial velocity.
@@ -774,6 +769,16 @@ void updateExistingBody(ScanContext &ctx, Box3DSharedState &st,
   const PointAttrs &a = ctx.a;
   const GA_Offset off = s.off;
 
+  // Becoming static: retype before the rebuild, which may make a `concave`
+  // mesh (Box3D meshes only go on static bodies).
+  if (s.rebuild && s.staticBody &&
+      entry.type != b3dop::BodySettings::Type::Static) {
+    world.setTypeByHandle(entry.handle, b3dop::BodySettings::Type::Static);
+    entry.type = b3dop::BodySettings::Type::Static;
+    entry.driven = false;
+    ++c.retyped;
+  }
+
   // Shape first (a shapeless body is static); pass 1 decided whether to
   // rebuild.
   const bool rebuild = s.rebuild;
@@ -814,9 +819,12 @@ void updateExistingBody(ScanContext &ctx, Box3DSharedState &st,
     }
   }
 
-  // Did `active` / `animated` flip?
+  // Did `active` / `animated` flip? A body with a mesh stays static (its
+  // shapes are rebuilt as hulls first, in pass 1's rebuild).
   const b3dop::BodySettings::Type wantType =
-      wantedType(ctx.node, s.active, animated, entry.shapeless);
+      entry.meshShapes
+          ? b3dop::BodySettings::Type::Static
+          : wantedType(ctx.node, s.active, animated, entry.shapeless);
   if (entry.type != wantType) {
     world.setTypeByHandle(entry.handle, wantType);
     entry.type = wantType;
@@ -897,6 +905,12 @@ void readSlot(const ScanContext &ctx, int objectId, Box3DPointSlot &s) {
       ctx.anyPrims ? getPackedInfo(ctx.gdp, s.off) : PackedInfo();
   s.ok = readPointState(ctx.gdp, a, s.off, pk, s.cur, &s.badVelocity);
   s.active = !a.active.isValid() || a.active.get(s.off) != 0;
+  {
+    const bool animated =
+        !s.active && a.animated.isValid() && a.animated.get(s.off) != 0;
+    s.staticBody = wantedType(ctx.node, s.active, animated, false) ==
+                   b3dop::BodySettings::Type::Static;
+  }
   s.packed = pk.prim != nullptr;
   if (s.packed) {
     s.primOff = static_cast<int64_t>(pk.primOff);
@@ -918,6 +932,10 @@ void readSlot(const ScanContext &ctx, int objectId, Box3DPointSlot &s) {
   }
   if (const Box3DBodyMirror *e = s.entry) {
     s.rebuild = s.deforming || s.refitWanted;
+    // Concave changes shape with the body type (mesh when static, hulls
+    // otherwise).
+    if (!s.rebuild && e->concave && e->plannedStatic != s.staticBody)
+      s.rebuild = true;
     if (!s.rebuild && e->autoScale) {
       float ps, sc[3];
       double sk[3];
@@ -963,7 +981,8 @@ bool planSlots(ScanContext &ctx, SlotList &snaps, std::vector<ShapePlan> &plans,
         c1 - c0,
         [&](size_t j) {
           Box3DPointSlot &s = snaps[want[c0 + j]];
-          plans[c0 + j] = planShapes(ctx, s.off, s.bid, ctx.packedInfo(s.off));
+          plans[c0 + j] = planShapes(ctx, s.off, s.bid, ctx.packedInfo(s.off),
+                                     s.staticBody);
           s.plan = static_cast<int32_t>(c0 + j);
         },
         2);
@@ -1219,7 +1238,6 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
   const b3dop::BodySettings node =
       dataNode ? dataNode->toBodySettings() : b3dop::nodeBodyDefaults();
   const bool addImpact = dataNode && dataNode->getAddImpact();
-  const bool overrideAttribs = dataNode && dataNode->getOverrideAttribs();
 
   // ---- unchanged since we last finished with it? ---------------------------
   // Markers are recorded after a scan and again after our own writes. Same
@@ -1231,10 +1249,7 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
   os.wholeObject = false;
   const Box3DSyncFingerprint fpNow = makeFingerprint(
       gdp, a, static_cast<int>(node.type), node.props, addImpact);
-  const bool overrideChanged = overrideAttribs != os.overrideAttribs;
-  os.overrideAttribs = overrideAttribs;
-  if (os.canSkip && fpNow == os.fp && !overrideChanged &&
-      (!st.wantNames || os.namesKnown)) {
+  if (os.canSkip && fpNow == os.fp && (!st.wantNames || os.namesKnown)) {
     ++c.skipped;
     st.stampedCount += os.entryCount;
     return;
@@ -1247,21 +1262,19 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
   os.canSkip = false;
   os.liveStamp = st.syncStamp;
   const int problems0 = c.failed + c.duplicates + c.badP;
-  if (dataNode && !overrideAttribs)
+  if (dataNode)
     noteOverriddenData(gdp, os, c);
   else
-    os.overridesReported.clear(); // reported afresh if the toggle goes off
+    os.overridesReported.clear(); // reported afresh if a Box3D Data comes back
 
   a.bindBuildAttrs(gdp);
-  if (overrideAttribs)
-    overriddenPointAttribs(a);
   ScanContext ctx(st, gdp, a, node);
 
   // Settings are compared only when a prop marker changed (or deforming bodies
   // need a rebuild anyway); otherwise the scan syncs pose, velocity and type.
   // Convex / concave scale is checked on every scan.
-  const bool checkProps = !os.propsKnown || !os.fp.samePropMarkers(fpNow) ||
-                          os.anyDeforming || overrideChanged;
+  const bool checkProps =
+      !os.propsKnown || !os.fp.samePropMarkers(fpNow) || os.anyDeforming;
 
   // For the post-step passes; kept as they are while the object is skipped.
   os.bodies.clear();

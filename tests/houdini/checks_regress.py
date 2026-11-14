@@ -27,6 +27,7 @@ from b3dtest import (
     merge,
     multisolver,
     new_dopnet,
+    node_messages,
     new_geo,
     packed_boxes,
     packed_object,
@@ -522,6 +523,71 @@ def test_baseline():
     return [Result("baseline", Result.PASS if ok else Result.FAIL, msg)]
 
 
+
+def torus_scene(tag, georep, flip_frame=None):
+    """A static packed torus (major radius 1, tube 0.25, hole up, centre at y 2) with bullet_georep
+    `georep`, a ball (AutoFit sphere, radius about 0.43) dropped through its hole from y 5, and a
+    ground. flip_frame: a SOP Solver turns the torus active from that frame. Returns
+    (dop, ball name, solver)."""
+    geo = new_geo(f"torus_{tag}")
+    tor = create(geo, "torus", "torus")
+    set_parm(tor, ["rad"], (1.0, 0.25))
+    set_parm(tor, ["t"], (0.0, 2.0, 0.0))
+    pack = create(geo, "pack", "pack")
+    pack.setInput(0, tor)
+    attrs = create(geo, "attribwrangle", "attrs")
+    attrs.setInput(0, pack)
+    set_parm(attrs, ["snippet"], f's@name = "torus"; i@active = 0; i@animated = 0; s@bullet_georep = "{georep}"; '
+                                 'v@v = {0, 0, 0}; v@w = {0, 0, 0};')
+    display(attrs)
+    ball_path, names = packed_boxes(f"torus_{tag}_ball", [
+        dict(GROUND, attrs={"active": 0, "bullet_georep": "box"}),
+        {"size": (0.5, 0.5, 0.5), "center": (0, 5, 0), "attrs": {"active": 1, "bullet_georep": "sphere"}}])
+    dop = new_dopnet(f"torus_{tag}")
+    torus = packed_object(dop, "torus", attrs.path())
+    ball = packed_object(dop, "ball", ball_path)
+    both = merge(dop, [torus, ball])
+    solver = box3d_solver(dop, None if flip_frame else both)
+    if flip_frame:
+        flip = sop_solver(dop, f'if (@Frame >= {flip_frame} && s@name == "torus") i@active = 1;')
+        finish(dop, multisolver(dop, both, [solver, flip]))
+    else:
+        finish(dop, solver)
+    return dop, names[1], solver
+
+
+def test_concave_static_mesh():
+    """A static (active 0) `concave` piece collides as a Box3D triangle mesh of its polygons: a ball
+    dropped onto a static packed torus falls through its hole to the ground (y about 0.43), where
+    one hull round the torus (convexhull) holds it on top (about 2.7). Then the torus is turned
+    active at frame 30: it becomes a moving body of hulls (Box3D meshes cannot move) and falls,
+    with no solver error."""
+    results = []
+    for georep, through in (("concave", True), ("convexhull", False)):
+        dop, ball, _ = torus_scene(georep, georep)
+        y = step(dop, 48, lambda sim, f: packed_positions(sim, "ball")[ball][1] if f == 48 else None)[48]
+        ok = (y < 1.0) if through else (y > 2.3)
+        results.append(Result("concave_static_mesh", Result.PASS if ok else Result.FAIL,
+                              f"static torus, {georep}: ball at y {y:.3f} (expected "
+                              f"{'through the hole, about 0.43' if through else 'on top, about 2.7'})"))
+
+    dop, ball, solver = torus_scene("flip", "concave", flip_frame=30)
+    msgs = []
+
+    def sample(sim, f):
+        if f in (29, 72):
+            msgs.extend(m for m in node_messages(solver) if "Box3D" in m)
+        return packed_positions(sim, "torus")["torus"][1], packed_positions(sim, "ball")[ball][1]
+
+    track = step(dop, 72, sample)
+    ball_y, torus_before, torus_after = track[29][1], track[29][0], track[72][0]
+    ok = ball_y < 1.0 and close(torus_before, 2.0, 0.01) and torus_after < 1.5 and not msgs
+    results.append(Result("concave_static_mesh", Result.PASS if ok else Result.FAIL,
+                          f"torus turned active at frame 30: ball at y {ball_y:.3f} on frame 29 (expected through, "
+                          f"about 0.43), torus at y {torus_before:.3f} on frame 29 (expected 2, static), "
+                          f"{torus_after:.3f} on frame 72 (expected fallen, below 1.5); messages {msgs or 'none'}"))
+    return results
+
 TESTS = {
     "joint_types": test_joint_types,
     "anchor_positions": test_anchor_positions,
@@ -530,5 +596,6 @@ TESTS = {
     "sidefx_soft": test_sidefx_soft,
     "body_types": test_body_types,
     "shape_kinds": test_shape_kinds,
+    "concave_static_mesh": test_concave_static_mesh,
     "baseline": test_baseline,
 }

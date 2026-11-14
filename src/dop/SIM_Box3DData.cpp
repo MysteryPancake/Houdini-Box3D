@@ -19,11 +19,7 @@ const SIM_DopDescription *SIM_Box3DData::getDescription() {
   static const b3dop::BodySettings kDefaults = b3dop::nodeBodyDefaults();
   static Box3DParms p;
   static const PRM_Template *templates =
-      // Above the folders: it decides whether everything below is used.
-      p.toggle("overrideattribs", "Override Existing Attributes", false,
-               "Use these settings even where points have their own, such as "
-               "the mass, density, friction and bounce RBD Packed Object adds.")
-          .folder("Shape")
+      p.folder("Shape")
           .menu("defaultshape", "Default Shape",
                 static_cast<int>(b3dop::ShapeType::Convex),
                 {"Box", "Sphere", "Convex Hull",

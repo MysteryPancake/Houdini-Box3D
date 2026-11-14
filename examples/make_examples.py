@@ -10,8 +10,8 @@ On Windows, make_examples.bat (in the repository root) finds Houdini and runs th
 
 Each scene is saved to examples/scenes/<number>_<name>.hip. Open one and press play: a sticky
 note in /obj says what it shows and what to try. Every scene is built from ordinary SOPs (Box,
-Copy to Points, Attribute Wrangle; the building also RBD Material Fracture) and one RBD Packed
-Object, so it doubles as a template.
+Copy to Points, Attribute Wrangle; the building also RBD Material Fracture) and one Box3D Packed
+Object (built with the plugin; RBD Packed Object if it is missing), so it doubles as a template.
 
 Scenes:
   shapes          the collision shapes: box, sphere, capsule and convex hull
@@ -304,15 +304,28 @@ def network_sop(name, lines):
 # ---------------------------------------------------------------------------
 
 
-def build_dops(name, pieces_path, joints=None, network_path=None, solver_parms=None, keep_velocity=False):
-    """RBD Packed Object -> (Constraint Network) -> Box3D Solver -> Output.
-    joints: [(relationship node type, node name, {parm: value})] for the constraint network.
-    Returns (dopnet, solver, {node name: Data Name})."""
-    dop = create(hou.node("/obj"), "dopnet", name)
-    obj = create(dop, "rbdpackedobject", "pieces")
-    set_parm(obj, "soppath", pieces_path)
-    if keep_velocity:  # keep the points' v instead of RBD Packed Object's initial velocity
+def packed_pieces(dop, pieces_path, name="pieces"):
+    """The pieces' DOP object: a Box3D Packed Object (the asset the build makes), which keeps the
+    points' own attributes (density, v ...) and stamps none. Without the asset: an RBD Packed Object
+    keeping the points' v."""
+    try:
+        obj = dop.createNode("box3d_packedobject", name)
+    except hou.OperationFailed:
+        print("  (no Box3D Packed Object asset: using RBD Packed Object)")
+        obj = create(dop, "rbdpackedobject", name)
         set_parm(obj, ["inheritvelocity", "usepointvelocity", "inheritvel"], 1)
+    set_parm(obj, "soppath", pieces_path)
+    return obj
+
+
+def build_dops(name, pieces_path, joints=None, network_path=None, solver_parms=None, keep_velocity=False):
+    """Box3D Packed Object -> (Constraint Network) -> Box3D Solver -> Output.
+    joints: [(relationship node type, node name, {parm: value})] for the constraint network.
+    keep_velocity: unused (the pieces always keep their points' v). Returns (dopnet, solver,
+    {node name: Data Name})."""
+    del keep_velocity
+    dop = create(hou.node("/obj"), "dopnet", name)
+    obj = packed_pieces(dop, pieces_path)
     last, data_names = obj, {}
     if joints:
         rels = []
@@ -377,7 +390,7 @@ def tidy(frames, note, dop):
     sticky.setSize(hou.Vector2(9, 6))
     place_note_left(obj, sticky)
     inner = dop.createStickyNote("how_it_works")
-    inner.setText("RBD Packed Object reads the pieces from the geometry object (one packed primitive per "
+    inner.setText("Box3D Packed Object reads the pieces from the geometry object (one packed primitive per "
                   "body). The Box3D Solver simulates them; its tabs hold the world settings "
                   "(substeps, gravity, sleeping, friction / bounce mixing).")
     inner.setSize(hou.Vector2(6, 2.5))
@@ -555,7 +568,7 @@ v@Cd = set(shade, shade * 0.98, shade * 0.93);
              mk((start_x, start_y, 0.0), "ball", cd=(0.2, 0.2, 0.22), density=8000.0, georep="sphere"),
              "the ball: steel density, so about 110 tonnes")
     path = p.finish(
-        "// The ball is thrown at the building (RBD Packed Object keeps v: Inherit Velocity on).\n"
+        "// The ball is thrown at the building (Box3D Packed Object keeps the points' v).\n"
         f'v@v = s@name == "ball" ? {vec((speed, 0, 0))} : {{0, 0, 0}};')
 
     strength = 5.0e4
@@ -834,8 +847,7 @@ for (int j = 0; j < {rows}; j++) for (int i = 0; i < {rows}; i++) {{
     path = p.finish()
 
     dop = create(hou.node("/obj"), "dopnet", "forces_sim")
-    obj = create(dop, "rbdpackedobject", "pieces")
-    set_parm(obj, "soppath", path)
+    obj = packed_pieces(dop, path)
 
     # DOP force: a Fan Force DOP attaches force data to the objects; the Box3D Solver evaluates it
     # at every body's centre of mass, every step.
@@ -916,8 +928,7 @@ def scene_terrain():
     path = p.finish()
 
     dop = create(hou.node("/obj"), "dopnet", "terrain_sim")
-    obj = create(dop, "rbdpackedobject", "pieces")
-    set_parm(obj, "soppath", path)
+    obj = packed_pieces(dop, path)
     # A Static Object whose geometry is a height field: the Box3D Solver collides the
     # pieces with a Box3D height field made from its height layer.
     static = create(dop, "staticobject", "terrain")

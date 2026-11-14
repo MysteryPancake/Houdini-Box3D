@@ -4,6 +4,10 @@
 // the Box3D shapes built from it, for points and for whole objects.
 #include "Box3DSolverInternal.h"
 
+#include <GA/GA_PrimitiveTypes.h>
+
+#include <cmath>
+
 namespace box3dsolver {
 
 // Packed 3x3 (row-vector, M = S * R) split into per-row scale and a unit
@@ -320,9 +324,106 @@ const PieceGroup *ShapeSources::innerPieces(const GU_PrimPacked &prim,
   return entry->connected.pieces.empty() ? nullptr : &entry->connected;
 }
 
+// The polygons of `prims` as triangles, fanned from each polygon's first
+// vertex in Houdini's order (open curves, packed and other primitives are
+// skipped). Vertices are the points in order of first use.
+std::shared_ptr<const MeshPiece> collectTriangles(const GU_Detail *gdp,
+                                                  const GA_Range &prims) {
+  auto mesh = std::make_shared<MeshPiece>();
+  std::vector<int32_t> remap(static_cast<size_t>(gdp->getNumPointOffsets()),
+                             -1); // point offset -> vertex
+  auto vertexOf = [&](GA_Offset pt) {
+    int32_t &idx = remap[static_cast<size_t>(pt)];
+    if (idx < 0) {
+      const UT_Vector3 p = gdp->getPos3(pt);
+      idx = static_cast<int32_t>(mesh->xyz.size() / 3);
+      mesh->xyz.push_back(p.x());
+      mesh->xyz.push_back(p.y());
+      mesh->xyz.push_back(p.z());
+    }
+    return idx;
+  };
+  for (GA_Iterator it(prims); !it.atEnd(); ++it) {
+    const GA_Primitive *prim = gdp->getPrimitive(*it);
+    if (!prim || prim->getTypeId() != GA_PRIMPOLY)
+      continue;
+    const GA_Size nv = prim->getVertexCount();
+    if (nv < 3)
+      continue;
+    const int32_t first = vertexOf(prim->getPointOffset(0));
+    for (GA_Size i = 1; i + 1 < nv; ++i) {
+      mesh->tris.push_back(first);
+      mesh->tris.push_back(vertexOf(prim->getPointOffset(i)));
+      mesh->tris.push_back(vertexOf(prim->getPointOffset(i + 1)));
+    }
+  }
+  if (mesh->tris.empty())
+    return nullptr;
+  return mesh;
+}
+
+std::shared_ptr<const MeshPiece>
+ShapeSources::innerTriangles(const GU_PrimPacked &prim) {
+  const GU_PackedFragment *frag = asFragment(prim);
+  GU_ConstDetailHandle handle = sourceHandle(prim, frag);
+  GU_DetailHandleAutoReadLock lock(handle);
+  const GU_Detail *gdp = lock.getGdp();
+  if (!gdp)
+    return nullptr;
+  std::lock_guard<std::mutex> guard(mutex);
+  const auto key = std::make_pair(gdp, fragmentFirst(frag));
+  auto it = triangles.find(key);
+  if (it == triangles.end()) {
+    TriEntry e;
+    e.handle = handle;
+    e.mesh = collectTriangles(gdp, frag ? frag->getPrimitiveRange()
+                                        : gdp->getPrimitiveRange());
+    it = triangles.emplace(key, std::move(e)).first;
+  }
+  return it->second.mesh;
+}
+
 // ---------------------------------------------------------------------------
 // Building the Box3D shapes for one point
 // ---------------------------------------------------------------------------
+
+// The volume a closed mesh encloses (the divergence theorem); an open one gives
+// some value near it, never negative.
+float meshVolume(const MeshPiece &m) {
+  double v = 0.0;
+  for (size_t t = 0; t + 2 < m.tris.size(); t += 3) {
+    const float *a = &m.xyz[3 * static_cast<size_t>(m.tris[t])];
+    const float *b = &m.xyz[3 * static_cast<size_t>(m.tris[t + 1])];
+    const float *c = &m.xyz[3 * static_cast<size_t>(m.tris[t + 2])];
+    v += static_cast<double>(a[0]) * (static_cast<double>(b[1]) * c[2] -
+                                      static_cast<double>(b[2]) * c[1]) -
+         static_cast<double>(a[1]) * (static_cast<double>(b[0]) * c[2] -
+                                      static_cast<double>(b[2]) * c[0]) +
+         static_cast<double>(a[2]) * (static_cast<double>(b[0]) * c[1] -
+                                      static_cast<double>(b[1]) * c[0]);
+  }
+  return static_cast<float>(std::fabs(v) / 6.0);
+}
+
+// A static `concave` point's mesh: its packed polygons, body-local, with
+// Box3D's winding. Null without polygons.
+std::shared_ptr<const MeshPiece>
+staticMeshPiece(ShapeSources &src, const PackedInfo &pk, bool houdiniWinding) {
+  const std::shared_ptr<const MeshPiece> raw = src.innerTriangles(*pk.prim);
+  if (!raw)
+    return nullptr;
+  auto mesh = std::make_shared<MeshPiece>();
+  b3dop::packedPointsToBodyLocal(raw->xyz.data(),
+                                 static_cast<int>(raw->xyz.size() / 3), pk.m4,
+                                 pk.pivot, mesh->xyz);
+  mesh->tris = raw->tris;
+  // Houdini's front faces wind clockwise, Box3D's counter-clockwise (meshes are
+  // one-sided), as for Static Object meshes.
+  if (houdiniWinding)
+    for (size_t t = 0; t + 2 < mesh->tris.size(); t += 3)
+      std::swap(mesh->tris[t + 1], mesh->tris[t + 2]);
+  return mesh;
+}
 
 const char *const kHullFallbackNote =
     "a piece could not be hulled (flat, < 4 points or too complex); used its "
@@ -373,13 +474,28 @@ BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
                         b3dop::ShapeType type, bool hullPerConnected,
                         float pscale, const float scale[3],
                         const PackedInfo &pk, bool autofit,
-                        const b3dop::PrimOverrides &ov) {
+                        const b3dop::PrimOverrides &ov, bool staticMesh,
+                        bool houdiniWinding) {
   using namespace b3dop;
   BuiltShapes out;
   auto add = [&](const Piece &pc) {
     out.totalVolume += pc.volume;
     out.pieces.push_back(pc);
   };
+
+  // Static concave: the exact polygons as one Box3D triangle mesh (meshes only
+  // collide as static). No polygons in it: hulls as for a moving body.
+  if (staticMesh && type == ShapeType::Concave && pk.prim) {
+    if (std::shared_ptr<const MeshPiece> mesh =
+            staticMeshPiece(src, pk, houdiniWinding)) {
+      Piece pc;
+      pc.volume = meshVolume(*mesh);
+      pc.mesh = std::move(mesh);
+      add(pc);
+      out.mesh = true;
+      return out;
+    }
+  }
 
   const bool wantGeometry =
       (type == ShapeType::Convex || type == ShapeType::Concave);

@@ -121,12 +121,6 @@ equal to what its body was built with.
   0, time, 0)` per point (normal of the surface hit, pointing at the body that gets the impact; ptnum = its `pointIndex`). An object
   with Impacts last step and none now loses the data (`removeNamedSubData`, `impactObjects`). No Feedback data (that is
   for mutual interaction with other solvers).
-* **Override Existing Attributes** (Box3D Data `overrideattribs`, off by default): after `bindBuildAttrs`,
-  `overriddenPointAttribs` resets the handles of the attributes that mirror Box3D Data settings (mass, density,
-  computemass, friction, bounce, rolling resistance, tangent velocity, damping, gravity scale, enablesleep, sleep / CCD
-  thresholds, fastobject, contactrecycling), so every body takes the node's values and `noteOverriddenData` stays
-  quiet. Shape attributes, `active`, `awake`, filters and locks still apply. `Box3DObjectSync::overrideAttribs`
-  records the last value: a change forces a full scan with `checkProps`. Shapes are not rebuilt by it.
 * **Dead** (`dead`): never stamped, so its body goes like a gone point's. With solver Reap Dead Points
   (`st.reapDead`, off by default; POP's Reaping is on by default) it is also queued as a `Box3DDeletion`; off, the
   point stays where it died with `dead = 1` (its `v` / `w` keep their last values). `deleteDeadPoints` checks every queued point (offset, `id` or number)
@@ -163,6 +157,16 @@ equal to what its body was built with.
 * `buildShapes`:
   1. Packed point: its geometry into `PieceGroup`s via `ShapeSources` (cached per source detail, and per
      `(source, first primitive)` for packed fragments, for one `syncObject`).
+  1b. Packed concave on a body that will be static (`Box3DPointSlot::staticBody`, from `wantedType` in `readSlot`):
+     one triangle mesh of the packed polygons (`staticMeshPiece`: `ShapeSources::innerTriangles`, fan-triangulated and
+     cached per source / fragment, then `packedPointsToBodyLocal`; winding flipped from Houdini's unless
+     `flipMeshWinding`), added with `createMeshShape`. Volume from the divergence theorem (`meshVolume`). No polygons:
+     hulls as below. The mirror records `concave`, `plannedStatic` and `meshShapes`; pass 1 rebuilds a concave body
+     whose wanted type changed between static and not. Becoming static retypes before the rebuild (a mesh needs a
+     static body); leaving static rebuilds as hulls first, and a body with a mesh is never retyped away from static.
+     Each body owns its mesh (no sharing between instances). Not done for whole objects (RBD Object). Checked on
+     22.0.502: `concave_static_mesh` (a ball through a static torus's hole; turned active, the torus falls as hulls)
+     and `shape_kinds` (the static cup).
   2. Packed convex / concave: `pieceFromPoints` with a `packedHullKey` (by content if the transform is degenerate):
      `findHull` first, body-local points only on a miss, else a fitted box with a note. Convex merges all pieces
      (kind 1) unless hull-per-connected; concave is one hull per piece (kind 2).
@@ -180,7 +184,8 @@ equal to what its body was built with.
   in Houdini 22.0), so its Box3D Data values for those do nothing. `noteOverriddenData` (Box3DPointSync.cpp) lists
   the attributes present that replace a Box3D Data value, on objects that have a Box3D Data node, once per object
   (first full scan, or when the set changes, `Box3DObjectSync::overridesReported`); the solver turns the step's
-  total into one warning. The Box3D Data tooltips of those five say so.
+  total into one warning, which points at the Box3D Packed Object asset (no stamped attributes, see
+  [build.md](build.md)). The Box3D Data tooltips of those five say so.
 
 **AutoFit** (`Box3DWorld::fitShapeOriented`, also for whole objects): the frame with the smallest box among the body
 axes and, from a throwaway `b3CreateHull` of the points, each face normal paired with each of that face's edges (exact

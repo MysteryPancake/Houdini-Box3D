@@ -61,6 +61,7 @@
 #include <initializer_list>
 #include <iterator>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -240,6 +241,14 @@ void collectPieces(const GU_Detail *gdp, PieceGroup &out);
 void collectConnectedPieces(const GU_Detail *gdp, const GA_Range &prims,
                             PieceGroup &out);
 
+// A triangle mesh: xyz per vertex, three vertex indices per triangle. In a
+// ShapeSources entry the source's own space and Houdini's winding; in a Piece
+// body-local with Box3D's (counter-clockwise front faces).
+struct MeshPiece {
+  std::vector<float> xyz;
+  std::vector<int32_t> tris;
+};
+
 struct SourceSummary;
 
 // Collision source geometry (what is packed in each point's primitive), cached
@@ -285,13 +294,24 @@ struct ShapeSources {
   // The primitive's pieces (by `name`, or connected sets), or null. Records the
   // summary.
   const PieceGroup *innerPieces(const GU_PrimPacked &prim, bool connected);
+
+  // The primitive's polygons as triangles (fan-triangulated, source space,
+  // Houdini winding), or null if it has none. Per source detail / fragment.
+  struct TriEntry {
+    GU_ConstDetailHandle handle;
+    std::shared_ptr<const MeshPiece> mesh;
+  };
+  std::map<std::pair<const GU_Detail *, GA_Offset>, TriEntry> triangles;
+  std::shared_ptr<const MeshPiece> innerTriangles(const GU_PrimPacked &prim);
 };
 
-// One collision piece: a hull, or a box / sphere / capsule.
+// One collision piece: a hull, a box / sphere / capsule, or (a static `concave`
+// point) a triangle mesh.
 struct Piece {
   bool isHull = false;
   b3dop::HullId hull = 0;
   b3dop::ShapeSpec spec;
+  std::shared_ptr<const MeshPiece> mesh; // set: a mesh (static bodies only)
   float volume = 0.0f;
 };
 
@@ -299,13 +319,18 @@ struct BuiltShapes {
   std::vector<Piece> pieces;
   float totalVolume = 0.0f;
   const char *note = nullptr; // set when something fell back
+  bool mesh = false;          // the pieces are one triangle mesh
 };
 
+// staticMesh: the body will be static, so `concave` becomes a triangle mesh of
+// the packed polygons (houdiniWinding: Houdini's clockwise front faces, i.e.
+// Box3D Data's Flip Static Mesh Winding off). No polygons: hulls as usual.
 BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
                         b3dop::ShapeType type, bool hullPerConnected,
                         float pscale, const float scale[3],
                         const PackedInfo &pk, bool autofit,
-                        const b3dop::PrimOverrides &ov);
+                        const b3dop::PrimOverrides &ov, bool staticMesh = false,
+                        bool houdiniWinding = true);
 BuiltShapes buildWholeObjectShapes(b3dop::Box3DWorld &world,
                                    const GU_Detail *gdp, const double m[16],
                                    const double pivot[3], b3dop::ShapeType type,
@@ -409,7 +434,8 @@ struct ScanContext {
 // A point's shapes, plus their signature and scale key.
 struct ShapePlan {
   b3dop::ShapeType type = b3dop::ShapeType::Box;
-  BuiltShapes shapes; // no pieces for `none`
+  BuiltShapes shapes;         // no pieces for `none`
+  bool plannedStatic = false; // planned for a static body (concave: a mesh)
   uint64_t sig = 0;
   bool autoScale = false;
   double sizeKey[3] = {1, 1, 1};

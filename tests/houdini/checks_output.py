@@ -12,6 +12,7 @@ from b3dtest import (
     Result,
     SetupError,
     box3d_data,
+    box3d_packed_object,
     box3d_solver,
     close,
     create,
@@ -492,35 +493,102 @@ def test_rbd_packed_attributes():
     return results
 
 
-def test_data_override_attributes():
-    """Box3D Data's Override Existing Attributes: RBD Packed Object stamps friction 1 on every piece, Box3D
-    Data asks for friction 0. A box pushed along the ground at 3 m/s stops quickly with the toggle off
-    (the stamped friction wins, and the solver warns) and slides about 3 m in 1 s with it on (Box3D
-    Data wins, no warning)."""
-    rows, ok = [], True
-    for override in (False, True):
-        tag = "on" if override else "off"
-        path, names = packed_boxes(f"override_{tag}", [GROUND, {"size": (1, 1, 1), "center": (0, 0.5, 0),
-                                                               "attrs": {"v": (3.0, 0.0, 0.0)}}])
-        dop = new_dopnet(f"override_{tag}")
-        obj = packed_object(dop, "pieces", path, keep_velocity=True)
-        data = box3d_data(dop, obj, "data", friction=0.0, overrideattribs=int(override))
-        solver = box3d_solver(dop, data)
-        finish(dop, solver)
-        warned = []
+def _push_test(tag, make_object, piece_attrs=None):
+    """A box pushed along the ground at 3 m/s for 1 s; make_object(dop, path) makes its DOP object.
+    Returns (x after 1 s, the solver's 'override Box3D Data' warnings)."""
+    attrs = {"v": (3.0, 0.0, 0.0), "active": 1}
+    attrs.update(piece_attrs or {})
+    # Every piece needs every attribute any piece sets (packed_boxes).
+    ground = dict(GROUND, attrs=dict(attrs, active=0, v=(0.0, 0.0, 0.0)))
+    path, names = packed_boxes(f"push_{tag}", [ground, {"size": (1, 1, 1), "center": (0, 0.5, 0), "attrs": attrs}])
+    dop = new_dopnet(f"push_{tag}")
+    solver = box3d_solver(dop, make_object(dop, path))
+    finish(dop, solver)
+    warned, data = [], []
 
-        def sample(sim, f):
-            warned.extend(m for m in node_messages(solver) if "override Box3D Data" in m)
-            a = point_attributes(sim, "pieces", names[1], ["P"])
-            return a["P"][0] if a else None
+    def sample(sim, f):
+        warned.extend(m for m in node_messages(solver) if "override Box3D Data" in m)
+        if f == 2:  # the Box3D Data the solver finds on the object, and its friction
+            o = sim.findObject("pieces")
+            d = o.findSubData("Geometry/Box3DData") if o is not None else None
+            if d is None and o is not None:
+                d = o.findSubData("Box3DData")
+            try:
+                data.append(d.options().field("friction") if d is not None else "no Box3D Data")
+            except Exception as e:  # noqa: BLE001 - a report
+                data.append(f"Box3D Data present ({e})")
+        a = point_attributes(sim, "pieces", names[1], ["P"])
+        return a["P"][0] if a else None
 
-        x = step(dop, 25, sample)[25]
-        slid = x is not None and x > 2.5
-        good = (slid and not warned) if override else (not slid and bool(warned))
-        ok = ok and good
-        rows.append(f"Override {tag}: box at x={x:.2f} after 1 s ({'slid' if slid else 'stopped'}), "
-                    f"warning {'shown' if warned else 'none'} (expected {'slid, none' if override else 'stopped, shown'})")
-    return [Result("data_override_attributes", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+    x = step(dop, 25, sample)[25]
+    return x, sorted(set(warned)) + [f"[Box3D Data friction on the object: {data[0] if data else '?'}]"]
+
+
+def test_box3d_packed_object():
+    """The Box3D Packed Object asset brings packed geometry in without RBD Packed Object's stamped
+    attributes, so its Box3D Data settings apply: a box pushed at 3 m/s with its Friction 0 slides
+    about 3 m in 1 s (RBD Packed Object with a Box3D Data Friction 0 stops: its stamped friction 1
+    wins, and the solver warns). A point's own attribute still wins (friction 1 on the point: it
+    stops). A dropped box falls as with RBD Packed Object, and Creation Frame 10 makes the object
+    appear on frame 10."""
+    results = []
+    x_ours, w_ours = _push_test("ours", lambda dop, p: box3d_packed_object(dop, "pieces", p, friction=0.0))
+    x_rbd, w_rbd = _push_test("rbd", lambda dop, p: box3d_data(
+        dop, packed_object(dop, "pieces", p, keep_velocity=True), "data", friction=0.0))
+    x_attr, _ = _push_test("attr", lambda dop, p: box3d_packed_object(dop, "pieces", p, friction=0.0),
+                           {"friction": 1.0})
+    # Does the asset's Friction reach the Box3D Data inside it?
+    probe_dop = new_dopnet("probe_link")
+    probe = box3d_packed_object(probe_dop, "pieces", "", friction=0.25)
+    inner = probe.node("box3d_data")
+    inner_f = inner.parm("friction") if inner is not None else None
+    op = inner.parm("parmop_friction") if inner is not None else None
+    link_note = (f"inside, box3d_data Friction = {inner_f.eval()} after setting the asset's to 0.25 "
+                 f"(references {inner_f.getReferencedParm().path()}; its operation "
+                 f"{op.evalAsString() if op is not None else '?'})" if inner_f is not None else
+                 f"no box3d_data inside the asset (children: {[c.name() for c in probe.children()]})")
+    def warnings(w):
+        return [m for m in w if not m.startswith("[")]
+
+    ok = x_ours > 2.5 and not warnings(w_ours) and x_rbd < 2.0 and bool(warnings(w_rbd)) and x_attr < 2.0
+    results.append(Result("box3d_packed_object", Result.PASS if ok else Result.FAIL,
+                          f"Friction 0 on Box3D Packed Object: box at x={x_ours:.2f} after 1 s (expected about 3, "
+                          f"slid), warnings {warnings(w_ours) or 'none'} (expected none) "
+                          f"{' '.join(m for m in w_ours if m.startswith('['))}; RBD Packed Object + Box3D Data "
+                          f"Friction 0: x={x_rbd:.2f} (expected stopped, below 2), warning "
+                          f"{'shown' if warnings(w_rbd) else 'none'} (expected shown); point friction 1 on Box3D Packed "
+                          f"Object: x={x_attr:.2f} (expected stopped: the point's value wins); {link_note}"))
+
+    # A dropped box: the same fall as RBD Packed Object; Creation Frame 10.
+    falls = {}
+    for kind in ("ours", "rbd"):
+        path, names = packed_boxes(f"drop_{kind}", [GROUND, {"size": (1, 1, 1), "center": (0, 3, 0)}])
+        dop = new_dopnet(f"drop_{kind}")
+        obj = box3d_packed_object(dop, "pieces", path) if kind == "ours" else packed_object(dop, "pieces", path)
+        finish(dop, box3d_solver(dop, obj))
+        falls[kind] = step(dop, 48, lambda sim, f: point_attributes(sim, "pieces", names[1], ["P"])["P"][1]
+                           if f in (12, 48) else None)
+    diff = abs(falls["ours"][12] - falls["rbd"][12])
+    ok = diff < 1e-3 and close(falls["ours"][48], 0.5, 0.03)
+    results.append(Result("box3d_packed_object", Result.PASS if ok else Result.FAIL,
+                          f"dropped box: y {falls['ours'][12]:.4f} on frame 12 (RBD Packed Object "
+                          f"{falls['rbd'][12]:.4f}, differ by {diff:.1e}), rests at {falls['ours'][48]:.3f} "
+                          f"(expected 0.5)"))
+
+    path, names = packed_boxes("drop_late", [GROUND, {"size": (1, 1, 1), "center": (0, 3, 0)}])
+    dop = new_dopnet("drop_late")
+    obj = box3d_packed_object(dop, "pieces", path)
+    label = next((pt for pt in obj.parmTuples() if pt.parmTemplate().label().lower() == "creation frame"), None)
+    if label is None:
+        results.append(Result("box3d_packed_object", Result.INFO, "no Creation Frame parameter on the asset"))
+        return results
+    label.set((10,))
+    finish(dop, box3d_solver(dop, obj))
+    seen = step(dop, 12, lambda sim, f: sim.findObject("pieces") is not None)
+    first = next((f for f in sorted(seen) if seen[f]), None)
+    results.append(Result("box3d_packed_object", Result.PASS if first == 10 else Result.FAIL,
+                          f"Creation Frame 10: object first present on frame {first} (expected 10)"))
+    return results
 
 
 def test_data_under_geometry():
@@ -531,8 +599,9 @@ def test_data_under_geometry():
     path, names = packed_boxes("data_geo", [GROUND, {"size": (1, 1, 1), "center": (0, 0.5, 0),
                                                      "attrs": {"v": (3.0, 0.0, 0.0)}}])
     dop = new_dopnet("data_geo")
-    obj = packed_object(dop, "pieces", path, keep_velocity=True)
-    data = box3d_data(dop, obj, "data", friction=0.0, overrideattribs=1)
+    # Box3D Packed Object: no stamped friction, so Box3D Data's Friction 0 applies.
+    obj = box3d_packed_object(dop, "pieces", path)
+    data = box3d_data(dop, obj, "data", friction=0.0)
     finish(dop, box3d_solver(dop, data))
 
     def sample(sim, f):
@@ -553,7 +622,7 @@ def test_data_under_geometry():
 TESTS = {
     "rbd_packed_attributes": test_rbd_packed_attributes,
     "data_under_geometry": test_data_under_geometry,
-    "data_override_attributes": test_data_override_attributes,
+    "box3d_packed_object": test_box3d_packed_object,
     "collision_masks": test_collision_masks,
     "offset_pivot": test_offset_pivot,
     "packed_disk": test_packed_disk,

@@ -10,6 +10,17 @@ How the project is built, tested and packaged. Index and rules: [CLAUDE.md](../.
 * A post-build step copies `icons/box3d.svg` to `<dso>/../config/Icons/DOP_<node name>.svg` (Houdini's default icon
   name for a node type is `<TABLE>_<name>`; the HDK alternative, `OP_Operator::setIconName`, needs the operator, which
   the automatic DOPs don't expose to us). Renaming a node's internal name means renaming its icon.
+* The Box3D Packed Object asset (`BOX3DDOP_MAKE_HDA`, default ON): a second post-build step runs
+  `tools/make_packed_object.py` with hython (found next to the toolkit, `${Houdini_DIR}/../../bin`, or `$HFS/bin`),
+  writing `<dso>/../otls/box3d_packedobject.hda`. It loads the plugin just built and copies Box3D Data's parameters,
+  so the asset always matches the plugin. Inside: Empty Object -> SOP Geometry (data name `Geometry`) -> Box3D Data, the
+  output (no input: merge it with other objects downstream); Object tab (Object Name `$OS`, Solve on Creation Frame, SOP Path, Use Object Transform,
+  found by label, skipping the `parmop_*` menus that share their labels; plus the asset's own Creation Frame, which
+  drives the Empty Object's Activation, `$SF == ch("../createframe")`, as RBD Packed Object's does), then each Box3D Data folder as a tab (its DOP settings outside the folders, Activation / Group / Data Name, are
+  left on the inner node: promoted copies kept it from attaching), every inner parameter a channel reference
+  to the outer one, and every inner `parmop_*` set to Set Initial (a new data node starts at Use Default and only an
+  edit, not a reference, switches it, so the inner node would otherwise keep its built-in defaults). No Colliders label, so the solver syncs it per point. The script never fails the build (warnings
+  only); without hython CMake warns and skips it. Takes a few seconds per build (a Houdini session starts).
 * Warnings: `b3dop_warnings(target)` adds `-Wall -Wextra -Wshadow -Wconversion` (`/W4` on MSVC) to `b3dop_core`, the tests and the plugin,
   never to Box3D. Houdini's headers come through an imported target, so they are system includes and not checked.
   `BOX3DDOP_WARNINGS_AS_ERRORS` (default OFF) adds `-Werror` / `/WX`; CI sets it on both platforms. A full MSVC
@@ -107,6 +118,7 @@ rebuilt, fallback notes). All macros compile to nothing without `BOX3DDOP_DEBUG`
 ## Package
 
 `CMakeLists.txt` has `install()` rules and CPack (zip) that lay out a Houdini package: `Box3D.json` (from
-`package/Box3D.json.in`, `hpath` is `$HOUDINI_USER_PREF_DIR/packages/Box3D`) and `Box3D/dso`, `Box3D/config/Icons`. The
+`package/Box3D.json.in`, `hpath` is `$HOUDINI_USER_PREF_DIR/packages/Box3D`) and `Box3D/dso`, `Box3D/config/Icons`,
+`Box3D/otls` (the asset, when the post-build step made it). The
 JSON is enabled only for the Houdini major.minor it was built with, taken from `Houdini_VERSION`; if that is not set
 it is always enabled. Checked with a stub project, not with a real Houdini build.
