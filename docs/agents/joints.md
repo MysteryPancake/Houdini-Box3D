@@ -39,13 +39,12 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   `jointParamIndices(type)` is the table filtered to the rows a type uses (built once, table order); `sameJointSettings`
   runs for every joint every step and walks only those rows. Per-type loops over the table should use it.
 * `Box3DWorld::defaultJointSettings(type)` copies `b3Default*JointDef`. The nodes start from `nodeJointDefaults(type, ...)`
-  over it instead: Box3D's spring stiffness, motor effort and limits are all 0, so turning a toggle on did nothing (or,
-  for limits, locked the joint at 0..0). Springs start at Bullet Soft's 10 Hz and damping ratio 1. Only the node UI
-  defaults; Box3D's stay the base everywhere else.
+  over it, since Box3D's spring stiffness, motor effort and limits are 0 (a toggle would do nothing, or lock a limit at
+  0..0). Springs start at Bullet Soft's 10 Hz, damping ratio 1. Only the node UI uses these.
 * `jointNodeToggles()`: node-only toggles (Breakable, Set Rest Length, Limit Spring Force, Limit Max Length, Limit
   Torque) in place of typing -1 for "never / unlimited". Gated settings name them in `enabledBy`; `settings()` writes -1
-  into them while the toggle is off (`jointNodeToggleOf`), so the settings, primitive attributes (float attributes
-  multiply the node's -1, as before) and the SideFX mapping keep their meaning. Not in `jointParams()`: no attribute,
+  into them while the toggle is off (`jointNodeToggleOf`), so the settings, primitive attributes (floats
+  multiply the node's -1) and the SideFX mapping keep their meaning. Not in `jointParams()`: no attribute,
   no fingerprint, no `sameJointSettings` entry. `findJointParam` searches both lists.
 * `jointParamRange(p, type)`: each float's slider; a hard 0 minimum where `sanitized` (Box3DWorld.cpp) would clamp
   anyway. `motor_speed` has an angle range on revolute and a linear one elsewhere.
@@ -64,8 +63,8 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
 * `jointFeedback`: constraint force / torque (vectors), linear / angular separation, and per-type readings named
   `current_*` (plus `motor_torque`, `motor_force`, `spin_torque`) so no reading shares a name with a setting (a
   test checks). Box3D's `b3Joint_GetAngularSeparation` compares the bodies' rotations, not the joint frames
-  (`relQ = inv(qA) * qB` in joint.c), so it reports a non-zero angle for a perfectly held joint between bodies that
-  started rotated relative to each other; we report it as Box3D gives it (the test documents this).
+  (`relQ = inv(qA) * qB` in joint.c), so a held joint between bodies that started rotated reports a non-zero angle;
+  it is passed on as Box3D gives it.
   For wheel joints Box3D's angular separation is a `// todo` that asserts, so it is reported as 0.
 * Breaking: Box3D raises a joint event when force / torque passes the threshold (solver.c) but does not break the
   joint; `brokenJoints` returns the events' user data and the caller destroys them. `b3DestroyBody` destroys a
@@ -109,8 +108,7 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   primitive changes), and written back through the relationship's `getGeometry()` (non-const: a `SIM_GeometryCopy`)
   or the object's ConstraintGeometry (made a `SIM_GeometryCopy` once, like the object geometry): the `broken`
   primitive group, then `force` / `torque` (magnitudes), `distance` / `angle` (linear / angular separation, angle
-  in radians, the Constraint Network DOP's names and units) and the per-type `current_*` readings (degrees, as
-  before) every step. The fingerprint is re-recorded after the write so it is not seen as an edit. A network that
+  in radians, the Constraint Network DOP's names and units) and the per-type `current_*` readings (degrees) every step. The fingerprint is re-recorded after the write so it is not seen as an edit. A network that
   re-imports its SOP every step (Overwrite with SOP) overwrites the group; `Box3DJointEntry::broken` still holds until
   a world rebuild. `Box3DJointNetwork::writable` is false when the last write found no geometry; such a network keeps
   its frames in the joint signature (see below).
@@ -123,8 +121,7 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   anchor points' `current_P` / `current_orient` to where its frames are now (`Box3DWorld::jointWorldFrames`: body
   pose times local frame; a world end does not move). `P` / `orient` are never written: the Constraint Network DOP
   documents `P` as the anchor's initial world position, and Houdini's constraint guide moves each anchor with its piece
-  itself, so writing the live frame into `P` (as this solver once did) drew every moving anchor twice as far as its
-  piece (`anchor_positions` checks both). `NetworkReader::frame` reads `current_*` when written (a zero
+  itself, so a live `P` would be drawn twice as far (`anchor_positions` checks both). `NetworkReader::frame` reads `current_*` when written (a zero
   `current_orient`, the value of a point added later, means not written), else `P` / `orient`. The network data is
   cached with each timestep (SIM_GeometryCopy), so a world rebuilt mid-simulation makes its joints from the cached
   `current_*` against the cached body poses, which gives exactly the same local frames as continuing
@@ -196,5 +193,5 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   so the anchors stay anchors, and `local_P` / `local_orient` hold the joint's own frames (compared with the
   offset anchors in `localFrameAgrees`). Offsets are fixed when the joint is made; their inputs (rotations,
   separation, the hold flag, not the anchor positions) are in the joint signature. Identity offsets (our nodes)
-  bypass the math, so those joints are bit for bit as before.
+  bypass the math.
 * The DOP timestep reaches `syncJoints` through `syncFromGeometry` (for Glue).

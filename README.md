@@ -46,34 +46,26 @@ Always build **Release**, never Debug, and close Houdini before rebuilding. To s
 
 ## Quick start
 
-In a DOP network, press **TAB** and add a **Box3D Solver**, then wire your object into it like any other DOP solver. Add a **Box3D Data** node to give the object default material and shape settings.
+In a DOP network, add a **Box3D Solver** and wire your objects into it like any DOP solver. For packed pieces, use a **Box3D Packed Object**; its settings (shape, mass, friction, bounce, ...) apply to every piece that doesn't set its own attribute.
 
-Like Houdini's RBD solvers, it works on **points**: every point in the object's geometry is one rigid body, and the point is its **centre of mass**. For packed pieces, put the pivot at the centroid (the Pack SOP and RBD tools do this by default).
+Like Houdini's RBD solvers, every point is one rigid body and the point is its **centre of mass** (for packed pieces, the pivot; the Pack SOP and RBD tools put it at the centroid). Objects from **RBD Object** and similar nodes are one body each instead, with their results in the object's Position data.
 
-Objects from **RBD Object** and similar nodes are one rigid body each instead, as with the older RBD workflow. Their settings come from Box3D Data if attached, otherwise from the RBD Object's own mass, friction, bounce and Bullet collision shape, and their results go to the object's Position data.
-
-For example scenes, run `make_examples.bat` (Linux: `hython examples/make_examples.py`), then open `examples/scenes`.
+Example scenes: run `make_examples.bat` (Linux: `hython examples/make_examples.py`) and open `examples/scenes`.
 
 ## Nodes
 
-- Box3D Solver
-- Box3D Data
-- Box3D Packed Object (a digital asset the build makes: packed geometry as one Box3D object, with Box3D Data's settings on the node and no stamped attributes)
-- Box3D Weld Constraint Relationship
-- Box3D Spherical Constraint Relationship
-- Box3D Revolute Constraint Relationship
-- Box3D Prismatic Constraint Relationship
-- Box3D Distance Constraint Relationship
-- Box3D Motor Constraint Relationship
-- Box3D Parallel Constraint Relationship
-- Box3D Wheel Constraint Relationship
-- Box3D Filter Constraint Relationship
+| Node | Use |
+|---|---|
+| Box3D Solver | The solver |
+| Box3D Packed Object | Packed geometry as a Box3D object, with Box3D Data's settings on the node |
+| Box3D Data | Per-object settings, for objects made by other nodes |
+| Box3D Weld / Spherical / Revolute / Prismatic / Distance / Motor / Parallel / Wheel / Filter Constraint Relationship | Joint types, used with a Constraint Network |
 
-SideFX's Glue, Hard, Spring, Bullet Soft and Cone Twist Constraint Relationships also work, approximately (see [Joints](#joints)).
+RBD Packed Object also works, but writes its own `mass`, `density`, `computemass`, `friction` and `bounce` onto every point, which win over Box3D Data (the solver warns). A Box3D Data after a Box3D Packed Object only changes parameters set to Set Always. SideFX's Glue, Hard, Spring, Bullet Soft and Cone Twist Constraint Relationships also work, approximately.
 
 ## Point attributes
 
-All attributes are optional except `P`. A missing one uses the Box3D Data value. RBD Packed Object writes its own `mass`, `density`, `computemass`, `friction` and `bounce` onto every point, as for Bullet, so with it set those on RBD Packed Object (the solver warns when they override Box3D Data). The **Box3D Packed Object** node writes none: its Box3D Data settings apply to every piece that doesn't set the attribute itself. It already contains a Box3D Data, so set them on the node; a separate Box3D Data after it only changes parameters whose operation is Set Always (Set Initial applies only when the data is created). Every step the solver writes `P`, `orient`, `v` and `w` back to the dynamic points.
+All are optional except `P`; a missing one uses the Box3D Data value. Every step the solver writes `P`, `orient`, `v` and `w` back to the dynamic points. Most can change mid-simulation; collision shapes are kept once built (set `bullet_autofit_valid = 0` or `deforming = 1` to rebuild).
 
 | Attribute | Type | Meaning |
 |---|---|---|
@@ -81,102 +73,87 @@ All attributes are optional except `P`. A missing one uses the Box3D Data value.
 | `orient` | quaternion | Rotation |
 | `v` / `w` | vector | Linear / angular velocity (radians/s) |
 | `id` | int | Stable point id. Use it if points can be deleted or reordered |
-| `dead` | int | Nonzero = remove the body; the point is deleted with Reap Dead Points on (like POP's Reap Particles / Reap At Frame End), else kept where it died |
-| `age` / `life` | float | With Enable Aging: the point is marked `dead` once `age` passes `life` |
-| `active` | int | `0` = static, anything else = dynamic |
-| `animated` | int | With `active` = 0: the body follows its animated point and pushes what it touches |
-| `enabled` | int | `0` = leave the body out of the simulation |
-| `awake` | int | `0` = asleep. Sets the starting state, then the solver keeps it up to date |
-| `mass`, `computemass`, `density` | float / int | Mass, or `computemass` = 1 to use `density` × shape volume |
+| `active` | int | `0` = static |
+| `animated` | int | With `active = 0`: follows its animation and pushes what it touches |
+| `enabled` | int | `0` = left out of the simulation |
+| `awake` | int | `0` = asleep. Sets the starting state; the solver keeps it up to date |
+| `dead` | int | Nonzero = remove the body; the point is deleted with Reap Dead Points on |
+| `age` / `life` | float | With Enable Aging: `dead` once `age` passes `life` |
+| `mass`, `computemass`, `density` | float / int | Mass, or `computemass` = 1 for `density` × volume |
 | `inertialtensorstiffness` | float | Scales how hard the body is to spin |
 | `friction`, `bounce` | float | Grip and bounciness |
 | `rollingresistance` | float | Resistance to rolling, 0 to 1 |
 | `tangentvelocity` | vector | Conveyor belt velocity, in the body's own axes |
 | `lineardamping`, `angulardamping` | float | Drag on movement and spin |
-| `gravityscale` | float | Multiplies gravity. Negative floats upward |
-| `enablesleep` | int | `0` = this body never sleeps |
-| `sleepthreshold` | float | Speed below which the body may fall asleep |
-| `ccdthreshold` | float | Fraction of the body's thinnest size it can move per step before being swept (default 0.5) |
+| `gravityscale` | float | Multiplies gravity; negative floats upward |
+| `enablesleep` | int | `0` = never sleeps |
+| `sleepthreshold` | float | Speed below which the body may sleep |
+| `ccdthreshold` | float | Fraction of its thinnest size it can move per step before being swept |
 | `fastobject` | int | Nonzero = can't pass through other moving bodies |
-| `fastrotation` | int | Nonzero = no spin speed limit. Only for round pieces like wheels and balls |
+| `fastrotation` | int | Nonzero = no spin speed limit (round pieces only) |
 | `contactrecycling` | int | `0` = never recycle this body's contacts |
-| `lock_linear`, `lock_angular` | vector | Per world axis, nonzero = locked. `{0,0,1}` keeps a body at its starting Z |
-| `collision_category`, `collision_mask`, `collision_group` | int | Collision filtering (see below) |
+| `lock_linear`, `lock_angular` | vector | Per world axis, nonzero = locked |
+| `collision_category`, `collision_mask`, `collision_group` | int | Collision filtering (below) |
 | `bullet_georep` | string | Collision shape (see [Shapes](#shapes)) |
-| `bullet_autofit`, `bullet_primS`, `bullet_radius`, `bullet_length`, `bullet_primT`, `bullet_primR` | various | Hand-set box, sphere or capsule (see [Shapes](#shapes)) |
-| `pscale` / `scale` | float / vector | Size of the shape |
+| `bullet_autofit`, `bullet_primS`, `bullet_radius`, `bullet_length`, `bullet_primT`, `bullet_primR` | various | Hand-set box, sphere or capsule |
+| `pscale` / `scale` | float / vector | Size of the shape on plain points |
 | `deforming` | int | Nonzero = rebuild the collision shape every step |
 | `bullet_autofit_valid` | int | `0` = rebuild the collision shape once |
+| `force` / `torque` | vector | Applied for one step, then cleared |
 
-Most attributes can be changed mid-simulation (a Geometry Wrangle DOP, a SOP Solver, or animating Box3D Data) and take effect on the next step. Collision shapes are kept once built, so to rebuild one set `bullet_autofit_valid = 0` or `deforming = 1`.
-
-### Collision filtering
-
-Two bodies in the same non-zero `collision_group` always collide if it's positive and never if it's negative. Otherwise they collide only when each one's `collision_mask` shares a bit with the other's `collision_category`.
-
-- Pieces that never hit each other: `i@collision_group = -1`.
-- Debris that ignores other debris but hits everything else: `i@collision_category = 2; i@collision_mask = ~2;`.
-
-`i@` attributes give 31 usable layers; use 64-bit attributes for all 64. Static Object colliders use every bit, so a body hits them unless its mask is `0`.
+**Collision filtering.** Two bodies in the same nonzero `collision_group` always collide if it's positive, never if it's negative. Otherwise they collide when each one's `collision_mask` shares a bit with the other's `collision_category`. For example `i@collision_group = -1` for pieces that never hit each other, or `i@collision_category = 2; i@collision_mask = ~2;` for debris that ignores other debris. Static Object colliders use every bit.
 
 ## Shapes
 
-Set `bullet_georep` to the same lowercase names Houdini's RBD tools use:
+`bullet_georep` takes Houdini's RBD names:
 
 | Value | Result |
 |---|---|
-| `box`, `sphere`, `capsule` | A simple shape fitted to the packed geometry (turned to follow it, sized as Bullet's), or sized from `pscale` / `scale` |
+| `box`, `sphere`, `capsule` | Fitted to the packed geometry, or sized from `pscale` / `scale` |
 | `convexhull` | One convex hull around the packed geometry |
-| `concave`, `compound` | On a static piece (`active = 0`, not animated): the exact polygons of the packed geometry, as a triangle mesh. On a moving piece: several convex hulls on one body, one per `name` piece of the packed geometry (Box3D meshes can't move) |
+| `concave`, `compound` | Static piece: the exact polygons, as a triangle mesh. Moving piece: one convex hull per `name` piece |
 | `none` | A static body with no collision |
 
-Anything else (including `cylinder` and `plane`) uses Box3D Data's Default Shape, a convex hull unless changed. Convex and concave shapes need **packed primitives**, one point plus one packed primitive per body (for example from the Pack SOP or RBD Packed Objects). Pack a simplified proxy for best performance.
-
-A static concave mesh is one-sided like a Static Object's: its polygons must face outwards (Houdini's usual winding), or turn on **Flip Static Mesh Winding** on Box3D Data. A piece that turns active mid-simulation is rebuilt as hulls, and back to a mesh if it turns static again. Show Collision Shapes doesn't draw meshes.
-
-To set a box, sphere or capsule by hand, turn Auto Fit off (or set `bullet_autofit = 0`) and use `bullet_primS` (box half extents), `bullet_radius`, `bullet_length` (capsule, along Y), `bullet_primT` (offset) and `bullet_primR` (rotation, Euler degrees).
-
-## Conveyor belts and rolling resistance
-
-- Set **Conveyor Velocity** (or `tangentvelocity`) on a static body, or on a Static Object, to carry whatever sits on it. It follows the belt's own axes, so a turned belt carries in the turned direction. The belt needs friction above 0 to grip.
-- You can animate it. Changing it wakes whatever touches the belt, so resting pieces pick up the new speed straight away.
-- **Rolling Resistance** slows round bodies rolling on a surface. When two shapes touch, the larger value is used.
+Anything else (including `cylinder` and `plane`) uses Box3D Data's Default Shape. Convex and concave shapes need packed primitives; pack a simplified proxy for speed. Triangle meshes are one-sided: polygons must face outwards, or turn on Flip Static Mesh Winding. To set a box, sphere or capsule by hand, turn Auto Fit off and use `bullet_primS` (half extents), `bullet_radius`, `bullet_length` (capsule, along Y), `bullet_primT` (offset) and `bullet_primR` (Euler degrees).
 
 ## Static Objects
 
-A **Static Object** DOP collides with solved objects when a collision relationship links them, as with Bullet. Its polygons become a triangle mesh; if its geometry has a height field (a HeightField SOP's `height` layer), that becomes a Box3D height field instead and the other primitives are ignored. SDF / volume collision is not used. Meshes are one-sided: if bodies fall through, turn on **Flip Static Mesh Winding** on a Box3D Data node attached to it. To move one by its object's animated transform, set its **OBJ Path** (Use Object Transform alone only applies the transform once). OBJ Path passes position and rotation only; an object-level scale or shear reaches the solver only through Use Object Transform. For edits to its geometry (a terrain you change mid-simulation) to reach the solver, turn on the Static Object's **Use Deforming Geometry**. An animated Static Object doesn't push bodies; for something that pushes, use a kinematic point (`active = 0`, `animated = 1`).
+A **Static Object** collides with solved objects through a collision relationship, as with Bullet. Its polygons become a triangle mesh; a height field (a HeightField SOP's `height` layer) becomes a Box3D height field instead.
+
+- **Moving it:** set its OBJ Path to follow an animated object (position and rotation only). Use Object Transform also passes scale and shear, but only once.
+- **Editing it mid-simulation:** turn on Use Deforming Geometry.
+- **Pushing things:** an animated Static Object doesn't push bodies; use a kinematic point (`active = 0`, `animated = 1`).
+- **Conveyor belts:** Conveyor Velocity on a Box3D Data attached to it carries what sits on it (needs friction).
 
 ## Joints
 
-Joints use Houdini's **Constraint Network** DOP. Wire Box3D Constraint Relationship nodes into its second input, as with Bullet. Each two-point line in the network geometry is one joint:
+Joints use Houdini's **Constraint Network** DOP: wire Box3D Constraint Relationship nodes into its second input. Each two-point line is one joint:
 
-- `constraint_name` primitive attribute: the Data Name of a Box3D Constraint Relationship (by default its type, capitalised: `Weld`, `Revolute`, ...; case is ignored when nothing matches exactly). It sets the joint's type and settings.
-- Each end's `name` picks a piece (empty means the world).
-- Each end's `P` and `orient` are that piece's joint frame, so put both ends at the pivot for a hinge or weld.
-- Primitive attributes named like the node's parameters (`lower_angle`, `stiffness`, ...) modify them, as with Bullet: float attributes multiply the node's value, other attributes replace it.
-- SideFX's constraint relationships become the nearest Box3D joint (using `constraint_type`): Glue breaks when its Strength is reached within one timestep, and Cone Twist uses the smaller of Max Up and Max Out Rotation.
-- Joints with **Breakable** on, past their Break Force or Break Torque, go into the `broken` group, or switch to their `next_constraint_name`. Every step the solver writes `force`, `distance`, `torque` and `angle` (radians) onto each line.
+- `constraint_name` names a relationship's Data Name (by default its type: `Weld`, `Revolute`, ...).
+- Each end's `name` picks a piece (empty = the world); its `P` and `orient` are the joint frame.
+- Primitive attributes named like the node's parameters modify them: floats multiply, others replace.
+- With **Breakable** on, a joint past its Break Force or Torque goes into the `broken` group, or switches to its `next_constraint_name`.
+- Each step the solver writes `force`, `distance`, `torque` and `angle` (radians) onto each line.
 
 ## Things to know
 
-- Bullet's collision padding and solver settings (ERP, CFM, iterations) are ignored. Use Substeps (default 10) and the contact settings; Substeps 1 at 24 fps gives very soft contacts. `bullet_want_deactivate`, `bullet_sleeping`, `bullet_ignore` and `min_activation_impulse` are not read; use `enablesleep`, `awake` and `enabled`.
-- Box3D's mover and pogo joints, explosions and wind aren't included. They are game-oriented, and Houdini already has Force DOPs for wind and explosions.
-- Use `id` if you delete points with `dead`, otherwise every later point counts as a new body.
+- Bullet's collision padding and solver settings (ERP, CFM, iterations) are ignored; use Substeps and the contact settings. Substeps 1 at 24 fps gives soft contacts.
+- `bullet_want_deactivate`, `bullet_sleeping`, `bullet_ignore` and `min_activation_impulse` are not read; use `enablesleep`, `awake` and `enabled`.
+- Points sharing a `name` are separate bodies, as with Bullet.
 - Sleeping a body also sleeps the bodies touching it.
+- Solve On Creation Frame works as with Bullet: off, a new object starts moving one frame after it appears.
+- Show Collision Shapes (Guide Options on the solver) draws the bodies' collision shapes.
 - Escape cancels a step.
-- An object node's Solve On Creation Frame works as with Bullet: off, a new object starts moving one frame after it appears.
-- The Box3D Solver's Guide Options have Show Collision Shapes, which draws each body's collision shapes in the viewport.
-- The Performance Monitor shows each solver stage (sync, step, write-back, ...) as its own entry.
 
 ## Troubleshooting
 
-**"Box3D: world limit reached".** Each time the solver rebuilds (for example when you simulate on from a frame that wasn't the last one stepped) it makes a new Box3D world, and the old one stays alive while cached frames use it. Resetting the simulation or clearing the DOP cache frees them. Build with `-DBOX3DDOP_MAX_WORLDS=<n>` to change the limit (default 1024).
+**"Box3D: world limit reached".** Each rebuild (for example simulating on from a frame that wasn't the last one stepped) makes a new world, and old ones stay alive while cached frames use them. Reset the simulation or clear the DOP cache, or build with `-DBOX3DDOP_MAX_WORLDS=<n>`.
 
-Debug logging is off by default; configure with `-DBOX3DDOP_DEBUG=ON` to print to Houdini's console.
+**Debug logging:** configure with `-DBOX3DDOP_DEBUG=ON` to print to Houdini's console.
 
 ## For developers
 
-See [CLAUDE.md](CLAUDE.md) for a technical writeup of the codebase.
+See [CLAUDE.md](CLAUDE.md).
 
 ## License
 

@@ -51,9 +51,8 @@ its 8 corners); sphere and capsule (along Y; Box3D turns a too-short one into a 
 `bodyShapeOutlines` reads a body's shapes back in body space (hull vertices and face loops, sphere, capsule) for the
 solver's guide geometry. `createHull` keys by
 content (`hashFloats` of the points; hashing mixes 8 bytes per round); packed instances pass their own key (`findHull`
-first, build on a miss). Builds try vertex budgets `{B3_MAX_HULL_VERTICES, 44, 32, 16, 8}`: a triangulated hull hits the
-256 half-edge limit at ~44 vertices, so a 64 rung fails whenever the maximum did (measured: on dense round input ~75% of
-hull time went to the two failing attempts). `createHullWithKey`'s `budgetGroup` (the solver passes the source hash and
+first, build on a miss). Builds try vertex budgets `{B3_MAX_HULL_VERTICES, 44, 32, 16, 8}` (a triangulated hull hits
+the 256 half-edge limit at ~44 vertices). `createHullWithKey`'s `budgetGroup` (the solver passes the source hash and
 kind) remembers the budget that worked, so later hulls of the group start there. Flat or non-finite results are rejected
 and the caller falls back to a box. Several hulls on one body make a dynamic compound; overlapping pieces count their
 overlap twice in the mass.
@@ -71,6 +70,12 @@ Packed sources also get a **source summary** (`SourceSummaryCache` in Box3DShape
 piece hashes, keyed by the source detail's identity (`geometryIdentity`: `getUniqueId`, `P` and primitive-list data ids, counts, fragment,
 connected or not). `buildShapes` tries it first for packed convex / concave points: when every hull key it gives is still
 cached, the source geometry is not read or hashed at all. This relies on whoever edits a source bumping its data ids.
+
+**Static meshes and height fields.** `createMeshShape` and `createHeightFieldShape` work on static bodies only (Box3D's
+rule) and validate their input (indices, finiteness, positive scale, at least 2 x 2 heights). Box3D keeps pointers to
+`b3MeshData` / `b3HeightFieldData`, so `Impl::bodyGeometry` owns them until the body, its shapes or the world go. A
+mesh's scale changes in place (`setMeshScaleByHandle`); a height field's cannot. Height fields are quantised to 16 bits
+over their own height range; `holes` become `B3_HEIGHT_FIELD_HOLE` cells.
 
 **`Box3DShapes.h`** (all unit-tested): `parseShapeType` (exact lowercase Houdini names; `compound`
 = `concave`; unknown values, including `cylinder` and `plane`, return false; the solver memoises per shared-string handle

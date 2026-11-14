@@ -49,28 +49,18 @@ deleteDeadPoints   `dead` points
 stamp = now
 ```
 
-**Performance Monitor.** As Bullet does, each stage opens a `UT_PerfMonAutoSolveEvent(this, "<stage>")` named like
-Bullet's (no solver prefix: the profiler shows the node), listed side by side under the node and its solver class. No
-group events: the Stats view shows each event's own time, so groups holding only stages read < 0.001 s (they were
-removed), and the HDK has no way to show stages under a group there (general events with a path-like object, tried,
-showed only the groups). Stages, in solve order: Rebuilding World, Updating Bodies, Updating Colliders, Removing Bodies,
-Updating Constraints, Applying Forces, Stepping World (`world.step` + move events), Exporting Simulation
-Results, Updating Constraint States, Recording Impacts, Updating Points (point writes, aging, dead points). Events are opened only on the solve
-thread; threaded passes count toward the stage that runs them. When the monitor is not recording, the constructor
-only checks two flags. Box3D's own step breakdown (`b3World_GetProfile`) is not reported.
+**Performance Monitor.** Each stage is a `UT_PerfMonAutoSolveEvent(this, "<stage>")` named like Bullet's, listed
+flat under the node (the HDK has no way to nest solve events in the Stats view; group events only showed their own,
+near-zero time). Stages in solve order: Rebuilding World, Updating Bodies, Updating Colliders, Removing Bodies,
+Updating Constraints, Applying Forces, Stepping World, Exporting Simulation Results, Updating Constraint States,
+Recording Impacts, Updating Points. Opened only on the solve thread.
 
-**Guide geometry** (`Box3DGuide.cpp`; the solver node's Guide Options: Show Collision Shapes, Shape Color). The solver
-overrides `createGuideObjectSubclass` (a `SIM_GuidePerObject`: one guide per object it is attached to) and
-`buildGuideGeometrySubclass`, which calls `buildCollisionGuide`. Guide parameters are `setGuideTemplates` on the DOP
-description, read with `GET_GUIDE_FUNC_B` / `_V3`; being guide parameters, changing them never re-simulates. The shapes come from the live world
-(`Box3DWorld::bodyShapeOutlines`: hulls with their face loops, spheres, capsules, in body space), found through the
-engine's objects (the `SIM_Box3DWorld` whose state has this object in `objectSync`); each body is placed at the pose
-the object's geometry shows on the displayed frame (point `P` with its packed rotation, else `orient`; whole objects
-from `readWholePose`), keyed as the sync keys it, so cached frames draw where the pieces were. Drawn as open
-polylines with a primitive `Cd` (dimmed for sleeping and for static / kinematic bodies). The state's mutex is only
-tried: a guide asked for while the solver steps is skipped. Bodies the world no longer has are not drawn; static
-colliders from affectors are not drawn. On an object's creation frame there is nothing to draw unless it has Solve
-On Creation Frame on (it is first solved a step later, so it has no body yet): expected, not a gap.
+**Guide geometry** (`Box3DGuide.cpp`; Guide Options: Show Collision Shapes, Shape Color). A `SIM_GuidePerObject`
+built by `buildCollisionGuide` from the live world (`bodyShapeOutlines`: hulls, spheres, capsules), each body placed at
+the pose the displayed frame's geometry shows, so cached frames draw where the pieces were. Open polylines with `Cd`,
+dimmed for sleeping and static / kinematic bodies. The mutex is only tried: a guide asked for mid-step is skipped.
+Not drawn: affector colliders, meshes, and anything on an object's creation frame without Solve On Creation Frame (no
+body yet; expected).
 
 **New objects.** Objects in `newobjects` (created this timestep) keep their initial state unless their object node has
 Solve On Creation Frame on (`SIM_Object::getSolveFirstFrame()`, as Bullet): `solveObjectsSubclass` drops the others
@@ -164,9 +154,16 @@ Only dynamic bodies are written; of several points sharing an `id`, only the fir
 
 ### Threading
 
-Box3D starts no threads of its own in the plugin. `SIM_Box3DWorld::createWorld` gives every world a `Box3DHoudiniTasks` (`src/sync/Box3DHoudiniTasks.h`, a `b3dop::TaskRunner` over `UT_TaskGroup`), wired to Box3D's `enqueueTask` / `finishTask` hooks in `Box3DWorld::create`, so all worlds share Houdini's TBB pool. Box3D's built-in scheduler keeps `workerCount - 1` OS threads per world until it is destroyed, which piled up across the old worlds that cached frames keep alive. `autothreads` (off by default: Box3D's solver workers spin-wait between stages, so many workers rarely pay off below very
-large scenes) = `UT_Thread::getNumProcessors()` (honours `HOUDINI_MAXTHREADS`), else `threads` (default `defaultWorkerCount()`, `src/core/Box3DCpu.h`: physical performance cores, no hyper-threads or efficiency cores, `kDefaultWorkerCount` if undetectable; range 1 to `kMaxWorkerCount`), never above Houdini's count; a change still rebuilds the world. Safe with Box3D's solver because tasks carry their own worker index, the stepping thread always runs solver worker 0 (which can finish the solve alone, so a busy pool cannot deadlock), and `step` runs inside `tbb::this_task_arena::isolate`. `UT_TaskGroup` does not carry `UT_TaskScope`, so the runner wraps each task in one. Without a runner (the tests) `Box3DWorld` falls back to Box3D's own pool. The plugin's
-loops use `UTparallelFor` with untuned thresholds; parallel lambdas only read shared data or write their own element.
-In `BOX3DDOP_DEBUG` builds the parallel thresholds (`kMinParallelPoints` and the others beside it in `Box3DSolverInternal.h`) can be overridden from the environment (`BOX3DDOP_MIN_PARALLEL_POINTS`, `_READ_PLAIN`, `_READ_PACKED`, `_WRITE`; a count, read once per process), to sweep them without rebuilding.
-The Box3D world and mirror are touched in serial passes (the write-back's parallel pass writes only its own entry). The
-shared-state mutex is held for the whole step.
+Box3D starts no threads of its own: every world gets a `Box3DHoudiniTasks` (`b3dop::TaskRunner` over `UT_TaskGroup`,
+each task in a `UT_TaskScope`), so all worlds share Houdini's TBB pool. Safe because tasks carry their worker index, the
+stepping thread runs solver worker 0 (which can finish alone, so a busy pool cannot deadlock), and `step` runs inside
+`tbb::this_task_arena::isolate`. Without a runner (the tests) Box3D uses its own pool.
+
+Worker count: `autothreads` (off by default) = `UT_Thread::getNumProcessors()`, else `threads` (default
+`defaultWorkerCount()`, `Box3DCpu.h`: physical performance cores), never above Houdini's count; a change rebuilds the
+world.
+
+The plugin's loops use `UTparallelFor` past thresholds (`kMinParallelPoints` and neighbours in
+`Box3DSolverInternal.h`; overridable from the environment in debug builds); parallel lambdas only read shared data or
+write their own element. The world and mirror are touched in serial passes; the shared-state mutex is held for the
+whole step.

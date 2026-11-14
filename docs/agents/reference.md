@@ -11,8 +11,7 @@ are `b3dop::kDefaultWorkerCount` / `kMaxWorkerCount` (`Box3DWorld.h`).
 Solver (read every step; only the thread count rebuilds the world): `gravity`, `substeps`, `autothreads`, `threads`
 (default `b3dop::defaultWorkerCount()` in `Box3DCpu.h`: the machine's physical performance cores, as Box3D recommends;
 `WorldSettings` keeps `kDefaultWorkerCount`), `enablesleep`, `timescale`, `enableaging`, `reapdead`, `reapatframeend` (disabled while `reapdead` is off), and Box3D's tuning
-(Box3D's defaults except `contactstiffness` 60 and `contactdamping` 3, stiffer than Box3D's 30 / 10 for a more rigid
-look): `contactstiffness`, `contactdamping`, `contactpushspeed`, `bouncethreshold`,
+(Box3D's defaults except the contact stiffness and damping, tuned for bouncier, more rigid contacts): `contactstiffness`, `contactdamping`, `contactpushspeed`, `bouncethreshold`,
 `contactrecycledistance`, `maxlinearspeed`, `enablecontinuous`. Force DOPs: `useforces`, `forceswake` (disabled while
 `useforces` is off). Box3D Data: `startasleep` and `sleepthreshold` are disabled while `enablesleep` is off,
 `mass` / `density` by `computemass`; joint nodes: see `enabledBy` in [joints.md](joints.md). Solver
@@ -50,16 +49,15 @@ reported by a scope guard in `solveObjectsSubclass`).
 
 ## Not supported on purpose
 
-* Box3D's mover and pogo joints (`b3CreateMoverJoint`, `b3CreatePogoJoint`) and character-mover queries are left out:
-  they are game character controller tools and have no place in a Houdini DOP workflow. Likewise Box3D's explosions
-  (`b3World_Explode`) and wind (`b3Shape_ApplyWind`): Houdini already has Force DOPs (Wind, Fan, POP Force, ...), which the
-  solver applies, so a second way to do the same thing would only add confusion.
+* Box3D's mover and pogo joints and character-mover queries (game character tools), explosions and wind (Houdini's
+  Force DOPs already do this).
 * Bullet's collision padding (`bullet_collision_margin`, `bullet_adjust_geometry`, `bullet_shrink_amount`) is ignored:
   Box3D collides the exact shapes with speculative contacts.
 * Bullet's solver tuning (ERP, CFM, split impulse, iterations, solve tolerance, randomized order) is not mapped; Box3D's
   own settings are offered.
 * Bullet's two sleep thresholds, Sleeping Time and `deactivation_time` are replaced by Box3D's one threshold.
-* `min_activation_impulse` (inactive bodies that activate when hit) was removed: Box3D has no equivalent, and it needed a contact scan after every step.
+* `min_activation_impulse` (inactive bodies that activate when hit): Box3D has no equivalent, and it would need a
+  contact scan after every step.
 
 ## Parameter tabs and folders
 

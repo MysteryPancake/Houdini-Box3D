@@ -14,6 +14,7 @@ body engine, C17, a git submodule in `extern/box3d`). It registers these `SIM_Da
 | Box3D Data | `SIM_Box3DData` | Per-object defaults (fallbacks for missing point attributes) |
 | (hidden) Box3D World | `SIM_Box3DWorld` | Holds the live Box3D world; not a DOP node |
 | Box3D <Type> Constraint Relationship | `SIM_Box3DConRel<Type>` | One per joint type: the joint's settings, named by `constraint_name` in a Constraint Network |
+| Box3D Packed Object | (digital asset) | Empty Object + SOP Geometry + Box3D Data, built by `tools/make_packed_object.py` |
 
 Design goals: Box3D's native performance (handle-based hot paths, no per-body hash lookups, threaded per-point passes
 where safe) and Houdini Bullet behaviour (same attribute names and rules, as documented on the RBD Packed Object page).
@@ -21,24 +22,32 @@ The exception is sleeping and enabling, which follow Box3D's own model (`enables
 enable state"); Bullet's `bullet_want_deactivate`, `bullet_sleeping`, `bullet_ignore` and `min_activation_impulse` are not read.
 
 The code is largely LLM-written by an author still learning the HDK. Treat HDK usage with healthy skepticism.
-Everything not yet tested or verified is listed in one place: "Untested and unverified" in `docs/agents/status.md`; everything still to do in
-another: "Known gaps / TODO" in the same file. Keep them there and nowhere else (no TODO or "unverified" notes in code comments, the
-README or other sections here).
+What is unverified, broken or still to do lives only in `docs/agents/status.md` ("Unverified", "Known gaps", "TODO"):
+no TODO or "unverified" notes in code comments, the README or other docs.
 
 ## Documentation split
 
 `README.md` is for people using the plugin in Houdini: how to build it, which nodes and attributes exist, what they do,
 and what behaves differently from Houdini's own solvers. Keep it short. Leave out anything a user cannot act on or would
 not notice: how the solver does something, Box3D internals and terms (density, restitution, move events, hull caches),
-performance mechanics. Those belong here (unverified details go in "Untested and unverified", `docs/agents/status.md`). When a change adds a feature, add one line or table
-row to the README if users need it, and put the explanation here.
+performance mechanics. Those belong in `docs/agents/`. When a change adds a feature, add one line or table row to
+the README if users need it, and put the explanation in the matching `docs/agents/` file.
 
 README rules (hard limits, not suggestions):
+- The top part, from the title through the Building section, is the author's: never change it unless asked.
+  Everything after it is user reference: short, organized, no history.
 - Never add more than one or two sentences, or one table row, per change. Do not grow a section to explain a feature.
 - No implementation details: no function, class or HDK names, locks, fingerprints, step ordering, clearing or caching
   behaviour. If a sentence says how the code works, it goes in this file.
 - Do not rewrite or expand existing README text while making an unrelated change. Trim, don't pad.
 - Before finishing a task, re-read any README edit and cut it down.
+
+Rules for `docs/agents/` (and this file):
+- Describe how the code works now, not how it got there: no history, no "was", "used to", "since fixed", "tried".
+  A failed approach earns one clause only when it stops someone retrying it.
+- Keep entries to a few lines; prefer a bullet to a paragraph. When something is settled, delete it from status.md
+  rather than marking it done.
+- One fact in one place: link to the file that owns it instead of repeating it.
 
 UI tooltips (the help text on parameters) follow the same rule: one or two short sentences, under about 150
 characters. Say what the control does and, if needed, when to change it. No implementation detail, no lists of point
@@ -58,7 +67,7 @@ Load only the file for the area you are changing.
 | [docs/agents/whole-object.md](docs/agents/whole-object.md) | RBD Object style bodies (one body per DOP object) |
 | [docs/agents/joints.md](docs/agents/joints.md) | Constraint networks, joint nodes, SideFX constraint data mapping |
 | [docs/agents/reference.md](docs/agents/reference.md) | Parameters, point attributes, node warnings, what is not supported, the parameter-tab builder |
-| [docs/agents/status.md](docs/agents/status.md) | Untested and unverified, HDK calls checked, Known gaps / TODO |
+| [docs/agents/status.md](docs/agents/status.md) | Unverified, Known gaps, TODO, HDK calls checked |
 
 **Values that live in code stay in code.** Defaults, counts, thresholds and sizes are not copied into these files: name
 the constant or table and its file (`kMinParallelPoints` in `Box3DSolverInternal.h`, `kPropAttribNames` in
@@ -132,9 +141,8 @@ Layering (keep it):
 ## Conventions and gotchas
 
 * A `SIM_DopDescription` must live in zero-filled static memory (a function-local static, or placement new into a
-  static buffer as `SIM_Box3DConRel::describe` does), never on the heap: built with `std::make_unique`, the joint
-  nodes' descriptions crashed Houdini 22 now and then while the node cooked (`SIM_DopDescription::computeLiveInput`).
-  Building them in static memory fixed it (60 runs clean), consistent with a member its constructor leaves unset.
+  static buffer as `SIM_Box3DConRel::describe` does), never on the heap: heap ones crash Houdini 22 now and then in
+  `SIM_DopDescription::computeLiveInput` (a member its constructor leaves unset).
 * Box3D headers only in `Box3DWorld.cpp`; `UT/UT_DSOVersion.h` only in `SIM_Box3DRegister.cpp`; new `SIM_Data` classes
   registered in `initializeSIM`.
 * The solver's parts live in `namespace box3dsolver`; anything one part uses from another is declared in

@@ -1,4 +1,4 @@
-"""Checks of the Box3D plugin in Houdini, for items in "Untested and unverified"
+"""Checks of the Box3D plugin in Houdini, for items in "Unverified"
 (docs/agents/status.md). Each test builds its own scene from scratch, simulates it and prints
 PASS / FAIL (or INFO for comparisons that need a human verdict). The tests live in the
 checks_*.py modules next to this file; this is the runner.

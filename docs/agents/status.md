@@ -1,236 +1,73 @@
-# Status: untested, verified, TODO
+# Status: unverified, known gaps, TODO
 
-The one list of unverified items, the HDK calls already checked, and the one list of work still to do. Index and rules: [CLAUDE.md](../../CLAUDE.md).
+The one list of what is unverified, broken or still to do. Index and rules: [CLAUDE.md](../../CLAUDE.md). Keep each
+item to a line or two; remove it once settled (the test that settles it is the record, not this file).
 
-## Untested and unverified
+Last full run (Houdini 22.0.502, MSVC): every check passes, 144 PASS and 20 INFO; the baseline (recorded on 22.0.479)
+matches exactly. What no script checks: Escape mid-step, the viewport, motion blur, how greyed-out parameters look.
 
-The one list of everything not yet tested in Houdini or confirmed against SideFX's documentation. Keep it here only;
-remove an item once it has been checked, and record anything new here rather than in comments or other sections.
+## Unverified
 
-**General**
-* The plugin has never been built on Linux (only the core-only build, in CI). `build.sh`, the README steps and the
-  CMake plugin section follow SideFX's HDK pages but are untested there: compiler warnings under gcc
-  `-Wall -Wextra` in `src/dop` / `src/sync`, the dso and icon copies, and the Houdini checks via
-  `hython tests/houdini/run_tests.py` (there is no Linux wrapper like `test.bat`).
-* No `SIM_*` code has CI. The plugin builds against the real HDK (Houdini 22.0.502, MSVC). The core tests pass, and
-  so does every Houdini check (all `checks_*.py`, `checks_regress.py` with its baseline.json, recorded on 22.0.479 and
-  matched exactly on 22.0.502): 144 PASS, 20 INFO on the last full run, `large_scene` included. What no script can
-  check: Escape mid-step, the viewport, motion blur, and how greyed-out parameters look.
-* An untouched object still skips its scan after a Box3D Data change elsewhere (debug log: `scan skipped`). (A Box3D
-  Data change mid-simulation reaching existing bodies is verified, `data_change_midsim`.)
+**Build**
+* Linux plugin build (only the core builds in CI): `build.sh`, gcc warnings in `src/dop` / `src/sync`, the dso and
+  icon copies, `hython tests/houdini/run_tests.py`.
+* The Houdini-side files have not been through `-Wshadow` / `-Wconversion` (GCC / Clang) or clang-tidy.
+* The Threads default (`performanceCoreCount`) on macOS (`hw.perflevel0`) and ARM Linux (`cpu_capacity`).
 
-**HDK and Houdini behaviour**
-* The Box3D Packed Object asset: built by the post-build step and checked on 22.0.502 (`box3d_packed_object`,
-  `data_under_geometry` pass: Box3D Data's Friction on the asset reaches the bodies, a point's own value still wins,
-  the fall matches RBD Packed Object, Creation Frame works). Two traps found on the way, both in build.md: the inner
-  `parmop_*` menus start at Use Default (a reference does not switch them), and Box3D Data's DOP settings outside its
-  folders (Activation, Group, Data Name) must not be promoted.
-* Height-field affectors: built and checked on 22.0.502 (`heightfield_flat`, `heightfield_terrain`,
-  `heightfield_animated` pass: a HeightField SOP's volume maps index x to world z and index y to world x, so the
-  transposed frame is the one used). The `terrain` example plays, and editing the HeightField SOP mid-simulation
-  reaches the collider when the Static Object has Use Deforming Geometry on (without it Houdini does not re-import
-  the geometry, as for meshes).
-* Data ids surviving the DOP copy between timesteps (the sync skip). If they do not, every step scans: correct, no gain.
-  The debug log `sync: N of M object(s) unchanged, scan skipped` shows it working.
-* The timestamp semantics behind `canContinue`.
-* Force DOPs: a Gravity Force DOP pulls at g and adds to the solver's Gravity (verified). Whether `getForce` is
-  thread-safe (evaluation is kept serial).
-* Houdini's impact normal convention (Impacts data).
-* Bullet's `bullet_primR` rotation order (taken as XYZ Euler degrees) and `bullet_length` meaning (taken as the
-  capsule's straight section without caps).
-**Solver step, caching and threads** (debug build: `REBUILD` lines in the log show every world rebuild)
-* An Escape mid-step (`SIM_SOLVER_FAIL`, world unstamped): Houdini discards that step and re-cooks it, the frames before
-  it stay cached and correct, the re-cook rebuilds once. Also that Escape reaches `opInterrupt()` at all with no
-  `opStart` of ours, during a long first-frame sync of many convex hulls.
-* `objects` sorted by object id (`box3dObjectById` binary search, a miss is final). Checked once per solve (`st.objectsSorted`); an array that is not sorted falls back to a linear scan, so only speed is at stake.
-* Box3D's tasks on Houdini's TBB pool (`Box3DHoudiniTasks`): no stall when several DOP networks or threaded SOPs cook
-  at once, or where threading is disabled for the cooking thread (tasks run inline). `HOUDINI_MAXTHREADS=1` is fine.
-* The Threads default (`performanceCoreCount`, `Box3DCpu.cpp`): confirmed by hand on Windows. Not checked on macOS
-  (`hw.perflevel0`) or ARM Linux (`cpu_capacity`).
-* Solver defaults Substeps 10 (slider 1 to 100), Contact Stiffness 60, Contact Damping Ratio 3 (were 4 / 30 / 10;
-  `baseline` pins the old values) pass the full suite. Contacts are bouncier by choice: pieces settle less (the
-  `rbd_defaults` rod still rocks after 10 s and rests on an edge; an RBD Object box still moves 0.15 / s after 6 s)
-  and a box in `large_scene` rebounded above the lattice. A scene saved with the old defaults may come back with the
-  new ones, if Houdini did not store the unchanged values.
-* Box3D Data under the object's Geometry (`Geometry/Box3DData`): verified on an RBD Packed Object, present on frame 1
-  and 25 and still applied (`data_under_geometry`). Still open: Static Objects and RBD Objects, RBD Packed Object's
-  Overwrite with SOP, and old scenes with the top-level name (`findBox3DData`'s fallback).
-* Scene scale: Box3D's tolerances assume metres. Measured (`scale`, current defaults): a three-box stack rests 2.498 /
-  2.498 / 2.418 box sizes tall at 0.01x / 1x / 100x (2.5 ideal), with slight jitter at 100x: scenes 100 times too
-  large sink about 3%.
+**Houdini behaviour**
+* Escape mid-step: the step is discarded and re-cooked, earlier frames stay cached, the re-cook rebuilds once.
+* Data ids surviving the DOP copy between timesteps (the sync skip; debug log `scan skipped`); our own writes not
+  looking like edits (debug log `full scan, changed:`).
+* `SourceSummaryCache`: a packed source edited in place without a new unique id or data id gives a stale hull.
+* Box3D's tasks on Houdini's TBB pool with several DOP networks or threaded SOPs cooking at once.
+* Whether `getForce` is thread-safe (Force DOPs are evaluated serially).
+* Box3D Data under Geometry on Static Objects and RBD Objects; old scenes with the top-level `Box3DData` name.
+* Scenes saved before a default changed (Default Shape, solver substeps / contact tuning): whether Houdini kept the old
+  value in the file.
 
-**Points and packed geometry**
-* Point order: reversing the points upstream (Sort SOP) keeps every body's identity, with and without `id` (verified,
-  `point_order`), but results differ slightly (5 cm after sliding 3 units): bodies are created in point order even when
-  `id` exists, and Box3D's results depend on body order. Creating them in `id` order would make results independent of
-  point order whenever `id` exists. The point number written to Impacts follows the current order.
-* Packed USD / packed sequences: `getPackedDetail()` gives usable geometry (Packed Disk and Packed Alembic do).
-* (Confirmed, `odd_packed_contents`: a packed primitive sphere or a nested packed primitive collides as a single point,
-  half sunk into the ground. Listed under Known gaps.)
-* (Confirmed, `mirrored_piece`: the write-back drops the mirror, determinant -1 becomes +1 once the piece moves. Listed
-  under Known gaps.)
-* `SourceSummaryCache` (process-wide, survives rebuilds): relies on `GU_Detail::getUniqueId()` never being reused in a
-  session and every edit to a packed source bumping its `P` or primitive-list data id. Edit a packed source in place
-  (no new id) and rebuild: a stale summary would give the old hull.
-* Fingerprint skip: a packed transform edited by another node (Transform Pieces in a SOP Solver, a wrangle on the
-  `transform` intrinsic) bumps the primitive list data id. (Moving `P` from a SOP Solver is picked up and the body
-  teleports, verified by `sop_solver_edit`.) Packed points added or deleted bump `P` or `id`.
-* `animated` bodies: a kinematic body tracks its animation at Time Scale 1 and 2 (verified, `time_scale_kinematic`);
-  at Time Scale 2 it pushes a box the same distance in DOP time. Not compared with Bullet.
-* Bullet's attribute semantics: `active` 0 -> 1 mid-simulation starts the body falling within a frame of Bullet, and
-  `awake` 0 -> 1 wakes it (verified, `attribute_toggles`). `animated`, `deforming` and `bullet_autofit_valid` toggles
-  are not compared with Bullet.
-* Shared-string handles (`GA_AIFSharedStringTuple::getHandle`) are stable for one scan of one detail (`bullet_georep`
-  and `name` are memoised by handle).
-* (Confirmed, `autofit_bullet` and `shape_types`: AutoFit boxes, spheres and capsules and the convex-hull Default
-  Shape rest as in Bullet, with the tilt baked into the packed geometry or on the packed transform; capsule top 0.595
-  vs Bullet's 0.602. A free standing capsule topples differently in each solver, so the length check drops a plate on
-  a static one.) Not compared with Bullet: AutoFit on whole objects (RBD Object) and on irregular (fractured) pieces.
-* Scenes saved with a Box3D Data node before the Default Shape became Convex Hull: whether Houdini kept the old menu
-  value (Box) in the file or the node now shows the new default.
+**Bullet semantics not compared**
+* `animated`, `deforming` and `bullet_autofit_valid` toggles; `bullet_primR` rotation order (taken as XYZ Euler
+  degrees) and `bullet_length` (taken as the capsule's straight part); AutoFit on whole objects and fractured pieces.
+* Impact normal direction; whether a fresh `SIM_Impacts` each step suits Houdini's impact tools.
+* Which end is Cone Twist's goal (taken as point 1).
 
-**Write-back and outputs**
-* RBD Packed Object's plain `SIM_Geometry` is replaced once by an adopting `SIM_GeometryCopy`
-  (`box3dWritableGeometry`): earlier cached frames keep their own poses (scrub back), and options that re-import the
-  SOP every step (Overwrite with SOP / deforming geometry) overwrite the written `P` / `orient` / `v` / `w`. Is that wanted?
-* Releasing a `SIM_GeometryAutoWriteLock` may bump data ids (the fingerprint is re-recorded after release). If our own
-  writes still look like edits, every object scans every step: watch for `full scan, changed:` lines in a debug build.
-* Downstream readers: DOP Import (Fetch) matches the simulation, `v` is -g t for a falling body and `w` is in radians
-  per second (verified). Still open: motion blur, and that a body falling asleep keeps its last small `v` / `w`.
-* `addPointImpact`: impulse (m*v plus the step's support), point number and time verified (`impacts`). Whether a fresh
-  `SIM_Impacts` each step suits Houdini's impact tools, and no Feedback data for other solvers in a Multi Solver.
-* Aging: `age` counts seconds, life 0 never dies, and a dead packed piece is deleted (verified, also inside a
-  constraint network without errors). Matches the POP Solver exactly (verified, `aging_vs_pop`, 24 fps, life 0.5, both
-  objects solved on their creation frame, POP Source's Jitter Birth Time None): the same age every frame (f/24) and
-  both die on frame 13 (dead once age > life, strictly). With Reap Dead Points a point that ages past its life is
-  deleted in the same step, as POP reaps (verified: gone on frame 13 like POP's particle; `ageObjects` queues it in
-  `st.deletions`). Reap Dead Points and Reap At Frame End (POP's Reap Particles / Reap At Frame End): verified
-  (`aging`: off by default, the dead piece is kept with `dead = 1`; `aging_vs_pop` / `aging_vs_pop_keep`: with either
-  Reap At Frame End setting, the same age, `dead` and removal frame as POP; `dead_with_network`: a kept dead welded
-  piece raises no errors). Reap At Frame End's default (on) is inferred: POP's particle vanished on its death frame
-  with the POP Solver left at its defaults. A kept dead point keeps aging, as POP's does (verified, `aging_vs_pop_noreap`:
-  the same age and `dead` every frame to 24 with reaping off on both). It keeps its last `v` / `w`. Its Box3D body is only removed by the next sync, so the guide may still draw it on that frame. With POP's default birth jitter its particles carry a random
-  sub-frame age and die up to a frame earlier; packed pieces have no sub-frame birth. Without Solve On Creation Frame
-  (RBD Packed Object's default) aging starts a frame later, like everything else on that object.
-* Point `force` / `torque`: applied for one step and zeroed (verified, `point_force`: F/m and torque/I exact). A POP
-  Force must cook before the Box3D Solver in the same step; the zeroing may clash with another solver reading `force`
-  in a Multi Solver.
-* Force DOPs are evaluated once per DOP step, at the start-of-step state (not per Box3D substep). A Gravity Force DOP
-  adds to the solver's own Gravity (documented in the Gravity tooltip).
+**Whole objects**
+* RBD Point Object makes no objects in a scripted setup (`other_rbd_objects`); check by hand.
+* An RBD Object without Box3D Data colliding as its convex hull; `bullet_primT` / `bullet_primS` meaning there.
 
-**Affectors (Static Object and similar)**
-* A moved Static Object is moved, not swept: bodies are not pushed (the README says so). (Following an animated
-  collider works, verified by `animated_static`, by OBJ Path or a Transform SOP.)
-* Static Objects whose geometry is packed, SDF-only or not polygons: only polygons are used, so they collide with
-  nothing and warn "no usable collision geometry". (The Ground Plane DOP works: a dropped box lands on it.)
-* A Static Object with Use Deforming Geometry bumps `P` every step, so its mesh is rebuilt every step (cost).
-* Objects solved by another solver (Bullet, RBD, POP) with a collide relationship: packed ones are ignored by Box3D
-  ("no usable collision geometry", seen with a Bullet RBD Packed Object, which then fell through the Box3D body). One-way
-  collision with polygon objects is untested.
+## Known gaps
 
-**Constraint relationship nodes**
-* Their icons are picked up.
+* Packed primitive spheres and nested packed primitives collide as one point, half sunk (`odd_packed_contents`).
+* Mirrored packed pieces lose their mirror once they move (`mirrored_piece`).
+* SideFX Glue breaks under static load (Break Force = strength / timestep) where Bullet's holds (`sidefx_glue`).
+* Results depend slightly on point order even with `id` (`point_order`): bodies are created in point order.
+* Objects solved by another solver: packed ones are ignored as colliders; one-way collision with polygons untested.
+* Float attributes multiply the node's value (Houdini's rule), so a zero default can't be changed per primitive.
+* Old scenes: joint toggles added later (Breakable, Set Rest Length, Limit ...) load off, so a typed Break Force etc.
+  is ignored until turned on; Bounce Mixing's menu was reordered; the mixing defaults are now Multiply / Minimum.
 
-**Constraint networks**
-* Relationships found with `getRelationship(ingroup, i)` for both `ingroup` true and false; deduplicated by name.
-* Float attributes multiply the node's value (Houdini's rule): confirm it is wanted, since zero defaults (limits,
-  targets) and -1 caps cannot be changed per primitive unless the node is set to 1.
+## TODO
 
-**SideFX constraint data**
-* `SIM_Options::importOption` converting SideFX's int / bool options (Glue with the Box3D Solver holds, so reading
-  SideFX's data works; the individual values are not checked).
-* (Confirmed, `sidefx_glue`: Box3D's Glue breaks under a hanging piece's weight at Strength 1 and 100 where Bullet's
-  holds; both hold at 1e4. Listed under Known gaps.)
-* Which end is Cone Twist's goal (taken as point 1); only matters when goal and constrained axes differ.
-* Cone Twist compared with Bullet (`sidefx_cone_twist`): Bullet's piece falls freely (20.85 apart after 2 s, the
-  same with anchors at the centroids or at one shared point), so there is nothing to compare with. Box3D holds: with
-  one shared anchor the pieces stay 2.015 apart (2.06 at the start); with anchors at the two centroids it pulls them
-  together (0.26), as a ball joint joining two anchor points should.
-* Soft / Spring `all` with a rest length shifts the frames along the anchor line when the joint is made; after a
-  world rebuild from a stretched pose the offset direction is re-derived from the anchors and may differ slightly.
-
-**Whole-object bodies**
-* RBD Point Object with the Box3D Solver: check by hand. A scripted setup (Point SOP Path on a 2 x 2 grid of points,
-  Geometry Path on a box) makes no objects at all and gives no errors or warnings (`other_rbd_objects`, which stays
-  INFO for it; RBD Fractured Object passes). It is an older node; RBD Packed Object is the usual choice.
-* The `Colliders` label on RBD Point Object and RBD Fractured Object (only RBD Object and RBD Packed Object were
-  checked); its value is not used, only "present and not PackedObject".
-* `SIM_DATA_CREATE(obj, "Position", SIM_Motion, 0)` when the object has no Position data, and whether writing
-  `Position` from a solver needs anything more (Bullet and the RBD solver do it).
-* The viewport and DOP Import SOP follow the written Position data (through the geometry's `positionpath`).
-* Without Box3D Data an RBD Object now uses its own RBD State / PhysicalParms / BulletData (names from a Houdini 22.0
-  probe). Its mass, bounce and shared world are checked; still open: that it collides as its convex hull (a tilted
-  rod falls over, so it is not an axis-aligned fitted box, but was still settling 0.32 tall after 240 frames, where
-  flat is 0.2), whether `bullet_primT` is relative to the pivot (taken so, as for points) and
-  `bullet_primS` a half size for whole objects too.
-* Float noise: the mirror takes a read-back after each write; a constant "edited" count (teleports) every step would
-  mean the read-back does not match what the next sync reads.
-* Impacts record point -1 for whole objects.
-* Bullet mixing defaults: Friction Mixing Multiply, Bounce Mixing Minimum (Bullet in Houdini 22.0 measured friction
-  0.16 and bounce 0.198 for 0.2 against 0.8: `bullet_mixing`), Box3D Data Bounce 0.5. Built; `friction_mixing`,
-  `bounce_mixing`, `rbd_defaults`, `bounce_heights` and `friction_slope` pass and the baseline matches.
-
-## HDK calls
-
-Checked against the HDK reference: `GU_PrimPacked::isPackedPrimitive`, `getPackedDetail`, `sharedImplementation`,
-`getFullTransform4`, `setLocalTransform`, `getPivot`, `transformDirty`; `GU_PackedFragment::getPrimitiveRange`, `detailPtr`; `UTgetInterrupt`, `UT_Interrupt::opInterrupt`;
-`UT_PerfMonAutoSolveEvent(const SIM_Solver *, const char *)` (`UT_PerfMonAutoEvent.h`; starts timed / memory solve
-events only while recording, stops them in the destructor);
-`GU_DetailHandleAutoReadLock` / `SIM_GeometryAutoReadLock::getGdp` (const pointer), `SIM_GeometryAutoWriteLock::getGdp`
-(reference); `GA_Detail::getPrimitiveList()` / `GA_PrimitiveList::getDataId()` / `bumpDataId()`,
-`findPointAttribute` (const), `getP`, `getNumPointOffsets`, `getNumPrimitiveOffsets`, `pointVertex`,
-`vertexPrimitive`, `getPointMap`, `pointIndex`, `pointOffset`, `destroyPointOffset` (`GA_DESTROY_DEGENERATE`),
-`destroyPrimitive`, `bumpAllDataIds`; `GA_Attribute::getDataId` / `bumpDataId`; `GA_AIFSharedStringTuple::getHandle`
-/ `getTableString`; `GEO_Detail::addIntTuple`; `SIM_DATA_CREATE` flags (`SIM_DATA_RETURN_EXISTING` unset = replace);
-`SIM_Impacts::addPointImpact`, `SIM_IMPACTS_DATANAME`; `SIM_RootData::getName`, `removeNamedSubData`;
-`UT_String::isstring`, `buffer`; `SIM_Object::getNumRelationships`, `getRelationship(ingroup, index / name)` (const),
-`getRelationships(ingroup)` (non-const, `SIM_RelationshipArray::findRelationshipByName`);
-`SIM_Relationship::getRelationshipTypeData` / `getConstRelationshipTypeData`; `SIM_ConstraintNetworkRelationship`
-(a `SIM_RelationshipData`) `getGeometry` const / non-const; `SIM_ConRel` (no pure virtuals, protected factory
-constructor); `DECLARE_CLASSNAME` / `DECLARE_DATAFACTORY` expansions (`SIM_DataUtils.h`); `UT_Matrix3D::extractScales`, `UT_QuaternionT::getRotationMatrix` /
-`updateFromRotationMatrix`; node icons as `config/Icons/DOP_<name>.svg`; `PRM_Conditional(const char *, PRM_ConditionalType)`
-passed as a `PRM_Template`'s conditional pointer.
-
-## Known gaps / TODO
-
-* Box3D Packed Object, not done: RBD Packed Object's Overwrite with SOP / deforming import, its initial velocity
-  controls, a `Colliders` label (RBD Packed Object attaches "PackedObject", which other solvers use to collide with
-  it), a Tab menu entry under a Box3D submenu (it is under Digital Assets).
-* Mirrored packed pieces lose their mirror once they move (the write-back writes a non-mirrored transform).
-* Packed primitive spheres and nested packed primitives collide as one point (hulls from points only): unpack or warn.
-* SideFX Glue breaks under static load (Break Force = strength / timestep) where Bullet's Glue holds.
-
-* GCC/Clang `-Wshadow` and `-Wconversion` are on (`b3dop_warnings`). The core and tests build clean with both
-  compilers, also as errors (Clang's `-Wconversion` includes `-Wsign-conversion`). The Houdini-side files
-  (`src/dop`, `src/sync`) have not been compiled with them: a Linux plugin build may show warnings there (MSVC's
-  `/W4` is unchanged).
-* clang-tidy (`.clang-tidy`) is clean on the core and tests. The Houdini-side files have not been through it (needs an
-  HDK build's compile_commands.json, e.g. `clang-tidy -p build` after a plugin build); their casts were converted to
-  `static_cast` by script, checked to change nothing else.
-
-* Scenes saved before the joint nodes' Breakable / Set Rest Length / Limit Spring Force / Limit Max Length / Limit
-  Torque toggles load with them off, so a Break Force, Rest Length etc. typed in such a scene is ignored until the
-  toggle is turned on. Bounce Mixing's menu was reordered: a non-default choice saved before then reads as a
-  different rule. The mixing defaults changed to Multiply / Minimum: a scene that relied on the old defaults
-  (Geometric Mean / Maximum) behaves differently unless those are set on its solver.
-
-The one list of what is still to do. Keep it here only (no TODO comments in the code).
-
-* Concave meshes: sharing one mesh between instances of the same packed geometry (each static body builds its own);
-  static concave whole objects (RBD Object) as meshes; drawing meshes in the collision guide.
-* Height fields for points (only affectors have them; see "Height fields" in [forces-affectors.md](forces-affectors.md)); holes from a mask layer; `cylinder` / `plane` shapes (no Box3D shape; hull or big box approximations possible).
-* Constraint networks: point / vertex / agent anchors (`anchor_id`, `anchor_type`); `constraint_type` on our own nodes
-  (e.g. on the weld node: `position` -> spherical, `rotation` -> rotation only, `all` -> weld; SideFX data reads it).
-* SideFX constraint data, the parts not mapped: Glue half-life / propagation (impulse accumulation); Soft
-  plasticity (would move the joint frames over time); Cone Twist's elliptical cone (only the smaller limit), cones
-  between 90 and 180 degrees (clamped to 90), softness / soft limits, motor and translation ranges; Hard's angular
-  motors; Spring's Hz conversion following mass changes.
-* Box3D Weld nodes between anchors at different points (Connect Adjacent Pieces puts each end at its piece's centroid)
-  pull the pieces together; `holdSeparation` (see "SideFX constraint data" in [joints.md](joints.md)) could be offered as a node option.
-* Whole-object bodies without Box3D Data: RBD Object's Create Active Object (`SolverParms/ActiveValue`) for the body
-  type, and RBD State's custom inertia tensor.
-* Force DOPs: only `getForce` at the centre of mass (no `getForceOnSphere` / area variants, no per-substep re-evaluation).
-  Evaluation is serial. Computing the forces in parallel (state read serially or from `BodyState`, `getForce` in
-  `UTparallelFor`, the sum applied serially) is possible only if the Force DOPs are thread-safe, which is not known for
-  custom ones; it would need an opt-in or a check of the force classes.
+* Box3D Packed Object: Overwrite with SOP / deforming import, initial velocity controls, a `Colliders` label (other
+  solvers use it to collide with it), a Box3D Tab submenu.
+* Concave meshes: one mesh shared between instances, static RBD Objects as meshes, drawing meshes in the guide.
+* Height fields: holes from a mask layer, height fields on points. `cylinder` / `plane` shapes (hull or box stand-ins).
+* Constraint networks: point / vertex / agent anchors (`anchor_id`, `anchor_type`); `constraint_type` on our nodes.
+* SideFX constraint data not mapped: Glue half-life / propagation, Soft plasticity, Cone Twist's elliptical and wide
+  cones, softness, motors and translation ranges, Hard's angular motors, Spring's Hz following mass changes.
+* A Hold Separation option on the Weld node (`holdSeparation`, see joints.md).
+* RBD Object without Box3D Data: Create Active Object (`SolverParms/ActiveValue`), RBD State's custom inertia.
+* Force DOPs: sphere / area variants, per-substep evaluation, parallel evaluation (needs thread-safe forces).
 * Sticky collisions; contact / sensor events beyond Impacts.
+
+## HDK calls checked
+
+Against the HDK reference, so they need no re-checking: `GU_PrimPacked` (`isPackedPrimitive`, `getPackedDetail`,
+`sharedImplementation`, `getFullTransform4`, `setLocalTransform`, `getPivot`, `transformDirty`),
+`GU_PackedFragment` (`getPrimitiveRange`, `detailPtr`), `UTgetInterrupt` / `opInterrupt`,
+`UT_PerfMonAutoSolveEvent`, the geometry locks, `GA_Detail` / `GA_PrimitiveList` / `GA_Attribute` data ids and the
+point / vertex / primitive maps, `GA_AIFSharedStringTuple`, `SIM_DATA_CREATE` flags, `SIM_Impacts::addPointImpact`,
+`SIM_Object` relationships, `SIM_ConstraintNetworkRelationship::getGeometry`, `SIM_ConRel`, the
+`DECLARE_DATAFACTORY` expansions, `UT_Matrix3D::extractScales`, `UT_QuaternionT` matrix conversions,
+`PRM_Conditional`, `SIMgetGeometryTransform`, `SIM_Object::getConstAffectors`, the `GEO_PrimVolume` /
+`UT_VoxelArrayIterator` calls in Box3DAffectors.cpp, node icons as `config/Icons/DOP_<name>.svg`.
