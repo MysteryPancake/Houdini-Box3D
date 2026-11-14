@@ -1119,7 +1119,10 @@ using EntriesByNetwork =
 int breakJoints(Box3DSharedState &st, EntriesByNetwork &brokeIn) {
   b3dop::Box3DWorld &world = st.world;
   std::vector<void *> events;
-  world.brokenJoints(events);
+  if (st.brokenCollected)
+    events = st.brokenThisFrame;
+  else
+    world.brokenJoints(events);
   int broke = 0;
   for (void *p : events) {
     Box3DJointEntry *e = static_cast<Box3DJointEntry *>(p);

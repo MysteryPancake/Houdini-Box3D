@@ -452,7 +452,9 @@ public:
 
   // Hit events of the last step (pairs that approached faster than
   // impactMinSpeed).
-  void updateHitEvents();
+  // append: keep the pairs already collected (Box3D clears its hit events every
+  // step, so a frame of several steps appends after each one).
+  void updateHitEvents(bool append = false);
   bool hadHitEvent(BodyHandle a, BodyHandle b) const;
 
   // ---- joints

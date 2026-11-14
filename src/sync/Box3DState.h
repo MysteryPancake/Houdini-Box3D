@@ -381,6 +381,15 @@ struct Box3DSharedState {
       impactObjects; // objects with Impacts data from last step (sorted)
 
   float stepDt = 0.0f; // this step's Box3D time step (DOP step * Time Scale)
+  // Joints that went over their threshold in any of this frame's Box3D steps
+  // (Substeps > 1): Box3D clears its joint events every step, so the last
+  // step's would otherwise be all breakJoints saw. Used only when
+  // brokenCollected is set.
+  std::vector<void *> brokenThisFrame;
+  bool brokenCollected = false;
+  // The same for hit events (Impact Min Speed): hitPairs already holds every
+  // Box3D step of this frame, so recordImpacts must not refill it from the last.
+  bool hitsCollected = false;
 
   double stampTime = 0.0; // SIM_Engine::getSimulationTime() at the last solve
   bool stamped = false;

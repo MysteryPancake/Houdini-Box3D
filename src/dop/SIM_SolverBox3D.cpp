@@ -408,6 +408,8 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
 
   // From here the step runs to the end (the write-back is quick), so the cached
   // result is always a whole step.
+  st->brokenCollected = false;
+  st->hitsCollected = false;
   if (n == 1) { // the usual case: one step, nothing to merge
     if (getUseForces()) {
       UT_PerfMonAutoSolveEvent perf(this, "Applying Forces");
@@ -421,8 +423,14 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
     st->world.getMoveEvents(st->moves); // read once: write-back and impacts
   } else {
     st->moves.clear();
+    st->brokenThisFrame.clear();
+    st->brokenCollected = true;
+    // Hit events are cleared every step too; only the speed filter reads them.
+    const bool collectHits = st->world.settings().impactMinSpeed > 0.0f;
+    st->hitsCollected = collectHits;
     std::unordered_map<b3dop::BodyHandle, size_t> slot;
     std::vector<b3dop::BodyMove> events;
+    std::vector<void *> broken;
     ForceStats forceStats;
     for (int i = 0; i < n; ++i) {
       // Force DOPs go into the bodies for one Box3D step only (it clears them
@@ -437,6 +445,15 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
         UT_PerfMonAutoSolveEvent perf(this, "Stepping World");
         st->world.step(subDt);
         st->world.getMoveEvents(events);
+        // Joint events are cleared by the next step too: keep every joint that
+        // went over its threshold (once each).
+        if (collectHits)
+          st->world.updateHitEvents(i > 0);
+        st->world.brokenJoints(broken);
+        for (void *p : broken)
+          if (std::find(st->brokenThisFrame.begin(), st->brokenThisFrame.end(),
+                        p) == st->brokenThisFrame.end())
+            st->brokenThisFrame.push_back(p);
       }
       // Box3D clears its move events every step, so merge them: the last
       // event of a body is its final pose (and its fell-asleep flag).

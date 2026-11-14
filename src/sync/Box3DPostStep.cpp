@@ -245,7 +245,7 @@ void recordImpacts(Box3DSharedState &st, SIM_ObjectArray &objects,
   if (any) {
     b3dop::Box3DWorld &world = st.world;
     const bool speedFilter = world.settings().impactMinSpeed > 0.0f;
-    if (speedFilter)
+    if (speedFilter && !st.hitsCollected)
       world.updateHitEvents();
     for (const b3dop::BodyMove &mv : st.moves) {
       const Box3DBodyMirror *e =

@@ -1606,8 +1606,9 @@ void Box3DWorld::applyTuning(const WorldSettings &s) {
   cur = next;
 }
 
-void Box3DWorld::updateHitEvents() {
-  myImpl->hitPairs.clear();
+void Box3DWorld::updateHitEvents(bool append) {
+  if (!append)
+    myImpl->hitPairs.clear();
   if (!isValid())
     return;
   const b3ContactEvents ev = b3World_GetContactEvents(myImpl->worldId);
