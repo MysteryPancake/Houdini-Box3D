@@ -60,12 +60,45 @@ Objects that the solver is not given but that affect a solved object through a c
   point remap is a vector indexed by offset. A failed build keeps handle 0 and is
   not retried until the signature changes (counted as failed, one warning per step).
 * Core: `Box3DWorld::createMeshShape` (static bodies only; validates indices and finiteness). Box3D keeps a pointer to the
-  `b3MeshData`, so `Impl::bodyMeshes` owns it: freed after `destroyBody` / `destroyShapesByHandle`, and after the world.
+  `b3MeshData`, so `Impl::bodyGeometry` owns it (and height fields' `b3HeightFieldData`): freed after `destroyBody` / `destroyShapesByHandle`, and after the world.
 * Material (`affectorBodySettings`): an optional `Box3DData` on the affector (friction, bounce); without one, the
   object's own Friction and Bounce from its `PhysicalParms` (Static Object's and Ground Plane's Physical tab: 1 and
   0.5 by default), read by name as for RBD Objects; negative or non-finite values keep `nodeBodyDefaults()`. The body
   type is always static. (`static_material` checks Static Object's Friction.)
-* Not done: SDF / volume collision of Static Objects, height fields, mesh sharing between identical affectors,
+* Height fields: see below.
+* Not done: SDF / volume collision of Static Objects, holes from a mask layer, mesh sharing between identical affectors,
   `getCollider`-style per-pair collider selection, affectors with `SIM_ColliderInfo` options.
 * Verified against the HDK docs: `void SIMgetGeometryTransform(UT_DMatrix4 &result, const SIM_Object &)` (SIM_Utils.h;
   geometry local space to world space) and `void SIM_Object::getConstAffectors(SIM_ConstObjectArray &, const char *relationshiptype) const`.
+
+### Height fields
+
+An affector whose geometry has a height layer becomes one static Box3D height field instead of a mesh; its other
+primitives are ignored (`findHeightVolume`, `prepareHeightField`, `buildHeightFieldBody` in Box3DAffectors.cpp).
+
+* Which volume: the float `GEO_PrimVolume` named `height` that is one voxel thick along one index axis (Houdini's
+  height fields are 2D volumes; the HeightField SOP's default layer is `height`); with no `name` attribute at all, the
+  first such volume. 3D volumes and other layers (`mask` ...) are ignored.
+* Grid (`readHeightFrame`): the two other index axes give the sample counts and steps (`indexToPos` of index 0 and 1,
+  so the samples are the voxel centres, as Houdini draws them); heights run along the thin axis of
+  `GEO_PrimVolume::getTransform()`, normalised, in world units (a volume's own scale along that axis does not scale
+  them; an object-level transform does).
+* Frame: Box3D's height field has columns along local x, heights up y, rows along z and its corner at the body origin.
+  That is the volume's (e1, up, e2), or (e2, up, e1) with the heights transposed when the first is mirrored. The frame
+  times the object transform goes through `decomposeScaledRigid`: the pose goes to the body (animated transforms only
+  move it, `setTransformByHandle`), the scale times the steps into the height field's scale. A height field cannot
+  change its scale in place, so the scale is in the signature (a change rebuilds it). Shear (or a scale along a
+  slanted axis) falls back to the field's triangles as a mesh (`buildHeightMesh`, counter-clockwise from above,
+  through the mesh path's pose / bake).
+* Signature: a hash of the heights, the grid, friction / bounce, the mode and the scale (or the baked matrix). The
+  heights are read and hashed (`UT_VoxelArrayIteratorF` over `getVoxelHandle()`) only when `geometryIdentity(gdp,
+  true)` changes (kept in `Box3DAffectorBody::heightSource` / `heightHash`), and read again for a rebuild.
+* Core: `Box3DWorld::createHeightFieldShape(h, body, heights, countX, countZ, scale, holes)` (static bodies only;
+  refuses scale <= 0, non-finite heights, fewer than 2 x 2 points). Heights are quantised by Box3D to 16 bits between
+  the field's own lowest and highest height (`globalMinimumHeight` / `Maximum`), so a 1000 m range has 1.5 cm steps.
+  `holes` maps to material `B3_HEIGHT_FIELD_HOLE`; the Houdini side does not use it yet. Tested in
+  tests/core_heightfield.cpp; Houdini checks `heightfield_flat`, `heightfield_terrain` (plain, posed, sheared fallback,
+  compared with `hou.Volume.sample`), `heightfield_animated`.
+* HDK calls (from the HDK docs): `GEO_PrimVolume::getRes(int&, int&, int&)`, `getStorageType()`,
+  `indexToPos(exint, exint, exint, UT_Vector3D&)`, `getTransform()` (`const UT_Matrix3 &`), `getVoxelHandle()`;
+  `UT_VoxelArrayIterator::setConstArray / rewind / atEnd / advance / x / y / z / getValue`.

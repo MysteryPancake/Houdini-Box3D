@@ -520,10 +520,12 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
   }
   warnCount(objects, affectorCounts.failed + affectorCounts.noGeo,
             "affector object(s) have no usable collision geometry (they need "
-            "polygons) and are ignored");
+            "polygons or a height field) and are ignored");
   if (affectorCounts.added || affectorCounts.removed || affectorCounts.moved)
-    B3D_LOG("  affectors: %d, +%d built, %d moved, -%d removed, %d baked",
-            affectorCounts.total, affectorCounts.added, affectorCounts.moved,
+    B3D_LOG("  affectors: %d, +%d built (%d height field), %d moved, -%d "
+            "removed, %d baked",
+            affectorCounts.total, affectorCounts.added,
+            affectorCounts.heightFields, affectorCounts.moved,
             affectorCounts.removed, affectorCounts.baked);
 
   // Remove bodies whose point (or object) is gone: the unstamped entries.

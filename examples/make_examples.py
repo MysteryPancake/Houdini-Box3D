@@ -21,6 +21,7 @@ Scenes:
   wrecking_ball   a ball on a rigid rope (distance joint) swinging into a brick wall
   paddle_mixer    a motor: a paddle driven by a revolute motor churning a tank of balls
   forces          a Fan Force DOP and a POP Force (in a Multiple Solver) pushing a field of boxes
+  terrain         a height-field collider: bodies tumbling down hills made with a HeightField SOP
 """
 
 import argparse
@@ -877,6 +878,76 @@ Use Force DOPs on the solver to see only the POP force."""
     tidy(240, note, dop)
     return dop, 240
 
+def scene_terrain():
+    # The terrain: a HeightField SOP whose height layer a Volume Wrangle shapes into hills
+    # sloping down towards +x.
+    terrain = create(hou.node("/obj"), "geo", "terrain")
+    for child in terrain.children():
+        child.destroy()
+    hf = create(terrain, "heightfield", "heightfield")
+    set_parm(hf, "size", (60.0, 60.0))
+    set_parm(hf, "gridspacing", 0.4)
+    hills = create(terrain, "volumewrangle", "hills")
+    hills.setInput(0, hf)
+    set_parm(hills, "snippet", """\
+// Rolling hills on a slope that falls towards +x (the height layer, in metres).
+@height = 3.0 * sin(@P.x * 0.16) * cos(@P.z * 0.13)
+        + 1.2 * sin(@P.x * 0.45 + @P.z * 0.3)
+        - 0.12 * @P.x;""")
+    out_terrain = create(terrain, "null", "OUT_terrain")
+    out_terrain.setInput(0, hills)
+    display(out_terrain)
+    cooked_geometry(out_terrain)
+
+    p = Pieces("terrain_pieces")
+    kinds = [("boxes", "box"), ("spheres", "sphere"), ("capsules", "capsule")]
+    shapes = [p.shape_box("boxes", (0.8, 0.8, 0.8)), p.shape_sphere("spheres", 0.45),
+              p.shape_tube("capsules", 0.25, 1.0)]
+    for k, ((tag, rep), shape) in enumerate(zip(kinds, shapes)):
+        cd = rainbow(k / len(kinds))
+        calls = []
+        for i in range(10):
+            for j in range(10):
+                x, z = -18.0 + (i - 4.5) * 2.0, (j - 4.5) * 2.0
+                y = 12.0 + k * 2.5 + 0.3 * ((i + j) % 3)
+                spin = quat_about((0.6, 0.0, 0.8), 0.4 * (i + 2 * j + k))
+                calls.append(mk((x + 0.6 * k, y, z), f"{tag}{i}_{j}", spin, cd, georep=rep))
+        p.stream(tag, shape, "\n".join(calls), f"{tag}: bullet_georep '{rep}'")
+    path = p.finish()
+
+    dop = create(hou.node("/obj"), "dopnet", "terrain_sim")
+    obj = create(dop, "rbdpackedobject", "pieces")
+    set_parm(obj, "soppath", path)
+    # A Static Object whose geometry is a height field: the Box3D Solver collides the
+    # pieces with a Box3D height field made from its height layer.
+    static = create(dop, "staticobject", "terrain")
+    set_parm(static, "soppath", out_terrain.path())
+    merge = create(dop, "merge", "merge")
+    merge.setInput(0, obj)
+    merge.setInput(1, static)
+    solver = create(dop, "box3d_solver", "box3d_solver")
+    solver.setInput(0, merge)
+    out = create(dop, "output", "output")
+    out.setInput(0, solver)
+    display(out)
+
+    note = f"""TERRAIN: {p.count} bodies tumble down hills made with a HeightField SOP.
+
+The Static Object 'terrain' reads /obj/terrain, whose geometry is a height field (a 2D
+volume named 'height'). The Box3D Solver turns it into a Box3D height field: the same
+grid and heights, no polygons needed. A Static Object with polygons instead becomes a
+triangle mesh.
+
+The object's transform poses the height field; moving it with an animated OBJ Path moves
+the collider without rebuilding it. Shear falls back to the field's triangles.
+
+Try: change the hills wrangle, or add a HeightField Noise or HeightField Erode SOP before
+OUT_terrain; add a Box3D Data node after 'terrain' in the DOP network to set its friction
+or bounce."""
+    tidy(240, note, dop)
+    return dop, 240
+
+
 SCENES = {
     "shapes": scene_shapes,
     "many_bodies": scene_many_bodies,
@@ -885,6 +956,7 @@ SCENES = {
     "wrecking_ball": scene_wrecking_ball,
     "paddle_mixer": scene_paddle_mixer,
     "forces": scene_forces,
+    "terrain": scene_terrain,
 }
 
 

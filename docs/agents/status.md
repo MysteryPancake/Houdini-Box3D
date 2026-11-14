@@ -23,6 +23,10 @@ remove an item once it has been checked, and record anything new here rather tha
   Data change mid-simulation reaching existing bodies is verified, `data_change_midsim`.)
 
 **HDK and Houdini behaviour**
+* Height-field affectors (new, not yet built or run in Houdini): the HDK calls compile, `heightfield_flat`,
+  `heightfield_terrain` and `heightfield_animated` pass, and two assumptions hold: heights run along the volume's
+  thin axis, normalised and unscaled by the volume's own transform; and a HeightField SOP edit changes
+  `geometryIdentity(gdp, true)` (else the heights are not re-read until something else changes).
 * Data ids surviving the DOP copy between timesteps (the sync skip). If they do not, every step scans: correct, no gain.
   The debug log `sync: N of M object(s) unchanged, scan skipped` shows it working.
 * The timestamp semantics behind `canContinue`.
@@ -224,7 +228,7 @@ The one list of what is still to do. Keep it here only (no TODO comments in the 
   (inactive, non-animated) `concave` point becomes a Box3D mesh of its packed geometry; a dynamic one keeps the
   compound. Mind the mesh's own memory (not the hull cache), `deforming` rebuilds, and that a mesh body cannot become
   dynamic without rebuilding its shape.
-* Height-field colliders; `cylinder` / `plane` shapes (no Box3D shape; hull or big box approximations possible).
+* Height fields for points (only affectors have them; see "Height fields" in [forces-affectors.md](forces-affectors.md)); holes from a mask layer; `cylinder` / `plane` shapes (no Box3D shape; hull or big box approximations possible).
 * Constraint networks: point / vertex / agent anchors (`anchor_id`, `anchor_type`); `constraint_type` on our own nodes
   (e.g. on the weld node: `position` -> spherical, `rotation` -> rotation only, `all` -> weld; SideFX data reads it).
 * SideFX constraint data, the parts not mapped: Glue half-life / propagation (impulse accumulation); Soft

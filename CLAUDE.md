@@ -112,6 +112,8 @@ tests/
   KeyedWorld.h        Test-only Box3DWorld subclass: bodies by caller-chosen id, over the handle API
   core_smoke.cpp      Version print + world create/destroy
   core_physics.cpp    Unit + physics checks (CHECK macro, nonzero exit on failure)
+  core_mesh.cpp       Static triangle meshes, mesh scale, decomposeScaledRigid
+  core_heightfield.cpp Static height fields: pose, scale, ramps, holes, refused input
   core_threads.cpp    1 worker vs N workers: timing + determinism
   core_taskrunner.cpp Host-supplied TaskRunner shared by 40+ worlds: no extra threads, same results as 1 worker
   core_joints.cpp     Every joint type, world anchors, live updates, breaking, feedback, the parameter table

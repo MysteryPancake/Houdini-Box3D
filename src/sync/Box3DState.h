@@ -249,6 +249,11 @@ struct Box3DAffectorBody {
       0, 0,
       0}; // (not in the signature: animating them must not rebuild the mesh)
   bool poseKnown = false;
+  // Height fields: the heights' hash, and the geometry identity it was taken
+  // from (the heights are read again only when that changes).
+  uint64_t heightSource = 0;
+  uint64_t heightHash = 0;
+  bool heightsKnown = false;
 };
 
 // One joint made from a primitive of a constraint network (Box3DJointSync.cpp).

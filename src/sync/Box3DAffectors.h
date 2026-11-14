@@ -6,7 +6,8 @@
 // (SIM_Object::getConstAffectors). The solver calls syncAffectorBodies() once
 // per step, after the point bodies are synced. Each affector's polygons become
 // one static Box3D triangle mesh, posed by the object's Houdini transform
-// (SIMgetGeometryTransform).
+// (SIMgetGeometryTransform); an affector with a height field (a flat float
+// volume named "height") becomes a static Box3D height field instead.
 #pragma once
 
 #include <cstdint>
@@ -23,6 +24,7 @@ struct Box3DAffectorCounts {
   int noGeo = 0;  // no Geometry data: skipped
   int baked =
       0; // built with a scaled / sheared transform baked into the vertices
+  int heightFields = 0; // of `added`: built from a height field
 };
 
 // `objects` are the objects being solved (their affectors are gathered here).

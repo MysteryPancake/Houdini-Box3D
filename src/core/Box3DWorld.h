@@ -338,6 +338,19 @@ public:
                        int vertexCount, const int32_t *triangles,
                        int triangleCount, float weldTolerance = 0.0f,
                        const float scale[3] = nullptr);
+  // A static height field: countX x countZ grid points (both >= 2), heights
+  // [row * countX + column]. Body-local vertex = (column * scale[0], height *
+  // scale[1], row * scale[2]): the grid corner sits at the body origin, columns
+  // run along x, rows along z, heights up y, and the triangles face +y.
+  // `holes` (optional, (countX-1) * (countZ-1) bytes, cell [row * (countX-1) +
+  // column]) leaves the cells where it is non-zero open. Box3D keeps heights as
+  // 16-bit steps between the lowest and the highest height. Static bodies
+  // only; false for a non-static body, a scale component <= 0, non-finite
+  // heights or too few points. The data belongs to the body, like a mesh.
+  bool createHeightFieldShape(BodyHandle h, const BodySettings &body,
+                              const float *heights, int countX, int countZ,
+                              const float scale[3],
+                              const uint8_t *holes = nullptr);
   void
   setMeshScaleByHandle(BodyHandle h,
                        const float scale[3]); // every mesh shape of the body

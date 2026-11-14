@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cfloat>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <mutex>
 #include <unordered_map>
@@ -178,26 +179,36 @@ struct Box3DWorld::Impl {
   // the origin, made on first use and not counted in liveBodies.
   b3BodyId anchor = b3_nullBodyId;
 
-  // Triangle meshes for static colliders. Box3D keeps a pointer to the
-  // b3MeshData (it does not clone it), so we own it: freed after its body is
-  // destroyed, or after the world.
-  std::unordered_map<BodyHandle, std::vector<b3MeshData *>> bodyMeshes;
+  // Triangle meshes and height fields for static colliders. Box3D keeps a
+  // pointer to the b3MeshData / b3HeightFieldData (it does not clone them), so
+  // we own them: freed after their body is destroyed, or after the world.
+  struct OwnedGeometry {
+    std::vector<b3MeshData *> meshes;
+    std::vector<b3HeightFieldData *> heightFields;
+    void release() {
+      for (b3MeshData *m : meshes)
+        b3DestroyMesh(m);
+      for (b3HeightFieldData *hf : heightFields)
+        b3DestroyHeightField(hf);
+      meshes.clear();
+      heightFields.clear();
+    }
+  };
+  std::unordered_map<BodyHandle, OwnedGeometry> bodyGeometry;
 
-  // The meshes a body's shapes used. Call after the body or its shapes are
-  // destroyed.
+  // The meshes and height fields a body's shapes used. Call after the body or
+  // its shapes are destroyed.
   void releaseBodyResources(BodyHandle body) {
-    auto mit = bodyMeshes.find(body);
-    if (mit == bodyMeshes.end())
+    auto it = bodyGeometry.find(body);
+    if (it == bodyGeometry.end())
       return;
-    for (b3MeshData *m : mit->second)
-      b3DestroyMesh(m);
-    bodyMeshes.erase(mit);
+    it->second.release();
+    bodyGeometry.erase(it);
   }
   void destroyAllMeshes() {
-    for (auto &kv : bodyMeshes)
-      for (b3MeshData *m : kv.second)
-        b3DestroyMesh(m);
-    bodyMeshes.clear();
+    for (auto &kv : bodyGeometry)
+      kv.second.release();
+    bodyGeometry.clear();
   }
 };
 
@@ -693,7 +704,66 @@ bool Box3DWorld::createMeshShape(BodyHandle h, const BodySettings &body,
     b3DestroyMesh(mesh);
     return false;
   }
-  myImpl->bodyMeshes[h].push_back(mesh);
+  myImpl->bodyGeometry[h].meshes.push_back(mesh);
+  return true;
+}
+
+bool Box3DWorld::createHeightFieldShape(BodyHandle h, const BodySettings &body,
+                                        const float *heights, int countX,
+                                        int countZ, const float scale[3],
+                                        const uint8_t *holes) {
+  if (!h || !heights || !scale || countX < 2 || countZ < 2)
+    return false;
+  // Box3D indexes with int and asserts on these: refuse instead.
+  if (static_cast<int64_t>(countX) * countZ > (int64_t{1} << 28))
+    return false;
+  if (!finite3(scale) || !(scale[0] > 0.0f) || !(scale[1] > 0.0f) ||
+      !(scale[2] > 0.0f))
+    return false;
+  if (b3Body_GetType(b3LoadBodyId(h)) != b3_staticBody)
+    return false;
+
+  const size_t count =
+      static_cast<size_t>(countX) * static_cast<size_t>(countZ);
+  float lo = heights[0], hi = heights[0];
+  for (size_t i = 0; i < count; ++i) {
+    const float v = heights[i];
+    if (!std::isfinite(v))
+      return false;
+    lo = std::min(lo, v);
+    hi = std::max(hi, v);
+  }
+
+  const size_t cells =
+      static_cast<size_t>(countX - 1) * static_cast<size_t>(countZ - 1);
+  std::vector<uint8_t> material(cells, 0);
+  if (holes)
+    for (size_t i = 0; i < cells; ++i)
+      if (holes[i])
+        material[i] = B3_HEIGHT_FIELD_HOLE;
+
+  std::vector<float> hs(heights, heights + count); // Box3D takes float*
+  b3HeightFieldDef def = {};
+  def.heights = hs.data();
+  def.materialIndices = material.data();
+  def.scale = makeVec3(scale);
+  def.countX = countX;
+  def.countZ = countZ;
+  // Quantised to 16 bits between these (unscaled): the field's own range.
+  def.globalMinimumHeight = lo;
+  def.globalMaximumHeight = hi;
+  def.clockwiseWinding = false; // triangles face +y
+
+  b3HeightFieldData *hf = b3CreateHeightField(&def);
+  if (!hf)
+    return false;
+  const b3ShapeDef sdef = shapeDefFor(body, false);
+  const b3ShapeId shape = b3CreateHeightFieldShape(b3LoadBodyId(h), &sdef, hf);
+  if (B3_IS_NULL(shape)) {
+    b3DestroyHeightField(hf);
+    return false;
+  }
+  myImpl->bodyGeometry[h].heightFields.push_back(hf);
   return true;
 }
 
