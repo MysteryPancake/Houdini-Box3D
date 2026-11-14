@@ -42,7 +42,20 @@ source /opt/hfsX.Y.ZZZ/houdini_setup
 
 The plugin is copied to `~/houdiniX.Y/dso`.
 
-Always build **Release**, never Debug, and close Houdini before rebuilding. To share the plugin, run `cpack` in the build folder and extract the zip into your `houdiniX.Y/packages` folder. It only loads in the Houdini version it was built for.
+Always build **Release**, never Debug, and close Houdini before rebuilding.
+
+### Packaging
+
+To share the plugin, build it, then make a zip in the build folder:
+
+```
+cd build
+cpack -G ZIP -C Release
+```
+
+(`-C Release` is needed on Windows; on Linux plain `cpack -G ZIP` works.) This makes `Box3D-Houdini-<version>-<system>.zip`. Extract it into your `houdiniX.Y/packages` folder so `Box3D.json` sits directly inside it. It only loads in the Houdini version it was built for.
+
+The zip includes the Box3D Packed Object and Box3D Solver SOP assets only if hython was found during the build. If you test the package on the machine you built on, first remove the copies the build put in your `houdiniX.Y/dso` and `otls` folders.
 
 ## Quick start
 
@@ -58,6 +71,7 @@ Example scenes: run `make_examples.bat` (Linux: `hython examples/make_examples.p
 |---|---|
 | Box3D Solver | The solver |
 | Box3D Packed Object | Packed geometry as a Box3D object, with Box3D Data's settings on the node |
+| Box3D Solver (SOP) | Like RBD Bullet Solver: packed geometry, constraints, proxy and collision in, simulated out |
 | Box3D Data | Per-object settings, for objects made by other nodes |
 | Box3D Weld / Spherical / Revolute / Prismatic / Distance / Motor / Parallel / Wheel / Filter Constraint Relationship | Joint types, used with a Constraint Network |
 

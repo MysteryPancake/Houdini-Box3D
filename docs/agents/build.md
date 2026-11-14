@@ -56,6 +56,42 @@ Traps it handles:
 * A second Box3D Data after the asset only changes Set Always parameters: Set Initial applies when the data is created,
   and the asset's already has been.
 
+## Box3D Solver SOP asset
+
+`tools/make_solver_sop.py <out.hda> [<packedobject.hda>]` builds `box3d_solver` in the SOP table (the DOP of the same
+name is another table), after the Packed Object, which it installs first. The module docstring draws the network.
+Four inputs, four matching outputs: Geometry, Constraints, Proxy, Collision.
+* A SOP-level DOP network whose inputs 0-2 are the simulated pieces (Geometry, or Proxy when connected), Constraints
+  and Collision, read inside with `dopcontextgeo(".", i)`.
+  Pieces and collision are Box3D Packed Objects, Use Object Transform off (SOP space). Unconnected inputs are switched
+  out by point count, so an empty input counts as unconnected everywhere alike: SOP Switches with the input's `IN_*`
+  null as spare input and `npoints(-1) > 0`, DOP Switches with `npoints(opinputpath("..", i)) > 0` (the DOP
+  network's inputs; collision also needs Use External Collisions), as RBD Bullet Solver does.
+* Collision: Default Shape Convex Hull. Animated Collision (default on) drives Body Type (Kinematic / Static) and every
+  Parameter Operation of the collision Packed Object's inner SOP Geometry (Set Always / Set Initial), so the SOP is
+  re-imported each step and the solver turns pose changes into kinematic targets. That nested Packed Object is made
+  editable for this; the asset is rebuilt every build anyway. A point with `active = 0` and no `animated` stays static.
+* The Constraint Network DOP uses Second Context Geometry and Attach Internal Constraints to Object (as RBD Bullet
+  Solver), so the network is the pieces object's `ConstraintGeometry`. Only the pieces go through it, the collision
+  object is merged after: a second object would get its own copy and make every joint twice. Every relationship in
+  `RELATIONSHIPS` (ours and SideFX's) is merged into it with default Data Names, so any `constraint_name` finds one.
+  Their parameters are not promoted: set values per primitive (floats multiply the node's).
+* Proxy: Transform Pieces moves Geometry by `name` from the proxy as connected (rest) to the simulated proxy, wired
+  straight in (it reads packed transforms itself).
+* Constraints output: DOP Import of the pieces object, Geometry Data Path `ConstraintGeometry`, so it carries `broken`,
+  `force` and the rest.
+* Parameters: Reset Simulation and Start Frame above the tabs, then the solver's tabs (folders found under its Data
+  Options, a tab of simple folders such as Misc kept whole; Guide Options skipped; `TAB_RENAMES` / `TAB_MOVES` cover older plugins). Tab order: Solver, Collision, Forces,
+  Pieces, the solver's other tabs (Misc), Advanced last. Solver: the solver's own settings, Cache Simulation, then the
+  solver's Collision tab (contact settings) as a Contacts folder. Collision: Use External Collisions
+  (`usecollisions`), Animated Collision and the collision object's Shape, Material and Sleep & Contacts folders (`COLLIDER_FOLDERS`,
+  all named `collision_*`). Pieces: the pieces' Box3D Data folders; names the solver uses get `piece_`
+  (`enablesleep`). Conditions are rewritten with the names. Inner solver `parmop_*` set to
+  Set Initial, as in the Packed Object.
+* Input / output labels are written into the DialogScript after the last `updateFromNode` (no hou setter). Wire
+  colours come from the subnet's indirect input nodes (`INPUT_COLORS`: the constraints input pink, and its IN /
+  OUT nodes).
+
 ## Tests
 
 Houdini checks: `hython tests/houdini/run_tests.py` (`--list`, `--failed`, `--info`, `--update-baseline`), or `test.bat`

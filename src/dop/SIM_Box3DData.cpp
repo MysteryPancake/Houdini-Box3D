@@ -23,8 +23,7 @@ const SIM_DopDescription *SIM_Box3DData::getDescription() {
           .menu("defaultshape", "Default Shape",
                 static_cast<int>(b3dop::ShapeType::Convex),
                 {"Box", "Sphere", "Convex Hull",
-                 "Concave / Compound (Hull per Piece)", "Capsule",
-                 "None (No Collision)"},
+                 "Concave / Compound (Hull per Piece)", "Capsule", "None"},
                 "Collision shape for points without a bullet_georep attribute. "
                 "Concave builds one convex hull per piece.")
           // Off: box / sphere / capsule from bullet_primS / radius / length /

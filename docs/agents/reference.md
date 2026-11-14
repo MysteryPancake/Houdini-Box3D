@@ -66,8 +66,10 @@ Every node's parameters come from `Box3DParms` (SIM_Box3DParms.h): one call per 
 optional disable condition). It keeps the names, defaults, ranges, menus and conditions alive and terminates the list.
 `tab()` groups share one `PRM_SWITCHER` (`PRM_Default(count, label)` per tab, switcher `b3dtabs`); `folder()` groups
 are simple folders, each a one-folder switcher with `PRM_SpareData::groupTypeSimple` named `<prefix><index>`. A builder
-uses one kind. The solver uses tabs: Setup (time scale, Substeps, Solver Passes, gravity, aging and reaping), Collision (contact tuning, recycling,
-Continuous Collision), Forces (Force DOPs, bounce, friction / bounce mixing), Advanced (Warm Starting, Allow
-Sleeping, threads, speed limit, ...); its guide parameters are a plain list on Houdini's own Guide Options tab (so the
+uses one kind, except `subfolder()`: a simple folder inside a tab (`<prefix>sub<index>`), counted as one parameter of
+the tab. The solver uses tabs: Solver (time scale, Substeps, Solver Passes), Collision (contact tuning, recycling),
+Forces (gravity, bounce, friction / bounce mixing), Misc (simple folders Sleeping: Allow Sleeping, Forces Wake Bodies;
+Aging: Enable Aging, Reap Dead Points, Reap At Frame End), Advanced (Warm Starting, Continuous Collision, Use Force
+DOPs, threads, speed limit, ...); its guide parameters are a plain list on Houdini's own Guide Options tab (so the
 solver's tabs sit inside Data Options). Box3D Data and the joint nodes use simple folders: Box3D Data's are Shape, Body, Material, Sleep & Contacts (CCD Threshold, Fast Object, Contact Recycling, the
 sleep settings, Add Impact Data last). A function-local static, because Houdini keeps pointers into it. Menu tokens are "0", "1", ... in item order (read as ints).

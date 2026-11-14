@@ -162,10 +162,16 @@ def test_ui():
     expect("Revolute's Joint and Revolute folders are simple",
            (len(ours), all(f.folderType() == hou.folderType.Simple for f in ours)), (2, True))
     solver_tabs = [f for f in all_folders(solver.parmTemplateGroup().entries())
-                   if f.label() in ("Setup", "Collision", "Forces", "Advanced")]
+                   if f.label() in ("Solver", "Collision", "Forces", "Misc", "Advanced")]
     expect("Solver tabs present, as tabs",
            ([f.label() for f in solver_tabs], all(f.folderType() == hou.folderType.Tabs for f in solver_tabs)),
-           (["Setup", "Collision", "Forces", "Advanced"], True))
+           (["Solver", "Collision", "Forces", "Misc", "Advanced"], True))
+    misc = next((f for f in solver_tabs if f.label() == "Misc"), None)
+    expect("Solver Misc tab holds simple Sleeping and Aging folders",
+           [(f.label(), f.folderType() == hou.folderType.Simple, sorted(c.name() for c in f.parmTemplates()))
+            for f in (misc.parmTemplates() if misc else []) if f.type() == hou.parmTemplateType.Folder],
+           [("Sleeping", True, ["enablesleep", "forceswake"]),
+            ("Aging", True, ["enableaging", "reapatframeend", "reapdead"])])
     expect("Solver Contact Stiffness default", solver.parm("contactstiffness").parmTemplate().defaultValue()[0], 60.0)
     expect("Solver Contact Damping Ratio default", solver.parm("contactdamping").parmTemplate().defaultValue()[0], 3.0)
     expect("Enable Spring label", rev.parm("enable_spring").parmTemplate().label(), "Enable Spring")

@@ -44,12 +44,13 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
       "). Usually only faster for very large scenes.";
   static Box3DParms p;
   static const PRM_Template *templates =
-      p.tab("Setup")
+      p.tab("Solver")
           .number("timescale", "Time Scale", 1.0, R{0, 2},
                   "Multiplies the time step: below 1 is slow motion, above 1 "
                   "fast motion.")
           // Outer loop: whole Box3D steps, each with its own collision
-          // detection. Slider 1 to 10; minimum 1, more can be typed (capped 64).
+          // detection. Slider 1 to 10; minimum 1, more can be typed (capped
+          // 64).
           .integer("stepsperframe", "Substeps", 1, R{1, 10},
                    "Box3D steps per time step. 1 steps once per frame (the "
                    "scene FPS), 2 twice, and so on. Each step detects "
@@ -65,19 +66,6 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                    "positions. More is stiffer and more stable for stacks "
                    "and chains, but slower. Raise Substeps instead for "
                    "collisions missed between frames.")
-          .vector("gravity", "Gravity", {0.0, -9.80665, 0.0},
-                  "Acceleration of every dynamic body, in units per second "
-                  "squared. Scale per body with Gravity Scale on Box3D Data.")
-          .toggle("enableaging", "Enable Aging", false,
-                  "Add the frame time step (not Time Scale-adjusted) to each "
-                  "point's age, and mark points dead once age exceeds life.")
-          .toggle("reapdead", "Reap Dead Points", false,
-                  "Delete points whose dead attribute is 1. Off keeps them "
-                  "where they died, no longer simulated.")
-          .toggle("reapatframeend", "Reap At Frame End", true,
-                  "Delete points that die during a step at its end, so dead "
-                  "points are never seen. Off keeps them for one frame.",
-                  "{ reapdead == 0 }")
           .tab("Collision")
           // Stiffer and less damped than Box3D's own defaults (30 Hz, 10):
           // a more rigid look. Box3D caps the stiffness at 1/8 of the pass
@@ -98,17 +86,10 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                   "Reuse contacts for pairs that barely moved: faster but "
                   "slightly less exact. 0 turns it off. "
                   "Box3D Data's Contact Recycling turns it off per object.")
-          .toggle("enablecontinuous", "Continuous Collision", true,
-                  "Stop fast bodies passing through static ones (and through "
-                  "moving ones, for Box3D Data's Fast Object).")
           .tab("Forces")
-          .toggle("useforces", "Use Force DOPs", true,
-                  "Apply Force DOPs connected to the objects (Wind, Fan, "
-                  "etc.). Set Gravity to 0 when using a Gravity Force.")
-          .toggle("forceswake", "Forces Wake Bodies", false,
-                  "Let forces wake sleeping bodies, e.g. wind that should blow "
-                  "resting pieces away.",
-                  "{ useforces == 0 }")
+          .vector("gravity", "Gravity", {0.0, -9.80665, 0.0},
+                  "Acceleration of every dynamic body, in units per second "
+                  "squared. Scale per body with Gravity Scale on Box3D Data.")
           .toggle("restitutionpropagation", "Bounce Propagation", false,
                   "Pass bounce on through stacks of touching pieces.")
           .number("bouncethreshold", "Bounce Threshold", 1.0, R{0, 5},
@@ -127,13 +108,36 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
           .menu("restitutionmixing", "Bounce Mixing", 1,
                 {"Geometric Mean", "Minimum", "Maximum", "Average", "Multiply"},
                 "How the bounce of two touching bodies is combined.")
+          .tab("Misc")
+          .subfolder("Sleeping")
+          .toggle("enablesleep", "Allow Sleeping", true,
+                  "Let resting bodies stop simulating until touched. Off keeps "
+                  "every body awake, whatever Box3D Data says.")
+          .toggle("forceswake", "Forces Wake Bodies", false,
+                  "Let forces wake sleeping bodies, e.g. wind that should blow "
+                  "resting pieces away.",
+                  "{ useforces == 0 }")
+          .subfolder("Aging")
+          .toggle("enableaging", "Enable Aging", false,
+                  "Add the frame time step (not Time Scale-adjusted) to each "
+                  "point's age, and mark points dead once age exceeds life.")
+          .toggle("reapdead", "Reap Dead Points", false,
+                  "Delete points whose dead attribute is 1. Off keeps them "
+                  "where they died, no longer simulated.")
+          .toggle("reapatframeend", "Reap At Frame End", true,
+                  "Delete points that die during a step at its end, so dead "
+                  "points are never seen. Off keeps them for one frame.",
+                  "{ reapdead == 0 }")
           .tab("Advanced")
           .toggle("enablewarmstarting", "Warm Starting", true,
                   "Reuse last step's contact forces. Leave on; off makes "
                   "stacks less stable.")
-          .toggle("enablesleep", "Allow Sleeping", true,
-                  "Let resting bodies stop simulating until touched. Off keeps "
-                  "every body awake, whatever Box3D Data says.")
+          .toggle("enablecontinuous", "Continuous Collision", true,
+                  "Stop fast bodies passing through static ones (and through "
+                  "moving ones, for Box3D Data's Fast Object).")
+          .toggle("useforces", "Use Force DOPs", true,
+                  "Apply Force DOPs connected to the objects (Wind, Fan, "
+                  "etc.). Set Gravity to 0 when using a Gravity Force.")
           .toggle("autothreads", "Use All Threads", false,
                   autoThreadsHelp.c_str())
           .integer("threads", "Threads", b3dop::defaultWorkerCount(),

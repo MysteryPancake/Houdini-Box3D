@@ -5,7 +5,8 @@
 // one per tab or folder, so the PRM boilerplate, the counts and the storage the
 // templates point at are handled in one place. Groups are either tabs (one
 // switcher) or simple folders (a one-folder switcher each, with
-// PRM_SpareData::groupTypeSimple); a builder uses one kind only. Keep the
+// PRM_SpareData::groupTypeSimple); a builder uses one kind only, except that a
+// tab can hold simple folders (subfolder()). Keep the
 // builder alive for the life of the plugin (a function-local static): Houdini
 // keeps pointers into it.
 #pragma once
@@ -39,6 +40,18 @@ public:
   Box3DParms &tab(const char *label) {
     myGroups.push_back({label, myParms.size(), 0});
     mySimple = false;
+    myInSub = false;
+    return *this;
+  }
+
+  // Starts a simple folder inside the current tab (tabs only); parameters added
+  // after it go in it, until the next subfolder() or tab(). In the tab's count
+  // the folder's switcher is one parameter, its contents none.
+  Box3DParms &subfolder(const char *label) {
+    mySubs.push_back({label, myParms.size(), 0});
+    myInSub = true;
+    if (!myGroups.empty())
+      ++myGroups.back().count;
     return *this;
   }
 
@@ -113,7 +126,14 @@ public:
                                        static_cast<int>(myTabDefaults.size()),
                                        &myTabsName, myTabDefaults.data()));
       }
-      myBuilt.insert(myBuilt.end(), myParms.begin(), myParms.end());
+      // Each subfolder's switcher goes just before its first parameter.
+      size_t sub = 0;
+      for (size_t i = 0; i <= myParms.size(); ++i) {
+        while (sub < mySubs.size() && mySubs[sub].start == i)
+          addSubfolderSwitcher(sub++);
+        if (i < myParms.size())
+          myBuilt.push_back(myParms[i]);
+      }
     } else {
       size_t next = 0; // first parameter not yet placed
       for (size_t i = 0; i < myGroups.size(); ++i) {
@@ -144,6 +164,16 @@ private:
     int count;
   };
 
+  void addSubfolderSwitcher(size_t i) {
+    const Group &g = mySubs[i];
+    myStrings.push_back(myFolderPrefix + "sub" + std::to_string(i));
+    myNames.emplace_back(myStrings.back().c_str());
+    myFolderDefaults.emplace_back(static_cast<fpreal>(g.count), g.label);
+    myBuilt.push_back(PRM_Template(PRM_SWITCHER, 1, &myNames.back(),
+                                   &myFolderDefaults.back(), nullptr, nullptr,
+                                   nullptr, &PRM_SpareData::groupTypeSimple));
+  }
+
   PRM_Range *range(Range r) {
     myRanges.emplace_back(
         r.hardMin ? PRM_RANGE_RESTRICTED : PRM_RANGE_UI, r.min,
@@ -171,7 +201,9 @@ private:
     }
     myParms.push_back(PRM_Template(type, size, &myNames.back(), d.data(), menu,
                                    r, 0, 0, 1, help, cond));
-    if (!myGroups.empty())
+    if (myInSub)
+      ++mySubs.back().count;
+    else if (!myGroups.empty())
       ++myGroups.back().count;
     return *this;
   }
@@ -185,7 +217,9 @@ private:
   std::deque<PRM_ChoiceList> myMenus;
   std::deque<PRM_Conditional> myConditions;
   std::vector<Group> myGroups;
+  std::vector<Group> mySubs; // simple folders inside tabs (subfolder())
   bool mySimple = false;
+  bool myInSub = false;
   // Tabs: one array, filled before the switcher points at it. Folders: one
   // each, in a deque so earlier ones keep their addresses.
   std::vector<PRM_Default> myTabDefaults;
