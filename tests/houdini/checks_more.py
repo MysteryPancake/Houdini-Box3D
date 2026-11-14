@@ -648,7 +648,114 @@ def test_aging_vs_pop_noreap():
     after death (still growing or not) matches POP's on every frame."""
     return _aging_pop_result("aging_vs_pop_noreap", False, True)
 
+
+# ---------------------------------------------------------------------------
+# Probe: packed points sharing a `name` (Bullet solves them as one object)
+# ---------------------------------------------------------------------------
+
+
+def _pair_scene(tag, kind, pieces, rename, frames, keep_velocity=False):
+    """Simulates `pieces` (packed_boxes specs) with Box3D or Bullet after renaming the pieces whose
+    index is in `rename` to "pair". Returns {frame: [(name, P, v, w, mass) per point, in point
+    order]} and the solver's messages."""
+    path, names = packed_boxes(f"pair_{tag}_{kind}", pieces)
+    targets = " || ".join(f's@name == "{names[i]}"' for i in rename)
+    prev = hou.node(path)
+    wr = create(prev.parent(), "attribwrangle", "rename")
+    wr.setInput(0, prev)
+    set_parm(wr, ["snippet"], f'if ({targets}) s@name = "pair";')
+    display(wr)
+    dop = new_dopnet(f"pair_{tag}_{kind}")
+    obj = packed_object(dop, "pieces", wr.path(), keep_velocity=keep_velocity)
+    solver = box3d_solver(dop, obj) if kind == "box3d" else bullet_solver(dop, obj)
+    finish(dop, solver)
+    msgs = []
+
+    def attr(pt, geo, name, default):
+        return pt.attribValue(name) if geo.findPointAttrib(name) is not None else default
+
+    def sample(sim, f):
+        if f == frames:
+            msgs.extend(m for m in node_messages(solver) if "Box3D" in m)
+        o = sim.findObject("pieces")
+        geo = o.geometry() if o is not None else None
+        if geo is None:
+            return []
+        return [(attr(pt, geo, "name", ""), pt.position(), attr(pt, geo, "v", (0, 0, 0)),
+                 attr(pt, geo, "w", (0, 0, 0)), attr(pt, geo, "mass", None)) for pt in geo.points()]
+
+    return step(dop, frames, sample), msgs
+
+
+def _fmt(v):
+    return "(" + ", ".join(f"{x:.2f}" for x in v) + ")"
+
+
+def _pair_points(sample):
+    return [p for p in sample if p[0] == "pair"]
+
+
+def test_name_fusion_probe():
+    """INFO probe for matching Bullet: two packed points renamed to the same `name`. Bullet is said
+    to solve same-named packed primitives as one object; measured on 22.0.502 it does not (they land
+    separately and keep their own mass and active), but both start with the first point's velocity.
+    For Bullet and Box3D, reports: (1) a pair dropped one end first: whether the two points keep
+    their 3.2 spacing (one rigid object) or
+    land separately (2.0 apart); (2) different v on the two points (up 2 on the left one only):
+    which velocity the pair ends up with, and whether it spins (both moving at the average with
+    a spin = momentum combined); (3) different density: the mass written on each point; (4) one
+    point active 0, the other 1: whether the pair stays put, falls or splits."""
+    results = []
+    box = {"size": (1, 1, 1)}
+    for kind in ("bullet", "box3d"):
+        label = "Bullet" if kind == "bullet" else "Box3D"
+        notes = []
+
+        # (1) one end first
+        pieces = [GROUND, dict(box, center=(-1, 3, 0)), dict(box, center=(1, 5.5, 0))]
+        track, msgs = _pair_scene("tilt", kind, pieces, [1, 2], 72)
+        spans = []
+        for f in (1, 24, 48, 72):
+            pts = _pair_points(track[f])
+            spans.append(f"{(pts[0][1] - pts[1][1]).length():.2f}" if len(pts) == 2 else f"{len(pts)} pt(s)")
+        pts = _pair_points(track[72])
+        notes.append(f"dropped one end first: spacing on frames 1, 24, 48, 72 = {spans} (3.2 kept = one "
+                     f"object; 2.0 = landed separately); at rest {[_fmt(p[1]) for p in pts]}")
+
+        # (2) different velocities, high in the air (no contact in 12 frames)
+        pieces = [dict(box, center=(-1, 20, 0), attrs={"v": (0.0, 2.0, 0.0)}),
+                  dict(box, center=(1, 20, 0), attrs={"v": (0.0, 0.0, 0.0)})]
+        track, _ = _pair_scene("vel", kind, pieces, [0, 1], 12, keep_velocity=True)
+        pts = _pair_points(track[12])
+        f1 = _pair_points(track[1])
+        notes.append("left point v (0, 2, 0), right (0, 0, 0): on frame 1 v "
+                     f"{[_fmt(p[2]) for p in f1]}; on frame 12 v {[_fmt(p[2]) for p in pts]}, "
+                     f"w {[_fmt(p[3]) for p in pts]}, spacing "
+                     f"{(pts[0][1] - pts[1][1]).length():.2f} (start 2.00)" if len(pts) == 2 else
+                     f"velocity case: {len(pts)} pair point(s) on frame 12")
+
+        # (3) different density
+        pieces = [dict(box, center=(-1, 20, 0), attrs={"density": 1000.0}),
+                  dict(box, center=(1, 20, 0), attrs={"density": 4000.0})]
+        track, _ = _pair_scene("mass", kind, pieces, [0, 1], 3)
+        pts = _pair_points(track[3])
+        notes.append(f"density 1000 / 4000: mass on the points {[p[4] for p in pts]} (1000 / 4000 = each "
+                     f"its own; 5000 on both = combined)")
+
+        # (4) one static, one active
+        pieces = [dict(box, center=(-1, 3, 0), attrs={"active": 0}),
+                  dict(box, center=(1, 3, 0), attrs={"active": 1})]
+        track, _ = _pair_scene("active", kind, pieces, [0, 1], 24)
+        pts = _pair_points(track[24])
+        notes.append(f"left active 0, right active 1: y after 1 s {[round(p[1][1], 2) for p in pts]} (both 3 = "
+                     f"static wins; both lower = active wins; 3 and lower = split)")
+
+        results.append(Result("name_fusion_probe", Result.INFO,
+                              f"{label}: " + "; ".join(notes) + (f"; messages {sorted(set(msgs))}" if msgs else "")))
+    return results
+
 TESTS = {
+    "name_fusion_probe": test_name_fusion_probe,
     "messages_clear": test_messages_clear,
     "saved_cache": test_saved_cache,
     "point_order": test_point_order,

@@ -171,6 +171,9 @@ equal to what its body was built with.
      `applyPrimOverrides` only with autofit off; convex / concave fall back to a box with a note. RBD Packed Object
      writes default `bullet_primS` (1, 1, 1) and `bullet_radius` 1 onto every point (seen in Houdini 22.0), so
      applying them with autofit on made every plain point a size-2 box whatever its `pscale`.
+* Packed points sharing a `name` are separate bodies, as in Bullet (measured on 22.0.502, `name_fusion_probe`,
+  despite write-ups saying Bullet fuses them): Bullet lands them separately and keeps each one's mass and `active`;
+  its only coupling is that both start with the first point's `v` (a name-keyed lookup). Box3D does not copy that.
 * Notes are aggregated into one node warning per kind, on the step a shape is built.
 * Point attributes override Box3D Data, as for Bullet (Box3D Data only fills in missing ones). RBD Packed Object
   writes several onto every point from its own parameters (`mass`, `density`, `computemass`, `friction`, `bounce`
