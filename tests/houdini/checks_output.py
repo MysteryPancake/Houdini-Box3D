@@ -599,10 +599,11 @@ def test_data_under_geometry():
     path, names = packed_boxes("data_geo", [GROUND, {"size": (1, 1, 1), "center": (0, 0.5, 0),
                                                      "attrs": {"v": (3.0, 0.0, 0.0)}}])
     dop = new_dopnet("data_geo")
-    # Box3D Packed Object: no stamped friction, so Box3D Data's Friction 0 applies.
-    obj = box3d_packed_object(dop, "pieces", path)
-    data = box3d_data(dop, obj, "data", friction=0.0)
-    finish(dop, box3d_solver(dop, data))
+    # Box3D Packed Object's own Box3D Data (Friction 0 on the asset). A second Box3D Data after it
+    # would not change it: its Set Initial values only apply when it creates the data, and the
+    # asset already has (Set Always would).
+    obj = box3d_packed_object(dop, "pieces", path, friction=0.0)
+    finish(dop, box3d_solver(dop, obj))
 
     def sample(sim, f):
         o = sim.findObject("pieces")

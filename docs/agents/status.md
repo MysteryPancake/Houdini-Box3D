@@ -12,13 +12,10 @@ remove an item once it has been checked, and record anything new here rather tha
   CMake plugin section follow SideFX's HDK pages but are untested there: compiler warnings under gcc
   `-Wall -Wextra` in `src/dop` / `src/sync`, the dso and icon copies, and the Houdini checks via
   `hython tests/houdini/run_tests.py` (there is no Linux wrapper like `test.bat`).
-* No `SIM_*` code has CI. The plugin builds against the real HDK (Houdini
-  22.0.502, MSVC). The core tests pass, and so does every Houdini check (`checks_core.py`,
-  `checks_solver.py`, `checks_output.py`, `checks_constraints.py`, `checks_more.py`, `checks_extra.py`,
-  `checks_regress.py` with its baseline.json, recorded on 22.0.479 and matched exactly on 22.0.502: 131 PASS, 17 INFO,
-  and `large_scene`, whose sanity check has since been relaxed for bouncy contacts and not re-run; the items they
-  settled are no longer listed here). What no script can check: Escape mid-step, the
-  viewport, motion blur, and how greyed-out parameters look.
+* No `SIM_*` code has CI. The plugin builds against the real HDK (Houdini 22.0.502, MSVC). The core tests pass, and
+  so does every Houdini check (all `checks_*.py`, `checks_regress.py` with its baseline.json, recorded on 22.0.479 and
+  matched exactly on 22.0.502): 144 PASS, 20 INFO on the last full run, `large_scene` included. What no script can
+  check: Escape mid-step, the viewport, motion blur, and how greyed-out parameters look.
 * An untouched object still skips its scan after a Box3D Data change elsewhere (debug log: `scan skipped`). (A Box3D
   Data change mid-simulation reaching existing bodies is verified, `data_change_midsim`.)
 
