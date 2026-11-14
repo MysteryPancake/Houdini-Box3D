@@ -13,7 +13,7 @@ Run from the repository root, with the plugin built (build.bat copies it to the 
     hython tests/houdini/run_tests.py --failed --info # ... plus the INFO results
     hython tests/houdini/run_tests.py baseline --update-baseline  # record baseline.json again
 
-On Windows, tests/test_houdini.bat finds Houdini and runs this.
+On Windows, test.bat (in the repository root) finds Houdini and runs this.
 
 Each test runs in its own hython process, so a crash (CRASH) doesn't stop the others. Each
 test's scene is saved to tests/houdini/out/<test>.hip to open and inspect afterwards (laid out,
@@ -210,7 +210,7 @@ def main():
               " the message lists the real names. It is not a plugin failure.")
     still = sorted(t for t, st in last.items() if st in NEEDS_RERUN and t in TESTS)
     if still:
-        print(f"\nTo re-run what still fails: tests\\test_houdini.bat --failed   ({len(still)}: {', '.join(still)})")
+        print(f"\nTo re-run what still fails: test.bat --failed   ({len(still)}: {', '.join(still)})")
     bad = any(r.status in NEEDS_RERUN for r in results)
     return 1 if bad else 0
 

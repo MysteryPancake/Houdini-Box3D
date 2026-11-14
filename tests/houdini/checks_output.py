@@ -383,8 +383,9 @@ def test_mass_written():
 
 
 def test_aging():
-    """With Enable Aging, age grows by one per second; a piece with life 0.5 is dead (or deleted)
-    after a second, one with life 0 never dies."""
+    """With Enable Aging, age grows by one per second (frames 2..25: the object is not solved on its
+    creation frame). A piece with life 0.5 is dead after a second and, with Reap Dead Points off (the
+    default), kept; one with life 0 never dies."""
     pieces = [
         {"size": (1, 1, 1), "center": (0, 0.5, 0), "attrs": {"life": 0.5, "age": 0.0}},
         {"size": (1, 1, 1), "center": (3, 0.5, 0), "attrs": {"life": 0.0, "age": 0.0}},
@@ -403,9 +404,10 @@ def test_aging():
     short, forever = track[25][names[0]], track[25][names[1]]
     short_gone = short is None or short.get("name") != names[0]
     age = forever["age"]
-    rows = [f"life 0 piece: age {age:.3f} after 1 s, dead={forever['dead']}",
-            "life 0.5 piece: " + ("deleted" if short_gone else f"age {short['age']:.3f}, dead={short['dead']}")]
-    ok = close(age, 1.0, 0.05) and not forever["dead"] and (short_gone or short["dead"] == 1)
+    rows = [f"life 0 piece: age {age:.4f} on frame 25 (1.0 expected), dead={forever['dead']}",
+            "life 0.5 piece: " + ("deleted (should be kept: Reap Dead Points is off)" if short_gone
+                                  else f"kept, age {short['age']:.3f}, dead={short['dead']}")]
+    ok = close(age, 1.0, 1e-3) and not forever["dead"] and not short_gone and short["dead"] == 1
     return [Result("aging", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
 
 

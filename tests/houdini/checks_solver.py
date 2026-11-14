@@ -115,6 +115,16 @@ def test_ui():
     solver = create(dop, "box3d_solver", "solver")
     expect("Solver Forces Wake Bodies disabled with Use Force DOPs off",
            disabled(solver, "forceswake", {"useforces": 0}), True)
+    expect("Solver Reap At Frame End disabled with Reap Dead Points off",
+           disabled(solver, "reapatframeend", {"reapdead": 0}), True)
+    expect("Solver Reap At Frame End enabled with Reap Dead Points on",
+           disabled(solver, "reapatframeend", {"reapdead": 1}), False)
+    expect("Solver Reap Dead Points default (off)", solver.parm("reapdead").parmTemplate().defaultValue(), False)
+    expect("Solver Reap At Frame End default (on, as POP)",
+           solver.parm("reapatframeend").parmTemplate().defaultValue(), True)
+    # Threads defaults to the machine's physical performance cores (Box3DCpu.cpp), 1..32.
+    threads_default = solver.parm("threads").parmTemplate().defaultValue()[0]
+    expect("Solver Threads default in 1..32", 1 <= threads_default <= 32, True)
 
     # Ranges and defaults (Box3DJoints.h: jointParamRange, nodeJointDefaults)
     t = rev.parm("stiffness").parmTemplate()

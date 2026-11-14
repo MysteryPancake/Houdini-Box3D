@@ -10,7 +10,7 @@ are `b3dop::kDefaultWorkerCount` / `kMaxWorkerCount` (`Box3DWorld.h`).
 
 Solver (read every step; only the thread count rebuilds the world): `gravity`, `substeps`, `autothreads`, `threads`
 (default `b3dop::defaultWorkerCount()` in `Box3DCpu.h`: the machine's physical performance cores, as Box3D recommends;
-`WorldSettings` keeps `kDefaultWorkerCount`), `enablesleep`, `timescale`, `enableaging`, and Box3D's tuning with
+`WorldSettings` keeps `kDefaultWorkerCount`), `enablesleep`, `timescale`, `enableaging`, `reapdead`, `reapatframeend` (disabled while `reapdead` is off), and Box3D's tuning with
 Box3D's defaults: `contactstiffness`, `contactdamping`, `contactpushspeed`, `bouncethreshold`,
 `contactrecycledistance`, `maxlinearspeed`, `enablecontinuous`. Force DOPs: `useforces`, `forceswake` (disabled while
 `useforces` is off). Box3D Data: `startasleep` and `sleepthreshold` are disabled while `enablesleep` is off,
@@ -37,7 +37,7 @@ have a hard minimum of 0 (Box3D asserts on negatives). `toBodySettings()` maps t
 may be negative). Identity is `(object id, id or point number)`.
 
 Written: `P`, `orient`, `v`, `w` and packed transforms (awake dynamic bodies), `awake` (if it exists),
-`bullet_autofit_valid`, `mass` (computemass), `age` / `dead` (aging); `dead` points are deleted.
+`bullet_autofit_valid`, `mass` (computemass), `age` / `dead` (aging); `dead` points lose their body, and are deleted with `reapdead` (off by default) or kept, frozen.
 
 ## Warnings surfaced on the node
 

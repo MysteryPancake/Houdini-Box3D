@@ -121,11 +121,16 @@ equal to what its body was built with.
   0, time, 0)` per point (normal of the surface hit, pointing at the body that gets the impact; ptnum = its `pointIndex`). An object
   with Impacts last step and none now loses the data (`removeNamedSubData`, `impactObjects`). No Feedback data (that is
   for mutual interaction with other solvers).
-* **Dead** (`dead`): queued as a `Box3DDeletion`; `deleteDeadPoints` checks every queued point (offset, `id` or number)
+* **Dead** (`dead`): never stamped, so its body goes like a gone point's. With solver Reap Dead Points
+  (`st.reapDead`, off by default; POP's Reaping is on by default) it is also queued as a `Box3DDeletion`; off, the
+  point stays where it died with `dead = 1` (its `v` / `w` keep their last values). `deleteDeadPoints` checks every queued point (offset, `id` or number)
   before deleting any (`destroyPrimitive(prim, true)` for packed, else `destroyPointOffset(off,
   GA_DESTROY_DEGENERATE)`), then `bumpAllDataIds()` and `forceScan`. Without `id`, later points become new bodies.
-* **Aging** (solver Enable Aging): `age += dt` (DOP step, not time-scaled) on every point, `dead = 1` past a positive
-  `life` (attributes created if missing). Writes every point every step while on; in parallel past `kMinParallelPoints` (`UTparallelFor` over a `GA_SplittableRange`, no offset vector), with
+* **Aging** (solver Enable Aging): `age += dt` (DOP step, not time-scaled) on every point of every solved object (not
+  on an object's creation frame unless its node has Solve On Creation Frame on, as POP Objects do by default), `dead = 1` once it exceeds a positive
+  `life` (strictly, as POP), and, with Reap Dead Points and Reap At Frame End (`st.reapAtFrameEnd`, on by default as POP's), the point
+  queued in `st.deletions` so `deleteDeadPoints` removes it the same step; with Reap At Frame End off it is kept that
+  frame with `dead = 1` (POP: deleted before the next Pre-solve) and the next step's sync queues it (attributes created if missing). Writes every point every step while on; in parallel past `kMinParallelPoints` (`UTparallelFor` over a `GA_SplittableRange`, no offset vector), with
   `age` / `dead` pages hardened first.
 * **Time Scale**: Box3D steps by `stepDt = dt * timescale`; animated targets use it; `canContinue` uses the DOP step.
 

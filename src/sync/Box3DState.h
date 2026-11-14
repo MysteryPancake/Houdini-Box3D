@@ -344,6 +344,12 @@ struct Box3DSharedState {
       jointNetworks; // key: relationship name (or object id)
   // some object has a constraint network: keep Box3DObjectSync::byName
   bool wantNames = false;
+  // solver Reap Dead Points: `dead` points are deleted (else kept, out of the
+  // simulation)
+  bool reapDead = false;
+  // solver Reap At Frame End: points that die during the step (aging) are
+  // deleted at its end; else kept this frame and deleted by the next step
+  bool reapAtFrameEnd = true;
   // this solve's objects are in id order (box3dObjectById may binary search)
   bool objectsSorted = false;
   uint64_t bodyVersion = 0; // bumped whenever bodies are added or removed

@@ -63,6 +63,13 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
           .toggle("enableaging", "Enable Aging", false,
                   "Add the frame time step (not Time Scale-adjusted) to each "
                   "point's age, and mark points dead once age exceeds life.")
+          .toggle("reapdead", "Reap Dead Points", false,
+                  "Delete points whose dead attribute is 1. Off keeps them "
+                  "where they died, no longer simulated.")
+          .toggle("reapatframeend", "Reap At Frame End", true,
+                  "Delete points that die during a step at its end, so dead "
+                  "points are never seen. Off keeps them for one frame.",
+                  "{ reapdead == 0 }")
           .number("maxlinearspeed", "Max Linear Speed", 400.0, R{0, 1000},
                   "Speed limit for every body, in units per second.")
           .tab("Performance")
@@ -476,6 +483,8 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
   ++st->syncStamp;
   st->stampedCount = 0;
   st->wantNames = anyJointNetwork(objects);
+  st->reapDead = getReapDead();
+  st->reapAtFrameEnd = getReapAtFrameEnd();
   st->pointWrites.clear();
   st->deletions.clear();
   {

@@ -33,7 +33,7 @@ git clone --recurse-submodules https://github.com/MysteryPancake/Houdini-Box3D
 
 **Windows:** open **Houdini X.Y.Z > Command Line Tools** from the Start menu, then run `build.bat` (or `cmake -S . -B build -G "Visual Studio 17 2022" -A x64`, then `cmake --build build --config Release`). The DLL is copied to `Documents\houdiniX.Y\dso`.
 
-**Linux:** install `g++ cmake git mesa-common-dev libglu1-mesa-dev libxi-dev`, then:
+**Linux:** install `g++ cmake git mesa-common-dev libglu1-mesa-dev libxi-dev` (Red Hat: `gcc-c++ cmake git mesa-libGL-devel mesa-libGLU-devel libXi-devel`), ideally the gcc version named in your Houdini download (`...-gccX.Y.tar.gz`), then:
 
 ```
 source /opt/hfsX.Y.ZZZ/houdini_setup
@@ -52,7 +52,7 @@ Like Houdini's RBD solvers, it works on **points**: every point in the object's 
 
 Objects from **RBD Object** and similar nodes are one rigid body each instead, as with the older RBD workflow. Their settings come from Box3D Data if attached, otherwise from the RBD Object's own mass, friction, bounce and Bullet collision shape, and their results go to the object's Position data.
 
-For example scenes, run `examples\make_examples.bat` (Linux: `hython examples/make_examples.py`), then open `examples/scenes`.
+For example scenes, run `make_examples.bat` (Linux: `hython examples/make_examples.py`), then open `examples/scenes`.
 
 ## Nodes
 
@@ -80,7 +80,7 @@ All attributes are optional except `P`. A missing one uses the Box3D Data value.
 | `orient` | quaternion | Rotation |
 | `v` / `w` | vector | Linear / angular velocity (radians/s) |
 | `id` | int | Stable point id. Use it if points can be deleted or reordered |
-| `dead` | int | Nonzero = delete the point and its body |
+| `dead` | int | Nonzero = remove the body; the point is deleted with Reap Dead Points on (like POP's Reap Particles / Reap At Frame End), else kept where it died |
 | `age` / `life` | float | With Enable Aging: the point is marked `dead` once `age` passes `life` |
 | `active` | int | `0` = static, anything else = dynamic |
 | `animated` | int | With `active` = 0: the body follows its animated point and pushes what it touches |

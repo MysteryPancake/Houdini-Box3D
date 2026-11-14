@@ -38,14 +38,23 @@ How the project is built, tested and packaged. Index and rules: [CLAUDE.md](../.
   check, so results after an assert may be wrong, but Houdini survives.
 * Inputs Box3D asserts on are guarded in the core too: velocities (`finiteVec3`: non-finite components -> 0) and
   gravity (`create`: non-finite components -> 0; `applyTuning`: non-finite gravity ignored, previous kept).
+* Linux follows SideFX's HDK CMake route (HDK "Compiling" page): `toolkit/cmake` appended to `CMAKE_PREFIX_PATH`
+  from `$HFS`, `find_package(Houdini)`, link the imported `Houdini` target, `houdini_configure_target` (no `lib`
+  prefix: `Box3DDOP.so`, into `$HOME/houdiniX.Y/dso`, one of Houdini's default DSO folders). The README's packages
+  are the HDK "Getting Started" list minus `tcsh`, which only `hcustom` needs. SideFX advise the gcc version named
+  in the Houdini download's file name. Houdini overrides malloc, so never link an allocator such as `tbbmalloc_proxy`.
+  `build.sh` takes `BUILD_TYPE` (default Release); `BUILD_TYPE=RelWithDebInfo ./build.sh` for gdb.
+* Linux debugging (HDK "Debugging" page): `gdb $HFS/bin/houdini-bin` (`houdini` is a wrapper script), then
+  `run -foreground` (without it Houdini forks); `HOUDINI_DSO_ERROR=1` prints why a plugin failed to load when the
+  nodes are missing; `HOUDINI_COREDUMP=1` stops crash recovery getting in the debugger's way.
 * `build.sh` wipes `build/` if the repo moved (`build/.configured_from`). `build.bat` finds `HFS` itself (env var, then
   registry `HKLM\SOFTWARE\Side Effects Software` ActiveVersion -> `Houdini <ver>\InstallPath`, then the newest
   `Program Files\Side Effects Software\Houdini X.Y.Z`). It still names the VS 2022 generator.
 
 ## Tests
 
-Houdini checks: `hython tests/houdini/run_tests.py` (`--list` for the tests); on Windows `tests\test_houdini.bat`, which
-finds Houdini the same way as `build.bat` (its search block is copied, also into `examples\make_examples.bat`: change all three together) and passes its
+Houdini checks: `hython tests/houdini/run_tests.py` (`--list` for the tests); on Windows `test.bat` (repository root), which
+finds Houdini the same way as `build.bat` (its search block is copied, also into `make_examples.bat`, both in the root: change all three together) and passes its
 arguments on. Each builds its scene from scratch
 (no dependence on `box3d_test.hiplc`), simulates and prints PASS / FAIL / INFO; scenes are saved to
 `tests/houdini/out/`, tidied for opening by hand first (`review.py`: every network laid out, input geometry hidden,

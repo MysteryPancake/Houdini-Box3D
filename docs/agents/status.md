@@ -8,11 +8,15 @@ The one list of everything not yet tested in Houdini or confirmed against SideFX
 remove an item once it has been checked, and record anything new here rather than in comments or other sections.
 
 **General**
+* The plugin has never been built on Linux (only the core-only build, in CI). `build.sh`, the README steps and the
+  CMake plugin section follow SideFX's HDK pages but are untested there: compiler warnings under gcc
+  `-Wall -Wextra` in `src/dop` / `src/sync`, the dso and icon copies, and the Houdini checks via
+  `hython tests/houdini/run_tests.py` (there is no Linux wrapper like `test.bat`).
 * No `SIM_*` code has CI; `examples/box3d_test.hiplc` is a manual scene. The plugin builds against the real HDK (Houdini
-  22.0.479, MSVC, no warnings). The core tests pass, and so does every Houdini check (`checks_core.py`,
+  22.0.502, MSVC). The core tests pass, and so does every Houdini check (`checks_core.py`,
   `checks_solver.py`, `checks_output.py`, `checks_constraints.py`, `checks_more.py`, `checks_extra.py`,
-  `checks_regress.py` with its baseline.json; Houdini
-  22.0.479; the items they settled are no longer listed here). What no script can check: Escape mid-step, the
+  `checks_regress.py` with its baseline.json, recorded on 22.0.479 and matched exactly on 22.0.502: 129 PASS, 17 INFO;
+  the items they settled are no longer listed here). What no script can check: Escape mid-step, the
   viewport, motion blur, and how greyed-out parameters look.
 * An untouched object still skips its scan after a Box3D Data change elsewhere (debug log: `scan skipped`). (A Box3D
   Data change mid-simulation reaching existing bodies is verified, `data_change_midsim`.)
@@ -34,8 +38,9 @@ remove an item once it has been checked, and record anything new here rather tha
 * `objects` sorted by object id (`box3dObjectById` binary search, a miss is final). Checked once per solve (`st.objectsSorted`); an array that is not sorted falls back to a linear scan, so only speed is at stake.
 * Box3D's tasks on Houdini's TBB pool (`Box3DHoudiniTasks`): no stall when several DOP networks or threaded SOPs cook
   at once, or where threading is disabled for the cooking thread (tasks run inline). `HOUDINI_MAXTHREADS=1` is fine.
-* The Threads default (`performanceCoreCount`, `Box3DCpu.cpp`): only the Linux path has run (CI / dev box). Windows
-  (`EfficiencyClass` on Intel hybrid), macOS (`hw.perflevel0`) and ARM Linux (`cpu_capacity`) are untested.
+* The Threads default (`performanceCoreCount`, `Box3DCpu.cpp`): builds and runs on Windows (the `ui` check only
+  asks for 1 to 32); that it equals the physical performance core count is not checked there, nor on macOS
+  (`hw.perflevel0`) or ARM Linux (`cpu_capacity`).
 * Scene scale: Box3D's tolerances assume metres. Measured (`scale`): a three-box stack rests 2.494 / 2.488 / 2.417 box
   sizes tall at 0.01x / 1x / 100x (2.5 ideal), with slight jitter at 100x: scenes 100 times too large sink about 3%.
 
@@ -80,9 +85,18 @@ remove an item once it has been checked, and record anything new here rather tha
 * `addPointImpact`: impulse (m*v plus the step's support), point number and time verified (`impacts`). Whether a fresh
   `SIM_Impacts` each step suits Houdini's impact tools, and no Feedback data for other solvers in a Multi Solver.
 * Aging: `age` counts seconds, life 0 never dies, and a dead packed piece is deleted (verified, also inside a
-  constraint network without errors). Compared with the POP Solver at 24 fps, a life of 0.5 dies on frame 14 here and
-  frame 12 there: our age starts a frame later (a new object is not solved on its creation frame) and dies at
-  age > life, POP's probably at >=.
+  constraint network without errors). Matches the POP Solver exactly (verified, `aging_vs_pop`, 24 fps, life 0.5, both
+  objects solved on their creation frame, POP Source's Jitter Birth Time None): the same age every frame (f/24) and
+  both die on frame 13 (dead once age > life, strictly). With Reap Dead Points a point that ages past its life is
+  deleted in the same step, as POP reaps (verified: gone on frame 13 like POP's particle; `ageObjects` queues it in
+  `st.deletions`). Reap Dead Points and Reap At Frame End (POP's Reap Particles / Reap At Frame End): verified
+  (`aging`: off by default, the dead piece is kept with `dead = 1`; `aging_vs_pop` / `aging_vs_pop_keep`: with either
+  Reap At Frame End setting, the same age, `dead` and removal frame as POP; `dead_with_network`: a kept dead welded
+  piece raises no errors). Reap At Frame End's default (on) is inferred: POP's particle vanished on its death frame
+  with the POP Solver left at its defaults. A kept dead point keeps aging, as POP's does (verified, `aging_vs_pop_noreap`:
+  the same age and `dead` every frame to 24 with reaping off on both). It keeps its last `v` / `w`. Its Box3D body is only removed by the next sync, so the guide may still draw it on that frame. With POP's default birth jitter its particles carry a random
+  sub-frame age and die up to a frame earlier; packed pieces have no sub-frame birth. Without Solve On Creation Frame
+  (RBD Packed Object's default) aging starts a frame later, like everything else on that object.
 * Point `force` / `torque`: applied for one step and zeroed (verified, `point_force`: F/m and torque/I exact). A POP
   Force must cook before the Box3D Solver in the same step; the zeroing may clash with another solver reading `force`
   in a Multi Solver.
@@ -137,10 +151,9 @@ remove an item once it has been checked, and record anything new here rather tha
 * Float noise: the mirror takes a read-back after each write; a constant "edited" count (teleports) every step would
   mean the read-back does not match what the next sync reads.
 * Impacts record point -1 for whole objects.
-* Bullet mixing defaults (not yet built): Friction Mixing Multiply, Bounce Mixing Minimum (Bullet in Houdini 22.0
-  measured friction 0.16 and bounce 0.198 for 0.2 against 0.8: `bullet_mixing`), Box3D Data Bounce 0.5. Tests that
-  relied on the old rules were changed: `rbd_defaults` (B bounce 1), `bounce_heights` (ground bounce 1),
-  `friction_slope` (ramp friction 1). The baseline needs `--update-baseline`.
+* Bullet mixing defaults: Friction Mixing Multiply, Bounce Mixing Minimum (Bullet in Houdini 22.0 measured friction
+  0.16 and bounce 0.198 for 0.2 against 0.8: `bullet_mixing`), Box3D Data Bounce 0.5. Built; `friction_mixing`,
+  `bounce_mixing`, `rbd_defaults`, `bounce_heights` and `friction_slope` pass and the baseline matches.
 * Performance Monitor stage events (`UT_PerfMonAutoSolveEvent`, see solver.md): built, but not yet looked at in the
   profiler (whether they nest under the solver node's entry the way Bullet's do).
 

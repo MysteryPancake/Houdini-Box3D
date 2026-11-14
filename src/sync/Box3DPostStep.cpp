@@ -363,7 +363,9 @@ void writePointAttrs(Box3DSharedState &st, SIM_ObjectArray &objects) {
 }
 
 // Enable Aging: age += dt on every point; dead = 1 once age exceeds a positive
-// life.
+// life (as the POP Solver). With Reap Dead Points and Reap At Frame End,
+// points that die are queued in st.deletions, so deleteDeadPoints removes them
+// in this same step; otherwise the next step's sync queues them.
 void ageObjects(Box3DSharedState &st, SIM_ObjectArray &objects, float dt) {
   for (exint i = 0; i < objects.entries(); ++i) {
     SIM_Object *obj = objects(i);
@@ -393,7 +395,12 @@ void ageObjects(Box3DSharedState &st, SIM_ObjectArray &objects, float dt) {
         continue;
       const GA_Range range(gdp->getPointRange());
       const bool killing = life.isValid() && dead.isValid();
+      // The deletion check matches points by `id`, or by point number without
+      // it (as the sync queues them).
+      const GA_ROHandleI pointIds(gdp, GA_ATTRIB_POINT, "id");
       std::atomic<bool> anyDead{false};
+      std::vector<Box3DDeletion> died; // rare: a lock is cheap enough
+      std::mutex diedLock;
       // Each point touches only its own `age` / `dead` slot.
       const auto agePoint = [&](GA_Offset off) {
         const float a = age.get(off) + dt;
@@ -403,6 +410,16 @@ void ageObjects(Box3DSharedState &st, SIM_ObjectArray &objects, float dt) {
           if (l > 0.0f && a > l && dead.get(off) == 0) {
             dead.set(off, 1);
             anyDead.store(true, std::memory_order_relaxed);
+            if (!st.reapDead || !st.reapAtFrameEnd)
+              return;
+            Box3DDeletion d;
+            d.objectId = obj->getObjectId();
+            d.off = off;
+            d.pointId = pointIds.isValid()
+                            ? static_cast<int64_t>(pointIds.get(off))
+                            : static_cast<int64_t>(gdp->pointIndex(off));
+            const std::lock_guard<std::mutex> guard(diedLock);
+            died.push_back(d);
           }
         }
       };
@@ -424,6 +441,7 @@ void ageObjects(Box3DSharedState &st, SIM_ObjectArray &objects, float dt) {
                       });
       }
       markedDead = anyDead.load();
+      st.deletions.insert(st.deletions.end(), died.begin(), died.end());
       age.getAttribute()->bumpDataId();
       if (markedDead)
         dead.getAttribute()->bumpDataId();

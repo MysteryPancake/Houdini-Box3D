@@ -1120,14 +1120,16 @@ private:
     if (s.badVelocity)
       ++myC.badVelocity; // simulated, with the bad v / w read as zero
 
-    // `dead`: deleted after the step. Not stamped, so its body goes with the
-    // gone points'.
+    // `dead`: out of the simulation, and deleted after the step when reaping.
+    // Not stamped, so its body goes with the gone points'.
     if (s.dead) {
-      Box3DDeletion d;
-      d.objectId = myObjectId;
-      d.off = off;
-      d.pointId = s.bid;
-      mySt.deletions.push_back(d);
+      if (mySt.reapDead) {
+        Box3DDeletion d;
+        d.objectId = myObjectId;
+        d.off = off;
+        d.pointId = s.bid;
+        mySt.deletions.push_back(d);
+      }
       dropFresh(ref, s);
       ++myC.dead;
       return;

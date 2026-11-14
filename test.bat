@@ -1,11 +1,12 @@
 @echo off
 setlocal enabledelayedexpansion
 
-rem Builds the example scenes (examples\make_examples.py) with hython, into examples\scenes.
-rem   make_examples.bat                   every scene
-rem   make_examples.bat dominoes shapes   some scenes
-rem   make_examples.bat --check           also simulate each scene and print timings
-rem Build the plugin first (build.bat): the scenes need it loaded.
+rem Runs the Houdini checks (tests\houdini\run_tests.py) with hython.
+rem   test.bat                    every test
+rem   test.bat pscale network     some tests
+rem   test.bat --list             list the tests
+rem   test.bat --failed           only what failed (or never ran) last time; add --info for INFO too
+rem Build the plugin first (build.bat): the checks load it from the dso folder.
 rem Finds Houdini the same way as build.bat.
 
 rem --- Find Houdini (no hardcoded path) -------------------------------------
@@ -42,6 +43,6 @@ if not exist "!HYTHON!" (
 )
 echo Using Houdini: !HFS!
 
-cd /d "%~dp0.."
-"!HYTHON!" "examples\make_examples.py" %*
+cd /d "%~dp0"
+"!HYTHON!" "tests\houdini\run_tests.py" %*
 exit /b %errorlevel%

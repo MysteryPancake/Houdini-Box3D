@@ -6,7 +6,7 @@ Run from the repository root with the plugin built and installed (build.bat):
     hython examples/make_examples.py dominoes     # some scenes (names below)
     hython examples/make_examples.py --check      # also simulate each scene and print timings
 
-On Windows, examples/make_examples.bat finds Houdini and runs this.
+On Windows, make_examples.bat (in the repository root) finds Houdini and runs this.
 
 Each scene is saved to examples/scenes/<number>_<name>.hip. Open one and press play: a sticky
 note in /obj says what it shows and what to try. Every scene is built from ordinary SOPs (Box,

@@ -527,27 +527,47 @@ def test_sidefx_cone_twist():
 
 
 # ---------------------------------------------------------------------------
-# Aging compared with the POP Solver (status: dead once age > life; POP may use >=)
+# Aging compared with the POP Solver (same age, gone on the same frame: both objects solved on their creation frame, no birth jitter)
 # ---------------------------------------------------------------------------
 
 
-def test_aging_vs_pop():
-    """When a piece with life 0.5 dies in Box3D, and when a particle with life 0.5 dies in the POP
-    Solver. INFO."""
-    path, names = packed_boxes("age_box3d", [GROUND, {"size": (1, 1, 1), "center": (0, 0.5, 0),
-                                                      "attrs": {"active": 1, "life": 0.5, "age": 0.0}}])
-    dop = new_dopnet("age_box3d")
-    solver = box3d_solver(dop, packed_object(dop, "pieces", path))
-    set_parm(solver, ["enableaging"], 1)
-    finish(dop, solver)
-    track = step(dop, 24, lambda sim, f: point_attributes(sim, "pieces", names[1], ["name", "dead"]))
-    ours = first_frame(track, lambda a: a is None or a.get("name") != names[1] or a.get("dead") == 1)
+def _set_by_label(node, label, value):
+    """Sets the parameter whose label contains `label` (internal names are not documented)."""
+    names = [p.name() for p in node.parms() if label in p.description().lower()]
+    if not names:
+        raise SetupError(f"{node.path()}: no parameter labelled like '{label}'")
+    set_parm(node, names, value)
 
-    pts = plain_points("age_pop_points", [{"P": (0, 0, 0)}])
-    pdop = new_dopnet("age_pop")
+
+def _aging_pop_compare(tag, reap, frame_end):
+    """A piece with life 0.5 in Box3D against a particle with life 0.5 in the POP Solver, with reaping
+    and Reap At Frame End set to reap / frame_end on both. Returns the two per-frame tracks."""
+    path, names = packed_boxes(f"age_box3d_{tag}", [GROUND, {"size": (1, 1, 1), "center": (0, 0.5, 0),
+                                                             "attrs": {"active": 1, "life": 0.5, "age": 0.0}}])
+    dop = new_dopnet(f"age_box3d_{tag}")
+    pieces = packed_object(dop, "pieces", path)
+    # Like the POP Object here, whose particle is born and aged on frame 1.
+    set_parm(pieces, ["solvefirstframe", "solveoncreationframe", "solve_first_frame"], 1)
+    solver = box3d_solver(dop, pieces)
+    set_parm(solver, ["enableaging"], 1)
+    set_parm(solver, ["reapdead"], int(reap))
+    set_parm(solver, ["reapatframeend"], int(frame_end))
+    finish(dop, solver)
+
+    def piece(sim, f):
+        # (age, dead) of the piece, or None once it is gone
+        a = point_attributes(sim, "pieces", names[1], ["name", "dead", "age"])
+        return (a["age"], a["dead"]) if a and a.get("name") == names[1] else None
+
+    track = step(dop, 24, piece)
+
+    pts = plain_points(f"age_pop_points_{tag}", [{"P": (0, 0, 0)}])
+    pdop = new_dopnet(f"age_pop_{tag}")
     pobj = create(pdop, "popobject", "particles")
     psolver = create(pdop, "popsolver", "pop_solver")
     psolver.setInput(0, pobj)
+    _set_by_label(psolver, "reap particles", int(reap))
+    _set_by_label(psolver, "reap at frame end", int(frame_end))
     source = create(pdop, "popsource", "source")
     set_menu_by_label(source, ["emittype"], "All Points")
     try:
@@ -557,23 +577,76 @@ def test_aging_vs_pop():
     set_parm(source, ["soppath"], pts)
     set_parm(source, ["life"], 0.5)
     set_parm(source, ["lifevar"], 0.0)
+    # Jitter Birth Time: None, so the particle is born at the frame (no random sub-frame age).
+    jitter = [p.name() for p in source.parms() if "jitter birth" in p.description().lower()]
+    if not jitter:
+        raise SetupError(f"{source.path()}: no Jitter Birth Time parameter")
+    set_menu_by_label(source, jitter, "None")
     set_parm(source, ["constantactivate", "constantactivation"], 0)
     set_expression(source, ["impulseactiveate", "impulseactivate", "impulseactivation"], "$SF == 1")
     psolver.setInput(1, source)
     finish(pdop, psolver)
 
-    def count(sim, f):
+    def particle(sim, f):
+        # (age, dead) of the particle, or None once it is gone
         obj = sim.findObject("particles")
         geo = obj.geometry() if obj is not None else None
-        return len(geo.points()) if geo is not None else 0
+        pts = geo.points() if geo is not None else ()
+        if not pts:
+            return None
+        age = pts[0].attribValue("age") if geo.findPointAttrib("age") is not None else None
+        dead = pts[0].attribValue("dead") if geo.findPointAttrib("dead") is not None else 0
+        return age, dead
 
-    ptrack = step(pdop, 24, count)
-    born = first_frame(ptrack, lambda n: n > 0)
-    died = first_frame({f: n for f, n in ptrack.items() if born and f > born}, lambda n: n == 0)
-    return [Result("aging_vs_pop", Result.INFO,
-                   f"life 0.5 at 24 fps: Box3D marks the piece dead (or deletes it) on frame {ours}; the POP Solver's "
-                   f"particle appears on frame {born} and is gone on frame {died}")]
+    return track, step(pdop, 24, particle)
 
+
+def _aging_pop_result(name, reap, frame_end):
+    track, ptrack = _aging_pop_compare(name, reap, frame_end)
+
+    def fmt(v):
+        if v is None:
+            return "-"
+        return f"{v[0]:.4f}" + (" dead" if v[1] else "")
+
+    def gone(t):
+        return first_frame({f: v for f, v in t.items() if f > 1}, lambda v: v is None)
+
+    def dead_seen(t):
+        return first_frame(t, lambda v: v is not None and v[1] == 1)
+
+    # Every frame is compared; frames 1..15 and the last are printed (enough to see aging after death).
+    rows, same = [], True
+    for f in sorted(track):
+        a, p = track.get(f), ptrack.get(f)
+        if (a is None) != (p is None) or (a is not None and (not close(a[0], p[0], 1e-4) or bool(a[1]) != bool(p[1]))):
+            same = False
+        if f <= 15 or f == max(track):
+            rows.append(f"{f}: {fmt(a)} / {fmt(p)}")
+    # Reaping: both gone, on the same frame. Not reaping: neither ever gone.
+    ok = same and gone(track) == gone(ptrack) and (gone(track) is not None) == reap
+    mode = f"Reap At Frame End {'on' if frame_end else 'off'}" if reap else "reaping off"
+    return [Result(name, Result.PASS if ok else Result.FAIL,
+                   f"life 0.5 at 24 fps, {mode}: gone on frame "
+                   f"{gone(track)} (Box3D) / {gone(ptrack)} (POP), dead seen on {dead_seen(track)} / "
+                   f"{dead_seen(ptrack)}. Age per frame (Box3D / POP): " + ", ".join(rows))]
+
+
+def test_aging_vs_pop():
+    """Reaping with Reap At Frame End on, against POP (both solved on frame 1, no birth jitter): the same
+    age every frame, and both gone on the frame they die, never seen dead."""
+    return _aging_pop_result("aging_vs_pop", True, True)
+
+
+def test_aging_vs_pop_keep():
+    """Reaping with Reap At Frame End off, against POP: both kept one frame with dead = 1, then gone."""
+    return _aging_pop_result("aging_vs_pop_keep", True, False)
+
+
+def test_aging_vs_pop_noreap():
+    """Reaping off on both, against POP: the dead piece is kept with dead = 1 on both, and its age
+    after death (still growing or not) matches POP's on every frame."""
+    return _aging_pop_result("aging_vs_pop_noreap", False, True)
 
 TESTS = {
     "messages_clear": test_messages_clear,
@@ -592,5 +665,7 @@ TESTS = {
     "sidefx_hard_untyped": test_sidefx_hard_untyped,
     "sidefx_cone_twist": test_sidefx_cone_twist,
     "aging_vs_pop": test_aging_vs_pop,
+    "aging_vs_pop_keep": test_aging_vs_pop_keep,
+    "aging_vs_pop_noreap": test_aging_vs_pop_noreap,
 }
 
