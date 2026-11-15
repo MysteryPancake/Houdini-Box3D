@@ -7,6 +7,8 @@ Not a build script: imported by the builders (run with hython, so this folder is
 
 import hou
 
+from b3d_hda import NO_VALUE, without_parmops
+
 # Box3D Data parameter -> how it is written. "same": the attribute of the same name. Anything
 # else is a special case (setting_vex in make_configure_sop.py, packed_defaults_vex here).
 # Parameters in SKIP are object-level only: no point attribute, they stay on Box3D Data.
@@ -21,24 +23,6 @@ SKIP = {"hullperconnected", "flipwinding", "addimpact"}
 # Default Shape's menu order (SIM_Box3DData.cpp) as bullet_georep values.
 GEOREP_VALUES = ["box", "sphere", "convexhull", "concave", "capsule", "none"]
 DYNAMIC = 2  # Body Type's Dynamic (Static, Kinematic, Dynamic)
-
-NO_VALUE = {hou.parmTemplateType.Folder, hou.parmTemplateType.FolderSet,
-            hou.parmTemplateType.Separator, hou.parmTemplateType.Label,
-            hou.parmTemplateType.Button}
-
-
-def without_parmops(entries):
-    """`entries` without the DOP Parameter Operation menus (parmop_<name>), recursing into folders."""
-    out = []
-    for pt in entries:
-        if pt.name().startswith("parmop"):
-            continue
-        if pt.type() == hou.parmTemplateType.Folder:
-            pt = pt.clone()
-            pt.setParmTemplates(without_parmops(pt.parmTemplates()))
-        out.append(pt)
-    return out
-
 
 def settings(data, warn):
     """Box3D Data's folders as (folder label, [(template, kind)]): kind is the attribute type

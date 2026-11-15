@@ -7,6 +7,7 @@ import time
 import hou
 
 from b3dtest import (
+    GROUND,
     Result,
     SetupError,
     box3d_solver,
@@ -24,7 +25,6 @@ from b3dtest import (
     step,
 )
 
-GROUND = {"size": (20, 1, 20), "center": (0, -0.5, 0), "attrs": {"active": 0}}
 
 
 # ---------------------------------------------------------------------------

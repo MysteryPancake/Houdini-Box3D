@@ -151,7 +151,7 @@ def _wrap(text):
 def place_note_left(net, note, gap=1.0):
     """Puts a sticky note to the left of every node in net, its top level with the highest node.
     Uses the bounding box of all the nodes, so it never lands on one (children()[0] is not the
-    leftmost node). Same helper as examples/make_examples.py."""
+    leftmost node). Also used by examples/make_examples.py."""
     nodes = net.children()
     if not nodes:
         note.setPosition(hou.Vector2(-gap - note.size()[0], 0))

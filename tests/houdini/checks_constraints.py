@@ -8,6 +8,8 @@ import math
 import hou
 
 from b3dtest import (
+    box_sop,
+    GROUND,
     box3d_data,
     box3d_solver,
     centroid,
@@ -36,7 +38,6 @@ from b3dtest import (
     whole_object_points,
 )
 
-GROUND = {"size": (20, 1, 20), "center": (0, -0.5, 0), "attrs": {"active": 0}}
 FACE = (0.5, 2, 0)  # the shared face of the fixed piece (0, 2, 0) and the hanging one (1, 2, 0)
 
 
@@ -255,18 +256,6 @@ def test_sidefx_spring():
 # ---------------------------------------------------------------------------
 # Whole objects (RBD Object)
 # ---------------------------------------------------------------------------
-
-
-def box_sop(name, center, size=(1, 1, 1)):
-    def build(geo):
-        box = create(geo, "box")
-        set_parm(box, ["size"], tuple(size))
-        xf = create(geo, "xform")
-        xf.setInput(0, box)
-        set_parm(xf, ["t"], tuple(center))
-        return xf
-
-    return single_object_geo(name, build)
 
 
 def test_rbd_first_frames():

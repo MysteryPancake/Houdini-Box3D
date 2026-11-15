@@ -10,6 +10,7 @@ import time
 import hou
 
 from b3dtest import (
+    GROUND,
     box3d_data,
     box3d_solver,
     bullet_solver,
@@ -41,7 +42,6 @@ from checks_constraints import FACE, broken_count, hanging_pair
 from checks_solver import stack_scene
 
 G = 9.80665
-GROUND = {"size": (20, 1, 20), "center": (0, -0.5, 0), "attrs": {"active": 0}}
 MIXING = ("Geometric Mean", "Minimum", "Maximum", "Average", "Multiply")
 
 

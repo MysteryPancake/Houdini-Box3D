@@ -35,6 +35,10 @@ sys.dont_write_bytecode = True
 
 import hou  # noqa: E402
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tests", "houdini"))
+from b3dtest import SetupError, create, display  # noqa: E402  (the checks' scene helpers)
+from review import place_note_left  # noqa: E402
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(HERE, "scenes")
 
@@ -42,17 +46,6 @@ OUT_DIR = os.path.join(HERE, "scenes")
 # ---------------------------------------------------------------------------
 # Small helpers
 # ---------------------------------------------------------------------------
-
-
-class SetupError(Exception):
-    """A node type or parameter was not found; the message says which."""
-
-
-def create(parent, type_name, name=None):
-    try:
-        return parent.createNode(type_name, name) if name else parent.createNode(type_name)
-    except hou.OperationFailed as e:
-        raise SetupError(f"cannot create a '{type_name}' node in {parent.path()}: {e}")
 
 
 def set_parm(node, names, value):
@@ -84,12 +77,6 @@ def set_menu(node, name, label_part):
             p.set(i)
             return
     raise SetupError(f"{node.path()}: menu '{name}' has no item like '{label_part}': {list(p.menuLabels())}")
-
-
-def display(node):
-    node.setDisplayFlag(True)
-    if hasattr(node, "setRenderFlag"):
-        node.setRenderFlag(True)
 
 
 def quat_about(axis, angle):
@@ -355,19 +342,6 @@ def build_dops(name, pieces_path, joints=None, network_path=None, solver_parms=N
     out.setInput(0, solver)
     display(out)
     return dop, solver, data_names
-
-
-def place_note_left(net, note, gap=1.0):
-    """Puts a sticky note to the left of every node in net, its top level with the highest node.
-    Uses the bounding box of all the nodes, so it never lands on one (children()[0] is not the
-    leftmost node)."""
-    nodes = net.children()
-    if not nodes:
-        note.setPosition(hou.Vector2(-gap - note.size()[0], 0))
-        return
-    left = min(n.position()[0] for n in nodes)
-    top = max(n.position()[1] + n.size()[1] for n in nodes)
-    note.setPosition(hou.Vector2(left - gap - note.size()[0], top - note.size()[1]))
 
 
 def tidy(frames, note, dop):

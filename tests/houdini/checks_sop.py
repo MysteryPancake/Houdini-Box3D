@@ -7,6 +7,7 @@ import math
 import hou
 
 from b3dtest import (
+    GROUND,
     Result,
     close,
     constraint_lines,
@@ -17,7 +18,6 @@ from b3dtest import (
     set_parm,
 )
 
-GROUND = {"size": (20, 1, 20), "center": (0, -0.5, 0), "attrs": {"active": 0}}
 
 
 def solver_sop(name, geometry=None, constraints=None, proxy=None, collision=None):

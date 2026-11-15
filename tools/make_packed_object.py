@@ -36,7 +36,9 @@ import traceback
 import hou
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import b3d_settings  # noqa: E402  (beside this script)
+import b3d_hda  # noqa: E402  (beside this script)
+import b3d_settings  # noqa: E402
+from b3d_hda import NO_VALUE, labels, value_templates, without_parmops  # noqa: E402
 
 TYPE_NAME = "box3d_packedobject"
 LABEL = "Box3D Packed Object"
@@ -54,23 +56,7 @@ OBJECT_PARMS = [
 
 STAGE = "create_attributes"  # the SOP stage (a DOP SOP network), as RBD Packed Object's
 
-# Templates without a value: nothing to reference.
-NO_VALUE = {hou.parmTemplateType.Folder, hou.parmTemplateType.FolderSet,
-            hou.parmTemplateType.Separator, hou.parmTemplateType.Label,
-            hou.parmTemplateType.Button}
-
-
-def warn(msg):
-    print(f"make_packed_object: WARNING: {msg}")
-
-
-def create_any(parent, type_names, name):
-    for t in type_names:
-        try:
-            return parent.createNode(t, name)
-        except hou.OperationFailed:
-            continue
-    raise RuntimeError(f"none of the node types {type_names} exist in {parent.path()}")
+warn = b3d_hda.warner("make_packed_object")
 
 
 def template_by_label(node, label):
@@ -82,22 +68,6 @@ def template_by_label(node, label):
         if pt.label().lower() == label.lower():
             return pt
     return None
-
-
-def labels(node):
-    return ", ".join(sorted({f"{pt.label()} ({pt.name()})" for pt in node.parmTemplateGroup().entriesWithoutFolders()
-                             if not pt.name().startswith("parmop") and pt.type() not in NO_VALUE}))
-
-
-def value_templates(entries):
-    """Every template with a value under `entries`, recursing into folders."""
-    out = []
-    for pt in entries:
-        if pt.type() == hou.parmTemplateType.Folder:
-            out.extend(value_templates(pt.parmTemplates()))
-        elif pt.type() not in NO_VALUE:
-            out.append(pt)
-    return out
 
 
 def link(inner, outer, name):
@@ -112,28 +82,6 @@ def link(inner, outer, name):
             warn(f"{outer.path()} has no parameter {p.name()}")
             continue
         p.set(target)  # a hou.Parm value: a channel reference
-
-
-def set_operations(node, token):
-    """Every Parameter Operation menu (parmop_*) of `node` to the item `token` (default / initial /
-    always / never)."""
-    changed = 0
-    for p in node.parms():
-        if not p.name().startswith("parmop"):
-            continue
-        items = list(p.menuItems()) if p.parmTemplate().type() == hou.parmTemplateType.Menu else []
-        try:
-            if p.parmTemplate().type() == hou.parmTemplateType.String:
-                p.set(token)
-            elif token in items:
-                p.set(items.index(token))
-            else:
-                warn(f"{p.path()}: no {token!r} item in {items}")
-                continue
-            changed += 1
-        except hou.Error as e:
-            warn(f"{p.path()}: {e}")
-    return changed
 
 
 def build_stage(sub, rows):
@@ -211,7 +159,7 @@ def build(out_path):
     sub = dopnet.createNode("subnet", TYPE_NAME)
 
     obj = sub.createNode("emptyobject", "emptyobject")
-    geo = create_any(sub, ["sopgeo", "sopgeometry"], "geometry")
+    geo = b3d_hda.create(sub, ["sopgeo", "sopgeometry"], "geometry")
     geo.setInput(0, obj)
     data = sub.createNode("box3d_data", "box3d_data")
     data.setInput(0, geo)
@@ -248,7 +196,7 @@ def build(out_path):
     # settings (Activation, Group, Data Name ...): not promoted, so the inner node keeps the values a
     # Box3D Data starts with (copied, their template defaults could differ, e.g. an empty Group).
     tabs = []
-    for i, entry in enumerate(b3d_settings.without_parmops(data.parmTemplateGroup().entries())):
+    for i, entry in enumerate(without_parmops(data.parmTemplateGroup().entries())):
         if entry.type() == hou.parmTemplateType.Folder:
             tabs.append(hou.FolderParmTemplate(f"b3dpo_tab{i}", entry.label(), entry.parmTemplates(),
                                                folder_type=hou.folderType.Tabs))
@@ -294,7 +242,7 @@ def build(out_path):
     # The linked parameters' operations: a new data node starts at Use Default, and only an edit by
     # hand (or hou.Parm.set) switches it to Set Initial; a channel reference does not, so without
     # this the inner node would keep its built-in defaults whatever the asset's values.
-    set_operations(inner_data, "initial")
+    b3d_hda.set_operations(inner_data, "initial", warn)
     definition.updateFromNode(asset)
     definition.save(out_path, asset)
     check(out_path, dopnet)

@@ -10,6 +10,7 @@ import tempfile
 import hou
 
 from b3dtest import (
+    GROUND,
     append_sop,
     box3d_data,
     box3d_solver,
@@ -43,7 +44,6 @@ from b3dtest import (
 from checks_constraints import hanging_pair, sidefx_compare
 from checks_solver import max_difference, stack_scene
 
-GROUND = {"size": (20, 1, 20), "center": (0, -0.5, 0), "attrs": {"active": 0}}
 
 
 def first_frame(track, test):

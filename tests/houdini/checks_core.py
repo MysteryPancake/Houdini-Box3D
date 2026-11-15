@@ -5,12 +5,15 @@ joint-node crash. Run through run_tests.py."""
 import hou
 
 from b3dtest import (
+    box_sop,
+    GROUND,
     box3d_solver,
     centroid,
     close,
     constraint_lines,
     create,
     finish,
+    ground_object,
     merge,
     new_dopnet,
     node_messages,
@@ -21,6 +24,7 @@ from b3dtest import (
     parm_value,
     plain_points,
     point_attributes,
+    rbd_object,
     Result,
     set_parm,
     SetupError,
@@ -30,14 +34,6 @@ from b3dtest import (
     velocity,
     whole_object_points,
 )
-
-GROUND = {"size": (20, 1, 20), "center": (0, -0.5, 0), "attrs": {"active": 0}}  # top face at y = 0
-
-
-def ground_object(dop, name="ground"):
-    path, _ = packed_boxes(name + "_geo", [GROUND])
-    return packed_object(dop, name, path)
-
 
 # ---------------------------------------------------------------------------
 # Preflight: the plugin is loaded and its node types exist (status.md: the nine DOPs appear)
@@ -77,31 +73,11 @@ def test_nodes():
 # ---------------------------------------------------------------------------
 
 
-def rbd_object(dop, name, sop_path, v=None):
-    obj = create(dop, "rbdobject", name)
-    set_parm(obj, ["soppath"], sop_path)
-    if v is not None:
-        set_parm(obj, ["vel", "v", "velocity"], tuple(v))
-    return obj
-
-
-def box_sop(name, center, size=(1, 1, 1)):
-    def build(geo):
-        box = create(geo, "box")
-        set_parm(box, ["size"], tuple(size))
-        xf = create(geo, "xform")
-        xf.setInput(0, box)
-        set_parm(xf, ["t"], tuple(center))
-        return xf
-
-    return single_object_geo(name, build)
-
-
 def collide_whole_objects(name, b_data=None, frames=48):
     """A (moving at 2 m/s along x) hits B (at rest), zero gravity. Returns the tracks and the
     velocities after the collision. b_data: Box3D Data parameters to put on B, or None."""
     dop = new_dopnet(name)
-    a = rbd_object(dop, "A", box_sop(name + "_A", (-3, 0, 0)), v=(2, 0, 0))
+    a = rbd_object(dop, "A", box_sop(name + "_A", (-3, 0, 0)), vel=(2, 0, 0))
     b = rbd_object(dop, "B", box_sop(name + "_B", (0, 0, 0)))
     b_out = b
     if b_data is not None:

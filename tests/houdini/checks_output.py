@@ -9,6 +9,7 @@ import tempfile
 import hou
 
 from b3dtest import (
+    GROUND,
     Result,
     SetupError,
     box3d_data,
@@ -19,6 +20,7 @@ from b3dtest import (
     det3,
     display,
     finish,
+    ground_object,
     merge,
     new_dopnet,
     new_geo,
@@ -35,15 +37,7 @@ from b3dtest import (
     step,
 )
 
-GROUND = {"size": (20, 1, 20), "center": (0, -0.5, 0), "attrs": {"active": 0}}
 G = 9.80665
-
-
-def ground_object(dop, name, **parms):
-    """A static packed ground box (top at y = 0). parms: RBD Packed Object parameters, e.g.
-    bounce=0.0 (its default 0.5 is written onto the point)."""
-    path, _ = packed_boxes(name + "_geo", [GROUND])
-    return packed_object(dop, name, path, **parms)
 
 
 def drop_one(name, sop_path, frames=72, extra=None):

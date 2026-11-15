@@ -65,7 +65,9 @@ import traceback
 import hou
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import b3d_prepare  # noqa: E402  (beside this script)
+import b3d_hda  # noqa: E402  (beside this script)
+import b3d_prepare  # noqa: E402
+from b3d_hda import NO_VALUE, labels, value_templates, without_parmops  # noqa: E402
 
 TYPE_NAME = "box3d_solver"  # a SOP; the DOP of the same name lives in another node table
 LABEL = "Box3D Solver"
@@ -188,46 +190,8 @@ DOPNET_PARMS = ["Start Frame", "Cache Simulation"]
 # Solver folders that are not promoted (guides: TODO in docs/agents/status.md).
 SKIP_SOLVER_FOLDERS = {"guide options"}
 
-# Templates without a value: nothing to reference.
-NO_VALUE = {hou.parmTemplateType.Folder, hou.parmTemplateType.FolderSet,
-            hou.parmTemplateType.Separator, hou.parmTemplateType.Label,
-            hou.parmTemplateType.Button}
-
-def warn(msg):
-    print(f"make_solver_sop: WARNING: {msg}")
-
-
-def create(parent, type_names, name):
-    for t in [type_names] if isinstance(type_names, str) else type_names:
-        try:
-            return parent.createNode(t, name)
-        except hou.OperationFailed:
-            continue
-    raise RuntimeError(f"none of the node types {type_names} exist in {parent.path()}")
-
-
-def value_templates(entries):
-    """Every template with a value under `entries`, recursing into folders."""
-    out = []
-    for pt in entries:
-        if pt.type() == hou.parmTemplateType.Folder:
-            out.extend(value_templates(pt.parmTemplates()))
-        elif pt.type() not in NO_VALUE:
-            out.append(pt)
-    return out
-
-
-def without_parmops(entries):
-    """`entries` without the DOP Parameter Operation menus (parmop_<name>), recursing into folders."""
-    out = []
-    for pt in entries:
-        if pt.name().startswith("parmop"):
-            continue
-        if pt.type() == hou.parmTemplateType.Folder:
-            pt = pt.clone()
-            pt.setParmTemplates(without_parmops(pt.parmTemplates()))
-        out.append(pt)
-    return out
+warn = b3d_hda.warner("make_solver_sop")
+create = b3d_hda.create
 
 
 def template_by_label(node, label):
@@ -242,11 +206,6 @@ def template_by_label(node, label):
 def parm_by_label(node, label):
     pt = template_by_label(node, label)
     return node.parmTuple(pt.name()) if pt is not None else None
-
-
-def labels(node):
-    return ", ".join(sorted({f"{pt.label()} ({pt.name()})" for pt in node.parmTemplateGroup().entriesWithoutFolders()
-                             if not pt.name().startswith("parmop") and pt.type() not in NO_VALUE}))
 
 
 def set_by_label(node, label, value):
@@ -275,21 +234,6 @@ def set_menu_item(node, parm_label, item_label):
             return True
     warn(f"{p.path()}: no item like {item_label!r} in {item_labels}")
     return False
-
-
-def set_operations(node, token):
-    """Every Parameter Operation menu (parmop_*) of `node` to `token`: a channel reference does not
-    switch a DOP data parameter from Use Default (see make_packed_object.py)."""
-    for p in node.parms():
-        if not p.name().startswith("parmop"):
-            continue
-        try:
-            if p.parmTemplate().type() == hou.parmTemplateType.String:
-                p.set(token)
-            elif token in p.menuItems():
-                p.set(list(p.menuItems()).index(token))
-        except hou.Error as e:
-            warn(f"{p.path()}: {e}")
 
 
 def solver_folders(entries):
@@ -1279,7 +1223,7 @@ def build(out_path, packed_hda=None):
     for inner_path, inner_name, outer_name in links:
         link(asset.node(inner_path), inner_name, asset, outer_name)
     scale_settings(asset)
-    set_operations(asset.node("dopnet/box3d_solver"), "initial")
+    b3d_hda.set_operations(asset.node("dopnet/box3d_solver"), "initial", warn)
     definition.updateFromNode(asset)
     definition.save(out_path, asset)
     # Labels last, saved without the node so nothing regenerates the DialogScript over them.

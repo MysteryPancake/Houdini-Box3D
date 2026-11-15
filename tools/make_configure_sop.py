@@ -39,7 +39,8 @@ import traceback
 import hou
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import b3d_prepare  # noqa: E402  (beside this script)
+import b3d_hda  # noqa: E402  (beside this script)
+import b3d_prepare  # noqa: E402
 import b3d_settings  # noqa: E402
 from b3d_settings import GEOREP_VALUES, literal  # noqa: E402
 
@@ -62,8 +63,7 @@ SPECIAL_LABELS = {
 }
 
 
-def warn(msg):
-    print(f"make_configure_sop: WARNING: {msg}")
+warn = b3d_hda.warner("make_configure_sop")
 
 
 MULTIPARM = "attributes"  # Number of Attributes, as RBD Configure

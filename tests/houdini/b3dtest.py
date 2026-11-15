@@ -311,6 +311,31 @@ def packed_object(dop, name, sop_path, keep_velocity=False, **parms):
     return obj
 
 
+def box_sop(name, center, size=(1, 1, 1)):
+    """A SOP object holding one box of `size` moved to `center`; returns its path."""
+
+    def build(geo):
+        box = create(geo, "box")
+        set_parm(box, ["size"], tuple(size))
+        xf = create(geo, "xform")
+        xf.setInput(0, box)
+        set_parm(xf, ["t"], tuple(center))
+        return xf
+
+    return single_object_geo(name, build)
+
+
+# A static ground box, 20 x 1 x 20, with its top face at y = 0.
+GROUND = {"size": (20, 1, 20), "center": (0, -0.5, 0), "attrs": {"active": 0}}
+
+
+def ground_object(dop, name="ground", **parms):
+    """A static packed ground box (GROUND). parms: RBD Packed Object parameters, e.g. bounce=0.0
+    (its default 0.5 is written onto the point)."""
+    path, _ = packed_boxes(name + "_geo", [GROUND])
+    return packed_object(dop, name, path, **parms)
+
+
 def box3d_packed_object(dop, name, sop_path, **parms):
     """A Box3D Packed Object (the asset tools/make_packed_object.py builds): the packed geometry
     without RBD Packed Object's stamped attributes; parms: its parameters (Box3D Data's, e.g.
