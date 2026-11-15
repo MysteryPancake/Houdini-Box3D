@@ -56,6 +56,8 @@ OBJECT_PARMS = [
     ("geometry", "Use Object Transform", False),
 ]
 
+OVERWRITE_FROM_SOP = "overwritefromsop"  # RBD Packed Object's Overwrite Attributes from SOP
+
 STAGE = "create_attributes"  # the SOP stage (a DOP SOP network), as RBD Packed Object's
 
 warn = b3d_hda.warner("make_packed_object")
@@ -155,6 +157,19 @@ def stamp_sop_geometry(geo):
         geo.parm(f"stampvalue{i}").setExpression(f"${key}", hou.exprLanguage.Hscript)
 
 
+def wire_overwrite(asset):
+    """Every Parameter Operation of the inner SOP Geometry (and its Default Operation): Set Always
+    while Overwrite Attributes from SOP is on, else Set Initial."""
+    geo = asset.node("geometry")
+    ops = [p for p in geo.parms()
+           if p.name().startswith("parmop") or p.parmTemplate().label().lower() == "default operation"]
+    if not ops:
+        warn(f"{geo.path()} has no Parameter Operation menus: Overwrite Attributes from SOP does nothing")
+    driven = [p.name() for p in ops
+              if b3d_hda.menu_index_expr(p, f'ch("../{OVERWRITE_FROM_SOP}")', "Always", "Initial", warn)]
+    print(f"make_packed_object: Overwrite Attributes from SOP drives {geo.path()}: {', '.join(driven) or 'nothing'}")
+
+
 def build(out_path):
     hou.hipFile.clear(suppress_save_prompt=True)
     dopnet = hou.node("/obj").createNode("dopnet", "build")
@@ -194,6 +209,14 @@ def build(out_path):
         help="The simulation frame ($SF) on which the object is created.")
     obj.parm("activation").setExpression('$SF == ch("../createframe")')
 
+    # Overwrite Attributes from SOP, as RBD Packed Object's: SOP Geometry imports the SOP once on the
+    # creation frame (Set Initial) or every step (Set Always), so an animated or deforming SOP reaches
+    # the simulation. Wired to the inner SOP Geometry's operations below (wire_overwrite).
+    overwrite = hou.ToggleParmTemplate(
+        OVERWRITE_FROM_SOP, "Overwrite Attributes from SOP", default_value=False,
+        help="Reads the SOP again every step, so animated or deforming geometry and changed attributes reach \
+the simulation. Off: read once when the object is created.")
+
     # Each Box3D Data folder becomes a tab. Its parameters outside the folders are DOP's own data
     # settings (Activation, Group, Data Name ...): not promoted, so the inner node keeps the values a
     # Box3D Data starts with (copied, their template defaults could differ, e.g. an empty Group).
@@ -204,6 +227,7 @@ def build(out_path):
                                                folder_type=hou.folderType.Tabs))
     names = [pt for _, pt in promoted]
     names.insert(1, create_frame)
+    names.append(overwrite)
     group = hou.ParmTemplateGroup()
     group.append(hou.FolderParmTemplate("b3dpo_object", "Object", names, folder_type=hou.folderType.Tabs))
     for tab in tabs:
@@ -236,6 +260,7 @@ def build(out_path):
 
     asset.allowEditingOfContents()
     wire_stage(asset, sop_path_parm, transform_parm, by_label["Object Name"])
+    wire_overwrite(asset)
     for node, pt in promoted:
         link(node, asset, pt.name())
     inner_data = asset.node("box3d_data")
@@ -290,6 +315,20 @@ def check(out_path, dopnet):
     impact = probe.node("box3d_data").parm("addimpact") if probe.node("box3d_data") else None
     if impact is None or impact.eval() != 1:
         warn("probe: Add Impact Data does not reach the inner Box3D Data")
+    # Overwrite Attributes from SOP: the inner SOP Geometry's operations follow it (Set Initial off, Always on).
+    geo = probe.node("geometry")
+    ops = [q for q in geo.parms() if q.name().startswith("parmop")] if geo is not None else []
+    if probe.parm(OVERWRITE_FROM_SOP) is None or not ops:
+        warn(f"probe: no {OVERWRITE_FROM_SOP} parameter or no Parameter Operation menus on the SOP Geometry")
+    else:
+        seen = []
+        for value in (0, 1):
+            probe.parm(OVERWRITE_FROM_SOP).set(value)
+            seen.append(ops[0].menuLabels()[ops[0].eval()] if ops[0].parmTemplate().type() == hou.parmTemplateType.Menu
+                        else ops[0].evalAsString())
+        probe.parm(OVERWRITE_FROM_SOP).set(0)
+        if "initial" not in seen[0].lower() or "always" not in seen[1].lower():
+            warn(f"probe: Overwrite Attributes from SOP off / on gives {seen}, expected Set Initial / Set Always")
     # A point's own friction is kept.
     attr = sop.createNode("attribwrangle", "own_friction")
     attr.setInput(0, pack)

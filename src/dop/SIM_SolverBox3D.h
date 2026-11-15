@@ -73,6 +73,9 @@ public:
   GETSET_DATA_FUNCS_B("reapatframeend",
                       ReapAtFrameEnd); // points dying this step: delete now
 
+  GETSET_DATA_FUNCS_B("exportshapes",
+                      ExportShapes); // every body's collision shapes as data
+
   // Guide (the node's Guides tab): every body's collision shapes.
   GET_GUIDE_FUNC_B(SIM_NAME_SHOWGUIDE, ShowGuide, false);
   GET_GUIDE_FUNC_V3(SIM_NAME_COLOR, Color, (0.2, 0.8, 1.0));

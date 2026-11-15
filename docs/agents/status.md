@@ -47,7 +47,7 @@ change: `solver_sop_layout` added, the two Detach Faces tests removed). What no 
 * An RBD Object without Box3D Data colliding as its convex hull; `bullet_primT` / `bullet_primS` meaning there.
 
 **Box3D Solver SOP** (`tools/make_solver_sop.py`, `tests/houdini/checks_sop.py`)
-* Animated Collision: whether SOP Geometry's Set Always re-imports every step (the build prints which menus it drives),
+* Collision Type Animated / Deforming: whether the Packed Object's Overwrite Attributes from SOP (SOP Geometry's Set Always) re-imports every step (the build prints which menus it drives),
   and the solver's cost of a full rescan of the collider each step.
 * Transform Pieces with packed transforms that carry scale or shear.
 * Constraints output through Transform Pieces: constraints between collision pieces (not in the simulation points, so
@@ -65,8 +65,11 @@ change: `solver_sop_layout` added, the two Detach Faces tests removed). What no 
 * Results depend slightly on point order even with `id` (`point_order`): bodies are created in point order.
 * Objects solved by another solver: packed ones are ignored as colliders; one-way collision with polygons untested.
 * Float attributes multiply the node's value (Houdini's rule), so a zero default can't be changed per primitive.
-* Box3D Packed Object: RBD Packed Object's Overwrite Attributes from SOP, deforming import, initial velocity
+* Box3D Packed Object: deforming import, initial velocity
   controls, a `Colliders` label (other solvers use it to collide with it), a Box3D Tab submenu.
+* Export Collision Shapes (unverified): `SIM_DATA_CREATE(obj, "Box3DShapes", SIM_GeometryCopy, SIM_DATA_RETURN_EXISTING)`
+  on an object that has no such data, then an empty detail in `SIM_GeometryAutoWriteLock`; `setExtraInfo` keeping other
+  entries and surviving the later `save`s (Bullet's extra info is `guide=GUIDE_GEO` among colour entries).
 * Concave meshes: one mesh shared between instances, static RBD Objects as meshes, drawing meshes in the guide.
 * Height fields: holes from a mask layer, height fields on points. `cylinder` / `plane` shapes (hull or box stand-ins).
 * Constraint networks: point / vertex / agent anchors (`anchor_id`, `anchor_type`); `constraint_type` on our nodes.

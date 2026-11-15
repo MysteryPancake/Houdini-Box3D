@@ -5,6 +5,7 @@ import hou
 import b3d_prepare
 from b3d_solver_common import (
     COLLISION,
+    COLLISION_TYPE,
     CONSTRAINTS,
     CONSTRAINTS_TOGGLES,
     copy_attributes,
@@ -20,6 +21,10 @@ from b3d_solver_common import (
     PROXY,
     set_by_label,
     set_by_labels,
+    GUIDE_GEO,
+    SHAPES_COLOR,
+    SHAPES_DATA,
+    SHAPES_TOGGLE,
     set_import_style,
     set_toggles,
     switch_on_spare_input,
@@ -86,6 +91,11 @@ SOLVE_FIRST_LABEL = "Solve on Creation Frame"  # the Box3D Packed Object's label
 # removed from the constraints output.
 KEEP_BROKEN = "constraint_keepbroken"
 
+# Collision Type Deforming: the colliders' `deforming`, so the solver rebuilds their shapes every step.
+COLLISION_DEFORMING_VEX = f'''\
+i@deforming = chi("../{COLLISION_TYPE}") == 2;
+'''
+
 # Constraint points anchored to the world (no piece name) keep their imported position.
 RESET_ANCHORS_VEX = "@P = point(1, \"P\", @ptnum);"
 
@@ -141,6 +151,11 @@ v@P *= s;
 foreach (string n; {"position", "v", "impulse"})
     if (haspointattrib(0, n)) setpointattrib(0, n, @ptnum, s, "mult");
 """
+
+# Collision shapes: the Box3DShapes polylines (white, dimmed by body state) tinted by Shape Color.
+SHAPES_TINT_VEX = f'''\
+v@Cd *= set(ch("../{SHAPES_COLOR}r"), ch("../{SHAPES_COLOR}g"), ch("../{SHAPES_COLOR}b"));
+'''
 
 # Pieces the solver deleted (dead, reaped) leave the Geometry / Proxy outputs: RBD Bullet Solver's
 # remove_deleted, on the names-mode pieces (input 1: the simulation points; input 2, Geometry only:
@@ -294,7 +309,11 @@ def build_network(sub):
     dopnet.setInput(DOP_CONSTRAINTS, scaled[CONSTRAINTS])
     # Collision: packed and named, rest from the start frame.
     collision_pieces = prepare_input(sub, scaled[COLLISION], "prepare_collision", pack=True, collision=True)
-    dopnet.setInput(DOP_COLLISION, collision_rest(sub, dopnet, collision_pieces))
+    deforming = create(sub, "attribwrangle", "collision_deforming")
+    deforming.setInput(0, collision_rest(sub, dopnet, collision_pieces))
+    deforming.parm("class").set("point")
+    deforming.parm("snippet").set(COLLISION_DEFORMING_VEX)
+    dopnet.setInput(DOP_COLLISION, deforming)
     for child in dopnet.children():
         child.destroy()
     solver = build_dops(dopnet)
@@ -387,6 +406,28 @@ def build_network(sub):
     set_by_labels(import_impacts, ["Record Type", "Records", "Record"], "Impacts")
     create(sub, "null", IMPACTS).setInput(
         0, scale_wrangle(sub, "unscale_impacts", import_impacts, UNSCALE_IMPACTS_VEX, inverse=True))
+
+    # Collision shapes (the Guide Geometry, not an output): the shapes the solver exports as each object's Box3DShapes data
+    # while Show Collision Shapes is on, world space like the simulation, so unscaled. Imported only
+    # while the toggle is on (the Switch does not cook the other input). Nothing before the Start Frame.
+    import_shapes = create(sub, "dopimport", "import_shapes")
+    import_shapes.parm("doppath").set("../dopnet")
+    import_shapes.parm("objpattern").set("pieces collision")
+    set_import_style(import_shapes, "fetch geometry")
+    set_by_label(import_shapes, "Geometry Data Path", SHAPES_DATA)
+    set_toggles(import_shapes, POINTS_TOGGLES)
+    tint = create(sub, "attribwrangle", "tint_shapes")
+    tint.setInput(0, import_shapes)
+    tint.parm("class").set("primitive")
+    tint.parm("snippet").set(SHAPES_TINT_VEX)
+    unscaled_shapes = scale_xform(sub, "unscale_shapes", tint, inverse=True)
+    no_shapes = create(sub, "null", "no_shapes")  # nothing wired: empty geometry
+    show_shapes = create(sub, "switch", "switch_show_shapes")
+    show_shapes.setInput(0, no_shapes)
+    show_shapes.setInput(1, unscaled_shapes)
+    show_shapes.parm("input").setExpression(f'ch("../{SHAPES_TOGGLE}")', hou.exprLanguage.Hscript)
+    shapes_out = before_start(sub, dopnet, "switchif_beforestart_shapes", show_shapes, no_shapes)
+    create(sub, "null", GUIDE_GEO).setInput(0, shapes_out)  # drawn in the viewport: the asset's Guide Geometry
 
     # Before the Start Frame the inputs pass through, as RBD Bullet Solver (the proxy output shows what
     # is simulated: the proxy, else the geometry).

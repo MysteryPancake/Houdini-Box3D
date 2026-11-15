@@ -12,11 +12,12 @@ Inputs:
     0  Geometry      pieces, packed or not. Simulated, unless a proxy is connected
     1  Constraints   constraint network (two-point lines); its subnet input is coloured pink
     2  Proxy         pieces simulated in place of Geometry; Geometry follows them
-    3  Collision     colliders, following their animation (Animated Collision) or static
+    3  Collision     colliders, static, animated or deforming (Collision Type)
 
 Unpacked inputs are packed by `name` (by connectivity when nothing is named), as RBD Bullet Solver.
 
-Outputs: 0-2 as the inputs (moved by the simulation), 3 Simulation Points (one point per piece).
+Outputs: 0-2 as the inputs (moved by the simulation), 3 Simulation Points (one point per piece),
+The collision shapes are the asset's Guide Geometry (GUIDE_GEO), not an output.
 
 Inside:
 
@@ -28,7 +29,7 @@ Inside:
                  to Object, only when input 1 has points; every Box3D and SideFX constraint
                  relationship merged into it)
               collision (Box3D Packed Object, convex hulls, `dopcontextgeo(".", 2)`, only when Use External
-                         Collisions is on and input 3 has points; Animated Collision: Kinematic and re-imported every step, else Static)
+                         Collisions is on and input 3 has points; Collision Type Animated / Deforming: Kinematic and re-imported every step, else Static)
                          merged in after the constraint network
               -> multisolver (FORCES/PRESOLVE, box3d_solver, FORCES/POSTSOLVE) -> output
               FORCES: DOP subnet, the asset's dive target, with subnet outputs PRESOLVE (output 0) and
@@ -42,13 +43,16 @@ Inside:
       anchors reset) -> constraints output
     Geometry, constraints and proxy outputs: the inputs before the Start Frame (switchif_beforestart*)
     import_impacts (DOP Import Records of the pieces' Impacts) -> IMPACTS null, merged out by Fetch Impacts
+    import_shapes (DOP Import of the objects' Box3DShapes data, written by the solver's Export Collision
+      Shapes) -> tint_shapes (Shape Color) -> switch_show_shapes -> GUIDE_GEO
 
 Its parameters: Reset Simulation and Start Frame above the tabs; then the tabs Solver (the
-solver's own, Cache Simulation, then its contact settings in a Contacts folder), Collision (a Collision
-Geometry folder whose header toggle is Use External Collisions, holding Animated Collision and the
-collider's Shape, Material and Contacts settings, collision_* names), Forces (Gravity first), Pieces
+solver's own settings loose, Cache Simulation, then its contact settings in a Contacts folder), Collision (a Collision
+Geometry folder whose header toggle is Use External Collisions, holding Collision Type and the
+collider's Shape, Material and Contacts settings, collision_* names), Forces (Gravity first, loose; Force DOPs and Bounce / Friction folders), Pieces
 (Box3D Packed Object's Box3D Data folders for the simulated pieces, then Sleep & Contacts with the
-solver's Allow Sleeping first, then the solver's Aging folder), Advanced, and Output, always last
+solver's Allow Sleeping first, then the solver's Aging folder), Visualization (Show Collision Shapes,
+Shape Color), Advanced, and Output, always last
 (Impact Data with Fetch Impacts, Transfer Attributes and Transfer to Geometry / Proxy Geometry,
 Constraints). Every folder is open except Impact Data. Each inner parameter is a channel reference to
 the outer one.
@@ -71,7 +75,7 @@ import b3d_hda  # noqa: E402  (beside this script)
 from b3d_hda import labels, value_templates, without_parmops  # noqa: E402
 from b3d_solver_common import (  # noqa: E402
     AGING_FOLDER,
-    ANIMATED_COLLISION,
+    COLLISION_TYPE,
     as_collapsible,
     collapsible,
     COLLIDER_DROPPED,
@@ -98,6 +102,9 @@ from b3d_solver_common import (  # noqa: E402
     PIECES_SEPARATE,
     pull,
     rename_templates,
+    GUIDE_GEO,
+    SHAPES_COLOR,
+    SHAPES_TOGGLE,
     SLEEPING_FOLDER,
     solver_folders,
     TAB_MOVES,
@@ -216,7 +223,7 @@ def build(out_path, packed_hda=None):
     solver_tabs = solver_folders(without_parmops(solver.parmTemplateGroup().entries()))
     if not solver_tabs:
         warn(f"no parameter folders found on {solver.path()}: the solver's parameters are not promoted")
-    taken = {pt.name() for pt in top + solver_first} | {USE_COLLISIONS, ANIMATED_COLLISION,
+    taken = {pt.name() for pt in top + solver_first} | {USE_COLLISIONS, COLLISION_TYPE,
                                                        WORLD_SCALE_TOGGLE, WORLD_SCALE}
     for tab in solver_tabs:
         for pt in value_templates(tab.parmTemplates()):
@@ -248,9 +255,11 @@ def build(out_path, packed_hda=None):
     use_collisions = hou.ToggleParmTemplate(
         USE_COLLISIONS, "Use External Collisions", default_value=True,
         help="Collides the pieces with the Collision input. Off: the Collision input is ignored.")
-    animated = hou.ToggleParmTemplate(
-        ANIMATED_COLLISION, "Animated Collision", default_value=True,
-        help="Collision geometry follows its animation and pushes what it hits. Off: it stays where it starts.")
+    animated = hou.MenuParmTemplate(
+        COLLISION_TYPE, "Collision Type", ("static", "animated", "deforming"),
+        menu_labels=("Static", "Animated", "Deforming"), default_value=1,
+        help="Static: collision stays where it starts. Animated: it follows its animation and pushes what it hits. "
+             "Deforming: Animated, with its shape rebuilt every step (slower).")
     animated.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_COLLISIONS} == 0 }}")
     # One open Collision Geometry folder with Use External Collisions as its header checkbox, laid out as
     # RBD Bullet Solver's: the toggle just before the folder (drawn in its header), the collider's
@@ -283,17 +292,19 @@ def build(out_path, packed_hda=None):
                 contents.insert(0, moved)
     # Out of the solver's tabs: the Aging and Sleeping folders (Misc) to Pieces, Impact Min Speed
     # (Advanced) to Output.
-    aging, sleeping, speed = [], [], []
+    aging, sleeping, speed, shapes = [], [], [], []
     for i, (label, contents) in enumerate(tabs):
         contents, a = pull(contents, lambda pt: pt.type() == hou.parmTemplateType.Folder
                            and pt.label() == AGING_FOLDER)
         contents, sl = pull(contents, lambda pt: pt.type() == hou.parmTemplateType.Folder
                             and pt.label() == SLEEPING_FOLDER)
         contents, sp = pull(contents, lambda pt: pt.name() == IMPACT_SPEED)
+        contents, sh = pull(contents, lambda pt: pt.name() == SHAPES_TOGGLE)
         tabs[i] = (label, contents)
         aging += a
         sleeping += [t for f in sl for t in f.parmTemplates()]
         speed += sp
+        shapes += sh
     if not aging:
         warn(f"no {AGING_FOLDER} folder on the solver: not on the Pieces tab")
     if not sleeping:
@@ -314,7 +325,7 @@ def build(out_path, packed_hda=None):
     if "Forces" in by_label:
         ordered.append(("Forces", by_label.pop("Forces")))
     ordered.append(("Pieces", None))  # filled below
-    ordered += list(by_label.items()) + last + [("Output", None)]  # filled below
+    ordered += list(by_label.items()) + [("Visualization", None)] + last + [("Output", None)]  # filled below
     print("make_solver_sop: solver tabs: " + ", ".join(t.label() for t in solver_tabs))
 
     data_tabs = drop_templates(data_folders(pieces), PIECES_DROPPED)
@@ -343,8 +354,10 @@ def build(out_path, packed_hda=None):
     pieces_items = [as_collapsible(f) for f in nested] + separate + \
         [collapsible("b3dsop_aging", f.label(), f.parmTemplates()) for f in aging]
     output_items = output_tab(impact, speed)
+    vis_items = visualization_tab(shapes)
     for i, (label, contents) in enumerate(ordered):
-        contents = {"Pieces": pieces_items, "Output": output_items, "Collision": contents}.get(
+        contents = {"Pieces": pieces_items, "Output": output_items, "Visualization": vis_items,
+                     "Collision": contents}.get(
             label, group_tab(label, contents) if contents is not None else contents)
         group.append(hou.FolderParmTemplate(f"b3dsop_tab{i}", label, contents, folder_type=hou.folderType.Tabs))
 
@@ -377,6 +390,7 @@ def build(out_path, packed_hda=None):
     scale_settings(asset)
     b3d_hda.set_operations(asset.node("dopnet/box3d_solver"), "initial", warn)
     definition.updateFromNode(asset)
+    set_guide_geometry(definition)
     definition.save(out_path, asset)
     # Labels last, saved without the node so nothing regenerates the DialogScript over them.
     edit_dialog_script(definition)
@@ -384,6 +398,13 @@ def build(out_path, packed_hda=None):
 
     check(out_path)
     print(f"Box3D Solver SOP asset: {os.path.normpath(out_path)}")
+
+
+def set_guide_geometry(definition):
+    """The Node tab's Guide Geometry: `guide=GUIDE_GEO` in the definition's extra info (as RBD Bullet
+    Solver's), keeping any other entries."""
+    kept = [t for t in definition.extraInfo().split() if not t.startswith("guide=")]
+    definition.setExtraInfo(" ".join(kept + [f"guide={GUIDE_GEO}"]))
 
 
 def output_tab(impact, speed):
@@ -421,6 +442,23 @@ def output_tab(impact, speed):
     return items
 
 
+def visualization_tab(shapes):
+    """The Visualization tab's contents: the solver's Export Collision Shapes as Show Collision Shapes,
+    and Shape Color."""
+    if not shapes:
+        warn(f"no {SHAPES_TOGGLE} on the solver: Show Collision Shapes is not on the Visualization tab")
+        return []
+    show = shapes[0].clone()
+    show.setLabel("Show Collision Shapes")
+    show.setHelp("Draws every body's collision shapes in the viewport. Costs time every step.")
+    color = hou.FloatParmTemplate(
+        SHAPES_COLOR, "Shape Color", 3, default_value=(0.2, 0.8, 1.0), min=0.0, max=1.0,
+        naming_scheme=hou.parmNamingScheme.RGBA, look=hou.parmLook.ColorSquare,
+        help="Colour of the collision shapes.")
+    color.setConditional(hou.parmCondType.DisableWhen, f"{{ {show.name()} == 0 }}")
+    return [show, color]
+
+
 def link(inner, inner_name, outer, outer_name):
     """Every component of inner's tuple `inner_name` a channel reference to outer's `outer_name`."""
     src = inner.parmTuple(inner_name) if inner is not None else None
@@ -448,6 +486,18 @@ def check(out_path):
         warn(f"input labels are {labels_now}, expected {INPUT_LABELS}")
     if len(probe.outputConnectors()) != 4:
         warn(f"the asset has {len(probe.outputConnectors())} outputs, expected 4")
+    if probe.node(GUIDE_GEO) is None:
+        warn(f"no {GUIDE_GEO} node inside the asset")
+    if f"guide={GUIDE_GEO}" not in probe.type().definition().extraInfo().split():
+        warn(f"the asset's extra info is {probe.type().definition().extraInfo()!r}: Guide Geometry is not {GUIDE_GEO}")
+    if probe.parm(SHAPES_TOGGLE) is None or probe.parm(SHAPES_COLOR + "r") is None:
+        warn(f"no {SHAPES_TOGGLE} / {SHAPES_COLOR} parameters on the asset")
+    else:
+        inner = probe.node("dopnet/box3d_solver")
+        probe.parm(SHAPES_TOGGLE).set(1)
+        if inner is None or inner.parm(SHAPES_TOGGLE) is None or inner.parm(SHAPES_TOGGLE).eval() != 1:
+            warn(f"dopnet/box3d_solver/{SHAPES_TOGGLE} does not follow the asset's")
+        probe.parm(SHAPES_TOGGLE).set(0)
     for outer, inner_path, inner_name in (("friction", "dopnet/pieces", "friction"),
                                           ("collision_friction", "dopnet/collision", "friction"),
                                           ("stepsperframe", "dopnet/box3d_solver", "stepsperframe")):

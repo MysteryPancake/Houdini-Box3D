@@ -111,7 +111,7 @@ def test_solver_sop_impacts():
 
 def test_solver_sop_animated_collision():
     """A ground box on the Collision input rising 0.5 m/s (keyed on its Transform SOP) lifts the box
-    resting on it: with Animated Collision on (the default) the box ends 1 m higher after 2 s; off,
+    resting on it: with Collision Type Animated (the default) the box ends 1 m higher after 2 s; off,
     the ground stays where it started and the box stays at y = 0.5."""
     results = []
     for animated in (1, 0):
@@ -121,14 +121,14 @@ def test_solver_sop_animated_collision():
         place = hou.node(ground).parent().node("place0")
         place.parm("ty").setExpression("-0.5 + 0.5 * $T", hou.exprLanguage.Hscript)
         sop = solver_sop(f"sop_lift_{tag}", geometry=pieces, collision=ground)
-        set_parm(sop, ["animatedcollision"], animated)
+        set_parm(sop, ["collisiontype"], 1 if animated else 0)  # Animated / Static
         track = play(sop, 49, lambda s, f: named_positions(s.geometry(0)).get(names[0]) if f in (1, 49) else None)
         y0 = track[1][1] if track[1] else None
         y1 = track[49][1] if track[49] else None
         want = 1.5 if animated else 0.5
         ok = y1 is not None and close(y1, want, 0.05)
         results.append(Result("solver_sop_animated_collision", Result.PASS if ok else Result.FAIL,
-                              f"Animated Collision {tag}: box y {y0} on frame 1, {y1} on frame 49 "
+                              f"Collision Type {'Animated' if animated else 'Static'}: box y {y0} on frame 1, {y1} on frame 49 "
                               f"(expected about {want}; the ground's top rises from 0 to 1)"))
     return results
 
@@ -454,7 +454,7 @@ def test_solver_sop_collision_prim_names():
 
 
 def test_solver_sop_collision_rest():
-    """An animated collider that turns (5 degrees about y per frame, Animated Collision on) keeps the
+    """An animated collider that turns (5 degrees about y per frame, Collision Type Animated) keeps the
     rest it had on the Start Frame (collision_rest, as RBD Bullet Solver's collision repack): on frame
     13 its restxform is still turned 5 degrees (frame 1) and its orient is the 60 degrees turned since."""
     bar, _ = packed_boxes("sop_colrest_bar", [{"size": (4, 1, 1), "center": (0, -0.5, 0), "attrs": {"active": 0}}])
@@ -533,7 +533,7 @@ def test_unpacked_turning_collider():
 
     got = {}
     sop = solver_sop("unpacked_turn_box3d", geometry=pieces, collision=turn.path())
-    got["Box3D, Animated Collision"] = height(sop)
+    got["Box3D, Collision Type Animated"] = height(sop)
     for label, kind in (("Bullet, Collision Type Animated", 1), ("Bullet, Collision Type Deforming", 2)):
         g = new_geo(f"unpacked_turn_bullet_{kind}")
         try:

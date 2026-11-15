@@ -2,9 +2,10 @@
 
 import hou
 
+import b3d_hda
 from b3d_hda import labels
 from b3d_solver_common import (
-    ANIMATED_COLLISION,
+    COLLISION_TYPE,
     create,
     DOP_COLLISION,
     DOP_CONSTRAINTS,
@@ -12,6 +13,7 @@ from b3d_solver_common import (
     FORCES,
     FORCES_NOTES,
     FORCES_OUTPUTS,
+    OVERWRITE_FROM_SOP,
     PACKED_OBJECT,
     parm_by_label,
     RELATIONSHIPS,
@@ -34,55 +36,32 @@ def packed_object(dopnet, name, context_input, object_name):
 
 
 def menu_index_expr(parm, cond, on_label, off_label):
-    """Drives the menu `parm` with an HScript expression: the item labelled like `on_label` while
-    `cond` is true, else the one like `off_label`. False if either item is missing."""
-    found = {}
-    for want in (on_label, off_label):
-        for i, lab in enumerate(parm.menuLabels()):
-            if want.lower() in lab.lower():
-                found[want] = i
-                break
-    if len(found) != 2:
-        warn(f"{parm.path()}: no items like {on_label!r} / {off_label!r} in {list(parm.menuLabels())}")
-        return False
-    if parm.parmTemplate().type() == hou.parmTemplateType.String:
-        items = list(parm.menuItems())
-        expr = f'ifs({cond}, "{items[found[on_label]]}", "{items[found[off_label]]}")'
-    else:
-        expr = f"if({cond}, {found[on_label]}, {found[off_label]})"
-    parm.setExpression(expr, hou.exprLanguage.Hscript)
-    return True
+    return b3d_hda.menu_index_expr(parm, cond, on_label, off_label, warn)
 
 
 def animate_collision(collision):
-    """Animated Collision on the asset drives the collision object: Body Type Kinematic / Static, and
-    every Parameter Operation of its inner SOP Geometry Set Always / Set Initial, so the SOP is
-    re-imported each step and the solver sees the new poses. The nested Packed Object is made
-    editable for that (rebuilt with this asset every build)."""
+    """Collision Type on the asset (Animated or Deforming) drives the collision object: Body Type
+    Kinematic / Static, and its Overwrite Attributes from SOP (the Packed Object re-imports the
+    SOP every step), so the solver sees the new poses. Both are the Packed Object's own parameters:
+    the nested asset stays locked."""
     pt = parm_by_label(collision, "Body Type")
     if pt is None:
         warn(f"{collision.path()} has no Body Type; its parameters: {labels(collision)}")
     else:
-        menu_index_expr(pt[0], f'ch("../../{ANIMATED_COLLISION}")', "Kinematic", "Static")
-    collision.allowEditingOfContents()
-    sopgeo = collision.node("geometry")
-    if sopgeo is None:
-        warn(f"no SOP Geometry node named 'geometry' in {collision.path()}: the collision cannot animate")
-        return
-    ops = [p for p in sopgeo.parms()
-           if p.name().startswith("parmop") or p.parmTemplate().label().lower() == "default operation"]
-    if not ops:
-        warn(f"{sopgeo.path()} has no Parameter Operation menus: the collision is imported once and cannot animate")
-    driven = [p.name() for p in ops if menu_index_expr(p, f'ch("../../../{ANIMATED_COLLISION}")', "Always", "Initial")]
-    print(f"make_solver_sop: Animated Collision drives {sopgeo.path()}: {', '.join(driven) or 'nothing'}")
+        menu_index_expr(pt[0], f'ch("../../{COLLISION_TYPE}") > 0', "Kinematic", "Static")
+    overwrite = collision.parm(OVERWRITE_FROM_SOP)
+    if overwrite is None:
+        warn(f"{collision.path()} has no {OVERWRITE_FROM_SOP}: the collision is imported once and cannot animate")
+    else:
+        overwrite.setExpression(f'ch("../../{COLLISION_TYPE}") > 0', hou.exprLanguage.Hscript)
 
 
 def build_dops(dopnet):
     pieces = packed_object(dopnet, "pieces", DOP_PIECES, "pieces")
 
-    # Collision: packed colliders as convex hulls unless a point sets bullet_georep. Animated
-    # Collision: Kinematic (the solver moves each body to its new pose) and the SOP re-imported
-    # every step; off: Static, imported once.
+    # Collision: packed colliders as convex hulls unless a point sets bullet_georep. Collision
+    # Type Animated / Deforming: Kinematic (the solver moves each body to its new pose) and the SOP re-imported
+    # every step; Static: Static, imported once.
     collision = packed_object(dopnet, "collision", DOP_COLLISION, "collision")
     set_menu_item(collision, "Default Shape", "Convex Hull")
     animate_collision(collision)

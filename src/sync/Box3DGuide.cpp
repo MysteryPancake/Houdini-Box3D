@@ -7,9 +7,15 @@
 // the displayed frame, so scrubbing through cached frames draws them where the
 // pieces are. A body the world no longer has (deleted, or a world rebuilt since
 // that frame) is not drawn.
+//
+// The same lines are also written as data on each object (the Export Collision
+// Shapes toggle, kShapesDataName): the Box3D Solver SOP imports them to draw
+// the shapes, so they follow the cached frames without the guide's lookups.
 #include "sync/Box3DSolverInternal.h"
 
 #include <GU/GU_PrimPoly.h>
+#include <SIM/SIM_GeometryCopy.h>
+#include <SIM/SIM_ObjectArray.h>
 #include <SIM/SIM_Engine.h>
 #include <SIM/SIM_Geometry.h>
 #include <SIM/SIM_Object.h>
@@ -197,6 +203,71 @@ void drawBody(Lines &out, const b3dop::Box3DWorld &world,
   }
 }
 
+// One object's bodies drawn into `lines`. The caller holds st.mutex.
+void drawObjectShapes(Lines &lines, Box3DSharedState &st, const SIM_Object &obj,
+                      const UT_Vector3 &color) {
+  const int objectId = obj.getObjectId();
+  const auto sync = st.objectSync.find(objectId);
+  if (sync == st.objectSync.end())
+    return;
+
+  if (sync->second.wholeObject) {
+    // One body: posed by the object's Position data.
+    const Box3DBodyMirror *body =
+        st.mirror.find(b3dop::makeBodyKey(objectId, kWholeObjectId));
+    double pivot[3];
+    Box3DBodyPose pose;
+    if (body && readWholePose(obj, pivot, pose)) {
+      Pose p;
+      b3dop::copy3(p.pos, pose.pos);
+      b3dop::copy4(p.rot, pose.rot);
+      drawBody(lines, st.world, *body, p, color);
+    }
+    return;
+  }
+  // One body per point, keyed as the sync keys it: `id`, else the point
+  // number; posed by the point's P and its packed rotation (else orient).
+  const SIM_Geometry *geo = obj.getGeometry();
+  if (!geo)
+    return;
+  SIM_GeometryAutoReadLock geoLock(geo);
+  const GU_Detail *gdp = geoLock.getGdp();
+  if (!gdp)
+    return;
+  const GA_ROHandleI id(gdp, GA_ATTRIB_POINT, "id");
+  const GA_ROHandleQ orient(gdp, GA_ATTRIB_POINT, "orient");
+  const bool anyPrims = gdp->getNumPrimitives() > 0;
+  int64_t n = 0;
+  for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it, ++n) {
+    const GA_Offset off = *it;
+    const int64_t bid = id.isValid() ? static_cast<int64_t>(id.get(off)) : n;
+    const Box3DBodyMirror *e =
+        st.mirror.find(b3dop::makeBodyKey(objectId, bid));
+    if (!e)
+      continue;
+    Pose p;
+    const PackedInfo pk = anyPrims ? getPackedInfo(gdp, off) : PackedInfo();
+    if (pk.prim) {
+      b3dop::copy3(p.pos, pk.P);
+      b3dop::copy4(p.rot, pk.rot);
+    } else {
+      const UT_Vector3 P = gdp->getPos3(off);
+      p.pos[0] = P.x();
+      p.pos[1] = P.y();
+      p.pos[2] = P.z();
+      if (orient.isValid()) {
+        const UT_QuaternionF q = orient.get(off);
+        p.rot[0] = q.x();
+        p.rot[1] = q.y();
+        p.rot[2] = q.z();
+        p.rot[3] = q.w();
+        b3dop::sanitizeQuat(p.rot);
+      }
+    }
+    drawBody(lines, st.world, *e, p, color);
+  }
+}
+
 } // namespace
 
 void buildCollisionGuide(const SIM_Object &obj, GU_Detail &out,
@@ -209,68 +280,28 @@ void buildCollisionGuide(const SIM_Object &obj, GU_Detail &out,
   std::unique_lock<std::mutex> lock(st->mutex, std::try_to_lock);
   if (!lock.owns_lock())
     return;
-  const int objectId = obj.getObjectId();
-  const auto sync = st->objectSync.find(objectId);
-  if (sync == st->objectSync.end())
-    return;
-
   Lines lines;
-  if (sync->second.wholeObject) {
-    // One body: posed by the object's Position data.
-    const Box3DBodyMirror *body =
-        st->mirror.find(b3dop::makeBodyKey(objectId, kWholeObjectId));
-    double pivot[3];
-    Box3DBodyPose pose;
-    if (body && readWholePose(obj, pivot, pose)) {
-      Pose p;
-      b3dop::copy3(p.pos, pose.pos);
-      b3dop::copy4(p.rot, pose.rot);
-      drawBody(lines, st->world, *body, p, color);
-    }
-  } else {
-    // One body per point, keyed as the sync keys it: `id`, else the point
-    // number; posed by the point's P and its packed rotation (else orient).
-    const SIM_Geometry *geo = obj.getGeometry();
-    if (!geo)
-      return;
-    SIM_GeometryAutoReadLock geoLock(geo);
-    const GU_Detail *gdp = geoLock.getGdp();
-    if (!gdp)
-      return;
-    const GA_ROHandleI id(gdp, GA_ATTRIB_POINT, "id");
-    const GA_ROHandleQ orient(gdp, GA_ATTRIB_POINT, "orient");
-    const bool anyPrims = gdp->getNumPrimitives() > 0;
-    int64_t n = 0;
-    for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it, ++n) {
-      const GA_Offset off = *it;
-      const int64_t bid = id.isValid() ? static_cast<int64_t>(id.get(off)) : n;
-      const Box3DBodyMirror *e =
-          st->mirror.find(b3dop::makeBodyKey(objectId, bid));
-      if (!e)
-        continue;
-      Pose p;
-      const PackedInfo pk = anyPrims ? getPackedInfo(gdp, off) : PackedInfo();
-      if (pk.prim) {
-        b3dop::copy3(p.pos, pk.P);
-        b3dop::copy4(p.rot, pk.rot);
-      } else {
-        const UT_Vector3 P = gdp->getPos3(off);
-        p.pos[0] = P.x();
-        p.pos[1] = P.y();
-        p.pos[2] = P.z();
-        if (orient.isValid()) {
-          const UT_QuaternionF q = orient.get(off);
-          p.rot[0] = q.x();
-          p.rot[1] = q.y();
-          p.rot[2] = q.z();
-          p.rot[3] = q.w();
-          b3dop::sanitizeQuat(p.rot);
-        }
-      }
-      drawBody(lines, st->world, *e, p, color);
-    }
-  }
+  drawObjectShapes(lines, *st, obj, color);
   lines.write(out);
+}
+
+void exportCollisionShapes(Box3DSharedState &st, SIM_ObjectArray &objects) {
+  const UT_Vector3 white(1.0f, 1.0f, 1.0f); // the SOP tints it (Shape Color)
+  for (exint i = 0; i < objects.entries(); ++i) {
+    SIM_Object *obj = objects(i);
+    if (!obj || !st.objectSync.count(obj->getObjectId()))
+      continue;
+    Lines lines;
+    drawObjectShapes(lines, st, *obj, white);
+    SIM_GeometryCopy *data = SIM_DATA_CREATE(
+        *obj, kShapesDataName, SIM_GeometryCopy, SIM_DATA_RETURN_EXISTING);
+    if (!data)
+      continue;
+    SIM_GeometryAutoWriteLock lock(data);
+    GU_Detail &gdp = lock.getGdp();
+    gdp.clearAndDestroy();
+    lines.write(gdp);
+  }
 }
 
 } // namespace box3dsolver

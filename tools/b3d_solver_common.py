@@ -16,7 +16,8 @@ PACKED_OBJECT = "box3d_packedobject"
 
 # Colours of the subnet inputs, IN_* nulls and OUT_* nodes by index: constraints pink.
 INPUT_COLORS = {1: (1.0, 0.6, 0.8)}
-ANIMATED_COLLISION = "animatedcollision"
+COLLISION_TYPE = "collisiontype"  # menu: 0 Static, 1 Animated, 2 Deforming (RBD Bullet Solver's Collision Type)
+OVERWRITE_FROM_SOP = "overwritefromsop"  # the Box3D Packed Object's toggle: re-import the SOP every step
 USE_COLLISIONS = "usecollisions"
 COLLIDER_FOLDERS = ["Shape", "Material", "Sleep & Contacts"]  # the collision object's Box3D Data folders on the Collision tab
 # Of the collider's Sleep & Contacts folder only Contact Recycling acts on a Static / Kinematic body
@@ -29,12 +30,10 @@ PIECES_DROPPED = {"enablesleep"}
 # Collapsible folders inside the tabs, as RBD Bullet Solver's, every one open but Impact Data.
 # (tab, [(folder label, members by parameter name or label)]); a parameter in none stays loose.
 TAB_GROUPS = {
-    "Solver": [("General", ["usescale", "scale", "timescale"]),  # WORLD_SCALE_TOGGLE, WORLD_SCALE
-               ("Simulation", ["stepsperframe", "substeps", "solvefirstframe", "Cache Simulation"])],
-    "Forces": [("Gravity", ["gravity"]),
-               ("Force DOPs", ["useforces", "forceswake"]),
-               ("Bounce", ["restitutionpropagation", "bouncethreshold", "restitutioniterations"]),
-               ("Mixing", ["frictionmixing", "restitutionmixing"])],
+    # Solver has no folders (World Scale, Time Scale, Substeps ... loose), and Gravity is loose, first in Forces.
+    "Forces": [("Force DOPs", ["useforces", "forceswake"]),
+               ("Bounce / Friction", ["restitutionpropagation", "bouncethreshold", "restitutioniterations",
+                                      "frictionmixing", "restitutionmixing"])],
     "Advanced": [("Box3D Solver", ["enablewarmstarting", "enablecontinuous", "maxlinearspeed",
                                    "isotropicinertia"]),
                  ("Threads", ["autothreads", "threads"])],
@@ -62,6 +61,13 @@ FORCES_NOTES = [
 
 INPUT_LABELS = ["Geometry", "Constraint Geometry", "Proxy Geometry", "Collision Geometry"]
 OUTPUT_LABELS = ["Geometry", "Constraint Geometry", "Proxy Geometry", "Simulation Points"]
+
+# Collision shapes: the solver's Export Collision Shapes (moved to the Output tab as Show Collision
+# Shapes) writes each object's shapes as the SHAPES_DATA geometry; the asset tints them (SHAPES_COLOR).
+SHAPES_TOGGLE = "exportshapes"
+SHAPES_COLOR = "shapecolor"
+SHAPES_DATA = "Box3DShapes"
+GUIDE_GEO = "GUIDE_GEO"  # the node the asset's Guide Geometry property names (as RBD Bullet Solver)
 
 # The DOP Imports, set like RBD Bullet Solver's. Simulation points: Create Points to Represent
 # Objects, Transfer Attributes from the asset's parameter, every group. Constraints: Fetch Geometry

@@ -571,4 +571,11 @@ ForceStats applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects,
 void buildCollisionGuide(const SIM_Object &obj, GU_Detail &out,
                          const UT_Vector3 &color);
 
+// Export Collision Shapes: the same shapes as world-space polylines (Cd = the
+// dimming, white when awake) in each object's kShapesDataName geometry, rewritten
+// every step. The solver's lock is held by the caller; poses are the written-back
+// ones, so call it after the step's point writes.
+inline constexpr const char *kShapesDataName = "Box3DShapes";
+void exportCollisionShapes(Box3DSharedState &st, SIM_ObjectArray &objects);
+
 } // namespace box3dsolver

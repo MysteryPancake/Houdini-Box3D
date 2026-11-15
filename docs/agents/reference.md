@@ -80,6 +80,6 @@ uses one kind, except `subfolder()`: a simple folder inside a tab (`<prefix>sub<
 the tab. The solver uses tabs: Solver (time scale, Substeps, Solver Passes), Collision (contact tuning, recycling),
 Forces (gravity, bounce, friction / bounce mixing, Use Force DOPs, Forces Wake Bodies), Misc (simple folders
 Sleeping: Allow Sleeping; Aging: Enable Aging, Reap Dead Points, Reap At Frame End), Advanced (Warm Starting,
-Continuous Collision, threads, speed limit, ...); its guide parameters are a plain list on Houdini's own Guide Options tab (so the
+Continuous Collision, Export Collision Shapes, threads, speed limit, ...); its guide parameters are a plain list on Houdini's own Guide Options tab (so the
 solver's tabs sit inside Data Options). Box3D Data and the joint nodes use simple folders: Box3D Data's are Shape, Body, Material, Sleep & Contacts (CCD Threshold, Fast Object, Contact Recycling, the
 sleep settings, Add Impact Data last). A function-local static, because Houdini keeps pointers into it. Menu tokens are "0", "1", ... in item order (read as ints).

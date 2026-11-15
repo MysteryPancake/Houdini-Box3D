@@ -76,7 +76,13 @@ Recording Impacts, Updating Points. Opened only on the solve thread.
 built by `buildCollisionGuide` from the live world (`bodyShapeOutlines`: hulls, spheres, capsules), each body placed at
 the pose the displayed frame's geometry shows, so cached frames draw where the pieces were. Open polylines with `Cd`,
 dimmed for sleeping and static / kinematic bodies. The mutex is only tried: a guide asked for mid-step is skipped.
-Not drawn: affector colliders, meshes, and anything on an object's creation frame without Solve On Creation Frame (no
+
+**Export Collision Shapes** (`exportshapes`, Advanced tab; `exportCollisionShapes` in `Box3DGuide.cpp`). The same
+lines (`drawObjectShapes`, shared with the guide) as world-space open polylines in a `SIM_GeometryCopy` named
+`kShapesDataName` (`Box3DShapes`) on every object with bodies, rewritten each step after the point writes (the solver
+holds the mutex; poses are the written-back ones). `Cd` is white times the dimming; the SOP tints it. The Box3D Solver
+SOP's `GUIDE_GEO` imports it (see build.md); turning the toggle off stops writing but leaves the last data
+in the cache. Not drawn: affector colliders, meshes, and anything on an object's creation frame without Solve On Creation Frame (no
 body yet; expected).
 
 **New objects.** Objects in `newobjects` (created this timestep) keep their initial state unless their object node has

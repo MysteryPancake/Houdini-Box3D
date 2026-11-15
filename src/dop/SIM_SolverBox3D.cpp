@@ -132,6 +132,10 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                   "points are never seen. Off keeps them for one frame.",
                   "{ reapdead == 0 }")
           .tab("Advanced")
+          .toggle("exportshapes", "Export Collision Shapes", false,
+                  "Write every body's collision shapes as data on its object "
+                  "(for the Box3D Solver SOP's Show Collision Shapes). Costs "
+                  "time every step.")
           .toggle("enablewarmstarting", "Warm Starting", true,
                   "Reuse last step's contact forces. Leave on; off makes "
                   "stacks less stable.")
@@ -495,6 +499,10 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
     if (getEnableAging())
       ageObjects(*st, objects, static_cast<float>(dt));
     deleteDeadPoints(*st, objects);
+  }
+  if (getExportShapes()) {
+    UT_PerfMonAutoSolveEvent perf(this, "Exporting Collision Shapes");
+    exportCollisionShapes(*st, objects);
   }
 
   st->stampTime = now;

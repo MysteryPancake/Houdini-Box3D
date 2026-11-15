@@ -67,9 +67,9 @@ references to the asset's parameters are set once the asset exists (`wire_stage`
 * `set_rest` (`b3d_settings.REST_VEX`): the rest reset and the `orient` / `pscale` / `scale` bake of RBD Packed
   Object's `set_rest_and_initial_xform`, with `orient` kept as the rotation since rest (see its comment). Switched in
   only on the creation frame: SOP Geometry stamps `$SF` and `$OBJCF`, which a `STAMPS` null reads, so a re-import
-  (the Solver SOP's Animated Collision) keeps the rest it was given.
+  (Overwrite Attributes from SOP, which the Solver SOP's Collision Type turns on) keeps the rest it was given.
 * Parameters: an Object tab (Object Name `$OS`, Creation Frame, Solve on Creation Frame, SOP Path, Use Object
-  Transform), then each Box3D Data folder as a tab, read by the stage. Only the object-level settings
+  Transform, Overwrite Attributes from SOP), then each Box3D Data folder as a tab, read by the stage. Only the object-level settings
   (`b3d_settings.SKIP`: Hull per Connected, Flip Winding, Add Impact Data) are channel references into the inner Box3D
   Data, whose other values stay at the defaults, so a missing attribute means the default. Settings change
   mid-simulation through the attributes, not the asset's parameters. No Colliders label, so the solver syncs it per
@@ -97,10 +97,11 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   out by point count, so an empty input counts as unconnected everywhere alike: SOP Switches with the input's `IN_*`
   null as spare input and `npoints(-1) > 0`, DOP Switches with `npoints(opinputpath("..", i)) > 0` (the DOP
   network's inputs; collision also needs Use External Collisions), as RBD Bullet Solver does.
-* Collision: Default Shape Convex Hull. Animated Collision (default on) drives Body Type (Kinematic / Static) and every
-  Parameter Operation of the collision Packed Object's inner SOP Geometry (Set Always / Set Initial), so the SOP is
-  re-imported each step and the solver turns pose changes into kinematic targets. That nested Packed Object is made
-  editable for this; the asset is rebuilt every build anyway. A point with `active = 0` and no `animated` stays static.
+* Collision: Default Shape Convex Hull. Collision Type (Static, Animated default, Deforming) drives Body Type (Kinematic
+  unless Static) and the collision Packed Object's Overwrite Attributes from SOP (on unless Static), so the SOP is
+  re-imported each step and the solver turns pose changes into kinematic targets; Deforming also sets `deforming` on
+  the colliders (`collision_deforming`). Both are the Packed Object's own parameters, so the nested asset stays locked.
+  A point with `active = 0` and no `animated` stays static.
 * The Constraint Network DOP uses Second Context Geometry and Attach Internal Constraints to Object (as RBD Bullet
   Solver), so the network is the pieces object's `ConstraintGeometry`. Only the pieces go through it, the collision
   object is merged after: a second object would get its own copy and make every joint twice. Every relationship in
@@ -153,6 +154,9 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
 * Solve on Creation Frame, as RBD Bullet Solver: `solvefirstframe` on the Solver tab (before Cache Simulation) is
   linked to both the pieces' and the collider's Packed Object (one toggle, as RBD Bullet Solver's). The build checks
   both links.
+* Collision shapes (the asset's Guide Geometry, node `GUIDE_GEO`, set as `guide=GUIDE_GEO` in the definition's extra info): DOP Import (`import_shapes`, pieces and collision objects, Geometry Data Path `SHAPES_DATA`, `POINTS_TOGGLES`)
+  -> `tint_shapes` (`SHAPES_TINT_VEX`, Shape Color) -> `unscale_shapes` -> `switch_show_shapes` (the solver's `exportshapes`, promoted
+  to Output > Visualization as Show Collision Shapes; empty input when off, so nothing cooks) -> `switchif_beforestart_shapes` -> `GUIDE_GEO`.
 * Before the Start Frame the Geometry, Constraints and Proxy outputs are the inputs (`before_start`, RBD Bullet
   Solver's `switchif_beforestart`; the proxy output shows the simulated source). A Switch-If takes its second input
   while its expression is true.
@@ -162,11 +166,11 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   asset, fed by a DOP Import Records of the pieces' `Impacts` data (its parameters set by label, `set_by_labels`).
 * Parameters: Reset Simulation and Start Frame above the tabs, then the solver's tabs (folders found under its Data
   Options, a tab of simple folders kept whole; Guide Options skipped; `TAB_RENAMES` / `TAB_MOVES` cover older plugins).
-  Tab order: Solver, Collision, Forces, Pieces, any other solver tabs, then Advanced and Output always last; the
+  Tab order: Solver, Collision, Forces, Pieces, any other solver tabs, Visualization (`visualization_tab`), then Advanced and Output always last; the
   solver's Misc tab is not shown (`MISC_TAB`: its Sleeping and Aging folders go to Pieces, anything else to Advanced
   with a warning). Solver: the solver's own settings, Cache Simulation, then the solver's Collision tab (contact
   settings) as a Contacts folder. Collision: one Collision Geometry folder whose header checkbox is Use External
-  Collisions (`usecollisions`, placed just before the folder, as RBD Bullet Solver's), holding Animated Collision and the collision object's Shape, Material and Sleep &
+  Collisions (`usecollisions`, placed just before the folder, as RBD Bullet Solver's), holding Collision Type and the collision object's Shape, Material and Sleep &
   Contacts folders (`COLLIDER_FOLDERS`, all named `collision_*`), the last cut to Contact Recycling as Contacts
   (`COLLIDER_DROPPED`: the rest does nothing for a Static / Kinematic body). Pieces: the pieces' Box3D Data folders
   without their Allow Sleeping (`PIECES_DROPPED`; `drop_templates`), the solver's Allow Sleeping first in Sleep &

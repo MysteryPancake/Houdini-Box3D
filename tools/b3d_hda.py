@@ -87,3 +87,24 @@ def set_operations(node, token, warn):
         except hou.Error as e:
             warn(f"{p.path()}: {e}")
     return changed
+
+
+def menu_index_expr(parm, cond, on_label, off_label, warn):
+    """Drives the menu `parm` with an HScript expression: the item labelled like `on_label` while
+    `cond` is true, else the one like `off_label`. False if either item is missing."""
+    found = {}
+    for want in (on_label, off_label):
+        for i, lab in enumerate(parm.menuLabels()):
+            if want.lower() in lab.lower():
+                found[want] = i
+                break
+    if len(found) != 2:
+        warn(f"{parm.path()}: no items like {on_label!r} / {off_label!r} in {list(parm.menuLabels())}")
+        return False
+    if parm.parmTemplate().type() == hou.parmTemplateType.String:
+        items = list(parm.menuItems())
+        expr = f'ifs({cond}, "{items[found[on_label]]}", "{items[found[off_label]]}")'
+    else:
+        expr = f"if({cond}, {found[on_label]}, {found[off_label]})"
+    parm.setExpression(expr, hou.exprLanguage.Hscript)
+    return True
