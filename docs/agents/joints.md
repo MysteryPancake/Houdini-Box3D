@@ -82,7 +82,7 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   `DECLARE_CLASSNAME` only) and one subclass per joint type from `BOX3D_DECLARE_CONREL`, each with its own automatic DOP
   (`box3d_<type>conrel`, label "Box3D <Type> Constraint Relationship", default Data Name the type label, `Weld` etc., capitalised like SideFX's). `describe(type)`
   builds the parameters (`Box3DParms`, defaults from `getJointParam` over `nodeJointDefaults`) once per type: a "Joint"
-  tab with the settings every type has (and Breakable), then a tab named after the type, in `jointParamUiOrder`,
+  tab with Attributes Replace Values (not on Filter) and the settings every type has (and Breakable), then a tab named after the type, in `jointParamUiOrder`,
   parameter name = attribute name (no per-type prefixes). `settings()` reads them through `setJointParam` in Box3D
   units over Box3D's defaults, then applies the node toggles.
 * Networks: every relationship of a solved object (group and affector side) whose relationship type data is a
@@ -107,7 +107,9 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   change. Settings = the kind's + matching primitive attributes, the Constraint Network DOP's rule: float attributes
   multiply the node's value (angles too: the attribute is a factor, so no degree conversion), toggles (int), vectors
   and Euler rotations (degrees) replace it. So a node value of 0 (most limits and targets) or a negative "never /
-  unlimited" cap cannot be changed per primitive except by setting the node to 1. Signature = type, bodies, both
+  unlimited" cap cannot be changed per primitive, unless the node's Attributes Replace Values
+  (`kAttributesReplaceName`, `Box3DJointKind::attributesReplace`, in `sameKinds`) is on: then floats are the value
+  too, in Houdini units (`applyFloatAttribute`). Every type but Filter. SideFX data keeps the multiply rule. Signature = type, bodies, both
   frames: equal and the joint valid -> `updateJoint` if settings differ; else recreate. `Box3DJointEntry` (in
   `st.joints`, key network + primitive offset) is the joint's user data, so nodes must not move (unordered_map).
   Entries not stamped are destroyed and erased.

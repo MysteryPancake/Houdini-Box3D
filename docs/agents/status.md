@@ -8,6 +8,16 @@ Last full run (Houdini 22.0.502, MSVC): every check passes except `baseline`, wh
 
 ## Unverified
 
+**Not yet run in Houdini**
+* `examples/make_examples.py car_park`: built against a stand-in `hou`, its bodies and joints replayed in the core
+  only. The wheel, motor, parallel and filter node parameter names and the network's `orient` are untested in Houdini.
+* Box3D Packed Object's Display Geometry (`visualize_hires`) and Collider Label (`add_display`): checked against a
+  stand-in `hou` only. The build's `check` probes both.
+* Attributes Replace Values on the joint nodes (test `joint_attributes_replace`; the core rule is in
+  `core_joints`).
+* An object with unpacked primitives and nothing packed returns before making bodies (`syncObject`): its bodies are
+  removed and its names released (`NameIndex::finish`). Test `unpacked_geometry`.
+
 **Build**
 * Linux plugin build (only the core builds in CI): `build.sh`, gcc warnings in `src/dop` / `src/sync`, the dso and
   icon copies, `hython tests/houdini/run_tests.py`.
@@ -38,9 +48,9 @@ Last full run (Houdini 22.0.502, MSVC): every check passes except `baseline`, wh
   degrees) and `bullet_length` (taken as the capsule's straight part); AutoFit on whole objects and fractured pieces.
 * Impact normal direction; whether a fresh `SIM_Impacts` each step suits Houdini's impact tools.
 * Which end is Cone Twist's goal (taken as point 1).
-* Unpacked geometry (`unpacked_geometry_bullet`, checked): Bullet errors on polygons only (the other objects still
-  simulate), ignores loose polygons beside packed pieces without a message (ours warns), and errors on loose points
-  (ours simulates them on purpose, a Box3D extension). Not checked: Bullet with an Empty Object + SOP Geometry.
+* Unpacked geometry (`unpacked_geometry_bullet`): an object of polygons only is skipped by both (ours warns). This
+  file had Bullet's message as an error, the author reports a warning: rerun to settle. Bullet ignores loose polygons
+  beside packed pieces without a message (ours warns) and gives that message for loose points (ours simulates them).
 
 **Whole objects**
 * RBD Point Object (`other_rbd_objects`, `point_object_bullet`): needs its Geometry Path menu (`usegeo`) set to Override, else it makes no objects. With that, Bullet and Box3D match: 4 whole objects, both fall to y -2.424 (checked).
@@ -61,12 +71,14 @@ Last full run (Houdini 22.0.502, MSVC): every check passes except `baseline`, wh
 * Mirrored packed pieces lose their mirror once they move (`mirrored_piece`).
 * Box3D Configure's Group takes a group name only, not a pattern such as `@name=piece0` or `piece*` (RBD
   Configure's does): the wrangle tests membership with `inpointgroup` / `inprimgroup`.
+* Spherical spring (and the motor joint's angular one) stalls when twisted about 180°: Box3D's error
+  (`b3DeltaQuatToRotation`) is the total rotation's axis, whose tilt part shrinks as cos(twist / 2). Fix in Box3D
+  (separate tilt and twist errors, upstream) or re-aim `targetRotation` at the current twist each step. A twist limit
+  avoids it (the car park's bollards). A parallel joint with a twist limit also orbited at about 72°: not understood.
 * SideFX Glue breaks under static load (Break Force = strength / timestep) where Bullet's holds (`sidefx_glue`).
 * Results depend slightly on point order even with `id` (`point_order`): bodies are created in point order.
 * Objects solved by another solver: packed ones are ignored as colliders; one-way collision with polygons untested.
-* Float attributes multiply the node's value (Houdini's rule), so a zero default can't be changed per primitive.
-* Box3D Packed Object: deforming import, initial velocity
-  controls, a `Colliders` label (other solvers use it to collide with it), a Box3D Tab submenu.
+* Box3D Packed Object: deforming import, initial velocity controls, a Box3D Tab submenu.
 * Export Collision Shapes (unverified): `SIM_DATA_CREATE(obj, "Box3DShapes", SIM_GeometryCopy, SIM_DATA_RETURN_EXISTING)`
   on an object that has no such data, then an empty detail in `SIM_GeometryAutoWriteLock`; `setExtraInfo` keeping other
   entries and surviving the later `save`s (Bullet's extra info is `guide=GUIDE_GEO` among colour entries).
@@ -86,8 +98,8 @@ Last full run (Houdini 22.0.502, MSVC): every check passes except `baseline`, wh
   * Collision: Deforming following an unpacked collider that scales (a turn is checked by
     `unpacked_turning_collider`); a Static Object option (height fields, one mesh), its own shape, friction and
     bounce on the node.
-  * Constraint relationship parameters on the node (Glue strength, Weld break force ...), or setting the inner ones to
-    1 so primitive attributes are absolute.
+  * Constraint relationship parameters on the node (Glue strength, Weld break force ...), or Attributes Replace
+    Values on the inner ones so primitive attributes are absolute.
   * Output tab: Import Constraints / Proxy toggles, `v` / `w` on Geometry; Transform Pieces options.
   * World Scale on joint node settings and primitive attributes that are lengths, and on FORCES.
   * Initial velocity controls, Set Always for animated solver parameters, a Tab submenu, a help card.

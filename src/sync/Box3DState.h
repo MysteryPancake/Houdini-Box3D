@@ -417,6 +417,9 @@ struct Box3DJointEntry {
 struct Box3DJointKind {
   b3dop::JointType type = b3dop::JointType::Weld;
   b3dop::JointSettings settings;
+  // Attributes Replace Values on the node: float primitive attributes are the
+  // value instead of a factor (b3dop::applyFloatAttribute).
+  bool attributesReplace = false;
   bool sideFX =
       false; // SideFX data: type / settings come from mapSideFX per primitive
   b3dop::SideFXType sideFXType = b3dop::SideFXType::Glue;

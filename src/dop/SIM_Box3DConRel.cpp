@@ -50,6 +50,11 @@ b3dop::JointSettings SIM_Box3DConRel::settings() const {
   return s;
 }
 
+bool SIM_Box3DConRel::attributesReplace() const {
+  return jointType() != b3dop::JointType::Filter &&
+         getOptions().getOptionB(b3dop::kAttributesReplaceName);
+}
+
 const SIM_DopDescription *
 SIM_Box3DConRel::describe(b3dop::JointType t,
                           const UT_StringHolder &classname) {
@@ -89,6 +94,11 @@ SIM_Box3DConRel::describe(b3dop::JointType t,
   const b3dop::JointSettings d =
       b3dop::nodeJointDefaults(t, b3dop::Box3DWorld::defaultJointSettings(t));
   st.parms.folder("Joint");
+  if (t != b3dop::JointType::Filter)
+    st.parms.toggle(b3dop::kAttributesReplaceName, "Attributes Replace Values",
+                    false,
+                    "Float primitive attributes set the value (degrees for "
+                    "angles). Off: they multiply this node's value.");
   bool ownTab = false;
   for (const JointParam *pp : b3dop::jointParamUiOrder(t)) {
     const JointParam &p = *pp;

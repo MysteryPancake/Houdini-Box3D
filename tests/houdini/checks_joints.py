@@ -45,6 +45,24 @@ def test_joint_revolute_limit():
     return [Result("joint_revolute_limit", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
 
 
+def test_joint_attributes_replace():
+    """A `lower_angle` primitive attribute of 0.5 on a revolute joint with Enable Limit (node limits +-45):
+    by Houdini's rule it multiplies, so the piece stops at -22.5 degrees. With Attributes Replace Values on
+    it is the limit itself, 0.5 degrees, so the piece hardly swings down."""
+    rows, ok = [], True
+    for replace in (0, 1):
+        dop, names = hanging_pair(f"attributes_replace{replace}", None, line_attrs={"lower_angle": 0.5},
+                                  conrels=[("box3d_revoluteconrel", {"enable_limit": 1,
+                                                                     "attributes_replace": replace})])
+        track = step(dop, 72, lambda sim, f: swing_angle(packed_positions(sim, "pieces")[names[1]]))
+        lowest = min(track.values())
+        expected = 0.5 if replace else -22.5
+        good = close(lowest, expected, 3.0)
+        rows.append(f"replace {'on' if replace else 'off'}: lowest angle {lowest:.1f} (expected {expected:g})")
+        ok = ok and good
+    return [Result("joint_attributes_replace", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
 def test_joint_revolute_motor():
     """A revolute motor at 90 deg/s (the node's default Max Motor Torque) spins a 1 kg piece at
     pi/2 rad/s after 2 s, no gravity; with the motor off it stays still."""
@@ -165,6 +183,7 @@ def test_negative_never_values():
 TESTS = {
     "joint_revolute_limit": test_joint_revolute_limit,
     "joint_revolute_motor": test_joint_revolute_motor,
+    "joint_attributes_replace": test_joint_attributes_replace,
     "joint_prismatic_limit": test_joint_prismatic_limit,
     "joint_spring_rest_length": test_joint_spring_rest_length,
     "joint_breakable": test_joint_breakable,

@@ -237,6 +237,43 @@ int main() {
                 1e-6f * std::max(1.0f, std::fabs(d.*p.f)));
       CHECK(jointParamSize(jointParams()[0]) == 1);
     }
+    // Float primitive attributes: a factor (the Constraint Network DOP's rule),
+    // or with Attributes Replace Values the value itself, in Houdini units.
+    {
+      const auto near = [](float got, float want) {
+        return std::fabs(got - want) <= 1e-6f * std::max(1.0f, std::fabs(want));
+      };
+      const JointType rev = JointType::Revolute, distance = JointType::Distance;
+      const JointParam &target = *findJointParam("target_angle");
+      const JointParam &lower = *findJointParam("lower_angle");
+      const JointParam &brk = *findJointParam("force_threshold");
+      const JointParam &maxLen = *findJointParam("max_length");
+      const JointSettings node =
+          nodeJointDefaults(rev, Box3DWorld::defaultJointSettings(rev));
+      CHECK(node.targetAngle == 0.0f &&
+            near(node.lowerAngle, -45.0f * kDegToRad));
+      JointSettings mul = node, rep = node;
+      applyFloatAttribute(mul, target, rev, 30.0f, false);
+      applyFloatAttribute(mul, lower, rev, 0.5f, false);
+      applyFloatAttribute(rep, target, rev, 30.0f, true);
+      applyFloatAttribute(rep, lower, rev, 0.5f, true);
+      CHECK(mul.targetAngle == 0.0f); // 0 times anything
+      CHECK(near(mul.lowerAngle, -22.5f * kDegToRad));
+      CHECK(near(rep.targetAngle, 30.0f * kDegToRad)); // degrees in
+      CHECK(near(rep.lowerAngle, 0.5f * kDegToRad));
+      // A cap left unlimited (-1, its node toggle off): a factor flips its
+      // sign, the value sets it.
+      mul.forceThreshold = rep.forceThreshold = -1.0f;
+      applyFloatAttribute(mul, brk, rev, 500.0f, false);
+      applyFloatAttribute(rep, brk, rev, 500.0f, true);
+      CHECK(mul.forceThreshold == -500.0f && rep.forceThreshold == 500.0f);
+      // Not an angle: no unit conversion.
+      JointSettings d = Box3DWorld::defaultJointSettings(distance);
+      applyFloatAttribute(d, maxLen, distance, 2.5f, true);
+      CHECK(d.maxLength == 2.5f);
+      // The node parameter is neither a setting nor a node toggle.
+      CHECK(findJointParam(kAttributesReplaceName) == nullptr);
+    }
     b.linearStiffness = 3.0f;
     CHECK(!sameJointSettings(JointType::Weld, a, b));
   }

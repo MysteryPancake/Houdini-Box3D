@@ -169,6 +169,7 @@ networkKinds(const SIM_Object &obj, const NetworkSource &src) {
       if (conrel) {
         k.type = conrel->jointType();
         k.settings = conrel->settings();
+        k.attributesReplace = conrel->attributesReplace();
       } else {
         k.sideFX = true;
         k.sideFXType = sideFXType;
@@ -195,6 +196,7 @@ bool sameKinds(const std::unordered_map<std::string, Box3DJointKind> &a,
                                      it->second.sideFXSettings))
         return false;
     } else if (it->second.type != kv.second.type ||
+               it->second.attributesReplace != kv.second.attributesReplace ||
                !b3dop::sameJointSettings(kv.second.type, kv.second.settings,
                                          it->second.settings))
       return false;
@@ -375,9 +377,10 @@ std::vector<SettingReader> bindSettings(const GU_Detail *gdp) {
 // The primitive's attributes on top of its constraint data's settings, as the
 // Constraint Network DOP documents: a float attribute multiplies the setting
 // (angles too: it is a factor, not degrees), any other kind replaces it
-// (vectors and Euler angles in Houdini units).
+// (vectors and Euler angles in Houdini units). With `replaceFloats` (the node's
+// Attributes Replace Values) floats replace too, in Houdini units.
 void applyOverrides(const std::vector<SettingReader> &readers,
-                    b3dop::JointType type, GA_Offset prim,
+                    b3dop::JointType type, GA_Offset prim, bool replaceFloats,
                     b3dop::JointSettings &s) {
   using b3dop::JointParam;
   for (const SettingReader &r : readers) {
@@ -385,7 +388,7 @@ void applyOverrides(const std::vector<SettingReader> &readers,
     if (!p.usedBy(type))
       continue;
     if (p.kind == JointParam::Float || p.kind == JointParam::Angle) {
-      s.*p.f *= r.f.get(prim);
+      b3dop::applyFloatAttribute(s, p, type, r.f.get(prim), replaceFloats);
       continue;
     }
     float v[3] = {0, 0, 0};
@@ -806,7 +809,7 @@ private:
     } else {
       j.type = kind.type;
       j.s = kind.settings;
-      applyOverrides(myReaders, j.type, off, j.s);
+      applyOverrides(myReaders, j.type, off, kind.attributesReplace, j.s);
       // A distance joint that measured its own rest length keeps it (see
       // writeLiveFrames).
       if (j.type == b3dop::JointType::Distance && !(j.s.restLength >= 0.0f) &&

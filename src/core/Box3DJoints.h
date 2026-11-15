@@ -837,6 +837,25 @@ inline void setJointParam(JointSettings &s, const JointParam &p, JointType t,
   }
 }
 
+// The relationship node parameter (not a setting, no attribute) that makes
+// float primitive attributes replace the node's value instead of multiplying
+// it. Every type but Filter, which has no float settings.
+constexpr const char *kAttributesReplaceName = "attributes_replace";
+
+// A float primitive attribute on setting `p` (a Float or Angle). Off: it
+// multiplies the node's value, the Constraint Network DOP's rule, so a node
+// value of 0 cannot be changed and -1 (unlimited) flips sign. `replace`: it is
+// the value, in Houdini units (degrees for angles), as other kinds already are.
+inline void applyFloatAttribute(JointSettings &s, const JointParam &p,
+                                JointType t, float value, bool replace) {
+  if (!replace) {
+    s.*p.f *= value;
+    return;
+  }
+  const float v[3] = {value, 0.0f, 0.0f};
+  setJointParam(s, p, t, v, nullptr); // floats need no Euler converter
+}
+
 // The Houdini value(s) of setting `p` of type `t` (the inverse of
 // setJointParam). Rotations read as zero Euler angles: only used for defaults,
 // and Box3D's default targets are the identity.

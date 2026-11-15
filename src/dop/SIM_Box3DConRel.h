@@ -6,7 +6,8 @@
 // Constraint Network DOP; primitives whose `constraint_name` equals its Data
 // Name become joints of that type, with the node's parameters as their
 // settings. Primitive attributes of the same names modify them (floats
-// multiply, everything else replaces), as the Constraint Network DOP documents.
+// multiply, everything else replaces), as the Constraint Network DOP documents,
+// or all replace with Attributes Replace Values on.
 // Parameters are generated from b3dop::jointParams(), so the nodes, the
 // attributes and the core always agree.
 #pragma once
@@ -29,6 +30,10 @@ public:
   // The node's settings, in Box3D units (Box3D's defaults for anything the type
   // does not use).
   b3dop::JointSettings settings() const;
+
+  // Attributes Replace Values: float primitive attributes replace the node's
+  // values instead of multiplying them.
+  bool attributesReplace() const;
 
 protected:
   explicit SIM_Box3DConRel(const SIM_DataFactory *factory);
