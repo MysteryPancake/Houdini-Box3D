@@ -8,5 +8,5 @@
 - Sleeping a body also sleeps the bodies touching it.
 - Solve On Creation Frame works as with Bullet: off, a new object starts moving one frame after it appears.
 - As with Bullet, a Box3D Packed Object resets each piece's rest (`restxform`) when its object is created and bakes `orient`, `pscale` and `scale` into the packed pieces. The Box3D Solver SOP's World Scale simulates the scene scaled, for pieces far from 1 unit.
-- Show Collision Shapes (Guide Options on the solver) draws the bodies' collision shapes.
+- Show Collision Shapes (Guide Options on the solver) draws the bodies' collision shapes. The Box3D Solver SOP also draws the external collision geometry by default (Show Collision Geometry).
 - Escape cancels a step.

@@ -67,6 +67,7 @@ OUTPUT_LABELS = ["Geometry", "Constraint Geometry", "Proxy Geometry", "Simulatio
 SHAPES_TOGGLE = "exportshapes"
 SHAPES_COLOR = "shapecolor"
 SHAPES_DATA = "Box3DShapes"
+SHOW_COLLISION = "showcollision"  # Visualization: the external collision geometry in the guide (on)
 GUIDE_GEO = "GUIDE_GEO"  # the node the asset's Guide Geometry property names (as RBD Bullet Solver)
 
 # The DOP Imports, set like RBD Bullet Solver's. Simulation points: Create Points to Represent

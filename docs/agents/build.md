@@ -156,7 +156,8 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   both links.
 * Collision shapes (the asset's Guide Geometry, node `GUIDE_GEO`, set as `guide=GUIDE_GEO` in the definition's extra info): DOP Import (`import_shapes`, pieces and collision objects, Geometry Data Path `SHAPES_DATA`, `POINTS_TOGGLES`)
   -> `tint_shapes` (`SHAPES_TINT_VEX`, Shape Color) -> `unscale_shapes` -> `switch_show_shapes` (the solver's `exportshapes`, promoted
-  to Output > Visualization as Show Collision Shapes; empty input when off, so nothing cooks) -> `switchif_beforestart_shapes` -> `GUIDE_GEO`.
+  to Output > Visualization as Show Collision Shapes; empty input when off, so nothing cooks) -> `switchif_beforestart_shapes` -> `merge_guide`.
+  The external collision geometry joins it as in RBD Bullet Solver's guide: DOP Import of the `collision` object (`import_collision_geo`) -> `dim_collision_geo` (`COLLISION_GUIDE_VEX`) -> `unscale_collision_geo` -> `switch_show_collision_geo` (`usecollisions` && Show Collision Geometry, `SHOW_COLLISION`, on) -> `switchif_beforestart_collision_geo`. `merge_guide` -> `guide_wireframe` (`gl_wireframe`) -> `GUIDE_GEO`.
 * Before the Start Frame the Geometry, Constraints and Proxy outputs are the inputs (`before_start`, RBD Bullet
   Solver's `switchif_beforestart`; the proxy output shows the simulated source). A Switch-If takes its second input
   while its expression is true.

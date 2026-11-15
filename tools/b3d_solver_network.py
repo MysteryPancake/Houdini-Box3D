@@ -25,12 +25,14 @@ from b3d_solver_common import (
     SHAPES_COLOR,
     SHAPES_DATA,
     SHAPES_TOGGLE,
+    SHOW_COLLISION,
     set_import_style,
     set_toggles,
     switch_on_spare_input,
     template_by_label,
     TRANSFER_ATTRIBUTES,
     TRANSFER_TO,
+    USE_COLLISIONS,
     warn,
 )
 from b3d_solver_dops import build_dops
@@ -156,6 +158,11 @@ foreach (string n; {"position", "v", "impulse"})
 SHAPES_TINT_VEX = f'''\
 v@Cd *= set(ch("../{SHAPES_COLOR}r"), ch("../{SHAPES_COLOR}g"), ch("../{SHAPES_COLOR}b"));
 '''
+
+# The collision object's own geometry in the guide, dimmed (Bullet's `@Cd *= 0.5`; grey when it has no Cd).
+COLLISION_GUIDE_VEX = """\
+v@Cd = hasprimattrib(0, "Cd") ? v@Cd * 0.5 : {0.5, 0.5, 0.5};
+"""
 
 # Pieces the solver deleted (dead, reaped) leave the Geometry / Proxy outputs: RBD Bullet Solver's
 # remove_deleted, on the names-mode pieces (input 1: the simulation points; input 2, Geometry only:
@@ -427,7 +434,36 @@ def build_network(sub):
     show_shapes.setInput(1, unscaled_shapes)
     show_shapes.parm("input").setExpression(f'ch("../{SHAPES_TOGGLE}")', hou.exprLanguage.Hscript)
     shapes_out = before_start(sub, dopnet, "switchif_beforestart_shapes", show_shapes, no_shapes)
-    create(sub, "null", GUIDE_GEO).setInput(0, shapes_out)  # drawn in the viewport: the asset's Guide Geometry
+
+    # The external collision geometry, as RBD Bullet Solver's guide shows it (dopimport_collision, dimmed
+    # by half, behind Use External Collisions and Show Collision Geometry; on by default).
+    import_cgeo = create(sub, "dopimport", "import_collision_geo")
+    import_cgeo.parm("doppath").set("../dopnet")
+    import_cgeo.parm("objpattern").set("collision")
+    set_import_style(import_cgeo, "fetch geometry")
+    set_by_label(import_cgeo, "Do Not Trigger Simulation", 1)
+    dim = create(sub, "attribwrangle", "dim_collision_geo")
+    dim.setInput(0, import_cgeo)
+    dim.parm("class").set("primitive")
+    dim.parm("snippet").set(COLLISION_GUIDE_VEX)
+    show_cgeo = create(sub, "switch", "switch_show_collision_geo")
+    show_cgeo.setInput(0, no_shapes)
+    show_cgeo.setInput(1, scale_xform(sub, "unscale_collision_geo", dim, inverse=True))
+    show_cgeo.parm("input").setExpression(f'ch("../{USE_COLLISIONS}") && ch("../{SHOW_COLLISION}")',
+                                          hou.exprLanguage.Hscript)
+    cgeo_out = before_start(sub, dopnet, "switchif_beforestart_collision_geo", show_cgeo, no_shapes)
+
+    # GUIDE_GEO, drawn in the viewport (the asset's Guide Geometry): both in wireframe, as Bullet's.
+    guide = create(sub, "merge", "merge_guide")
+    guide.setInput(0, cgeo_out)
+    guide.setInput(1, shapes_out)
+    wire = create(sub, ["attribcreate::2.0", "attribcreate"], "guide_wireframe")
+    wire.setInput(0, guide)
+    wire.parm("name1").set("gl_wireframe")
+    wire.parm("class1").set(0)  # detail
+    wire.parm("type1").set(1)  # int
+    wire.parm("value1v1").set(-1)
+    create(sub, "null", GUIDE_GEO).setInput(0, wire)
 
     # Before the Start Frame the inputs pass through, as RBD Bullet Solver (the proxy output shows what
     # is simulated: the proxy, else the geometry).

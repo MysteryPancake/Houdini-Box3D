@@ -655,7 +655,7 @@ def _folders(entries, path=()):
 
 
 def test_solver_sop_layout():
-    """The Solver SOP's tabs and folders: Solver, Collision, Forces, Pieces, Advanced, Output (no Misc);
+    """The Solver SOP's tabs and folders: Solver, Collision, Forces, Pieces, Visualization, Advanced, Output (no Misc);
     Collision Geometry's header checkbox is Use External Collisions, which sits just before it (as RBD
     Bullet Solver's); the Pieces tab is Shape, Body, Material, Sleep & Contacts (the solver's Allow
     Sleeping first), Aging; no Detach Faces; every collapsible folder open but
@@ -669,7 +669,7 @@ def test_solver_sop_layout():
             problems.append(f"{what}: {got!r}, expected {want!r}")
 
     tabs = [pt.label() for pt in entries if pt.type() == hou.parmTemplateType.Folder]
-    expect("tabs", tabs, ["Solver", "Collision", "Forces", "Pieces", "Advanced", "Output"])
+    expect("tabs", tabs, ["Solver", "Collision", "Forces", "Pieces", "Visualization", "Advanced", "Output"])
     folders = _folders(entries)
     by_path = {path: pt for path, pt in folders}
     coll = by_path.get(("Collision", "Collision Geometry"))
@@ -677,6 +677,10 @@ def test_solver_sop_layout():
            "usecollisions")
     expect("Collision tab", [pt.name() for pt in by_path[("Collision",)].parmTemplates()][:1]
            if ("Collision",) in by_path else None, ["usecollisions"])
+    show_geo = sop.parm("showcollision")
+    expect("Show Collision Geometry default (the guide shows the external collisions)",
+           show_geo.eval() if show_geo else None, 1)
+    expect("Show Collision Shapes default", sop.parm("exportshapes").eval() if sop.parm("exportshapes") else None, 0)
     expect("Collision Geometry group_type", coll.tags().get("group_type") if coll else None, "collapsible")
     pieces_tab = by_path.get(("Pieces",))
     expect("Pieces tab folders", [pt.label() for pt in pieces_tab.parmTemplates()] if pieces_tab else None,

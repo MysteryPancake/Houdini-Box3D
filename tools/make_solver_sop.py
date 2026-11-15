@@ -105,6 +105,7 @@ from b3d_solver_common import (  # noqa: E402
     GUIDE_GEO,
     SHAPES_COLOR,
     SHAPES_TOGGLE,
+    SHOW_COLLISION,
     SLEEPING_FOLDER,
     solver_folders,
     TAB_MOVES,
@@ -456,7 +457,12 @@ def visualization_tab(shapes):
         naming_scheme=hou.parmNamingScheme.RGBA, look=hou.parmLook.ColorSquare,
         help="Colour of the collision shapes.")
     color.setConditional(hou.parmCondType.DisableWhen, f"{{ {show.name()} == 0 }}")
-    return [show, color]
+    # The external collision geometry, as RBD Bullet Solver's Collision Geometry > Show Geometry (on).
+    geo = hou.ToggleParmTemplate(
+        SHOW_COLLISION, "Show Collision Geometry", default_value=True,
+        help="Draws the external collision geometry in the viewport.")
+    geo.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_COLLISIONS} == 0 }}")
+    return [collapsible("b3dsop_collision_geo", "Collision Geometry", [geo]), show, color]
 
 
 def link(inner, inner_name, outer, outer_name):
@@ -498,6 +504,8 @@ def check(out_path):
         if inner is None or inner.parm(SHAPES_TOGGLE) is None or inner.parm(SHAPES_TOGGLE).eval() != 1:
             warn(f"dopnet/box3d_solver/{SHAPES_TOGGLE} does not follow the asset's")
         probe.parm(SHAPES_TOGGLE).set(0)
+    if probe.parm(SHOW_COLLISION) is None or probe.parm(SHOW_COLLISION).eval() != 1:
+        warn(f"no {SHOW_COLLISION} parameter on the asset, or it is not on by default")
     for outer, inner_path, inner_name in (("friction", "dopnet/pieces", "friction"),
                                           ("collision_friction", "dopnet/collision", "friction"),
                                           ("stepsperframe", "dopnet/box3d_solver", "stepsperframe")):
