@@ -508,6 +508,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
 
   st->stampTime = now;
   st->stamped = true;
+  worldData->claimMemory();
   return SIM_SOLVER_SUCCESS;
 }
 

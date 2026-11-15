@@ -47,7 +47,7 @@ Inside:
       Shapes) -> tint_shapes (Shape Color) -> switch_show_shapes -> GUIDE_GEO
 
 Its parameters: Reset Simulation and Start Frame above the tabs; then the tabs Solver (the
-solver's own settings loose, Cache Simulation, then its contact settings in a Contacts folder, and the
+solver's own settings loose, Cache Simulation and Cache Memory (MB), then its contact settings in a Contacts folder, and the
 closed Sleeping (Allow Sleeping) and Aging folders), Pieces
 (Box3D Packed Object's Box3D Data folders for the simulated pieces: Shape, Body, Material, CCD & Contacts,
 Sleep), Collision (a Collision
@@ -75,6 +75,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import b3d_hda  # noqa: E402  (beside this script)
 from b3d_hda import labels, value_templates, without_parmops  # noqa: E402
 from b3d_solver_common import (  # noqa: E402
+    CACHE_MEMORY,
     COLLISION_TYPE,
     as_collapsible,
     collapsible,
@@ -97,6 +98,7 @@ from b3d_solver_common import (  # noqa: E402
     OUTPUT_LABELS,
     PACKED_OBJECT,
     parm_by_label,
+    row_by_label,
     PIECES_DROPPED,
     pull,
     rename_templates,
@@ -211,6 +213,13 @@ def build(out_path, packed_hda=None):
     if "Start Frame" in dop_templates:
         top.append(dop_templates["Start Frame"])
     solver_first = [dop_templates["Cache Simulation"]] if "Cache Simulation" in dop_templates else []
+    cache_memory = row_by_label(dopnet, CACHE_MEMORY)
+    if not cache_memory:
+        warn(f"{dopnet.path()} has no parameter labelled {CACHE_MEMORY!r}; not promoted. "
+             f"Its parameters: {labels(dopnet)}")
+    for pt in cache_memory:
+        links.append((sub.relativePathTo(dopnet), pt.name(), pt.name()))
+    solver_first += cache_memory
     # Solve on Creation Frame, before Cache Simulation (as on RBD Bullet Solver's first tab), linked to
     # the pieces' and the collider's Packed Object.
     solve_first = hou.ToggleParmTemplate(
@@ -532,6 +541,8 @@ def check(out_path):
         if inner is None or inner.parm(SHAPES_TOGGLE) is None or inner.parm(SHAPES_TOGGLE).eval() != 1:
             warn(f"dopnet/box3d_solver/{SHAPES_TOGGLE} does not follow the asset's")
         probe.parm(SHAPES_TOGGLE).set(0)
+    if not row_by_label(probe, CACHE_MEMORY):
+        warn(f"no {CACHE_MEMORY!r} parameter on the asset")
     if probe.parm(SHOW_COLLISION) is None or probe.parm(SHOW_COLLISION).eval() != 1:
         warn(f"no {SHOW_COLLISION} parameter on the asset, or it is not on by default")
     for outer, inner_path, inner_name in (("friction", "dopnet/pieces", "friction"),

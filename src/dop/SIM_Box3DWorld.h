@@ -27,6 +27,9 @@ public:
   // A new shared state with a fresh world, for this data only.
   bool createWorld(const b3dop::WorldSettings &settings);
 
+  // After a solve: this copy now reports the state's size to the cache.
+  void claimMemory();
+
 protected:
   explicit SIM_Box3DWorld(const SIM_DataFactory *factory);
   ~SIM_Box3DWorld() override;
@@ -36,8 +39,9 @@ protected:
   void
   makeEqualSubclass(const SIM_Data *source) override; // copies share the state
 
-  // A small constant: otherwise every sharing copy counts the whole world
-  // against the cache.
+  // The state's estimated size (Box3DSharedState::estimatedBytes), from the one
+  // copy that stepped it last: otherwise every sharing copy counts the whole
+  // world against the cache. The others report only themselves.
   int64 getMemorySizeSubclass() const override;
 
   // No save / load: a reloaded sim rebuilds its world.

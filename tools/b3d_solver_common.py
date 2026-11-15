@@ -132,8 +132,10 @@ RELATIONSHIPS = [
 ]
 
 # Parameters promoted from the inner SOP-level DOP network, by label (Start Frame above the tabs,
-# Cache Simulation in the Solver tab after the solver's own settings).
+# Cache Simulation in the Solver tab after the solver's own settings, then Cache Memory (MB): its
+# checkbox and slider, as RBD Bullet Solver's).
 DOPNET_PARMS = ["Start Frame", "Cache Simulation"]
+CACHE_MEMORY = "Cache Memory (MB)"
 
 # Solver folders that are not promoted (the guide's toggle and colour are on the Visualization tab).
 SKIP_SOLVER_FOLDERS = {"guide options"}
@@ -149,6 +151,22 @@ def template_by_label(node, label):
         if pt.label().lower() == label.lower():
             return pt
     return None
+
+
+def row_by_label(node, label):
+    """Clones of the parameters on the row of the one labelled `label`, in order: it and the ones joined to
+    it (a checkbox and its value). Empty if there is none."""
+    entries = [pt for pt in node.parmTemplateGroup().entriesWithoutFolders() if not pt.name().startswith("parmop")]
+    for i, pt in enumerate(entries):
+        if pt.type() in NO_VALUE or pt.label().lower() != label.lower():
+            continue
+        lo, hi = i, i
+        while lo > 0 and entries[lo - 1].joinsWithNext():
+            lo -= 1
+        while hi < len(entries) - 1 and entries[hi].joinsWithNext():
+            hi += 1
+        return [e.clone() for e in entries[lo:hi + 1]]
+    return []
 
 
 def parm_by_label(node, label):

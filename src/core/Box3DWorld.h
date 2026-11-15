@@ -618,6 +618,12 @@ public:
                                ShapeSpec &out);
   int hullCacheSize() const; // hulls this world holds
 
+  // A rough size of this world in memory, in bytes: Box3D's bodies, shapes,
+  // contacts and joints at measured average sizes, plus the hulls, meshes and
+  // height fields it holds. For cache accounting, not exact. Call between
+  // steps, from the thread that steps the world.
+  size_t estimatedBytes() const;
+
   // The shared cache: entries, bytes, and the byte budget past which the least
   // recently used entries are evicted (default 256 MB). Builds / attempts count
   // b3CreateHull calls (tests).

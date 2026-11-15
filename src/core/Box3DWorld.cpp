@@ -1110,6 +1110,37 @@ void Box3DWorld::pruneHulls() {
   myImpl->held.clear();
 }
 
+// Average bytes Box3D allocates per object, measured with b3GetByteCount on
+// box hull shapes (8000 bodies, one worker): a body 510 plus 210 of solver
+// arrays after its first step, an extra shape 400, a touching contact 1330
+// (manifolds included), a revolute joint 600.
+constexpr size_t kBodyBytes = 720;
+constexpr size_t kShapeBytes = 400;
+constexpr size_t kContactBytes = 1330;
+constexpr size_t kJointBytes = 600;
+
+size_t Box3DWorld::estimatedBytes() const {
+  if (!isValid())
+    return 0;
+  const b3Counters c = b3World_GetCounters(myImpl->worldId);
+  size_t bytes = static_cast<size_t>(c.bodyCount) * kBodyBytes +
+                 static_cast<size_t>(c.shapeCount) * kShapeBytes +
+                 static_cast<size_t>(c.contactCount) * kContactBytes +
+                 static_cast<size_t>(c.jointCount) * kJointBytes;
+  {
+    std::lock_guard<std::mutex> lock(myImpl->held_mutex);
+    for (const auto &kv : myImpl->held)
+      bytes += kv.second->bytes;
+  }
+  for (const auto &kv : myImpl->bodyGeometry) {
+    for (const b3MeshData *m : kv.second.meshes)
+      bytes += static_cast<size_t>(m->byteCount);
+    for (const b3HeightFieldData *hf : kv.second.heightFields)
+      bytes += static_cast<size_t>(hf->byteCount);
+  }
+  return bytes;
+}
+
 int Box3DWorld::hullCacheSize() const {
   std::lock_guard<std::mutex> lock(myImpl->held_mutex);
   return static_cast<int>(myImpl->held.size());

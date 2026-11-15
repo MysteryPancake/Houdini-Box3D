@@ -2282,6 +2282,37 @@ void testHullCache() {
   std::printf("shared hull cache checks done\n");
 }
 
+// The size estimate for the cache: an empty world is small, it grows with
+// bodies, shapes and (after a step) contacts, and a destroyed world is 0.
+void testEstimatedBytes() {
+  b3dop::KeyedWorld w;
+  CHECK(w.create(b3dop::WorldSettings()));
+  const size_t empty = w.estimatedBytes();
+  const float half[3] = {0.5f, 0.5f, 0.5f};
+  const double groundPos[3] = {0, -0.5, 0};
+  b3dop::BodySettings groundBody;
+  groundBody.type = b3dop::BodySettings::Type::Static;
+  CHECK(w.addBody(1, groundBody, groundPos, qIdentity));
+  const float groundHalf[3] = {20, 0.5f, 20};
+  CHECK(w.addBoxShape(1, groundHalf));
+  const int count = 100;
+  for (int i = 0; i < count; ++i) {
+    const double p[3] = {(i % 10) * 1.0, 0.5 + (i / 10) * 1.0, 0};
+    CHECK(w.addBody(100 + i, b3dop::BodySettings(), p, qIdentity));
+    CHECK(w.addBoxShape(100 + i, half));
+  }
+  const size_t bodies = w.estimatedBytes();
+  // At least a body and a shape each, and not wildly more.
+  CHECK(bodies >= empty + static_cast<size_t>(count) * 1000);
+  CHECK(bodies <= empty + static_cast<size_t>(count) * 3000);
+  for (int i = 0; i < 10; ++i)
+    w.step(1.0f / 60.0f);
+  CHECK(w.estimatedBytes() > bodies); // touching boxes: contacts
+  w.destroy();
+  CHECK(w.estimatedBytes() == 0);
+  std::printf("estimated bytes checks done\n");
+}
+
 // Sleep and enable state: starting asleep / disabled, forced sleep, live
 // enableSleep.
 void testSleepEnable() {
@@ -2436,6 +2467,7 @@ const TestCase kTests[] = {
     {"surface_material", testSurfaceMaterial},
     {"world_settings", testWorldSettings},
     {"hull_cache", testHullCache},
+    {"estimated_bytes", testEstimatedBytes},
     {"sleep_enable", testSleepEnable},
 };
 

@@ -12,11 +12,13 @@
 #include <GA/GA_Types.h>
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <deque>
 #include <iterator>
 #include <mutex>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -119,6 +121,14 @@ public:
   };
 
   size_t size() const { return index_.size(); }
+
+  // A rough heap size: the entries, the free list and the hash index.
+  size_t bytes() const {
+    return slots_.size() * sizeof(Slot) + free_.capacity() * sizeof(uint32_t) +
+           index_.size() * (sizeof(std::pair<const uint64_t, uint32_t>) +
+                            2 * sizeof(void *)) +
+           index_.bucket_count() * sizeof(void *);
+  }
 
   void reserve(size_t n) { index_.reserve(n); }
 
@@ -523,6 +533,40 @@ struct Box3DSharedState {
 
   double stampTime = 0.0; // SIM_Engine::getSimulationTime() at the last solve
   bool stamped = false;
+
+  // The size reported to the cache (SIM_Box3DWorld::getMemorySizeSubclass),
+  // set after each solve: the timestep copies share this state, so only the
+  // one that stepped it last (memoryOwner) reports it.
+  std::atomic<size_t> memoryBytes{0};
+  std::atomic<const void *> memoryOwner{nullptr};
+
+  // A rough size of everything this state holds: Box3D's world, the per-body,
+  // per-object and per-joint records, and the scratch kept between steps.
+  size_t estimatedBytes() const {
+    constexpr size_t kNode = 2 * sizeof(void *); // a hash node's links
+    auto mapBytes = [](const auto &m) {
+      using Value = typename std::decay_t<decltype(m)>::value_type;
+      return m.size() * (sizeof(Value) + kNode) +
+             m.bucket_count() * sizeof(void *);
+    };
+    size_t n = world.estimatedBytes() + mirror.bytes() + mapBytes(objectSync) +
+               mapBytes(affectors) + mapBytes(joints) +
+               mapBytes(jointNetworks) + mapBytes(slots);
+    for (const auto &kv : objectSync) {
+      const Box3DObjectSync &os = kv.second;
+      n += os.bodies.capacity() * sizeof(Box3DBodyMirror *) +
+           mapBytes(os.byName) + os.overridesReported.capacity();
+    }
+    for (const auto &kv : slots)
+      n += kv.second.capacity() * sizeof(Box3DPointSlot);
+    return n + writeItems.capacity() * sizeof(Box3DWriteItem) +
+           packedWrites.capacity() * sizeof(Box3DPackedWrite) +
+           moves.capacity() * sizeof(b3dop::BodyMove) +
+           contacts.capacity() * sizeof(b3dop::ContactPoint) +
+           impactGroups.capacity() * sizeof(Box3DImpactGroup) +
+           pointWrites.capacity() * sizeof(Box3DPointWrite) +
+           deletions.capacity() * sizeof(Box3DDeletion);
+  }
 
   std::mutex mutex;
 

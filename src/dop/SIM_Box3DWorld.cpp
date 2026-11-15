@@ -13,6 +13,10 @@ SIM_Box3DWorld::SIM_Box3DWorld(const SIM_DataFactory *factory)
 
 SIM_Box3DWorld::~SIM_Box3DWorld() {
   // The world goes when the last timestep copy sharing it does.
+  if (myState) {
+    const void *self = this;
+    myState->memoryOwner.compare_exchange_strong(self, nullptr);
+  }
 }
 
 const SIM_DopDescription *SIM_Box3DWorld::getDescription() {
@@ -50,7 +54,17 @@ void SIM_Box3DWorld::makeEqualSubclass(const SIM_Data *source) {
 }
 
 int64 SIM_Box3DWorld::getMemorySizeSubclass() const {
-  return SIM_Data::getMemorySizeSubclass() + 64;
+  int64 bytes = SIM_Data::getMemorySizeSubclass() + sizeof(myState);
+  if (myState && myState->memoryOwner.load() == this)
+    bytes += static_cast<int64>(myState->memoryBytes.load());
+  return bytes;
+}
+
+void SIM_Box3DWorld::claimMemory() {
+  if (!myState)
+    return;
+  myState->memoryBytes.store(myState->estimatedBytes());
+  myState->memoryOwner.store(this);
 }
 
 bool SIM_Box3DWorld::createWorld(const b3dop::WorldSettings &settings) {
