@@ -162,3 +162,19 @@ def set_tab_submenu(definition, warn):
         warn(f"{definition.nodeTypeName()}: no Tab menu tool for a {ctx} asset")
         return
     definition.addSection("Tools.shelf", TOOLS_SHELF.format(ctx=ctx, utils=utils, submenu=TAB_SUBMENU))
+
+
+def pull(entries, pred):
+    """(`entries` without the templates `pred` picks, recursing into folders; the templates picked)."""
+    kept, picked = [], []
+    for pt in entries:
+        if pred(pt):
+            picked.append(pt)
+            continue
+        if pt.type() == hou.parmTemplateType.Folder:
+            pt = pt.clone()
+            inner, more = pull(pt.parmTemplates(), pred)
+            pt.setParmTemplates(inner)
+            picked += more
+        kept.append(pt)
+    return kept, picked

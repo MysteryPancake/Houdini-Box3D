@@ -36,8 +36,8 @@ Collider Label PackedObject, as RBD Packed Object: other solvers collide with th
 pieces, and the Box3D Solver keeps it one body per point.
 
 Its parameters: the Object tab (object name, creation frame, solve on creation frame, SOP path,
-object transform, overwrite from SOP, deforming, display geometry), Initial State, then every Box3D
-Data folder as a tab. The asset is listed under Box3D in the Tab menu.
+object transform, overwrite from SOP, deforming, Add Impact Data, display geometry), Initial State (with
+Start Asleep), then every Box3D Data folder as a tab. The asset is listed under Box3D in the Tab menu.
 
 Never fails the build: problems are printed as warnings and the script exits 0.
 """
@@ -53,7 +53,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import b3d_hda  # noqa: E402  (beside this script)
 import b3d_settings  # noqa: E402
-from b3d_hda import NO_VALUE, labels, value_templates, without_parmops  # noqa: E402
+from b3d_hda import NO_VALUE, labels, pull, value_templates, without_parmops  # noqa: E402
 
 TYPE_NAME = "box3d_packedobject"
 LABEL = "Box3D Packed Object"
@@ -102,14 +102,19 @@ DEFORMING_VEX = """if (chi("../../%s")) {
 STAGE = "create_attributes"  # the SOP stage (a DOP SOP network), as RBD Packed Object's
 HIRES = "visualize_hires"  # the SOP Guide drawing the render geometry, as RBD Packed Object's
 
+# Box3D Data settings the asset shows outside their folders: Add Impact Data on the Object tab, Start Asleep on
+# Initial State.
+IMPACT_TOGGLE, START_ASLEEP = "addimpact", "startasleep"
+
 # Display Geometry / Render SOP Path, as RBD Packed Object's (same names, so its expressions carry over).
 DISPLAY, DISPLAY_GEO, RENDER_PATH = "display", "displaygeo", "rendergeopath"
 
 
-def initial_state_templates():
-    """The Initial State tab, as RBD Packed Object's (Position and Rotation are the SOP's own here)."""
+def initial_state_templates(extra=()):
+    """The Initial State tab, as RBD Packed Object's (Position and Rotation are the SOP's own here),
+    then `extra` (Box3D Data's Start Asleep)."""
     inherit = f"{{ {INHERIT_VEL} == 1 }}"
-    return [
+    return [*extra,
         hou.FloatParmTemplate(VEL, "Velocity", 3, default_value=(0, 0, 0), disable_when=inherit,
                               help="The pieces' starting velocity, in units per second."),
         hou.FloatParmTemplate(ANGVEL, "Angular Velocity", 3, default_value=(0, 0, 0), disable_when=inherit,
@@ -408,17 +413,23 @@ the simulation. Off: read once when the object is created.")
         if entry.type() == hou.parmTemplateType.Folder:
             tabs.append(hou.FolderParmTemplate(f"b3dpo_tab{i}", entry.label(), entry.parmTemplates(),
                                                folder_type=hou.folderType.Tabs))
+    # Box3D Data's Add Impact Data goes to the Object tab and Start Asleep to Initial State (still linked /
+    # written by name, wherever they sit).
+    object_level = [pt for pt in value_templates(tabs) if pt.name() in b3d_settings.SKIP]
+    tab_folders, moved = pull(tabs, lambda pt: pt.name() in (IMPACT_TOGGLE, START_ASLEEP))
+    tabs = [t for t in tab_folders if t.parmTemplates()]
+    moved = {pt.name(): pt for pt in moved}
     names = [pt for _, pt in promoted]
     names.insert(1, create_frame)
-    names += [overwrite, deforming]
+    names += [overwrite, deforming] + ([moved[IMPACT_TOGGLE]] if IMPACT_TOGGLE in moved else [])
     names += display_templates()
     group = hou.ParmTemplateGroup()
     group.append(hou.FolderParmTemplate("b3dpo_object", "Object", names, folder_type=hou.folderType.Tabs))
-    group.append(hou.FolderParmTemplate("initial_state", "Initial State", initial_state_templates(),
+    group.append(hou.FolderParmTemplate("initial_state", "Initial State",
+                                        initial_state_templates([moved[START_ASLEEP]] if START_ASLEEP in moved else []),
                                         folder_type=hou.folderType.Tabs))
     for tab in tabs:
         group.append(tab)
-    object_level = [pt for pt in value_templates(tabs) if pt.name() in b3d_settings.SKIP]
     rows = [r for _, rs in b3d_settings.settings(data, warn) for r in rs]
 
     # The SOP stage, read by SOP Geometry (whose SOP Path and Use Object Transform are no longer the

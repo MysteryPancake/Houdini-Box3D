@@ -51,22 +51,22 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
           // Outer loop: whole Box3D steps, each with its own collision
           // detection. Slider 1 to 10; minimum 1, more can be typed (capped
           // 64).
-          .integer("stepsperframe", "Substeps", 1, R{1, 10},
+          .integer("substeps", "Substeps", 1, R{1, 10},
                    "Box3D steps per time step. 1 steps once per frame (the "
                    "scene FPS), 2 twice, and so on. Each step detects "
                    "collisions again and runs its own Solver Passes, so more "
                    "catches fast or thin objects better, at a cost of "
                    "roughly Substeps x Solver Passes.")
           // Inner loop. Slider 1 to 100; minimum 1 (Box3D clamps to it), more
-          // can be typed. Name kept as \"substeps\" for saved scenes.
-          .integer("substeps", "Solver Passes", 10, R{1, 100},
+          // can be typed.
+          .integer("solverpasses", "Solver Passes", 10, R{1, 100},
                    "Contact and joint solver passes per Box3D step (Box3D's "
                    "counterpart to Constraint Iterations). Each pass is a "
                    "smaller time step, not another pass at the same "
                    "positions. More is stiffer and more stable for stacks "
                    "and chains, but slower. Raise Substeps instead for "
                    "collisions missed between frames.")
-          .tab("Collision")
+          .subfolder("Contacts")
           // Stiffer and less damped than Box3D's own defaults (30 Hz, 10):
           // a more rigid look. Box3D caps the stiffness at 1/8 of the pass
           // rate (fps x Substeps x Solver Passes), so 60 Hz needs 20 in total
@@ -115,7 +115,6 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                   "Let forces wake sleeping bodies, e.g. wind that should blow "
                   "resting pieces away.",
                   "{ useforces == 0 }")
-          .tab("Misc")
           .subfolder("Sleeping")
           .toggle("enablesleep", "Allow Sleeping", true,
                   "Let resting bodies stop simulating until touched. Off keeps "
@@ -246,7 +245,7 @@ b3dop::WorldSettings SIM_SolverBox3D::currentWorldSettings() const {
   s.gravity[0] = g.x();
   s.gravity[1] = g.y();
   s.gravity[2] = g.z();
-  s.subSteps = static_cast<int>(getSubSteps());
+  s.subSteps = static_cast<int>(getSolverPasses());
   s.workerCount = currentWorkerCount();
   s.enableSleep = getEnableSleep();
   s.contactPushSpeed = static_cast<float>(getContactPushSpeed());
@@ -410,7 +409,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   // its own collision detection and Solver Passes. st->stepDt stays the whole
   // frame's time: a kinematic target and a Glue's break force are per frame.
   const int n = st->stepDt > 0.0f
-                    ? std::clamp(static_cast<int>(getStepsPerFrame()), 1, 64)
+                    ? std::clamp(static_cast<int>(getSubsteps()), 1, 64)
                     : 1;
   const float subDt = st->stepDt / static_cast<float>(n);
 

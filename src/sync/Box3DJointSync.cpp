@@ -48,14 +48,6 @@ const char *const kAutoRestLength = "auto_restlength";
 const char *const kCurrentP = "current_P";
 const char *const kCurrentOrient = "current_orient";
 
-uint64_t hashString(const std::string &s) {
-  return b3dop::hashBytes(b3dop::kHashSeed, s.data(), s.size());
-}
-
-std::string toString(const UT_String &s) {
-  return s.isstring() ? std::string(s.buffer()) : std::string();
-}
-
 // The Constraint Network data a relationship carries, or null for other
 // relationships.
 const SIM_ConstraintNetworkRelationship *
@@ -1154,11 +1146,16 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects, float timeStep,
         NetworkRef ref;
         ref.object = obj;
         ref.source.inGroup = inGroup;
-        ref.source.relName = toString(rel->getName());
+        const UT_String relName = rel->getName();
+        ref.source.relName =
+            relName.isstring() ? std::string(relName.buffer()) : std::string();
         if (ref.source.relName.empty() ||
             !seenRels.insert(ref.source.relName).second)
           continue;
-        ref.key = b3dop::mixHash(hashString(ref.source.relName), 1);
+        ref.key = b3dop::mixHash(b3dop::hashBytes(b3dop::kHashSeed,
+                                                  ref.source.relName.data(),
+                                                  ref.source.relName.size()),
+                                 1);
         refs.push_back(ref);
       }
     if (obj->getConstNamedSubData(kInternalGeometry)) {

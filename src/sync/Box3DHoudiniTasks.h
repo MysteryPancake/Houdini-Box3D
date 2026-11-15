@@ -25,11 +25,7 @@
 #include <UT/UT_TaskScope.h>
 #include <UT/UT_Thread.h>
 
-#if __has_include(<oneapi/tbb/task_arena.h>)
-#include <oneapi/tbb/task_arena.h> // oneTBB (newer Houdini)
-#else
-#include <tbb/task_arena.h> // classic TBB
-#endif
+#include <oneapi/tbb/task_arena.h>
 
 // One per world. Never share one between worlds: wait() waits for every task in
 // the group.

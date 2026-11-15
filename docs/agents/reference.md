@@ -8,7 +8,7 @@ Defaults, ranges and menus are defined once, in the `Box3DParms` tables: the sol
 Box3D Data's in `src/dop/SIM_Box3DData.cpp`. Look values up there; do not copy them into docs. The worker-count bounds
 are `b3dop::kDefaultWorkerCount` / `kMaxWorkerCount` (`Box3DWorld.h`).
 
-Solver (read every step; only the thread count rebuilds the world): `gravity`, `stepsperframe` (Substeps), `substeps` (Solver Passes), `autothreads`, `threads`
+Solver (read every step; only the thread count rebuilds the world): `gravity`, `substeps` (Substeps), `solverpasses` (Solver Passes), `autothreads`, `threads`
 (default `b3dop::defaultWorkerCount()` in `Box3DCpu.h`: the machine's physical performance cores, as Box3D recommends;
 `WorldSettings` keeps `kDefaultWorkerCount`), `enablesleep`, `timescale`, `enableaging`, `reapdead`, `reapatframeend` (disabled while `reapdead` is off), and Box3D's tuning
 (Box3D's defaults except the contact stiffness and damping, tuned for bouncier, more rigid contacts): `contactstiffness`, `contactdamping`, `contactpushspeed`, `bouncethreshold`,
@@ -77,9 +77,9 @@ optional disable condition). It keeps the names, defaults, ranges, menus and con
 `tab()` groups share one `PRM_SWITCHER` (`PRM_Default(count, label)` per tab, switcher `b3dtabs`); `folder()` groups
 are simple folders, each a one-folder switcher with `PRM_SpareData::groupTypeSimple` named `<prefix><index>`. A builder
 uses one kind, except `subfolder()`: a simple folder inside a tab (`<prefix>sub<index>`), counted as one parameter of
-the tab. The solver uses tabs: Solver (time scale, Substeps, Solver Passes), Collision (contact tuning, recycling),
-Forces (gravity, bounce, friction / bounce mixing, Use Force DOPs, Forces Wake Bodies), Misc (simple folders
-Sleeping: Allow Sleeping; Aging: Enable Aging, Reap Dead Points, Reap At Frame End), Advanced (Warm Starting,
+the tab. The solver uses tabs: Solver (time scale, Substeps, Solver Passes, then simple folders Contacts: contact tuning,
+recycling; Sleeping: Allow Sleeping; Aging: Enable Aging, Reap Dead Points, Reap At Frame End),
+Forces (gravity, bounce, friction / bounce mixing, Use Force DOPs, Forces Wake Bodies), Advanced (Warm Starting,
 Continuous Collision, Export Collision Shapes, threads, speed limit, ...); its guide parameters are a plain list on Houdini's own Guide Options tab (so the
-solver's tabs sit inside Data Options). Box3D Data and the joint nodes use simple folders: Box3D Data's are Shape, Body, Material, Sleep & Contacts (CCD Threshold, Fast Object, Contact Recycling, the
-sleep settings, Add Impact Data last). A function-local static, because Houdini keeps pointers into it. Menu tokens are "0", "1", ... in item order (read as ints).
+solver's tabs sit inside Data Options). Box3D Data and the joint nodes use simple folders: Box3D Data's are Shape, Body, Material, CCD & Contacts (CCD Threshold, Fast Object, Contact Recycling, Add
+Impact Data) and Sleep (Allow Sleeping, Start Asleep, Sleep Threshold). A function-local static, because Houdini keeps pointers into it. Menu tokens are "0", "1", ... in item order (read as ints).

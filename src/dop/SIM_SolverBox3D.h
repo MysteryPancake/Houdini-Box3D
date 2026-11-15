@@ -32,11 +32,10 @@ public:
       "useforces", UseForces); // apply the Force DOPs attached to the objects
   GETSET_DATA_FUNCS_B("forceswake",
                       ForcesWake); // a force also wakes a sleeping body
-  // "substeps": solver passes per Box3D step (labelled Solver Passes); keeps
-  // its name so saved scenes and scripts still work.
-  GETSET_DATA_FUNCS_I("substeps", SubSteps);
-  // "stepsperframe": full Box3D steps per DOP step (labelled Substeps).
-  GETSET_DATA_FUNCS_I("stepsperframe", StepsPerFrame);
+  // "solverpasses": solver passes per Box3D step (labelled Solver Passes).
+  GETSET_DATA_FUNCS_I("solverpasses", SolverPasses);
+  // "substeps": full Box3D steps per DOP step (labelled Substeps).
+  GETSET_DATA_FUNCS_I("substeps", Substeps);
   GETSET_DATA_FUNCS_B("autothreads",
                       AutoThreads);        // every core, ignoring "threads"
   GETSET_DATA_FUNCS_I("threads", Threads); // 1..b3dop::kMaxWorkerCount

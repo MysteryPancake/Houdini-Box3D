@@ -47,14 +47,15 @@ Inside:
       Shapes) -> tint_shapes (Shape Color) -> switch_show_shapes -> GUIDE_GEO
 
 Its parameters: Reset Simulation and Start Frame above the tabs; then the tabs Solver (the
-solver's own settings loose, Cache Simulation, then its contact settings in a Contacts folder), Collision (a Collision
+solver's own settings loose, Cache Simulation, then its contact settings in a Contacts folder, and the
+closed Sleeping (Allow Sleeping) and Aging folders), Pieces
+(Box3D Packed Object's Box3D Data folders for the simulated pieces: Shape, Body, Material, CCD & Contacts,
+Sleep), Collision (a Collision
 Geometry folder whose header toggle is Use External Collisions, holding Collision Type and the
-collider's Shape, Material and Contacts settings, collision_* names), Forces (Gravity first, loose; Force DOPs and Bounce / Friction folders), Pieces
-(Box3D Packed Object's Box3D Data folders for the simulated pieces, then Sleep & Contacts with the
-solver's Allow Sleeping first, then the solver's Aging folder), Visualization (Show Collision Shapes,
-Shape Color), Advanced, and Output, always last
+collider's Shape, Material and Contacts settings, collision_* names), Forces (Gravity first, loose; Force DOPs and Bounce / Friction folders),
+Visualization (Show Collision Geometry, Show Collision Shapes, Shape Color), Advanced, and Output, always last
 (Impact Data with Fetch Impacts, Transfer Attributes and Transfer to Geometry / Proxy Geometry,
-Constraints). Every folder is open except Impact Data. Each inner parameter is a channel reference to
+Constraints). Every folder is open except Impact Data, Sleeping and Aging. Each inner parameter is a channel reference to
 the outer one.
 A Box3D Data parameter whose name the solver already uses gets a "piece_" prefix.
 
@@ -80,6 +81,7 @@ from b3d_solver_common import (  # noqa: E402
     collapsible,
     COLLIDER_DROPPED,
     COLLIDER_FOLDERS,
+    CONTACTS_FOLDER,
     COLLIDER_RELABEL,
     DIVE_TARGET,
     DOP_COLLISION,
@@ -94,12 +96,10 @@ from b3d_solver_common import (  # noqa: E402
     IMPACTS,
     INPUT_LABELS,
     LABEL,
-    MISC_TAB,
     OUTPUT_LABELS,
     PACKED_OBJECT,
     parm_by_label,
     PIECES_DROPPED,
-    PIECES_SEPARATE,
     pull,
     rename_templates,
     GUIDE_GEO,
@@ -107,9 +107,8 @@ from b3d_solver_common import (  # noqa: E402
     SHAPES_TOGGLE,
     SHOW_COLLISION,
     SLEEPING_FOLDER,
+    START_ASLEEP,
     solver_folders,
-    TAB_MOVES,
-    TAB_RENAMES,
     template_by_label,
     TRANSFER_ATTRIBUTES,
     TRANSFER_ATTRIBUTES_DEFAULT,
@@ -152,15 +151,27 @@ def edit_dialog_script(definition):
 def data_folders(packed):
     """A Box3D Packed Object's Box3D Data folders. Found by content (folders holding parameters its
     inner Box3D Data has), not by name: Houdini merges adjacent tabs into one folder set and renames
-    all but the first (b3dpo_object_1 ...), and Object is the first."""
+    all but the first (b3dpo_object_1 ...), and Object and Initial State come before them (they hold
+    Add Impact Data and Start Asleep, which `moved_settings` returns)."""
     inner = packed.node("box3d_data") if packed is not None else None
     names = {pt.name() for pt in inner.parmTuples()} if inner is not None else set()
     found = [e for e in packed.parmTemplateGroup().entries()
-             if e.type() == hou.parmTemplateType.Folder and e.label() != "Object"
+             if e.type() == hou.parmTemplateType.Folder and e.label() not in ("Object", "Initial State")
              and any(pt.name() in names for pt in value_templates(e.parmTemplates()))] if packed else []
     if not found:
         warn(f"no Box3D Data folders on {packed.path() if packed else '?'}: its settings are not promoted")
     return found
+
+
+def moved_settings(packed):
+    """The Box3D Data settings the Packed Object shows outside its data folders (Add Impact Data on the Object
+    tab, Start Asleep on Initial State), as {name: template}."""
+    group = packed.parmTemplateGroup()
+    found = {name: group.find(name) for name in (IMPACT_TOGGLE, START_ASLEEP)}
+    for name, pt in found.items():
+        if pt is None:
+            warn(f"{packed.path()} has no {name}: not on the Solver SOP")
+    return {name: pt.clone() for name, pt in found.items() if pt is not None}
 
 
 def build(out_path, packed_hda=None):
@@ -235,7 +246,7 @@ def build(out_path, packed_hda=None):
             links.append((sub.relativePathTo(solver), pt.name(), pt.name()))
             taken.add(pt.name())
 
-    # The collider's Shape, Material and Sleep & Contacts folders, every name prefixed (they would clash with the
+    # The collider's Shape, Material and CCD & Contacts folders, every name prefixed (they would clash with the
     # pieces' and the solver's), Default Shape defaulting to Convex Hull.
     collision = dopnet.node("collision")
     collider_tabs = [t for t in data_folders(collision) if t.label() in COLLIDER_FOLDERS]
@@ -282,24 +293,16 @@ def build(out_path, packed_hda=None):
     group = hou.ParmTemplateGroup()
     for pt in top:
         group.append(pt)
-    # The solver's tabs by label, with parameters moved where the SOP shows them (TAB_MOVES: Gravity
-    # first in Forces). The solver's Collision tab (contact settings) goes into Solver as a Contacts
-    # folder after Cache Simulation, so the SOP's Collision tab is only about the Collision input.
-    tabs = [(TAB_RENAMES.get(t.label(), t.label()), list(t.parmTemplates())) for t in solver_tabs]
-    for name, target in TAB_MOVES.items():
-        moved = None
-        for _, contents in tabs:
-            for pt in list(contents):
-                if pt.name() == name:
-                    contents.remove(pt)
-                    moved = pt
-        for label, contents in tabs:
-            if moved is not None and label == target:
-                contents.insert(0, moved)
-    # Out of the solver's tabs: the Aging and Sleeping folders (Misc) to Pieces, Impact Min Speed
-    # (Advanced) to Output.
-    aging, sleeping, speed, shapes = [], [], [], []
+    # The solver's tabs by label. Its Contacts folder goes after Cache Simulation in Solver (collapsible), so
+    # the SOP's Collision tab is only about the Collision input.
+    tabs = [(t.label(), list(t.parmTemplates())) for t in solver_tabs]
+    # Out of the solver's tabs: the Contacts, Sleeping and Aging folders re-placed at the end of the Solver tab
+    # (after Cache Simulation), Impact Min Speed (Advanced) to Output.
+    aging, sleeping, speed, shapes, contact_folders = [], [], [], [], []
     for i, (label, contents) in enumerate(tabs):
+        contents, c = pull(contents, lambda pt: pt.type() == hou.parmTemplateType.Folder
+                           and pt.label() == CONTACTS_FOLDER)
+        contact_folders += c
         contents, a = pull(contents, lambda pt: pt.type() == hou.parmTemplateType.Folder
                            and pt.label() == AGING_FOLDER)
         contents, sl = pull(contents, lambda pt: pt.type() == hou.parmTemplateType.Folder
@@ -308,33 +311,42 @@ def build(out_path, packed_hda=None):
         contents, sh = pull(contents, lambda pt: pt.name() == SHAPES_TOGGLE)
         tabs[i] = (label, contents)
         aging += a
-        sleeping += [t for f in sl for t in f.parmTemplates()]
+        sleeping += sl
         speed += sp
         shapes += sh
     if not aging:
-        warn(f"no {AGING_FOLDER} folder on the solver: not on the Pieces tab")
+        warn(f"no {AGING_FOLDER} folder on the solver: not on the Solver tab")
     if not sleeping:
-        warn(f"no {SLEEPING_FOLDER} folder on the solver: Allow Sleeping is not on the Pieces tab")
-    contacts = next((c for label, c in tabs if label == "Collision"), [])
-    solver_extra = solver_first + ([collapsible("b3dsop_contacts", "Contacts", contacts, True)] if contacts else [])
-    # Tab order: Solver, Collision, Forces, Pieces, any other solver tabs, then Advanced and Output
-    # always last. Misc is gone once Sleeping and Aging are out; anything else in it goes to Advanced.
+        warn(f"no {SLEEPING_FOLDER} folder on the solver: Allow Sleeping is not on the Solver tab")
+    contacts = [t for f in contact_folders for t in f.parmTemplates()]
+    # Solver tab: Cache Simulation, Contacts, then the closed Sleeping and Aging folders.
+    lifecycle = [collapsible(f"b3dsop_lifecycle{i}", f.label(), f.parmTemplates(), open_folder=False)
+                 for i, f in enumerate(sleeping + aging)]
+    solver_extra = solver_first + ([collapsible("b3dsop_contacts", "Contacts", contacts, True)] if contacts else []) \
+        + lifecycle
+    # Tab order: Solver, Pieces, Collision, Forces, any other solver tabs, Visualization, then Advanced and
+    # Output always last.
     by_label = {label: contents for label, contents in tabs}
-    misc = by_label.pop(MISC_TAB, [])
-    if misc:
-        warn(f"the solver's {MISC_TAB} tab still holds {[pt.label() for pt in misc]}: moved to Advanced")
-        by_label["Advanced"] = by_label.get("Advanced", []) + misc
     ordered = [("Solver", [use_scale, world_scale] + by_label.pop("Solver", []) + solver_extra),
+               ("Pieces", None),  # filled below
                ("Collision", collision_items)]
-    by_label.pop("Collision", None)
     last = [(label, by_label.pop(label)) for label in ("Advanced",) if label in by_label]
     if "Forces" in by_label:
         ordered.append(("Forces", by_label.pop("Forces")))
-    ordered.append(("Pieces", None))  # filled below
     ordered += list(by_label.items()) + [("Visualization", None)] + last + [("Output", None)]  # filled below
     print("make_solver_sop: solver tabs: " + ", ".join(t.label() for t in solver_tabs))
 
     data_tabs = drop_templates(data_folders(pieces), PIECES_DROPPED)
+    # Start Asleep (the Packed Object's Initial State) leads the Sleep folder; Add Impact Data (its Object tab)
+    # joins as a folder of its own, taken out for the Output tab just below.
+    moved = moved_settings(pieces)
+    sleep = next((t for t in data_tabs if t.label() == "Sleep"), None)
+    if START_ASLEEP in moved and sleep is not None:
+        sleep.setParmTemplates([moved[START_ASLEEP]] + list(sleep.parmTemplates()))
+    elif START_ASLEEP in moved:
+        warn("no Sleep folder on the pieces: Start Asleep is not on the Pieces tab")
+    if IMPACT_TOGGLE in moved:
+        data_tabs.append(hou.FolderParmTemplate("b3dsop_impact_tmp", "Impact", [moved[IMPACT_TOGGLE]]))
     print("make_solver_sop: Pieces folders: " + ", ".join(t.label() for t in data_tabs))
     renames = {pt.name(): f"piece_{pt.name()}" for pt in value_templates(data_tabs) if pt.name() in taken}
     if renames:
@@ -349,22 +361,15 @@ def build(out_path, packed_hda=None):
     # The pieces' Add Impact Data goes to Output (still linked by its name).
     impact_name = renames.get(IMPACT_TOGGLE, IMPACT_TOGGLE)
     folders, impact = pull(folders, lambda pt: pt.name() == impact_name)
-    # The Pieces tab: the Box3D Data folders (Shape, Body, Material) each an open collapsible folder,
-    # then Sleep & Contacts with the solver's Allow Sleeping first, then the solver's Aging.
-    nested, separate = pull(folders, lambda pt: pt.label() == PIECES_SEPARATE)
-    if not separate:
-        warn(f"no {PIECES_SEPARATE} folder on the pieces: Allow Sleeping is not on the Pieces tab")
-    separate = [as_collapsible(f) for f in separate]
-    if separate:
-        separate[0].setParmTemplates(sleeping + list(separate[0].parmTemplates()))
-    pieces_items = [as_collapsible(f) for f in nested] + separate + \
-        [collapsible("b3dsop_aging", f.label(), f.parmTemplates()) for f in aging]
+    # The Pieces tab: the Box3D Data folders (Shape, Body, Material, CCD & Contacts, Sleep), each an open
+    # collapsible folder (the folder Add Impact Data came out of may be left empty: dropped).
+    pieces_items = [as_collapsible(f) for f in folders if f.parmTemplates()]
     velocity = velocity_templates(sub.node("transform_geometry"))
     output_items = output_tab(impact, speed, velocity)
     vis_items = visualization_tab(shapes)
     for i, (label, contents) in enumerate(ordered):
         contents = {"Pieces": pieces_items, "Output": output_items, "Visualization": vis_items,
-                     "Collision": contents}.get(
+                    "Collision": contents}.get(
             label, group_tab(label, contents) if contents is not None else contents)
         group.append(hou.FolderParmTemplate(f"b3dsop_tab{i}", label, contents, folder_type=hou.folderType.Tabs))
 
@@ -472,8 +477,8 @@ def output_tab(impact, speed, velocity):
 
 
 def visualization_tab(shapes):
-    """The Visualization tab's contents: the solver's Export Collision Shapes as Show Collision Shapes,
-    and Shape Color."""
+    """The Visualization tab's contents: Show Collision Geometry, the solver's Export Collision Shapes as
+    Show Collision Shapes, and Shape Color, all at the tab's top level."""
     if not shapes:
         warn(f"no {SHAPES_TOGGLE} on the solver: Show Collision Shapes is not on the Visualization tab")
         return []
@@ -490,7 +495,7 @@ def visualization_tab(shapes):
         SHOW_COLLISION, "Show Collision Geometry", default_value=True,
         help="Draws the external collision geometry in the viewport.")
     geo.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_COLLISIONS} == 0 }}")
-    return [collapsible("b3dsop_collision_geo", "Collision Geometry", [geo]), show, color]
+    return [geo, show, color]
 
 
 def link(inner, inner_name, outer, outer_name):
@@ -536,7 +541,7 @@ def check(out_path):
         warn(f"no {SHOW_COLLISION} parameter on the asset, or it is not on by default")
     for outer, inner_path, inner_name in (("friction", "dopnet/pieces", "friction"),
                                           ("collision_friction", "dopnet/collision", "friction"),
-                                          ("stepsperframe", "dopnet/box3d_solver", "stepsperframe")):
+                                          ("substeps", "dopnet/box3d_solver", "substeps")):
         p, inner = probe.parm(outer), probe.node(inner_path)
         q = inner.parm(inner_name) if inner is not None else None
         if p is None or q is None:

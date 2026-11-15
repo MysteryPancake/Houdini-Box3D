@@ -32,9 +32,9 @@ pointer to its object's record (`sync`), valid because records are erased only a
 
 ## Solver step (`solveObjectsSubclass`)
 
-**Two step counts.** *Substeps* (`stepsperframe`, default 1) splits the DOP step into whole Box3D steps, each with its
+**Two step counts.** *Substeps* (`substeps`, default 1) splits the DOP step into whole Box3D steps, each with its
 own `b3Collide` (contact detection), so collisions are found `fps * Substeps` times a second. *Solver Passes*
-(`substeps`, default 10; the parm keeps its old name so saved scenes and scripts still work) is Box3D's own
+(`solverpasses`, default 10) is Box3D's own
 `subStepCount`: each pass is a smaller time step for the contact / joint solve, not another iteration at the same
 positions (Box3D runs one solve and one relax per pass). Not to be confused with `restitutionIterations`. Kinematic
 targets (`setTargetTransformByHandle`) and the Glue break force use the whole frame's `stepDt`, so they hold for any
@@ -52,7 +52,7 @@ lock st->mutex
 stepDt = dt * timescale; world.applyTuning(currentWorldSettings())   (stepDt stays the whole frame's time)
 syncFromGeometry   per object syncObject(); syncAffectorBodies (Static Objects); remove gone bodies; syncJoints;
                    pruneHulls; warnings
-world.step         n = Substeps (`stepsperframe`, 1..64; 1 when stepDt is 0). Each of the n steps: applyExternalForces (Box3D clears
+world.step         n = Substeps (`substeps`, 1..64; 1 when stepDt is 0). Each of the n steps: applyExternalForces (Box3D clears
                    forces every step), b3World_Step(stepDt / n, subSteps = Solver Passes), then its move events are merged
                    into st.moves by body (Box3D clears them every step; the last event wins, so fell-asleep survives).
                    applyExternalForces (Use Force DOPs): SIM_Force data per object -> getForce at each dynamic body's
@@ -104,8 +104,7 @@ a `UT_ERROR_MESSAGE` "step cancelled", and `SIM_SOLVER_FAIL`. `b3World_Step` its
 once it has run the step always finishes (write-back etc. are quick), so a cached step is always whole.
 `StepProgress` is at global scope in `Box3DSolverInternal.h` (the solver header forward-declares it).
 
-Data names: `"Box3DWorld"`, `kBox3DDataName` (`"Geometry/Box3DData"`, under the object's Geometry like Bullet Data; `findBox3DData` also
-finds `kBox3DDataLegacyName`, the top-level `"Box3DData"` of older scenes; SIM_Box3DData.h), `SIM_GEOMETRY_DATANAME`.
+Data names: `"Box3DWorld"`, `kBox3DDataName` (`"Geometry/Box3DData"`, under the object's Geometry like Bullet Data; SIM_Box3DData.h), `SIM_GEOMETRY_DATANAME`.
 
 ### syncObject (per object)
 

@@ -106,7 +106,7 @@ def test_substeps_fps():
         hou.setFps(fps)
         dop, names = stack_scene(f"substeps_{fps}_{substeps}")
         solver = dop.node("box3d_solver")
-        set_parm(solver, ["substeps"], substeps)
+        set_parm(solver, ["solverpasses"], substeps)
         frames = 4 * fps
         track = step(dop, frames, lambda sim, f: packed_positions(sim, "pieces")[names[3]])
         rest = track[frames][1]

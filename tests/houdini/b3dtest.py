@@ -134,10 +134,6 @@ def parm_value(node, names, default=None):
     return default
 
 
-def node_type_exists(category, name):
-    return hou.nodeType(category, name) is not None
-
-
 def display(node):
     node.setDisplayFlag(True)
     if hasattr(node, "setRenderFlag"):

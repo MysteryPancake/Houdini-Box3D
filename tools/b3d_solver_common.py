@@ -6,7 +6,7 @@ import re
 import hou
 
 import b3d_hda
-from b3d_hda import labels, NO_VALUE, value_templates
+from b3d_hda import labels, NO_VALUE, pull, value_templates
 
 
 TYPE_NAME = "box3d_solver"  # a SOP; the DOP of the same name lives in another node table
@@ -19,12 +19,12 @@ INPUT_COLORS = {1: (1.0, 0.6, 0.8)}
 COLLISION_TYPE = "collisiontype"  # menu: 0 Static, 1 Animated, 2 Deforming (RBD Bullet Solver's Collision Type)
 OVERWRITE_FROM_SOP = "overwritefromsop"  # the Box3D Packed Object's toggle: re-import the SOP every step
 USE_COLLISIONS = "usecollisions"
-COLLIDER_FOLDERS = ["Shape", "Material", "Sleep & Contacts"]  # the collision object's Box3D Data folders on the Collision tab
-# Of the collider's Sleep & Contacts folder only Contact Recycling acts on a Static / Kinematic body
+COLLIDER_FOLDERS = ["Shape", "Material", "CCD & Contacts"]  # the collision object's Box3D Data folders on the Collision tab
+# Of the collider's CCD & Contacts folder only Contact Recycling acts on a Static / Kinematic body
 # (shown as Collider Contacts); the rest, and the pieces' Allow Sleeping, are left out: on the SOP the
 # solver's Allow Sleeping is the one switch for every body. Their inner values stay at the defaults.
 COLLIDER_DROPPED = {"ccdthreshold", "fastobject", "enablesleep", "startasleep", "sleepthreshold", "addimpact"}
-COLLIDER_RELABEL = {"Sleep & Contacts": "Contacts"}
+COLLIDER_RELABEL = {"CCD & Contacts": "Contacts"}
 PIECES_DROPPED = {"enablesleep"}
 
 # Collapsible folders inside the tabs, as RBD Bullet Solver's, every one open but Impact Data.
@@ -38,13 +38,11 @@ TAB_GROUPS = {
                                    "isotropicinertia"]),
                  ("Threads", ["autothreads", "threads"])],
 }
-PIECES_SEPARATE = "Sleep & Contacts"  # the Pieces tab: after Shape, Body, Material, the solver's Allow Sleeping first
-# The solver's Misc tab is not shown: its Sleeping folder's Allow Sleeping goes first in the Pieces' Sleep &
-# Contacts (one switch for every body), its Aging folder below that on the Pieces tab.
-MISC_TAB = "Misc"
+# The Pieces tab is the pieces' Box3D Data folders (Shape, Body, Material, CCD & Contacts, Sleep). The solver's Solver
+# tab ends with Contacts, Sleeping and Aging folders; the SOP puts Cache Simulation before them and closes
+# Sleeping and Aging.
+CONTACTS_FOLDER = "Contacts"  # the solver's contact settings, a folder at the end of its Solver tab
 SLEEPING_FOLDER = "Sleeping"
-TAB_RENAMES = {"Setup": "Solver"}  # older plugins name the solver's first tab Setup
-TAB_MOVES = {"gravity": "Forces"}  # solver parameters shown first in another tab (older plugins: Setup)
 
 # The DOP subnet for forces, the asset's dive target, and its outputs in the order the Multiple
 # Solver runs them around the Box3D Solver.
@@ -96,7 +94,8 @@ CONSTRAINTS_TOGGLES = {"Pack Geometry Before Merging": False,
                        "Preserve World Space Positions": False}
 # The Output tab, always last, as RBD Bullet Solver's: Impact Data (the pieces' Add Impact Data as the
 # folder's header toggle, the solver's Impact Min Speed, Fetch Impacts; closed), then Transfer Attributes.
-IMPACT_TOGGLE = "addimpact"  # the pieces' Box3D Data toggle
+IMPACT_TOGGLE = "addimpact"  # the pieces' Box3D Data toggle (on the Packed Object's Object tab)
+START_ASLEEP = "startasleep"  # the pieces' Box3D Data toggle (on the Packed Object's Initial State tab)
 IMPACT_SPEED = "impactminspeed"  # the solver's, moved from Advanced
 AGING_FOLDER = "Aging"  # the solver's Misc subfolder
 IMPACTS = "IMPACTS"  # the null holding the imported impact records, what Fetch Impacts merges
@@ -213,8 +212,11 @@ def collapsible(name, label, contents, open_folder=True, header_toggle=None):
 
 
 def as_collapsible(folder):
-    """A clone of the folder template as an open collapsible folder."""
+    """A clone of the folder template as an open collapsible folder (a folder that is already collapsible
+    keeps its own open / closed state)."""
     folder = folder.clone()
+    if folder.folderType() == hou.folderType.Collapsible:
+        return folder
     folder.setFolderType(hou.folderType.Collapsible)
     tags = dict(folder.tags())
     tags["group_type"] = "collapsible"
@@ -331,22 +333,6 @@ def set_by_labels(node, candidates, value):
             return set_by_label(node, label, value)
     warn(f"{node.path()} has none of the parameters {candidates}; its parameters: {labels(node)}")
     return False
-
-
-def pull(entries, pred):
-    """(`entries` without the templates `pred` picks, recursing into folders; the templates picked)."""
-    kept, picked = [], []
-    for pt in entries:
-        if pred(pt):
-            picked.append(pt)
-            continue
-        if pt.type() == hou.parmTemplateType.Folder:
-            pt = pt.clone()
-            inner, more = pull(pt.parmTemplates(), pred)
-            pt.setParmTemplates(inner)
-            picked += more
-        kept.append(pt)
-    return kept, picked
 
 
 def copy_attributes(xform, toggle_parm):

@@ -86,7 +86,7 @@ const SIM_DopDescription *SIM_Box3DData::getDescription() {
           .number("angulardamping", "Angular Damping", 0.0, R{0, 10},
                   "Slows spinning; 0 is none. Overridden by the angulardamping "
                   "attribute.")
-          .folder("Sleep & Contacts")
+          .folder("CCD & Contacts")
           .number("ccdthreshold", "CCD Threshold", 0.5, R{0, 1},
                   "Continuous collision starts when a body moves more than "
                   "this fraction of its thinnest size per step. "
@@ -100,6 +100,11 @@ const SIM_DopDescription *SIM_Box3DData::getDescription() {
                   "Reuse contacts between steps (within the solver's Contact "
                   "Recycle Distance). Turn off if thin or fast bodies show "
                   "ghost collisions.")
+          .toggle(
+              "addimpact", "Add Impact Data", false,
+              "Record impacts in Impacts data on the object. Costs extra time "
+              "and memory. Filter by speed with the solver's Impact Min Speed.")
+          .folder("Sleep")
           .toggle("enablesleep", "Allow Sleeping", true,
                   "Let resting bodies stop simulating until touched. Needs the "
                   "solver's Allow Sleeping. Overridden by the "
@@ -114,10 +119,6 @@ const SIM_DopDescription *SIM_Box3DData::getDescription() {
                   "A body falls asleep once its speed stays below this for "
                   "half a second. Overridden by the sleepthreshold attribute.",
                   "{ enablesleep == 0 }")
-          .toggle(
-              "addimpact", "Add Impact Data", false,
-              "Record impacts in Impacts data on the object. Costs extra time "
-              "and memory. Filter by speed with the solver's Impact Min Speed.")
           .templates();
 
   static SIM_DopDescription theDopDescription(

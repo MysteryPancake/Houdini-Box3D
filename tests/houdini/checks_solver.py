@@ -132,13 +132,13 @@ def test_ui():
     expect("Solver Reap Dead Points default (off)", solver.parm("reapdead").parmTemplate().defaultValue(), False)
     expect("Solver Reap At Frame End default (on, as POP)",
            solver.parm("reapatframeend").parmTemplate().defaultValue(), True)
-    t = solver.parm("substeps").parmTemplate()
-    expect("Solver Passes (parm substeps) label", t.label(), "Solver Passes")
+    t = solver.parm("solverpasses").parmTemplate()
+    expect("Solver Passes (parm solverpasses) label", t.label(), "Solver Passes")
     expect("Solver Passes default", t.defaultValue()[0], 10)
     expect("Solver Passes slider 1..100 (hard minimum only)",
            (t.minValue(), t.minIsStrict(), t.maxValue(), t.maxIsStrict()), (1, True, 100, False))
-    t = solver.parm("stepsperframe").parmTemplate()
-    expect("Solver Substeps (parm stepsperframe) label", t.label(), "Substeps")
+    t = solver.parm("substeps").parmTemplate()
+    expect("Solver Substeps (parm substeps) label", t.label(), "Substeps")
     expect("Solver Substeps default (1 = one Box3D step per frame)", t.defaultValue()[0], 1)
     expect("Solver Substeps slider 1..10 (hard minimum only)",
            (t.minValue(), t.minIsStrict(), t.maxValue(), t.maxIsStrict()), (1, True, 10, False))
@@ -162,16 +162,17 @@ def test_ui():
     expect("Revolute's Joint and Revolute folders are simple",
            (len(ours), all(f.folderType() == hou.folderType.Simple for f in ours)), (2, True))
     solver_tabs = [f for f in all_folders(solver.parmTemplateGroup().entries())
-                   if f.label() in ("Solver", "Collision", "Forces", "Misc", "Advanced")]
+                   if f.label() in ("Solver", "Forces", "Advanced")]
     expect("Solver tabs present, as tabs",
            ([f.label() for f in solver_tabs], all(f.folderType() == hou.folderType.Tabs for f in solver_tabs)),
-           (["Solver", "Collision", "Forces", "Misc", "Advanced"], True))
-    misc = next((f for f in solver_tabs if f.label() == "Misc"), None)
-    expect("Solver Misc tab holds simple Sleeping and Aging folders",
+           (["Solver", "Forces", "Advanced"], True))
+    solver_tab = next((f for f in solver_tabs if f.label() == "Solver"), None)
+    expect("Solver tab ends with simple Contacts, Sleeping and Aging folders",
            [(f.label(), f.folderType() == hou.folderType.Simple,
              sorted(c.name() for c in f.parmTemplates() if not c.name().startswith("parmop")))
-            for f in (misc.parmTemplates() if misc else []) if f.type() == hou.parmTemplateType.Folder],
-           [("Sleeping", True, ["enablesleep"]),
+            for f in (solver_tab.parmTemplates() if solver_tab else []) if f.type() == hou.parmTemplateType.Folder],
+           [("Contacts", True, ["contactdamping", "contactpushspeed", "contactrecycledistance", "contactstiffness"]),
+            ("Sleeping", True, ["enablesleep"]),
             ("Aging", True, ["enableaging", "reapatframeend", "reapdead"])])
     forces_tab = next((f for f in solver_tabs if f.label() == "Forces"), None)
     expect("Solver Forces tab ends with Use Force DOPs, then Forces Wake Bodies",

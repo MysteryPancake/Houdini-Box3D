@@ -41,12 +41,6 @@ struct SharedHull {
 };
 using HullRef = std::shared_ptr<const SharedHull>;
 
-size_t hullBytes(const b3HullData *h) {
-  // The hull's whole allocation: header, vertex / point / edge / plane / face
-  // arrays, the SoA vertex and normal arrays and the edge cosines.
-  return static_cast<size_t>(h->byteCount);
-}
-
 class HullLibrary {
 public:
   static HullLibrary &instance() {
@@ -69,7 +63,9 @@ public:
     auto fresh = std::make_shared<SharedHull>();
     fresh->hull = hull;
     fresh->volume = hull->volume;
-    fresh->bytes = hullBytes(hull);
+    // The hull's whole allocation: header, vertex / point / edge / plane / face
+    // arrays, the SoA vertex and normal arrays and the edge cosines.
+    fresh->bytes = static_cast<size_t>(hull->byteCount);
     std::lock_guard<std::mutex> lock(myMutex);
     auto ins = myEntries.try_emplace(key);
     if (ins.second) {
@@ -455,11 +451,6 @@ b3RestitutionCallback *restitutionRule(WorldSettings::RestitutionMixing mode) {
     break;
   }
   return nullptr;
-}
-
-bool sameBody(b3BodyId a, b3BodyId b) {
-  return a.index1 == b.index1 && a.world0 == b.world0 &&
-         a.generation == b.generation;
 }
 
 } // namespace
@@ -1543,7 +1534,8 @@ int Box3DWorld::getContactsByHandle(BodyHandle h,
     const b3ContactData &cd = data[static_cast<size_t>(i)];
     const b3BodyId a = b3Shape_GetBody(cd.shapeIdA);
     const b3BodyId b = b3Shape_GetBody(cd.shapeIdB);
-    const bool thisIsA = sameBody(a, id);
+    const bool thisIsA = a.index1 == id.index1 && a.world0 == id.world0 &&
+                         a.generation == id.generation;
     const b3BodyId other = thisIsA ? b : a;
     const b3Pos centerA =
         b3Body_GetWorldCenter(a); // anchors are relative to A's centre of mass

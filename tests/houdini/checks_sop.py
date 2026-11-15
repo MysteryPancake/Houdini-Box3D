@@ -658,11 +658,11 @@ def _folders(entries, path=()):
 
 
 def test_solver_sop_layout():
-    """The Solver SOP's tabs and folders: Solver, Collision, Forces, Pieces, Visualization, Advanced, Output (no Misc);
-    Collision Geometry's header checkbox is Use External Collisions, which sits just before it (as RBD
-    Bullet Solver's); the Pieces tab is Shape, Body, Material, Sleep & Contacts (the solver's Allow
-    Sleeping first), Aging; no Detach Faces; every collapsible folder open but
-    Impact Data."""
+    """The Solver SOP's tabs and folders: Solver, Pieces, Collision, Forces, Visualization, Advanced, Output (no
+    Misc); Collision Geometry's header checkbox is Use External Collisions, which sits just before it (as RBD
+    Bullet Solver's); the Pieces tab is Shape, Body, Material, CCD & Contacts, Sleep (Start Asleep first); the
+    Solver tab ends with Contacts, Sleeping (the solver's Allow Sleeping) and Aging; Visualization has no
+    folders; no Detach Faces; every collapsible folder open but Impact Data, Sleeping and Aging."""
     sop = solver_sop("sop_layout")
     entries = sop.parmTemplateGroup().entries()
     problems = []
@@ -672,7 +672,7 @@ def test_solver_sop_layout():
             problems.append(f"{what}: {got!r}, expected {want!r}")
 
     tabs = [pt.label() for pt in entries if pt.type() == hou.parmTemplateType.Folder]
-    expect("tabs", tabs, ["Solver", "Collision", "Forces", "Pieces", "Visualization", "Advanced", "Output"])
+    expect("tabs", tabs, ["Solver", "Pieces", "Collision", "Forces", "Visualization", "Advanced", "Output"])
     folders = _folders(entries)
     by_path = {path: pt for path, pt in folders}
     coll = by_path.get(("Collision", "Collision Geometry"))
@@ -687,19 +687,29 @@ def test_solver_sop_layout():
     expect("Collision Geometry group_type", coll.tags().get("group_type") if coll else None, "collapsible")
     pieces_tab = by_path.get(("Pieces",))
     expect("Pieces tab folders", [pt.label() for pt in pieces_tab.parmTemplates()] if pieces_tab else None,
-           ["Shape", "Body", "Material", "Sleep & Contacts", "Aging"])
-    sleep = by_path.get(("Pieces", "Sleep & Contacts"))
-    first = sleep.parmTemplates()[0].name() if sleep and sleep.parmTemplates() else None
-    expect("first in Sleep & Contacts", first, "enablesleep")
+           ["Shape", "Body", "Material", "CCD & Contacts", "Sleep"])
+    solver_tab = by_path.get(("Solver",))
+    expect("Solver tab ends with", [pt.label() for pt in solver_tab.parmTemplates()][-3:] if solver_tab else None,
+           ["Contacts", "Sleeping", "Aging"])
+    sleeping = by_path.get(("Solver", "Sleeping"))
+    first = sleeping.parmTemplates()[0].name() if sleeping and sleeping.parmTemplates() else None
+    expect("first in Solver / Sleeping", first, "enablesleep")
+    piece_sleep = by_path.get(("Pieces", "Sleep"))
+    expect("first in Pieces / Sleep", piece_sleep.parmTemplates()[0].name() if piece_sleep else None,
+           "startasleep")
+    expect("Add Impact Data on Output", sop.parm("addimpact") is not None, True)
+    vis_tab = by_path.get(("Visualization",))
+    expect("Visualization tab (no folders)", [pt.name() for pt in vis_tab.parmTemplates()] if vis_tab else None,
+           ["showcollision", "exportshapes", "shapecolor"])
     expect("Detach Faces", sop.parm("collision_detachfaces"), None)
     shut = sorted("/".join(path) for path, pt in folders
                   if pt.folderType() == hou.folderType.Collapsible and pt.tags().get("group_default") != "1")
-    expect("closed folders", shut, ["Output/Impact Data"])
+    expect("closed folders", shut, ["Output/Impact Data", "Solver/Aging", "Solver/Sleeping"])
     if problems:
         return [Result("solver_sop_layout", Result.FAIL, "; ".join(problems))]
     return [Result("solver_sop_layout", Result.PASS,
-                   f"tabs {tabs}; {len(folders)} folders, only Impact Data closed; Allow Sleeping first in Sleep & "
-                   "Contacts; Use External Collisions the Collision Geometry header")]
+                   f"tabs {tabs}; {len(folders)} folders, Impact Data, Sleeping and Aging closed; Allow Sleeping first in Solver / "
+                   "Sleeping; Use External Collisions the Collision Geometry header")]
 
 
 def test_solver_sop_proxy():

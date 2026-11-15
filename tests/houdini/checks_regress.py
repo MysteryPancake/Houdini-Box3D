@@ -68,12 +68,6 @@ def dist(a, b):
     return math.sqrt(sum((a[i] - b[i]) ** 2 for i in range(3)))
 
 
-def moving_state(sim, name):
-    """(position, 3x3 rows, w) of the moving piece."""
-    return (packed_positions(sim, "pieces")[name], packed_transform(sim, "pieces", name),
-            point_attributes(sim, "pieces", name, ["w"])["w"])
-
-
 def pair(tag, conrel, parms=None, v=None, w=None, gravity=None, anchors=None, unit_mass=False, joints=None):
     """hanging_pair with an optional initial v / w on the moving piece. Returns (dop, names)."""
     moving = {"active": 1}
@@ -198,7 +192,10 @@ def joint_filter():
 
 
 def moving_state_at(dop, name, frame):
-    return step(dop, frame, lambda sim, f: moving_state(sim, name) if f == frame else None)[frame]
+    # (position, 3x3 rows, w) of the moving piece
+    return step(dop, frame, lambda sim, f: (
+        packed_positions(sim, "pieces")[name], packed_transform(sim, "pieces", name),
+        point_attributes(sim, "pieces", name, ["w"])["w"]) if f == frame else None)[frame]
 
 
 def swing_track(dop, name, frame=48):
@@ -467,7 +464,7 @@ def baseline_scene():
     solver = box3d_solver(dop, net)
     # Pinned: the recorded baseline was made with 4 substeps and Box3D's contact tuning (the solver's
     # defaults are now 10 substeps, stiffness 60, damping ratio 3).
-    set_parm(solver, ["substeps"], 4)
+    set_parm(solver, ["solverpasses"], 4)
     set_parm(solver, ["contactstiffness"], 30.0)
     set_parm(solver, ["contactdamping"], 10.0)
     finish(dop, solver)

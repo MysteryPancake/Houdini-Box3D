@@ -51,10 +51,6 @@ def first_frame(track, test):
     return next((f for f in sorted(track) if test(track[f])), None)
 
 
-def bullet_solver_alone(dop, name="bullet_solver"):
-    return create(dop, "bulletrbdsolver", name)
-
-
 # ---------------------------------------------------------------------------
 # Node messages clear once the problem is gone
 # ---------------------------------------------------------------------------
@@ -276,7 +272,7 @@ def test_attribute_toggles():
         dop = new_dopnet(f"toggle_{kind}")
         obj = packed_object(dop, "piece", path)
         flip = sop_solver(dop, "if (@Frame >= 12) i@active = 1;")
-        solver = box3d_solver(dop, None) if kind == "box3d" else bullet_solver_alone(dop)
+        solver = box3d_solver(dop, None) if kind == "box3d" else create(dop, "bulletrbdsolver", "bullet_solver")
         last = multisolver(dop, obj, [solver, flip])
         if kind == "bullet":
             grav = create(dop, "gravity", "gravity")

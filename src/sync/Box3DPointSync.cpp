@@ -92,14 +92,6 @@ bool poseDiffers(const Box3DBodyPose &a, const Box3DBodyPose &b) {
   return false;
 }
 
-// The primitive list's data id: the marker for packed transforms (intrinsics
-// have no attribute id). Bumping it is up to whoever edits a primitive; an edit
-// that does not is picked up on the next scan instead.
-GA_DataId primitiveListDataId(const GU_Detail *gdp) {
-  return gdp->getNumPrimitives() > 0 ? gdp->getPrimitiveList().getDataId()
-                                     : Box3DSyncFingerprint::kNoId;
-}
-
 // The object's change markers (Box3DSyncFingerprint). `a` must be bound on
 // `gdp`.
 Box3DSyncFingerprint makeFingerprint(const GU_Detail *gdp, const PointAttrs &a,
@@ -131,7 +123,11 @@ Box3DSyncFingerprint makeFingerprint(const GU_Detail *gdp, const PointAttrs &a,
     const GA_Attribute *attr = gdp->findPointAttribute(kPropAttribNames[i]);
     fp.propIds[i] = attr ? attr->getDataId() : Box3DSyncFingerprint::kNoId;
   }
-  fp.primsId = primitiveListDataId(gdp);
+  // The primitive list's data id is the marker for packed transforms
+  // (intrinsics have no attribute id). Bumping it is up to whoever edits a
+  // primitive; an edit that does not is picked up on the next scan instead.
+  fp.primsId = gdp->getNumPrimitives() > 0 ? gdp->getPrimitiveList().getDataId()
+                                           : Box3DSyncFingerprint::kNoId;
   fp.nodeProps = nodeProps;
   fp.addImpact = addImpact;
   return fp;
@@ -299,10 +295,6 @@ struct StringAttr {
     const char *v = handle->get(off);
     return v ? std::string(v) : std::string();
   }
-  // The point's string without a copy; null for none.
-  const char *cstr(GA_Offset off) const {
-    return attr ? handle->get(off) : nullptr;
-  }
 };
 
 // Box3D density: computemass -> density; else mass / volume (density if
@@ -336,8 +328,8 @@ b3dop::BodySettings::Type wantedType(const b3dop::BodySettings &node,
 // The body's mass after shapes are added / replaced or its type changes. As in
 // Houdini RBD the point (pivot) is the centre of mass, so the shapes' centroid
 // is moved there; inertia is scaled by inertialtensorstiffness (a custom
-// or bounding box inertia replaces it first). Static / kinematic bodies only get shape
-// densities. setShapeDensity = false for shapes just created with
+// or bounding box inertia replaces it first). Static / kinematic bodies only
+// get shape densities. setShapeDensity = false for shapes just created with
 // boxDensity(p, volume).
 void applyBodyMass(b3dop::Box3DWorld &world, b3dop::BodyHandle h,
                    const b3dop::BodyProps &p, float volume,
@@ -347,8 +339,8 @@ void applyBodyMass(b3dop::Box3DWorld &world, b3dop::BodyHandle h,
   if (p.customInertia)
     inverse = p.inverseInertia;
   else if (p.boundsInertia &&
-           b3dop::boundsInverseInertia(p.boundsExtents, effectiveMass(p, volume),
-                                       boxInverse))
+           b3dop::boundsInverseInertia(p.boundsExtents,
+                                       effectiveMass(p, volume), boxInverse))
     inverse = boxInverse;
   world.applyMassByHandle(h, boxDensity(p, volume), true, p.inertiaScale,
                           setShapeDensity, inverse);
@@ -1068,7 +1060,8 @@ public:
   void add(Box3DObjectSync &os, GA_Offset off, Box3DBodyMirror *entry) const {
     if (!myKeep)
       return;
-    const char *v = myNames.cstr(off);
+    // The point's name without a copy; null for none.
+    const char *v = myNames.attr ? myNames.handle->get(off) : nullptr;
     if (!v || !*v)
       return;
     uint64_t h = os.nameSigNext;
@@ -1351,7 +1344,8 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
 
   PointAttrs a(gdp);
   const int objectId = obj.getObjectId();
-  const SIM_Box3DData *dataNode = findBox3DData(obj);
+  const SIM_Box3DData *dataNode =
+      SIM_DATA_GETCONST(obj, kBox3DDataName, SIM_Box3DData);
   const b3dop::BodySettings node =
       dataNode ? dataNode->toBodySettings() : b3dop::nodeBodyDefaults();
   const bool addImpact = dataNode && dataNode->getAddImpact();

@@ -75,8 +75,8 @@ references to the asset's parameters are set once the asset exists (`wire_stage`
 * `setup_deforming` (`DEFORMING_VEX`): the Deforming toggle writes `deforming` 1 on every import and, with Overwrite
   Attributes from SOP, sets the SOP Geometry to Set Always (`REIMPORT`), as RBD's Create Deforming Objects.
 * Parameters: an Object tab (Object Name `$OS`, Creation Frame, Solve on Creation Frame, SOP Path, Use Object
-  Transform, Overwrite Attributes from SOP, Deforming, Display Geometry), Initial State, then each Box3D Data folder
-  as a tab, read by the stage. Only the object-level settings
+  Transform, Overwrite Attributes from SOP, Deforming, Add Impact Data, Display Geometry), Initial State (with Start
+  Asleep), then each Box3D Data folder as a tab (`pull` moves the two out), read by the stage. Only the object-level settings
   (`b3d_settings.SKIP`: Hull per Connected, Flip Winding, Add Impact Data) are channel references into the inner Box3D
   Data, whose other values stay at the defaults, so a missing attribute means the default. Settings change
   mid-simulation through the attributes, not the asset's parameters.
@@ -187,23 +187,24 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   (`IMPORT_CONSTRAINTS` / `IMPORT_PROXY`: off, an empty output, the chain not cooked). Fetch Impacts makes (or reuses) an Object Merge of the asset's `IMPACTS` null beside the
   asset, fed by a DOP Import Records of the pieces' `Impacts` data (its parameters set by label, `set_by_labels`).
 * Parameters: Reset Simulation and Start Frame above the tabs, then the solver's tabs (folders found under its Data
-  Options, a tab of simple folders kept whole; Guide Options skipped; `TAB_RENAMES` / `TAB_MOVES` cover older plugins).
-  Tab order: Solver, Collision, Forces, Pieces, any other solver tabs, Visualization (`visualization_tab`), then Advanced and Output always last; the
-  solver's Misc tab is not shown (`MISC_TAB`: its Sleeping and Aging folders go to Pieces, anything else to Advanced
-  with a warning). Solver: the solver's own settings, Cache Simulation, then the solver's Collision tab (contact
-  settings) as a Contacts folder. Collision: one Collision Geometry folder whose header checkbox is Use External
-  Collisions (`usecollisions`, placed just before the folder, as RBD Bullet Solver's), holding Collision Type and the collision object's Shape, Material and Sleep &
+  Options, a tab of simple folders kept whole; Guide Options skipped).
+  Tab order: Solver, Pieces, Collision, Forces, any other solver tabs, Visualization (`visualization_tab`: Show
+  Collision Geometry, Show Collision Shapes and Shape Color, no folders), then Advanced and Output always last; the
+  solver's own Contacts, Sleeping and Aging folders (`CONTACTS_FOLDER`, `SLEEPING_FOLDER`, `AGING_FOLDER`) are pulled
+  out of its Solver tab and re-placed after Cache Simulation, Sleeping and Aging closed. Solver: the solver's own
+  settings, Cache Simulation, then Contacts, Sleeping and Aging. Collision: one Collision Geometry folder whose header checkbox is Use External
+  Collisions (`usecollisions`, placed just before the folder, as RBD Bullet Solver's), holding Collision Type and the collision object's Shape, Material and CCD &
   Contacts folders (`COLLIDER_FOLDERS`, all named `collision_*`), the last cut to Contact Recycling as Contacts
   (`COLLIDER_DROPPED`: the rest does nothing for a Static / Kinematic body). Pieces: the pieces' Box3D Data folders
-  without their Allow Sleeping (`PIECES_DROPPED`; `drop_templates`), the solver's Allow Sleeping first in Sleep &
-  Contacts instead (one switch for every body), then the solver's Aging folder; names the solver also uses would
+  (Shape, Body, Material, CCD & Contacts, Sleep) without their Allow Sleeping (`PIECES_DROPPED`; `drop_templates`),
+  the solver's Allow Sleeping is in the Solver tab's Sleeping folder instead (one switch for every body); names the solver also uses would
   get `piece_`. Conditions are rewritten with the names (the pieces' Start Asleep and Sleep Threshold grey out
   with the solver's Allow Sleeping). Inner solver `parmop_*` set to
   Set Initial, as in the Packed Object. Inside each tab the settings sit in collapsible folders, as RBD Bullet
   Solver's (`TAB_GROUPS`, `group_tab`) and with its tags (`group_type`, `group_default`, `sidefx::header_toggle`),
-  every one open except Output's Impact Data; Collision is one Collision Geometry folder with the collider's folders
-  simple inside it (each disabled with Use External Collisions off), Pieces is Shape, Body, Material, Sleep & Contacts
-  and Aging. Test `solver_sop_layout`.
+  every one open except Output's Impact Data and the Solver tab's Sleeping and Aging; Collision is one Collision Geometry folder with the collider's folders
+  simple inside it (each disabled with Use External Collisions off), Pieces is Shape, Body, Material, CCD & Contacts
+  and Sleep (the Packed Object's Start Asleep first, `moved_settings`), and Add Impact Data is on Output. Test `solver_sop_layout`.
 * Input / output labels are written into the DialogScript after the last `updateFromNode` (no hou setter). Wire
   colours come from the subnet's indirect input nodes (`INPUT_COLORS`: the constraints input pink, and its IN /
   OUT nodes).

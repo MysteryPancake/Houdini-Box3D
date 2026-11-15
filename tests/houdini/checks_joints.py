@@ -146,14 +146,13 @@ def test_joint_breakable():
 
 
 # ---------------------------------------------------------------------------
-# Negative "never" values, as older scenes and primitive attributes use them
+# Negative "never" values, as primitive attributes use them
 # ---------------------------------------------------------------------------
 
 
 def test_negative_never_values():
-    """Break Force / Torque of -1 with Breakable on (the old way to say never) keep a weld holding a
-    1000 kg piece; the parameters must also accept -1 rather than clamping it to 0 (which breaks at
-    once). Also reports what an old scene with a real Break Force does now (Breakable loads off)."""
+    """Break Force / Torque of -1 with Breakable on (never) keep a weld holding a 1000 kg piece; the
+    parameters must accept -1 rather than clamping it to 0 (which breaks at once)."""
     results = []
     dop, names = hanging_pair("never_values", "weld",
                               conrels=[("box3d_weldconrel", {"breakable": 1, "force_threshold": -1.0,
@@ -166,17 +165,7 @@ def test_negative_never_values():
     results.append(Result("negative_never_values", Result.PASS if ok else Result.FAIL,
                           f"Breakable on, thresholds set to -1: read back as {read_back}; the 1000 kg piece "
                           f"{'held' if y > 1.9 else 'fell'} (y={y:.2f})"
-                          + ("" if read_back == (-1.0, -1.0) else
-                             ". The parameter clamps -1: an old scene saved with -1 would load as 0")))
-
-    dop, names = hanging_pair("never_values_old", "weld",
-                              conrels=[("box3d_weldconrel", {"breakable": 0, "force_threshold": 100.0,
-                                                             "torque_threshold": 100.0})],
-                              packed_parms={"computemass": 0, "mass": 1000.0})
-    y = step(dop, 24, lambda sim, f: packed_positions(sim, "pieces"))[24][names[1]][1]
-    results.append(Result("negative_never_values", Result.INFO,
-                          f"an old scene with Break Force 100 (Breakable loads off): the 1000 kg piece "
-                          f"{'held' if y > 1.9 else 'fell'} (before the toggle it would have broken)"))
+                          + ("" if read_back == (-1.0, -1.0) else ". The parameter clamps -1 to 0")))
     return results
 
 

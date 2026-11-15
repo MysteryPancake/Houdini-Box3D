@@ -17,7 +17,6 @@ from b3dtest import (
     merge,
     new_dopnet,
     node_messages,
-    node_type_exists,
     packed_boxes,
     packed_object,
     packed_positions,
@@ -46,7 +45,7 @@ def test_nodes():
     cat = hou.dopNodeTypeCategory()
     joints = ["weld", "spherical", "revolute", "prismatic", "distance", "motor", "parallel", "wheel", "filter"]
     missing = [n for n in ["box3d_solver", "box3d_data"] + [f"box3d_{j}conrel" for j in joints]
-               if not node_type_exists(cat, n)]
+               if hou.nodeType(cat, n) is None]
     if missing:
         return [Result("nodes", Result.FAIL,
                        f"node types not found: {', '.join(missing)}. Is the plugin in the dso folder?")]
