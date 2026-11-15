@@ -24,7 +24,7 @@ The exception is sleeping and enabling, which follow Box3D's own model (`enables
 enable state"); Bullet's `bullet_want_deactivate`, `bullet_sleeping`, `bullet_ignore` and `min_activation_impulse` are not read.
 
 The code is largely LLM-written by an author still learning the HDK. Treat HDK usage with healthy skepticism.
-What is unverified, broken or still to do lives only in `docs/agents/status.md` ("Unverified", "Known gaps", "TODO"):
+What is unverified, broken or still to do lives only in `docs/agents/status.md` ("Unverified", "TODO"):
 no TODO or "unverified" notes in code comments, the README or other docs.
 
 ## Documentation split
@@ -69,7 +69,7 @@ Load only the file for the area you are changing.
 | [docs/agents/whole-object.md](docs/agents/whole-object.md) | RBD Object style bodies (one body per DOP object) |
 | [docs/agents/joints.md](docs/agents/joints.md) | Constraint networks, joint nodes, SideFX constraint data mapping |
 | [docs/agents/reference.md](docs/agents/reference.md) | Parameters, point attributes, node warnings, what is not supported, the parameter-tab builder |
-| [docs/agents/status.md](docs/agents/status.md) | Unverified, Known gaps, TODO, HDK calls checked |
+| [docs/agents/status.md](docs/agents/status.md) | Unverified, TODO, HDK calls checked |
 
 **Values that live in code stay in code.** Defaults, counts, thresholds and sizes are not copied into these files: name
 the constant or table and its file (`kMinParallelPoints` in `Box3DSolverInternal.h`, `kPropAttribNames` in

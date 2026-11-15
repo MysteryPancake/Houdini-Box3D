@@ -481,28 +481,6 @@ def test_solver_sop_collision_rest():
                    f"orient turned {since_deg} degrees (expected 60: since then)")]
 
 
-def test_solver_sop_detach_rotated():
-    """Detach Faces with a packed collider whose packed transform is turned (a 4 x 1 x 1 bar turned 90
-    degrees about y, so it runs along z): the repack keeps the turn, so a box dropped at z = 1.5 lands
-    on it (y = 1.5); a lost turn would leave the bar along x and the box would fall past it."""
-    bar, _ = packed_boxes("sop_detrot_bar", [{"size": (4, 1, 1), "center": (0, 0.5, 0), "attrs": {"active": 0}}])
-    geo = new_geo("sop_detrot_turned")
-    src = create(geo, "object_merge", "bar")
-    set_parm(src, ["objpath1"], bar)
-    turn = create(geo, "xform", "turn")  # turns the packed transform, not the geometry inside it
-    turn.setInput(0, src)
-    set_parm(turn, ["r"], (0, 90, 0))
-    display(turn)
-    pieces, names = packed_boxes("sop_detrot_pieces", [{"size": (1, 1, 1), "center": (0, 3, 1.5)}])
-    sop = solver_sop("sop_detach_rotated", geometry=pieces, collision=turn.path())
-    set_parm(sop, ["collision_detachfaces"], 1)
-    pos = play(sop, 48, lambda s_, f: named_positions(s_.geometry(0)).get(names[0]) if f == 48 else None)[48]
-    ok = pos is not None and close(pos[1], 1.5, 0.05)
-    return [Result("solver_sop_detach_rotated", Result.PASS if ok else Result.FAIL,
-                   f"box at y={pos[1] if pos else None} after 2 s with Detach Faces (expected 1.5: on the turned "
-                   "bar)")]
-
-
 def test_solver_sop_world_anchor():
     """The constraints output moves each anchor with its piece and leaves a world anchor where it was
     authored (as RBD Bullet Solver's reset_pin_locations): a box on a distance joint to a world point 2
@@ -666,17 +644,55 @@ def test_solver_sop_keep_broken():
     return results
 
 
-def test_solver_sop_detach_faces():
-    """Detach Faces on: the collider is rebuilt from unshared points and repacked, and a box dropped
-    on it still rests on top (y = 0.5)."""
-    pieces, names = packed_boxes("sop_detach_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0)}])
-    ground, _ = packed_boxes("sop_detach_ground", [GROUND])
-    sop = solver_sop("sop_detach", geometry=pieces, collision=ground)
-    set_parm(sop, ["collision_detachfaces"], 1)
-    pos = play(sop, 48, lambda s, f: named_positions(s.geometry(0)).get(names[0]) if f == 48 else None)[48]
-    ok = pos is not None and close(pos[1], 0.5, 0.03)
-    return [Result("solver_sop_detach_faces", Result.PASS if ok else Result.FAIL,
-                   f"box at y={pos[1] if pos else None} after 2 s with Detach Faces (expected 0.5)")]
+def _folders(entries, path=()):
+    """(path of labels, folder template) for every folder under `entries`, depth first."""
+    out = []
+    for pt in entries:
+        if pt.type() == hou.parmTemplateType.Folder:
+            out.append((path + (pt.label(),), pt))
+            out += _folders(pt.parmTemplates(), path + (pt.label(),))
+    return out
+
+
+def test_solver_sop_layout():
+    """The Solver SOP's tabs and folders: Solver, Collision, Forces, Pieces, Advanced, Output (no Misc);
+    Collision Geometry's header checkbox is Use External Collisions, which sits just before it (as RBD
+    Bullet Solver's); the Pieces tab is Shape, Body, Material, Sleep & Contacts (the solver's Allow
+    Sleeping first), Aging; no Detach Faces; every collapsible folder open but
+    Impact Data."""
+    sop = solver_sop("sop_layout")
+    entries = sop.parmTemplateGroup().entries()
+    problems = []
+
+    def expect(what, got, want):
+        if got != want:
+            problems.append(f"{what}: {got!r}, expected {want!r}")
+
+    tabs = [pt.label() for pt in entries if pt.type() == hou.parmTemplateType.Folder]
+    expect("tabs", tabs, ["Solver", "Collision", "Forces", "Pieces", "Advanced", "Output"])
+    folders = _folders(entries)
+    by_path = {path: pt for path, pt in folders}
+    coll = by_path.get(("Collision", "Collision Geometry"))
+    expect("Collision Geometry header toggle", coll.tags().get("sidefx::header_toggle") if coll else None,
+           "usecollisions")
+    expect("Collision tab", [pt.name() for pt in by_path[("Collision",)].parmTemplates()][:1]
+           if ("Collision",) in by_path else None, ["usecollisions"])
+    expect("Collision Geometry group_type", coll.tags().get("group_type") if coll else None, "collapsible")
+    pieces_tab = by_path.get(("Pieces",))
+    expect("Pieces tab folders", [pt.label() for pt in pieces_tab.parmTemplates()] if pieces_tab else None,
+           ["Shape", "Body", "Material", "Sleep & Contacts", "Aging"])
+    sleep = by_path.get(("Pieces", "Sleep & Contacts"))
+    first = sleep.parmTemplates()[0].name() if sleep and sleep.parmTemplates() else None
+    expect("first in Sleep & Contacts", first, "enablesleep")
+    expect("Detach Faces", sop.parm("collision_detachfaces"), None)
+    shut = sorted("/".join(path) for path, pt in folders
+                  if pt.folderType() == hou.folderType.Collapsible and pt.tags().get("group_default") != "1")
+    expect("closed folders", shut, ["Output/Impact Data"])
+    if problems:
+        return [Result("solver_sop_layout", Result.FAIL, "; ".join(problems))]
+    return [Result("solver_sop_layout", Result.PASS,
+                   f"tabs {tabs}; {len(folders)} folders, only Impact Data closed; Allow Sleeping first in Sleep & "
+                   "Contacts; Use External Collisions the Collision Geometry header")]
 
 
 def test_solver_sop_proxy():
@@ -806,7 +822,6 @@ TESTS = {
     "solver_sop_before_start": test_solver_sop_before_start,
     "solver_sop_solve_first_frame": test_solver_sop_solve_first_frame,
     "solver_sop_keep_broken": test_solver_sop_keep_broken,
-    "solver_sop_detach_faces": test_solver_sop_detach_faces,
     "configure_packs": test_configure_packs,
     "solver_sop_rest_anchors": test_solver_sop_rest_anchors,
     "solver_sop_initial_bake": test_solver_sop_initial_bake,
@@ -815,12 +830,12 @@ TESTS = {
     "solver_sop_world_scale": test_solver_sop_world_scale,
     "solver_sop_collision_prim_names": test_solver_sop_collision_prim_names,
     "solver_sop_collision_rest": test_solver_sop_collision_rest,
-    "solver_sop_detach_rotated": test_solver_sop_detach_rotated,
     "solver_sop_world_anchor": test_solver_sop_world_anchor,
     "unpacked_turning_collider": test_unpacked_turning_collider,
     "solver_sop_impacts": test_solver_sop_impacts,
     "solver_sop_animated_collision": test_solver_sop_animated_collision,
     "solver_sop_forces": test_solver_sop_forces,
+    "solver_sop_layout": test_solver_sop_layout,
     "solver_sop_proxy": test_solver_sop_proxy,
     "solver_sop_constraints": test_solver_sop_constraints,
     "configure": test_configure,

@@ -67,9 +67,6 @@ def warn(msg):
 
 
 MULTIPARM = "attributes"  # Number of Attributes, as RBD Configure
-# Box3D Data folders shown collapsible (closed) in each entry, as RBD Configure's Collision Shapes,
-# Collisions and Speed Limit; Body and Material stay simple, as its Physical Attributes.
-COLLAPSED_FOLDERS = {"Shape", "Sleep & Contacts"}
 
 # Packing parameters, RBD Configure's names and defaults (its Attributes folder, above the entries).
 TRANSFER_GROUPS = "* ^*inside ^*outside"  # RBD Configure's: groups onto the packed pieces
@@ -210,9 +207,9 @@ def ui(folders):
                 f"{{ {toggle_name(n)}# == 0 }} {{ enable# == 0 }}"
             value.setConditional(hou.parmCondType.DisableWhen, new)
             items += [box, value]
-        # As RBD Configure's entries: the main folders simple, the secondary ones collapsible (closed).
-        kind = hou.folderType.Collapsible if label in COLLAPSED_FOLDERS else hou.folderType.Simple
-        entry.append(hou.FolderParmTemplate(f"b3dcfg_folder{i}_#", label, items, folder_type=kind))
+        # Every Box3D Data folder simple (always open) in each entry.
+        entry.append(hou.FolderParmTemplate(f"b3dcfg_folder{i}_#", label, items,
+                                            folder_type=hou.folderType.Simple))
     multi = hou.FolderParmTemplate(MULTIPARM, "Number of Attributes", entry,
                                    folder_type=hou.folderType.TabbedMultiparmBlock, default_value=1)
     group = hou.ParmTemplateGroup()

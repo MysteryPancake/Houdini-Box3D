@@ -149,28 +149,28 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
 * Before the Start Frame the Geometry, Constraints and Proxy outputs are the inputs (`before_start`, RBD Bullet
   Solver's `switchif_beforestart`; the proxy output shows the simulated source). A Switch-If takes its second input
   while its expression is true.
-* Detach Faces (`DETACH_FACES`, Collision tab, off; hidden on RBD Bullet Solver): `detach_faces` copies Bullet's
-  branch: colliders assembled by name, unpacked ones' points split and packed again, packed ones repacked (`REPACK_*`:
-  unpacked about the origin, split, packed with an origin pivot, transform restored relative to the start frame).
-* Output tab, as RBD Bullet Solver's: Impact Data, a collapsible folder whose header toggle is the pieces' Add Impact
-  Data (`sidefx::header_toggle`), with the solver's Impact Min Speed and Fetch Impacts; the solver's Aging folder (out of
-  Misc); Transfer Attributes, with Transfer to Geometry / Proxy Geometry driving each Transform Pieces' Attributes to
+* Output tab, as RBD Bullet Solver's: Impact Data, a closed collapsible folder whose header toggle is the pieces' Add
+  Impact Data (`sidefx::header_toggle`), with the solver's Impact Min Speed and Fetch Impacts; Transfer Attributes, with Transfer to Geometry / Proxy Geometry driving each Transform Pieces' Attributes to
   Copy toggle (`TRANSFER_TO`; the toggle found by label or from the list's disable condition). Fetch Impacts makes (or reuses) an Object Merge of the asset's `IMPACTS` null beside the
   asset, fed by a DOP Import Records of the pieces' `Impacts` data (its parameters set by label, `set_by_labels`).
 * Parameters: Reset Simulation and Start Frame above the tabs, then the solver's tabs (folders found under its Data
-  Options, a tab of simple folders such as Misc kept whole; Guide Options skipped; `TAB_RENAMES` / `TAB_MOVES` cover older plugins). Tab order: Solver, Collision, Forces,
-  Pieces, any other solver tabs, then Misc, Advanced and Output always last. Solver: the solver's own settings, Cache Simulation, then the
-  solver's Collision tab (contact settings) as a Contacts folder. Collision: Use External Collisions
-  (`usecollisions`), Animated Collision and the collision object's Shape, Material and Sleep & Contacts folders (`COLLIDER_FOLDERS`,
-  all named `collision_*`), the last cut to Contact Recycling as Contacts (`COLLIDER_DROPPED`: the rest does
-  nothing for a Static / Kinematic body). Pieces: the pieces' Box3D Data folders without Allow Sleeping
-  (`PIECES_DROPPED`: the solver's is the one switch for every body; `drop_templates`); names the solver also uses
-  would get `piece_`. Conditions are rewritten with the names (the pieces' Start Asleep and Sleep Threshold grey out
+  Options, a tab of simple folders kept whole; Guide Options skipped; `TAB_RENAMES` / `TAB_MOVES` cover older plugins).
+  Tab order: Solver, Collision, Forces, Pieces, any other solver tabs, then Advanced and Output always last; the
+  solver's Misc tab is not shown (`MISC_TAB`: its Sleeping and Aging folders go to Pieces, anything else to Advanced
+  with a warning). Solver: the solver's own settings, Cache Simulation, then the solver's Collision tab (contact
+  settings) as a Contacts folder. Collision: one Collision Geometry folder whose header checkbox is Use External
+  Collisions (`usecollisions`, placed just before the folder, as RBD Bullet Solver's), holding Animated Collision and the collision object's Shape, Material and Sleep &
+  Contacts folders (`COLLIDER_FOLDERS`, all named `collision_*`), the last cut to Contact Recycling as Contacts
+  (`COLLIDER_DROPPED`: the rest does nothing for a Static / Kinematic body). Pieces: the pieces' Box3D Data folders
+  without their Allow Sleeping (`PIECES_DROPPED`; `drop_templates`), the solver's Allow Sleeping first in Sleep &
+  Contacts instead (one switch for every body), then the solver's Aging folder; names the solver also uses would
+  get `piece_`. Conditions are rewritten with the names (the pieces' Start Asleep and Sleep Threshold grey out
   with the solver's Allow Sleeping). Inner solver `parmop_*` set to
   Set Initial, as in the Packed Object. Inside each tab the settings sit in collapsible folders, as RBD Bullet
-  Solver's (`TAB_GROUPS`, `group_tab`): main groups open (Contacts too), secondary ones closed; Collision is one open Collision
-  Geometry folder with the collider's folders simple inside it, Pieces an open Pieces folder (Shape, Body, Material)
-  beside an open Sleep & Contacts.
+  Solver's (`TAB_GROUPS`, `group_tab`) and with its tags (`group_type`, `group_default`, `sidefx::header_toggle`),
+  every one open except Output's Impact Data; Collision is one Collision Geometry folder with the collider's folders
+  simple inside it (each disabled with Use External Collisions off), Pieces is Shape, Body, Material, Sleep & Contacts
+  and Aging. Test `solver_sop_layout`.
 * Input / output labels are written into the DialogScript after the last `updateFromNode` (no hou setter). Wire
   colours come from the subnet's indirect input nodes (`INPUT_COLORS`: the constraints input pink, and its IN /
   OUT nodes).
@@ -184,8 +184,7 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
 folder sits above the entries. Names map one to one except `MAPPING`: Default Shape -> `bullet_georep` (`GEOREP_VALUES`, menu order), Auto Fit
 -> `bullet_autofit`, Body Type -> `active` / `animated`, Start Asleep -> `awake` (inverted); `SKIP` holds the
 object-level ones (Hull per Connected, Flip Winding, Add Impact Data). Disable conditions also need the referenced
-setting ticked (`rewrite_condition`). Shape and Sleep & Contacts are collapsible (closed) in each entry, Body and
-Material simple, as RBD Configure's secondary and main folders (`COLLAPSED_FOLDERS`).
+setting ticked (`rewrite_condition`). Every Box3D Data folder in an entry is simple (always open).
 * Geometry and Proxy are packed first, as RBD Configure does, by the chain the Box3D Solver SOP runs
   (`tools/b3d_prepare.py`, `prepare_input` in pack mode without the rest attributes): packed primitives kept, the rest
   assembled into packed pieces named on their points. RBD Configure's packing parameters drive the Assembles (Name

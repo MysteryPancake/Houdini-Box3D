@@ -1,10 +1,10 @@
-# Status: unverified, known gaps, TODO
+# Status: unverified, TODO
 
-The one list of what is unverified, broken or still to do. Index and rules: [CLAUDE.md](../../CLAUDE.md). Keep each
+The one list of what is unverified or still to do. Index and rules: [CLAUDE.md](../../CLAUDE.md). Keep each
 item to a line or two; remove it once settled (the test that settles it is the record, not this file).
 
-Last full run (Houdini 22.0.502, MSVC): every check passes, 178 PASS and 21 INFO; the baseline (recorded on 22.0.479)
-matches exactly. What no script checks: Escape mid-step, the viewport, motion blur, how greyed-out parameters look.
+Last full run (Houdini 22.0.502, MSVC): every check passes, 178 PASS and 21 INFO (before the Solver SOP layout
+change: `solver_sop_layout` added, the two Detach Faces tests removed). What no script checks: Escape mid-step, the viewport, motion blur, how greyed-out parameters look.
 
 ## Unverified
 
@@ -21,9 +21,7 @@ matches exactly. What no script checks: Escape mid-step, the viewport, motion bl
 * `SourceSummaryCache`: a packed source edited in place without a new unique id or data id gives a stale hull.
 * Box3D's tasks on Houdini's TBB pool with several DOP networks or threaded SOPs cooking at once.
 * Whether `getForce` is thread-safe (Force DOPs are evaluated serially).
-* Box3D Data under Geometry on Static Objects and RBD Objects; old scenes with the top-level `Box3DData` name.
-* Scenes saved before a default changed (Default Shape, solver substeps / contact tuning): whether Houdini kept the old
-  value in the file.
+* Box3D Data under Geometry on Static Objects and RBD Objects.
 
 **Box3D Configure** (`tools/make_configure_sop.py`, tests `configure`, `configure_packs`)
 * The packing (`b3d_prepare.py`): Transfer Groups carrying primitive groups onto the pieces, the Assembles' path /
@@ -34,8 +32,7 @@ matches exactly. What no script checks: Escape mid-step, the viewport, motion bl
 * The rest convention (`restxform`, `pivot`, `orient` since rest) against an RBD Bullet Solver run of the same pieces;
   the extra `restRotation` split per packed point in every full scan.
 * Solve on Creation Frame on the SOP (`solver_sop_solve_first_frame`) for the collider, against Bullet's.
-* Before-start outputs, Export Broken Constraints and Detach Faces (`solver_sop_before_start`, `solver_sop_keep_broken`,
-  `solver_sop_detach_faces`): the repack with nested packed colliders.
+* Before-start outputs and Export Broken Constraints (`solver_sop_before_start`, `solver_sop_keep_broken`).
 * Joints from authored anchors through `restToNow` and the `angle` since rest, against Bullet.
 * `animated`, `deforming` and `bullet_autofit_valid` toggles; `bullet_primR` rotation order (taken as XYZ Euler
   degrees) and `bullet_length` (taken as the capsule's straight part); AutoFit on whole objects and fractured pieces.
@@ -55,7 +52,7 @@ matches exactly. What no script checks: Escape mid-step, the viewport, motion bl
 * FORCES: the Multiple Solver with nothing wired into PRESOLVE / POSTSOLVE (no warning expected); that diving into
   the asset lands in FORCES (the build's check passes); FORCES editable in a locked instance (`EditableNodes`).
 
-## Known gaps
+## TODO
 
 * Packed primitive spheres and nested packed primitives collide as one point, half sunk (`odd_packed_contents`).
 * Mirrored packed pieces lose their mirror once they move (`mirrored_piece`).
@@ -65,14 +62,8 @@ matches exactly. What no script checks: Escape mid-step, the viewport, motion bl
 * Results depend slightly on point order even with `id` (`point_order`): bodies are created in point order.
 * Objects solved by another solver: packed ones are ignored as colliders; one-way collision with polygons untested.
 * Float attributes multiply the node's value (Houdini's rule), so a zero default can't be changed per primitive.
-* Old scenes: joint toggles added later (Breakable, Set Rest Length, Limit ...) load off, so a typed Break Force etc.
-  is ignored until turned on; Bounce Mixing's menu was reordered; the mixing defaults are now Multiply / Minimum.
-
-## TODO
-
 * Box3D Packed Object: RBD Packed Object's Overwrite Attributes from SOP, deforming import, initial velocity
-  controls, a `Colliders` label (other
-  solvers use it to collide with it), a Box3D Tab submenu.
+  controls, a `Colliders` label (other solvers use it to collide with it), a Box3D Tab submenu.
 * Concave meshes: one mesh shared between instances, static RBD Objects as meshes, drawing meshes in the guide.
 * Height fields: holes from a mask layer, height fields on points. `cylinder` / `plane` shapes (hull or box stand-ins).
 * Constraint networks: point / vertex / agent anchors (`anchor_id`, `anchor_type`); `constraint_type` on our nodes.

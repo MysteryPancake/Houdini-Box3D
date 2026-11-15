@@ -21,9 +21,8 @@ Outputs: 0-2 as the inputs (moved by the simulation), 3 Simulation Points (one p
 Inside:
 
     IN_* nulls -> sim_source (Proxy when it has points, else Geometry) -> prepare_pieces (pack mode)
-      -> dopnet (SOP-level DOP network); IN_collision -> use_detach_faces (collision_detach: Bullet's
-      Detach Faces and repack, when ticked) -> prepare_collision (pack mode) -> collision_rest (rest
-      from a Time Shift to the start frame) -> dopnet input 2
+      -> dopnet (SOP-level DOP network); IN_collision -> prepare_collision (pack mode) -> collision_rest
+      (rest from a Time Shift to the start frame) -> dopnet input 2
       dopnet: pieces (Box3D Packed Object, SOP Path `dopcontextgeo(".", 0)`)
               -> constraintnetwork (Geometry Source: Second Context Geometry, Attach Internal Constraints
                  to Object, only when input 1 has points; every Box3D and SideFX constraint
@@ -45,11 +44,14 @@ Inside:
     import_impacts (DOP Import Records of the pieces' Impacts) -> IMPACTS null, merged out by Fetch Impacts
 
 Its parameters: Reset Simulation and Start Frame above the tabs; then the tabs Solver (the
-solver's own, Cache Simulation, then its contact settings in a Contacts folder), Collision (Use
-External Collisions, Animated Collision and the collider's Shape, Material and Sleep & Contacts settings,
-collision_* names), Forces (Gravity first), Pieces (Box3D Packed Object's Box3D Data folders for the
-simulated pieces), Misc (Sleeping), Advanced, and Output, always last (Impact Data with Fetch Impacts,
-the solver's Aging folder, Transfer Attributes and Transfer to Geometry / Proxy Geometry). Each inner parameter is a channel reference to the outer one.
+solver's own, Cache Simulation, then its contact settings in a Contacts folder), Collision (a Collision
+Geometry folder whose header toggle is Use External Collisions, holding Animated Collision and the
+collider's Shape, Material and Contacts settings, collision_* names), Forces (Gravity first), Pieces
+(Box3D Packed Object's Box3D Data folders for the simulated pieces, then Sleep & Contacts with the
+solver's Allow Sleeping first, then the solver's Aging folder), Advanced, and Output, always last
+(Impact Data with Fetch Impacts, Transfer Attributes and Transfer to Geometry / Proxy Geometry,
+Constraints). Every folder is open except Impact Data. Each inner parameter is a channel reference to
+the outer one.
 A Box3D Data parameter whose name the solver already uses gets a "piece_" prefix.
 
 Never fails the build: problems are printed as warnings and the script exits 0.
@@ -82,23 +84,24 @@ COLLIDER_DROPPED = {"ccdthreshold", "fastobject", "enablesleep", "startasleep", 
 COLLIDER_RELABEL = {"Sleep & Contacts": "Contacts"}
 PIECES_DROPPED = {"enablesleep"}
 
-# Collapsible folders inside the tabs, as RBD Bullet Solver's: the main groups open (its General,
-# Simulation, Pieces, Sleeping, Collision Geometry), secondary ones closed (its Advanced folders,
-# Attribute Transfer). Gravity is open here (closed on Bullet): it is the setting most often changed.
-# (tab, [(folder label, open, members by parameter name or label)]); a parameter in none stays loose.
+# Collapsible folders inside the tabs, as RBD Bullet Solver's, every one open but Impact Data.
+# (tab, [(folder label, members by parameter name or label)]); a parameter in none stays loose.
 TAB_GROUPS = {
-    "Solver": [("General", True, ["usescale", "scale", "timescale"]),  # WORLD_SCALE_TOGGLE, WORLD_SCALE
-               ("Simulation", True, ["stepsperframe", "substeps", "solvefirstframe", "Cache Simulation"])],
-    "Forces": [("Gravity", True, ["gravity"]),
-               ("Force DOPs", True, ["useforces", "forceswake"]),
-               ("Bounce", False, ["restitutionpropagation", "bouncethreshold", "restitutioniterations"]),
-               ("Mixing", False, ["frictionmixing", "restitutionmixing"])],
-    "Advanced": [("Box3D Solver", False, ["enablewarmstarting", "enablecontinuous", "maxlinearspeed",
-                                           "isotropicinertia"]),
-                 ("Threads", False, ["autothreads", "threads"])],
+    "Solver": [("General", ["usescale", "scale", "timescale"]),  # WORLD_SCALE_TOGGLE, WORLD_SCALE
+               ("Simulation", ["stepsperframe", "substeps", "solvefirstframe", "Cache Simulation"])],
+    "Forces": [("Gravity", ["gravity"]),
+               ("Force DOPs", ["useforces", "forceswake"]),
+               ("Bounce", ["restitutionpropagation", "bouncethreshold", "restitutioniterations"]),
+               ("Mixing", ["frictionmixing", "restitutionmixing"])],
+    "Advanced": [("Box3D Solver", ["enablewarmstarting", "enablecontinuous", "maxlinearspeed",
+                                   "isotropicinertia"]),
+                 ("Threads", ["autothreads", "threads"])],
 }
-OPEN_FOLDERS = {"Contacts", "Sleeping", "Aging", "Constraints"}  # folders the solver or Output brings, open
-PIECES_SEPARATE = "Sleep & Contacts"  # the Pieces tab: this one beside the Pieces folder, as Bullet's Sleeping
+PIECES_SEPARATE = "Sleep & Contacts"  # the Pieces tab: after Shape, Body, Material, the solver's Allow Sleeping first
+# The solver's Misc tab is not shown: its Sleeping folder's Allow Sleeping goes first in the Pieces' Sleep &
+# Contacts (one switch for every body), its Aging folder below that on the Pieces tab.
+MISC_TAB = "Misc"
+SLEEPING_FOLDER = "Sleeping"
 TAB_RENAMES = {"Setup": "Solver"}  # older plugins name the solver's first tab Setup
 TAB_MOVES = {"gravity": "Forces"}  # solver parameters shown first in another tab (older plugins: Setup)
 
@@ -143,8 +146,7 @@ CONSTRAINTS_TOGGLES = {"Pack Geometry Before Merging": False,
                        "Transform Geometry With Geometry Data": False,
                        "Preserve World Space Positions": False}
 # The Output tab, always last, as RBD Bullet Solver's: Impact Data (the pieces' Add Impact Data as the
-# folder's header toggle, the solver's Impact Min Speed, Fetch Impacts), the solver's Aging folder
-# (moved from Misc), then Transfer Attributes.
+# folder's header toggle, the solver's Impact Min Speed, Fetch Impacts; closed), then Transfer Attributes.
 IMPACT_TOGGLE = "addimpact"  # the pieces' Box3D Data toggle
 IMPACT_SPEED = "impactminspeed"  # the solver's, moved from Advanced
 AGING_FOLDER = "Aging"  # the solver's Misc subfolder
@@ -308,44 +310,48 @@ def solver_folders(entries):
     return out
 
 
-def collapsible(name, label, contents, open_folder):
-    """A collapsible folder, open by default when `open_folder` (Bullet's group_default tag)."""
-    return hou.FolderParmTemplate(name, label, contents, folder_type=hou.folderType.Collapsible,
-                                  tags={"group_default": "1"} if open_folder else {})
+def collapsible(name, label, contents, open_folder=True, header_toggle=None):
+    """A collapsible folder with RBD Bullet Solver's tags: group_type collapsible, group_default 1 when
+    `open_folder`, and `header_toggle` (a toggle's name) as its header checkbox."""
+    tags = {"group_type": "collapsible"}
+    if open_folder:
+        tags["group_default"] = "1"
+    if header_toggle:
+        tags["sidefx::header_toggle"] = header_toggle
+    return hou.FolderParmTemplate(name, label, contents, folder_type=hou.folderType.Collapsible, tags=tags)
 
 
-def as_collapsible(folder, open_folder):
-    """A clone of the folder template as a collapsible folder."""
+def as_collapsible(folder):
+    """A clone of the folder template as an open collapsible folder."""
     folder = folder.clone()
     folder.setFolderType(hou.folderType.Collapsible)
     tags = dict(folder.tags())
-    tags.pop("group_type", None)
-    if open_folder:
-        tags["group_default"] = "1"
+    tags["group_type"] = "collapsible"
+    tags["group_default"] = "1"
     folder.setTags(tags)
     return folder
 
 
 def group_tab(label, contents):
-    """A tab's contents in collapsible folders (TAB_GROUPS); the folders it already has become
-    collapsible too (OPEN_FOLDERS open, the rest closed). Parameters in no group stay loose, first."""
+    """A tab's contents in open collapsible folders (TAB_GROUPS); the folders it already has become
+    open collapsible folders too. Parameters in no group stay loose, first."""
     groups = TAB_GROUPS.get(label, [])
     member = {}
-    for i, (_, _, names) in enumerate(groups):
+    for i, (_, names) in enumerate(groups):
         for n in names:
             member[n] = i
     filled = [[] for _ in groups]
     loose, folders = [], []
     for pt in contents:
         if pt.type() == hou.parmTemplateType.Folder:
-            folders.append(as_collapsible(pt, pt.label() in OPEN_FOLDERS))
+            folders.append(as_collapsible(pt))
             continue
         i = member.get(pt.name(), member.get(pt.label()))
         (filled[i] if i is not None else loose).append(pt)
     out = list(loose)
-    for i, ((glabel, open_folder, _), pts) in enumerate(zip(groups, filled)):
+    for i, ((glabel, _), pts) in enumerate(zip(groups, filled)):
         if pts:
-            out.append(collapsible(f"b3dsop_{label.lower()}_group{i}", glabel, pts, open_folder))
+            out.append(collapsible(f"b3dsop_{label.lower()}_group{i}", glabel, pts))
     return out + folders
 
 
@@ -455,24 +461,6 @@ foreach (matrix3 a; m) {
 4@restxform = rest;
 v@pivot = point(1, "P", rp);
 p@orient = quaternion(transpose(r[0]) * r[1]);
-"""
-
-# Detach Faces (RBD Bullet Solver's collision_detachfaces, a hidden toggle there): colliders are rebuilt
-# from unshared points, packed ones repacked (REPACK_*: each unpacked about the origin, its points
-# split, packed again with an origin pivot, and given back its transform relative to the start frame).
-DETACH_FACES = "collision_detachfaces"
-REPACK_ID_VEX = "i@__packedid = @ptnum;"
-REPACK_TO_ORIGIN_VEX = "@P = set(0);"
-REPACK_PRIM_ID_VEX = 'i@__packedid = point(0, "__packedid", @primnum);'
-# Input 0: the repacked pieces at the start frame; 1: the original packed pieces at the start frame;
-# 2: the original packed pieces now. Bullet's own VEX.
-REPACK_XFORM_VEX = """\
-matrix3 refxform = primintrinsic(1, "transform", i@ptnum);
-matrix3 animxform = primintrinsic(2, "transform", i@ptnum);
-matrix3 xform = primintrinsic(0, "transform", i@ptnum);
-xform *= invert(refxform) * animxform;
-setprimintrinsic(0, "transform", @ptnum, xform);
-@P = v@opinput2_P;
 """
 
 # Solve on Creation Frame, as RBD Bullet Solver: solvefirstframe on the Solver tab drives both the
@@ -635,81 +623,6 @@ def scale_settings(asset):
                 p.setExpression(f"({expr}) * pow({factor}, {power})", hou.exprLanguage.Hscript)
 
 
-def detach_faces(sub, dopnet, collision):
-    """RBD Bullet Solver's Detach Faces branch for the collision input: assembled by name (or
-    connectivity), unpacked colliders' points split and packed again by name, packed ones repacked
-    (REPACK_*). Switched in by the asset's collision_detachfaces. Returns the switch."""
-    net = create(sub, "subnet", "collision_detach")
-    net.setInput(0, collision)
-    for child in net.children():
-        child.destroy()
-    inp = net.indirectInputs()[0]
-
-    def node(parent, type_name, name, inputs=(), parms=None, exprs=None):
-        n = create(parent, type_name, name)
-        for i, item in enumerate(inputs):
-            n.setInput(i, item[0], item[1]) if isinstance(item, tuple) else n.setInput(i, item)
-        b3d_prepare._set(n, warn, parms, exprs)
-        return n
-
-    conn = node(net, "connectivity", "connectivity", [inp], {"connecttype": "prim"})
-    grp = node(net, "attribwrangle", "group_packed", [inp, conn],
-               {"class": "primitive", "snippet": b3d_prepare.GROUP_PACKED_VEX})
-    named = node(net, "assemble", "assemble_names", [grp],
-                 {"outside_group": "static", "connect": 0, "createpath": 1},
-                 {"newname": '1 - hasprimattrib(opinputpath(".", 0), "name")'})
-    split = node(net, "split", "split_packed", [named],
-                 {"group": b3d_prepare.PACKED_GROUP, "grouptype": "prims"})
-
-    # Packed colliders: repacked, as Bullet's repack subnet.
-    start = start_frame_expr(dopnet)
-    start_inner = start.replace('ch("../', 'ch("../../../') if start else None  # repack/x -> asset
-    rp = create(net, "subnet", "repack")
-    rp.setInput(0, split, 0)
-    for child in rp.children():
-        child.destroy()
-    rin = rp.indirectInputs()[0]
-    ids = node(rp, "attribwrangle", "packed_id", [rin], {"snippet": REPACK_ID_VEX})
-    origin = node(rp, "attribwrangle", "to_origin", [ids], {"snippet": REPACK_TO_ORIGIN_VEX})
-    unpack = node(rp, "unpack", "unpack", [origin], {"transfer_attributes": "__packedid"})
-    unique = node(rp, "splitpoints", "unique_points", [unpack])
-    packed = node(rp, "assemble", "assemble", [unique],
-                  {"outside_group": "static", "newname": 0, "connect": 0, "pack_geo": 1, "createpath": 1,
-                   "path": b3d_prepare.PACK_PATH, "transfer_attributes": "__packedid", "pivot": 0})
-    prim_id = node(rp, "attribwrangle", "prim_id", [packed],
-                   {"class": "primitive", "snippet": REPACK_PRIM_ID_VEX})
-    order = node(rp, "sort", "sort", [prim_id],
-                 {"ptsort": "attribute", "pointattrib": "__packedid", "primsort": "attribute",
-                  "primattrib": "__packedid"})
-    at_start = [node(rp, "timeshift", nm, [src]) for nm, src in (("repacked_at_start", order),
-                                                                 ("original_at_start", ids))]
-    for ts in at_start:
-        if start_inner:
-            ts.parm("frame").setExpression(start_inner, hou.exprLanguage.Hscript)
-    xform = node(rp, "attribwrangle", "restore_transform", [at_start[0], at_start[1], ids],
-                 {"snippet": REPACK_XFORM_VEX})
-    clean = node(rp, "attribdelete", "delete_temp", [xform], {"ptdel": "__*", "primdel": "__*"})
-    rout = node(rp, "output", "output0", [clean])
-    rout.setDisplayFlag(True)
-    rp.layoutChildren()
-
-    # Unpacked colliders: points split, packed again by the names assemble_names gave.
-    unique2 = node(net, "splitpoints", "unique_points", [(split, 1)])
-    repacked = node(net, "assemble", "assemble_pieces", [unique2],
-                    {"outside_group": "static", "newname": 0, "connect": 0, "pack_geo": 1, "createpath": 1,
-                     "path": b3d_prepare.PACK_PATH})
-    merged = node(net, "merge", "merge", [rp, repacked])
-    out = node(net, "output", "output0", [merged])
-    out.setDisplayFlag(True)
-    net.layoutChildren()
-
-    sw = create(sub, "switch", "use_detach_faces")
-    sw.setInput(0, collision)
-    sw.setInput(1, net)
-    sw.parm("input").setExpression(f'ch("../{DETACH_FACES}")', hou.exprLanguage.Hscript)
-    return sw
-
-
 def collision_rest(sub, dopnet, collision):
     """The prepared collision with its rest from the start frame (COLLISION_REST_VEX). Returns the
     node feeding the DOP network's collision input."""
@@ -765,9 +678,8 @@ def build_network(sub):
     dopnet = create(sub, "dopnet", "dopnet")
     dopnet.setInput(DOP_PIECES, sim_scaled)
     dopnet.setInput(DOP_CONSTRAINTS, scaled[CONSTRAINTS])
-    # Collision: Detach Faces (optional), packed and named, rest from the start frame.
-    collision_pieces = prepare_input(sub, detach_faces(sub, dopnet, scaled[COLLISION]), "prepare_collision",
-                                     pack=True, collision=True)
+    # Collision: packed and named, rest from the start frame.
+    collision_pieces = prepare_input(sub, scaled[COLLISION], "prepare_collision", pack=True, collision=True)
     dopnet.setInput(DOP_COLLISION, collision_rest(sub, dopnet, collision_pieces))
     for child in dopnet.children():
         child.destroy()
@@ -1158,7 +1070,7 @@ def build(out_path, packed_hda=None):
 
     # Parameters: Reset Simulation and Start Frame above the tabs; then the tabs Solver (ending with
     # Cache Simulation and the contact settings), Collision (the collision toggles and the
-    # collider's settings), Forces, Pieces (Box3D Data folders), Misc, Advanced.
+    # collider's settings), Forces, Pieces (Box3D Data folders, sleeping, aging), Advanced, Output.
     # (inner node's path relative to the subnet, inner tuple name, outer tuple name): paths, since
     # the subnet node is replaced by the asset instance below.
     links = []
@@ -1244,14 +1156,17 @@ def build(out_path, packed_hda=None):
         ANIMATED_COLLISION, "Animated Collision", default_value=True,
         help="Collision geometry follows its animation and pushes what it hits. Off: it stays where it starts.")
     animated.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_COLLISIONS} == 0 }}")
-    detach = hou.ToggleParmTemplate(
-        DETACH_FACES, "Detach Faces", default_value=False,
-        help="Rebuilds colliders from unshared points, repacking packed ones (RBD Bullet Solver's hidden option).")
-    detach.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_COLLISIONS} == 0 }}")
-    # One open Collision Geometry folder, the collider's folders simple inside it (as RBD Bullet Solver's).
-    collision_items = [collapsible("b3dsop_collision_geometry", "Collision Geometry",
-                                   [use_collisions, animated, detach] + collider_folders, True)]
-    taken.update([TRANSFER_ATTRIBUTES, DETACH_FACES, KEEP_BROKEN] + [n for n, _ in TRANSFER_TO.values()])
+    # One open Collision Geometry folder with Use External Collisions as its header checkbox, laid out as
+    # RBD Bullet Solver's: the toggle just before the folder (drawn in its header), the collider's
+    # folders simple inside it, each disabled with the toggle off.
+    off = f"{{ {USE_COLLISIONS} == 0 }}"
+    for f in collider_folders:
+        f.setConditional(hou.parmCondType.DisableWhen, off)
+        f.setTags({**f.tags(), "group_type": "simple"})
+    collision_items = [use_collisions,
+                       collapsible("b3dsop_collision_geometry", "Collision Geometry",
+                                   [animated] + collider_folders, header_toggle=USE_COLLISIONS)]
+    taken.update([TRANSFER_ATTRIBUTES, KEEP_BROKEN] + [n for n, _ in TRANSFER_TO.values()])
 
     group = hou.ParmTemplateGroup()
     for pt in top:
@@ -1270,24 +1185,36 @@ def build(out_path, packed_hda=None):
         for label, contents in tabs:
             if moved is not None and label == target:
                 contents.insert(0, moved)
-    # Out of the solver's tabs into Output: the Aging folder (Misc) and Impact Min Speed (Advanced).
-    aging, speed = [], []
+    # Out of the solver's tabs: the Aging and Sleeping folders (Misc) to Pieces, Impact Min Speed
+    # (Advanced) to Output.
+    aging, sleeping, speed = [], [], []
     for i, (label, contents) in enumerate(tabs):
         contents, a = pull(contents, lambda pt: pt.type() == hou.parmTemplateType.Folder
                            and pt.label() == AGING_FOLDER)
+        contents, sl = pull(contents, lambda pt: pt.type() == hou.parmTemplateType.Folder
+                            and pt.label() == SLEEPING_FOLDER)
         contents, sp = pull(contents, lambda pt: pt.name() == IMPACT_SPEED)
         tabs[i] = (label, contents)
         aging += a
+        sleeping += [t for f in sl for t in f.parmTemplates()]
         speed += sp
+    if not aging:
+        warn(f"no {AGING_FOLDER} folder on the solver: not on the Pieces tab")
+    if not sleeping:
+        warn(f"no {SLEEPING_FOLDER} folder on the solver: Allow Sleeping is not on the Pieces tab")
     contacts = next((c for label, c in tabs if label == "Collision"), [])
     solver_extra = solver_first + ([collapsible("b3dsop_contacts", "Contacts", contacts, True)] if contacts else [])
-    # Tab order: Solver, Collision, Forces, Pieces, any other solver tabs, then Misc, Advanced and
-    # Output always last.
+    # Tab order: Solver, Collision, Forces, Pieces, any other solver tabs, then Advanced and Output
+    # always last. Misc is gone once Sleeping and Aging are out; anything else in it goes to Advanced.
     by_label = {label: contents for label, contents in tabs}
+    misc = by_label.pop(MISC_TAB, [])
+    if misc:
+        warn(f"the solver's {MISC_TAB} tab still holds {[pt.label() for pt in misc]}: moved to Advanced")
+        by_label["Advanced"] = by_label.get("Advanced", []) + misc
     ordered = [("Solver", [use_scale, world_scale] + by_label.pop("Solver", []) + solver_extra),
                ("Collision", collision_items)]
     by_label.pop("Collision", None)
-    last = [(label, by_label.pop(label)) for label in ("Misc", "Advanced") if label in by_label]
+    last = [(label, by_label.pop(label)) for label in ("Advanced",) if label in by_label]
     if "Forces" in by_label:
         ordered.append(("Forces", by_label.pop("Forces")))
     ordered.append(("Pieces", None))  # filled below
@@ -1309,12 +1236,17 @@ def build(out_path, packed_hda=None):
     # The pieces' Add Impact Data goes to Output (still linked by its name).
     impact_name = renames.get(IMPACT_TOGGLE, IMPACT_TOGGLE)
     folders, impact = pull(folders, lambda pt: pt.name() == impact_name)
-    # The Pieces tab as Bullet's Properties tab: an open Pieces folder holding the simple Box3D Data
-    # folders, and Sleep & Contacts beside it (Bullet's Sleeping).
+    # The Pieces tab: the Box3D Data folders (Shape, Body, Material) each an open collapsible folder,
+    # then Sleep & Contacts with the solver's Allow Sleeping first, then the solver's Aging.
     nested, separate = pull(folders, lambda pt: pt.label() == PIECES_SEPARATE)
-    pieces_items = [collapsible("b3dsop_pieces", "Pieces", nested, True)] + \
-        [as_collapsible(f, True) for f in separate]
-    output_items = output_tab(impact, speed, aging)
+    if not separate:
+        warn(f"no {PIECES_SEPARATE} folder on the pieces: Allow Sleeping is not on the Pieces tab")
+    separate = [as_collapsible(f) for f in separate]
+    if separate:
+        separate[0].setParmTemplates(sleeping + list(separate[0].parmTemplates()))
+    pieces_items = [as_collapsible(f) for f in nested] + separate + \
+        [collapsible("b3dsop_aging", f.label(), f.parmTemplates()) for f in aging]
+    output_items = output_tab(impact, speed)
     for i, (label, contents) in enumerate(ordered):
         contents = {"Pieces": pieces_items, "Output": output_items, "Collision": contents}.get(
             label, group_tab(label, contents) if contents is not None else contents)
@@ -1358,9 +1290,9 @@ def build(out_path, packed_hda=None):
     print(f"Box3D Solver SOP asset: {os.path.normpath(out_path)}")
 
 
-def output_tab(impact, speed, aging):
-    """The Output tab's contents: Impact Data (a collapsible folder, `impact` its header toggle,
-    then `speed` and Fetch Impacts), the `aging` folders, Transfer Attributes."""
+def output_tab(impact, speed):
+    """The Output tab's contents: Impact Data (a closed collapsible folder, `impact` its header toggle,
+    then `speed` and Fetch Impacts), Attribute Transfer, Constraints."""
     items = []
     if not impact:
         warn(f"no {IMPACT_TOGGLE} on the pieces: Impact Data is not on the Output tab")
@@ -1378,23 +1310,18 @@ def output_tab(impact, speed, aging):
             help="Adds an Object Merge beside this node with the pieces' impacts as points.")
         fetch.setConditional(hou.parmCondType.DisableWhen, off)
         contents.append(fetch)
-        items.append(hou.FolderParmTemplate("b3dsop_impacts", "Impact Data", contents,
-                                            folder_type=hou.folderType.Collapsible,
-                                            tags={"sidefx::header_toggle": toggle.name()}))
-    if not aging:
-        warn(f"no {AGING_FOLDER} folder on the solver: not on the Output tab")
-    for pt in aging:
-        items.append(collapsible("b3dsop_aging", pt.label(), pt.parmTemplates(), True))
+        items.append(collapsible("b3dsop_impacts", "Impact Data", contents, open_folder=False,
+                                 header_toggle=toggle.name()))
     transfer = hou.StringParmTemplate(
         TRANSFER_ATTRIBUTES, "Transfer Attributes", 1, default_value=(TRANSFER_ATTRIBUTES_DEFAULT,),
         help="Point attributes copied from the simulation onto Simulation Points, and onto the pieces as ticked below.")
     to = [hou.ToggleParmTemplate(name, label, default_value=True,
                                  help=f"Copies Transfer Attributes onto the {label[12:]} output.")
           for name, label in TRANSFER_TO.values()]
-    items.append(collapsible("b3dsop_transfer", "Attribute Transfer", [transfer] + to, False))
+    items.append(collapsible("b3dsop_transfer", "Attribute Transfer", [transfer] + to))
     keep = hou.ToggleParmTemplate(KEEP_BROKEN, "Export Broken Constraints", default_value=False,
                                   help="Keeps broken constraints in the Constraint Geometry output. Off: they are removed.")
-    items.append(collapsible("b3dsop_constraints", "Constraints", [keep], True))
+    items.append(collapsible("b3dsop_constraints", "Constraints", [keep]))
     return items
 
 
@@ -1482,10 +1409,10 @@ def check(out_path):
         if q[0].eval() != 1:
             warn(f"{inner_path}'s {SOLVE_FIRST_LABEL} does not follow the asset's {outer}")
         p.set(0)
-    for parm in (DETACH_FACES, KEEP_BROKEN):
+    for parm in (KEEP_BROKEN,):
         if probe.parm(parm) is None:
             warn(f"no {parm} parameter on the asset")
-    for path in ("switchif_beforestart", "switchif_keepbroken", "use_detach_faces", "collision_detach/repack"):
+    for path in ("switchif_beforestart", "switchif_keepbroken"):
         if probe.node(path) is None:
             warn(f"no {path} inside the asset")
     for path in ("prepare_pieces", "prepare_collision", "names_geometry", "names_proxy"):
