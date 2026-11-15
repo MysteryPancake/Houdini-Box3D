@@ -32,14 +32,14 @@ static bool run(int workers, int side, int steps, Result &r) {
   // side x side x side grid of boxes, with a little jitter so they topple
   const float bh[3] = {0.5f, 0.5f, 0.5f};
   uint64_t id = 100;
-  srand(1);
+  b3dop::TestRng rng(1);
   for (int y = 0; y < side; ++y)
     for (int x = 0; x < side; ++x)
       for (int z = 0; z < side; ++z) {
         const int centre = side / 2; // whole cells: the grid sits on integers
-        const double p[3] = {(x - centre) * 1.05 + (rand() % 100) * 0.0004,
+        const double p[3] = {(x - centre) * 1.05 + rng.below(100) * 0.0004,
                              0.5 + y * 1.02,
-                             (z - centre) * 1.05 + (rand() % 100) * 0.0004};
+                             (z - centre) * 1.05 + rng.below(100) * 0.0004};
         w.addBody(id, b3dop::BodySettings(), p, qid);
         w.addBoxShape(id, bh);
         ++id;

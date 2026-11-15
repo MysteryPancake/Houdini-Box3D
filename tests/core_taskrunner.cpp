@@ -100,13 +100,13 @@ static bool run(int workers, Pool *pool, std::vector<double> &out) {
   w.addBoxShape(1, gh);
   const float bh[3] = {0.5f, 0.5f, 0.5f};
   uint64_t id = 100;
-  srand(1);
+  b3dop::TestRng rng(1);
   for (int y = 0; y < 8; ++y)
     for (int x = 0; x < 8; ++x)
       for (int z = 0; z < 8; ++z) {
-        const double p[3] = {(x - 4) * 1.05 + (rand() % 100) * 0.0004,
+        const double p[3] = {(x - 4) * 1.05 + rng.below(100) * 0.0004,
                              0.5 + y * 1.02,
-                             (z - 4) * 1.05 + (rand() % 100) * 0.0004};
+                             (z - 4) * 1.05 + rng.below(100) * 0.0004};
         w.addBody(id, b3dop::BodySettings(), p, qid);
         w.addBoxShape(id, bh);
         ++id;

@@ -2,6 +2,8 @@
 #include "Box3DSideFX.h"
 #include "Box3DWorld.h"
 
+#include <box3d/math_functions.h>
+
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
@@ -157,22 +159,29 @@ void twistFrame(const float twistIn[3], const float upIn[3], float q[4]) {
   sanitizeQuat(q);
 }
 
+// Quaternions here are x, y, z, w arrays; Box3D's b3Quat is (v = xyz, s = w).
+b3Quat toB3(const float q[4]) { return b3Quat{{q[0], q[1], q[2]}, q[3]}; }
+
+void fromB3(const b3Quat &q, float out[4]) {
+  out[0] = q.v.x;
+  out[1] = q.v.y;
+  out[2] = q.v.z;
+  out[3] = q.s;
+}
+
 void quatMul(const float a[4], const float b[4], float out[4]) {
-  const float x = a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1];
-  const float y = a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0];
-  const float z = a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3];
-  const float w = a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2];
-  out[0] = x;
-  out[1] = y;
-  out[2] = z;
-  out[3] = w;
+  fromB3(b3MulQuat(toB3(a), toB3(b)), out);
 }
 
 void quatConj(const float q[4], float out[4]) {
-  out[0] = -q[0];
-  out[1] = -q[1];
-  out[2] = -q[2];
-  out[3] = q[3];
+  fromB3(b3Conjugate(toB3(q)), out);
+}
+
+void rotateVec(const float q[4], const float v[3], float out[3]) {
+  const b3Vec3 r = b3RotateVector(toB3(q), b3Vec3{v[0], v[1], v[2]});
+  out[0] = r.x;
+  out[1] = r.y;
+  out[2] = r.z;
 }
 
 } // namespace
@@ -297,7 +306,7 @@ void sideFXFrameOffsets(const SideFXJoint &j, const JointFrame &anchorA,
       u[k] = static_cast<float>(d[k] / dist);
   else {
     const float x[3] = {1, 0, 0};
-    quatRotate(anchorA.rot, x, u);
+    rotateVec(anchorA.rot, x, u);
   }
   const float half = static_cast<float>(0.5 * sep);
   float qa[4], qb[4];
@@ -306,8 +315,8 @@ void sideFXFrameOffsets(const SideFXJoint &j, const JointFrame &anchorA,
   const float wa[3] = {u[0] * half, u[1] * half, u[2] * half};
   const float wb[3] = {-wa[0], -wa[1], -wa[2]};
   float la[3], lb[3];
-  quatRotate(qa, wa, la);
-  quatRotate(qb, wb, lb);
+  rotateVec(qa, wa, la);
+  rotateVec(qb, wb, lb);
   for (int k = 0; k < 3; ++k) {
     adjA.pos[k] = la[k];
     adjB.pos[k] = lb[k];
@@ -320,7 +329,7 @@ JointFrame applyFrameOffset(const JointFrame &anchor, const JointFrame &adj) {
                       static_cast<float>(adj.pos[1]),
                       static_cast<float>(adj.pos[2])};
   float w[3];
-  quatRotate(anchor.rot, p, w);
+  rotateVec(anchor.rot, p, w);
   for (int k = 0; k < 3; ++k)
     out.pos[k] = anchor.pos[k] + static_cast<double>(w[k]);
   quatMul(anchor.rot, adj.rot, out.rot);
@@ -338,7 +347,7 @@ JointFrame removeFrameOffset(const JointFrame &joint, const JointFrame &adj) {
                       static_cast<float>(adj.pos[1]),
                       static_cast<float>(adj.pos[2])};
   float w[3];
-  quatRotate(out.rot, p, w);
+  rotateVec(out.rot, p, w);
   for (int k = 0; k < 3; ++k)
     out.pos[k] = joint.pos[k] - static_cast<double>(w[k]);
   return out;

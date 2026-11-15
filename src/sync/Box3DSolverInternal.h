@@ -14,6 +14,7 @@
 #include "Box3DAttribNames.h"
 #include "Box3DHoudiniUtil.h"
 #include "core/Box3DDebug.h"
+#include "core/Box3DShapes.h"
 #include "dop/SIM_Box3DData.h"
 #include "dop/SIM_Box3DWorld.h"
 
@@ -61,6 +62,7 @@
 #include <initializer_list>
 #include <iterator>
 #include <map>
+#include <shared_mutex>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -254,6 +256,42 @@ struct MeshPiece {
 
 struct SourceSummary;
 
+// A map whose values are built once, outside the map lock. get() returns the
+// value for a key, inserting a default one if missing (shared lock for a hit,
+// exclusive only to insert); the caller then builds it with std::call_once on
+// a once_flag in V, so different keys build in parallel and the same key
+// builds once. Values never move (unordered_map nodes), so references stay
+// valid while others insert.
+template <class K, class V, class Hash> class OnceCache {
+public:
+  V &get(const K &key) {
+    {
+      std::shared_lock<std::shared_mutex> lock(myMutex);
+      const auto it = myMap.find(key);
+      if (it != myMap.end())
+        return it->second;
+    }
+    std::unique_lock<std::shared_mutex> lock(myMutex);
+    return myMap.try_emplace(key).first->second;
+  }
+
+private:
+  std::shared_mutex myMutex;
+  std::unordered_map<K, V, Hash> myMap;
+};
+
+struct SourceKeyHash {
+  size_t operator()(const std::pair<const GU_Detail *, GA_Offset> &k) const {
+    return static_cast<size_t>(b3dop::mixHash(
+        reinterpret_cast<uintptr_t>(k.first),
+        static_cast<uint64_t>(static_cast<int64_t>(k.second))));
+  }
+  size_t operator()(const GU_Detail *k) const {
+    return static_cast<size_t>(b3dop::mixHash(
+        reinterpret_cast<uintptr_t>(k), 0));
+  }
+};
+
 // Collision source geometry (what is packed in each point's primitive), cached
 // for one syncObject() call. Thread-safe: the shape pre-pass plans points in
 // parallel.
@@ -263,13 +301,14 @@ struct ShapeSources {
     GU_ConstDetailHandle handle;
     PieceGroup pieces;    // grouped by the `name` attribute
     PieceGroup connected; // one piece per set of connected primitives
-    bool connectedBuilt = false;
+    std::once_flag piecesOnce;    // guards handle + pieces
+    std::once_flag connectedOnce; // guards connected
   };
-  std::mutex mutex;
-  std::unordered_map<const GU_Detail *, InnerEntry> inner;
+  using SourceKey = std::pair<const GU_Detail *, GA_Offset>;
+  OnceCache<const GU_Detail *, InnerEntry, SourceKeyHash> inner;
   // Fragments: (shared source detail, first primitive offset) -> that
   // fragment's piece.
-  std::map<std::pair<const GU_Detail *, GA_Offset>, InnerEntry> fragments;
+  OnceCache<SourceKey, InnerEntry, SourceKeyHash> fragments;
 
   // The primitive's source detail. A packed fragment shares the WHOLE source
   // detail (detailPtr) with every fragment of it and stands for its own
@@ -303,8 +342,9 @@ struct ShapeSources {
   struct TriEntry {
     GU_ConstDetailHandle handle;
     std::shared_ptr<const MeshPiece> mesh;
+    std::once_flag once;
   };
-  std::map<std::pair<const GU_Detail *, GA_Offset>, TriEntry> triangles;
+  OnceCache<SourceKey, TriEntry, SourceKeyHash> triangles;
   std::shared_ptr<const MeshPiece> innerTriangles(const GU_PrimPacked &prim);
 };
 

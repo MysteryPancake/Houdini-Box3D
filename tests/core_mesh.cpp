@@ -164,7 +164,7 @@ int main() {
     // quaternion's body-space use: check through Box3D-free maths: the matrix
     // of the recovered quaternion equals m.
     double p0[3] = {1, 0, 0}, p1[3];
-    transformPoint(m, p0, p1);
+    xformPoint(m, p0, p1);
     CHECK(std::fabs(p1[0] - (1 - 2 * (qy * qy + qz * qz) + 4)) < 1e-9);
 
     // Scale, mirror and perspective are not rigid.

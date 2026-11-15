@@ -479,7 +479,7 @@ void bakeTransform(const double m[16], TriMesh &mesh,
     const double p[3] = {mesh.xyz[3 * i], mesh.xyz[3 * i + 1],
                          mesh.xyz[3 * i + 2]};
     double q[3];
-    b3dop::transformPoint(m, p, q);
+    b3dop::xformPoint(m, p, q);
     for (int j = 0; j < 3; ++j)
       baked[3 * i + static_cast<size_t>(j)] = static_cast<float>(q[j]);
   }

@@ -7,11 +7,39 @@
 
 #include "core/Box3DWorld.h"
 
+#include <cstdint>
 #include <memory>
 #include <unordered_map>
 #include <utility>
 
 namespace b3dop {
+
+// Test jitter: Marsaglia's XOR-128, seeded exactly as the HDK's UT_FastRandom
+// (UT/UT_FastRandom.h, header-only integer code), so the sequence is the same
+// on every platform (rand() differs between MSVC and glibc) and matches what
+// UT_FastRandom gives for the same seed. It is copied rather than included
+// because the core tests build without the HDK (BOX3DDOP_CORE_ONLY).
+class TestRng {
+public:
+  explicit TestRng(uint32_t seed = 0) {
+    mySeeds[0] = seed ^ 123456789u;
+    for (uint32_t i = 1; i < 4; ++i)
+      mySeeds[i] = 1812433253u * (mySeeds[i - 1] ^ (mySeeds[i - 1] >> 30)) + i;
+  }
+  uint32_t urandom() {
+    uint32_t t = mySeeds[0] ^ (mySeeds[0] << 11);
+    mySeeds[0] = mySeeds[1];
+    mySeeds[1] = mySeeds[2];
+    mySeeds[2] = mySeeds[3];
+    mySeeds[3] = (mySeeds[3] ^ (mySeeds[3] >> 19)) ^ (t ^ (t >> 8));
+    return mySeeds[3];
+  }
+  // 0 .. n-1 (n <= 2^24).
+  uint32_t below(uint32_t n) { return (urandom() >> 8) % n; }
+
+private:
+  uint32_t mySeeds[4];
+};
 
 class KeyedWorld : public Box3DWorld {
 public:

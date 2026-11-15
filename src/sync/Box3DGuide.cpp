@@ -267,7 +267,7 @@ void buildCollisionGuide(const SIM_Object &obj, GU_Detail &out,
           b3dop::sanitizeQuat(p.rot);
         }
       }
-      drawBody(lines, st->world, e->second, p, color);
+      drawBody(lines, st->world, *e, p, color);
     }
   }
   lines.write(out);

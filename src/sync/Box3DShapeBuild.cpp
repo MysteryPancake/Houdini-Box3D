@@ -291,43 +291,32 @@ const PieceGroup *ShapeSources::innerPieces(const GU_PrimPacked &prim,
   if (!gdp)
     return nullptr;
 
-  std::lock_guard<std::mutex> guard(mutex);
   const GA_Offset firstOff = fragmentFirst(frag);
   InnerEntry *entry = nullptr;
-  bool fresh = false;
   if (frag) {
-    const auto key = std::make_pair(gdp, firstOff);
-    auto fit = fragments.find(key);
-    if (fit == fragments.end()) {
-      InnerEntry e;
-      e.handle = handle;
+    entry = &fragments.get(std::make_pair(gdp, firstOff));
+    std::call_once(entry->piecesOnce, [&] {
+      entry->handle = handle;
       collectFragmentPiece(gdp, frag->getPrimitiveRange(),
                            std::to_string(static_cast<int64_t>(firstOff)),
-                           e.pieces);
-      fit = fragments.emplace(key, std::move(e)).first;
-      fresh = true;
-    }
-    entry = &fit->second;
-  } else {
-    auto it = inner.find(gdp);
-    if (it == inner.end()) {
-      InnerEntry e;
-      e.handle = handle;
-      collectPieces(gdp, e.pieces);
-      it = inner.emplace(gdp, std::move(e)).first;
-      fresh = true;
-    }
-    entry = &it->second;
-  }
-
-  if (!connected) {
-    if (fresh)
+                           entry->pieces);
       SourceSummaryCache::instance().insert(
           sourceIdentity(gdp, firstOff, false), entry->pieces);
-    return anyPieceNonEmpty(entry->pieces) ? &entry->pieces : nullptr;
+    });
+  } else {
+    entry = &inner.get(gdp);
+    std::call_once(entry->piecesOnce, [&] {
+      entry->handle = handle;
+      collectPieces(gdp, entry->pieces);
+      SourceSummaryCache::instance().insert(
+          sourceIdentity(gdp, firstOff, false), entry->pieces);
+    });
   }
 
-  if (!entry->connectedBuilt) {
+  if (!connected)
+    return anyPieceNonEmpty(entry->pieces) ? &entry->pieces : nullptr;
+
+  std::call_once(entry->connectedOnce, [&] {
     if (frag)
       collectConnectedPieces(gdp, frag->getPrimitiveRange(), entry->connected);
     else {
@@ -335,10 +324,9 @@ const PieceGroup *ShapeSources::innerPieces(const GU_PrimPacked &prim,
       if (entry->connected.pieces.empty()) // points only, no primitives
         collectPieces(gdp, entry->connected);
     }
-    entry->connectedBuilt = true;
     SourceSummaryCache::instance().insert(sourceIdentity(gdp, firstOff, true),
                                           entry->connected);
-  }
+  });
   return entry->connected.pieces.empty() ? nullptr : &entry->connected;
 }
 
@@ -388,17 +376,13 @@ ShapeSources::innerTriangles(const GU_PrimPacked &prim) {
   const GU_Detail *gdp = lock.getGdp();
   if (!gdp)
     return nullptr;
-  std::lock_guard<std::mutex> guard(mutex);
-  const auto key = std::make_pair(gdp, fragmentFirst(frag));
-  auto it = triangles.find(key);
-  if (it == triangles.end()) {
-    TriEntry e;
-    e.handle = handle;
-    e.mesh = collectTriangles(gdp, frag ? frag->getPrimitiveRange()
-                                        : gdp->getPrimitiveRange());
-    it = triangles.emplace(key, std::move(e)).first;
-  }
-  return it->second.mesh;
+  TriEntry &entry = triangles.get(std::make_pair(gdp, fragmentFirst(frag)));
+  std::call_once(entry.once, [&] {
+    entry.handle = handle;
+    entry.mesh = collectTriangles(gdp, frag ? frag->getPrimitiveRange()
+                                            : gdp->getPrimitiveRange());
+  });
+  return entry.mesh;
 }
 
 // ---------------------------------------------------------------------------

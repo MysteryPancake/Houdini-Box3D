@@ -105,11 +105,4 @@ inline bool decomposeScaledRigid(const double m[16], double pos[3],
   return decomposeRigid(n, pos, quat, tol);
 }
 
-// p * M for a point (row-vector convention), in double.
-inline void transformPoint(const double m[16], const double p[3],
-                           double out[3]) {
-  for (int j = 0; j < 3; ++j)
-    out[j] = p[0] * m[j] + p[1] * m[4 + j] + p[2] * m[8 + j] + m[12 + j];
-}
-
 } // namespace b3dop

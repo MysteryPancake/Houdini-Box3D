@@ -788,10 +788,11 @@ bool Box3DWorld::boxShape(BodyHandle h, const BodySettings &b,
           const float corner[3] = {static_cast<float>(sx) * halfExtents[0],
                                    static_cast<float>(sy) * halfExtents[1],
                                    static_cast<float>(sz) * halfExtents[2]};
-          float r[3];
-          quatRotate(rotationXYZW, corner, r);
-          for (int j = 0; j < 3; ++j)
-            pts[n++] = r[j] + (center ? center[j] : 0.0f);
+          const b3Vec3 r = b3RotateVector(
+              makeQuat(rotationXYZW), makeVec3(corner));
+          pts[n++] = r.x + (center ? center[0] : 0.0f);
+          pts[n++] = r.y + (center ? center[1] : 0.0f);
+          pts[n++] = r.z + (center ? center[2] : 0.0f);
         }
     const HullId hull = createHull(pts, 8, nullptr);
     return hull && createHullShape(h, b, hull, updateMass);
@@ -832,8 +833,11 @@ bool Box3DWorld::capsuleShape(BodyHandle h, const BodySettings &b, float radius,
   // The axis is the shape's Y, turned by the shape rotation.
   float axis[3] = {0.0f, 1.0f, 0.0f};
   if (!isIdentityRotation(rotationXYZW)) {
-    const float up[3] = {0.0f, 1.0f, 0.0f};
-    quatRotate(rotationXYZW, up, axis);
+    const b3Vec3 up = {0.0f, 1.0f, 0.0f};
+    const b3Vec3 r = b3RotateVector(makeQuat(rotationXYZW), up);
+    axis[0] = r.x;
+    axis[1] = r.y;
+    axis[2] = r.z;
   }
   b3Capsule capsule;
   capsule.center1.x = c[0] - halfLength * axis[0];
