@@ -589,7 +589,7 @@ v@Cd = set(shade, shade * 0.98, shade * 0.93);
         "// The ball is thrown at the building (Box3D Packed Object keeps the points' v).\n"
         f'v@v = s@name == "ball" ? {vec((speed, 0, 0))} : {{0, 0, 0}};')
 
-    strength = 5.0e4
+    strength = 1.0e4
     dop, _, names_used = build_dops(
         "building_sim", path, network_path=constraints.path(), keep_velocity=True,
         joints=[("glueconrel", "glue", {"strength": strength})])
