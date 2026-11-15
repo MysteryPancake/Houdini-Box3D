@@ -698,6 +698,13 @@ def test_solver_sop_layout():
     expect("first in Pieces / Sleep", piece_sleep.parmTemplates()[0].name() if piece_sleep else None,
            "startasleep")
     expect("Add Impact Data on Output", sop.parm("addimpact") is not None, True)
+    advanced = by_path.get(("Advanced",))
+    expect("Advanced tab folders", [pt.label() for pt in advanced.parmTemplates()] if advanced else None,
+           ["Stability", "Performance"])
+    performance = by_path.get(("Advanced", "Performance"))
+    expect("Performance has Cache Simulation (label hidden, joined) first",
+           (performance.parmTemplates()[0].isLabelHidden(), performance.parmTemplates()[0].joinsWithNext())
+           if performance and performance.parmTemplates() else None, (True, True))
     vis_tab = by_path.get(("Visualization",))
     expect("Visualization tab (no folders)", [pt.name() for pt in vis_tab.parmTemplates()] if vis_tab else None,
            ["showcollision", "exportshapes", "shapecolor"])

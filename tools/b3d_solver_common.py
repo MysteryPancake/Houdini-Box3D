@@ -34,9 +34,10 @@ TAB_GROUPS = {
     "Forces": [("Force DOPs", ["useforces", "forceswake"]),
                ("Bounce / Friction", ["restitutionpropagation", "bouncethreshold", "restitutioniterations",
                                       "frictionmixing", "restitutionmixing"])],
-    "Advanced": [("Box3D Solver", ["enablewarmstarting", "enablecontinuous", "maxlinearspeed",
-                                   "isotropicinertia"]),
-                 ("Threads", ["autothreads", "threads"])],
+    "Advanced": [("Stability", ["enablewarmstarting", "enablecontinuous", "maxlinearspeed",
+                                "isotropicinertia"]),
+                 # Cache Simulation / Cache Memory (MB) join this folder first (make_solver_sop.py).
+                 ("Performance", ["autothreads", "threads"])],
 }
 # The Pieces tab is the pieces' Box3D Data folders (Shape, Body, Material, CCD & Contacts, Sleep).
 # The solver's settings the SOP regroups by name, wherever the DOP has them: (folder label, names, open) on the
@@ -234,10 +235,10 @@ def as_collapsible(folder):
     return folder
 
 
-def group_tab(label, contents):
-    """A tab's contents in open collapsible folders (TAB_GROUPS); the folders it already has become
-    open collapsible folders too. Parameters in no group stay loose, first."""
-    groups = TAB_GROUPS.get(label, [])
+def group_tab(label, contents, groups=None):
+    """A tab's contents in open collapsible folders (`groups`, else TAB_GROUPS); the folders it already
+    has become open collapsible folders too. Parameters in no group stay loose, first."""
+    groups = TAB_GROUPS.get(label, []) if groups is None else groups
     member = {}
     for i, (_, names) in enumerate(groups):
         for n in names:

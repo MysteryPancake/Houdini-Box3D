@@ -47,13 +47,14 @@ Inside:
       Shapes) -> tint_shapes (Shape Color) -> switch_show_shapes -> GUIDE_GEO
 
 Its parameters: Reset Simulation and Start Frame above the tabs; then the tabs Solver (the
-solver's own settings loose, the Cache Simulation checkbox joined to Cache Memory (MB), then its contact settings in a Contacts folder, and the
+solver's own settings loose, then its contact settings in a Contacts folder, and the
 closed Sleeping (Allow Sleeping) and Aging folders), Pieces
 (Box3D Packed Object's Box3D Data folders for the simulated pieces: Shape, Body, Material, CCD & Contacts,
 Sleep), Collision (a Collision
 Geometry folder whose header toggle is Use External Collisions, holding Collision Type and the
 collider's Shape, Material and Contacts settings, collision_* names), Forces (Gravity first, loose; Force DOPs and Bounce / Friction folders),
-Visualization (Show Collision Geometry, Show Collision Shapes, Shape Color), Advanced, and Output, always last
+Visualization (Show Collision Geometry, Show Collision Shapes, Shape Color), Advanced (Stability and Performance folders;
+Performance starts with the Cache Simulation checkbox joined to Cache Memory (MB)), and Output, always last
 (Impact Data with Fetch Impacts, Transfer Attributes and Transfer to Geometry / Proxy Geometry,
 Constraints). Every folder is open except Impact Data, Sleeping and Aging. Each inner parameter is a channel reference to
 the outer one.
@@ -108,6 +109,7 @@ from b3d_solver_common import (  # noqa: E402
     SHOW_COLLISION,
     START_ASLEEP,
     solver_folders,
+    TAB_GROUPS,
     SOLVER_FOLDERS,
     BOUNCE_PARMS,
     template_by_label,
@@ -189,7 +191,7 @@ def build(out_path, packed_hda=None):
     dopnet, solver, pieces = build_network(sub)
 
     # Parameters: Reset Simulation and Start Frame above the tabs; then the tabs Solver (ending with
-    # Cache Simulation and the contact settings), Collision (the collision toggles and the
+    # the contact settings), Collision (the collision toggles and the
     # collider's settings), Forces, Pieces (Box3D Data folders, sleeping, aging), Advanced, Output.
     # (inner node's path relative to the subnet, inner tuple name, outer tuple name): paths, since
     # the subnet node is replaced by the asset instance below.
@@ -213,7 +215,7 @@ def build(out_path, packed_hda=None):
     if "Start Frame" in dop_templates:
         top.append(dop_templates["Start Frame"])
     # Cache Simulation as RBD Bullet Solver's: a checkbox with its label hidden, joined to Cache Memory (MB), which
-    # it enables (any checkbox the DOP network has on that row is left out).
+    # it enables (any checkbox the DOP network has on that row is left out). Both go in Advanced / Performance.
     cache_toggle = dop_templates.get("Cache Simulation")
     cache_memory = [pt for pt in row_by_label(dopnet, CACHE_MEMORY) if pt.type() != hou.parmTemplateType.Toggle]
     if not cache_memory:
@@ -228,9 +230,10 @@ def build(out_path, packed_hda=None):
         for pt in cache_memory:
             own = pt.conditionals().get(hou.parmCondType.DisableWhen, "")
             pt.setConditional(hou.parmCondType.DisableWhen, f"{own} {off}".strip())
-    solver_first = ([cache_toggle] if cache_toggle is not None else []) + cache_memory
-    # Solve on Creation Frame, before Cache Simulation (as on RBD Bullet Solver's first tab), linked to
-    # the pieces' and the collider's Packed Object.
+    cache_items = ([cache_toggle] if cache_toggle is not None else []) + cache_memory
+    solver_first = []
+    # Solve on Creation Frame (as on RBD Bullet Solver's first tab), linked to the pieces' and the collider's
+    # Packed Object.
     solve_first = hou.ToggleParmTemplate(
         SOLVE_FIRST, "Solve on Creation Frame", default_value=False,
         help="Simulates pieces and colliders on the frame they appear. Off: they start moving one frame later.")
@@ -256,7 +259,7 @@ def build(out_path, packed_hda=None):
     solver_tabs = solver_folders(without_parmops(solver.parmTemplateGroup().entries()))
     if not solver_tabs:
         warn(f"no parameter folders found on {solver.path()}: the solver's parameters are not promoted")
-    taken = {pt.name() for pt in top + solver_first} | {USE_COLLISIONS, COLLISION_TYPE,
+    taken = {pt.name() for pt in top + solver_first + cache_items} | {USE_COLLISIONS, COLLISION_TYPE,
                                                        WORLD_SCALE_TOGGLE, WORLD_SCALE}
     for tab in solver_tabs:
         for pt in value_templates(tab.parmTemplates()):
@@ -311,7 +314,7 @@ def build(out_path, packed_hda=None):
     for pt in top:
         group.append(pt)
     # The solver's tabs by label, pulled apart by parameter name: Contacts, Sleeping and Aging become folders
-    # after Cache Simulation on the Solver tab, Bounce / Friction goes to Forces, Impact Min Speed and Export
+    # at the end of the Solver tab, Bounce / Friction goes to Forces, Impact Min Speed and Export
     # Collision Shapes to Output and Visualization. The DOP's own Collision, Aging and Output tabs end up
     # empty and are dropped, so the SOP's Collision tab is only about the Collision input.
     tabs = [(t.label(), list(t.parmTemplates())) for t in solver_tabs]
@@ -340,6 +343,10 @@ def build(out_path, packed_hda=None):
     # Output always last.
     by_label = {label: contents for label, contents in tabs if contents}
     by_label["Forces"] = by_label.get("Forces", []) + bounce
+    # Cache Simulation and Cache Memory (MB) lead the Advanced tab's Performance folder.
+    by_label["Advanced"] = cache_items + by_label.get("Advanced", [])
+    advanced_groups = [(glabel, names + [pt.name() for pt in cache_items] if glabel == "Performance" else names)
+                       for glabel, names in TAB_GROUPS["Advanced"]]
     ordered = [("Solver", [use_scale, world_scale] + by_label.pop("Solver", []) + solver_extra),
                ("Pieces", None),  # filled below
                ("Collision", collision_items)]
@@ -383,7 +390,8 @@ def build(out_path, packed_hda=None):
     for i, (label, contents) in enumerate(ordered):
         contents = {"Pieces": pieces_items, "Output": output_items, "Visualization": vis_items,
                     "Collision": contents}.get(
-            label, group_tab(label, contents) if contents is not None else contents)
+            label, group_tab(label, contents, advanced_groups if label == "Advanced" else None)
+            if contents is not None else contents)
         group.append(hou.FolderParmTemplate(f"b3dsop_tab{i}", label, contents, folder_type=hou.folderType.Tabs))
 
     if os.path.exists(out_path):

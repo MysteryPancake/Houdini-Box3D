@@ -191,11 +191,12 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   Tab order: Solver, Pieces, Collision, Forces, any other solver tabs, Visualization (`visualization_tab`: Show
   Collision Geometry, Show Collision Shapes and Shape Color, no folders), then Advanced and Output always last; the
   solver's parameters are regrouped by name (`SOLVER_FOLDERS`, `BOUNCE_PARMS`, `IMPACT_SPEED`, `SHAPES_TOGGLE`, pulled
-  with `pull`), whichever DOP tab holds them: Contacts, Sleeping and Aging become folders after Cache Simulation on the
+  with `pull`), whichever DOP tab holds them: Contacts, Sleeping and Aging become folders at the end of the
   Solver tab (Sleeping and Aging closed), bounce / friction settings go loose into Forces (`TAB_GROUPS` folders them),
-  and DOP tabs left empty (Collision, Aging, Output) are dropped. Solver: the solver's own settings, Cache Simulation,
-  Cache Memory (MB) (the inner DOP network's value found by label, `row_by_label`, `CACHE_MEMORY`; Cache Simulation's
-  label is hidden and it is joined to it, disabling it when off), then Contacts, Sleeping and Aging. Collision: one Collision Geometry folder whose header checkbox is Use External
+  and DOP tabs left empty (Collision, Aging, Output) are dropped. Solver: the solver's own settings, then Contacts,
+  Sleeping and Aging. Advanced is Stability (warm starting, continuous, speed limit, inertia) and Performance (Cache
+  Simulation with its label hidden, joined to Cache Memory (MB) and disabling it when off; then threads). Cache Memory is
+  the inner DOP network's value found by label (`row_by_label`, `CACHE_MEMORY`), placed by `group_tab`'s `groups`. Collision: one Collision Geometry folder whose header checkbox is Use External
   Collisions (`usecollisions`, placed just before the folder, as RBD Bullet Solver's), holding Collision Type and the collision object's Shape, Material and CCD &
   Contacts folders (`COLLIDER_FOLDERS`, all named `collision_*`), the last cut to Contact Recycling as Contacts
   (`COLLIDER_DROPPED`: the rest does nothing for a Static / Kinematic body). Pieces: the pieces' Box3D Data folders
