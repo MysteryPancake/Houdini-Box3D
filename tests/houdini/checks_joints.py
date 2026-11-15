@@ -180,10 +180,30 @@ def test_negative_never_values():
     return results
 
 
+def test_weld_hold_separation():
+    """A Weld whose anchors are the two pieces' own centroids, 1 apart, no gravity. With Hold Separation on
+    the pieces stay 1 apart (the anchors' offset is kept) and do not turn; the unheld Weld pulls the
+    anchors together instead, so that distance is only reported."""
+    rows, ok = [], True
+    for hold in (1, 0):
+        dop, names = hanging_pair(f"weld_hold{hold}", "weld", conrels=[("box3d_weldconrel", {"hold_separation": hold})],
+                                  gravity=(0, 0, 0), anchors=((0.0, 2.0, 0.0), (1.0, 2.0, 0.0)))
+        track = step(dop, 48, lambda sim, f: packed_positions(sim, "pieces") if f == 48 else None)[48]
+        a, b = track[names[0]], track[names[1]]
+        gap = math.dist(a, b)
+        if hold:
+            good = close(gap, 1.0, 0.03)
+            ok = ok and good
+        rows.append(f"Hold Separation {'on' if hold else 'off'}: pieces {gap:.3f} apart after 2 s"
+                    f"{' (expected 1)' if hold else ''}")
+    return [Result("weld_hold_separation", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
 TESTS = {
     "joint_revolute_limit": test_joint_revolute_limit,
     "joint_revolute_motor": test_joint_revolute_motor,
     "joint_attributes_replace": test_joint_attributes_replace,
+    "weld_hold_separation": test_weld_hold_separation,
     "joint_prismatic_limit": test_joint_prismatic_limit,
     "joint_spring_rest_length": test_joint_spring_rest_length,
     "joint_breakable": test_joint_breakable,

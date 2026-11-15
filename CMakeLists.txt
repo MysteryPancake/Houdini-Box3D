@@ -153,6 +153,7 @@ b3dop_add_test(sidefx)
 b3dop_add_test(rbdobject)
 b3dop_add_test(threads)
 b3dop_add_test(taskrunner)
+b3dop_add_test(worlds)
 
 if(BOX3DDOP_CORE_ONLY)
     return()

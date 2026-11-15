@@ -631,6 +631,77 @@ def test_box3d_packed_object():
     return results
 
 
+def test_packed_object_initial_state():
+    """The Box3D Packed Object's Initial State tab, as RBD Packed Object's. Inherit Velocity (the default)
+    keeps the point's own v: a point v of (2, 0, 0) moves 2 in 1 s whatever Velocity says. With it off,
+    Velocity (1, 0, 0) and Angular Velocity (0, 90, 0) degrees per second apply: it moves 1 and w.y is
+    pi / 2 radians per second."""
+    results = []
+    got = {}
+    for inherit in (1, 0):
+        path, names = packed_boxes(f"po_vel_box{inherit}", [{"size": (1, 1, 1), "center": (0, 3, 0),
+                                                           "attrs": {"v": (2.0, 0.0, 0.0)}}])
+        dop = new_dopnet(f"po_vel{inherit}")
+        obj = box3d_packed_object(dop, "pieces", path, inheritvelocity=inherit, vel=(1.0, 0.0, 0.0),
+                                  angvel=(0.0, 90.0, 0.0))
+        finish(dop, box3d_solver(dop, obj, gravity=(0, 0, 0)))
+        track = step(dop, 25, lambda sim, f: (packed_positions(sim, "pieces")[names[0]],
+                                              point_attributes(sim, "pieces", names[0], ["w"])["w"])
+                     if f == 25 else None)[25]
+        got[inherit] = track
+    x_in = got[1][0][0]
+    x_out, w_out = got[0][0][0], got[0][1]
+    ok = close(x_in, 2.0, 0.05) and close(x_out, 1.0, 0.05) and close(w_out[1], math.pi / 2, 0.02)
+    results.append(Result("packed_object_initial_state", Result.PASS if ok else Result.FAIL,
+                          f"Inherit Velocity on: x {x_in:.3f} after 1 s (expected 2, the point's v); off: x {x_out:.3f} "
+                          f"(expected 1), w.y {w_out[1]:.3f} rad/s (expected {math.pi / 2:.3f})"))
+    return results
+
+
+def test_packed_object_deforming():
+    """The Box3D Packed Object's Deforming toggle writes deforming 1 on the points (off: none) and reads
+    the SOP every step, as Overwrite Attributes from SOP does: a Kinematic piece whose SOP object rises
+    0.1 per frame follows it (y 3 + 1.2 on frame 13) with Deforming on, and stays at 3 with it off."""
+    results = []
+    path, _ = packed_boxes("po_def_probe", [{"size": (1, 1, 1), "center": (0, 3, 0)}])
+    flags = {}
+    for on in (0, 1):
+        attrs = stage_points(box3d_packed_object(new_dopnet(f"po_def_attr{on}"), "pieces", path, deforming=on)) or {}
+        flags[on] = attrs.get("deforming")
+    ok = not flags[0] and flags[1] == 1
+    results.append(Result("packed_object_deforming", Result.PASS if ok else Result.FAIL,
+                          f"deforming attribute with Deforming off / on: {flags[0]} / {flags[1]} (expected none or 0 / 1)"))
+    rows, ok = [], True
+    for on in (0, 1):
+        path, names = packed_boxes(f"po_def_box{on}", [{"size": (1, 1, 1), "center": (0, 3, 0)}])
+        hou.node(path).parent().parm("ty").setExpression("($FF - 1) * 0.1", hou.exprLanguage.Hscript)
+        dop = new_dopnet(f"po_def_follow{on}")
+        obj = box3d_packed_object(dop, "pieces", path, usetransform=1, bodytype=1, deforming=on)
+        finish(dop, box3d_solver(dop, obj, gravity=(0, 0, 0)))
+        y = step(dop, 13, lambda sim, f: packed_positions(sim, "pieces")[names[0]][1] if f == 13 else None)[13]
+        good = close(y, 4.2, 0.05) if on else close(y, 3.0, 0.05)
+        rows.append(f"Deforming {'on' if on else 'off'}: y {y:.3f} on frame 13 (expected {4.2 if on else 3.0})")
+        ok = ok and good
+    results.append(Result("packed_object_deforming", Result.PASS if ok else Result.FAIL, "; ".join(rows)))
+    return results
+
+
+def test_tab_submenu():
+    """The three assets are listed under Box3D in the Tab menu: each has a Tools.shelf section naming that
+    submenu."""
+    rows, ok = [], True
+    for category, name in ((hou.dopNodeTypeCategory(), "box3d_packedobject"),
+                           (hou.sopNodeTypeCategory(), "box3d_configure"),
+                           (hou.sopNodeTypeCategory(), "box3d_solver")):
+        node_type = hou.nodeType(category, name)
+        definition = node_type.definition() if node_type is not None else None
+        shelf = definition.sections().get("Tools.shelf") if definition is not None else None
+        good = shelf is not None and "<toolSubmenu>Box3D</toolSubmenu>" in shelf.contents()
+        rows.append(f"{category.name()} {name}: {'Box3D' if good else 'no Box3D submenu'}")
+        ok = ok and good
+    return [Result("tab_submenu", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
 def test_packed_object_attributes():
     """The Box3D Packed Object's SOP stage, as RBD Packed Object's: Body Type Static and Default Shape
     Sphere become active 0 and bullet_georep "sphere", untouched settings write nothing, every piece
@@ -934,6 +1005,9 @@ TESTS = {
     "rbd_packed_attributes": test_rbd_packed_attributes,
     "rest_reset": test_rest_reset,
     "packed_object_attributes": test_packed_object_attributes,
+    "packed_object_initial_state": test_packed_object_initial_state,
+    "packed_object_deforming": test_packed_object_deforming,
+    "tab_submenu": test_tab_submenu,
     "packed_object_use_transform": test_packed_object_use_transform,
     "data_under_geometry": test_data_under_geometry,
     "box3d_packed_object": test_box3d_packed_object,

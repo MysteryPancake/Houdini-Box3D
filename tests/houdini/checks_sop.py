@@ -823,6 +823,94 @@ def test_configure():
                    f"(expected below 2: fell)")]
 
 
+def test_configure_group_patterns():
+    """Box3D Configure's Group takes patterns as RBD Configure's does, not only group names: `@name=<piece>`,
+    a wildcard over group names (`chos*`) and a point number each pick the first of two pieces, which
+    alone gets Friction 0.25."""
+    pieces, names = packed_boxes("cfg_pat_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0)},
+                                                    {"size": (1, 1, 1), "center": (3, 3, 0)}])
+    geo = new_geo("cfg_pat")
+    src = create(geo, "object_merge", "pieces")
+    set_parm(src, ["objpath1"], pieces)
+    grp = create(geo, "attribwrangle", "chosen")
+    grp.setInput(0, src)
+    set_parm(grp, ["snippet"], f'if (s@name == "{names[0]}") setpointgroup(0, "chosen_a", @ptnum, 1);')
+    rows, ok = [], True
+    for label, pattern in (("name", f"@name={names[0]}"), ("wildcard", "chos*"), ("number", "0")):
+        cfg = create(geo, "box3d_configure", f"configure_{label}")
+        cfg.setInput(0, grp)
+        for n, v in (("group1", pattern), ("addfriction1", 1), ("friction1", 0.25)):
+            set_parm(cfg, [n], v)
+        g = cfg.geometry()
+        got = {p.attribValue("name"): round(p.attribValue("friction"), 4) for p in g.points()} \
+            if g is not None and g.findPointAttrib("friction") else {}
+        good = got.get(names[0]) == 0.25 and got.get(names[1]) not in (None, 0.25)
+        rows.append(f"{label} ({pattern!r}): {got}")
+        ok = ok and good
+    return [Result("configure_group_patterns", Result.PASS if ok else Result.FAIL,
+                   "; ".join(rows) + f" (expected 0.25 on {names[0]} only)")]
+
+
+def test_configure_initial_state():
+    """Box3D Configure's Initial State: Velocity (2, 0, 0) moves the group's piece 2 in 1 s through the Box3D
+    Solver SOP (no gravity needed in x), and Angular Velocity (0, 90, 0) degrees per second is written
+    as w in radians (pi / 2)."""
+    pieces, names = packed_boxes("cfg_vel_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0)},
+                                                    {"size": (1, 1, 1), "center": (0, 3, 5)}])
+    geo = new_geo("cfg_vel")
+    src = create(geo, "object_merge", "pieces")
+    set_parm(src, ["objpath1"], pieces)
+    grp = create(geo, "attribwrangle", "chosen")
+    grp.setInput(0, src)
+    set_parm(grp, ["snippet"], f'if (s@name == "{names[0]}") setpointgroup(0, "chosen", @ptnum, 1);')
+    cfg = create(geo, "box3d_configure", "configure")
+    cfg.setInput(0, grp)
+    for n, v in (("group1", "chosen"), ("addv1", 1), ("v1", (2.0, 0.0, 0.0)), ("addw1", 1), ("w1", (0.0, 90.0, 0.0))):
+        set_parm(cfg, [n], v)
+    g = cfg.geometry()
+    w = {p.attribValue("name"): p.attribValue("w") for p in g.points()} if g is not None and g.findPointAttrib("w") else {}
+    w_ok = names[0] in w and close(w[names[0]][1], math.pi / 2, 1e-4)
+    solver = create(geo, "box3d_solver", "box3d_solver")
+    solver.setInput(0, cfg)
+    display(solver)
+    pos = play(solver, 25, lambda s, f: named_positions(s.geometry(0)) if f == 25 else None)[25]
+    x0, x1 = pos[names[0]][0], pos[names[1]][0]
+    ok = w_ok and close(x0, 2.0, 0.1) and close(x1, 0.0, 0.05)
+    return [Result("configure_initial_state", Result.PASS if ok else Result.FAIL,
+                   f"w on the piece {w.get(names[0])} (expected y = {math.pi / 2:.4f}); x after 1 s: grouped {x0:.3f} "
+                   f"(expected 2), other {x1:.3f} (expected 0)")]
+
+
+def test_configure_pin():
+    """Box3D Configure's Pin adds one Weld line from the world to each pinned piece on the Constraint Geometry
+    output. Wired into the Box3D Solver SOP, the pinned piece stays at y = 3 and the other falls."""
+    pieces, names = packed_boxes("cfg_pin_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0)},
+                                                    {"size": (1, 1, 1), "center": (3, 3, 0)}])
+    geo = new_geo("cfg_pin")
+    src = create(geo, "object_merge", "pieces")
+    set_parm(src, ["objpath1"], pieces)
+    grp = create(geo, "attribwrangle", "chosen")
+    grp.setInput(0, src)
+    set_parm(grp, ["snippet"], f'if (s@name == "{names[0]}") setpointgroup(0, "chosen", @ptnum, 1);')
+    cfg = create(geo, "box3d_configure", "configure")
+    cfg.setInput(0, grp)
+    for n, v in (("group1", "chosen"), ("addpin1", 1), ("pin1", 1), ("pintype1", 0)):
+        set_parm(cfg, [n], v)
+    lines = cfg.geometry(1)
+    kinds = [p.attribValue("constraint_name") for p in lines.prims()] if lines is not None \
+        and lines.findPrimAttrib("constraint_name") else None
+    solver = create(geo, "box3d_solver", "box3d_solver")
+    solver.setInput(0, cfg, 0)
+    solver.setInput(1, cfg, 1)
+    display(solver)
+    pos = play(solver, 24, lambda s, f: named_positions(s.geometry(0)) if f == 24 else None)[24]
+    y_pinned, y_free = pos[names[0]][1], pos[names[1]][1]
+    ok = kinds == ["Weld"] and close(y_pinned, 3.0, 0.02) and y_free < 2.0
+    return [Result("configure_pin", Result.PASS if ok else Result.FAIL,
+                   f"constraint lines {kinds} (expected one 'Weld'); after 1 s the pinned piece is at y={y_pinned:.3f} "
+                   f"(expected 3), the other at {y_free:.3f} (expected below 2: fell)")]
+
+
 TESTS = {
     "solver_sop_collision": test_solver_sop_collision,
     "solver_sop_pieces": test_solver_sop_pieces,
@@ -846,4 +934,7 @@ TESTS = {
     "solver_sop_proxy": test_solver_sop_proxy,
     "solver_sop_constraints": test_solver_sop_constraints,
     "configure": test_configure,
+    "configure_group_patterns": test_configure_group_patterns,
+    "configure_initial_state": test_configure_initial_state,
+    "configure_pin": test_configure_pin,
 }

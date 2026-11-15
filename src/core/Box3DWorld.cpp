@@ -240,6 +240,14 @@ void logHandler(const char *message) {
   B3D_LOG("%s (from Box3D)", message ? message : "?");
 }
 
+// Box3D's world list is not thread-safe: creating or destroying worlds from
+// several threads (two DOP networks cooking at once, a cache freeing old
+// worlds) must not overlap. Never held while stepping.
+std::mutex &worldListMutex() {
+  static std::mutex m;
+  return m;
+}
+
 void installAssertHandler() {
   static std::once_flag once;
   std::call_once(once, [] {
@@ -517,6 +525,7 @@ bool Box3DWorld::create(const WorldSettings &s,
 
   // At the limit b3CreateWorld asserts (a crash in builds with Box3D asserts
   // on, such as RelWithDebInfo) before failing, so fail here first.
+  std::unique_lock<std::mutex> listLock(worldListMutex());
   if (b3GetWorldCount() >= B3_MAX_WORLDS)
     return false;
 
@@ -526,6 +535,7 @@ bool Box3DWorld::create(const WorldSettings &s,
   myImpl->settings.gravity[2] = def.gravity.z;
   myImpl->tasks = std::move(tasks);
   myImpl->worldId = b3CreateWorld(&def);
+  listLock.unlock();
   if (!b3World_IsValid(myImpl->worldId)) {
     myImpl->tasks.reset();
     return false;
@@ -543,8 +553,10 @@ bool Box3DWorld::create(const WorldSettings &s,
 }
 
 void Box3DWorld::destroy() {
-  if (b3World_IsValid(myImpl->worldId))
+  if (b3World_IsValid(myImpl->worldId)) {
+    std::lock_guard<std::mutex> listLock(worldListMutex());
     b3DestroyWorld(myImpl->worldId); // destroys all bodies/shapes/joints
+  }
 
   myImpl->tasks
       .reset(); // after the world: Box3D may call the runner until it is gone

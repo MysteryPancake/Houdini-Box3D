@@ -79,14 +79,25 @@ VEL, ANGVEL, INHERIT_VEL = "vel", "angvel", "inheritvelocity"
 
 # setup_velocities, on the creation frame: Velocity and Angular Velocity (degrees per second, written
 # as radians) as v and w, unless the points' own are inherited.
-VELOCITY_VEX = """// The starting velocity, unless the points' own v / w are kept.
+VELOCITY_VEX = """// The starting velocity, unless the points' own v / w are kept. Detail wrangle: an @-binding
+// would add v and w to the points even when nothing is written.
 if (!chi("../../%s")) {
-    v@v = chv("../../%s");
-    v@w = radians(chv("../../%s"));
+    vector v = chv("../../%s");
+    vector w = radians(chv("../../%s"));
+    if (!haspointattrib(0, "v")) addpointattrib(0, "v", {0, 0, 0});
+    if (!haspointattrib(0, "w")) addpointattrib(0, "w", {0, 0, 0});
+    for (int pt = 0; pt < npoints(0); pt++) {
+        setpointattrib(0, "v", pt, v);
+        setpointattrib(0, "w", pt, w);
+    }
 }""" % (INHERIT_VEL, VEL, ANGVEL)
 
 # setup_deforming, on every import: the deforming attribute, so the solver rebuilds the shapes.
-DEFORMING_VEX = 'if (chi("../../%s")) i@deforming = 1;' % DEFORMING
+DEFORMING_VEX = """if (chi("../../%s")) {
+    if (!haspointattrib(0, "deforming")) addpointattrib(0, "deforming", 0);
+    for (int pt = 0; pt < npoints(0); pt++)
+        setpointattrib(0, "deforming", pt, 1);
+}""" % DEFORMING
 
 STAGE = "create_attributes"  # the SOP stage (a DOP SOP network), as RBD Packed Object's
 HIRES = "visualize_hires"  # the SOP Guide drawing the render geometry, as RBD Packed Object's
@@ -242,6 +253,7 @@ def build_stage(sub, rows):
     rest.parm("snippet").set(b3d_settings.REST_VEX)
     velocities = net.createNode("attribwrangle", "setup_velocities")
     velocities.setInput(0, rest)
+    velocities.parm("class").set("detail")
     velocities.parm("snippet").set(VELOCITY_VEX)
     stamps = net.createNode("null", "STAMPS")
     for parm, key in (("frame", "SF"), ("objcf", "OBJCF")):
@@ -254,6 +266,7 @@ def build_stage(sub, rows):
                                       hou.exprLanguage.Hscript)
     deforming = net.createNode("attribwrangle", "setup_deforming")
     deforming.setInput(0, first)
+    deforming.parm("class").set("detail")
     deforming.parm("snippet").set(DEFORMING_VEX)
     out = net.createNode("null", "OUT")
     out.setInput(0, deforming)
@@ -535,7 +548,7 @@ def check(out_path, dopnet):
     # Deforming writes deforming and re-imports.
     g = out.geometry()
     if g is not None and g.findPointAttrib("v") is not None:
-        warn("probe: Inherit Velocity on still wrote v")
+        warn("probe: Inherit Velocity on still wrote v (it should add nothing)")
     for name, value in ((INHERIT_VEL, 0), (DEFORMING, 1)):
         if probe.parm(name) is None:
             warn(f"probe: no {name} parameter")

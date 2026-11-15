@@ -13,15 +13,9 @@ Last full run (Houdini 22.0.502, MSVC): every check passes except `baseline`, wh
   only. The wheel, motor, parallel and filter node parameter names and the network's `orient` are untested in Houdini.
 * Box3D Packed Object's Display Geometry (`visualize_hires`) and Collider Label (`add_display`): checked against a
   stand-in `hou` only. The build's `check` probes both.
-* Weld's Hold Separation (core test checked; `hold_separation` on the node and as an attribute untested in Houdini).
-* Box3D Configure's extra settings, Bounds / Use Bounds and Pin, and the Solver SOP's Output tab (Point Velocities,
+* Box3D Configure's extra settings and Bounds / Use Bounds, and the Solver SOP's Output tab (Point Velocities,
   Import Constraints / Proxy, Bullet's `w` rule) and World Scale on joints and FORCES: built against stand-ins and
-  lint only. The builders' `check`s probe Pin, Use Bounds and the joint scaling.
-* Attributes Replace Values on the joint nodes (test `joint_attributes_replace`; the core rule is in
-  `core_joints`).
-* Box3D Packed Object's Initial State and Deforming, the Tab menu's Box3D submenu on all three assets, and Box3D
-  Configure group patterns (`piece*`, `@name=piece0`): lint only. The Packed Object's `check` probes `v`, `w` and
-  `deforming`.
+  lint only. The builders' `check`s probe Use Bounds and the joint scaling.
 * An object with unpacked primitives and nothing packed returns before making bodies (`syncObject`): its bodies are
   removed and its names released (`NameIndex::finish`). Test `unpacked_geometry`.
 
