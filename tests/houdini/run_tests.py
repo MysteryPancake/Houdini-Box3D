@@ -39,7 +39,12 @@ import hou  # noqa: E402
 
 import checks_constraints  # noqa: E402
 import checks_core  # noqa: E402
-import checks_extra  # noqa: E402
+import checks_contact  # noqa: E402
+import checks_determinism  # noqa: E402
+import checks_heightfield  # noqa: E402
+import checks_joints  # noqa: E402
+import checks_mixing  # noqa: E402
+import checks_robustness  # noqa: E402
 import checks_more  # noqa: E402
 import checks_output  # noqa: E402
 import checks_regress  # noqa: E402
@@ -50,7 +55,8 @@ import b3dtest  # noqa: E402
 from b3dtest import Result, SetupError  # noqa: E402
 
 # Every test, in run order: module by module.
-MODULES = [checks_core, checks_solver, checks_output, checks_constraints, checks_more, checks_extra, checks_sop, checks_regress]
+MODULES = [checks_core, checks_solver, checks_output, checks_constraints, checks_more, checks_joints, checks_mixing, checks_determinism, checks_contact,
+           checks_robustness, checks_heightfield, checks_sop, checks_regress]
 TESTS = {}
 for module in MODULES:
     for name, fn in module.TESTS.items():

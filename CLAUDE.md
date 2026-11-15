@@ -124,7 +124,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
 examples/            make_examples.py: builds demo scenes into examples/scenes (git-ignored)
 package/             Box3D.json.in: the Houdini package file the build configures
 tools/               make_assets.py (runs the three asset builders in one hython, as the build does),
-                     make_packed_object.py, make_configure_sop.py, make_solver_sop.py (the assets),
+                     make_packed_object.py, make_configure_sop.py, make_solver_sop.py (the assets; the Solver SOP's inner builders are in b3d_solver_common.py, b3d_solver_network.py and b3d_solver_dops.py),
                      b3d.py (finds Houdini; runs the checks, examples or ctest on any OS), b3d_hda.py (warn, create, set_operations and the parameter-template helpers the asset builders share), b3d_prepare.py (the input packing both SOP assets share), b3d_settings.py (Box3D Data's
                      settings as point attributes and the creation-frame rest, for Configure and the Packed Object),
                      check_docs.py,

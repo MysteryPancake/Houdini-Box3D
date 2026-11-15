@@ -1,0 +1,407 @@
+"""Box3D Solver SOP: the inner SOP network (input preparation, scaling, start-frame switches, build_network)."""
+
+import hou
+
+import b3d_prepare
+from b3d_solver_common import (
+    COLLISION,
+    CONSTRAINTS,
+    CONSTRAINTS_TOGGLES,
+    copy_attributes,
+    create,
+    DOP_COLLISION,
+    DOP_CONSTRAINTS,
+    DOP_PIECES,
+    GEO,
+    IMPACTS,
+    INPUT_COLORS,
+    POINTS_KEEP,
+    POINTS_TOGGLES,
+    PROXY,
+    set_by_label,
+    set_by_labels,
+    set_import_style,
+    set_toggles,
+    switch_on_spare_input,
+    template_by_label,
+    TRANSFER_ATTRIBUTES,
+    TRANSFER_TO,
+    warn,
+)
+from b3d_solver_dops import build_dops
+
+
+# Input preparation (b3d_prepare.py, shared with Box3D Configure): pack mode for what is simulated,
+# collision mode for the collision, names mode for the Geometry / Proxy outputs. The rest and the
+# orient / pscale / scale bake happen in the Box3D Packed Objects, as in RBD Bullet Solver.
+PACK_TRANSFER_ATTRIBS = "v w active animated deforming"  # onto assembled pieces' points
+
+
+def prepare_input(sub, src, name, pack, collision=False):
+    """b3d_prepare.prepare_input as this asset uses it, with RBD Bullet Solver's Assemble settings:
+    Create Path Attribute on, Path Attribute op:<assemble>/pack when packing (Housekeeping,
+    Collisions), v w transferred in names mode (Housecleaning)."""
+    if pack:
+        parms = {"createpath": 1, "path": b3d_prepare.PACK_PATH,
+                 "transfer_attributes": PACK_TRANSFER_ATTRIBS}
+    else:
+        parms = {"createpath": 1, "transfer_attributes": "v w"}
+    return b3d_prepare.prepare_input(sub, src, name, pack, warn, assemble_parms=parms, collision=collision)
+
+
+# The collision's rest from the start frame (input 1: the prepared collision there), as RBD Bullet
+# Solver's collision repack does with a Time Shift: restxform stays the starting transform while an
+# animated collider is re-imported every step, and orient is the rotation since (row-normalised
+# rotations, mirrors flipped, as the solver splits packed matrices). Matched by name, else by number.
+COLLISION_REST_VEX = """\
+int rp = findattribval(1, "point", "name", s@name);
+if (rp < 0) rp = @ptnum;
+int now[] = pointprims(0, @ptnum);
+int was[] = pointprims(1, rp);
+if (len(now) != 1 || len(was) != 1) return;
+// Both read as 4x4 first: matrix3(primintrinsic(...)) picks primintrinsic()'s matrix3 overload,
+// which reads nothing from this 4x4 intrinsic.
+matrix rest = primintrinsic(1, "packedfulltransform", was[0]);
+matrix current = primintrinsic(0, "packedfulltransform", now[0]);
+matrix3 m[] = array(matrix3(rest), matrix3(current));
+matrix3 r[];
+foreach (matrix3 a; m) {
+    vector x = normalize(set(a.xx, a.xy, a.xz));
+    vector y = normalize(set(a.yx, a.yy, a.yz));
+    vector z = normalize(set(a.zx, a.zy, a.zz));
+    if (determinant(a) < 0) z = -z;
+    push(r, set(x, y, z));
+}
+4@restxform = rest;
+v@pivot = point(1, "P", rp);
+p@orient = quaternion(transpose(r[0]) * r[1]);
+"""
+
+# Solve on Creation Frame, as RBD Bullet Solver: solvefirstframe on the Solver tab drives both the
+# pieces' and the collider's Packed Object.
+SOLVE_FIRST = "solvefirstframe"
+SOLVE_FIRST_LABEL = "Solve on Creation Frame"  # the Box3D Packed Object's label (Empty Object's)
+
+# Export Broken Constraints (RBD Bullet Solver's constraint_keepbroken): off, broken constraints are
+# removed from the constraints output.
+KEEP_BROKEN = "constraint_keepbroken"
+
+# Constraint points anchored to the world (no piece name) keep their imported position.
+RESET_ANCHORS_VEX = "@P = point(1, \"P\", @ptnum);"
+
+# Every primitive removed, its points kept: an Add SOP's Delete Geometry But Keep the Points (one
+# bulk delete; removeprim per primitive is far slower on many pieces). The wrangle is the fallback
+# when no such toggle is found.
+POINTS_ONLY_LABELS = ["Delete Geometry But Keep the Points", "Delete Geometry, Keep Points"]
+POINTS_ONLY_VEX = "removeprim(0, @primnum, 0);"
+
+# World Scale (RBD Bullet Solver's usescale / Bullet World Scale): the inputs are scaled by it for the
+# simulation and every output scaled back, so pieces far from about 1 unit simulate at a size Box3D
+# is tuned for. Lengths and speeds among the solver's and Box3D Data's settings follow it
+# (SCALED_SETTINGS), densities by its cube, so masses stay the same.
+WORLD_SCALE_TOGGLE = "usescale"
+WORLD_SCALE = "scale"
+SCALE_FACTOR = f'if(ch("../{WORLD_SCALE_TOGGLE}"), ch("../{WORLD_SCALE}"), 1)'  # from a node inside the asset
+SCALE_ACTIVE = f'if(ch("../{WORLD_SCALE_TOGGLE}"), ch("../{WORLD_SCALE}") != 1, 0)'  # switches: input 1 when scaling
+# (inner node relative to the asset, parameter tuple, power of the scale it follows).
+SCALED_SETTINGS = [("dopnet/box3d_solver", n, 1) for n in
+                   ("gravity", "maxlinearspeed", "contactpushspeed", "bouncethreshold",
+                    "contactrecycledistance", "impactminspeed")] + \
+    [("dopnet/pieces", "density", -3)] + \
+    [("dopnet/pieces", n, 1) for n in ("sleepthreshold", "tangentvelocity")] + \
+    [("dopnet/collision", "tangentvelocity", 1)]
+# (The collider's density and sleep threshold are not promoted: it is never dynamic.)
+# The pieces after packing (Transform scaled P, v, w and the packed transforms): Bullet's
+# scale_density_and_attribs (density / s^3, w back, as the Transform scaled it), plus the hand-set
+# shape sizes and the sleep threshold, which Bullet leaves.
+SCALE_ATTRIBS_VEX = """\
+float s = chf("scale");
+if (haspointattrib(0, "density")) setpointattrib(0, "density", @ptnum, 1 / pow(s, 3), "mult");
+if (haspointattrib(0, "w")) setpointattrib(0, "w", @ptnum, 1 / s, "mult");
+foreach (string n; {"bullet_primS", "bullet_primT", "bullet_radius", "bullet_length", "sleepthreshold"})
+    if (haspointattrib(0, n)) setpointattrib(0, n, @ptnum, s, "mult");
+"""
+# Outputs scaled back (chf("scale") is 1 / World Scale): Bullet's scale_simpoints, scale_attribs and
+# scale_impacts. Joint feedback: force and distance scale with length, torque with its square.
+UNSCALE_POINTS_VEX = """\
+float s = chf("scale");
+v@P *= s;
+if (haspointattrib(0, "pivot")) v@pivot *= s;
+if (haspointattrib(0, "v")) v@v *= s;
+"""
+UNSCALE_CONSTRAINTS_VEX = """\
+float s = chf("scale");
+foreach (string n; {"force", "distance"})
+    if (hasprimattrib(0, n)) setprimattrib(0, n, @primnum, s, "mult");
+if (hasprimattrib(0, "torque")) setprimattrib(0, "torque", @primnum, s * s, "mult");
+"""
+UNSCALE_IMPACTS_VEX = """\
+float s = chf("scale");
+v@P *= s;
+foreach (string n; {"position", "v", "impulse"})
+    if (haspointattrib(0, n)) setpointattrib(0, n, @ptnum, s, "mult");
+"""
+
+# Pieces the solver deleted (dead, reaped) leave the Geometry / Proxy outputs: RBD Bullet Solver's
+# remove_deleted, on the names-mode pieces (input 1: the simulation points; input 2, Geometry only:
+# what was simulated, so pieces that never were, such as geometry without a proxy piece, stay).
+# removeprim only runs for the deleted few.
+REMOVE_DELETED_VEX = """\
+string name = prim(0, "name", @primnum);
+if (name == "")
+    name = point(0, "name", @ptnum);
+int del = findattribval(1, "point", "name", name) < 0;
+if (npoints(2))
+{
+    int pt = findattribval(2, "prim", "name", name);
+    if (pt < 0)
+        pt = findattribval(2, "point", "name", name);
+    del *= pt >= 0;
+}
+if (del) removeprim(0, @primnum, 1);
+"""
+
+
+def start_frame_expr(dopnet):
+    """HScript for the asset's Start Frame from a node directly inside the asset (the promoted
+    parameter has the DOP network's name), or None."""
+    start = template_by_label(dopnet, "Start Frame")
+    return f'ch("../{start.name()}")' if start is not None else None
+
+
+def before_start(sub, dopnet, name, result, original):
+    """RBD Bullet Solver's switchif_beforestart: `original` before the Start Frame, else `result`."""
+    sw = create(sub, "switchif", name)
+    sw.setInput(0, result)
+    sw.setInput(1, original)
+    start = start_frame_expr(dopnet)
+    if start is None or sw.parm("expr1") is None:
+        warn(f"{sw.path()}: no Start Frame or no Enable expression; the simulated result is shown always")
+        if sw.parm("expr1") is not None:
+            sw.parm("expr1").set(0)
+    else:
+        sw.parm("expr1").setExpression(f"$FF < {start}", hou.exprLanguage.Hscript)
+    return sw
+
+
+def scale_xform(sub, name, src, inverse=False):
+    """A Transform SOP scaling `src` uniformly by the World Scale (or its inverse)."""
+    xf = create(sub, "xform", name)
+    xf.setInput(0, src)
+    p = xf.parm("scale")
+    if p is None:
+        warn(f"{xf.path()} has no Uniform Scale (scale); World Scale ignored there")
+    else:
+        p.setExpression(f"1 / {SCALE_FACTOR}" if inverse else SCALE_FACTOR, hou.exprLanguage.Hscript)
+    return xf
+
+
+def scale_wrangle(sub, name, src, snippet, inverse, run_over="point"):
+    """A wrangle with a `scale` spare parameter (the World Scale, or its inverse) running `snippet`,
+    and the Switch that uses it only while scaling, as Bullet's switch_scale*. Returns the switch."""
+    wr = create(sub, "attribwrangle", name)
+    wr.setInput(0, src)
+    wr.parm("class").set(run_over)
+    wr.addSpareParmTuple(hou.FloatParmTemplate(WORLD_SCALE, "Scale", 1, default_value=(1.0,)))
+    wr.parm(WORLD_SCALE).setExpression(f"1 / {SCALE_FACTOR}" if inverse else SCALE_FACTOR,
+                                       hou.exprLanguage.Hscript)
+    wr.parm("snippet").set(snippet)
+    sw = create(sub, "switch", f"switch_{name}")
+    sw.setInput(0, src)
+    sw.setInput(1, wr)
+    sw.parm("input").setExpression(SCALE_ACTIVE, hou.exprLanguage.Hscript)
+    return sw
+
+
+def scale_settings(asset):
+    """SCALED_SETTINGS: each inner channel reference times the World Scale to its power."""
+    for inner_path, name, power in SCALED_SETTINGS:
+        inner = asset.node(inner_path)
+        tup = inner.parmTuple(name) if inner is not None else None
+        if tup is None:
+            warn(f"World Scale: no {inner_path}/{name}; it is not scaled")
+            continue
+        rel = inner.relativePathTo(asset)
+        factor = f'if(ch("{rel}/{WORLD_SCALE_TOGGLE}"), ch("{rel}/{WORLD_SCALE}"), 1)'
+        for p in tup:
+            try:
+                expr = p.expression()
+            except hou.OperationFailed:
+                expr = None
+            if not expr:
+                warn(f"World Scale: {p.path()} is not a channel reference; it is not scaled")
+                continue
+            if power == 1:
+                p.setExpression(f"({expr}) * {factor}", hou.exprLanguage.Hscript)
+            else:
+                p.setExpression(f"({expr}) * pow({factor}, {power})", hou.exprLanguage.Hscript)
+
+
+def collision_rest(sub, dopnet, collision):
+    """The prepared collision with its rest from the start frame (COLLISION_REST_VEX). Returns the
+    node feeding the DOP network's collision input."""
+    start = template_by_label(dopnet, "Start Frame")
+    at_start = create(sub, "timeshift", "collision_at_start")
+    at_start.setInput(0, collision)
+    p = at_start.parm("frame")
+    if start is None or p is None:
+        warn("no Start Frame on the DOP network or no Frame on the Time Shift: the collision's rest is "
+             "its current transform")
+    else:  # the asset's promoted Start Frame (same name as the DOP network's)
+        p.setExpression(f'ch("../{start.name()}")', hou.exprLanguage.Hscript)
+    rest = create(sub, "attribwrangle", "collision_rest")
+    rest.setInput(0, collision)
+    rest.setInput(1, at_start)
+    rest.parm("snippet").set(COLLISION_REST_VEX)
+    return rest
+
+
+def build_network(sub):
+    """The asset's contents, inside the subnet `sub`. Returns the nodes whose parameters the
+    asset promotes: (dopnet, solver, pieces)."""
+    ins = sub.indirectInputs()
+    for i, rgb in INPUT_COLORS.items():
+        ins[i].setColor(hou.Color(rgb))
+    nulls = []
+    for i, name in enumerate(["IN_geometry", "IN_constraints", "IN_proxy", "IN_collision"]):
+        n = create(sub, "null", name)
+        n.setInput(0, ins[i])
+        if i in INPUT_COLORS:
+            n.setColor(hou.Color(INPUT_COLORS[i]))
+        nulls.append(n)
+
+    # World Scale on every input, as RBD Bullet Solver's transform1 / 2 / 4 / 5 (the before-start
+    # outputs pass the unscaled inputs).
+    scaled = [scale_xform(sub, f"world_scale_{n[3:]}", nulls[i]) for i, n in
+              enumerate(["IN_geometry", "IN_constraints", "IN_proxy", "IN_collision"])]
+
+    # What is simulated: the proxy when connected, else the geometry; packed and named (pack mode).
+    sim_source = create(sub, "switch", "sim_source")
+    sim_source.setInput(0, scaled[GEO])
+    sim_source.setInput(1, scaled[PROXY])
+    switch_on_spare_input(sim_source, nulls[PROXY])
+    # The same choice unscaled, for the Proxy output before the Start Frame.
+    sim_input = create(sub, "switch", "sim_source_unscaled")
+    sim_input.setInput(0, nulls[GEO])
+    sim_input.setInput(1, nulls[PROXY])
+    switch_on_spare_input(sim_input, nulls[PROXY])
+    sim_pieces = prepare_input(sub, sim_source, "prepare_pieces", pack=True)
+    sim_scaled = scale_wrangle(sub, "scale_attributes", sim_pieces, SCALE_ATTRIBS_VEX, inverse=False)
+
+    # The DOP network, its context geometry three streams (dopcontextgeo(".", i) inside).
+    dopnet = create(sub, "dopnet", "dopnet")
+    dopnet.setInput(DOP_PIECES, sim_scaled)
+    dopnet.setInput(DOP_CONSTRAINTS, scaled[CONSTRAINTS])
+    # Collision: packed and named, rest from the start frame.
+    collision_pieces = prepare_input(sub, scaled[COLLISION], "prepare_collision", pack=True, collision=True)
+    dopnet.setInput(DOP_COLLISION, collision_rest(sub, dopnet, collision_pieces))
+    for child in dopnet.children():
+        child.destroy()
+    solver = build_dops(dopnet)
+
+    # Simulation points, the fourth output, as RBD Bullet Solver's: one point per piece with P, name,
+    # orient (the rotation since rest), pivot (the rest position), restxform (the packed transform at
+    # rest), v, w, id and the Transfer Attributes.
+    import_points = create(sub, "dopimport", "import_points")
+    import_points.parm("doppath").set("../dopnet")
+    import_points.parm("objpattern").set("pieces")
+    set_import_style(import_points, "fetch geometry")
+    set_toggles(import_points, POINTS_TOGGLES)
+    points_only = create(sub, "add", "points_only")
+    points_only.setInput(0, import_points)
+    if not any(template_by_label(points_only, label) for label in POINTS_ONLY_LABELS) or \
+            not set_by_labels(points_only, POINTS_ONLY_LABELS, 1):
+        warn(f"{points_only.path()}: no Delete Geometry But Keep the Points toggle; removing primitives in VEX")
+        points_only.destroy()
+        points_only = create(sub, "attribwrangle", "points_only")
+        points_only.setInput(0, import_points)
+        points_only.parm("class").set("primitive")
+        points_only.parm("snippet").set(POINTS_ONLY_VEX)
+    sim_points = create(sub, "attribdelete", "sim_points")
+    sim_points.setInput(0, points_only)
+    sim_points.parm("ptdel").set(f'{POINTS_KEEP} `chs("../{TRANSFER_ATTRIBUTES}")`')
+    if not set_by_labels(sim_points, ["Delete Non Selected", "Delete Non-Selected"], 1):
+        # Without the inverse toggle the list would delete exactly what must stay: keep everything.
+        sim_points.parm("ptdel").set("")
+
+    # Geometry and proxy follow the simulation points, as RBD Bullet Solver: Transform Pieces by name
+    # with no rest input, each point's transform being its motion since rest (pivot, orient, P). Each
+    # output keeps its input's packing (names mode).
+    pieces_out = []
+    for name, src in (("transform_geometry", scaled[GEO]), ("transform_proxy", sim_source)):
+        named = prepare_input(sub, src, f"names_{name[len('transform_'):]}", pack=False)
+        removed = create(sub, "attribwrangle", f"remove_deleted_{name[len('transform_'):]}")
+        removed.setInput(0, named)
+        removed.setInput(1, sim_points)
+        if name == "transform_geometry":
+            removed.setInput(2, sim_pieces)
+        removed.parm("class").set("primitive")
+        removed.parm("snippet").set(REMOVE_DELETED_VEX)
+        xform = create(sub, "xformpieces", name)
+        xform.setInput(0, removed)
+        xform.setInput(1, sim_points)
+        copy_attributes(xform, TRANSFER_TO[name][0])
+        pieces_out.append(scale_xform(sub, f"unscale_{name[len('transform_'):]}", xform, inverse=True))
+    geo_out, proxy_out = pieces_out
+
+    # Constraints as the solver left them: the network is attached to the pieces object
+    # (Attach Internal Constraints to Object) as its ConstraintGeometry data, imported as is.
+    import_con = create(sub, "dopimport", "import_constraints")
+    import_con.parm("doppath").set("../dopnet")
+    import_con.parm("objpattern").set("pieces")
+    set_import_style(import_con, "fetch geometry")
+    set_by_label(import_con, "Geometry Data Path", "ConstraintGeometry")
+    set_toggles(import_con, CONSTRAINTS_TOGGLES)
+    # The solver does not move the network's points: Transform Pieces carries each point with the piece
+    # its `name` names, and points anchored to the world (no name) keep their place, as RBD Bullet Solver.
+    # Export Broken Constraints off: the broken group's primitives removed first (as RBD Bullet Solver).
+    blast_broken = create(sub, "blast", "blast_broken")
+    blast_broken.setInput(0, import_con)
+    blast_broken.parm("group").set("broken")
+    keep_broken = create(sub, "switchif", "switchif_keepbroken")
+    keep_broken.setInput(0, blast_broken)
+    keep_broken.setInput(1, import_con)
+    keep_broken.parm("expr1").setExpression(f'ch("../{KEEP_BROKEN}")', hou.exprLanguage.Hscript)
+    con_xform = create(sub, "xformpieces", "transform_constraints")
+    con_xform.setInput(0, keep_broken)
+    con_xform.setInput(1, sim_points)
+    reset_anchors = create(sub, "attribwrangle", "reset_world_anchors")
+    reset_anchors.setInput(0, con_xform)
+    reset_anchors.setInput(1, keep_broken)
+    reset_anchors.parm("group").set('@name=="-1" @name==""')
+    reset_anchors.parm("grouptype").set("points")
+    reset_anchors.parm("snippet").set(RESET_ANCHORS_VEX)
+    con_attribs = scale_wrangle(sub, "unscale_constraint_attribs", reset_anchors, UNSCALE_CONSTRAINTS_VEX,
+                                inverse=True, run_over="primitive")
+    con_out = create(sub, "switch", "constraints_result")
+    con_out.setInput(0, nulls[CONSTRAINTS])
+    con_out.setInput(1, scale_xform(sub, "unscale_constraints", con_attribs, inverse=True))
+    switch_on_spare_input(con_out, nulls[CONSTRAINTS])
+
+    # Impacts: the pieces object's Impacts records as points (only when Add Impact Data is on and
+    # something pulls IMPACTS, e.g. the Object Merge Fetch Impacts makes).
+    import_impacts = create(sub, "dopimportrecords", "import_impacts")
+    set_by_labels(import_impacts, ["DOP Network"], "../dopnet")
+    set_by_labels(import_impacts, ["Object Mask", "Objects", "Object Pattern"], "pieces")
+    set_by_labels(import_impacts, ["Data", "Data Name", "Data Path", "Subdata Name"], "Impacts")
+    set_by_labels(import_impacts, ["Record Type", "Records", "Record"], "Impacts")
+    create(sub, "null", IMPACTS).setInput(
+        0, scale_wrangle(sub, "unscale_impacts", import_impacts, UNSCALE_IMPACTS_VEX, inverse=True))
+
+    # Before the Start Frame the inputs pass through, as RBD Bullet Solver (the proxy output shows what
+    # is simulated: the proxy, else the geometry).
+    geo_out = before_start(sub, dopnet, "switchif_beforestart", geo_out, nulls[GEO])
+    con_out = before_start(sub, dopnet, "switchif_beforestart_constraints", con_out, nulls[CONSTRAINTS])
+    proxy_out = before_start(sub, dopnet, "switchif_beforestart_proxy", proxy_out, sim_input)
+    points_out = scale_wrangle(sub, "unscale_points", sim_points, UNSCALE_POINTS_VEX, inverse=True)
+    for idx, src in enumerate([geo_out, con_out, proxy_out, points_out]):
+        out = create(sub, "output", f"OUT_{['geometry', 'constraints', 'proxy', 'points'][idx]}")
+        out.setInput(0, src)
+        out.parm("outputidx").set(idx)
+        if idx in INPUT_COLORS:
+            out.setColor(hou.Color(INPUT_COLORS[idx]))
+        if idx == 0:
+            out.setDisplayFlag(True)
+            out.setRenderFlag(True)
+    sub.layoutChildren()
+    return dopnet, solver, dopnet.node("pieces")
