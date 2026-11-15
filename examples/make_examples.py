@@ -22,6 +22,7 @@ Scenes:
   paddle_mixer    a motor: a paddle driven by a revolute motor churning a tank of balls
   forces          a Fan Force DOP and a POP Force (in a Multiple Solver) pushing a field of boxes
   terrain         a height-field collider: bodies tumbling down hills made with a HeightField SOP
+  car_park        every joint type at once: a car towing a trailer through a car park entrance
 """
 
 import argparse
@@ -190,6 +191,25 @@ class Pieces:
         set_parm(pl, ["rad", "radius"], radius)
         return pl
 
+    def shape_parts(self, tag, parts):
+        """One body's shape from several boxes: parts is [(size, centre)], the centres relative
+        to the body's point. Pair with bullet_georep 'convexhull' (one hull around them all) or 'box'."""
+        merge = create(self.geo, "merge", f"{tag}_shape")
+        for i, (size, centre) in enumerate(parts):
+            box = create(self.geo, "box", f"{tag}_part{i}")
+            set_parm(box, "size", tuple(size))
+            set_parm(box, "t", tuple(centre))
+            merge.setInput(i, box)
+        return merge
+
+    def shape_wheel(self, tag, radius, width):
+        """A wheel: a capped tube with its axle along z (fitted by a 'sphere' shape, it rolls smoothly)."""
+        tube = self.shape_tube(f"{tag}_tube", radius, width)
+        turn = create(self.geo, "xform", f"{tag}_shape")
+        turn.setInput(0, tube)
+        set_parm(turn, "r", (90.0, 0.0, 0.0))
+        return turn
+
     def stream(self, tag, shape, vex_body, note=""):
         """Copies `shape` onto the points that vex_body makes (mk(...) calls or loops)."""
         pts = create(self.geo, "attribwrangle", f"{tag}_points")
@@ -262,13 +282,16 @@ def ground(pieces, size=40.0):
 
 def network_sop(name, lines):
     """A constraint network: one polyline per joint between two pieces' anchor points.
-    lines: (name_a, pos_a, name_b, pos_b, constraint_name). An empty name pins to the world.
-    Both points sit where the joint is; constraint_name picks the relationship node."""
+    lines: (name_a, pos_a, name_b, pos_b, constraint_name[, orient]). An empty name pins to the
+    world. Both points sit where the joint is; constraint_name picks the relationship node. The
+    optional orient (a quaternion, on both ends) turns the joint's axes: a revolute hinge turns
+    about its z axis, a prismatic slides along x, and so on."""
     geo = create(hou.node("/obj"), "geo", name)
     for child in geo.children():
         child.destroy()
     wr = create(geo, "attribwrangle", "constraint_lines")
     set_parm(wr, "class", 0)
+    turned = any(len(line) > 5 for line in lines)
     code = ['// One polyline per joint. Each end names the piece it holds ("" = the world) and',
             '// sits at the joint; constraint_name matches a relationship node\'s Data Name.',
             "void joint(string a; vector pa; string b; vector pb; string cname) {",
@@ -276,10 +299,27 @@ def network_sop(name, lines):
             '    setpointattrib(0, "name", i, a); setpointattrib(0, "name", j, b);',
             '    int pr = addprim(0, "polyline", i, j);',
             '    setprimattrib(0, "constraint_name", pr, cname);',
-            "}",
-            'addpointattrib(0, "name", ""); addprimattrib(0, "constraint_name", "");']
-    for a, pa, b, pb, cname in lines:
-        code.append(f'joint("{a}", {vec(pa)}, "{b}", {vec(pb)}, "{cname}");')
+            "}"]
+    if turned:
+        code += ["// The same with orient on both ends: the joint's axes (no orient = the world axes).",
+                 "void joint_turned(string a; vector pa; string b; vector pb; string cname; vector4 q) {",
+                 "    int i = addpoint(0, pa), j = addpoint(0, pb);",
+                 '    setpointattrib(0, "name", i, a); setpointattrib(0, "name", j, b);',
+                 '    setpointattrib(0, "orient", i, q); setpointattrib(0, "orient", j, q);',
+                 '    int pr = addprim(0, "polyline", i, j);',
+                 '    setprimattrib(0, "constraint_name", pr, cname);',
+                 "}"]
+    code.append('addpointattrib(0, "name", ""); addprimattrib(0, "constraint_name", "");')
+    if turned:
+        code += ["vector4 identity = {0, 0, 0, 1};  // a typed variable: set() with four floats could be a matrix2",
+                 'addpointattrib(0, "orient", identity);',
+                 'setattribtypeinfo(0, "point", "orient", "quaternion");']
+    for line in lines:
+        a, pa, b, pb, cname = line[:5]
+        if len(line) > 5:
+            code.append(f'joint_turned("{a}", {vec(pa)}, "{b}", {vec(pb)}, "{cname}", {vec(line[5])});')
+        else:
+            code.append(f'joint("{a}", {vec(pa)}, "{b}", {vec(pb)}, "{cname}");')
     set_parm(wr, "snippet", "\n".join(code))
     display(wr)
     geo.setDisplayFlag(False)
@@ -307,7 +347,8 @@ def packed_pieces(dop, pieces_path, name="pieces"):
 
 def build_dops(name, pieces_path, joints=None, network_path=None, solver_parms=None, keep_velocity=False):
     """Box3D Packed Object -> (Constraint Network) -> Box3D Solver -> Output.
-    joints: [(relationship node type, node name, {parm: value})] for the constraint network.
+    joints: [(relationship node type, node name, {parm: value}[, comment])] for the constraint
+    network; a parm key may be a tuple of candidate names, and the comment is shown on the node.
     keep_velocity: unused (the pieces always keep their points' v). Returns (dopnet, solver,
     {node name: Data Name})."""
     del keep_velocity
@@ -316,10 +357,13 @@ def build_dops(name, pieces_path, joints=None, network_path=None, solver_parms=N
     last, data_names = obj, {}
     if joints:
         rels = []
-        for type_name, node_name, parms in joints:
+        for type_name, node_name, parms, *comment in joints:
             rel = create(dop, type_name, node_name)
             for parm, value in parms.items():
                 set_parm(rel, parm, value)
+            if comment:
+                rel.setComment(comment[0])
+                rel.setGenericFlag(hou.nodeFlag.DisplayComment, True)
             dn = next((rel.parm(n) for n in ("dataname", "data_name", "DataName") if rel.parm(n)), None)
             data_names[node_name] = dn.eval() if dn is not None else None
             rels.append(rel)
@@ -344,7 +388,7 @@ def build_dops(name, pieces_path, joints=None, network_path=None, solver_parms=N
     return dop, solver, data_names
 
 
-def tidy(frames, note, dop):
+def tidy(frames, note, dop, note_size=(9, 6)):
     """Frame range, layout, hide the source geometry and add the sticky notes."""
     try:
         hou.playbar.setFrameRange(1, frames)
@@ -361,7 +405,7 @@ def tidy(frames, note, dop):
     obj.layoutChildren()
     sticky = obj.createStickyNote("about_this_scene")
     sticky.setText(note.strip())
-    sticky.setSize(hou.Vector2(9, 6))
+    sticky.setSize(hou.Vector2(*note_size))
     place_note_left(obj, sticky)
     inner = dop.createStickyNote("how_it_works")
     inner.setText("Box3D Packed Object reads the pieces from the geometry object (one packed primitive per "
@@ -934,6 +978,213 @@ or bounce."""
     return dop, 240
 
 
+DATA_NAME = ("dataname", "data_name", "DataName")  # a relationship node's Data Name parameter
+
+
+def scene_car_park():
+    """Every Box3D joint type, each doing the job it is made for. The car drives along +x."""
+    p = Pieces("car_park_pieces")
+    ground(p, 80.0)
+    up = quat_about((1, 0, 0), -math.pi / 2)  # a joint frame whose z axis points up (world y)
+    wheel_axes = quat_about((0, 0, 1), math.pi / 2)  # x up (suspension, steering), z along the axle
+    backward = quat_about((0, 1, 0), -math.pi / 2)  # z along -x, down the trailer's drawbar
+    lines = []  # (piece A, anchor A, piece B, anchor B, constraint_name[, orient])
+
+    # --- The car: a body (one convex hull around chassis and cabin) on four wheels.
+    x0 = -14.0  # the car's centre
+    body_y, wheel_r, wheel_w = 0.75, 0.34, 0.2
+    wheel_y = math.hypot(wheel_r, wheel_w / 2) + 0.002  # the fitted sphere just encloses the tube
+    p.stream("car_body", p.shape_parts("car_body", [((4.0, 0.55, 1.7), (0, 0, 0)),
+                                                    ((2.2, 0.55, 1.5), (-0.2, 0.55, 0))]),
+             mk((x0, body_y, 0), "car_body", cd=(0.75, 0.12, 0.1), density=150.0, georep="convexhull"),
+             "the car's body: chassis and cabin, about 900 kg")
+    car_wheels = []
+    for tag, dx in (("f", 1.35), ("r", -1.35)):
+        for side, z in (("l", 0.95), ("r", -0.95)):
+            name = f"wheel_{tag}{side}"
+            centre = (x0 + dx, wheel_y, z)
+            car_wheels.append(mk(centre, name, cd=(0.12, 0.12, 0.13), density=300.0, georep="sphere"))
+            lines.append(("car_body", centre, name, centre, "front_wheels" if tag == "f" else "rear_wheels",
+                          wheel_axes))
+    p.stream("car_wheels", p.shape_wheel("car_wheels", wheel_r, wheel_w), "\n".join(car_wheels),
+             "the car's wheels (sphere shapes: they roll smoothly)")
+
+    # Tow bar under the rear bumper, bolted (welded) to the car; the hitch ball is on its end.
+    towbar = (x0 - 1.75, 0.42, 0.0)
+    hitch = (x0 - 1.9, 0.5, 0.0)
+    p.boxes("tow_bar", (0.5, 0.1, 0.1), [mk(towbar, "tow_bar", cd=(0.3, 0.3, 0.32), density=7800.0)],
+            "the tow bar, a separate steel part bolted under the car")
+    lines.append(("car_body", towbar, "tow_bar", towbar, "bolted"))
+
+    # --- The trailer: bed, side rails and a drawbar whose coupler sits on the hitch ball, tucked
+    # under the car's bumper (so the car's and the trailer's shapes overlap there).
+    tx = x0 - 4.7  # the bed's centre
+    p.stream("trailer", p.shape_parts("trailer", [((2.6, 0.15, 1.6), (0, 0, 0)),
+                                                  ((2.6, 0.25, 0.06), (0, 0.2, 0.77)),
+                                                  ((2.6, 0.25, 0.06), (0, 0.2, -0.77)),
+                                                  ((1.6, 0.12, 0.12), (2.1, -0.22, 0))]),
+             mk((tx, 0.75, 0), "trailer", cd=(0.35, 0.45, 0.6), density=120.0, georep="convexhull"),
+             "the trailer: bed, rails and drawbar in one convex hull")
+    lines.append(("tow_bar", hitch, "trailer", hitch, "hitch_ball", backward))
+    lines.append(("car_body", hitch, "trailer", hitch, "no_collide"))
+    trailer_r, trailer_w = 0.29, 0.16
+    trailer_y = math.hypot(trailer_r, trailer_w / 2) + 0.002
+    trailer_wheels = []
+    for side, z in (("l", 0.95), ("r", -0.95)):
+        centre = (tx - 0.2, trailer_y, z)
+        trailer_wheels.append(mk(centre, f"trailer_wheel_{side}", cd=(0.12, 0.12, 0.13), density=300.0,
+                                 georep="sphere"))
+        lines.append(("trailer", centre, f"trailer_wheel_{side}", centre, "trailer_wheels", wheel_axes))
+    p.stream("trailer_wheels", p.shape_wheel("trailer_wheels", trailer_r, trailer_w), "\n".join(trailer_wheels),
+             "the trailer's wheels")
+    # A tall crate strapped down on the bed (welded): too tall for the height bar.
+    crate_size = (1.3, 1.8, 1.3)
+    bed_top = 0.825
+    p.boxes("crate", crate_size, [mk((tx, bed_top + crate_size[1] / 2 + 0.002, 0), "crate", cd=(0.7, 0.52, 0.3),
+                                     density=100.0)], "the load, strapped to the trailer")
+    lines.append(("trailer", (tx, bed_top, 0), "crate", (tx, bed_top, 0), "bolted"))
+
+    # --- A camera drone following the car: a motor joint to the car body holds it above the
+    # trailer with capped force (its thrust); a parallel joint to the world keeps it level (its
+    # flight controller) and leaves it free to turn about the vertical.
+    drone = (x0 - 4.0, 5.0, 0.0)
+    p.stream("drone", p.shape_parts("drone", [((0.6, 0.12, 0.6), (0, 0, 0))]
+                                    + [((0.28, 0.03, 0.28), (sx * 0.3, 0.08, sz * 0.3))
+                                       for sx in (-1, 1) for sz in (-1, 1)]),
+             mk(drone, "drone", cd=(0.15, 0.15, 0.17), density=70.0, georep="box"),
+             "a camera drone, about 10 kg")
+    lines.append(("car_body", drone, "drone", drone, "drone_follow"))
+    lines.append(("", drone, "drone", drone, "drone_level", up))
+
+    # --- The entrance: two spring-loaded swing gates on static posts (revolute, axis up).
+    xg, post_z = -8.0, 1.7
+    p.boxes("gate_posts", (0.2, 1.5, 0.2),
+            [mk((xg, 0.75, s * post_z), f"gate_post_{n}", cd=(0.5, 0.5, 0.52), active=0)
+             for n, s in (("l", 1), ("r", -1))], "static gate posts")
+    p.boxes("gates", (0.12, 1.0, 1.55),
+            [mk((xg, 0.75, s * 0.85), f"gate_{n}", cd=(0.92, 0.92, 0.9), density=150.0)
+             for n, s in (("l", 1), ("r", -1))], "the gate leaves")
+    for n, s in (("l", 1), ("r", -1)):
+        hinge = (xg, 0.75, s * 1.62)
+        lines.append((f"gate_post_{n}", hinge, f"gate_{n}", hinge, "gate_hinges", up))
+
+    # --- A height bar hung on two chains from a static gantry (distance joints used as chains).
+    xc, beam_y, bar_y = 0.0, 3.5, 2.35
+    p.boxes("gantry_posts", (0.25, beam_y - 0.15, 0.25),
+            [mk((xc, (beam_y - 0.15) / 2, s * 2.3), f"gantry_post_{n}", cd=(0.5, 0.5, 0.52), active=0)
+             for n, s in (("l", 1), ("r", -1))], "static gantry posts")
+    p.boxes("gantry_beam", (0.3, 0.3, 4.85), [mk((xc, beam_y, 0), "gantry", cd=(0.5, 0.5, 0.52), active=0)],
+            "the static gantry beam")
+    p.boxes("height_bar", (0.12, 0.12, 3.2), [mk((xc, bar_y, 0), "height_bar", cd=(0.95, 0.8, 0.1), density=300.0)],
+            "the hanging height bar: the car fits under it, the crate does not")
+    chain = (beam_y - 0.15) - (bar_y + 0.06)
+    for z in (1.3, -1.3):
+        lines.append(("gantry", (xc, beam_y - 0.15, z), "height_bar", (xc, bar_y + 0.06, z), "chains"))
+
+    # --- Flexible lane bollards on the centre line: a sprung ball joint at the base (spherical)
+    # lets each bend any way and stands it back up; the twist limit keeps it from spinning on its
+    # base, as a bolted-down one cannot (twisted far round, the spring's way back is ambiguous).
+    bollards = []
+    for i, xb in enumerate((5.0, 6.5, 8.0)):
+        bollards.append(mk((xb, 0.46, 0), f"bollard{i}", cd=(1.0, 0.45, 0.05), density=400.0, georep="capsule"))
+        base = (xb, 0.09, 0)  # the centre of the capsule's bottom cap: it pivots without digging in
+        lines.append(("", base, f"bollard{i}", base, "bollard_base", up))
+    p.stream("bollards", p.shape_tube("bollards", 0.08, 0.9), "\n".join(bollards), "flexible bollards")
+
+    # --- A spring buffer stop at the end of the road: a plate sliding along x (prismatic).
+    xs = 16.15
+    p.boxes("buffer_block", (0.6, 1.4, 3.0), [mk((xs + 1.45, 0.7, 0), "buffer_block", cd=(0.45, 0.45, 0.47),
+                                                 active=0)], "the static concrete block behind the buffer")
+    p.boxes("buffer_plate", (0.3, 1.0, 2.6), [mk((xs, 0.7, 0), "buffer_plate", cd=(0.95, 0.75, 0.1),
+                                                 density=300.0)], "the buffer plate")
+    lines.append(("buffer_block", (xs, 0.7, 0), "buffer_plate", (xs, 0.7, 0), "buffer_slide"))
+
+    path = p.finish("""\
+// Grip: rubber wheels on a rough road, slippery plastic bollards, everything else in between.
+// Little bounce (Box3D Data's default is 0.5).
+f@friction = 0.6;
+if (s@name == "ground") f@friction = 1.0;
+if (match("*wheel*", s@name)) f@friction = 1.2;
+if (match("bollard*", s@name)) f@friction = 0.2;
+f@bounce = 0.1;""")
+    network = network_sop("car_park_network", lines)
+
+    def rel(kind, name, comment, **parms):
+        parms[DATA_NAME] = name  # constraint_name in the network is the node's name
+        return (f"box3d_{kind}conrel", name, parms, comment)
+
+    suspension = dict(enable_suspension_spring=1, suspension_stiffness=5.0, suspension_damping_ratio=0.7,
+                      enable_suspension_limit=1, lower_suspension_limit=-0.15, upper_suspension_limit=0.15)
+    joints = [
+        rel("wheel", "front_wheels", "Wheel: suspension + steering (held straight)",
+            **suspension, enable_steering=1, steering_stiffness=10.0, steering_damping_ratio=0.7,
+            target_steering_angle=0.0, max_steering_torque=500.0, enable_steering_limit=1,
+            lower_steering_limit=-35.0, upper_steering_limit=35.0),
+        rel("wheel", "rear_wheels", "Wheel: suspension + spin motor (rear-wheel drive)",
+            **suspension, enable_spin_motor=1, spin_speed=-450.0, max_spin_torque=600.0),
+        rel("wheel", "trailer_wheels", "Wheel: suspension only, free rolling", **suspension),
+        rel("weld", "bolted", "Weld: tow bar bolted to the car, crate strapped to the trailer"),
+        rel("spherical", "hitch_ball", "Spherical: tow ball, cone and twist limits stop jackknifing",
+            enable_cone_limit=1, cone_angle=60.0, enable_twist_limit=1, lower_twist_angle=-15.0,
+            upper_twist_angle=15.0),
+        rel("filter", "no_collide", "Filter: car body and trailer overlap at the hitch, never collide"),
+        rel("motor", "drone_follow", "Motor: drone holds its place over the trailer, capped thrust",
+            linear_stiffness=1.0, linear_damping_ratio=0.5, angular_stiffness=0.0, angular_damping_ratio=0.0,
+            max_spring_force=200.0, max_spring_torque=0.0, max_velocity_force=0.0, max_velocity_torque=0.0),
+        rel("parallel", "drone_level", "Parallel: keeps the drone level, free to turn about the vertical",
+            stiffness=2.0, damping_ratio=1.0),
+        rel("revolute", "gate_hinges", "Revolute: self-closing spring hinges",
+            enable_spring=1, stiffness=1.0, damping_ratio=0.3, target_angle=0.0,
+            enable_limit=1, lower_angle=-100.0, upper_angle=100.0),
+        rel("distance", "chains", "Distance: chains, slack up to their length",
+            enable_spring=1, stiffness=0.0, enable_limit=1, min_length=0.0, limit_max_length=1,
+            max_length=chain),
+        rel("spherical", "bollard_base", "Spherical: sprung rubber base, bends up to 85 degrees, no spinning",
+            enable_spring=1, stiffness=3.0, damping_ratio=0.3, enable_cone_limit=1, cone_angle=85.0,
+            enable_twist_limit=1, lower_twist_angle=-10.0, upper_twist_angle=10.0),
+        rel("prismatic", "buffer_slide", "Prismatic: buffer plate slides along the road on a spring",
+            enable_spring=1, stiffness=2.0, damping_ratio=0.5, target_translation=0.0,
+            enable_limit=1, lower_translation=-0.05, upper_translation=1.0),
+    ]
+    dop, _, names_used = build_dops("car_park_sim", path, network_path=network, joints=joints)
+    wrong = {k: v for k, v in names_used.items() if v != k}
+    if wrong:
+        raise SetupError(f"relationship Data Names did not take: {wrong}")
+
+    note = f"""CAR PARK: every Box3D joint type, each doing its real-world job. A car towing a
+trailer drives through a car park entrance and into a buffer stop.
+
+  Wheel      the car's and trailer's wheels: suspension spring and limits; the rear
+             wheels have a spin motor (the drive), the front ones steering.
+  Weld       parts fixed together: the tow bar bolted to the car, the crate strapped
+             to the trailer.
+  Spherical  the tow ball (cone and twist limits stop the trailer jackknifing or
+             rolling over), and the rubber base of each flexible bollard: it bends
+             any way when the car runs it over and its spring stands it back up.
+  Filter     the trailer's coupler tucks under the car's bumper: their shapes overlap,
+             so a filter joint stops them colliding (no other effect).
+  Motor      the camera drone: a spring holds it at its place over the trailer, with
+             Max Spring Force (200 N) as its thrust, so it lags and sways.
+  Parallel   the drone's flight controller: keeps it level, free to turn about the
+             vertical.
+  Revolute   the entrance gates: spring hinges that swing shut behind the trailer.
+  Distance   the chains of the height bar: slack (Enable Spring with Stiffness 0) up
+             to Max Length ({chain:.2f} m). The car fits under; the crate knocks the bar.
+  Prismatic  the buffer stop: the plate slides along the road only, on a spring,
+             within its limits.
+
+car_park_network holds one line per joint; its constraint_name is the name of the
+relationship node in car_park_sim, and its orient sets the joint's axes (a hinge
+turns about z, a slider moves along x, a wheel's suspension runs along x).
+
+Try: delete no_collide (the overlap shoves the car's tail up and it barely moves);
+on front_wheels set Target Steering Angle to 10; on drone_follow drop Max Spring
+Force below the drone's weight (about 80 N); turn Enable Spring off on chains (rigid
+rods); on rear_wheels make Spin Speed more negative to drive faster."""
+    tidy(360, note, dop, note_size=(11, 9))
+    return dop, 360
+
+
 SCENES = {
     "shapes": scene_shapes,
     "many_bodies": scene_many_bodies,
@@ -943,6 +1194,7 @@ SCENES = {
     "paddle_mixer": scene_paddle_mixer,
     "forces": scene_forces,
     "terrain": scene_terrain,
+    "car_park": scene_car_park,
 }
 
 
