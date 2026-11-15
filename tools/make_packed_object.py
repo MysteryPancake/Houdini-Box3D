@@ -10,7 +10,8 @@ What it is: RBD Packed Object for Box3D. Like it, a SOP stage inside the object
 (create_attributes, as RBD Packed Object's create_or_overwrite_attributes) prepares the SOP
 geometry when the object is created:
 
-    Empty Object -> SOP Geometry (create_attributes/OUT) -> Box3D Data -> (output)
+    Empty Object -> SOP Geometry (create_attributes/OUT) -> Box3D Data -> visualize_hires
+                    ^ Rendering Parameters Volatile          -> Collider Label (output)
     create_attributes: Object Merge of the SOP Path -> setup_defaults -> create_name
                        -> [creation frame] set_rest -> OUT
 
@@ -23,8 +24,14 @@ as RBD Packed Object). The inner Box3D Data holds only the object-level settings
 a missing attribute means the default. Settings change mid-simulation through the attributes (a
 SOP Solver, POP Wrangle), not through the asset's parameters.
 
+Display Geometry, as RBD Packed Object: Simulation shows the object's geometry (Rendering Parameters
+Volatile); Render hides it and the SOP Guide visualize_hires draws Render SOP Path instead, its pieces
+moved by the simulated points with the same name (Transform Pieces, once per object the asset made).
+Collider Label PackedObject, as RBD Packed Object: other solvers collide with the object as packed
+pieces, and the Box3D Solver keeps it one body per point.
+
 Its parameters: the Object tab (object name, creation frame, solve on creation frame, SOP path,
-object transform), then every Box3D Data folder as a tab of its own.
+object transform, overwrite from SOP, display geometry), then every Box3D Data folder as a tab.
 
 Never fails the build: problems are printed as warnings and the script exits 0.
 """
@@ -59,6 +66,82 @@ OBJECT_PARMS = [
 OVERWRITE_FROM_SOP = "overwritefromsop"  # RBD Packed Object's Overwrite Attributes from SOP
 
 STAGE = "create_attributes"  # the SOP stage (a DOP SOP network), as RBD Packed Object's
+HIRES = "visualize_hires"  # the SOP Guide drawing the render geometry, as RBD Packed Object's
+
+# Display Geometry / Render SOP Path, as RBD Packed Object's (same names, so its expressions carry over).
+DISPLAY, DISPLAY_GEO, RENDER_PATH = "display", "displaygeo", "rendergeopath"
+
+
+def display_templates():
+    """Display Geometry (toggle and Simulation / Render menu on one row) and Render SOP Path."""
+    toggle = hou.ToggleParmTemplate(DISPLAY, "Display Geometry", default_value=True, join_with_next=True)
+    toggle.hideLabel(True)
+    menu = hou.MenuParmTemplate(
+        DISPLAY_GEO, "Display Geometry", ("simgeo", "rendergeo"), ("Simulation Geometry", "Render Geometry"),
+        default_value=0, disable_when=f"{{ {DISPLAY} == 0 }}",
+        help="Render Geometry draws the Render SOP Path's pieces moved with the simulated ones, matched by name.")
+    path = hou.StringParmTemplate(
+        RENDER_PATH, "Render SOP Path", 1, default_value=("",), string_type=hou.stringParmType.NodeReference,
+        disable_when=f"{{ {DISPLAY} == 0 }}", help="Hi-res geometry to draw in place of the simulated pieces.")
+    path.setConditional(hou.parmCondType.HideWhen, f"{{ {DISPLAY_GEO} != rendergeo }}")
+    path.setTags({"opfilter": "!!SOP!!", "oprelative": "."})
+    return [toggle, menu, path]
+
+
+def build_hires(guide):
+    """The SOP Guide's network, as RBD Packed Object's visualize_hires: for each object this asset made
+    (a For-Each over createdObjects(), the iteration from the metadata Block Begin), Transform Pieces
+    moves the Render SOP Path's pieces by the matching simulated points, matched by name. The
+    references to the asset's parameters are set by wire_hires."""
+    for child in guide.children():
+        child.destroy()
+    meta = guide.createNode("block_begin", "repeat_begin1_metadata1")
+    begin = guide.createNode("block_begin", "repeat_begin1")
+    fetch = guide.createNode("object_merge", "fetch_hires_geo")
+    points = guide.createNode("dopimport", "fetch_transforms")
+    pieces = guide.createNode("xformpieces", "transformpieces1")
+    end = guide.createNode("block_end", "repeat_end1")
+    pieces.setInput(0, fetch)
+    pieces.setInput(1, points)
+    end.setInput(0, pieces)
+    py = hou.exprLanguage.Python
+    set_parm(meta, "method", "metadata")
+    set_parm(meta, "blockpath", "../repeat_end1")
+    set_parm(begin, "blockpath", "../repeat_end1")
+    set_parm(end, "itermethod", "count")
+    set_parm(end, "method", "merge")
+    set_parm(end, "blockpath", "../repeat_begin1")
+    set_parm(end, "iterations", expr='len(hou.node("../..").createdObjects())', lang=py)
+    end.setComment("Merge the hi-res geometry for each created DOP object.")
+    set_parm(points, "doppath", expr='hou.node("..").simulation().dopNetNode().path()', lang=py)
+    set_parm(points, "objpattern", lang=py, expr=(
+        'node = hou.node("../..")\n'
+        'iteration = hou.node("../repeat_begin1_metadata1").geometry().intAttribValue("iteration")\n'
+        "\n"
+        "return node.createdObjects()[iteration].objid()"))
+    set_parm(points, "importstyle", "points")
+    set_parm(points, "donotsim", 1)
+    end.setDisplayFlag(True)
+    end.setRenderFlag(True)
+    guide.layoutChildren()
+
+
+def wire_hires(asset, transform_parm):
+    """Display Geometry's references: Rendering Parameters Volatile shows the simulation geometry, the
+    SOP Guide the render geometry, and the guide's Object Merge reads Render SOP Path (Use Object
+    Transform as the stage's)."""
+    if asset.node(HIRES) is None:
+        return  # not built (warned)
+    show = f'ch("../{DISPLAY}") && ch("../{DISPLAY_GEO}") == '
+    set_parm(asset.node("renderparmsvolatile"), "display", expr=show + "0")
+    guide = asset.node(HIRES)
+    set_parm(guide, "showguide", expr=show + "1")
+    fetch = guide.node("fetch_hires_geo")
+    set_parm(fetch, "objpath1", f'`chsop("../../{RENDER_PATH}")`')
+    if transform_parm:
+        set_parm(fetch, "xformtype", expr=f'ch("../../{transform_parm}")')
+
+
 
 warn = b3d_hda.warner("make_packed_object")
 
@@ -86,6 +169,19 @@ def link(inner, outer, name):
             warn(f"{outer.path()} has no parameter {p.name()}")
             continue
         p.set(target)  # a hou.Parm value: a channel reference
+
+
+def set_parm(node, name, value=None, expr=None, lang=hou.exprLanguage.Hscript):
+    """Sets node's parameter `name` to `value`, or to the expression `expr`; warns when it has none."""
+    parm = node.parm(name)
+    if parm is None:
+        warn(f"{node.path()} has no parameter {name}; its parameters: {labels(node)}")
+        return False
+    if expr is not None:
+        parm.setExpression(expr, lang)
+    else:
+        parm.set(value)
+    return True
 
 
 def build_stage(sub, rows):
@@ -170,6 +266,33 @@ def wire_overwrite(asset):
     print(f"make_packed_object: Overwrite Attributes from SOP drives {geo.path()}: {', '.join(driven) or 'nothing'}")
 
 
+def add_display(sub, geo, data):
+    """After Box3D Data, as RBD Packed Object: Rendering Parameters Volatile on the SOP Geometry (shown
+    with Display Geometry: Simulation), the SOP Guide drawing the render geometry (Render), then the
+    Collider Label, which is the asset's output. If any of it cannot be made (another Houdini version),
+    Box3D Data stays the output and Display Geometry does nothing."""
+    data.setDisplayFlag(True)  # the asset's output until the Collider Label is made
+    try:
+        renderparms = sub.createNode("renderparmsvolatile", "renderparmsvolatile")
+        geo.setInput(1, renderparms)
+        guide = sub.createNode("sopguide", HIRES)
+        guide.setInput(0, data)
+        set_parm(guide, "wireframe", 0)
+        build_hires(guide)
+        # PackedObject: other solvers (FLIP, Vellum, Pyro) collide with it as packed pieces, and the
+        # Box3D Solver keeps syncing it per point (any other label makes one body, see isWholeObject).
+        label = sub.createNode("colliderlabel", "colliderlabel")
+        label.setInput(0, guide)
+        set_parm(label, "colliderlabel", "PackedObject")
+        label.setDisplayFlag(True)
+    except hou.Error:
+        warn("Display Geometry / Collider Label not built:\n" + traceback.format_exc())
+        for name in ("renderparmsvolatile", HIRES, "colliderlabel"):
+            if sub.node(name) is not None:
+                sub.node(name).destroy()
+        data.setDisplayFlag(True)
+
+
 def build(out_path):
     hou.hipFile.clear(suppress_save_prompt=True)
     dopnet = hou.node("/obj").createNode("dopnet", "build")
@@ -180,7 +303,7 @@ def build(out_path):
     geo.setInput(0, obj)
     data = sub.createNode("box3d_data", "box3d_data")
     data.setInput(0, geo)
-    data.setDisplayFlag(True)  # the asset's output; it has no input
+    add_display(sub, geo, data)
 
     # The parameters: the Object tab, then each Box3D Data folder as a tab.
     inner = {"emptyobject": obj, "geometry": geo}
@@ -228,6 +351,7 @@ the simulation. Off: read once when the object is created.")
     names = [pt for _, pt in promoted]
     names.insert(1, create_frame)
     names.append(overwrite)
+    names += display_templates()
     group = hou.ParmTemplateGroup()
     group.append(hou.FolderParmTemplate("b3dpo_object", "Object", names, folder_type=hou.folderType.Tabs))
     for tab in tabs:
@@ -260,6 +384,7 @@ the simulation. Off: read once when the object is created.")
 
     asset.allowEditingOfContents()
     wire_stage(asset, sop_path_parm, transform_parm, by_label["Object Name"])
+    wire_hires(asset, transform_parm)
     wire_overwrite(asset)
     for node, pt in promoted:
         link(node, asset, pt.name())
@@ -315,6 +440,22 @@ def check(out_path, dopnet):
     impact = probe.node("box3d_data").parm("addimpact") if probe.node("box3d_data") else None
     if impact is None or impact.eval() != 1:
         warn("probe: Add Impact Data does not reach the inner Box3D Data")
+    # Display Geometry: Simulation shows the object's geometry, Render the SOP Guide; the collider label.
+    guide, renderparms = probe.node(HIRES), probe.node("renderparmsvolatile")
+    if guide is None or renderparms is None or probe.parm(DISPLAY_GEO) is None:
+        warn("probe: no SOP Guide, Rendering Parameters Volatile or Display Geometry menu")
+    else:
+        seen = []
+        for value in (0, 1):
+            probe.parm(DISPLAY_GEO).set(value)
+            seen.append((renderparms.parm("display").eval(), guide.parm("showguide").eval()))
+        probe.parm(DISPLAY_GEO).set(0)
+        if seen != [(1, 0), (0, 1)]:
+            warn(f"probe: Display Geometry Simulation / Render gives (geometry shown, guide shown) {seen}, "
+                 "expected (1, 0) / (0, 1)")
+    label = probe.node("colliderlabel")
+    if label is None or label.parm("colliderlabel").eval() != "PackedObject":
+        warn("probe: no Collider Label 'PackedObject' (the solver would treat the object as one body)")
     # Overwrite Attributes from SOP: the inner SOP Geometry's operations follow it (Set Initial off, Always on).
     geo = probe.node("geometry")
     ops = [q for q in geo.parms() if q.name().startswith("parmop")] if geo is not None else []

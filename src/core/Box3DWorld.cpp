@@ -232,12 +232,12 @@ int assertHandler(const char *condition, const char *fileName, int lineNumber) {
             "line %d",
             condition ? condition : "?", fileName ? fileName : "?", lineNumber);
   if (n == kMaxAssertLogs)
-    B3D_LOG("Box3D: further assertion messages are not printed");
+    B3D_LOG("further Box3D assertion messages are not printed");
   return 0;
 }
 
 void logHandler(const char *message) {
-  B3D_LOG("Box3D: %s", message ? message : "?");
+  B3D_LOG("%s (from Box3D)", message ? message : "?");
 }
 
 void installAssertHandler() {

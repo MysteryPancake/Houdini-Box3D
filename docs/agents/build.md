@@ -52,8 +52,8 @@ How the project is built, tested and packaged. Index and rules: [CLAUDE.md](../.
 ## Box3D Packed Object asset
 
 `tools/make_packed_object.py` builds it from the plugin just compiled, so it always matches Box3D Data. It copies RBD
-Packed Object (read from a `houdini_network_dump.py` dump of RBD Bullet Solver): Empty Object -> SOP Geometry (data name
-`Geometry`) -> Box3D Data, which is the output (no input); SOP Geometry reads a SOP stage inside the asset (`STAGE`,
+Packed Object (read from `houdini_network_dump.py` dumps of RBD Bullet Solver and RBD Packed Object): Empty Object -> SOP
+Geometry (data name `Geometry`) -> Box3D Data -> `visualize_hires` -> Collider Label, the output (no input); SOP Geometry reads a SOP stage inside the asset (`STAGE`,
 RBD Packed Object's `create_or_overwrite_attributes`): Object Merge of the asset's SOP Path (Use Object Transform drives
 its Transform, Into This Object: the DOP network's space; SOP Geometry's own stays off, as 22.0's has no OBJ Path to
 point at an object) -> `setup_defaults` -> `create_name` -> `set_rest` on the creation frame only -> `OUT`. The stage's
@@ -72,8 +72,13 @@ references to the asset's parameters are set once the asset exists (`wire_stage`
   Transform, Overwrite Attributes from SOP), then each Box3D Data folder as a tab, read by the stage. Only the object-level settings
   (`b3d_settings.SKIP`: Hull per Connected, Flip Winding, Add Impact Data) are channel references into the inner Box3D
   Data, whose other values stay at the defaults, so a missing attribute means the default. Settings change
-  mid-simulation through the attributes, not the asset's parameters. No Colliders label, so the solver syncs it per
-  point. The script prints one line, or warnings, and never fails the build; its `check` cooks the stage of a fresh
+  mid-simulation through the attributes, not the asset's parameters.
+* Display Geometry (`add_display`, RBD Packed Object's nodes and names): Rendering Parameters Volatile on SOP Geometry's
+  data input shows the object while it is Simulation; Render shows the SOP Guide `visualize_hires` instead: a For-Each
+  over the asset's `createdObjects()` (the iteration from a metadata Block Begin), DOP Import of that object's points,
+  Transform Pieces of Render SOP Path by them, matched by `name`. Python expressions, as SideFX's.
+* Collider Label `PackedObject`, as RBD Packed Object's: other solvers collide with it as packed pieces; the solver
+  still syncs it per point (`isWholeObject` takes any other label as one body). The script prints one line, or warnings, and never fails the build; its `check` cooks the stage of a fresh
   instance.
 
 Traps it handles:

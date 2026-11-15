@@ -911,7 +911,7 @@ void SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData,
                       "could not be converted",
                       obj->getObjectId());
       addError(obj, SIM_MESSAGE,
-               "Box3D: this object's Geometry is not writable and could not be "
+               "This object's Geometry is not writable and could not be "
                "converted to a SIM_GeometryCopy; results are not written back",
                UT_ERROR_WARNING);
       return;

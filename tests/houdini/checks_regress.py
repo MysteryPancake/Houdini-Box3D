@@ -576,7 +576,7 @@ def test_concave_static_mesh():
 
     def sample(sim, f):
         if f in (29, 72):
-            msgs.extend(m for m in node_messages(solver) if "Box3D" in m)
+            msgs.extend(node_messages(solver))
         return packed_positions(sim, "torus")["torus"][1], packed_positions(sim, "ball")[ball][1]
 
     track = step(dop, 72, sample)

@@ -213,7 +213,7 @@ void SIM_SolverBox3D::buildGuideGeometrySubclass(const SIM_RootData &root,
 void SIM_SolverBox3D::message(SIM_ObjectArray &objects, const std::string &text,
                               UT_ErrorSeverity severity) {
   if (objects.entries() > 0)
-    addError(objects(0), SIM_MESSAGE, ("Box3D: " + text).c_str(), severity);
+    addError(objects(0), SIM_MESSAGE, text.c_str(), severity);
 }
 
 void SIM_SolverBox3D::warnCount(SIM_ObjectArray &objects, int n,
@@ -683,8 +683,8 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
     message(objects,
             name + ": Geometry does not contain any primitive types supported "
                    "by the solver. Pack the pieces (Pack or Assemble SOP), or "
-                   "use the Box3D Solver SOP, which packs its inputs",
-            UT_ERROR_ABORT);
+                   "use the Box3D Solver SOP, which packs its inputs. The "
+                   "object is not simulated");
   warnCount(objects, counts.unpackedPrimPoints,
             "point(s) belong to primitives that are not packed and are not "
             "simulated (only packed primitives and loose points are)");

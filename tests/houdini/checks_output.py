@@ -820,29 +820,29 @@ def _unpacked_run(tag, kind, bullet):
 
 
 def test_unpacked_geometry():
-    """Box3D, as RBD Bullet Solver: polygons with nothing packed are an error naming the object
+    """Box3D, as RBD Bullet Solver: polygons with nothing packed are a warning naming the object
     ("Geometry does not contain any primitive types supported by the solver") and get no bodies
     (the box stays at y = 2.5), while a valid packed box in the same solver still falls to its
     first-second y (3 - g/2, about -1.9); packed pieces beside loose polygons fall, the polygons'
-    points stay, with a warning; loose points (no primitives) fall, with no message (a Box3D extension: Bullet gives the error)."""
+    points stay, with a warning; loose points (no primitives) fall, with no message (a Box3D extension: Bullet gives the warning)."""
     results = []
     rows, ok = [], True
     for kind in ("polygons", "mixed", "points"):
         y1, y25, good_y, msgs = _unpacked_run(f"ours_{kind}", kind, bullet=False)
-        error = any(UNSUPPORTED in m for m in msgs)
+        unsupported = any(UNSUPPORTED in m for m in msgs)
         warned = any("not packed" in m for m in msgs)
         fell = good_y is not None and good_y < 0.0
         if y25 is None:
             this_ok = False
         elif kind == "polygons":
-            this_ok = error and close(y25.get("other", 0), 2.5, 1e-4) and fell
+            this_ok = unsupported and close(y25.get("other", 0), 2.5, 1e-4) and fell
         elif kind == "mixed":
-            this_ok = (not error and warned and y25.get("packed", 9) < 0.0 and close(y25.get("other", 0), 2.5, 1e-4)
+            this_ok = (not unsupported and warned and y25.get("packed", 9) < 0.0 and close(y25.get("other", 0), 2.5, 1e-4)
                        and fell)
         else:
-            this_ok = not error and not warned and y25.get("other", 9) < 0.0 and fell
+            this_ok = not unsupported and not warned and y25.get("other", 9) < 0.0 and fell
         ok = ok and this_ok
-        rows.append(f"{kind}: lowest y {y1} -> {y25}, valid box y={good_y}, error {error}, warning {warned}"
+        rows.append(f"{kind}: lowest y {y1} -> {y25}, valid box y={good_y}, unsupported-geometry warning {unsupported}, unpacked-points warning {warned}"
                     f"{'' if this_ok else ' (FAIL) messages ' + repr(msgs)}")
     results.append(Result("unpacked_geometry", Result.PASS if ok else Result.FAIL, "; ".join(rows)))
     return results

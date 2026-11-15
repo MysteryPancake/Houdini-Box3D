@@ -14,4 +14,5 @@ def mix(rule, a, b):
 
 
 def box3d_messages(node):
-    return sorted({m.strip() for m in node_messages(node) if "Box3D" in m})
+    """The messages on a Box3D Solver node (all of them are the solver's), sorted, once each."""
+    return sorted({m.strip() for m in node_messages(node)})

@@ -513,8 +513,9 @@ struct SyncCounts {
   // Points on primitives that are not packed, in objects that also have
   // packed points: not simulated (warning).
   int unpackedPrimPoints = 0;
-  // Objects whose primitives are all unpacked: no bodies (error, as RBD Bullet
-  // Solver's "Geometry does not contain any primitive types supported").
+  // Objects with unpacked primitives and nothing packed: not simulated at all
+  // (warning, as RBD Bullet Solver's "Geometry does not contain any primitive
+  // types supported").
   std::vector<std::string> unsupportedObjects;
 };
 
@@ -572,9 +573,9 @@ void buildCollisionGuide(const SIM_Object &obj, GU_Detail &out,
                          const UT_Vector3 &color);
 
 // Export Collision Shapes: the same shapes as world-space polylines (Cd = the
-// dimming, white when awake) in each object's kShapesDataName geometry, rewritten
-// every step. The solver's lock is held by the caller; poses are the written-back
-// ones, so call it after the step's point writes.
+// dimming, white when awake) in each object's kShapesDataName geometry,
+// rewritten every step. The solver's lock is held by the caller; poses are the
+// written-back ones, so call it after the step's point writes.
 inline constexpr const char *kShapesDataName = "Box3DShapes";
 void exportCollisionShapes(Box3DSharedState &st, SIM_ObjectArray &objects);
 

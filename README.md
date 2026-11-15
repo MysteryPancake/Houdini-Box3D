@@ -53,15 +53,15 @@ cd build
 cpack -G ZIP -C Release
 ```
 
-(`-C Release` is needed on Windows; on Linux plain `cpack -G ZIP` works.) This makes `Box3D-Houdini-<version>-<system>.zip`. Extract it into your `houdiniX.Y/packages` folder so `Box3D.json` sits directly inside it. It only loads in the Houdini version it was built for.
+(`-C Release` is needed on Windows. On Linux, plain `cpack -G ZIP` works.) This makes `Box3D-Houdini-<version>-<system>.zip`. Extract it into your `houdiniX.Y/packages` folder so `Box3D.json` sits directly inside it. It only loads in the Houdini version it was built for.
 
 The zip includes the Box3D Packed Object, Box3D Configure and Box3D Solver SOP assets only if hython was found during the build. If you test the package on the machine you built on, first remove the copies the build put in your `houdiniX.Y/dso` and `otls` folders.
 
 ## Quick start
 
-In a DOP network, add a **Box3D Solver** and wire your objects into it like any DOP solver. For packed pieces, use a **Box3D Packed Object**; its settings (shape, mass, friction, bounce, ...) apply to every piece that doesn't set its own attribute.
+In a DOP network, add a **Box3D Solver** and wire your objects into it like any DOP solver. For packed pieces, use a **Box3D Packed Object**. Its settings (shape, mass, friction, bounce, ...) apply to every piece that doesn't set its own attribute.
 
-Like Houdini's RBD solvers, every point is one rigid body and the point is its **centre of mass** (for packed pieces, the pivot; the Pack SOP and RBD tools put it at the centroid). Objects from **RBD Object** and similar nodes are one body each instead, with their results in the object's Position data.
+Like Houdini's RBD solvers, every point is one rigid body and the point is its **centre of mass** (for packed pieces, the pivot, which the Pack SOP puts at the centroid). Objects from **RBD Object** and similar nodes are one body each instead, with their results in the object's Position data.
 
 Example scenes: run `make_examples.bat` (Linux: `hython examples/make_examples.py`) and open `examples/scenes`.
 
@@ -87,13 +87,13 @@ Example scenes: run `make_examples.bat` (Linux: `hython examples/make_examples.p
 
 ## Troubleshooting
 
-**"Box3D: world limit reached".** Each rebuild (for example simulating on from a frame that wasn't the last one stepped) makes a new world, and old ones stay alive while cached frames use them. Reset the simulation or clear the DOP cache, or build with `-DBOX3DDOP_MAX_WORLDS=<n>`.
+**"world limit reached".** Simulating on from an earlier frame keeps extra copies of the simulation alive for the cached frames. Reset the simulation or clear the DOP cache, or build with `-DBOX3DDOP_MAX_WORLDS=<n>`.
 
 **Debug logging:** configure with `-DBOX3DDOP_DEBUG=ON` to print to Houdini's console.
 
 ## For developers
 
-See [CLAUDE.md](CLAUDE.md).
+See [CLAUDE.md](CLAUDE.md). Before committing, format the code with `cmake --build build --target format`. CI checks it with `--target format-check`.
 
 ## License
 

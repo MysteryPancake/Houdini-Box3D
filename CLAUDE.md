@@ -43,6 +43,8 @@ README rules (hard limits, not suggestions):
 - Never add more than one or two sentences, or one table row, per change. Do not grow a section to explain a feature.
 - No implementation details: no function, class or HDK names, locks, fingerprints, step ordering, clearing or caching
   behaviour. If a sentence says how the code works, it goes in this file.
+- No semicolons: write separate sentences. No trailing asides with details a user does not need (which node sets a
+  value, how it is stored, what else happens behind the scenes). Keep what they act on, cut the rest.
 - Do not rewrite or expand existing README text while making an unrelated change. Trim, don't pad.
 - Before finishing a task, re-read any README edit and cut it down.
 
@@ -164,8 +166,8 @@ Layering (keep it):
   `Box3DSolverInternal.h` (default arguments there, not on the definitions). Small Houdini helpers used by several
   files go in `Box3DHoudiniUtil.h`, Houdini-free math (`kDegToRad`, `quatsDiffer`, `xformPoint`) in `Box3DMath.h`, shape math and hashing in
   `Box3DShapes.h`.
-* Node messages go through `SIM_SolverBox3D::message` / `warnCount` ("Box3D: " prefix, first object; counts only when
-  non-zero). Whole objects count separately from points (`failedObjects`, `objectFallbacks`).
+* Node messages go through `SIM_SolverBox3D::message` / `warnCount` (no prefix: they show on the solver's node; first
+  object; counts only when non-zero). Whole objects count separately from points (`failedObjects`, `objectFallbacks`).
 * Anything kept in the world must be reconstructible from point attributes, or a scrub / reload loses it.
 * Hull keys must always imply identical body-local points (`createHullWithKey` trusts them).
 * Sanitize every new input path: Box3D asserts on non-unit quaternions and negative material values.

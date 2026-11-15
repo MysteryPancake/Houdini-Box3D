@@ -73,7 +73,7 @@ def test_messages_clear():
                               network_edit=animate_name,
                               net_parms={("reloadfromsops", "overwrite", "overwritewithsop"): 1})
     solver = dop.node("box3d_solver")
-    track = step(dop, 20, lambda sim, f: [m for m in node_messages(solver) if "Box3D" in m])
+    track = step(dop, 20, lambda sim, f: node_messages(solver))
     early = [m for f in range(2, 9) for m in track[f]]
     late = [m for f in range(15, 21) for m in track[f]]
     ok = bool(early) and not late
@@ -454,7 +454,7 @@ def test_other_solver():
     msgs = []
 
     def sample(sim, f):
-        msgs.extend(m for m in node_messages(b_solver) if "Box3D" in m)
+        msgs.extend(node_messages(b_solver))
         return packed_positions(sim, "bullet_obj"), packed_positions(sim, "box3d_obj")
 
     track = step(dop, 72, sample)
@@ -670,7 +670,7 @@ def _pair_scene(tag, kind, pieces, rename, frames, keep_velocity=False):
 
     def sample(sim, f):
         if f == frames:
-            msgs.extend(m for m in node_messages(solver) if "Box3D" in m)
+            msgs.extend(node_messages(solver))
         o = sim.findObject("pieces")
         geo = o.geometry() if o is not None else None
         if geo is None:

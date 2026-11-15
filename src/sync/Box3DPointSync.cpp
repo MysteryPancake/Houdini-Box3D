@@ -1391,7 +1391,9 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
   collectSlots(gdp, snaps);
   readSlots(ctx, objectId, snaps);
   // Unpacked primitives: their points get no body. With no packed point at all
-  // the object is an error, as with RBD Bullet Solver; with some, a warning.
+  // the object is not simulated (a warning, as with RBD Bullet Solver): nothing
+  // is stamped, so bodies it had are removed, and canSkip stays false, so it is
+  // checked (and reported) again every step. With some, those points only.
   {
     int unpacked = 0;
     bool anyPacked = false;
@@ -1399,10 +1401,13 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
       unpacked += s.unpackedPrim ? 1 : 0;
       anyPacked = anyPacked || s.packed;
     }
-    if (unpacked > 0 && !anyPacked)
+    if (unpacked > 0 && !anyPacked) {
       c.unsupportedObjects.emplace_back(obj.getName().c_str());
-    else
-      c.unpackedPrimPoints += unpacked;
+      os.entryCount = 0;
+      names.finish(st, os); // no names: joints stop resolving to its bodies
+      return;
+    }
+    c.unpackedPrimPoints += unpacked;
   }
   std::vector<ShapePlan> plans;
   if (!planSlots(ctx, snaps, plans, progress))

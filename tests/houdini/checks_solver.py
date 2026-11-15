@@ -195,8 +195,8 @@ def test_ui():
 
 
 def test_messages():
-    """A problem (a convex shape asked for on plain points) shows as a "Box3D: ..." message on the
-    Box3D Solver node itself. Asked for with bullet_georep: a hull from the Default Shape (the
+    """A problem (a convex shape asked for on plain points) shows as a message on the Box3D Solver
+    node itself. Asked for with bullet_georep: a hull from the Default Shape (the
     default) quietly gives plain points their pscale box."""
     dop = new_dopnet("messages")
     pts = plain_points("messages_points", [{"P": (0, 3, 0), "pscale": 1.0, "bullet_georep": "convexhull"}])
@@ -205,8 +205,8 @@ def test_messages():
     finish(dop, solver)
     seen = []
     step(dop, 4, lambda sim, f: seen.extend(node_messages(solver)))
-    ours = [m for m in seen if "Box3D" in m]
-    if any("packed primitive" in m for m in ours):
+    ours = [m for m in seen if "packed primitive" in m]
+    if ours:
         return [Result("messages", Result.PASS, f"on the solver node: {ours[0]!r}")]
     return [Result("messages", Result.FAIL, f"no 'needs a packed primitive' message on the solver node; got {seen}")]
 

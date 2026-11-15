@@ -100,7 +100,7 @@ and bar are left alone. SIM_Engine discards and re-cooks an interrupted step its
 start of the solve, before each object, every `kProgressEvery` points in `syncObject` pass 2 (serial, between
 points, so no half-built body), and once before the step. A cancel latches. Cancelled after the sync began:
 `st->stamped = false` (the half-synced world can never be continued; the next solve that would continue it rebuilds),
-a `UT_ERROR_MESSAGE` "Box3D: step cancelled", and `SIM_SOLVER_FAIL`. `b3World_Step` itself is not interruptible, and
+a `UT_ERROR_MESSAGE` "step cancelled", and `SIM_SOLVER_FAIL`. `b3World_Step` itself is not interruptible, and
 once it has run the step always finishes (write-back etc. are quick), so a cached step is always whole.
 `StepProgress` is at global scope in `Box3DSolverInternal.h` (the solver header forward-declares it).
 
