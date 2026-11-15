@@ -514,7 +514,7 @@ def test_unpacked_turning_collider():
     4 x 1 x 1 polygon bar along x, turned 90 degrees about y (a Transform SOP on the polygons) from
     frame 3, and a box dropped at z = 1.5, which only the turned bar is under. Each solver packs the
     unpacked bar again every frame, so the turn is inside the packed geometry, not on its transform.
-    Box3D with Animated Collision, Bullet with Collision Type Animated (its default) and Deforming:
+    Box3D with Collision Type Animated and Deforming, Bullet with Collision Type Animated (its default) and Deforming:
     the box lands on the bar (y about 1.5) only where the solver follows the turn."""
     geo = new_geo("unpacked_turn_bar")
     bar = create(geo, "box", "bar")
@@ -534,6 +534,9 @@ def test_unpacked_turning_collider():
     got = {}
     sop = solver_sop("unpacked_turn_box3d", geometry=pieces, collision=turn.path())
     got["Box3D, Collision Type Animated"] = height(sop)
+    deforming = solver_sop("unpacked_turn_box3d_deforming", geometry=pieces, collision=turn.path())
+    set_parm(deforming, ["collisiontype"], 2)  # Deforming
+    got["Box3D, Collision Type Deforming"] = height(deforming)
     for label, kind in (("Bullet, Collision Type Animated", 1), ("Bullet, Collision Type Deforming", 2)):
         g = new_geo(f"unpacked_turn_bullet_{kind}")
         try:

@@ -134,7 +134,7 @@ RELATIONSHIPS = [
 # Cache Simulation in the Solver tab after the solver's own settings).
 DOPNET_PARMS = ["Start Frame", "Cache Simulation"]
 
-# Solver folders that are not promoted (guides: TODO in docs/agents/status.md).
+# Solver folders that are not promoted (the guide's toggle and colour are on the Visualization tab).
 SKIP_SOLVER_FOLDERS = {"guide options"}
 
 warn = b3d_hda.warner("make_solver_sop")

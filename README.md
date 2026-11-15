@@ -76,8 +76,6 @@ Example scenes: run `make_examples.bat` (Linux: `hython examples/make_examples.p
 | Box3D Data | Per-object settings, for objects made by other nodes |
 | Box3D Weld / Spherical / Revolute / Prismatic / Distance / Motor / Parallel / Wheel / Filter Constraint Relationship | Joint types, used with a Constraint Network |
 
-More on packed objects and constraint types: [docs/nodes.md](docs/nodes.md).
-
 ## Reference
 
 - [Packed objects and constraints](docs/nodes.md): RBD Packed Object, unpacked geometry, other constraint types

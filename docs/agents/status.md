@@ -3,8 +3,8 @@
 The one list of what is unverified or still to do. Index and rules: [CLAUDE.md](../../CLAUDE.md). Keep each
 item to a line or two; remove it once settled (the test that settles it is the record, not this file).
 
-Last full run (Houdini 22.0.502, MSVC): every check passes, 178 PASS and 21 INFO (before the Solver SOP layout
-change: `solver_sop_layout` added, the two Detach Faces tests removed). What no script checks: Escape mid-step, the viewport, motion blur, how greyed-out parameters look.
+Last full run (Houdini 22.0.502, MSVC): every check passes except `baseline`, which was recorded on 22.0.479
+(`run_tests.py baseline --update-baseline` records it again). What no script checks: Escape mid-step, the viewport, motion blur, how greyed-out parameters look.
 
 ## Unverified
 
@@ -83,16 +83,14 @@ change: `solver_sop_layout` added, the two Detach Faces tests removed). What no 
   collision filtering, `enabled`, initial `v` / `w`, `deforming`, hand-set `bullet_prim*` shapes), a Pin / animated
   shortcut like RBD Configure's, viewport group selection.
 * Box3D Solver SOP:
-  * Collision: RBD Bullet Solver's Collision Type Deforming (`deforming` on the colliders): without it an unpacked
-    collider that turns or changes shape keeps its first frame's shape, as with Bullet's Animated
-    (`unpacked_turning_collider`); a Static Object option (height fields, one mesh), its own shape, friction and
+  * Collision: Deforming following an unpacked collider that scales (a turn is checked by
+    `unpacked_turning_collider`); a Static Object option (height fields, one mesh), its own shape, friction and
     bounce on the node.
   * Constraint relationship parameters on the node (Glue strength, Weld break force ...), or setting the inner ones to
     1 so primitive attributes are absolute.
   * Output tab: Import Constraints / Proxy toggles, `v` / `w` on Geometry; Transform Pieces options.
   * World Scale on joint node settings and primitive attributes that are lengths, and on FORCES.
-  * Guide Options (Show Collision Shapes), initial velocity controls,
-    Set Always for animated solver parameters, a Tab submenu, a help card.
+  * Initial velocity controls, Set Always for animated solver parameters, a Tab submenu, a help card.
 
 ## HDK calls checked
 
