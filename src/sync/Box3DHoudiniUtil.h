@@ -176,6 +176,12 @@ inline bool box3dDataOption(const SIM_Data &data, const char *name,
 }
 
 inline bool box3dDataOption(const SIM_Data &data, const char *name,
+                            UT_Matrix3 &out) {
+  const SIM_Options *opts = box3dDataOptions(data);
+  return opts && opts->importOption(name, out);
+}
+
+inline bool box3dDataOption(const SIM_Data &data, const char *name,
                             UT_StringHolder &out) {
   if (const SIM_Options *opts = box3dDataOptions(data))
     return opts->importOption(name, out);

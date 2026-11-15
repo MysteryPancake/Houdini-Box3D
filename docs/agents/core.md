@@ -18,8 +18,11 @@ can compare two and call only the setters for what differs.
 **Mass.** A shape add recomputes the mass unless `updateMass` is false. The solver always passes false and then calls
 `applyMassByHandle` once (required before the next step): it sets every shape's density, applies the mass from the
 shapes and, for dynamic bodies, can move the centre of mass to the body origin (parallel axis theorem) and scale the
-inertia (`b3Body_SetMassData`; skipped when already centred with scale 1). `setTypeByHandle` recomputes from the shapes,
-so the caller re-applies after a type change.
+inertia (`b3Body_SetMassData`; skipped when already centred with scale 1). A custom inertia (`BodyProps::inverseInertia`,
+the last argument) replaces the computed inertia of a dynamic body, about the centre of mass at the origin, before the
+scale; `invertSymmetric3` (`Box3DMath.h`) refuses a tensor that is not positive definite, and then the call returns
+false and the computed inertia stays. `getMassDataByHandle` can return the off-diagonal terms too. `setTypeByHandle`
+recomputes from the shapes, so the caller re-applies after a type change.
 
 **Changes to existing bodies.** `setMaterialByHandle` (every shape; Box3D re-mixes contact friction / restitution every
 step, so touching contacts follow), `setDampingByHandle`, `setGravityScaleByHandle`, `setSleepEnabledByHandle` (the

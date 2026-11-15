@@ -51,6 +51,33 @@ inline bool quatsDiffer(const float a[4], const float b[4], double eps = 1e-5) {
   return false;
 }
 
+// Inverse of a symmetric 3x3 matrix stored as xx, yy, zz, xy, xz, yz (the
+// layout of BodyProps::inverseInertia). False, `out` untouched, if the matrix
+// is not finite or not positive definite (an inertia tensor and its inverse
+// always are).
+inline bool invertSymmetric3(const float in[6], float out[6]) {
+  for (int i = 0; i < 6; ++i)
+    if (!std::isfinite(in[i]))
+      return false;
+  const double a = in[0], b = in[1], c = in[2];
+  const double d = in[3], e = in[4], f = in[5];
+  // Leading principal minors, all positive for a positive definite matrix.
+  const double m2 = a * b - d * d;
+  const double det = a * (b * c - f * f) - d * (d * c - f * e) +
+                     e * (d * f - b * e);
+  if (!(a > 0.0) || !(m2 > 0.0) || !(det > 0.0) || !std::isfinite(det))
+    return false;
+  const double inv[6] = {(b * c - f * f) / det, (a * c - e * e) / det,
+                         (a * b - d * d) / det, (e * f - d * c) / det,
+                         (d * f - b * e) / det, (d * e - a * f) / det};
+  for (int i = 0; i < 6; ++i)
+    if (!std::isfinite(inv[i]))
+      return false;
+  for (int i = 0; i < 6; ++i)
+    out[i] = static_cast<float>(inv[i]);
+  return true;
+}
+
 // A point through a row-vector 4x4 (Houdini layout: p' = [p 1] * M, translation
 // in row 3).
 inline void xformPoint(const double m[16], const double p[3], double out[3]) {

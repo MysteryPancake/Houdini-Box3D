@@ -11,10 +11,15 @@
 #include <cmath>
 #include <string>
 
+#include "Box3DMath.h"
 #include "Box3DShapes.h"
 #include "Box3DWorld.h"
 
 namespace b3dop {
+
+// RBD State's `computeinertialtensortype` value for a custom tensor, the menu
+// index of "Custom".
+constexpr int kRbdInertiaTypeCustom = 1;
 
 // Option names on the three data (Houdini 22.0 probe). They match the point
 // attributes.
@@ -28,6 +33,15 @@ struct RbdObjectSettings {
   float mass = 1.0f; // mass
   bool hasInertia = false;
   float inertiaStiffness = 1.0f; // inertialtensorstiffness
+  // The inertial tensor type is "custom" (`computeinertialtensortype`) and
+  // `itensorlocalinv` was read: the inverse inertia, object space, as xx yy zz
+  // xy xz yz (BodyProps::inverseInertia).
+  bool hasCustomInertia = false;
+  float inverseInertia[6] = {0, 0, 0, 0, 0, 0};
+
+  // SolverParms (`ActiveValue`, Create Active Object)
+  bool hasActive = false;
+  bool active = true;
 
   // PhysicalParms (SIM_PhysicalParms)
   bool hasFriction = false;
@@ -57,6 +71,9 @@ struct RbdObjectSettings {
 struct WholeObjectSetup {
   BodySettings
       node; // Box3D Data's defaults with the RBD Object's values on top
+  // A usable custom inertia (BodyProps::customInertia / inverseInertia)
+  bool customInertia = false;
+  float inverseInertia[6] = {0, 0, 0, 0, 0, 0};
   bool explicitShape =
       false; // AutoFit off on a box / sphere / capsule: `spec`, not fitted
   ShapeSpec spec;
@@ -78,6 +95,19 @@ inline WholeObjectSetup rbdObjectSetup(const RbdObjectSettings &r) {
     p.mass = r.mass;
   if (r.hasInertia && isPositive(r.inertiaStiffness))
     p.inertiaScale = r.inertiaStiffness;
+
+  // Create Active Object off: a static body, as `active = 0` on a point.
+  if (r.hasActive && !r.active)
+    n.type = BodySettings::Type::Static;
+
+  // A tensor that is not positive definite (a zero entry on the diagonal
+  // means infinite inertia) keeps the computed inertia.
+  float unused[6];
+  if (r.hasCustomInertia && invertSymmetric3(r.inverseInertia, unused)) {
+    out.customInertia = true;
+    for (int i = 0; i < 6; ++i)
+      out.inverseInertia[i] = r.inverseInertia[i];
+  }
 
   if (r.hasFriction && isNonNeg(r.friction))
     p.friction = r.friction;

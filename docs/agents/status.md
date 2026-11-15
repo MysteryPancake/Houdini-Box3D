@@ -9,8 +9,6 @@ Last full run (Houdini 22.0.502, MSVC): every check passes except `baseline`, wh
 ## Unverified
 
 **Not yet run in Houdini**
-* `examples/make_examples.py car_park`: built against a stand-in `hou`, its bodies and joints replayed in the core
-  only. The wheel, motor, parallel and filter node parameter names and the network's `orient` are untested in Houdini.
 * Box3D Packed Object's Display Geometry (`visualize_hires`) and Collider Label (`add_display`): checked against a
   stand-in `hou` only. The build's `check` probes both.
 * Box3D Configure's extra settings and Bounds / Use Bounds, and the Solver SOP's Output tab (Point Velocities,
@@ -56,6 +54,11 @@ Last full run (Houdini 22.0.502, MSVC): every check passes except `baseline`, wh
 **Whole objects**
 * RBD Point Object (`other_rbd_objects`, `point_object_bullet`): needs its Geometry Path menu (`usegeo`) set to Override, else it makes no objects. With that, Bullet and Box3D match: 4 whole objects, both fall to y -2.424 (checked).
 * An RBD Object without Box3D Data colliding as its convex hull; `bullet_primT` / `bullet_primS` meaning there.
+* RBD Object's Create Active Object (`SolverParms/ActiveValue`) and RBD State's custom inertia (tests
+  `rbd_object_active`, `rbd_object_custom_inertia`), written without Houdini: the option names; `kRbdInertiaTypeCustom`
+  (`Box3DRbdObject.h`), a guess at the menu index of Custom for `computeinertialtensortype` (the second test prints
+  the menu); `itensorlocalinv` being the inverse tensor about the pivot in object space, read as a matrix or else a
+  vector (`SIM_Options::importOption(UT_Matrix3 &)` not checked against the HDK).
 
 **Box3D Solver SOP** (`tools/make_solver_sop.py`, `tests/houdini/checks_sop.py`)
 * Collision Type Animated / Deforming: whether the Packed Object's Overwrite Attributes from SOP (SOP Geometry's Set Always) re-imports every step (the build prints which menus it drives),
@@ -85,7 +88,10 @@ Last full run (Houdini 22.0.502, MSVC): every check passes except `baseline`, wh
 * Constraint networks: point / vertex / agent anchors (`anchor_id`, `anchor_type`); `constraint_type` on our nodes.
 * SideFX constraint data not mapped: Glue half-life / propagation, Soft plasticity, Cone Twist's elliptical and wide
   cones, softness, motors and translation ranges, Hard's angular motors, Spring's Hz following mass changes.
-* RBD Object without Box3D Data: Create Active Object (`SolverParms/ActiveValue`), RBD State's custom inertia.
+* Inactive RBD Object (Create Active Object off) is a static body: animating its Position teleports it, where Bullet
+  drives it as a kinematic body that pushes what it touches.
+* An RBD State custom inertial tensor that is unusable (not positive definite, e.g. a zero on the diagonal) keeps the
+  computed inertia without a warning.
 * Force DOPs: sphere / area variants, per-substep evaluation, parallel evaluation (needs thread-safe forces).
 * Sticky collisions; contact / sensor events beyond Impacts.
 * Box3D Solver SOP:

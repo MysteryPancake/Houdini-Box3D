@@ -1,7 +1,8 @@
 """Constraint and whole-object checks: breaking and the broken group, attributes multiplying the
 node's values, next_constraint_name, feedback attributes, centroid anchors, Hard / Spring compared
 with Bullet; RBD Object first-frame drift, initial velocity and spin, Use Object Transform, other
-RBD object types, a Box3D Data change mid-simulation, a Static Object's object transform."""
+RBD object types, an RBD Object's Create Active Object and custom inertia, a Box3D Data change
+mid-simulation, a Static Object's object transform."""
 
 import math
 
@@ -19,6 +20,7 @@ from b3dtest import (
     display,
     find_network_geometry,
     finish,
+    ground_object,
     merge,
     new_dopnet,
     new_geo,
@@ -31,6 +33,7 @@ from b3dtest import (
     set_expression,
     set_menu_by_label,
     set_parm,
+    set_parm_by_label,
     SetupError,
     single_object_geo,
     solver_for,
@@ -413,6 +416,58 @@ def test_other_rbd_objects():
     return results
 
 
+def test_rbd_object_active():
+    """An RBD Object with Create Active Object off (SolverParms ActiveValue) is a static body: it
+    stays where it is, while the same object with it on falls. No Box3D Data on either."""
+    results = []
+    heights = {}
+    for label, active in (("active", 1), ("inactive", 0)):
+        dop = new_dopnet(f"rbd_{label}")
+        obj = rbd_object(dop, "box", box_sop(f"rbd_{label}_box", (0, 3, 0)))
+        set_parm_by_label(obj, "active object", active)
+        finish(dop, box3d_solver(dop, obj))
+        track = step(dop, 24, lambda sim, f: centroid(whole_object_points(sim, "box"))[1])
+        heights[label] = track[24]
+    ok = close(heights["inactive"], 3.0, 0.01) and heights["active"] < 2.5
+    results.append(Result("rbd_object_active", Result.PASS if ok else Result.FAIL,
+                          f"after 1 s the box is at y {heights['active']:.3f} with Create Active Object on "
+                          f"(falls) and {heights['inactive']:.3f} off (expected 3.0)"))
+    return results
+
+
+def test_rbd_object_custom_inertia():
+    """An RBD Object spinning about its vertical axis on the ground (90 deg/s): with RBD State's
+    custom inertial tensor set to a huge inertia (itensorlocalinv, the inverse, 1e-5) it keeps
+    turning, while with the computed inertia (1000 kg cube: 167 kg m^2) friction stops it within
+    a fraction of a second. Reports the menu items of computeinertialtensortype: the solver
+    takes kRbdInertiaTypeCustom (Box3DRbdObject.h) as the index of Custom."""
+    results = []
+    turned = {}
+    for label, custom in (("computed", False), ("custom", True)):
+        dop = new_dopnet(f"rbd_inertia_{label}")
+        obj = rbd_object(dop, "box", box_sop(f"rbd_inertia_{label}_box", (0, 0.5, 0)), angvel=(0, 90, 0))
+        if custom:
+            menu = obj.parm("computeinertialtensortype")
+            if menu is not None:
+                results.append(Result("rbd_object_custom_inertia", Result.INFO,
+                                      f"computeinertialtensortype items {list(menu.menuItems())}, "
+                                      f"labels {list(menu.menuLabels())}"))
+            set_menu_by_label(obj, ["computeinertialtensortype"], "custom")
+            set_parm(obj, ["itensorlocalinv"], (1e-5, 0, 0, 0, 1e-5, 0, 0, 0, 1e-5))
+        finish(dop, box3d_solver(dop, merge(dop, [ground_object(dop), obj])))
+
+        def sample(sim, f):
+            m = sim.findObject("box").transform()
+            return math.degrees(math.atan2(-m.at(0, 2), m.at(0, 0)))
+
+        turned[label] = step(dop, 25, sample)[25]
+    ok = turned["custom"] > 60.0 and abs(turned["computed"]) < 20.0
+    results.append(Result("rbd_object_custom_inertia", Result.PASS if ok else Result.FAIL,
+                          f"after 1 s the box turned {turned['computed']:.1f} degrees with the computed inertia "
+                          f"(expected under 20) and {turned['custom']:.1f} with the custom one (expected about 90)"))
+    return results
+
+
 def test_data_change_midsim():
     """Changing Box3D Data's Friction mid-simulation (its parmop_friction menu at Set Always)
     updates an existing body: an RBD Object box sliding with friction 0 stops once friction
@@ -471,6 +526,8 @@ TESTS = {
     "rbd_initial_motion": test_rbd_initial_motion,
     "rbd_object_transform": test_rbd_object_transform,
     "other_rbd_objects": test_other_rbd_objects,
+    "rbd_object_active": test_rbd_object_active,
+    "rbd_object_custom_inertia": test_rbd_object_custom_inertia,
     "data_change_midsim": test_data_change_midsim,
     "static_object_transform": test_static_object_transform,
 }

@@ -28,9 +28,15 @@ its state in the object's `Position` data instead of point attributes.
   `b3dop::rbdObjectSetup` over Box3D Data's defaults; option names from a Houdini 22.0 probe, read by name with
   `box3dDataOption` since none of the classes is in the HDK):
   * RBD State (`Position`, `RBD_State`): `computemass`, `density`, `mass` (the parameter, not a computed mass: Box3D
-    computes density x volume from its shapes as for points), `inertialtensorstiffness` (the inertia scale). Its
-    custom inertia tensor (`computeinertialtensortype`, `itensorlocalinv`) and glue options are not read. `p` /
+    computes density x volume from its shapes as for points), `inertialtensorstiffness` (the inertia scale). With
+    `computeinertialtensortype` at `kRbdInertiaTypeCustom` (or the token "custom") `itensorlocalinv`, the inverse
+    tensor about the pivot in object space (a matrix, else a vector as its diagonal), goes to
+    `BodyProps::inverseInertia`: it replaces the computed inertia (the mass stays computed, the inertia scale still
+    applies). A tensor `invertSymmetric3` refuses keeps the computed inertia. Glue options are not read. `p` /
     `computecom` is the pivot, already read through `getPivot`.
+  * `SolverParms` (`ActiveValue`, Create Active Object): off makes the body static (`rbdObjectSetup`), as `active = 0`
+    does on a point. Read every step, so toggling retypes the body. There is no kinematic whole object, so edited
+    Position data teleports it (see Edits).
   * `PhysicalParms` (`SIM_PhysicalParms`): `friction`, `bounce`. `dynamicfriction`, `bounceforward`, `temperature`
     have no Box3D equivalent.
   * `Geometry/BulletData` (`SIM_BulletData`): `bullet_georep` (unknown names such as cylinder / plane: box),
@@ -41,8 +47,8 @@ its state in the object's `Position` data instead of point attributes.
     not read either, so Impacts stay opt-in through Box3D Data.
   Values Box3D cannot use (non-positive mass / density / inertia, negative friction / bounce, non-finite) keep Box3D
   Data's defaults. Houdini's RBD Object defaults match Box3D Data's (`nodeBodyDefaults`: density 1000 with Compute
-  Mass, so a 1 m box is 1000 kg; friction 1; a convex hull) except bounce (0.5 against 0). Body type is the node's (no
-  `active` / `animated`).
+  Mass, so a 1 m box is 1000 kg; friction 1; a convex hull) except bounce (0.5 against 0). Body type is the node's, or static
+  with Create Active Object off (no `animated`).
 * Mirror: one entry, key `makeBodyKey(objectId, kWholeObjectId = -1)`, `wholeObject = true`, `pivot`, no point
   (`pointOff` -1, `pointIndex` -1 in Impacts). The object scans every step (one body: no fingerprint).
   `Box3DObjectSync::wholeObject` makes aging and point `force` / `torque` skip the object; Force DOPs still apply.

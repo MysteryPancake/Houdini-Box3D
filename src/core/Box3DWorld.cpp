@@ -1409,11 +1409,12 @@ void Box3DWorld::applyForceByHandle(BodyHandle h, const float force[3],
     b3Body_ApplyTorque(id, t, wake);
 }
 
-void Box3DWorld::applyMassByHandle(BodyHandle h, float density,
+bool Box3DWorld::applyMassByHandle(BodyHandle h, float density,
                                    bool comAtOrigin, float inertiaScale,
-                                   bool setShapeDensity) {
+                                   bool setShapeDensity,
+                                   const float *inverseInertia) {
   if (!h || !(density >= 0.0f) || !std::isfinite(density))
-    return;
+    return true;
   const b3BodyId id = b3LoadBodyId(h);
   const int n =
       setShapeDensity ? bodyShapes(id, tShapes) : b3Body_GetShapeCount(id);
@@ -1422,18 +1423,30 @@ void Box3DWorld::applyMassByHandle(BodyHandle h, float density,
       b3Shape_SetDensity(tShapes[static_cast<size_t>(i)], density, false);
   b3Body_ApplyMassFromShapes(id);
 
+  // A custom inertia is the inverse of the tensor given, about the centre of
+  // mass, which is the body origin.
+  float custom[6];
+  const bool haveCustom =
+      inverseInertia && invertSymmetric3(inverseInertia, custom);
+  const bool customOk = !inverseInertia || haveCustom;
+
   const bool scale = inertiaScale > 0.0f && std::isfinite(inertiaScale) &&
                      inertiaScale != 1.0f;
   if (b3Body_GetType(id) != b3_dynamicBody || n == 0 ||
-      (!comAtOrigin && !scale))
-    return;
+      (!comAtOrigin && !scale && !haveCustom))
+    return customOk;
   b3MassData md = b3Body_GetMassData(id);
   const bool moveCenter =
-      comAtOrigin &&
+      (comAtOrigin || haveCustom) &&
       (md.center.x != 0.0f || md.center.y != 0.0f || md.center.z != 0.0f);
-  if (!moveCenter && !scale)
-    return; // already centred
-  if (moveCenter) {
+  if (!moveCenter && !scale && !haveCustom)
+    return customOk; // already centred
+  if (haveCustom) {
+    md.inertia.cx = {custom[0], custom[3], custom[4]};
+    md.inertia.cy = {custom[3], custom[1], custom[5]};
+    md.inertia.cz = {custom[4], custom[5], custom[2]};
+    md.center = b3Vec3_zero;
+  } else if (moveCenter) {
     // Parallel axis: I_o = I_c + m (|d|^2 E - d d^T). b3Matrix3 is three
     // columns.
     const float d[3] = {md.center.x, md.center.y, md.center.z};
@@ -1455,10 +1468,12 @@ void Box3DWorld::applyMassByHandle(BodyHandle h, float density,
     md.inertia.cz = b3MulSV(inertiaScale, md.inertia.cz);
   }
   b3Body_SetMassData(id, md);
+  return customOk;
 }
 
 bool Box3DWorld::getMassDataByHandle(BodyHandle h, float &mass, float center[3],
-                                     float inertiaDiag[3]) const {
+                                     float inertiaDiag[3],
+                                     float *inertiaOff) const {
   if (!h)
     return false;
   const b3MassData md = b3Body_GetMassData(b3LoadBodyId(h));
@@ -1467,6 +1482,11 @@ bool Box3DWorld::getMassDataByHandle(BodyHandle h, float &mass, float center[3],
   inertiaDiag[0] = md.inertia.cx.x;
   inertiaDiag[1] = md.inertia.cy.y;
   inertiaDiag[2] = md.inertia.cz.z;
+  if (inertiaOff) {
+    inertiaOff[0] = md.inertia.cy.x; // xy
+    inertiaOff[1] = md.inertia.cz.x; // xz
+    inertiaOff[2] = md.inertia.cz.y; // yz
+  }
   return true;
 }
 

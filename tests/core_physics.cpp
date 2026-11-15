@@ -1404,6 +1404,7 @@ void testBodyPropsEquality() {
       [](BodyProps &p) { p.density += 1.0f; },
       [](BodyProps &p) { p.computeMass = !p.computeMass; },
       [](BodyProps &p) { p.inertiaScale += 1.0f; },
+      [](BodyProps &p) { p.customInertia = true; },
       [](BodyProps &p) { p.friction += 1.0f; },
       [](BodyProps &p) { p.restitution += 1.0f; },
       [](BodyProps &p) { p.rollingResistance += 1.0f; },
@@ -1442,9 +1443,21 @@ void testBodyPropsEquality() {
   CHECK(na == nb && !(na != nb));
   nb.friction = 0.6f;
   CHECK(na != nb);
-  // 25 independent edits: one per scalar, and the filter and lock members one
+  // the custom inertia tensor counts only while it is on
+  BodyProps ca = base, cb = base;
+  ca.customInertia = cb.customInertia = true;
+  ca.inverseInertia[0] = cb.inverseInertia[0] = 0.1f;
+  CHECK(ca == cb);
+  cb.inverseInertia[3] = 0.01f;
+  CHECK(ca != cb);
+  cb.inverseInertia[3] = nan;
+  ca.inverseInertia[3] = nan;
+  CHECK(ca == cb);
+  cb.customInertia = false;
+  CHECK(cb == base); // a tensor left behind while off is no difference
+  // 26 independent edits: one per scalar, and the filter and lock members one
   // by one
-  CHECK(edits.size() == 25);
+  CHECK(edits.size() == 26);
   std::printf("BodyProps comparison checks done\n");
 }
 

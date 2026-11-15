@@ -203,6 +203,13 @@ struct BodyProps {
       false; // `computemass`; solver only: mass = density * volume instead
   // `inertialtensorstiffness`; solver only: scales the inertia of the mass
   float inertiaScale = 1.0f;
+  // A custom inertia tensor (RBD State's `itensorlocalinv`, whole objects
+  // only): the INVERSE inertia about the body origin, in body space, symmetric
+  // as xx yy zz xy xz yz. Replaces the inertia computed from the shapes (the
+  // mass is still computed, and inertiaScale still scales it). An unusable
+  // tensor (see invertSymmetric3) leaves the computed inertia.
+  bool customInertia = false;
+  float inverseInertia[6] = {0, 0, 0, 0, 0, 0};
   float friction = 0.6f;
   float restitution = 0.0f; // `bounce`
   // `rollingresistance`: 0 .. 1, slows rolling (see b3SurfaceMaterial)
@@ -234,11 +241,26 @@ struct BodyProps {
       filter; // `collision_category` / `collision_mask` / `collision_group`
   MotionLocks locks; // `lock_linear` / `lock_angular`
 
+  // The custom inertia matches: both off, or both on with the same tensor.
+  bool sameInertia(const BodyProps &o) const {
+    if (customInertia != o.customInertia)
+      return false;
+    if (!customInertia)
+      return true;
+    for (int i = 0; i < 6; ++i)
+      if (inverseInertia[i] != o.inverseInertia[i] &&
+          (inverseInertia[i] == inverseInertia[i] ||
+           o.inverseInertia[i] == o.inverseInertia[i]))
+        return false;
+    return true;
+  }
+
   bool operator==(const BodyProps &o) const {
     auto same = [](float a, float b) { return a == b || (a != a && b != b); };
     return same(mass, o.mass) && same(density, o.density) &&
            computeMass == o.computeMass && same(inertiaScale, o.inertiaScale) &&
-           same(friction, o.friction) && same(restitution, o.restitution) &&
+           sameInertia(o) && same(friction, o.friction) &&
+           same(restitution, o.restitution) &&
            same(rollingResistance, o.rollingResistance) &&
            same(tangentVelocity[0], o.tangentVelocity[0]) &&
            same(tangentVelocity[1], o.tangentVelocity[1]) &&
@@ -427,10 +449,18 @@ public:
   // bodies, comAtOrigin moves the centre of mass to the body origin (parallel
   // axis theorem) and inertiaScale scales the inertia. setTypeByHandle
   // recomputes from the shapes, so re-apply after a type change.
-  void applyMassByHandle(BodyHandle h, float density, bool comAtOrigin,
-                         float inertiaScale, bool setShapeDensity = true);
+  // `inverseInertia` (null: none; xx yy zz xy xz yz) replaces the computed
+  // inertia of a dynamic body with the inverse of that tensor, about the
+  // centre of mass (which moves to the origin, so pass comAtOrigin), before
+  // inertiaScale. False if it was given but unusable (not positive definite,
+  // not finite) and the computed inertia stayed; true otherwise.
+  bool applyMassByHandle(BodyHandle h, float density, bool comAtOrigin,
+                         float inertiaScale, bool setShapeDensity = true,
+                         const float *inverseInertia = nullptr);
+  // inertiaOff (optional): the off-diagonal terms xy, xz, yz.
   bool getMassDataByHandle(BodyHandle h, float &mass, float center[3],
-                           float inertiaDiag[3]) const;
+                           float inertiaDiag[3],
+                           float *inertiaOff = nullptr) const;
 
   // Box3D's single sleep threshold on |v| + |w| * extent. Negative = Box3D's
   // default.
