@@ -7,8 +7,9 @@
 // and strings only) so Box3DState.h can include it.
 //
 // Each entry is X(member, "attribute", Tag): `member` is the PointAttrs handle,
-// Tag the GA_ROHandle suffix (F, I, V3, ID, S, Q). The README's attribute table
-// is prose; tools/check_docs.py checks that every name here is mentioned in it.
+// Tag the GA_ROHandle suffix (F, I, V3, ID, S, Q). The attribute table in
+// docs/attributes.md is prose; tools/check_docs.py checks that every name here
+// is mentioned in the user docs.
 #pragma once
 
 #include <cstddef>

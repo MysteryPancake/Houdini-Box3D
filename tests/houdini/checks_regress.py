@@ -15,27 +15,27 @@ import os
 import hou
 
 from b3dtest import (
-    Result,
     box3d_solver,
-    bullet_solver,
     close,
     constraint_lines,
     create,
-    find_network_geometry,
     display,
+    find_network_geometry,
     finish,
     merge,
     multisolver,
     new_dopnet,
-    node_messages,
     new_geo,
+    node_messages,
     packed_boxes,
     packed_object,
     packed_positions,
     packed_transform,
     parm_value,
     point_attributes,
+    Result,
     set_parm,
+    solver_for,
     sop_solver,
     step,
 )
@@ -268,7 +268,7 @@ def first_frame_drop(tag, solver_kind, solve_first):
     dop = new_dopnet(f"first_{tag}")
     obj = packed_object(dop, "pieces", path)
     set_parm(obj, ["solvefirstframe", "solveoncreationframe", "solve_first_frame"], int(solve_first))
-    finish(dop, box3d_solver(dop, obj) if solver_kind == "box3d" else bullet_solver(dop, obj))
+    finish(dop, solver_for(solver_kind, dop, obj))
     ys = step(dop, 2, lambda sim, f: packed_positions(sim, "pieces")[names[0]][1])
     return ys[1], ys[2]
 

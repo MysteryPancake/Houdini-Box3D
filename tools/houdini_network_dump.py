@@ -30,7 +30,6 @@ so your scene's HDA stays locked and untouched.
 
 import os
 import datetime
-import textwrap
 
 import hou
 

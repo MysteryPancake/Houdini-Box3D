@@ -58,12 +58,12 @@ def drop_one(name, sop_path, frames=72, extra=None):
 
 
 # ---------------------------------------------------------------------------
-# collision_category / collision_mask / collision_group (README's collision rules)
+# collision_category / collision_mask / collision_group (docs/attributes.md's collision rules)
 # ---------------------------------------------------------------------------
 
 
 def test_collision_masks():
-    """README's collision rules on packed pieces: a mask of -1 collides with everything, a mask
+    """The collision rules in docs/attributes.md on packed pieces: a mask of -1 collides with everything, a mask
     that misses the other's category passes through, a negative shared group never collides."""
     cases = {
         # name: (falling box attributes, expected to land)

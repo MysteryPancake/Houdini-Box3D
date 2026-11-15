@@ -10,8 +10,6 @@ import time
 import hou
 
 from b3dtest import (
-    Result,
-    SetupError,
     box3d_data,
     box3d_solver,
     bullet_solver,
@@ -29,9 +27,12 @@ from b3dtest import (
     packed_object,
     packed_positions,
     point_attributes,
+    Result,
     set_expression,
     set_menu_by_label,
     set_parm,
+    SetupError,
+    solver_for,
     sop_solver,
     step,
     vex_value,
@@ -658,7 +659,7 @@ def autofit_scene(name, solver_kind, georep, rotate_before_pack, size=AUTOFIT_SI
 
     dop = new_dopnet(name)
     obj = packed_object(dop, "pieces", m.path(), keep_velocity=True)
-    finish(dop, box3d_solver(dop, obj) if solver_kind == "box3d" else bullet_solver(dop, obj))
+    finish(dop, solver_for(solver_kind, dop, obj))
     return dop
 
 
@@ -744,7 +745,7 @@ def capsule_top(solver_kind, frames=48):
     path, names = packed_boxes(f"capsule_top_{solver_kind}_pieces", pieces)
     dop = new_dopnet(f"capsule_top_{solver_kind}")
     obj = packed_object(dop, "pieces", path, keep_velocity=True)
-    finish(dop, box3d_solver(dop, obj) if solver_kind == "box3d" else bullet_solver(dop, obj))
+    finish(dop, solver_for(solver_kind, dop, obj))
     ys = step(dop, frames, lambda sim, f: packed_positions(sim, "pieces")[names[1]][1])
     for f in range(3, frames + 1):
         fall, before = ys[f - 1] - ys[f], ys[f - 2] - ys[f - 1]

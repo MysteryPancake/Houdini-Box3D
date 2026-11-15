@@ -8,11 +8,8 @@ import math
 import hou
 
 from b3dtest import (
-    Result,
-    SetupError,
     box3d_data,
     box3d_solver,
-    bullet_solver,
     centroid,
     close,
     constraint_lines,
@@ -28,10 +25,13 @@ from b3dtest import (
     packed_positions,
     parm_value,
     rbd_object,
+    Result,
     set_expression,
     set_menu_by_label,
     set_parm,
+    SetupError,
     single_object_geo,
+    solver_for,
     step,
     whole_object_points,
 )
@@ -80,7 +80,7 @@ def hanging_pair(name, joints, line_attrs=None, conrels=None, gravity=None, solv
         net.setInput(1, nodes[0])
     elif nodes:
         net.setInput(1, merge(dop, nodes, "joints"))
-    last = box3d_solver(dop, net, gravity=gravity) if solver_kind == "box3d" else bullet_solver(dop, net)
+    last = solver_for(solver_kind, dop, net, gravity=gravity)
     finish(dop, last)
     return dop, names
 

@@ -5,10 +5,7 @@ joint-node crash. Run through run_tests.py."""
 import hou
 
 from b3dtest import (
-    Result,
-    SetupError,
     box3d_solver,
-    bullet_solver,
     centroid,
     close,
     constraint_lines,
@@ -24,8 +21,11 @@ from b3dtest import (
     parm_value,
     plain_points,
     point_attributes,
+    Result,
     set_parm,
+    SetupError,
     single_object_geo,
+    solver_for,
     step,
     velocity,
     whole_object_points,
@@ -163,7 +163,7 @@ def welded_pair(name, conrel_type="box3d_weldconrel", solver_kind="box3d"):
     set_parm(net, ["soppath", "constraintsoppath", "geosoppath"], network_path)
     if conrel is not None:
         net.setInput(1, conrel)
-    solver = box3d_solver(dop, net) if solver_kind == "box3d" else bullet_solver(dop, net)
+    solver = solver_for(solver_kind, dop, net)
     finish(dop, solver)
     messages = []
 
@@ -327,7 +327,7 @@ def rest_height_of_point(solver_kind):
     pts = plain_points(name + "_points", [{"P": (0, 3, 0), "pscale": 1.0}])
     balls = packed_object(dop, "balls", pts)
     objects = merge(dop, [ground_object(dop, name + "_ground"), balls])
-    last = box3d_solver(dop, objects) if solver_kind == "box3d" else bullet_solver(dop, objects)
+    last = solver_for(solver_kind, dop, objects)
     finish(dop, last)
     size_attrs = {}
 

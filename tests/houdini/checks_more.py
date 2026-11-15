@@ -10,8 +10,6 @@ import tempfile
 import hou
 
 from b3dtest import (
-    Result,
-    SetupError,
     append_sop,
     box3d_data,
     box3d_solver,
@@ -31,9 +29,13 @@ from b3dtest import (
     packed_positions,
     plain_points,
     point_attributes,
+    Result,
     set_expression,
     set_menu_by_label,
     set_parm,
+    set_parm_by_label,
+    SetupError,
+    solver_for,
     sop_solver,
     sop_solver_contents,
     step,
@@ -531,14 +533,6 @@ def test_sidefx_cone_twist():
 # ---------------------------------------------------------------------------
 
 
-def _set_by_label(node, label, value):
-    """Sets the parameter whose label contains `label` (internal names are not documented)."""
-    names = [p.name() for p in node.parms() if label in p.description().lower()]
-    if not names:
-        raise SetupError(f"{node.path()}: no parameter labelled like '{label}'")
-    set_parm(node, names, value)
-
-
 def _aging_pop_compare(tag, reap, frame_end):
     """A piece with life 0.5 in Box3D against a particle with life 0.5 in the POP Solver, with reaping
     and Reap At Frame End set to reap / frame_end on both. Returns the two per-frame tracks."""
@@ -566,8 +560,8 @@ def _aging_pop_compare(tag, reap, frame_end):
     pobj = create(pdop, "popobject", "particles")
     psolver = create(pdop, "popsolver", "pop_solver")
     psolver.setInput(0, pobj)
-    _set_by_label(psolver, "reap particles", int(reap))
-    _set_by_label(psolver, "reap at frame end", int(frame_end))
+    set_parm_by_label(psolver, "reap particles", int(reap))
+    set_parm_by_label(psolver, "reap at frame end", int(frame_end))
     source = create(pdop, "popsource", "source")
     set_menu_by_label(source, ["emittype"], "All Points")
     try:
@@ -667,7 +661,7 @@ def _pair_scene(tag, kind, pieces, rename, frames, keep_velocity=False):
     display(wr)
     dop = new_dopnet(f"pair_{tag}_{kind}")
     obj = packed_object(dop, "pieces", wr.path(), keep_velocity=keep_velocity)
-    solver = box3d_solver(dop, obj) if kind == "box3d" else bullet_solver(dop, obj)
+    solver = solver_for(kind, dop, obj)
     finish(dop, solver)
     msgs = []
 

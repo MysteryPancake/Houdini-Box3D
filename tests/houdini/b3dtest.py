@@ -31,9 +31,37 @@ def create(parent, type_name, name=None):
         raise SetupError(f"cannot create a '{type_name}' node in {parent.path()}: {e}")
 
 
+# Every parameter set_parm has set in this process, as (node path, parameter name): checked at the end
+# of the test by disabled_parm_notes().
+_SET_PARMS = []
+
+
+def _record(node, name):
+    _SET_PARMS.append((node.path(), name))
+    return name
+
+
+def disabled_parm_notes():
+    """Messages for parameters set_parm set that are still disabled once the test is built.
+    Houdini ignores a disabled parameter (e.g. RBD Point Object's Geometry Path while its Use /
+    Override menu is on Use Point Value), so setting it does nothing."""
+    notes = []
+    for path, name in dict.fromkeys(_SET_PARMS):
+        parm = hou.parm(f"{path}/{name}")
+        if parm is None:
+            parm = (hou.parmTuple(f"{path}/{name}") or [None])[0]
+        try:
+            if parm is not None and parm.isDisabled():
+                notes.append(f"{path}/{name}")
+        except hou.Error:
+            pass
+    return notes
+
+
 def set_parm(node, names, value):
     """Sets the first of `names` that exists. A tuple value sets a parameter tuple. Raises
-    SetupError listing the node's parameters if none exists, so a wrong guess is easy to fix."""
+    SetupError listing the node's parameters if none exists, so a wrong guess is easy to fix.
+    A parameter that is disabled when the test finishes is reported (disabled_parm_notes)."""
     if isinstance(names, str):
         names = [names]
     for n in names:
@@ -42,17 +70,17 @@ def set_parm(node, names, value):
             if pt is not None and len(pt) == len(value):
                 pt.deleteAllKeyframes()
                 pt.set(value)
-                return n
+                return _record(node, n)
         else:
             p = node.parm(n)
             if p is not None:
                 p.deleteAllKeyframes()  # a default expression (e.g. $FSTART) would otherwise win
                 p.set(value)
-                return n
+                return _record(node, n)
             pt = node.parmTuple(n)
             if pt is not None and len(pt) == 1:
                 pt.set((value,))
-                return n
+                return _record(node, n)
     available = ", ".join(sorted({pt.name() for pt in node.parmTuples()}))
     raise SetupError(
         f"{node.path()} ({node.type().name()}): no parameter named {' / '.join(names)}. "
@@ -78,6 +106,14 @@ def set_menu_by_label(node, names, label_part):
                 return n
         raise SetupError(f"{node.path()}: menu '{n}' has no item like '{label_part}'; items: {labels}")
     set_parm(node, names, 0)  # raises with the parameter list
+
+
+def set_parm_by_label(node, label, value):
+    """Sets the parameter whose label contains `label` (lower case; internal names are not documented)."""
+    names = [p.name() for p in node.parms() if label in p.description().lower()]
+    if not names:
+        raise SetupError(f"{node.path()}: no parameter labelled like '{label}'")
+    set_parm(node, names, value)
 
 
 def set_expression(node, names, expr):
@@ -328,6 +364,12 @@ def bullet_solver(dop, upstream):
     grav = create(dop, "gravity", "gravity")
     grav.setInput(0, solver)
     return grav
+
+
+def solver_for(kind, dop, upstream, **box3d_parms):
+    """The Box3D Solver (kind "box3d"; box3d_parms: box3d_solver's, e.g. gravity=) or RBD Bullet
+    Solver (any other kind) wired to `upstream`, for tests that run both."""
+    return box3d_solver(dop, upstream, **box3d_parms) if kind == "box3d" else bullet_solver(dop, upstream)
 
 
 def multisolver(dop, upstream, solvers, name="multisolver"):

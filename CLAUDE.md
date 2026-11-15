@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 Technical notes for AI agents (and humans) working on this codebase: how the code works and why.
-Build and usage instructions for users are in `README.md`.
+Build and usage instructions for users are in `README.md`; the user reference (attributes, shapes, joints) is in `docs/*.md`.
 
 ## What this is
 
@@ -34,6 +34,8 @@ and what behaves differently from Houdini's own solvers. Keep it short. Leave ou
 not notice: how the solver does something, Box3D internals and terms (density, restitution, move events, hull caches),
 performance mechanics. Those belong in `docs/agents/`. When a change adds a feature, add one line or table row to
 the README if users need it, and put the explanation in the matching `docs/agents/` file.
+The README holds the install, build and quick start, and links to the user reference in `docs/` (`attributes.md`,
+`shapes.md`, `static-objects.md`, `joints.md`, `nodes.md`, `notes.md`); the README rules below apply to all of them.
 
 README rules (hard limits, not suggestions):
 - The top part, from the title through the Building section, is the author's: never change it unless asked.

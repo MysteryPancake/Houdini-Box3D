@@ -46,6 +46,7 @@ import checks_regress  # noqa: E402
 import checks_solver  # noqa: E402
 import checks_sop  # noqa: E402
 import review  # noqa: E402
+import b3dtest  # noqa: E402
 from b3dtest import Result, SetupError  # noqa: E402
 
 # Every test, in run order: module by module.
@@ -66,6 +67,13 @@ def run_child(name, out_dir, result_file):
         got = [Result(name, Result.SETUP, str(e))]
     except Exception:
         got = [Result(name, Result.ERROR, traceback.format_exc())]
+    try:
+        ignored = b3dtest.disabled_parm_notes()
+        if ignored:
+            got.append(Result(name, Result.INFO, "disabled parameters set by the test (Houdini ignores them): "
+                              + ", ".join(ignored)))
+    except Exception:
+        traceback.print_exc()
     try:
         # Laid out, spaced and annotated for a person to open; never allowed to affect the result.
         review.tidy_for_review(name, TESTS[name], [(r.status, r.message) for r in got])
