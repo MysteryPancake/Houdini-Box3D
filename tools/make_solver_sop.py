@@ -47,7 +47,7 @@ Inside:
       Shapes) -> tint_shapes (Shape Color) -> switch_show_shapes -> GUIDE_GEO
 
 Its parameters: Reset Simulation and Start Frame above the tabs; then the tabs Solver (the
-solver's own settings loose, Cache Simulation and Cache Memory (MB), then its contact settings in a Contacts folder, and the
+solver's own settings loose, the Cache Simulation checkbox joined to Cache Memory (MB), then its contact settings in a Contacts folder, and the
 closed Sleeping (Allow Sleeping) and Aging folders), Pieces
 (Box3D Packed Object's Box3D Data folders for the simulated pieces: Shape, Body, Material, CCD & Contacts,
 Sleep), Collision (a Collision
@@ -212,14 +212,23 @@ def build(out_path, packed_hda=None):
         links.append((sub.relativePathTo(dopnet), pt.name(), pt.name()))
     if "Start Frame" in dop_templates:
         top.append(dop_templates["Start Frame"])
-    solver_first = [dop_templates["Cache Simulation"]] if "Cache Simulation" in dop_templates else []
-    cache_memory = row_by_label(dopnet, CACHE_MEMORY)
+    # Cache Simulation as RBD Bullet Solver's: a checkbox with its label hidden, joined to Cache Memory (MB), which
+    # it enables (any checkbox the DOP network has on that row is left out).
+    cache_toggle = dop_templates.get("Cache Simulation")
+    cache_memory = [pt for pt in row_by_label(dopnet, CACHE_MEMORY) if pt.type() != hou.parmTemplateType.Toggle]
     if not cache_memory:
         warn(f"{dopnet.path()} has no parameter labelled {CACHE_MEMORY!r}; not promoted. "
              f"Its parameters: {labels(dopnet)}")
     for pt in cache_memory:
         links.append((sub.relativePathTo(dopnet), pt.name(), pt.name()))
-    solver_first += cache_memory
+    if cache_toggle is not None and cache_memory:
+        cache_toggle.hideLabel(True)
+        cache_toggle.setJoinWithNext(True)
+        off = f"{{ {cache_toggle.name()} == 0 }}"
+        for pt in cache_memory:
+            own = pt.conditionals().get(hou.parmCondType.DisableWhen, "")
+            pt.setConditional(hou.parmCondType.DisableWhen, f"{own} {off}".strip())
+    solver_first = ([cache_toggle] if cache_toggle is not None else []) + cache_memory
     # Solve on Creation Frame, before Cache Simulation (as on RBD Bullet Solver's first tab), linked to
     # the pieces' and the collider's Packed Object.
     solve_first = hou.ToggleParmTemplate(

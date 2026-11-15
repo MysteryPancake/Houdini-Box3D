@@ -132,8 +132,8 @@ RELATIONSHIPS = [
 ]
 
 # Parameters promoted from the inner SOP-level DOP network, by label (Start Frame above the tabs,
-# Cache Simulation in the Solver tab after the solver's own settings, then Cache Memory (MB): its
-# checkbox and slider, as RBD Bullet Solver's).
+# Cache Simulation in the Solver tab after the solver's own settings: its label hidden, joined to Cache
+# Memory (MB), which it enables, as RBD Bullet Solver's).
 DOPNET_PARMS = ["Start Frame", "Cache Simulation"]
 CACHE_MEMORY = "Cache Memory (MB)"
 
