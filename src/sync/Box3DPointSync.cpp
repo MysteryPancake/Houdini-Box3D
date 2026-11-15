@@ -1124,8 +1124,8 @@ private:
   // point) inserted unstamped.
   struct EntryRef {
     Box3DBodyMirror *entry = nullptr;
-    bool fresh = false;  // just inserted, no body yet
-    uint32_t slot = 0;   // its mirror slot, to erase if the body cannot be built
+    bool fresh = false; // just inserted, no body yet
+    uint32_t slot = 0;  // its mirror slot, to erase if the body cannot be built
   };
 
   EntryRef resolveEntry(Box3DPointSlot &s) {

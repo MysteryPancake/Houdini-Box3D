@@ -125,8 +125,27 @@ function(b3dop_add_test name)
     add_test(NAME ${target} COMMAND ${target} ${ARGN})
 endfunction()
 
+# A test whose file is a table of named cases (a kTests list of {"case", function} lines, see
+# tests/core_physics.cpp) also gets one CTest test per case, b3dop_core_<name>.<case>, so a failure
+# names the area that broke (run one with `ctest -R b3dop_core_physics.hull_cache`). The names are
+# read from the table, so adding a case needs no edit here; CMake re-configures when the file changes.
+# The whole-file test b3dop_core_<name> stays and still runs every case.
+function(b3dop_add_test_cases name)
+    set(source "${CMAKE_CURRENT_SOURCE_DIR}/tests/core_${name}.cpp")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${source}")
+    file(STRINGS "${source}" case_lines REGEX "^ *{\"[a-z0-9_]+\", *test[A-Za-z0-9_]+},")
+    if(NOT case_lines)
+        message(FATAL_ERROR "No {\"case\", function} lines found in ${source}")
+    endif()
+    foreach(line IN LISTS case_lines)
+        string(REGEX REPLACE "^ *{\"([a-z0-9_]+)\".*" "\\1" case "${line}")
+        add_test(NAME b3dop_core_${name}.${case} COMMAND b3dop_core_${name} ${case})
+    endforeach()
+endfunction()
+
 b3dop_add_test(smoke)
 b3dop_add_test(physics)
+b3dop_add_test_cases(physics)
 b3dop_add_test(mesh)
 b3dop_add_test(heightfield)
 b3dop_add_test(joints)

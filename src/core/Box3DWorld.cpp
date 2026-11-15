@@ -788,8 +788,8 @@ bool Box3DWorld::boxShape(BodyHandle h, const BodySettings &b,
           const float corner[3] = {static_cast<float>(sx) * halfExtents[0],
                                    static_cast<float>(sy) * halfExtents[1],
                                    static_cast<float>(sz) * halfExtents[2]};
-          const b3Vec3 r = b3RotateVector(
-              makeQuat(rotationXYZW), makeVec3(corner));
+          const b3Vec3 r =
+              b3RotateVector(makeQuat(rotationXYZW), makeVec3(corner));
           pts[n++] = r.x + (center ? center[0] : 0.0f);
           pts[n++] = r.y + (center ? center[1] : 0.0f);
           pts[n++] = r.z + (center ? center[2] : 0.0f);

@@ -62,9 +62,9 @@
 #include <initializer_list>
 #include <iterator>
 #include <map>
-#include <shared_mutex>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -282,13 +282,13 @@ private:
 
 struct SourceKeyHash {
   size_t operator()(const std::pair<const GU_Detail *, GA_Offset> &k) const {
-    return static_cast<size_t>(b3dop::mixHash(
-        reinterpret_cast<uintptr_t>(k.first),
-        static_cast<uint64_t>(static_cast<int64_t>(k.second))));
+    return static_cast<size_t>(
+        b3dop::mixHash(reinterpret_cast<uintptr_t>(k.first),
+                       static_cast<uint64_t>(static_cast<int64_t>(k.second))));
   }
   size_t operator()(const GU_Detail *k) const {
-    return static_cast<size_t>(b3dop::mixHash(
-        reinterpret_cast<uintptr_t>(k), 0));
+    return static_cast<size_t>(
+        b3dop::mixHash(reinterpret_cast<uintptr_t>(k), 0));
   }
 };
 
@@ -299,8 +299,8 @@ struct ShapeSources {
   // Per distinct source detail; the handle keeps the detail (the key) alive.
   struct InnerEntry {
     GU_ConstDetailHandle handle;
-    PieceGroup pieces;    // grouped by the `name` attribute
-    PieceGroup connected; // one piece per set of connected primitives
+    PieceGroup pieces;            // grouped by the `name` attribute
+    PieceGroup connected;         // one piece per set of connected primitives
     std::once_flag piecesOnce;    // guards handle + pieces
     std::once_flag connectedOnce; // guards connected
   };
