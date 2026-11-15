@@ -116,7 +116,7 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   sections) with `subnetoutput` nodes `PRESOLVE`
   and `POSTSOLVE` (Output Index 0 and 1), nothing wired in, PRESOLVE left and
   POSTSOLVE right with a sticky note on each outer side (`FORCES_NOTES`), the subnet's inputs moved above. Not `output`: in DOPs that is the Output DOP that saves to
-  disk. A DOP subnet always shows four outputs. A Multiple Solver takes the objects and runs PRESOLVE, the Box3D Solver, POSTSOLVE.
+  disk. A DOP subnet always shows four outputs. A Multiple Solver takes the objects and runs PRESOLVE, `scale_forces`, the Box3D Solver, POSTSOLVE.
   A POP Force on PRESOLVE writes `force`, applied and cleared by the solver in the same step; on POSTSOLVE it is
   applied the next step (see [forces-affectors.md](forces-affectors.md)).
 * Input preparation (`tools/b3d_prepare.py`, shared with Box3D Configure): node for node RBD Bullet Solver's
@@ -149,8 +149,12 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   `SCALED_SETTINGS` (lengths and speeds of the solver, the pieces' and collider's Box3D Data) into reference x scale.
   The outputs come back through `unscale_*` (Transform SOPs; `UNSCALE_*_VEX` for the simulation points, the
   constraints' `force` / `distance` / `torque` and the impact records). Every wrangle sits behind a Switch
-  (`SCALE_ACTIVE`), so World Scale 1 costs nothing. Not scaled: joint node settings and primitive attributes that
-  are lengths, and FORCES, which runs in the scaled world.
+  (`SCALE_ACTIVE`), so World Scale 1 costs nothing. Joints: `scale_joint_settings` makes each inner relationship
+  setting with a length or force in it its value x scale^power (`JOINT_SCALE_POWERS`, which must hold every float
+  setting of our nodes, `JOINT_SCALE_BY_NODE`, `SIDEFX_SCALE_POWERS`), Set Initial. Float primitive attributes
+  multiply those, so they follow. `scale_constraint_attribs` (`SCALE_CONSTRAINTS_VEX`) scales what replaces a setting
+  (`linear_velocity`) and `auto_restlength`. FORCES: `scale_forces`, a POP Wrangle after PRESOLVE in the Multiple
+  Solver, scales `force` and `torque` (`SCALE_FORCES_VEX`), so POP force values are real units. POSTSOLVE is not scaled.
 * Constraints output: DOP Import of the pieces object, Geometry Data Path `ConstraintGeometry`, nothing transformed,
   packed or tagged (`CONSTRAINTS_TOGGLES`), so it carries `broken`, `force` and the rest. The solver does not move its
   points, so a Transform Pieces onto the simulation points carries them with their pieces; world-anchored points
@@ -167,8 +171,10 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   Solver's `switchif_beforestart`; the proxy output shows the simulated source). A Switch-If takes its second input
   while its expression is true.
 * Output tab, as RBD Bullet Solver's: Impact Data, a closed collapsible folder whose header toggle is the pieces' Add
-  Impact Data (`sidefx::header_toggle`), with the solver's Impact Min Speed and Fetch Impacts; Transfer Attributes, with Transfer to Geometry / Proxy Geometry driving each Transform Pieces' Attributes to
-  Copy toggle (`TRANSFER_TO`; the toggle found by label or from the list's disable condition). Fetch Impacts makes (or reuses) an Object Merge of the asset's `IMPACTS` null beside the
+  Impact Data (`sidefx::header_toggle`), with the solver's Impact Min Speed and Fetch Impacts; Transfer Attributes, with Transfer to Geometry / Proxy Geometry choosing each Transform Pieces' Attributes to
+  Copy as RBD Bullet Solver's: the list while on, else `w` (`copy_attributes`, `TRANSFER_TO`), and Transform Pieces'
+  own Point Velocities parameters promoted onto both (`POINT_VELOCITY_PARMS`); Outputs, Import Constraints / Proxy
+  (`IMPORT_CONSTRAINTS` / `IMPORT_PROXY`: off, an empty output, the chain not cooked). Fetch Impacts makes (or reuses) an Object Merge of the asset's `IMPACTS` null beside the
   asset, fed by a DOP Import Records of the pieces' `Impacts` data (its parameters set by label, `set_by_labels`).
 * Parameters: Reset Simulation and Start Frame above the tabs, then the solver's tabs (folders found under its Data
   Options, a tab of simple folders kept whole; Guide Options skipped; `TAB_RENAMES` / `TAB_MOVES` cover older plugins).
@@ -212,7 +218,18 @@ setting ticked (`rewrite_condition`). Every Box3D Data folder in an entry is sim
 * One point wrangle (`set_attributes`, `wrangle_vex`) loops over the entries: an enabled entry whose group holds the
   point writes each ticked setting, creating the attribute with Box3D Data's default first (`addpointattrib`) so
   points outside the group keep the default rather than VEX's 0 (`active` 0 is static). Group is tested with
-  `inpointgroup` / `inprimgroup`, so it takes a group name, not a pattern; empty is every piece.
+  `inpointgroup` / `inprimgroup`, so it takes a group name, not a pattern; empty is every piece. The Group button
+  picks primitives in the viewport (RBD Configure's `selectGroupParm` call).
+* Settings Box3D Data has no parameter for (`extra_folders`): Initial State (`v`, `w` in degrees per second written as
+  radians, `enabled`, `deforming`), Motion (`inertialtensorstiffness`, `fastrotation`, `lock_linear` / `lock_angular`),
+  Collision Filtering, Hand-Set Shape (`bullet_prim*`, `bullet_radius`, `bullet_length`, disabled with Auto Fit on).
+  Defaults are the solver's when the attribute is missing.
+* Bounds and Pin, as RBD Configure's (read from a dump of it): the Bounds folder (`boundingtype`, `bbox*`) and the
+  fourth input (Static Bounds Geometry) put the pieces inside into the point group `INSIDE_GROUP` (`inside_bounds`;
+  no bounds geometry: none). Use Bounds (`use<name>bounds#`, on Body Type and every toggle, `has_bounds`) gives the
+  value inside and the opposite outside (Body Type: Dynamic). Pin (`pin_templates`) marks pieces (`PIN_ATTRIB`) and
+  `add_pin_constraints` (`PIN_VEX`) appends one line per pinned piece from the world to its point, `constraint_name`
+  from `PIN_TYPES` (Weld, Soft: the Solver SOP's relationship Data Names). The marker and group are stripped.
 * It uses `setpointattrib`, never `@` bindings: a binding creates its attribute on every point at compile time, even
   inside an `if` that never runs.
 * The build checks a fresh instance: two unpacked boxes come out as two packed pieces named on their points, the

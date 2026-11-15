@@ -744,6 +744,7 @@ struct JointSpec {
   b3dop::JointSettings s;
   b3dop::JointFrame adjA,
       adjB; // the frames relative to the anchors: identity but for SideFX data
+            // and Hold Separation
   uint64_t frameSig = 0;
 };
 
@@ -817,6 +818,14 @@ private:
         const float made = myRd.autoRest.get(off);
         if (made >= 0.0f)
           j.s.restLength = made;
+      }
+      // Hold Separation: the frame offsets SideFX's Glue gets, so the weld
+      // holds the anchors as far apart as they are when it is made.
+      if (j.type == b3dop::JointType::Weld && j.s.holdSeparation) {
+        b3dop::SideFXJoint m;
+        m.holdSeparation = true;
+        j.frameSig = sideFXFrameSignature(m);
+        b3dop::sideFXFrameOffsets(m, fa, fb, j.adjA, j.adjB);
       }
     }
     return j;

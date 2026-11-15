@@ -101,6 +101,9 @@ struct JointSettings {
   float upperTwistAngle = 0.0f;
 
   // Weld springs (off: rigid in that part) and the motor joint's springs.
+  // holdSeparation is not a Box3D setting: the sync offsets the weld's frames
+  // so the anchors keep the distance they had when the joint was made.
+  bool holdSeparation = false;      // weld
   bool enableLinearSpring = false;  // weld
   bool enableAngularSpring = false; // weld
   float linearStiffness = 0.0f;     // weld, motor (Hz)
@@ -283,6 +286,9 @@ inline const std::vector<JointParam> &jointParams() {
                 "set_rest_length"),
 
       // ---- weld ----
+      jp("hold_separation", "Hold Separation", W, &S::holdSeparation,
+         "Keep the anchors as far apart as when the joint is made. Off: the "
+         "weld pulls them together."),
       jp("enable_linear_spring", "Enable Linear Spring", W,
          &S::enableLinearSpring,
          "Off: position is held rigidly. On: a spring with Linear Stiffness."),

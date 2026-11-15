@@ -31,7 +31,7 @@ Inside:
               collision (Box3D Packed Object, convex hulls, `dopcontextgeo(".", 2)`, only when Use External
                          Collisions is on and input 3 has points; Collision Type Animated / Deforming: Kinematic and re-imported every step, else Static)
                          merged in after the constraint network
-              -> multisolver (FORCES/PRESOLVE, box3d_solver, FORCES/POSTSOLVE) -> output
+              -> multisolver (FORCES/PRESOLVE, scale_forces, box3d_solver, FORCES/POSTSOLVE) -> output
               FORCES: DOP subnet, the asset's dive target, with subnet outputs PRESOLVE (output 0) and
                       POSTSOLVE (output 1) for POP forces and other microsolvers run before / after
                       the Box3D Solver
@@ -120,7 +120,11 @@ from b3d_solver_common import (  # noqa: E402
 )
 from b3d_solver_network import (  # noqa: E402
     build_network,
+    IMPORT_CONSTRAINTS,
+    IMPORT_PROXY,
     KEEP_BROKEN,
+    POINT_VELOCITY_PARMS,
+    scale_joint_settings,
     scale_settings,
     SOLVE_FIRST,
     SOLVE_FIRST_LABEL,
@@ -272,7 +276,8 @@ def build(out_path, packed_hda=None):
     collision_items = [use_collisions,
                        collapsible("b3dsop_collision_geometry", "Collision Geometry",
                                    [animated] + collider_folders, header_toggle=USE_COLLISIONS)]
-    taken.update([TRANSFER_ATTRIBUTES, KEEP_BROKEN] + [n for n, _ in TRANSFER_TO.values()])
+    taken.update([TRANSFER_ATTRIBUTES, KEEP_BROKEN, IMPORT_CONSTRAINTS, IMPORT_PROXY]
+                 + list(POINT_VELOCITY_PARMS) + [n for n, _ in TRANSFER_TO.values()])
 
     group = hou.ParmTemplateGroup()
     for pt in top:
@@ -354,7 +359,8 @@ def build(out_path, packed_hda=None):
         separate[0].setParmTemplates(sleeping + list(separate[0].parmTemplates()))
     pieces_items = [as_collapsible(f) for f in nested] + separate + \
         [collapsible("b3dsop_aging", f.label(), f.parmTemplates()) for f in aging]
-    output_items = output_tab(impact, speed)
+    velocity = velocity_templates(sub.node("transform_geometry"))
+    output_items = output_tab(impact, speed, velocity)
     vis_items = visualization_tab(shapes)
     for i, (label, contents) in enumerate(ordered):
         contents = {"Pieces": pieces_items, "Output": output_items, "Visualization": vis_items,
@@ -389,6 +395,7 @@ def build(out_path, packed_hda=None):
     for inner_path, inner_name, outer_name in links:
         link(asset.node(inner_path), inner_name, asset, outer_name)
     scale_settings(asset)
+    scale_joint_settings(asset)
     b3d_hda.set_operations(asset.node("dopnet/box3d_solver"), "initial", warn)
     definition.updateFromNode(asset)
     set_guide_geometry(definition)
@@ -408,9 +415,23 @@ def set_guide_geometry(definition):
     definition.setExtraInfo(" ".join(kept + [f"guide={GUIDE_GEO}"]))
 
 
-def output_tab(impact, speed):
+def velocity_templates(xform):
+    """Transform Pieces' own Point Velocities parameters (POINT_VELOCITY_PARMS), copied from `xform`."""
+    found = []
+    group = xform.parmTemplateGroup() if xform is not None else None
+    for name in POINT_VELOCITY_PARMS:
+        pt = group.find(name) if group is not None else None
+        if pt is None:
+            warn(f"no {name} on the inner Transform Pieces: not on the Output tab")
+        else:
+            found.append(pt.clone())
+    return found
+
+
+def output_tab(impact, speed, velocity):
     """The Output tab's contents: Impact Data (a closed collapsible folder, `impact` its header toggle,
-    then `speed` and Fetch Impacts), Attribute Transfer, Constraints."""
+    then `speed` and Fetch Impacts), Attribute Transfer (with `velocity`, Transform Pieces' Point
+    Velocities), Outputs (Import Constraints / Proxy), Constraints."""
     items = []
     if not impact:
         warn(f"no {IMPACT_TOGGLE} on the pieces: Impact Data is not on the Output tab")
@@ -434,11 +455,17 @@ def output_tab(impact, speed):
         TRANSFER_ATTRIBUTES, "Transfer Attributes", 1, default_value=(TRANSFER_ATTRIBUTES_DEFAULT,),
         help="Point attributes copied from the simulation onto Simulation Points, and onto the pieces as ticked below.")
     to = [hou.ToggleParmTemplate(name, label, default_value=True,
-                                 help=f"Copies Transfer Attributes onto the {label[12:]} output.")
+                                 help=f"Copies Transfer Attributes onto the {label[12:]} output. Off: only w.")
           for name, label in TRANSFER_TO.values()]
-    items.append(collapsible("b3dsop_transfer", "Attribute Transfer", [transfer] + to))
+    items.append(collapsible("b3dsop_transfer", "Attribute Transfer", [transfer] + to + list(velocity)))
+    imports = [hou.ToggleParmTemplate(IMPORT_CONSTRAINTS, "Import Constraints", default_value=True,
+                                      help="Outputs the simulated constraints. Off: an empty output, which is faster."),
+               hou.ToggleParmTemplate(IMPORT_PROXY, "Import Proxy", default_value=True,
+                                      help="Outputs the simulated proxy. Off: an empty output, which is faster.")]
+    items.append(collapsible("b3dsop_outputs", "Outputs", imports))
     keep = hou.ToggleParmTemplate(KEEP_BROKEN, "Export Broken Constraints", default_value=False,
                                   help="Keeps broken constraints in the Constraint Geometry output. Off: they are removed.")
+    keep.setConditional(hou.parmCondType.DisableWhen, f"{{ {IMPORT_CONSTRAINTS} == 0 }}")
     items.append(collapsible("b3dsop_constraints", "Constraints", [keep]))
     return items
 
@@ -533,7 +560,21 @@ def check(out_path):
                 warn(f"World Scale: cannot check {outer} ({inner_path})")
             elif abs(q.eval() - p.eval() * ratio) > 1e-6 * max(1.0, abs(p.eval())):
                 warn(f"World Scale 2: {inner_path}/{inner_name} reads {q.eval()}, expected {p.eval() * ratio}")
+        # Joint settings: read at World Scale 2 against scale 1 (a length doubles, a torque is four
+        # times, an angular speed stays; Prismatic's Motor Speed is a length per second).
+        joints = (("distance", "max_length", 2.0), ("weld", "torque_threshold", 4.0),
+                  ("revolute", "motor_speed", 1.0), ("prismatic", "motor_speed", 2.0), ("glue", "strength", 2.0))
+        at2 = {}
+        for name, parm, _ in joints:
+            q = probe.parm(f"dopnet/{name}/{parm}") if probe.node(f"dopnet/{name}") else None
+            at2[(name, parm)] = q.eval() if q is not None else None
         probe.parm(WORLD_SCALE_TOGGLE).set(0)
+        for name, parm, ratio in joints:
+            q = probe.parm(f"dopnet/{name}/{parm}") if probe.node(f"dopnet/{name}") else None
+            if q is None or at2[(name, parm)] is None:
+                warn(f"World Scale: cannot check dopnet/{name}/{parm}")
+            elif abs(at2[(name, parm)] - q.eval() * ratio) > 1e-6 * max(1.0, abs(q.eval())):
+                warn(f"World Scale 2: dopnet/{name}/{parm} reads {at2[(name, parm)]}, expected {q.eval() * ratio}")
     else:
         warn("the asset has no World Scale parameters")
     if probe.node(IMPACTS) is None or probe.parm("fetchimpacts") is None:

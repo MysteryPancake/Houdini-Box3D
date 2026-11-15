@@ -201,6 +201,7 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   `writeLiveFrames` and the `next_constraint_name` switch write `removeFrameOffset(frame, adj)` back as `current_P` / `current_orient`,
   so the anchors stay anchors, and `local_P` / `local_orient` hold the joint's own frames (compared with the
   offset anchors in `localFrameAgrees`). Offsets are fixed when the joint is made; their inputs (rotations,
-  separation, the hold flag, not the anchor positions) are in the joint signature. Identity offsets (our nodes)
-  bypass the math.
+  separation, the hold flag, not the anchor positions) are in the joint signature. Our Weld's Hold Separation
+  (`JointSettings::holdSeparation`, `hold_separation`, not a Box3D setting) gets Glue's hold offsets in `specFor`.
+  Identity offsets (our other nodes) bypass the math.
 * The DOP timestep reaches `syncJoints` through `syncFromGeometry` (for Glue).

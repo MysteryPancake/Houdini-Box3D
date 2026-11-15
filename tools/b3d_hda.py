@@ -64,6 +64,28 @@ def create(parent, type_names, name):
     raise RuntimeError(f"none of the node types {type_names} exist in {parent.path()}")
 
 
+def set_operation(node, name, token, warn):
+    """Sets the Parameter Operation menu of `node`'s parameter `name` (parmop_<name>) to `token`, as
+    set_operations does for all of them. False (with a warning) when it cannot."""
+    p = node.parm(f"parmop_{name}")
+    if p is None:
+        warn(f"{node.path()} has no parmop_{name}")
+        return False
+    items = list(p.menuItems()) if p.parmTemplate().type() == hou.parmTemplateType.Menu else []
+    try:
+        if p.parmTemplate().type() == hou.parmTemplateType.String:
+            p.set(token)
+        elif token in items:
+            p.set(items.index(token))
+        else:
+            warn(f"{p.path()}: no {token!r} item in {items}")
+            return False
+    except hou.Error as e:
+        warn(f"{p.path()}: {e}")
+        return False
+    return True
+
+
 def set_operations(node, token, warn):
     """Sets every Parameter Operation menu (parmop_*) of `node` to the item `token` (default /
     initial / always / never) and returns how many it set; each one it cannot set is a warning.

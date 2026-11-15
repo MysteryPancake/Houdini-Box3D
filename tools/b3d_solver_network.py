@@ -3,6 +3,7 @@
 import hou
 
 import b3d_prepare
+from b3d_hda import set_operation
 from b3d_solver_common import (
     COLLISION,
     COLLISION_TYPE,
@@ -19,6 +20,7 @@ from b3d_solver_common import (
     POINTS_KEEP,
     POINTS_TOGGLES,
     PROXY,
+    RELATIONSHIPS,
     set_by_label,
     set_by_labels,
     GUIDE_GEO,
@@ -92,6 +94,11 @@ SOLVE_FIRST_LABEL = "Solve on Creation Frame"  # the Box3D Packed Object's label
 # Export Broken Constraints (RBD Bullet Solver's constraint_keepbroken): off, broken constraints are
 # removed from the constraints output.
 KEEP_BROKEN = "constraint_keepbroken"
+# Output tab: Import Constraints / Proxy (off: that output is empty and its chain is not cooked), and
+# Transform Pieces' own Point Velocities parameters, promoted under their names onto both transforms.
+IMPORT_CONSTRAINTS = "importconstraints"
+IMPORT_PROXY = "importproxy"
+POINT_VELOCITY_PARMS = ("pointvels", "integrateovertime")
 
 # Collision Type Deforming: the colliders' `deforming`, so the solver rebuilds their shapes every step.
 COLLISION_DEFORMING_VEX = f'''\
@@ -123,6 +130,59 @@ SCALED_SETTINGS = [("dopnet/box3d_solver", n, 1) for n in
     [("dopnet/pieces", n, 1) for n in ("sleepthreshold", "tangentvelocity")] + \
     [("dopnet/collision", "tangentvelocity", 1)]
 # (The collider's density and sleep threshold are not promoted: it is never dynamic.)
+
+# World Scale on joints: the power of the scale each inner relationship setting follows. Masses stay
+# the same, so lengths, linear speeds and forces follow the scale and torques its square, while
+# angles, Hz and ratios keep their values. Float primitive attributes multiply these settings, so
+# they follow too. Every float setting of Box3D's nodes is listed (the build warns otherwise), so a new
+# setting in Box3DJoints.h needs a power here.
+JOINT_SCALE_POWERS = {name: power for power, names in (
+    (1, ("restlength", "min_length", "max_length", "lower_translation", "upper_translation",
+         "target_translation", "lower_suspension_limit", "upper_suspension_limit", "linear_velocity",
+         "force_threshold", "max_motor_force", "max_tension_force", "max_compression_force",
+         "max_velocity_force", "max_spring_force")),
+    (2, ("torque_threshold", "max_motor_torque", "max_velocity_torque", "max_spring_torque", "max_torque",
+         "max_spin_torque", "max_steering_torque")),
+    (0, ("constraint_stiffness", "constraint_damping_ratio", "stiffness", "damping_ratio", "linear_stiffness",
+         "linear_damping_ratio", "angular_stiffness", "angular_damping_ratio", "target_rotation", "cone_angle",
+         "lower_twist_angle", "upper_twist_angle", "motor_velocity", "target_angle", "lower_angle",
+         "upper_angle", "motor_speed", "angular_velocity", "suspension_stiffness", "suspension_damping_ratio",
+         "spin_speed", "steering_stiffness", "steering_damping_ratio", "target_steering_angle",
+         "lower_steering_limit", "upper_steering_limit")),
+) for name in names}
+# Motor Speed is degrees per second on a revolute joint, units per second on these.
+JOINT_SCALE_BY_NODE = {("prismatic", "motor_speed"): 1, ("distance", "motor_speed"): 1}
+# SideFX's nodes: only what the solver reads with a length or force in it. Glue's strength is an
+# impulse; Spring's is Hooke's k, force per length, so it stays.
+SIDEFX_SCALE_POWERS = {"glue": {"strength": 1}, "hard": {"restlength": 1}, "spring": {"restlength": 1},
+                       "soft": {"restlength": 1}}
+# The constraint input: the attributes that replace a setting instead of multiplying it (vectors), and
+# the rest length the solver measured for a distance joint (auto_restlength, -1 = none yet).
+SCALE_CONSTRAINTS_VEX = """\
+float s = chf("scale");
+if (hasprimattrib(0, "linear_velocity")) {
+    vector lv = prim(0, "linear_velocity", @primnum);
+    setprimattrib(0, "linear_velocity", @primnum, lv * s);
+}
+if (hasprimattrib(0, "auto_restlength")) {
+    float r = prim(0, "auto_restlength", @primnum);
+    if (r >= 0) setprimattrib(0, "auto_restlength", @primnum, r * s);
+}
+"""
+# FORCES: PRESOLVE's POP forces write force / torque in the scaled world. Scaled after it, so their
+# values are real units (forces follow the scale, torques its square).
+SCALE_FORCES_VEX = """\
+float s = chf("scale");
+if (s == 1) return;
+if (haspointattrib(0, "force")) {
+    vector f = point(0, "force", @ptnum);
+    setpointattrib(0, "force", @ptnum, f * s);
+}
+if (haspointattrib(0, "torque")) {
+    vector t = point(0, "torque", @ptnum);
+    setpointattrib(0, "torque", @ptnum, t * s * s);
+}
+"""
 # The pieces after packing (Transform scaled P, v, w and the packed transforms): Bullet's
 # scale_density_and_attribs (density / s^3, w back, as the Transform scaled it), plus the hand-set
 # shape sizes and the sleep threshold, which Bullet leaves.
@@ -143,9 +203,15 @@ if (haspointattrib(0, "v")) v@v *= s;
 """
 UNSCALE_CONSTRAINTS_VEX = """\
 float s = chf("scale");
-foreach (string n; {"force", "distance"})
+foreach (string n; {"force", "distance", "current_length", "current_translation", "current_speed",
+                    "motor_force"})
     if (hasprimattrib(0, n)) setprimattrib(0, n, @primnum, s, "mult");
-if (hasprimattrib(0, "torque")) setprimattrib(0, "torque", @primnum, s * s, "mult");
+foreach (string n; {"torque", "motor_torque", "spin_torque"})
+    if (hasprimattrib(0, n)) setprimattrib(0, n, @primnum, s * s, "mult");
+if (hasprimattrib(0, "auto_restlength")) {
+    float r = prim(0, "auto_restlength", @primnum);
+    if (r >= 0) setprimattrib(0, "auto_restlength", @primnum, r * s);
+}
 """
 UNSCALE_IMPACTS_VEX = """\
 float s = chf("scale");
@@ -259,6 +325,65 @@ def scale_settings(asset):
                 p.setExpression(f"({expr}) * pow({factor}, {power})", hou.exprLanguage.Hscript)
 
 
+def scale_joint_settings(asset):
+    """World Scale on the inner relationship nodes: each setting with a length or force in it becomes
+    its value times the scale to its power (JOINT_SCALE_POWERS, SIDEFX_SCALE_POWERS), Set Initial so
+    the expression is used. Box3D's nodes' float settings must all be classified."""
+    for _, name in RELATIONSHIPS:
+        node = asset.node(f"dopnet/{name}")
+        if node is None:
+            continue
+        box3d = node.type().name().startswith("box3d_")
+        rel = node.relativePathTo(asset)
+        factor = f'if(ch("{rel}/{WORLD_SCALE_TOGGLE}"), ch("{rel}/{WORLD_SCALE}"), 1)'
+        for pt in node.parmTemplateGroup().entriesWithoutFolders():
+            pname = pt.name()
+            if pt.type() != hou.parmTemplateType.Float or pname.startswith("parmop"):
+                continue
+            if not box3d:
+                power = SIDEFX_SCALE_POWERS.get(name, {}).get(pname, 0)
+            elif (name, pname) in JOINT_SCALE_BY_NODE:
+                power = JOINT_SCALE_BY_NODE[(name, pname)]
+            elif pname in JOINT_SCALE_POWERS:
+                power = JOINT_SCALE_POWERS[pname]
+            else:
+                warn(f"World Scale: {node.path()}/{pname} has no power in JOINT_SCALE_POWERS; it is not scaled")
+                continue
+            if not power:
+                continue
+            for p in node.parmTuple(pname):
+                value = p.eval()
+                scaled = factor if power == 1 else f"pow({factor}, {power})"
+                p.setExpression(f"{value!r} * {scaled}", hou.exprLanguage.Hscript)
+            set_operation(node, pname, "initial", warn)
+
+
+def scale_forces(dopnet):
+    """A POP Wrangle in the Multiple Solver right after FORCES/PRESOLVE scaling the pieces' force and
+    torque (SCALE_FORCES_VEX), so POP force values are in real units under World Scale. The other
+    solvers move one input down, each keeping the output it is wired from."""
+    multi = dopnet.node("multisolver")
+    if multi is None:
+        warn("World Scale: no multisolver; FORCES are not scaled")
+        return
+    wr = create(dopnet, "popwrangle", "scale_forces")
+    wr.addSpareParmTuple(hou.FloatParmTemplate(WORLD_SCALE, "Scale", 1, default_value=(1.0,)))
+    rel = wr.relativePathTo(dopnet.parent())
+    wr.parm(WORLD_SCALE).setExpression(f'if(ch("{rel}/{WORLD_SCALE_TOGGLE}"), ch("{rel}/{WORLD_SCALE}"), 1)',
+                                       hou.exprLanguage.Hscript)
+    if wr.parm("snippet") is None:
+        warn(f"{wr.path()} has no snippet: FORCES are not scaled")
+        wr.destroy()
+        return
+    wr.parm("snippet").set(SCALE_FORCES_VEX)
+    wired = {c.inputIndex(): (c.inputNode(), c.outputIndex()) for c in multi.inputConnections()}
+    presolve = 1  # inputs: objects, PRESOLVE, Box3D Solver, POSTSOLVE
+    for i in sorted((i for i in wired if i > presolve), reverse=True):
+        node, out = wired[i]
+        multi.setInput(i + 1, node, out)
+    multi.setInput(presolve + 1, wr)
+
+
 def collision_rest(sub, dopnet, collision):
     """The prepared collision with its rest from the start frame (COLLISION_REST_VEX). Returns the
     node feeding the DOP network's collision input."""
@@ -313,7 +438,8 @@ def build_network(sub):
     # The DOP network, its context geometry three streams (dopcontextgeo(".", i) inside).
     dopnet = create(sub, "dopnet", "dopnet")
     dopnet.setInput(DOP_PIECES, sim_scaled)
-    dopnet.setInput(DOP_CONSTRAINTS, scaled[CONSTRAINTS])
+    dopnet.setInput(DOP_CONSTRAINTS, scale_wrangle(sub, "scale_constraint_attribs", scaled[CONSTRAINTS],
+                                                   SCALE_CONSTRAINTS_VEX, inverse=False, run_over="primitive"))
     # Collision: packed and named, rest from the start frame.
     collision_pieces = prepare_input(sub, scaled[COLLISION], "prepare_collision", pack=True, collision=True)
     deforming = create(sub, "attribwrangle", "collision_deforming")
@@ -324,6 +450,7 @@ def build_network(sub):
     for child in dopnet.children():
         child.destroy()
     solver = build_dops(dopnet)
+    scale_forces(dopnet)
 
     # Simulation points, the fourth output, as RBD Bullet Solver's: one point per piece with P, name,
     # orient (the rotation since rest), pivot (the rest position), restxform (the packed transform at
@@ -367,6 +494,11 @@ def build_network(sub):
         xform.setInput(0, removed)
         xform.setInput(1, sim_points)
         copy_attributes(xform, TRANSFER_TO[name][0])
+        for parm in POINT_VELOCITY_PARMS:
+            if xform.parm(parm) is None:
+                warn(f"{xform.path()} has no {parm}: Point Velocities does nothing there")
+            else:
+                xform.parm(parm).setExpression(f'ch("../{parm}")', hou.exprLanguage.Hscript)
         pieces_out.append(scale_xform(sub, f"unscale_{name[len('transform_'):]}", xform, inverse=True))
     geo_out, proxy_out = pieces_out
 
@@ -428,7 +560,7 @@ def build_network(sub):
     tint.parm("class").set("primitive")
     tint.parm("snippet").set(SHAPES_TINT_VEX)
     unscaled_shapes = scale_xform(sub, "unscale_shapes", tint, inverse=True)
-    no_shapes = create(sub, "null", "no_shapes")  # nothing wired: empty geometry
+    no_shapes = create(sub, "null", "no_shapes")  # nothing wired: empty geometry (also the Import toggles' off)
     show_shapes = create(sub, "switch", "switch_show_shapes")
     show_shapes.setInput(0, no_shapes)
     show_shapes.setInput(1, unscaled_shapes)
@@ -470,6 +602,16 @@ def build_network(sub):
     geo_out = before_start(sub, dopnet, "switchif_beforestart", geo_out, nulls[GEO])
     con_out = before_start(sub, dopnet, "switchif_beforestart_constraints", con_out, nulls[CONSTRAINTS])
     proxy_out = before_start(sub, dopnet, "switchif_beforestart_proxy", proxy_out, sim_input)
+    # Import Constraints / Proxy off: an empty output (a Switch does not cook the input it leaves out).
+    for name, parm in (("constraints", IMPORT_CONSTRAINTS), ("proxy", IMPORT_PROXY)):
+        sw = create(sub, "switch", f"switch_import_{name}")
+        sw.setInput(0, no_shapes)
+        sw.setInput(1, con_out if name == "constraints" else proxy_out)
+        sw.parm("input").setExpression(f'ch("../{parm}")', hou.exprLanguage.Hscript)
+        if name == "constraints":
+            con_out = sw
+        else:
+            proxy_out = sw
     points_out = scale_wrangle(sub, "unscale_points", sim_points, UNSCALE_POINTS_VEX, inverse=True)
     for idx, src in enumerate([geo_out, con_out, proxy_out, points_out]):
         out = create(sub, "output", f"OUT_{['geometry', 'constraints', 'proxy', 'points'][idx]}")

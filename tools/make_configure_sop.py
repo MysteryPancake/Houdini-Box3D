@@ -50,9 +50,10 @@ TYPE_NAME = "box3d_configure"
 LABEL = "Box3D Configure"
 ICON = "DOP_box3d_data"  # installed by the build for Box3D Data (config/Icons)
 
-# Inputs and outputs, matching the Box3D Solver SOP's first three. The settings go onto the proxy
-# when it has points, else onto the geometry; everything else passes through.
-LABELS = ["Geometry", "Constraint Geometry", "Proxy Geometry"]
+# Inputs and outputs, matching the Box3D Solver SOP's first three, plus RBD Configure's fourth input
+# for Use Bounds. The settings go onto the proxy when it has points, else onto the geometry.
+LABELS = ["Geometry", "Constraint Geometry", "Proxy Geometry"]  # outputs
+INPUT_LABELS = LABELS + ["Static Bounds Geometry"]
 INPUT_COLORS = {1: (1.0, 0.6, 0.8)}  # constraints pink, as the Box3D Solver SOP
 
 # Labels and help for the settings whose attribute is not their name.
@@ -74,6 +75,44 @@ MULTIPARM = "attributes"  # Number of Attributes, as RBD Configure
 TRANSFER_GROUPS = "* ^*inside ^*outside"  # RBD Configure's: groups onto the packed pieces
 
 
+# RBD Configure's Bounds folder: which pieces count as inside for the Use Bounds checkboxes. Bounding
+# Geometry and Volume use the fourth input. Its default is RBD Configure's (Bounding Geometry).
+BOUNDING_TYPES = ("Bounding Box", "Bounding Geometry", "Bounding Volume")
+INSIDE_GROUP = "__static_grp"  # RBD Configure's: the pieces inside the bounds
+# Pin types: constraint_name of a pin line, the Data Names of the Box3D Solver SOP's relationships.
+PIN_TYPES = [("Weld", "Weld"), ("Soft", "Soft")]
+
+
+def bounds_templates():
+    btype = hou.MenuParmTemplate("boundingtype", "Bounding Type", ("0", "1", "2"), BOUNDING_TYPES, default_value=1,
+                                 help="What Use Bounds tests: this box, or the Static Bounds Geometry input's "
+                                      "bounding box or volume.")
+    items = [btype]
+    for name, label, default in (("bboxsize", "Size", (1.0, 1.0, 1.0)), ("bboxcenter", "Center", (0.0, 0.0, 0.0)),
+                                 ("bboxr", "Rotation", (0.0, 0.0, 0.0))):
+        pt = hou.FloatParmTemplate(name, label, 3, default_value=default, help=f"The bounding box's {label.lower()}.")
+        pt.setConditional(hou.parmCondType.DisableWhen, "{ boundingtype > 0 }")
+        pt.setConditional(hou.parmCondType.HideWhen, "{ boundingtype > 0 }")
+        items.append(pt)
+    return items
+
+
+def pin_templates():
+    """RBD Configure's Pin, per entry: a constraint from the world to each piece."""
+    add = hou.ToggleParmTemplate("addpin#", "Add Pin", default_value=False, join_with_next=True,
+                                 help="Add a constraint pinning each piece to the world.")
+    add.hideLabel(True)
+    pin = hou.ToggleParmTemplate("pin#", "Pin", default_value=True, help="Pin the pieces.")
+    ptype = hou.MenuParmTemplate("pintype#", "Type", tuple(str(i) for i in range(len(PIN_TYPES))),
+                                 tuple(label for label, _ in PIN_TYPES), default_value=0,
+                                 help="Weld holds rigidly. Soft holds with a spring.")
+    bounds = hou.ToggleParmTemplate("usepinbounds#", "Use Bounds", default_value=False,
+                                    help="Pin the pieces inside the bounds and free the others.")
+    for pt in (pin, ptype, bounds):
+        pt.setConditional(hou.parmCondType.DisableWhen, "{ addpin# == 0 } { enable# == 0 }")
+    return [add, pin, ptype, bounds]
+
+
 def packing_templates():
     path = hou.StringParmTemplate("path", "Path Attribute", 1, default_value=("op:`opfullpath('.')`",),
                                   help="The path attribute value of each packed piece.")
@@ -93,6 +132,71 @@ def packing_templates():
         hou.ToggleParmTemplate("createpackedfragments", "Create Packed Fragments", default_value=True,
                                help="Packs pieces as fragments of one shared geometry instead of one geometry each."),
     ]
+
+
+def extra_folders():
+    """Settings Box3D Data has no parameter for (point attributes only), as more folders after its
+    own: (folder label, [(template, kind)]) like b3d_settings.settings. Each template is named after
+    its attribute, and its default is the solver's when the attribute is missing."""
+    F, I, T = hou.FloatParmTemplate, hou.IntParmTemplate, hou.ToggleParmTemplate
+    zero3 = (0.0, 0.0, 0.0)
+    def shape(pt):
+        # A hand-set shape only applies with Auto Fit off.
+        pt.setConditional(hou.parmCondType.DisableWhen, "{ autofit == 1 }")
+        return pt
+
+    return [
+        ("Initial State", [
+            (F("v", "Velocity", 3, default_value=zero3, min=-10.0, max=10.0,
+               help="Starting velocity, in units per second."), "v"),
+            (F("w", "Angular Velocity", 3, default_value=zero3, min=-360.0, max=360.0,
+               help="Starting spin, in degrees per second. Writes w in radians per second."), "w"),
+            (T("enabled", "Enabled", default_value=True,
+               help="Off leaves the pieces out of the simulation."), "i"),
+            (T("deforming", "Deforming", default_value=False,
+               help="Rebuild the collision shape every step, for pieces whose geometry changes."), "i"),
+        ]),
+        ("Motion", [
+            (F("inertialtensorstiffness", "Rotational Stiffness", 1, default_value=(1.0,), min=0.0, max=10.0,
+               min_is_strict=True, help="Scales how hard the pieces are to spin."), "f"),
+            (T("fastrotation", "Fast Rotation", default_value=False,
+               help="No spin speed limit. For round pieces such as wheels."), "i"),
+            (I("lock_linear", "Lock Position", 3, default_value=(0, 0, 0), min=0, max=1, min_is_strict=True,
+               max_is_strict=True, help="1 stops movement along that world axis (X, Y, Z)."), "v"),
+            (I("lock_angular", "Lock Rotation", 3, default_value=(0, 0, 0), min=0, max=1, min_is_strict=True,
+               max_is_strict=True, help="1 stops rotation about that world axis (X, Y, Z)."), "v"),
+        ]),
+        ("Collision Filtering", [
+            (I("collision_category", "Category", 1, default_value=(-1,),
+               help="Bits saying what the pieces are. -1 is every bit."), "i"),
+            (I("collision_mask", "Mask", 1, default_value=(-1,),
+               help="Bits of the categories the pieces collide with. -1 is every bit."), "i"),
+            (I("collision_group", "Group", 1, default_value=(0,), min=-10, max=10,
+               help="Pieces in the same group always collide if it's positive, never if it's negative."), "i"),
+        ]),
+        ("Hand-Set Shape", [
+            (shape(F("bullet_primS", "Box Size", 3, default_value=(1.0, 1.0, 1.0), min=0.0, max=10.0,
+                     min_is_strict=True, help="Half the box's size on each axis. Needs Auto Fit off.")), "v"),
+            (shape(F("bullet_radius", "Radius", 1, default_value=(0.5,), min=0.0, max=5.0, min_is_strict=True,
+                     help="Sphere or capsule radius. Needs Auto Fit off.")), "f"),
+            (shape(F("bullet_length", "Length", 1, default_value=(1.0,), min=0.0, max=5.0, min_is_strict=True,
+                     help="Capsule length along Y, caps not included. Needs Auto Fit off.")), "f"),
+            (shape(F("bullet_primT", "Offset", 3, default_value=zero3, min=-1.0, max=1.0,
+                     help="Moves the shape from the piece's centre. Needs Auto Fit off.")), "v"),
+            (shape(F("bullet_primR", "Rotation", 3, default_value=zero3, min=-180.0, max=180.0,
+                     help="Turns the shape, as XYZ angles in degrees. Needs Auto Fit off.")), "v"),
+        ]),
+    ]
+
+
+def has_bounds(pt, kind):
+    """Settings with a Use Bounds checkbox (RBD Configure's): Body Type and the on / off ones."""
+    return kind in ("active/animated", "awake") or (
+        kind == "i" and pt.type() == hou.parmTemplateType.Toggle)
+
+
+def bounds_name(name):
+    return f"use{name}bounds"
 
 
 def toggle_name(name):
@@ -136,6 +240,13 @@ def setting_vex(pt, kind):
         return (f'if (!haspointattrib(0, "{attr}")) addpointattrib(0, "{attr}", {default}); '
                 f'setpointattrib(0, "{attr}", @ptnum, {value});')
 
+    def bounded(expr, outside):
+        """`expr` inside the bounds; `outside` for the others while Use Bounds is ticked."""
+        if not has_bounds(pt, kind):
+            return expr
+        return (f'(chi("../{bounds_name(n)}" + num) && !inpointgroup(0, "{INSIDE_GROUP}", @ptnum)) '
+                f'? ({outside}) : ({expr})')
+
     body = None
     if kind == "bullet_georep":
         values = ", ".join(f'"{v}"' for v in GEOREP_VALUES)
@@ -143,17 +254,20 @@ def setting_vex(pt, kind):
                 + put("bullet_georep", '""', f'shapes[clamp({ch("chi")}, 0, len(shapes) - 1)]'))
     elif kind == "bullet_autofit":
         body = put("bullet_autofit", literal(pt, "i"), ch("chi"))
-    elif kind == "active/animated":
-        body = (f'int body = {ch("chi")}; '
+    elif kind == "active/animated":  # outside the bounds: Dynamic
+        body = (f'int body = {bounded(ch("chi"), "2")}; '
                 + put("active", "1", "body == 2") + " " + put("animated", "0", "body == 1"))
     elif kind == "awake":
-        body = put("awake", "0" if pt.defaultValue() else "1", f'!{ch("chi")}')
+        asleep = ch("chi")
+        body = put("awake", "0" if pt.defaultValue() else "1", f'!({bounded(asleep, "!" + asleep)})')
     elif kind == "v":
         body = put(n, literal(pt, kind), ch("chv"))
+    elif kind == "w":  # degrees per second on the node, radians per second on the points
+        body = put("w", "{0.0, 0.0, 0.0}", f'radians({ch("chv")})')
     elif kind == "f":
         body = put(n, literal(pt, kind), ch("chf"))
     else:
-        body = put(n, literal(pt, kind), ch("chi"))
+        body = put(n, literal(pt, kind), bounded(ch("chi"), "!" + ch("chi")))
     return f'    if (chi("../{t}" + num)) {{ {body} }}'
 
 
@@ -170,8 +284,41 @@ def wrangle_vex(rows):
         "",
     ]
     lines += [setting_vex(pt, kind) for pt, kind in rows]
+    lines += [
+        "    // Pin: marks the piece for add_pin_constraints (1 + the Type), 0 = free.",
+        '    if (chi("../addpin" + num)) {',
+        '        int pin = chi("../pin" + num);',
+        f'        if (chi("../usepinbounds" + num) && !inpointgroup(0, "{INSIDE_GROUP}", @ptnum)) pin = !pin;',
+        f'        if (!haspointattrib(0, "{PIN_ATTRIB}")) addpointattrib(0, "{PIN_ATTRIB}", 0);',
+        f'        setpointattrib(0, "{PIN_ATTRIB}", @ptnum, pin ? chi("../pintype" + num) + 1 : 0);',
+        "    }",
+    ]
     lines.append("}")
     return "\n".join(lines)
+
+
+PIN_ATTRIB = "__pin"
+# One constraint line per pinned piece, from the world ("") to the piece, both ends at its point,
+# appended to the Constraint Geometry (input 0); input 1 is the configured pieces.
+PIN_TYPE_NAMES = ", ".join('"' + name + '"' for _, name in PIN_TYPES)
+PIN_VEX = """\
+// Pin constraints: one line from the world to each pinned piece (RBD Configure's add_pin_constraints).
+string types[] = {%(types)s};
+if (!haspointattrib(1, "%(pin)s")) return;
+if (!haspointattrib(0, "name")) addpointattrib(0, "name", "");
+if (!hasprimattrib(0, "constraint_name")) addprimattrib(0, "constraint_name", "");
+for (int pt = 0; pt < npoints(1); pt++) {
+    int pin = point(1, "%(pin)s", pt);
+    if (pin <= 0) continue;
+    vector P = point(1, "P", pt);
+    int a = addpoint(0, P), b = addpoint(0, P);
+    setpointattrib(0, "name", a, "");
+    string piece = point(1, "name", pt);  // typed: point() alone could be read as an int
+    setpointattrib(0, "name", b, piece);
+    int pr = addprim(0, "polyline", a, b);
+    setprimattrib(0, "constraint_name", pr, types[clamp(pin - 1, 0, len(types) - 1)]);
+}
+""" % {"types": PIN_TYPE_NAMES, "pin": PIN_ATTRIB}
 
 
 def ui(folders):
@@ -183,8 +330,11 @@ def ui(folders):
                                help="Write this entry's settings."),
         hou.StringParmTemplate(
             "group#", "Group", 1, help="The pieces (point or primitive group) to set. Empty sets every piece.",
-            tags={"script_action": "import soputils\nkwargs['geometrytype'] = (hou.geometryType.Points,)\n"
-                                   "kwargs['inputindex'] = 0\nsoputils.selectGroupParm(kwargs)",
+            # RBD Configure's selection button: pick pieces (primitives) in the viewport.
+            tags={"script_action": "import soputils\nnode = kwargs['node']\n"
+                                   "kwargs['geometrytype'] = hou.geometryType.Primitives\n"
+                                   "kwargs['inputindex'] = 0\nkwargs['nodepath'] = node.path()\n"
+                                   "soputils.selectGroupParm(kwargs)",
                   "script_action_icon": "BUTTONS_reselect"}),
     ]
     entry[1].setConditional(hou.parmCondType.DisableWhen, "{ enable# == 0 }")
@@ -197,7 +347,7 @@ def ui(folders):
             lab, help_text = SPECIAL_LABELS.get(n, (None, None))
             if lab:
                 value.setLabel(lab)
-            attr = n if kind in ("f", "i", "v") else kind
+            attr = n if kind in ("f", "i", "v", "w") else kind
             value.setHelp(help_text or f"{first_sentence(pt.help())} Writes the {attr} point attribute.")
             # The checkbox has a real label, hidden (an empty label shows the name instead).
             box = hou.ToggleParmTemplate(f"{toggle_name(n)}#", value.label(), default_value=False,
@@ -209,12 +359,23 @@ def ui(folders):
                 f"{{ {toggle_name(n)}# == 0 }} {{ enable# == 0 }}"
             value.setConditional(hou.parmCondType.DisableWhen, new)
             items += [box, value]
+            if has_bounds(pt, kind):
+                use = hou.ToggleParmTemplate(f"{bounds_name(n)}#", "Use Bounds", default_value=False,
+                                             help="Inside the bounds this value, outside the opposite "
+                                                  "(Body Type: Dynamic).")
+                use.setConditional(hou.parmCondType.DisableWhen,
+                                   f"{{ {toggle_name(n)}# == 0 }} {{ enable# == 0 }}")
+                items.append(use)
         # Every Box3D Data folder simple (always open) in each entry.
         entry.append(hou.FolderParmTemplate(f"b3dcfg_folder{i}_#", label, items,
                                             folder_type=hou.folderType.Simple))
+    entry.append(hou.FolderParmTemplate("b3dcfg_pin_#", "Constraints", pin_templates(),
+                                        folder_type=hou.folderType.Simple))
     multi = hou.FolderParmTemplate(MULTIPARM, "Number of Attributes", entry,
                                    folder_type=hou.folderType.TabbedMultiparmBlock, default_value=1)
     group = hou.ParmTemplateGroup()
+    group.append(hou.FolderParmTemplate("b3dcfg_bounds", "Bounds", bounds_templates(),
+                                        folder_type=hou.folderType.Simple))
     group.append(hou.FolderParmTemplate("b3dcfg_packing", "Packing", packing_templates(),
                                         folder_type=hou.folderType.Simple))
     group.append(multi)
@@ -226,14 +387,14 @@ def build_network(sub, rows):
     geometry; the other streams pass through unchanged."""
     ins = sub.indirectInputs()
     nulls = []
-    for i, name in enumerate(["IN_geometry", "IN_constraints", "IN_proxy"]):
+    for i, name in enumerate(["IN_geometry", "IN_constraints", "IN_proxy", "IN_bounds"]):
         n = sub.createNode("null", name)
         n.setInput(0, ins[i])
         if i in INPUT_COLORS:
             ins[i].setColor(hou.Color(INPUT_COLORS[i]))
             n.setColor(hou.Color(INPUT_COLORS[i]))
         nulls.append(n)
-    geo_in, con_in, proxy_in = nulls
+    geo_in, con_in, proxy_in, bounds_in = nulls
 
     # Both streams packed and named as RBD Configure does. Expressions are relative to the nodes
     # inside each prepare subnet: ../../ is the asset.
@@ -253,15 +414,27 @@ def build_network(sub, rows):
 
     target = switch_on_proxy(sub, "target", geo_packed, proxy_packed, proxy_packed)  # what gets configured
     setter = sub.createNode("attribwrangle", "set_attributes")
-    setter.setInput(0, target)
+    setter.setInput(0, inside_bounds(sub, target, bounds_in))
     setter.parm("snippet").set(wrangle_vex(rows))
+    # Pins go onto the constraints, then the markers leave the pieces.
+    pins = sub.createNode("attribwrangle", "add_pin_constraints")
+    pins.setInput(0, con_in)
+    pins.setInput(1, setter)
+    pins.parm("class").set("detail")
+    pins.parm("snippet").set(PIN_VEX)
+    strip = sub.createNode("attribdelete", "strip_pin_marker")
+    strip.setInput(0, setter)
+    strip.parm("ptdel").set(PIN_ATTRIB)
+    configured = sub.createNode("groupdelete", "strip_bounds_group")
+    configured.setInput(0, strip)
+    configured.parm("group1").set(INSIDE_GROUP)
     # With a proxy the geometry passes through (packed), unless there is none: then, as RBD Configure,
     # the configured proxy stands in for it.
-    geo_out = switch_on_proxy(sub, "geometry_result", setter, geo_packed, proxy_packed,
+    geo_out = switch_on_proxy(sub, "geometry_result", configured, geo_packed, proxy_packed,
                               extra=geo_packed)
-    proxy_out = switch_on_proxy(sub, "proxy_result", proxy_packed, setter, proxy_packed)
+    proxy_out = switch_on_proxy(sub, "proxy_result", proxy_packed, configured, proxy_packed)
 
-    for idx, src in enumerate([geo_out, con_in, proxy_out]):
+    for idx, src in enumerate([geo_out, pins, proxy_out]):
         out = sub.createNode("output", f"OUT_{['geometry', 'constraints', 'proxy'][idx]}")
         out.setInput(0, src)
         out.parm("outputidx").set(idx)
@@ -271,6 +444,46 @@ def build_network(sub, rows):
             out.setDisplayFlag(True)
             out.setRenderFlag(True)
     sub.layoutChildren()
+
+
+def inside_bounds(sub, target, bounds_in):
+    """RBD Configure's bounds: the point group INSIDE_GROUP holds the pieces inside the Bounds box, or
+    inside the Static Bounds Geometry's bounding box or volume. With no bounds geometry, no group
+    (every piece outside)."""
+    box = sub.createNode("box", "bounds_box")
+    for parm, src in (("size", "bboxsize"), ("t", "bboxcenter"), ("r", "bboxr")):
+        for c, axis in zip(box.parmTuple(parm), "xyz"):
+            c.setExpression(f'ch("../{src}{axis}")', hou.exprLanguage.Hscript)
+    shape = sub.createNode("switch", "use_bounds_geometry")
+    shape.setInput(0, box)
+    shape.setInput(1, bounds_in)
+    shape.parm("input").setExpression('ch("../boundingtype") > 0', hou.exprLanguage.Hscript)
+    groups = []
+    for name, boundtype in (("bounds_object", "usebobject"), ("bounds_volume", "usebvolume")):
+        g = sub.createNode("groupcreate", name)
+        g.setInput(0, target)
+        g.setInput(1, shape)
+        for parm, value in (("groupname", INSIDE_GROUP), ("grouptype", "point"), ("groupbase", 0),
+                            ("groupbounding", 1), ("boundtype", boundtype)):
+            if g.parm(parm) is None:
+                warn(f"{g.path()} has no {parm}: Use Bounds may not work")
+            else:
+                g.parm(parm).set(value)
+        groups.append(g)
+    kind = sub.createNode("switch", "bounding_type")
+    kind.setInput(0, groups[0])
+    kind.setInput(1, groups[1])
+    kind.parm("input").setExpression('ch("../boundingtype") == 2', hou.exprLanguage.Hscript)
+    any_bounds = sub.createNode("switch", "any_bounds")
+    any_bounds.setInput(0, target)
+    any_bounds.setInput(1, kind)
+    any_bounds.addSpareParmTuple(hou.StringParmTemplate(
+        "spare_input0", "Spare Input 0", 1, string_type=hou.stringParmType.NodeReference,
+        help="The bounds geometry the expression reads as input -1.",
+        tags={"opfilter": "!!SOP!!", "oprelative": "."}))
+    any_bounds.parm("spare_input0").set(any_bounds.relativePathTo(shape))
+    any_bounds.parm("input").setExpression("nprims(-1) > 0", hou.exprLanguage.Hscript)
+    return any_bounds
 
 
 def switch_on_proxy(sub, name, without, with_proxy, proxy, extra=None):
@@ -301,7 +514,7 @@ def edit_dialog_script(definition):
         return
     lines = [ln for ln in section.contents().splitlines()
              if not re.match(r"\s*(inputlabel|outputlabel)\b", ln)]
-    extra = [f'    inputlabel\t{i + 1}\t"{lab}"' for i, lab in enumerate(LABELS)]
+    extra = [f'    inputlabel\t{i + 1}\t"{lab}"' for i, lab in enumerate(INPUT_LABELS)]
     extra += [f'    outputlabel\t{i + 1}\t"{lab}"' for i, lab in enumerate(LABELS)]
     at = next((i + 1 for i, ln in enumerate(lines) if re.match(r"\s*label\b", ln)), 1)
     section.setContents("\n".join(lines[:at] + extra + lines[at:]) + "\n")
@@ -314,7 +527,7 @@ def build(out_path):
         data = dopnet.createNode("box3d_data", "box3d_data")
     except hou.OperationFailed:
         raise RuntimeError("the box3d_data DOP is not installed: build the plugin first")
-    folders = settings(data)
+    folders = settings(data) + extra_folders()
     rows = [r for _, rs in folders for r in rs]
     print("make_configure_sop: settings: " + ", ".join(pt.name() for pt, _ in rows))
 
@@ -325,6 +538,8 @@ def build(out_path):
     # The Packing parameters first (spare, replaced by the asset's interface below), so the expressions
     # build_network sets on the Assembles and wrangles find them while the network is built.
     spare = sub.parmTemplateGroup()
+    spare.append(hou.FolderParmTemplate("b3dcfg_bounds", "Bounds", bounds_templates(),
+                                        folder_type=hou.folderType.Simple))
     spare.append(hou.FolderParmTemplate("b3dcfg_packing", "Packing", packing_templates(),
                                         folder_type=hou.folderType.Simple))
     sub.setParmTemplateGroup(spare)
@@ -339,7 +554,7 @@ def build(out_path):
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
 
     asset = sub.createDigitalAsset(name=TYPE_NAME, hda_file_name=out_path, description=LABEL,
-                                   min_num_inputs=1, max_num_inputs=len(LABELS))
+                                   min_num_inputs=1, max_num_inputs=len(INPUT_LABELS))
     definition = asset.type().definition()
     definition.setParmTemplateGroup(ui(folders))
     definition.setMaxNumOutputs(len(LABELS))
@@ -394,6 +609,31 @@ def check(out_path):
     if got != want:
         warn(f"probe: (friction, active) per piece {got}, expected {want} (only the group's piece set, the "
              "other Box3D Data's defaults)")
+    # Bounds and Pin: a box around the first piece only. Body Type Static with Use Bounds makes it static
+    # and the other Dynamic; Pin adds one Weld line from the world to it.
+    settings_to = (("group1", ""), ("boundingtype", 0), ("bboxcenter", (0.0, 0.0, 0.0)), ("bboxsize", (1.5, 1.5, 1.5)),
+                   ("usebodytypebounds1", 1), ("addpin1", 1), ("usepinbounds1", 1))
+    for n, v in settings_to:
+        target = cfg.parmTuple(n)
+        if target is None:
+            warn(f"the asset has no {n} parameter: bounds / pin not checked")
+            break
+        target.set(v if isinstance(v, tuple) else (v,))
+    else:
+        g = cfg.geometry()
+        actives = sorted(round(p.position()[0]) for p in g.points() if p.attribValue("active") == 0) if g else None
+        if actives != [0]:
+            warn(f"probe: Use Bounds made the pieces at x {actives} static, expected only x 0")
+        if g is not None and (g.findPointAttrib(PIN_ATTRIB) or g.findPointGroup(INSIDE_GROUP)):
+            warn("probe: the pin marker or the bounds group reached the output")
+        cons = cfg.geometry(1)
+        lines = [(pr.attribValue("constraint_name"), [pt.attribValue("name") for pt in pr.points()])
+                 for pr in cons.prims()] if cons is not None and cons.findPrimAttrib("constraint_name") else []
+        if len(lines) != 1 or lines[0][0] != "Weld" or lines[0][1][0] != "":
+            warn(f"probe: Pin gave constraint lines {lines}, expected one Weld line from the world to the piece")
+        for n, _ in settings_to:
+            cfg.parmTuple(n).revertToDefaults()
+        cfg.parm("group1").set("chosen")
     # With a proxy: the settings go onto it, the geometry passes through untouched (packed).
     cfg.setInput(2, pts)
     out0, out2 = cfg.geometry(0), cfg.geometry(2)

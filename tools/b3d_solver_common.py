@@ -54,7 +54,7 @@ DIVE_TARGET = f"dopnet/{FORCES}"
 # Sticky notes beside PRESOLVE (left) and POSTSOLVE (right).
 FORCES_NOTES = [
     "Wire POP Forces into PRESOLVE to apply per-point forces.\n\n"
-    "If scaling the sim, remember to apply scale accordingly.",
+    "With World Scale, the force and torque they set are scaled for you: enter real values.",
     "Wire post-solve operations into POSTSOLVE.\n\n"
     "If scaling the sim, remember to apply scale accordingly.",
 ]
@@ -350,16 +350,16 @@ def pull(entries, pred):
 
 
 def copy_attributes(xform, toggle_parm):
-    """Transform Pieces' Attributes to Copy: its toggle follows the asset's `toggle_parm`, its list the
-    asset's Transfer Attributes. The toggle is the one named in the list's disable condition (or a
-    toggle with the same label)."""
+    """Transform Pieces' Attributes to Copy, as RBD Bullet Solver's: always on, the asset's Transfer
+    Attributes while its `toggle_parm` is on, else just w. The toggle is the one named in the list's
+    disable condition (or a toggle with the same label)."""
     group = xform.parmTemplateGroup()
     found = [pt for pt in group.entriesWithoutFolders() if pt.label().lower() == "attributes to copy"]
     attribs = next((pt for pt in found if pt.type() == hou.parmTemplateType.String), None)
     if attribs is None:
         warn(f"{xform.path()} has no Attributes to Copy list; its parameters: {labels(xform)}")
         return
-    xform.parm(attribs.name()).set(f'`chs("../{TRANSFER_ATTRIBUTES}")`')
+    xform.parm(attribs.name()).set(f'`ifs(ch("../{toggle_parm}"), chs("../{TRANSFER_ATTRIBUTES}"), "w")`')
     toggle = next((pt.name() for pt in found if pt.type() == hou.parmTemplateType.Toggle), None)
     if toggle is None:
         for cond in attribs.conditionals().values():
@@ -370,7 +370,7 @@ def copy_attributes(xform, toggle_parm):
     if toggle is None:
         warn(f"{xform.path()}: no toggle for Attributes to Copy found; it copies always")
         return
-    xform.parm(toggle).setExpression(f'ch("../{toggle_parm}")', hou.exprLanguage.Hscript)
+    xform.parm(toggle).set(1)
 
 
 def set_toggles(node, toggles):

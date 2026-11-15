@@ -1,6 +1,7 @@
 // Box3D joints through Box3DWorld: every type, world anchors, live updates,
 // breaking, feedback, and the parameter table the Houdini side is built from.
 #include "TestUtil.h"
+#include "core/Box3DSideFX.h" // frame offsets, as the sync applies them
 #include "core/Box3DWorld.h"
 
 #include <cmath>
@@ -280,6 +281,44 @@ int main() {
 
   WorldSettings ws;
   ws.workerCount = 1;
+
+  // ---- Hold Separation: a weld between two pieces' centres 2 apart holds
+  // them there (frames offset as the sync does), a plain one pulls them
+  // together ----
+  {
+    WorldSettings zeroG = ws;
+    zeroG.gravity[0] = zeroG.gravity[1] = zeroG.gravity[2] = 0.0f;
+    double gap[2] = {0, 0};
+    for (int hold = 0; hold < 2; ++hold) {
+      Box3DWorld w;
+      CHECK(w.create(zeroG));
+      const BodyHandle a = box(w, 0, 5, 0), b = box(w, 2, 5, 0);
+      JointFrame fa = frame(0, 5, 0), fb = frame(2, 5, 0);
+      if (hold) {
+        SideFXJoint m;
+        m.holdSeparation = true;
+        JointFrame adjA, adjB;
+        sideFXFrameOffsets(m, fa, fb, adjA, adjB);
+        CHECK(!isIdentityOffset(adjA) && !isIdentityOffset(adjB));
+        fa = applyFrameOffset(fa, adjA);
+        fb = applyFrameOffset(fb, adjB);
+      }
+      CHECK(w.createJoint(JointType::Weld, a, b, fa, fb,
+                          Box3DWorld::defaultJointSettings(JointType::Weld)) !=
+            0);
+      steps(w, 60);
+      double pa[3], pb[3];
+      pos(w, a, pa);
+      pos(w, b, pb);
+      gap[hold] = std::sqrt((pb[0] - pa[0]) * (pb[0] - pa[0]) +
+                            (pb[1] - pa[1]) * (pb[1] - pa[1]) +
+                            (pb[2] - pa[2]) * (pb[2] - pa[2]));
+    }
+    std::printf("weld between centres 2 apart: plain gap %.3f, Hold "
+                "Separation gap %.3f\n",
+                gap[0], gap[1]);
+    CHECK(gap[0] < 0.1 && std::fabs(gap[1] - 2.0) < 1e-3);
+  }
 
   // ---- weld to the world: the body hangs where it is ----
   {
