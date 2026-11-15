@@ -366,18 +366,14 @@ def ui(folders):
                 use.setConditional(hou.parmCondType.DisableWhen,
                                    f"{{ {toggle_name(n)}# == 0 }} {{ enable# == 0 }}")
                 items.append(use)
-        # Every Box3D Data folder simple (always open) in each entry.
-        entry.append(hou.FolderParmTemplate(f"b3dcfg_folder{i}_#", label, items,
-                                            folder_type=hou.folderType.Simple))
-    entry.append(hou.FolderParmTemplate("b3dcfg_pin_#", "Constraints", pin_templates(),
-                                        folder_type=hou.folderType.Simple))
+        # Every Box3D Data folder an open collapsible folder in each entry.
+        entry.append(b3d_hda.collapsible(f"b3dcfg_folder{i}_#", label, items))
+    entry.append(b3d_hda.collapsible("b3dcfg_pin_#", "Constraints", pin_templates()))
     multi = hou.FolderParmTemplate(MULTIPARM, "Number of Attributes", entry,
                                    folder_type=hou.folderType.TabbedMultiparmBlock, default_value=1)
     group = hou.ParmTemplateGroup()
-    group.append(hou.FolderParmTemplate("b3dcfg_bounds", "Bounds", bounds_templates(),
-                                        folder_type=hou.folderType.Simple))
-    group.append(hou.FolderParmTemplate("b3dcfg_packing", "Packing", packing_templates(),
-                                        folder_type=hou.folderType.Simple))
+    group.append(b3d_hda.collapsible("b3dcfg_bounds", "Bounds", bounds_templates()))
+    group.append(b3d_hda.collapsible("b3dcfg_packing", "Packing", packing_templates()))
     group.append(multi)
     return group
 
@@ -538,10 +534,8 @@ def build(out_path):
     # The Packing parameters first (spare, replaced by the asset's interface below), so the expressions
     # build_network sets on the Assembles and wrangles find them while the network is built.
     spare = sub.parmTemplateGroup()
-    spare.append(hou.FolderParmTemplate("b3dcfg_bounds", "Bounds", bounds_templates(),
-                                        folder_type=hou.folderType.Simple))
-    spare.append(hou.FolderParmTemplate("b3dcfg_packing", "Packing", packing_templates(),
-                                        folder_type=hou.folderType.Simple))
+    spare.append(b3d_hda.collapsible("b3dcfg_bounds", "Bounds", bounds_templates()))
+    spare.append(b3d_hda.collapsible("b3dcfg_packing", "Packing", packing_templates()))
     sub.setParmTemplateGroup(spare)
     build_network(sub, rows)
 

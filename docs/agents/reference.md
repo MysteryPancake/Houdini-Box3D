@@ -77,9 +77,10 @@ optional disable condition). It keeps the names, defaults, ranges, menus and con
 `tab()` groups share one `PRM_SWITCHER` (`PRM_Default(count, label)` per tab, switcher `b3dtabs`); `folder()` groups
 are simple folders, each a one-folder switcher with `PRM_SpareData::groupTypeSimple` named `<prefix><index>`. A builder
 uses one kind, except `subfolder()`: a simple folder inside a tab (`<prefix>sub<index>`), counted as one parameter of
-the tab. The solver uses tabs: Solver (time scale, Substeps, Solver Passes, then simple folders Contacts: contact tuning,
-recycling; Sleeping: Allow Sleeping; Aging: Enable Aging, Reap Dead Points, Reap At Frame End),
-Forces (gravity, bounce, friction / bounce mixing, Use Force DOPs, Forces Wake Bodies), Advanced (Warm Starting,
-Continuous Collision, Export Collision Shapes, threads, speed limit, ...); its guide parameters are a plain list on Houdini's own Guide Options tab (so the
+the tab. The solver uses tabs by subject: Solver (time scale, Substeps, Solver Passes, Allow Sleeping), Collision (simple
+folders Contacts: contact tuning, recycling; Bounce / Friction: bounce settings, friction / bounce mixing),
+Forces (gravity, Use Force DOPs, Forces Wake Bodies), Aging (Enable Aging, Reap Dead Points, Reap At Frame End),
+Output (Export Collision Shapes, Impact Min Speed), Advanced (Warm Starting,
+Continuous Collision, threads, speed limit, ...); its guide parameters are a plain list on Houdini's own Guide Options tab (so the
 solver's tabs sit inside Data Options). Box3D Data and the joint nodes use simple folders: Box3D Data's are Shape, Body, Material, CCD & Contacts (CCD Threshold, Fast Object, Contact Recycling, Add
 Impact Data) and Sleep (Allow Sleeping, Start Asleep, Sleep Threshold). A function-local static, because Houdini keeps pointers into it. Menu tokens are "0", "1", ... in item order (read as ints).

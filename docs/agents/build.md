@@ -190,9 +190,11 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   Options, a tab of simple folders kept whole; Guide Options skipped).
   Tab order: Solver, Pieces, Collision, Forces, any other solver tabs, Visualization (`visualization_tab`: Show
   Collision Geometry, Show Collision Shapes and Shape Color, no folders), then Advanced and Output always last; the
-  solver's own Contacts, Sleeping and Aging folders (`CONTACTS_FOLDER`, `SLEEPING_FOLDER`, `AGING_FOLDER`) are pulled
-  out of its Solver tab and re-placed after Cache Simulation, Sleeping and Aging closed. Solver: the solver's own
-  settings, Cache Simulation, then Contacts, Sleeping and Aging. Collision: one Collision Geometry folder whose header checkbox is Use External
+  solver's parameters are regrouped by name (`SOLVER_FOLDERS`, `BOUNCE_PARMS`, `IMPACT_SPEED`, `SHAPES_TOGGLE`, pulled
+  with `pull`), whichever DOP tab holds them: Contacts, Sleeping and Aging become folders after Cache Simulation on the
+  Solver tab (Sleeping and Aging closed), bounce / friction settings go loose into Forces (`TAB_GROUPS` folders them),
+  and DOP tabs left empty (Collision, Aging, Output) are dropped. Solver: the solver's own settings, Cache Simulation,
+  then Contacts, Sleeping and Aging. Collision: one Collision Geometry folder whose header checkbox is Use External
   Collisions (`usecollisions`, placed just before the folder, as RBD Bullet Solver's), holding Collision Type and the collision object's Shape, Material and CCD &
   Contacts folders (`COLLIDER_FOLDERS`, all named `collision_*`), the last cut to Contact Recycling as Contacts
   (`COLLIDER_DROPPED`: the rest does nothing for a Static / Kinematic body). Pieces: the pieces' Box3D Data folders
@@ -218,7 +220,7 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
 folder sits above the entries. Names map one to one except `MAPPING`: Default Shape -> `bullet_georep` (`GEOREP_VALUES`, menu order), Auto Fit
 -> `bullet_autofit`, Body Type -> `active` / `animated`, Start Asleep -> `awake` (inverted); `SKIP` holds the
 object-level ones (Hull per Connected, Flip Winding, Add Impact Data). Disable conditions also need the referenced
-setting ticked (`rewrite_condition`). Every Box3D Data folder in an entry is simple (always open).
+setting ticked (`rewrite_condition`). Every folder (Bounds, Packing, each Box3D Data folder and Constraints in an entry) is an open collapsible folder (`b3d_hda.collapsible`).
 * Geometry and Proxy are packed first, as RBD Configure does, by the chain the Box3D Solver SOP runs
   (`tools/b3d_prepare.py`, `prepare_input` in pack mode without the rest attributes): packed primitives kept, the rest
   assembled into packed pieces named on their points. RBD Configure's packing parameters drive the Assembles (Name

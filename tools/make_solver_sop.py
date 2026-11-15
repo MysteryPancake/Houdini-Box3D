@@ -75,13 +75,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import b3d_hda  # noqa: E402  (beside this script)
 from b3d_hda import labels, value_templates, without_parmops  # noqa: E402
 from b3d_solver_common import (  # noqa: E402
-    AGING_FOLDER,
     COLLISION_TYPE,
     as_collapsible,
     collapsible,
     COLLIDER_DROPPED,
     COLLIDER_FOLDERS,
-    CONTACTS_FOLDER,
     COLLIDER_RELABEL,
     DIVE_TARGET,
     DOP_COLLISION,
@@ -106,9 +104,10 @@ from b3d_solver_common import (  # noqa: E402
     SHAPES_COLOR,
     SHAPES_TOGGLE,
     SHOW_COLLISION,
-    SLEEPING_FOLDER,
     START_ASLEEP,
     solver_folders,
+    SOLVER_FOLDERS,
+    BOUNCE_PARMS,
     template_by_label,
     TRANSFER_ATTRIBUTES,
     TRANSFER_ATTRIBUTES_DEFAULT,
@@ -293,40 +292,36 @@ def build(out_path, packed_hda=None):
     group = hou.ParmTemplateGroup()
     for pt in top:
         group.append(pt)
-    # The solver's tabs by label. Its Contacts folder goes after Cache Simulation in Solver (collapsible), so
-    # the SOP's Collision tab is only about the Collision input.
+    # The solver's tabs by label, pulled apart by parameter name: Contacts, Sleeping and Aging become folders
+    # after Cache Simulation on the Solver tab, Bounce / Friction goes to Forces, Impact Min Speed and Export
+    # Collision Shapes to Output and Visualization. The DOP's own Collision, Aging and Output tabs end up
+    # empty and are dropped, so the SOP's Collision tab is only about the Collision input.
     tabs = [(t.label(), list(t.parmTemplates())) for t in solver_tabs]
-    # Out of the solver's tabs: the Contacts, Sleeping and Aging folders re-placed at the end of the Solver tab
-    # (after Cache Simulation), Impact Min Speed (Advanced) to Output.
-    aging, sleeping, speed, shapes, contact_folders = [], [], [], [], []
-    for i, (label, contents) in enumerate(tabs):
-        contents, c = pull(contents, lambda pt: pt.type() == hou.parmTemplateType.Folder
-                           and pt.label() == CONTACTS_FOLDER)
-        contact_folders += c
-        contents, a = pull(contents, lambda pt: pt.type() == hou.parmTemplateType.Folder
-                           and pt.label() == AGING_FOLDER)
-        contents, sl = pull(contents, lambda pt: pt.type() == hou.parmTemplateType.Folder
-                            and pt.label() == SLEEPING_FOLDER)
-        contents, sp = pull(contents, lambda pt: pt.name() == IMPACT_SPEED)
-        contents, sh = pull(contents, lambda pt: pt.name() == SHAPES_TOGGLE)
-        tabs[i] = (label, contents)
-        aging += a
-        sleeping += sl
-        speed += sp
-        shapes += sh
-    if not aging:
-        warn(f"no {AGING_FOLDER} folder on the solver: not on the Solver tab")
-    if not sleeping:
-        warn(f"no {SLEEPING_FOLDER} folder on the solver: Allow Sleeping is not on the Solver tab")
-    contacts = [t for f in contact_folders for t in f.parmTemplates()]
-    # Solver tab: Cache Simulation, Contacts, then the closed Sleeping and Aging folders.
-    lifecycle = [collapsible(f"b3dsop_lifecycle{i}", f.label(), f.parmTemplates(), open_folder=False)
-                 for i, f in enumerate(sleeping + aging)]
-    solver_extra = solver_first + ([collapsible("b3dsop_contacts", "Contacts", contacts, True)] if contacts else []) \
-        + lifecycle
+
+    def take(names):
+        taken_templates = []
+        for i, (label, contents) in enumerate(tabs):
+            contents, got = pull(contents, lambda pt: pt.name() in names)
+            tabs[i] = (label, contents)
+            taken_templates += got
+        return taken_templates
+
+    folder_items = []
+    for label, names, is_open in SOLVER_FOLDERS:
+        got = take(names)
+        if not got:
+            warn(f"none of the {label} settings {names} found on the solver: no {label} folder on the Solver tab")
+        else:
+            folder_items.append(collapsible(f"b3dsop_{label.lower()}", label, got, open_folder=is_open))
+    bounce = take(BOUNCE_PARMS)
+    speed = take((IMPACT_SPEED,))
+    shapes = take((SHAPES_TOGGLE,))
+    tabs = [(label, drop_templates(contents, set())) for label, contents in tabs]  # folders left empty go
+    solver_extra = solver_first + folder_items
     # Tab order: Solver, Pieces, Collision, Forces, any other solver tabs, Visualization, then Advanced and
     # Output always last.
-    by_label = {label: contents for label, contents in tabs}
+    by_label = {label: contents for label, contents in tabs if contents}
+    by_label["Forces"] = by_label.get("Forces", []) + bounce
     ordered = [("Solver", [use_scale, world_scale] + by_label.pop("Solver", []) + solver_extra),
                ("Pieces", None),  # filled below
                ("Collision", collision_items)]

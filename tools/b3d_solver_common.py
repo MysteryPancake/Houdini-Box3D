@@ -6,7 +6,7 @@ import re
 import hou
 
 import b3d_hda
-from b3d_hda import labels, NO_VALUE, pull, value_templates
+from b3d_hda import collapsible, labels, NO_VALUE, pull, value_templates
 
 
 TYPE_NAME = "box3d_solver"  # a SOP; the DOP of the same name lives in another node table
@@ -38,11 +38,14 @@ TAB_GROUPS = {
                                    "isotropicinertia"]),
                  ("Threads", ["autothreads", "threads"])],
 }
-# The Pieces tab is the pieces' Box3D Data folders (Shape, Body, Material, CCD & Contacts, Sleep). The solver's Solver
-# tab ends with Contacts, Sleeping and Aging folders; the SOP puts Cache Simulation before them and closes
-# Sleeping and Aging.
-CONTACTS_FOLDER = "Contacts"  # the solver's contact settings, a folder at the end of its Solver tab
-SLEEPING_FOLDER = "Sleeping"
+# The Pieces tab is the pieces' Box3D Data folders (Shape, Body, Material, CCD & Contacts, Sleep).
+# The solver's settings the SOP regroups by name, wherever the DOP has them: (folder label, names, open) on the
+# Solver tab after Cache Simulation, and the bounce / friction ones loose in Forces (TAB_GROUPS folders them).
+SOLVER_FOLDERS = [("Contacts", ("contactstiffness", "contactdamping", "contactpushspeed", "contactrecycledistance"), True),
+                  ("Sleeping", ("enablesleep",), False),
+                  ("Aging", ("enableaging", "reapdead", "reapatframeend"), False)]
+BOUNCE_PARMS = ("restitutionpropagation", "bouncethreshold", "restitutioniterations", "frictionmixing",
+                "restitutionmixing")
 
 # The DOP subnet for forces, the asset's dive target, and its outputs in the order the Multiple
 # Solver runs them around the Box3D Solver.
@@ -97,7 +100,6 @@ CONSTRAINTS_TOGGLES = {"Pack Geometry Before Merging": False,
 IMPACT_TOGGLE = "addimpact"  # the pieces' Box3D Data toggle (on the Packed Object's Object tab)
 START_ASLEEP = "startasleep"  # the pieces' Box3D Data toggle (on the Packed Object's Initial State tab)
 IMPACT_SPEED = "impactminspeed"  # the solver's, moved from Advanced
-AGING_FOLDER = "Aging"  # the solver's Misc subfolder
 IMPACTS = "IMPACTS"  # the null holding the imported impact records, what Fetch Impacts merges
 # Fetch Impacts: an Object Merge of IMPACTS beside the asset (reused if there), selected.
 FETCH_IMPACTS = (
@@ -198,17 +200,6 @@ def solver_folders(entries):
         elif value_templates(children):
             out.append(pt)
     return out
-
-
-def collapsible(name, label, contents, open_folder=True, header_toggle=None):
-    """A collapsible folder with RBD Bullet Solver's tags: group_type collapsible, group_default 1 when
-    `open_folder`, and `header_toggle` (a toggle's name) as its header checkbox."""
-    tags = {"group_type": "collapsible"}
-    if open_folder:
-        tags["group_default"] = "1"
-    if header_toggle:
-        tags["sidefx::header_toggle"] = header_toggle
-    return hou.FolderParmTemplate(name, label, contents, folder_type=hou.folderType.Collapsible, tags=tags)
 
 
 def as_collapsible(folder):

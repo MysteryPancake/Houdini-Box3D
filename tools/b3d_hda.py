@@ -178,3 +178,14 @@ def pull(entries, pred):
             picked += more
         kept.append(pt)
     return kept, picked
+
+
+def collapsible(name, label, contents, open_folder=True, header_toggle=None):
+    """A collapsible folder with RBD Bullet Solver's tags: group_type collapsible, group_default 1 when
+    `open_folder`, and `header_toggle` (a toggle's name) as its header checkbox."""
+    tags = {"group_type": "collapsible"}
+    if open_folder:
+        tags["group_default"] = "1"
+    if header_toggle:
+        tags["sidefx::header_toggle"] = header_toggle
+    return hou.FolderParmTemplate(name, label, contents, folder_type=hou.folderType.Collapsible, tags=tags)

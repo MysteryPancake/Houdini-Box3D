@@ -66,6 +66,10 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                    "positions. More is stiffer and more stable for stacks "
                    "and chains, but slower. Raise Substeps instead for "
                    "collisions missed between frames.")
+          .toggle("enablesleep", "Allow Sleeping", true,
+                  "Let resting bodies stop simulating until touched. Off keeps "
+                  "every body awake, whatever Box3D Data says.")
+          .tab("Collision")
           .subfolder("Contacts")
           // Stiffer and less damped than Box3D's own defaults (30 Hz, 10):
           // a more rigid look. Box3D caps the stiffness at 1/8 of the pass
@@ -86,10 +90,7 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                   "Reuse contacts for pairs that barely moved: faster but "
                   "slightly less exact. 0 turns it off. "
                   "Box3D Data's Contact Recycling turns it off per object.")
-          .tab("Forces")
-          .vector("gravity", "Gravity", {0.0, -9.80665, 0.0},
-                  "Acceleration of every dynamic body, in units per second "
-                  "squared. Scale per body with Gravity Scale on Box3D Data.")
+          .subfolder("Bounce / Friction")
           .toggle("restitutionpropagation", "Bounce Propagation", false,
                   "Pass bounce on through stacks of touching pieces.")
           .number("bouncethreshold", "Bounce Threshold", 1.0, R{0, 5},
@@ -108,6 +109,10 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
           .menu("restitutionmixing", "Bounce Mixing", 1,
                 {"Geometric Mean", "Minimum", "Maximum", "Average", "Multiply"},
                 "How the bounce of two touching bodies is combined.")
+          .tab("Forces")
+          .vector("gravity", "Gravity", {0.0, -9.80665, 0.0},
+                  "Acceleration of every dynamic body, in units per second "
+                  "squared. Scale per body with Gravity Scale on Box3D Data.")
           .toggle("useforces", "Use Force DOPs", true,
                   "Apply Force DOPs connected to the objects (Wind, Fan, "
                   "etc.). Set Gravity to 0 when using a Gravity Force.")
@@ -115,11 +120,7 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                   "Let forces wake sleeping bodies, e.g. wind that should blow "
                   "resting pieces away.",
                   "{ useforces == 0 }")
-          .subfolder("Sleeping")
-          .toggle("enablesleep", "Allow Sleeping", true,
-                  "Let resting bodies stop simulating until touched. Off keeps "
-                  "every body awake, whatever Box3D Data says.")
-          .subfolder("Aging")
+          .tab("Aging")
           .toggle("enableaging", "Enable Aging", false,
                   "Add the frame time step (not Time Scale-adjusted) to each "
                   "point's age, and mark points dead once age exceeds life.")
@@ -130,11 +131,15 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                   "Delete points that die during a step at its end, so dead "
                   "points are never seen. Off keeps them for one frame.",
                   "{ reapdead == 0 }")
-          .tab("Advanced")
+          .tab("Output")
           .toggle("exportshapes", "Export Collision Shapes", false,
                   "Write every body's collision shapes as data on its object "
                   "(for the Box3D Solver SOP's Show Collision Shapes). Costs "
                   "time every step.")
+          .number("impactminspeed", "Impact Min Speed", 0.0, R{0, 10},
+                  "Impact data (Box3D Data's Add Impact Data) only includes "
+                  "collisions faster than this. 0 includes every contact.")
+          .tab("Advanced")
           .toggle("enablewarmstarting", "Warm Starting", true,
                   "Reuse last step's contact forces. Leave on; off makes "
                   "stacks less stable.")
@@ -155,9 +160,6 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                   R{0, 1, true},
                   "Treats nearly spherical bodies as spheres for spin. Applies "
                   "to new bodies and mass changes.")
-          .number("impactminspeed", "Impact Min Speed", 0.0, R{0, 10},
-                  "Impact data (Box3D Data's Add Impact Data) only includes "
-                  "collisions faster than this. 0 includes every contact.")
           .templates();
 
   static SIM_DopDescription theDopDescription(

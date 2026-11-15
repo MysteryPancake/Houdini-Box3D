@@ -162,18 +162,26 @@ def test_ui():
     expect("Revolute's Joint and Revolute folders are simple",
            (len(ours), all(f.folderType() == hou.folderType.Simple for f in ours)), (2, True))
     solver_tabs = [f for f in all_folders(solver.parmTemplateGroup().entries())
-                   if f.label() in ("Solver", "Forces", "Advanced")]
+                   if f.label() in ("Solver", "Collision", "Forces", "Aging", "Output", "Advanced")]
     expect("Solver tabs present, as tabs",
            ([f.label() for f in solver_tabs], all(f.folderType() == hou.folderType.Tabs for f in solver_tabs)),
-           (["Solver", "Forces", "Advanced"], True))
-    solver_tab = next((f for f in solver_tabs if f.label() == "Solver"), None)
-    expect("Solver tab ends with simple Contacts, Sleeping and Aging folders",
+           (["Solver", "Collision", "Forces", "Aging", "Output", "Advanced"], True))
+    collision_tab = next((f for f in solver_tabs if f.label() == "Collision"), None)
+    expect("Solver Collision tab holds simple Contacts and Bounce / Friction folders",
            [(f.label(), f.folderType() == hou.folderType.Simple,
              sorted(c.name() for c in f.parmTemplates() if not c.name().startswith("parmop")))
-            for f in (solver_tab.parmTemplates() if solver_tab else []) if f.type() == hou.parmTemplateType.Folder],
+            for f in (collision_tab.parmTemplates() if collision_tab else [])
+            if f.type() == hou.parmTemplateType.Folder],
            [("Contacts", True, ["contactdamping", "contactpushspeed", "contactrecycledistance", "contactstiffness"]),
-            ("Sleeping", True, ["enablesleep"]),
-            ("Aging", True, ["enableaging", "reapatframeend", "reapdead"])])
+            ("Bounce / Friction", True, ["bouncethreshold", "frictionmixing", "restitutioniterations",
+                                         "restitutionmixing", "restitutionpropagation"])])
+    for tab_label, want in (("Solver", ["enablesleep", "solverpasses", "substeps", "timescale"]),
+                            ("Aging", ["enableaging", "reapatframeend", "reapdead"]),
+                            ("Output", ["exportshapes", "impactminspeed"])):
+        tab = next((f for f in solver_tabs if f.label() == tab_label), None)
+        expect(f"Solver {tab_label} tab parameters",
+               sorted(c.name() for c in (tab.parmTemplates() if tab else []) if not c.name().startswith("parmop")),
+               want)
     forces_tab = next((f for f in solver_tabs if f.label() == "Forces"), None)
     expect("Solver Forces tab ends with Use Force DOPs, then Forces Wake Bodies",
            [pt.name() for pt in (forces_tab.parmTemplates() if forces_tab else [])
