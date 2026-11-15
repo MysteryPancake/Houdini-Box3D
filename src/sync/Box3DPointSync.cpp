@@ -5,6 +5,9 @@
 // bodies.
 #include "Box3DSolverInternal.h"
 
+#include <functional>
+#include <string_view>
+
 namespace box3dsolver {
 
 // ---------------------------------------------------------------------------
@@ -295,6 +298,10 @@ struct StringAttr {
       return std::string();
     const char *v = handle->get(off);
     return v ? std::string(v) : std::string();
+  }
+  // The point's string without a copy; null for none.
+  const char *cstr(GA_Offset off) const {
+    return attr ? handle->get(off) : nullptr;
   }
 };
 
@@ -947,9 +954,7 @@ void readSlot(const ScanContext &ctx, int objectId, Box3DPointSlot &s) {
   if (!s.ok || s.dead || s.unpackedPrim)
     return;
   if (!s.entry) {
-    const auto it = ctx.st.mirror.find(key);
-    if (it != ctx.st.mirror.end())
-      s.entry = &it->second;
+    s.entry = ctx.st.mirror.find(key);
   }
   if (const Box3DBodyMirror *e = s.entry) {
     s.rebuild = s.deforming || s.refitWanted;
@@ -1028,17 +1033,23 @@ void reserveMirror(Box3DSharedState &st, const SlotList &snaps) {
 }
 
 // Bodies by point `name`, for joint anchors (only while some object has a joint
-// network). The old map is kept to see whether a rename changed what the names
-// resolve to.
+// network). Each scan hashes the (name, entry) pairs in point order, without
+// copying a string; the map (os.byName) is rebuilt only when that hash differs
+// from the one it was built from, and the joints re-resolve only if what the
+// names resolve to changed.
 class NameIndex {
 public:
   NameIndex(Box3DSharedState &st, Box3DObjectSync &os, const GU_Detail *gdp)
       : myNameH(gdp, GA_ATTRIB_POINT, "name") {
-    myOld.swap(os.byName);
-    os.byName.clear();
     os.namesKnown = st.wantNames;
     myNames.bind(myNameH);
     myKeep = st.wantNames && myNames.valid();
+    os.nameSigNext = kSeed;
+    os.namedPoints.clear();
+    if (!myKeep) {
+      os.byName.clear();
+      os.nameSig = 0; // not built: the next scan that keeps names rebuilds
+    }
   }
   NameIndex(const NameIndex &) = delete;
   NameIndex &operator=(const NameIndex &) = delete;
@@ -1047,22 +1058,37 @@ public:
   void add(Box3DObjectSync &os, GA_Offset off, Box3DBodyMirror *entry) const {
     if (!myKeep)
       return;
-    std::string n = myNames.str(off);
-    if (!n.empty())
-      os.byName.emplace(std::move(n), entry);
+    const char *v = myNames.cstr(off);
+    if (!v || !*v)
+      return;
+    uint64_t h = os.nameSigNext;
+    h = (h ^ std::hash<std::string_view>()(std::string_view(v))) * kPrime;
+    h = (h ^ static_cast<uint64_t>(reinterpret_cast<uintptr_t>(entry))) *
+        kPrime;
+    os.nameSigNext = h;
+    os.namedPoints.emplace_back(off, entry);
   }
 
   // Joint anchors resolve by point `name`: a renamed piece re-resolves the
   // joints.
-  void finish(Box3DSharedState &st, const Box3DObjectSync &os) const {
-    if (myKeep && os.byName != myOld)
+  void finish(Box3DSharedState &st, Box3DObjectSync &os) const {
+    if (!myKeep || os.nameSigNext == os.nameSig)
+      return;
+    std::unordered_map<std::string, Box3DBodyMirror *> fresh;
+    fresh.reserve(os.namedPoints.size());
+    for (const auto &p : os.namedPoints)
+      fresh.emplace(myNames.str(p.first), p.second); // first point wins
+    if (fresh != os.byName)
       ++st.bodyVersion;
+    os.byName.swap(fresh);
+    os.nameSig = os.nameSigNext;
   }
 
 private:
+  static constexpr uint64_t kSeed = 14695981039346656037ull;
+  static constexpr uint64_t kPrime = 1099511628211ull;
   const GA_ROHandleS myNameH;
   StringAttr myNames;
-  std::unordered_map<std::string, Box3DBodyMirror *> myOld;
   bool myKeep = false;
 };
 
@@ -1094,14 +1120,12 @@ public:
   bool anyDriven = false;
 
 private:
-  using MirrorMap = std::unordered_map<uint64_t, Box3DBodyMirror>;
-
   // A point's mirror entry: the cached one, else found, or (for a readable
   // point) inserted unstamped.
   struct EntryRef {
     Box3DBodyMirror *entry = nullptr;
-    bool fresh = false;       // just inserted, no body yet
-    MirrorMap::iterator node; // to erase if the body cannot be built
+    bool fresh = false;  // just inserted, no body yet
+    uint32_t slot = 0;   // its mirror slot, to erase if the body cannot be built
   };
 
   EntryRef resolveEntry(Box3DPointSlot &s) {
@@ -1111,15 +1135,12 @@ private:
       return r;
     if (s.ok) {
       // One lookup for "known?" and "make room"; a new node is unstamped.
-      auto res = mySt.mirror.try_emplace(s.key);
-      r.entry = &res.first->second;
-      r.fresh = res.second;
-      if (r.fresh)
-        r.node = res.first;
+      const Box3DMirrorMap::Ref res = mySt.mirror.tryEmplace(s.key);
+      r.entry = res.entry;
+      r.fresh = res.inserted;
+      r.slot = res.index;
     } else {
-      auto mit = mySt.mirror.find(s.key); // a bad point never creates a body
-      if (mit != mySt.mirror.end())
-        r.entry = &mit->second;
+      r.entry = mySt.mirror.find(s.key); // a bad point never creates a body
     }
     s.entry = r.entry;
     return r;
@@ -1128,7 +1149,7 @@ private:
   // Drops a just-inserted entry that will get no body.
   void dropFresh(const EntryRef &r, Box3DPointSlot &s) {
     if (r.fresh) {
-      mySt.mirror.erase(r.node);
+      mySt.mirror.erase(r.slot);
       s.entry = nullptr;
     }
   }

@@ -205,6 +205,7 @@ Box3DObjectSync &beginWholeObjectSync(Box3DSharedState &st, int objectId,
   os.entryCount = 0;
   os.bodies.clear();
   os.byName.clear(); // anchors name the object itself (Anchors: one body)
+  os.nameSig = 0;
   os.namesKnown = st.wantNames;
   return os;
 }
@@ -265,8 +266,8 @@ Box3DBodyMirror *createWholeObjectBody(Box3DSharedState &st, uint64_t key,
                                        const WholeObjectScan &s) {
   const b3dop::BodySettings &node = s.node();
   BuiltShapes shapes = wholeObjectShapes(s.world, s.gdp, s.m, s.pivot, s.setup);
-  auto res = st.mirror.try_emplace(key);
-  Box3DBodyMirror *entry = &res.first->second;
+  const Box3DMirrorMap::Ref res = st.mirror.tryEmplace(key);
+  Box3DBodyMirror *entry = res.entry;
   entry->props = s.p;
   entry->volume = shapes.totalVolume;
   entry->shapeSig = s.sig;
@@ -285,7 +286,7 @@ Box3DBodyMirror *createWholeObjectBody(Box3DSharedState &st, uint64_t key,
   const b3dop::BodyHandle h = createBodyWithShapes(
       s.world, b, s.cur, shapes, entry->shapeless, s.p, true, *entry);
   if (!h) {
-    st.mirror.erase(res.first);
+    st.mirror.erase(res.index);
     ++s.c.failedObjects;
     return nullptr;
   }
@@ -387,8 +388,7 @@ void syncWholeObject(Box3DSharedState &st, const SIM_Object &obj,
     }
 
   const uint64_t key = b3dop::makeBodyKey(objectId, kWholeObjectId);
-  auto found = st.mirror.find(key);
-  Box3DBodyMirror *entry = found != st.mirror.end() ? &found->second : nullptr;
+  Box3DBodyMirror *entry = st.mirror.find(key);
 
   double pivot[3] = {0, 0, 0};
   Box3DBodyPose cur;

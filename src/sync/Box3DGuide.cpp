@@ -217,15 +217,15 @@ void buildCollisionGuide(const SIM_Object &obj, GU_Detail &out,
   Lines lines;
   if (sync->second.wholeObject) {
     // One body: posed by the object's Position data.
-    const auto it =
+    const Box3DBodyMirror *body =
         st->mirror.find(b3dop::makeBodyKey(objectId, kWholeObjectId));
     double pivot[3];
     Box3DBodyPose pose;
-    if (it != st->mirror.end() && readWholePose(obj, pivot, pose)) {
+    if (body && readWholePose(obj, pivot, pose)) {
       Pose p;
       b3dop::copy3(p.pos, pose.pos);
       b3dop::copy4(p.rot, pose.rot);
-      drawBody(lines, st->world, it->second, p, color);
+      drawBody(lines, st->world, *body, p, color);
     }
   } else {
     // One body per point, keyed as the sync keys it: `id`, else the point
@@ -244,8 +244,9 @@ void buildCollisionGuide(const SIM_Object &obj, GU_Detail &out,
     for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it, ++n) {
       const GA_Offset off = *it;
       const int64_t bid = id.isValid() ? static_cast<int64_t>(id.get(off)) : n;
-      const auto e = st->mirror.find(b3dop::makeBodyKey(objectId, bid));
-      if (e == st->mirror.end())
+      const Box3DBodyMirror *e =
+          st->mirror.find(b3dop::makeBodyKey(objectId, bid));
+      if (!e)
         continue;
       Pose p;
       const PackedInfo pk = anyPrims ? getPackedInfo(gdp, off) : PackedInfo();

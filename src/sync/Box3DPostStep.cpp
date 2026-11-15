@@ -182,8 +182,10 @@ void forEachObjectRun(std::vector<Item> &items, const F &f) {
     return;
 
   // Pass 1: the bucket of every item, and the size of every bucket.
-  std::unordered_map<int, uint32_t>
-      bucketOf; // objectId -> bucket (first-seen order)
+  // Object ids in first-seen order: the index is the bucket. Objects are few,
+  // so a linear search beats a hash map; kept between calls: no allocation.
+  thread_local std::vector<int> bucketIds;
+  bucketIds.clear();
   std::vector<uint32_t> bucket(n);
   std::vector<size_t> start; // size of a bucket, then its first slot
   size_t runs = 0;
@@ -193,9 +195,12 @@ void forEachObjectRun(std::vector<Item> &items, const F &f) {
   for (size_t i = 0; i < n; ++i) {
     const int id = items[i].objectId;
     if (!haveLast || id != lastId) {
-      const auto ins =
-          bucketOf.try_emplace(id, static_cast<uint32_t>(bucketOf.size()));
-      lastBucket = ins.first->second;
+      size_t b = 0;
+      while (b < bucketIds.size() && bucketIds[b] != id)
+        ++b;
+      if (b == bucketIds.size())
+        bucketIds.push_back(id);
+      lastBucket = static_cast<uint32_t>(b);
       lastId = id;
       haveLast = true;
       ++runs;
@@ -207,7 +212,7 @@ void forEachObjectRun(std::vector<Item> &items, const F &f) {
   }
 
   // More runs than objects: an object's items are not together, so move them.
-  if (runs != bucketOf.size()) {
+  if (runs != bucketIds.size()) {
     size_t sum = 0;
     for (size_t &c : start) {
       const size_t count = c;
@@ -240,13 +245,21 @@ void forEachObjectRun(std::vector<Item> &items, const F &f) {
 // Feedback data (that is for interaction with other solvers).
 void recordImpacts(Box3DSharedState &st, SIM_ObjectArray &objects,
                    const SIM_Time &now) {
-  // `fromOther`: cp was read from the other body's side.
-  struct Hit {
-    const Box3DBodyMirror *self, *other;
-    b3dop::ContactPoint cp;
-    bool fromOther;
+  using Hit = Box3DImpactHit;
+  // Per-object hits in st scratch (objects are few: linear search). Groups are
+  // reused, not freed, so the hit vectors keep their capacity.
+  st.impactGroupCount = 0;
+  auto hitsFor = [&st](int objectId) -> std::vector<Hit> & {
+    for (size_t i = 0; i < st.impactGroupCount; ++i)
+      if (st.impactGroups[i].objectId == objectId)
+        return st.impactGroups[i].hits;
+    if (st.impactGroupCount == st.impactGroups.size())
+      st.impactGroups.emplace_back();
+    Box3DImpactGroup &g = st.impactGroups[st.impactGroupCount++];
+    g.objectId = objectId;
+    g.hits.clear();
+    return g.hits;
   };
-  std::unordered_map<int, std::vector<Hit>> hitsOf;
 
   bool any = false;
   for (const auto &kv : st.objectSync)
@@ -276,24 +289,25 @@ void recordImpacts(Box3DSharedState &st, SIM_ObjectArray &objects,
             (speedFilter && !world.hadHitEvent(e->handle, cp.other)))
           continue;
         if (selfWants)
-          hitsOf[e->objectId].push_back({e, o, cp, false});
+          hitsFor(e->objectId).push_back({e, o, cp, false});
         if (otherWants)
-          hitsOf[o->objectId].push_back({o, e, cp, true});
+          hitsFor(o->objectId).push_back({o, e, cp, true});
       }
     }
   }
 
   std::vector<int> wrote;
-  for (const auto &kv : hitsOf) {
-    SIM_Object *obj = box3dObjectById(objects, kv.first, st.objectsSorted);
+  for (size_t gi = 0; gi < st.impactGroupCount; ++gi) {
+    const Box3DImpactGroup &grp = st.impactGroups[gi];
+    SIM_Object *obj = box3dObjectById(objects, grp.objectId, st.objectsSorted);
     if (!obj)
       continue;
     SIM_Impacts *imp =
         SIM_DATA_CREATE(*obj, SIM_IMPACTS_DATANAME, SIM_Impacts, 0);
     if (!imp)
       continue;
-    wrote.push_back(kv.first);
-    for (const Hit &h : kv.second) {
+    wrote.push_back(grp.objectId);
+    for (const Hit &h : grp.hits) {
       // cp.normal points from the body it was read from into the other one.
       const b3dop::ContactPoint &cp = h.cp;
       const float sgn = h.fromOther ? 1.0f : -1.0f;

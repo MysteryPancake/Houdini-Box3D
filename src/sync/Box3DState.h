@@ -13,9 +13,11 @@
 
 #include <array>
 #include <cstdint>
+#include <deque>
 #include <iterator>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <unordered_map>
 #include <vector>
 
@@ -101,6 +103,87 @@ struct Box3DBodyMirror : Box3DBodyPose {
   bool dynamic() const {
     return type == b3dop::BodySettings::Type::Dynamic;
   } // written back
+};
+
+// The body mirror: entries in a slab (a deque: entries never move, which the
+// cached Box3DPointSlot::entry pointers and Box3D's body user data rely on)
+// with a free list, so live entries stay together in memory and iteration walks
+// the slab. A key -> slot index map serves the lookups that miss the cache.
+// An entry lives until erase(); its slot is then reset and reused.
+class Box3DMirrorMap {
+public:
+  struct Ref {
+    Box3DBodyMirror *entry = nullptr;
+    uint32_t index = 0;    // for erase()
+    bool inserted = false; // new, default-constructed
+  };
+
+  size_t size() const { return index_.size(); }
+
+  void reserve(size_t n) { index_.reserve(n); }
+
+  Box3DBodyMirror *find(uint64_t key) {
+    const auto it = index_.find(key);
+    return it == index_.end() ? nullptr : &slots_[it->second].entry;
+  }
+  const Box3DBodyMirror *find(uint64_t key) const {
+    const auto it = index_.find(key);
+    return it == index_.end() ? nullptr : &slots_[it->second].entry;
+  }
+
+  // The entry for `key`, inserted (default-constructed) if missing.
+  Ref tryEmplace(uint64_t key) {
+    const auto ins = index_.try_emplace(key, 0u);
+    Ref r;
+    if (!ins.second) {
+      r.index = ins.first->second;
+      r.entry = &slots_[r.index].entry;
+      return r;
+    }
+    if (!free_.empty()) {
+      r.index = free_.back();
+      free_.pop_back();
+    } else {
+      r.index = static_cast<uint32_t>(slots_.size());
+      slots_.emplace_back();
+    }
+    ins.first->second = r.index;
+    Slot &s = slots_[r.index];
+    s.key = key;
+    s.live = true;
+    r.entry = &s.entry;
+    r.inserted = true;
+    return r;
+  }
+
+  void erase(uint32_t index) {
+    Slot &s = slots_[index];
+    index_.erase(s.key);
+    s.entry = Box3DBodyMirror(); // so a reused slot starts clean
+    s.live = false;
+    free_.push_back(index);
+  }
+
+  // Erases every entry for which f(entry) is true; returns how many.
+  template <class F> size_t eraseIf(F &&f) {
+    size_t n = 0;
+    for (size_t i = 0; i < slots_.size(); ++i)
+      if (slots_[i].live && f(slots_[i].entry)) {
+        erase(static_cast<uint32_t>(i));
+        ++n;
+      }
+    return n;
+  }
+
+private:
+  struct Slot {
+    Box3DBodyMirror entry;
+    uint64_t key = 0;
+    bool live = false;
+  };
+  std::deque<Slot> slots_;
+  std::vector<uint32_t> free_;
+  std::unordered_map<uint64_t, uint32_t> index_;
 };
 
 // One point as syncObject() reads it. Kept between steps; `entry` caches the
@@ -246,6 +329,12 @@ struct Box3DObjectSync {
   // (Box3DSharedState::wantNames).
   std::unordered_map<std::string, Box3DBodyMirror *> byName;
   bool namesKnown = false; // byName describes the current entries
+  // Order-sensitive hash of the (name, entry) pairs byName was built from; 0:
+  // byName is not built. A scan that hashes the same leaves byName untouched.
+  uint64_t nameSig = 0;
+  // Scratch of the scan in progress: its hash and its named points in order.
+  uint64_t nameSigNext = 0;
+  std::vector<std::pair<GA_Offset, Box3DBodyMirror *>> namedPoints;
   Box3DSyncFingerprint fp;
 };
 
@@ -354,10 +443,23 @@ struct Box3DJointNetwork {
 };
 
 // Everything shared between timestep copies.
+// One contact recorded for the Impacts data. `fromOther`: cp was read from the
+// other body's side.
+struct Box3DImpactHit {
+  const Box3DBodyMirror *self, *other;
+  b3dop::ContactPoint cp;
+  bool fromOther;
+};
+
+// The impact hits of one object this step (see recordImpacts).
+struct Box3DImpactGroup {
+  int objectId = 0;
+  std::vector<Box3DImpactHit> hits;
+};
+
 struct Box3DSharedState {
   b3dop::Box3DWorld world;
-  std::unordered_map<uint64_t, Box3DBodyMirror>
-      mirror; // key: makeBodyKey(object id, point id)
+  Box3DMirrorMap mirror; // key: makeBodyKey(object id, point id)
 
   // Bumped once per sync; stampedCount current entries (equal to mirror.size():
   // nothing to remove).
@@ -394,6 +496,10 @@ struct Box3DSharedState {
   std::vector<b3dop::BodyMove>
       moves; // this step's move events (read once after the step)
   std::vector<b3dop::ContactPoint> contacts;
+  // recordImpacts scratch: the first `impactGroupCount` entries are in use this
+  // step. Entries (and their hit vectors) are kept so capacity is reused.
+  std::vector<Box3DImpactGroup> impactGroups;
+  size_t impactGroupCount = 0;
   // Filled by the sync (in object order), used after the step:
   std::vector<Box3DPointWrite> pointWrites;
   std::vector<Box3DDeletion> deletions;

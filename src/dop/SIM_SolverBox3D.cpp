@@ -598,15 +598,13 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
   if (st->stampedCount != st->mirror.size()) {
     UT_PerfMonAutoSolveEvent perf(this, "Removing Bodies");
     std::unordered_set<int> touched; // objects that lost bodies
-    for (auto it = st->mirror.begin(); it != st->mirror.end();) {
-      if (!st->isLive(it->second)) {
-        touched.insert(it->second.objectId);
-        st->world.destroyBody(it->second.handle);
-        it = st->mirror.erase(it);
-        ++removed;
-      } else
-        ++it;
-    }
+    removed = static_cast<int>(st->mirror.eraseIf([&](Box3DBodyMirror &e) {
+      if (st->isLive(e))
+        return false;
+      touched.insert(e.objectId);
+      st->world.destroyBody(e.handle);
+      return true;
+    }));
     // Those objects' slots may cache pointers to erased entries; other objects
     // keep theirs.
     for (const int id : touched) {
