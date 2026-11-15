@@ -470,6 +470,12 @@ struct SyncCounts {
   // message. Each object counts once (noteOverriddenData).
   std::map<std::string, int> overriddenData;
   int overriddenObjects = 0;
+  // Points on primitives that are not packed, in objects that also have
+  // packed points: not simulated (warning).
+  int unpackedPrimPoints = 0;
+  // Objects whose primitives are all unpacked: no bodies (error, as RBD Bullet
+  // Solver's "Geometry does not contain any primitive types supported").
+  std::vector<std::string> unsupportedObjects;
 };
 
 constexpr size_t kProgressEvery =

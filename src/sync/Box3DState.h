@@ -116,7 +116,10 @@ struct Box3DPointSlot {
   bool badVelocity = false; // v or w was not finite (read as zero)
   bool active = true;
   bool packed = false; // the point belongs to a packed primitive
-  int64_t index = 0;   // point number
+  // The point belongs to a primitive that is not packed (a polygon's point):
+  // no body, as RBD Bullet Solver (docs/agents/bodies.md, "Unpacked geometry").
+  bool unpackedPrim = false;
+  int64_t index = 0; // point number
   int64_t primOff = -1;
   double m3[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
   double rowScale[3] = {1, 1, 1}; // m3's per-row scale

@@ -38,9 +38,12 @@ change: `solver_sop_layout` added, the two Detach Faces tests removed). What no 
   degrees) and `bullet_length` (taken as the capsule's straight part); AutoFit on whole objects and fractured pieces.
 * Impact normal direction; whether a fresh `SIM_Impacts` each step suits Houdini's impact tools.
 * Which end is Cone Twist's goal (taken as point 1).
+* Unpacked geometry (`unpacked_geometry_bullet`, checked): Bullet errors on polygons only (the other objects still
+  simulate), ignores loose polygons beside packed pieces without a message (ours warns), and errors on loose points
+  (ours simulates them on purpose, a Box3D extension). Not checked: Bullet with an Empty Object + SOP Geometry.
 
 **Whole objects**
-* RBD Point Object makes no objects in a scripted setup (`other_rbd_objects`); check by hand.
+* RBD Point Object (`other_rbd_objects`, `point_object_bullet`): needs its Geometry Path menu (`usegeo`) set to Override, else it makes no objects. With that, Bullet and Box3D match: 4 whole objects, both fall to y -2.424 (checked).
 * An RBD Object without Box3D Data colliding as its convex hull; `bullet_primT` / `bullet_primS` meaning there.
 
 **Box3D Solver SOP** (`tools/make_solver_sop.py`, `tests/houdini/checks_sop.py`)

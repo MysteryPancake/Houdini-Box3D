@@ -931,6 +931,8 @@ void readSlot(const ScanContext &ctx, int objectId, Box3DPointSlot &s) {
                    b3dop::BodySettings::Type::Static;
   }
   s.packed = pk.prim != nullptr;
+  s.unpackedPrim =
+      !s.packed && ctx.anyPrims && GAisValid(ctx.gdp->pointVertex(s.off));
   if (s.packed) {
     s.primOff = static_cast<int64_t>(pk.primOff);
     std::copy(pk.m3, pk.m3 + 9, s.m3);
@@ -942,7 +944,7 @@ void readSlot(const ScanContext &ctx, int objectId, Box3DPointSlot &s) {
   s.refitWanted = a.autofitValid.isValid() && a.autofitValid.get(s.off) == 0;
   s.rebuild = false;
   s.dead = a.dead.isValid() && a.dead.get(s.off) != 0;
-  if (!s.ok || s.dead)
+  if (!s.ok || s.dead || s.unpackedPrim)
     return;
   if (!s.entry) {
     const auto it = ctx.st.mirror.find(key);
@@ -965,6 +967,12 @@ void readSlot(const ScanContext &ctx, int objectId, Box3DPointSlot &s) {
   }
 }
 
+// The problems that keep an object scanning every step (retried and reported).
+int problemCount(const SyncCounts &c) {
+  return c.failed + c.duplicates + c.badP + c.unpackedPrimPoints +
+         static_cast<int>(c.unsupportedObjects.size());
+}
+
 void readSlots(const ScanContext &ctx, int objectId, SlotList &snaps) {
   parallelForEach(
       snaps.size(), [&](size_t i) { readSlot(ctx, objectId, snaps[i]); },
@@ -982,7 +990,8 @@ void readSlots(const ScanContext &ctx, int objectId, SlotList &snaps) {
 std::vector<size_t> slotsNeedingPlans(const SlotList &snaps) {
   std::vector<size_t> want;
   for (size_t i = 0; i < snaps.size(); ++i)
-    if (snaps[i].ok && (!snaps[i].entry ? !snaps[i].dead : snaps[i].rebuild))
+    if (snaps[i].ok && !snaps[i].unpackedPrim &&
+        (!snaps[i].entry ? !snaps[i].dead : snaps[i].rebuild))
       want.push_back(i);
   return want;
 }
@@ -1208,6 +1217,13 @@ private:
     const PointAttrs &a = myCtx.a;
     const GA_Offset off = s.off;
 
+    // A polygon's (or other unpacked primitive's) point: no body. Not stamped,
+    // so a body it had is removed. Counted by syncObject.
+    if (s.unpackedPrim) {
+      s.entry = nullptr;
+      return;
+    }
+
     const EntryRef ref = resolveEntry(s);
     Box3DBodyMirror *entry = ref.entry;
 
@@ -1331,7 +1347,7 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
 #endif
   os.canSkip = false;
   os.liveStamp = st.syncStamp;
-  const int problems0 = c.failed + c.duplicates + c.badP;
+  const int problems0 = problemCount(c);
   if (dataNode)
     noteOverriddenData(gdp, os, c, node);
   else
@@ -1353,6 +1369,20 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
   SlotList &snaps = st.slots[objectId];
   collectSlots(gdp, snaps);
   readSlots(ctx, objectId, snaps);
+  // Unpacked primitives: their points get no body. With no packed point at all
+  // the object is an error, as with RBD Bullet Solver; with some, a warning.
+  {
+    int unpacked = 0;
+    bool anyPacked = false;
+    for (const Box3DPointSlot &s : snaps) {
+      unpacked += s.unpackedPrim ? 1 : 0;
+      anyPacked = anyPacked || s.packed;
+    }
+    if (unpacked > 0 && !anyPacked)
+      c.unsupportedObjects.emplace_back(obj.getName().c_str());
+    else
+      c.unpackedPrimPoints += unpacked;
+  }
   std::vector<ShapePlan> plans;
   if (!planSlots(ctx, snaps, plans, progress))
     return;
@@ -1369,8 +1399,8 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
   os.propsKnown = true;
   os.anyDeforming = apply.anyDeforming;
   os.anyDriven = apply.anyDriven;
-  os.canSkip = (c.failed + c.duplicates + c.badP) == problems0 &&
-               !apply.anyDeforming && !apply.anyDriven;
+  os.canSkip =
+      problemCount(c) == problems0 && !apply.anyDeforming && !apply.anyDriven;
 }
 
 } // namespace box3dsolver

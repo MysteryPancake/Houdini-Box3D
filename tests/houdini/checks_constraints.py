@@ -372,6 +372,8 @@ def test_other_rbd_objects():
         set_parm(obj, ["soppath"], single_object_geo(type_name + "_geo", build))
         if type_name == "rbdpointobject":
             # Each point instances this geometry (else its objects have none to collide with).
+            # Geometry Path is ignored while the menu beside it (usegeo) is 0, Use Point Value.
+            set_parm(obj, ["usegeo"], 1)
             def unit_box(geo):
                 return create(geo, "box")
             set_parm(obj, ["geopath", "instancepath", "geometrypath", "instance"],

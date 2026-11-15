@@ -673,6 +673,15 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
                          "Object writes these from its own parameters: set "
                          "them there, or on a Box3D Packed Object");
   }
+  for (const std::string &name : counts.unsupportedObjects)
+    message(objects,
+            name + ": Geometry does not contain any primitive types supported "
+                   "by the solver. Pack the pieces (Pack or Assemble SOP), or "
+                   "use the Box3D Solver SOP, which packs its inputs",
+            UT_ERROR_ABORT);
+  warnCount(objects, counts.unpackedPrimPoints,
+            "point(s) belong to primitives that are not packed and are not "
+            "simulated (only packed primitives and loose points are)");
   warnCount(objects, counts.failed,
             "point(s) could not be turned into a body and are not simulated");
   warnCount(objects, counts.failedObjects,

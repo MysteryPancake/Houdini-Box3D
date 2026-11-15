@@ -31,6 +31,7 @@ from b3dtest import (
     point_attributes,
     set_menu_by_label,
     set_parm,
+    single_object_geo,
     step,
 )
 
@@ -735,6 +736,206 @@ def test_data_under_geometry():
                    f"{top1} / {top25} (expected False); box at x={x:.2f} after 1 s (slides with Friction 0)")]
 
 
+# Unpacked geometry on a points object (Box3D Packed Object / RBD Packed Object): as RBD Bullet Solver,
+# an error when nothing is packed; packed pieces beside loose polygons, the polygons' points get no body.
+
+UNSUPPORTED = "primitive types supported"
+
+
+def _unpacked_geometry(name, kind):
+    """A SOP object for the unpacked-geometry tests: 'polygons' (an unpacked polygon box at y = 3),
+    'mixed' (a packed box at x = -2 and an unpacked one at x = 2, both at y = 3) or 'points' (two
+    loose points at y = 3). Returns its SOP path."""
+    geo = new_geo(name)
+    if kind == "points":
+        wr = create(geo, "attribwrangle", "points")
+        set_parm(wr, ["class"], 0)  # detail
+        set_parm(wr, ["snippet"], "addpoint(0, {-1, 3, 0}); addpoint(0, {1, 3, 0});")
+        display(wr)
+        return wr.path()
+
+    def box(tag, x):
+        b = create(geo, "box", f"box_{tag}")
+        xf = create(geo, "xform", f"place_{tag}")
+        xf.setInput(0, b)
+        set_parm(xf, ["t"], (x, 3.0, 0.0))
+        return xf
+
+    if kind == "polygons":
+        out = box("unpacked", 0.0)
+    else:
+        pack = create(geo, "pack", "pack")
+        pack.setInput(0, box("packed", -2.0))
+        out = create(geo, "merge", "merge")
+        out.setInput(0, pack)
+        out.setInput(1, box("unpacked", 2.0))
+    display(out)
+    return out.path()
+
+
+def _lowest_y(sim, obj_name):
+    """{'packed': the lowest packed point's y, 'other': the lowest other point's y} of the object."""
+    obj = sim.findObject(obj_name)
+    geo = obj.geometry() if obj is not None else None
+    if geo is None:
+        return None
+    packed = set()
+    for prim in geo.prims():
+        if isinstance(prim, hou.PackedPrim):
+            packed.update(v.point().number() for v in prim.vertices())
+    out = {}
+    for pt in geo.points():
+        key = "packed" if pt.number() in packed else "other"
+        out[key] = min(out.get(key, 1e9), pt.position()[1])
+    return out
+
+
+def _unpacked_run(tag, kind, bullet):
+    """Drops the `kind` geometry for 1 s with a Box3D Packed Object and the Box3D Solver (bullet: an
+    RBD Packed Object and RBD Bullet Solver), beside a valid packed box object. Returns (lowest y
+    per kind of point at frame 1 and 25, the valid box's y at 25, the solver's and object's
+    messages)."""
+    path = _unpacked_geometry(f"unpacked_{tag}", kind)
+    good_path, good_names = packed_boxes(f"unpacked_{tag}_good", [{"size": (1, 1, 1), "center": (5, 3, 0)}])
+    dop = new_dopnet(f"unpacked_{tag}")
+    if bullet:
+        obj = packed_object(dop, "pieces", path)
+        good = packed_object(dop, "good", good_path)
+        solver_node = create(dop, "bulletrbdsolver", "bullet_solver")
+        solver_node.setInput(0, merge(dop, [obj, good]))
+        last = create(dop, "gravity", "gravity")
+        last.setInput(0, solver_node)
+    else:
+        obj = box3d_packed_object(dop, "pieces", path)
+        good = box3d_packed_object(dop, "good", good_path)
+        solver_node = last = box3d_solver(dop, merge(dop, [obj, good]))
+    finish(dop, last)
+    messages = set()
+
+    def sample(sim, f):
+        for n in (solver_node, obj):
+            messages.update(node_messages(n))
+        good_pt = point_attributes(sim, "good", good_names[0], ["P"])
+        return _lowest_y(sim, "pieces"), good_pt["P"][1] if good_pt else None
+
+    try:
+        track = step(dop, 25, sample)
+    except hou.Error as e:
+        return None, None, None, [f"cook failed: {e}"]
+    return track[1][0], track[25][0], track[25][1], sorted(messages)
+
+
+def test_unpacked_geometry():
+    """Box3D, as RBD Bullet Solver: polygons with nothing packed are an error naming the object
+    ("Geometry does not contain any primitive types supported by the solver") and get no bodies
+    (the box stays at y = 2.5), while a valid packed box in the same solver still falls to its
+    first-second y (3 - g/2, about -1.9); packed pieces beside loose polygons fall, the polygons'
+    points stay, with a warning; loose points (no primitives) fall, with no message (a Box3D extension: Bullet gives the error)."""
+    results = []
+    rows, ok = [], True
+    for kind in ("polygons", "mixed", "points"):
+        y1, y25, good_y, msgs = _unpacked_run(f"ours_{kind}", kind, bullet=False)
+        error = any(UNSUPPORTED in m for m in msgs)
+        warned = any("not packed" in m for m in msgs)
+        fell = good_y is not None and good_y < 0.0
+        if y25 is None:
+            this_ok = False
+        elif kind == "polygons":
+            this_ok = error and close(y25.get("other", 0), 2.5, 1e-4) and fell
+        elif kind == "mixed":
+            this_ok = (not error and warned and y25.get("packed", 9) < 0.0 and close(y25.get("other", 0), 2.5, 1e-4)
+                       and fell)
+        else:
+            this_ok = not error and not warned and y25.get("other", 9) < 0.0 and fell
+        ok = ok and this_ok
+        rows.append(f"{kind}: lowest y {y1} -> {y25}, valid box y={good_y}, error {error}, warning {warned}"
+                    f"{'' if this_ok else ' (FAIL) messages ' + repr(msgs)}")
+    results.append(Result("unpacked_geometry", Result.PASS if ok else Result.FAIL, "; ".join(rows)))
+    return results
+
+
+def test_unpacked_geometry_bullet():
+    """RBD Bullet Solver with the same three inputs (polygons only, packed + polygons, loose points),
+    recorded: which messages it gives and which points move, for test unpacked_geometry to match."""
+    rows = []
+    for kind in ("polygons", "mixed", "points"):
+        y1, y25, good_y, msgs = _unpacked_run(f"bullet_{kind}", kind, bullet=True)
+        rows.append(f"{kind}: lowest y {y1} -> {y25}, valid box y={good_y}, messages {msgs or 'none'}")
+    return [Result("unpacked_geometry_bullet", Result.INFO, "; ".join(rows))]
+
+
+def _point_object_run(tag, bullet):
+    """Drops four points (a 2 x 2 grid at y = 3) with an RBD Point Object, each instancing a unit
+    box, for 1 s, with the Box3D Solver (bullet: RBD Bullet Solver). Returns (lowest y of each
+    object with geometry at frame 1 and 25, the number of DOP objects at frame 25, their names and
+    data, the solver's and object's messages including inside the asset)."""
+    dop = new_dopnet(f"pointobj_{tag}")
+
+    def build(geo):
+        grid = create(geo, "grid")
+        set_parm(grid, ["size"], (10, 10))
+        set_parm(grid, ["rows"], 2)
+        set_parm(grid, ["cols"], 2)
+        wr = create(geo, "attribwrangle")
+        wr.setInput(0, grid)
+        set_parm(wr, ["class"], 2)
+        set_parm(wr, ["snippet"], "@P.y = 3;")
+        return wr
+
+    obj = create(dop, "rbdpointobject", "objects")
+    set_parm(obj, ["soppath"], single_object_geo(f"pointobj_{tag}_geo", build))
+    # Geometry Path is disabled (and ignored) while the Use / Override menu next to it is 0.
+    set_parm(obj, ["usegeo"], 1)
+    set_parm(obj, ["geopath", "instancepath", "geometrypath", "instance"],
+             single_object_geo(f"pointobj_{tag}_box", lambda geo: create(geo, "box")))
+    if bullet:
+        solver_node = create(dop, "bulletrbdsolver", "bullet_solver")
+        solver_node.setInput(0, obj)
+        last = create(dop, "gravity", "gravity")
+        last.setInput(0, solver_node)
+    else:
+        solver_node = last = box3d_solver(dop, obj)
+    finish(dop, last)
+    messages = set()
+
+    def sample(sim, f):
+        for n in [solver_node, obj] + list(obj.allSubChildren()):
+            messages.update(f"{n.name()}: {m.strip()[:120]}" for m in node_messages(n))
+        ys, names = [], []
+        for o in sim.objects():
+            names.append(f"{o.name()} {sorted(o.subData().keys())}")
+            geo = o.geometry()
+            pts = geo.points() if geo is not None else []
+            if pts:
+                xform = o.transform()
+                ys.append(round(min((p.position() * xform)[1] for p in pts), 3))
+        return sorted(ys), names
+
+    try:
+        track = step(dop, 25, sample)
+    except hou.Error as e:
+        return None, None, 0, [], [f"cook failed: {e}"]
+    return track[1][0], track[25][0], len(track[25][1]), track[25][1][:4], sorted(messages)[:6]
+
+
+def test_point_object_bullet():
+    """RBD Point Object on RBD Bullet Solver and on the Box3D Solver, same four points and
+    instance box, recorded side by side. Settles whether Bullet simulates an RBD Point Object's
+    points. INFO only. (status.md: RBD Point Object made no objects in a scripted setup, so a
+    result of 0 objects on both sides says nothing about either solver.)"""
+    rows = []
+    for label, bullet in (("bullet", True), ("box3d", False)):
+        try:
+            y1, y25, n, names, msgs = _point_object_run(label, bullet)
+        except SetupError as e:
+            rows.append(f"{label}: not available ({e})")
+            continue
+        fell = bool(y1) and bool(y25) and len(y1) == len(y25) and all(b < a - 0.5 for a, b in zip(y1, y25))
+        rows.append(f"{label}: {n} DOP object(s) {names}, lowest y {y1} -> {y25}, fell {fell}, "
+                    f"messages {msgs or 'none'}")
+    return [Result("point_object_bullet", Result.INFO, "; ".join(rows))]
+
+
 TESTS = {
     "rbd_packed_attributes": test_rbd_packed_attributes,
     "rest_reset": test_rest_reset,
@@ -742,6 +943,9 @@ TESTS = {
     "packed_object_use_transform": test_packed_object_use_transform,
     "data_under_geometry": test_data_under_geometry,
     "box3d_packed_object": test_box3d_packed_object,
+    "unpacked_geometry": test_unpacked_geometry,
+    "unpacked_geometry_bullet": test_unpacked_geometry_bullet,
+    "point_object_bullet": test_point_object_bullet,
     "collision_masks": test_collision_masks,
     "offset_pivot": test_offset_pivot,
     "packed_disk": test_packed_disk,

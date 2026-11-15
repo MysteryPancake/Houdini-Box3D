@@ -81,6 +81,15 @@ is where the body's origin was at rest; joints map authored anchors with it ([jo
 
 ## Building shapes (`addPointBody`, `planShapes`, `buildShapes`)
 
+* Unpacked geometry: a point on a primitive that is not packed (`Box3DPointSlot::unpackedPrim`, set in `readSlot`)
+  gets no body, and a body it had is removed. An object with such points and no packed point is an error naming it,
+  with RBD Bullet Solver's wording (`SyncCounts::unsupportedObjects`, severity abort); with packed points too, a
+  warning (`unpackedPrimPoints`). Loose points (no vertex) stay bodies: a Box3D extension (`pscale` / `bullet_georep` points; tests `pscale`,
+  `messages`). RBD Bullet Solver gives its unsupported-geometry error for them instead (`unpacked_geometry_bullet`).
+  RBD Point Object is not this path: it makes whole objects (`other_rbd_objects`). Either keeps the object
+  scanning every step (`problemCount`), so the message repeats. Tests `unpacked_geometry`, and
+  `unpacked_geometry_bullet` (INFO: what Bullet does with the same inputs).
+
 * Defaults: `nodeBodyDefaults()` (Box3DWorld.h), Bullet's RBD values, also for objects without Box3D Data.
   `BodySettings()` keeps the core's own values for direct use of `Box3DWorld`.
 * Type: `wantedType` (active -> node type; inactive -> static, or kinematic if animated; shapeless -> static).
