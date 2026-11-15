@@ -130,3 +130,35 @@ def menu_index_expr(parm, cond, on_label, off_label, warn):
         expr = f"if({cond}, {found[on_label]}, {found[off_label]})"
     parm.setExpression(expr, hou.exprLanguage.Hscript)
     return True
+
+
+TAB_SUBMENU = "Box3D"  # the Tab menu folder every Box3D asset is listed under
+
+# The asset's Tools.shelf section, as SideFX's assets: the Tab menu tool for the asset's network type, in
+# TAB_SUBMENU. `{ctx}` is DOP or SOP, `{utils}` doptoolutils or soptoolutils.
+TOOLS_SHELF = """<?xml version="1.0" encoding="UTF-8"?>
+<shelfDocument>
+  <tool name="$HDA_DEFAULT_TOOL" label="$HDA_LABEL" icon="$HDA_ICON">
+    <toolMenuContext name="viewer">
+      <contextNetType>{ctx}</contextNetType>
+    </toolMenuContext>
+    <toolMenuContext name="network">
+      <contextOpType>$HDA_TABLE_AND_NAME</contextOpType>
+    </toolMenuContext>
+    <toolSubmenu>{submenu}</toolSubmenu>
+    <script scriptType="python"><![CDATA[import {utils}
+
+{utils}.genericTool(kwargs, '$HDA_NAME')]]></script>
+  </tool>
+</shelfDocument>
+"""
+
+
+def set_tab_submenu(definition, warn):
+    """Lists the asset under TAB_SUBMENU in the Tab menu (its Tools.shelf section)."""
+    ctx = definition.nodeTypeCategory().name().upper()  # "Dop" / "Sop"
+    utils = {"DOP": "doptoolutils", "SOP": "soptoolutils"}.get(ctx)
+    if utils is None:
+        warn(f"{definition.nodeTypeName()}: no Tab menu tool for a {ctx} asset")
+        return
+    definition.addSection("Tools.shelf", TOOLS_SHELF.format(ctx=ctx, utils=utils, submenu=TAB_SUBMENU))

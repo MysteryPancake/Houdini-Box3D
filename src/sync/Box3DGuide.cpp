@@ -14,11 +14,11 @@
 #include "sync/Box3DSolverInternal.h"
 
 #include <GU/GU_PrimPoly.h>
+#include <SIM/SIM_GeometryCopy.h>
+#include <SIM/SIM_ObjectArray.h>
 #include <SIM/SIM_Engine.h>
 #include <SIM/SIM_Geometry.h>
-#include <SIM/SIM_GeometryCopy.h>
 #include <SIM/SIM_Object.h>
-#include <SIM/SIM_ObjectArray.h>
 
 #include <cmath>
 #include <mutex>

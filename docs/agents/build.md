@@ -56,7 +56,8 @@ Packed Object (read from `houdini_network_dump.py` dumps of RBD Bullet Solver an
 Geometry (data name `Geometry`) -> Box3D Data -> `visualize_hires` -> Collider Label, the output (no input); SOP Geometry reads a SOP stage inside the asset (`STAGE`,
 RBD Packed Object's `create_or_overwrite_attributes`): Object Merge of the asset's SOP Path (Use Object Transform drives
 its Transform, Into This Object: the DOP network's space; SOP Geometry's own stays off, as 22.0's has no OBJ Path to
-point at an object) -> `setup_defaults` -> `create_name` -> `set_rest` on the creation frame only -> `OUT`. The stage's
+point at an object) -> `setup_defaults` -> `create_name` -> `set_rest` and `setup_velocities` on the creation frame
+only -> `setup_deforming` -> `OUT`. The stage's
 references to the asset's parameters are set once the asset exists (`wire_stage`).
 * `setup_defaults` (detail wrangle, `b3d_settings.packed_defaults_vex`): each per-body setting whose value differs from
   Box3D Data's default becomes a point attribute holding it, unless the points already have it (RBD Packed Object's
@@ -68,8 +69,14 @@ references to the asset's parameters are set once the asset exists (`wire_stage`
   Object's `set_rest_and_initial_xform`, with `orient` kept as the rotation since rest (see its comment). Switched in
   only on the creation frame: SOP Geometry stamps `$SF` and `$OBJCF`, which a `STAMPS` null reads, so a re-import
   (Overwrite Attributes from SOP, which the Solver SOP's Collision Type turns on) keeps the rest it was given.
+* `setup_velocities` (`VELOCITY_VEX`): RBD Packed Object's Initial State tab (`vel`, `angvel` in degrees per second
+  written as radians, `inheritvelocity`). Inherit defaults on, unlike RBD's, so the points' own `v` / `w` (Box3D
+  Configure's Initial State) are kept unless the user turns it off.
+* `setup_deforming` (`DEFORMING_VEX`): the Deforming toggle writes `deforming` 1 on every import and, with Overwrite
+  Attributes from SOP, sets the SOP Geometry to Set Always (`REIMPORT`), as RBD's Create Deforming Objects.
 * Parameters: an Object tab (Object Name `$OS`, Creation Frame, Solve on Creation Frame, SOP Path, Use Object
-  Transform, Overwrite Attributes from SOP), then each Box3D Data folder as a tab, read by the stage. Only the object-level settings
+  Transform, Overwrite Attributes from SOP, Deforming, Display Geometry), Initial State, then each Box3D Data folder
+  as a tab, read by the stage. Only the object-level settings
   (`b3d_settings.SKIP`: Hull per Connected, Flip Winding, Add Impact Data) are channel references into the inner Box3D
   Data, whose other values stay at the defaults, so a missing attribute means the default. Settings change
   mid-simulation through the attributes, not the asset's parameters.
@@ -80,6 +87,9 @@ references to the asset's parameters are set once the asset exists (`wire_stage`
 * Collider Label `PackedObject`, as RBD Packed Object's: other solvers collide with it as packed pieces; the solver
   still syncs it per point (`isWholeObject` takes any other label as one body). The script prints one line, or warnings, and never fails the build; its `check` cooks the stage of a fresh
   instance.
+
+All three assets list themselves under Box3D in the Tab menu (`b3d_hda.set_tab_submenu`: a Tools.shelf section as
+SideFX's, `doptoolutils` / `soptoolutils.genericTool`).
 
 Traps it handles:
 * Parameters are found by label, skipping the `parmop_*` menus that share their labels.
@@ -218,7 +228,7 @@ setting ticked (`rewrite_condition`). Every Box3D Data folder in an entry is sim
 * One point wrangle (`set_attributes`, `wrangle_vex`) loops over the entries: an enabled entry whose group holds the
   point writes each ticked setting, creating the attribute with Box3D Data's default first (`addpointattrib`) so
   points outside the group keep the default rather than VEX's 0 (`active` 0 is static). Group is tested with
-  `inpointgroup` / `inprimgroup`, so it takes a group name, not a pattern; empty is every piece. The Group button
+  `inpointgroup` / `inprimgroup`, as RBD Configure, so patterns (`piece*`, `@name=piece0`) work; empty is every piece. The Group button
   picks primitives in the viewport (RBD Configure's `selectGroupParm` call).
 * Settings Box3D Data has no parameter for (`extra_folders`): Initial State (`v`, `w` in degrees per second written as
   radians, `enabled`, `deforming`), Motion (`inertialtensorstiffness`, `fastrotation`, `lock_linear` / `lock_angular`),

@@ -329,7 +329,7 @@ def ui(folders):
         hou.ToggleParmTemplate("enable#", "Enable", default_value=True,
                                help="Write this entry's settings."),
         hou.StringParmTemplate(
-            "group#", "Group", 1, help="The pieces (point or primitive group) to set. Empty sets every piece.",
+            "group#", "Group", 1, help="The pieces to set: a point or primitive group, or a pattern such as piece* or @name=piece0. Empty sets every piece.",
             # RBD Configure's selection button: pick pieces (primitives) in the viewport.
             tags={"script_action": "import soputils\nnode = kwargs['node']\n"
                                    "kwargs['geometrytype'] = hou.geometryType.Primitives\n"
@@ -559,6 +559,7 @@ def build(out_path):
     definition.setParmTemplateGroup(ui(folders))
     definition.setMaxNumOutputs(len(LABELS))
     definition.setIcon(ICON)
+    b3d_hda.set_tab_submenu(definition, warn)
     definition.setComment("Sets Box3D body settings as point attributes on the pieces in a group, "
                           "like RBD Configure. Point attributes win over Box3D Data.")
     definition.updateFromNode(asset)

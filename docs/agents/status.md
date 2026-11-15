@@ -19,6 +19,9 @@ Last full run (Houdini 22.0.502, MSVC): every check passes except `baseline`, wh
   lint only. The builders' `check`s probe Pin, Use Bounds and the joint scaling.
 * Attributes Replace Values on the joint nodes (test `joint_attributes_replace`; the core rule is in
   `core_joints`).
+* Box3D Packed Object's Initial State and Deforming, the Tab menu's Box3D submenu on all three assets, and Box3D
+  Configure group patterns (`piece*`, `@name=piece0`): lint only. The Packed Object's `check` probes `v`, `w` and
+  `deforming`.
 * An object with unpacked primitives and nothing packed returns before making bodies (`syncObject`): its bodies are
   removed and its names released (`NameIndex::finish`). Test `unpacked_geometry`.
 
@@ -73,8 +76,6 @@ Last full run (Houdini 22.0.502, MSVC): every check passes except `baseline`, wh
 
 * Packed primitive spheres and nested packed primitives collide as one point, half sunk (`odd_packed_contents`).
 * Mirrored packed pieces lose their mirror once they move (`mirrored_piece`).
-* Box3D Configure's Group takes a group name only, not a pattern such as `@name=piece0` or `piece*` (RBD
-  Configure's does): the wrangle tests membership with `inpointgroup` / `inprimgroup`.
 * Spherical spring (and the motor joint's angular one) stalls when twisted about 180°: Box3D's error
   (`b3DeltaQuatToRotation`) is the total rotation's axis, whose tilt part shrinks as cos(twist / 2). Fix in Box3D
   (separate tilt and twist errors, upstream) or re-aim `targetRotation` at the current twist each step. A twist limit
@@ -82,7 +83,6 @@ Last full run (Houdini 22.0.502, MSVC): every check passes except `baseline`, wh
 * SideFX Glue breaks under static load (Break Force = strength / timestep) where Bullet's holds (`sidefx_glue`).
 * Results depend slightly on point order even with `id` (`point_order`): bodies are created in point order.
 * Objects solved by another solver: packed ones are ignored as colliders; one-way collision with polygons untested.
-* Box3D Packed Object: deforming import, initial velocity controls, a Box3D Tab submenu.
 * Export Collision Shapes (unverified): `SIM_DATA_CREATE(obj, "Box3DShapes", SIM_GeometryCopy, SIM_DATA_RETURN_EXISTING)`
   on an object that has no such data, then an empty detail in `SIM_GeometryAutoWriteLock`; `setExtraInfo` keeping other
   entries and surviving the later `save`s (Bullet's extra info is `guide=GUIDE_GEO` among colour entries).
@@ -100,7 +100,7 @@ Last full run (Houdini 22.0.502, MSVC): every check passes except `baseline`, wh
     bounce on the node.
   * Constraint relationship parameters on the node (Glue strength, Weld break force ...), or Attributes Replace
     Values on the inner ones so primitive attributes are absolute.
-  * Initial velocity controls, Set Always for animated solver parameters, a Tab submenu, a help card.
+  * Initial velocity controls, Set Always for animated solver parameters, a help card.
 
 ## HDK calls checked
 

@@ -382,6 +382,7 @@ def build(out_path, packed_hda=None):
     definition.setParmTemplateGroup(group)
     definition.setMaxNumOutputs(4)
     definition.setIcon(ICON)
+    b3d_hda.set_tab_submenu(definition, warn)
     definition.setComment("Simulates packed pieces with Box3D, like RBD Bullet Solver: geometry, "
                           "constraints, proxy and collision in; geometry, constraints, proxy and "
                           "simulation points out.")

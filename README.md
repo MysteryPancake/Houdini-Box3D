@@ -59,7 +59,7 @@ The zip includes the Box3D Packed Object, Box3D Configure and Box3D Solver SOP a
 
 ## Quick start
 
-In a DOP network, add a **Box3D Solver** and wire your objects into it like any DOP solver. For packed pieces, use a **Box3D Packed Object**. Its settings (shape, mass, friction, bounce, ...) apply to every piece that doesn't set its own attribute.
+In a DOP network, add a **Box3D Solver** and wire your objects into it like any DOP solver. For packed pieces, use a **Box3D Packed Object**. Its settings (shape, mass, friction, bounce, ...) apply to every piece that doesn't set its own attribute. The Box3D assets are under Box3D in the Tab menu.
 
 Like Houdini's RBD solvers, every point is one rigid body and the point is its **centre of mass** (for packed pieces, the pivot, which the Pack SOP puts at the centroid). Objects from **RBD Object** and similar nodes are one body each instead, with their results in the object's Position data.
 
@@ -72,7 +72,7 @@ Example scenes: run `make_examples.bat` (Linux: `hython examples/make_examples.p
 | Box3D Solver | The solver |
 | Box3D Packed Object | Packed geometry as a Box3D object, with Box3D Data's settings on the node |
 | Box3D Solver (SOP) | Like RBD Bullet Solver: geometry (packed or not), constraints, proxy and collision in, simulated out |
-| Box3D Configure (SOP) | Like RBD Configure: packs geometry and proxy, then sets Box3D Data's settings as point attributes on a group of pieces (a group name, not a pattern). Pin and Use Bounds work as in RBD Configure |
+| Box3D Configure (SOP) | Like RBD Configure: packs geometry and proxy, then sets Box3D Data's settings as point attributes on a group of pieces. Pin and Use Bounds work as in RBD Configure |
 | Box3D Data | Per-object settings, for objects made by other nodes |
 | Box3D Weld / Spherical / Revolute / Prismatic / Distance / Motor / Parallel / Wheel / Filter Constraint Relationship | Joint types, used with a Constraint Network |
 

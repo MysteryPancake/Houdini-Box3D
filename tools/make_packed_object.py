@@ -13,7 +13,12 @@ geometry when the object is created:
     Empty Object -> SOP Geometry (create_attributes/OUT) -> Box3D Data -> visualize_hires
                     ^ Rendering Parameters Volatile          -> Collider Label (output)
     create_attributes: Object Merge of the SOP Path -> setup_defaults -> create_name
-                       -> [creation frame] set_rest -> OUT
+                       -> [creation frame] set_rest -> setup_velocities -> setup_deforming -> OUT
+
+setup_velocities writes Velocity / Angular Velocity as v / w on the creation frame, unless Inherit
+Velocity keeps the points' own (on by default, so Box3D Configure's Initial State reaches the
+simulation). Deforming writes the deforming attribute on every import and re-imports the SOP every
+step, as RBD Packed Object's Create Deforming Objects, so the solver rebuilds the shapes.
 
 setup_defaults writes each per-body setting whose value differs from Box3D Data's default as a
 point attribute (b3d_settings.packed_defaults_vex), unless the points already have it, so a point
@@ -31,7 +36,8 @@ Collider Label PackedObject, as RBD Packed Object: other solvers collide with th
 pieces, and the Box3D Solver keeps it one body per point.
 
 Its parameters: the Object tab (object name, creation frame, solve on creation frame, SOP path,
-object transform, overwrite from SOP, display geometry), then every Box3D Data folder as a tab.
+object transform, overwrite from SOP, deforming, display geometry), Initial State, then every Box3D
+Data folder as a tab. The asset is listed under Box3D in the Tab menu.
 
 Never fails the build: problems are printed as warnings and the script exits 0.
 """
@@ -64,12 +70,43 @@ OBJECT_PARMS = [
 ]
 
 OVERWRITE_FROM_SOP = "overwritefromsop"  # RBD Packed Object's Overwrite Attributes from SOP
+DEFORMING = "deforming"  # the pieces' shapes follow the SOP (RBD's Create Deforming Objects)
+# The re-import condition of the inner SOP Geometry: Overwrite Attributes from SOP, or Deforming.
+REIMPORT = f'ch("../{OVERWRITE_FROM_SOP}") || ch("../{DEFORMING}")'
+
+# Initial State, as RBD Packed Object's (same names).
+VEL, ANGVEL, INHERIT_VEL = "vel", "angvel", "inheritvelocity"
+
+# setup_velocities, on the creation frame: Velocity and Angular Velocity (degrees per second, written
+# as radians) as v and w, unless the points' own are inherited.
+VELOCITY_VEX = """// The starting velocity, unless the points' own v / w are kept.
+if (!chi("../../%s")) {
+    v@v = chv("../../%s");
+    v@w = radians(chv("../../%s"));
+}""" % (INHERIT_VEL, VEL, ANGVEL)
+
+# setup_deforming, on every import: the deforming attribute, so the solver rebuilds the shapes.
+DEFORMING_VEX = 'if (chi("../../%s")) i@deforming = 1;' % DEFORMING
 
 STAGE = "create_attributes"  # the SOP stage (a DOP SOP network), as RBD Packed Object's
 HIRES = "visualize_hires"  # the SOP Guide drawing the render geometry, as RBD Packed Object's
 
 # Display Geometry / Render SOP Path, as RBD Packed Object's (same names, so its expressions carry over).
 DISPLAY, DISPLAY_GEO, RENDER_PATH = "display", "displaygeo", "rendergeopath"
+
+
+def initial_state_templates():
+    """The Initial State tab, as RBD Packed Object's (Position and Rotation are the SOP's own here)."""
+    inherit = f"{{ {INHERIT_VEL} == 1 }}"
+    return [
+        hou.FloatParmTemplate(VEL, "Velocity", 3, default_value=(0, 0, 0), disable_when=inherit,
+                              help="The pieces' starting velocity, in units per second."),
+        hou.FloatParmTemplate(ANGVEL, "Angular Velocity", 3, default_value=(0, 0, 0), disable_when=inherit,
+                              help="The pieces' starting spin, in degrees per second about each world axis."),
+        hou.ToggleParmTemplate(INHERIT_VEL, "Inherit Velocity from Point Velocity", default_value=True,
+                               help="Keeps the points' own v and w (Box3D Configure's Initial State). Off: "
+                                    "Velocity and Angular Velocity replace them."),
+    ]
 
 
 def display_templates():
@@ -187,8 +224,9 @@ def set_parm(node, name, value=None, expr=None, lang=hou.exprLanguage.Hscript):
 def build_stage(sub, rows):
     """The SOP stage inside the asset (STAGE), as RBD Packed Object's create_or_overwrite_attributes:
     Object Merge of the asset's SOP Path -> setup_defaults -> create_name -> set_rest on the creation
-    frame only (switch_first_frame on the stamped $SF / $OBJCF) -> OUT. The references to the asset's
-    parameters are set by wire_stage once the asset has them. Returns OUT."""
+    frame only, with setup_velocities (switch_first_frame on the stamped $SF / $OBJCF) -> setup_deforming
+    -> OUT. The references to the asset's parameters are set by wire_stage once the asset has them.
+    Returns OUT."""
     net = sub.createNode("sopnet", STAGE)
     merge = net.createNode("object_merge", "object_merge")
     defaults = net.createNode("attribwrangle", "setup_defaults")
@@ -202,17 +240,23 @@ def build_stage(sub, rows):
     rest = net.createNode("attribwrangle", "set_rest")
     rest.setInput(0, name)
     rest.parm("snippet").set(b3d_settings.REST_VEX)
+    velocities = net.createNode("attribwrangle", "setup_velocities")
+    velocities.setInput(0, rest)
+    velocities.parm("snippet").set(VELOCITY_VEX)
     stamps = net.createNode("null", "STAMPS")
     for parm, key in (("frame", "SF"), ("objcf", "OBJCF")):
         stamps.addSpareParmTuple(hou.FloatParmTemplate(parm, key, 1))
         stamps.parm(parm).setExpression(f'stamp("..", "{key}", -1)', hou.exprLanguage.Hscript)
     first = net.createNode("switch", "switch_first_frame")
     first.setInput(0, name)
-    first.setInput(1, rest)
+    first.setInput(1, velocities)
     first.parm("input").setExpression('ch("../STAMPS/frame") == ch("../STAMPS/objcf")',
                                       hou.exprLanguage.Hscript)
+    deforming = net.createNode("attribwrangle", "setup_deforming")
+    deforming.setInput(0, first)
+    deforming.parm("snippet").set(DEFORMING_VEX)
     out = net.createNode("null", "OUT")
-    out.setInput(0, first)
+    out.setInput(0, deforming)
     out.setDisplayFlag(True)
     out.setRenderFlag(True)
     net.layoutChildren()
@@ -255,15 +299,15 @@ def stamp_sop_geometry(geo):
 
 def wire_overwrite(asset):
     """Every Parameter Operation of the inner SOP Geometry (and its Default Operation): Set Always
-    while Overwrite Attributes from SOP is on, else Set Initial."""
+    while Overwrite Attributes from SOP or Deforming is on, else Set Initial."""
     geo = asset.node("geometry")
     ops = [p for p in geo.parms()
            if p.name().startswith("parmop") or p.parmTemplate().label().lower() == "default operation"]
     if not ops:
         warn(f"{geo.path()} has no Parameter Operation menus: Overwrite Attributes from SOP does nothing")
     driven = [p.name() for p in ops
-              if b3d_hda.menu_index_expr(p, f'ch("../{OVERWRITE_FROM_SOP}")', "Always", "Initial", warn)]
-    print(f"make_packed_object: Overwrite Attributes from SOP drives {geo.path()}: {', '.join(driven) or 'nothing'}")
+              if b3d_hda.menu_index_expr(p, REIMPORT, "Always", "Initial", warn)]
+    print(f"make_packed_object: Overwrite Attributes from SOP / Deforming drive {geo.path()}: {', '.join(driven) or 'nothing'}")
 
 
 def add_display(sub, geo, data):
@@ -339,6 +383,9 @@ def build(out_path):
         OVERWRITE_FROM_SOP, "Overwrite Attributes from SOP", default_value=False,
         help="Reads the SOP again every step, so animated or deforming geometry and changed attributes reach \
 the simulation. Off: read once when the object is created.")
+    deforming = hou.ToggleParmTemplate(
+        DEFORMING, "Deforming", default_value=False,
+        help="The pieces' shapes follow the SOP: it is read again every step and the shapes are rebuilt.")
 
     # Each Box3D Data folder becomes a tab. Its parameters outside the folders are DOP's own data
     # settings (Activation, Group, Data Name ...): not promoted, so the inner node keeps the values a
@@ -350,10 +397,12 @@ the simulation. Off: read once when the object is created.")
                                                folder_type=hou.folderType.Tabs))
     names = [pt for _, pt in promoted]
     names.insert(1, create_frame)
-    names.append(overwrite)
+    names += [overwrite, deforming]
     names += display_templates()
     group = hou.ParmTemplateGroup()
     group.append(hou.FolderParmTemplate("b3dpo_object", "Object", names, folder_type=hou.folderType.Tabs))
+    group.append(hou.FolderParmTemplate("initial_state", "Initial State", initial_state_templates(),
+                                        folder_type=hou.folderType.Tabs))
     for tab in tabs:
         group.append(tab)
     object_level = [pt for pt in value_templates(tabs) if pt.name() in b3d_settings.SKIP]
@@ -379,6 +428,7 @@ the simulation. Off: read once when the object is created.")
     definition = asset.type().definition()
     definition.setParmTemplateGroup(group)
     definition.setIcon(ICON)
+    b3d_hda.set_tab_submenu(definition, warn)
     definition.setComment("Packed geometry as a Box3D object, like RBD Packed Object: settings that differ "
                           "from Box3D Data's defaults become point attributes; a point's own attribute wins.")
 
@@ -404,7 +454,8 @@ the simulation. Off: read once when the object is created.")
 def check(out_path, dopnet):
     """On a fresh instance of the saved asset: Friction 0.25 and Kinematic become point attributes
     (friction, active, animated), Bounce left at its default writes none, a point's own friction is
-    kept, and Add Impact Data reaches the inner Box3D Data."""
+    kept, Add Impact Data reaches the inner Box3D Data, and Initial State / Deforming write v, w and
+    deforming."""
     hou.hda.installFile(out_path, force_use_assets=True)
     sop = hou.node("/obj").createNode("geo", "probe_geo")
     for child in sop.children():
@@ -480,6 +531,31 @@ def check(out_path, dopnet):
     own = g.points()[0].attribValue("friction") if g is not None and g.findPointAttrib("friction") else None
     if own is None or abs(own - 0.75) > 1e-6:
         warn(f"probe: a point's own friction 0.75 came out as {own}")
+    # Initial State: inherited by default (no v written), Velocity / Angular Velocity once it is off;
+    # Deforming writes deforming and re-imports.
+    g = out.geometry()
+    if g is not None and g.findPointAttrib("v") is not None:
+        warn("probe: Inherit Velocity on still wrote v")
+    for name, value in ((INHERIT_VEL, 0), (DEFORMING, 1)):
+        if probe.parm(name) is None:
+            warn(f"probe: no {name} parameter")
+            sop.destroy()
+            return
+        probe.parm(name).set(value)
+    probe.parmTuple(VEL).set((1, 2, 3))
+    probe.parmTuple(ANGVEL).set((180, 0, 0))
+    g = out.geometry()
+    p0 = g.points()[0] if g is not None and g.points() else None
+    got = {n: (p0.attribValue(n) if p0 is not None and g.findPointAttrib(n) else None) for n in ("v", "w", "deforming")}
+    if got["v"] is None or max(abs(x - y) for x, y in zip(got["v"], (1, 2, 3))) > 1e-5:
+        warn(f"probe: Velocity (1, 2, 3) wrote v {got['v']}")
+    if got["w"] is None or abs(got["w"][0] - 3.14159265) > 1e-4:
+        warn(f"probe: Angular Velocity 180 degrees per second wrote w {got['w']}, expected pi radians")
+    if got["deforming"] != 1:
+        warn(f"probe: Deforming wrote deforming {got['deforming']}, expected 1")
+    if ops and "always" not in (ops[0].menuLabels()[ops[0].eval()] if ops[0].parmTemplate().type() == hou.parmTemplateType.Menu
+                                else ops[0].evalAsString()).lower():
+        warn("probe: Deforming does not re-import the SOP (Set Always)")
     sop.destroy()
 
 
