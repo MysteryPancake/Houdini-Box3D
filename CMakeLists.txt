@@ -7,6 +7,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # compile_commands.json in the build folder, for clang-tidy and IDEs.
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Single-config generators (Makefiles, Ninja) build with no optimisation unless told otherwise,
+# which makes the core tests' timings meaningless. Default to Release; -DCMAKE_BUILD_TYPE overrides.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 # ---------------------------------------------------------------------------
 # Options
 # ---------------------------------------------------------------------------
@@ -202,33 +208,32 @@ add_custom_command(TARGET Box3DDOP POST_BUILD
     ${BOX3DDOP_ICON_COPIES}
     VERBATIM)
 
-# The digital assets, built with hython after the plugin into houdiniX.Y/otls next to dso/:
-# Box3D Packed Object (tools/make_packed_object.py), Box3D Configure (tools/make_configure_sop.py),
-# then the Box3D Solver SOP (tools/make_solver_sop.py), which contains the Packed Object. All three copy parameters from the plugin just built, so
-# they are remade every time the plugin is. Problems print a warning and never fail the build.
+# The digital assets, built with hython into houdiniX.Y/otls next to dso/ by tools/make_assets.py (one
+# hython session: Box3D Packed Object, Box3D Configure, then the Box3D Solver SOP, which contains the
+# Packed Object). All three copy parameters from the plugin just built, so they are remade whenever the
+# plugin is relinked or any script in tools/ changes. Problems print a warning and never fail the build.
 option(BOX3DDOP_MAKE_HDA "Build the Box3D digital assets (Packed Object, Configure, Solver SOP) with hython after the plugin" ON)
 if(BOX3DDOP_MAKE_HDA)
     find_program(BOX3DDOP_HYTHON NAMES hython
         HINTS "${Houdini_DIR}/../../bin" "$ENV{HFS}/bin" NO_DEFAULT_PATH)
     if(BOX3DDOP_HYTHON)
-        set(BOX3DDOP_HDA "$<TARGET_FILE_DIR:Box3DDOP>/../otls/box3d_packedobject.hda")
-        add_custom_command(TARGET Box3DDOP POST_BUILD
-            COMMAND "${BOX3DDOP_HYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/make_packed_object.py" "${BOX3DDOP_HDA}"
+        set(BOX3DDOP_OTLS_DIR "$<TARGET_FILE_DIR:Box3DDOP>/../otls")
+        set(BOX3DDOP_HDAS box3d_packedobject.hda box3d_configure.hda box3d_solver_sop.hda)
+        file(GLOB BOX3DDOP_TOOL_SCRIPTS CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/make_*.py" "${CMAKE_CURRENT_SOURCE_DIR}/tools/b3d_*.py")
+        # OUTPUT cannot hold generator expressions (the otls folder depends on the Houdini install), so
+        # a stamp file in the build folder records that the assets are up to date.
+        set(BOX3DDOP_ASSET_STAMP "${CMAKE_BINARY_DIR}/box3d_assets.stamp")
+        add_custom_command(OUTPUT "${BOX3DDOP_ASSET_STAMP}"
+            COMMAND "${BOX3DDOP_HYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/make_assets.py" "${BOX3DDOP_OTLS_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E touch "${BOX3DDOP_ASSET_STAMP}"
+            DEPENDS Box3DDOP ${BOX3DDOP_TOOL_SCRIPTS}
+            COMMENT "Building the Box3D digital assets"
             VERBATIM)
-        add_custom_command(TARGET Box3DDOP POST_BUILD
-            COMMAND "${BOX3DDOP_HYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/make_configure_sop.py"
-                    "$<TARGET_FILE_DIR:Box3DDOP>/../otls/box3d_configure.hda"
-            VERBATIM)
-        # After the Packed Object (POST_BUILD commands run in the order they are added).
-        set(BOX3DDOP_SOP_HDA "$<TARGET_FILE_DIR:Box3DDOP>/../otls/box3d_solver_sop.hda")
-        add_custom_command(TARGET Box3DDOP POST_BUILD
-            COMMAND "${BOX3DDOP_HYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/make_solver_sop.py" "${BOX3DDOP_SOP_HDA}"
-                    "${BOX3DDOP_HDA}"
-            VERBATIM)
+        add_custom_target(Box3DAssets ALL DEPENDS "${BOX3DDOP_ASSET_STAMP}")
     else()
         message(WARNING "hython not found next to the Houdini toolkit: the Box3D digital assets will not "
-                        "be built (run tools/make_packed_object.py, tools/make_configure_sop.py, then "
-                        "tools/make_solver_sop.py, with hython yourself)")
+                        "be built (run hython tools/make_assets.py <otls folder> yourself)")
     endif()
 endif()
 
@@ -254,10 +259,10 @@ foreach(node IN LISTS BOX3DDOP_NODES)
 endforeach()
 install(FILES "${CMAKE_BINARY_DIR}/package/Box3D.json" DESTINATION .)
 if(BOX3DDOP_MAKE_HDA AND BOX3DDOP_HYTHON)
-    # The asset the post-build step made (absent if it failed: OPTIONAL).
-    install(FILES "$<TARGET_FILE_DIR:Box3DDOP>/../otls/box3d_packedobject.hda" DESTINATION Box3D/otls OPTIONAL)
-    install(FILES "$<TARGET_FILE_DIR:Box3DDOP>/../otls/box3d_solver_sop.hda" DESTINATION Box3D/otls OPTIONAL)
-    install(FILES "$<TARGET_FILE_DIR:Box3DDOP>/../otls/box3d_configure.hda" DESTINATION Box3D/otls OPTIONAL)
+    # The assets the build step made (absent if one failed: OPTIONAL).
+    foreach(hda IN LISTS BOX3DDOP_HDAS)
+        install(FILES "${BOX3DDOP_OTLS_DIR}/${hda}" DESTINATION Box3D/otls OPTIONAL)
+    endforeach()
 endif()
 
 set(CPACK_GENERATOR ZIP)

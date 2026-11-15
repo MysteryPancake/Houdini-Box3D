@@ -12,10 +12,12 @@ How the project is built, tested and packaged. Index and rules: [CLAUDE.md](../.
     default icon name is `<TABLE>_<name>`; renaming a node means renaming its icon). The two SOP assets reuse DOP
     icons (`ICON` in their scripts), so they are not in the list.
   * The digital assets (`BOX3DDOP_MAKE_HDA`, default ON), with hython (found at `${Houdini_DIR}/../../bin` or
-    `$HFS/bin`), into `<dso>/../otls/`, in this order: `tools/make_packed_object.py` (`box3d_packedobject.hda`),
-    `tools/make_configure_sop.py` (`box3d_configure.hda`), `tools/make_solver_sop.py` (`box3d_solver_sop.hda`, which
-    contains the Packed Object, so it comes after it). Without hython a configure warning names the scripts to run by
-    hand. All three copy parameters from the plugin just built. See below.
+    `$HFS/bin`), into `<dso>/../otls/`: one `tools/make_assets.py` run (one hython session) builds
+    `tools/make_packed_object.py` (`box3d_packedobject.hda`), `tools/make_configure_sop.py` (`box3d_configure.hda`),
+    then `tools/make_solver_sop.py` (`box3d_solver_sop.hda`, which contains the Packed Object). It is the custom target
+    `Box3DAssets` (part of ALL), re-run when the plugin relinks or any `tools/make_*.py` / `b3d_*.py` changes; a stamp
+    file in the build folder records it (OUTPUT cannot hold the dso-relative path). Without hython a configure warning
+    names the command to run by hand. All three copy parameters from the plugin just built. See below.
 * Warnings: `b3dop_warnings(target)` adds `-Wall -Wextra -Wshadow -Wconversion` (`/W4` on MSVC) to our targets, never to
   Box3D; Houdini's headers are system includes. `BOX3DDOP_WARNINGS_AS_ERRORS` (default OFF, on in CI) adds `-Werror` /
   `/WX`.
@@ -38,9 +40,14 @@ How the project is built, tested and packaged. Index and rules: [CLAUDE.md](../.
   version named in the Houdini download; never link an allocator (Houdini overrides malloc). `BUILD_TYPE=RelWithDebInfo
   ./build.sh` for gdb: `gdb $HFS/bin/houdini-bin`, `run -foreground`; `HOUDINI_DSO_ERROR=1` says why a plugin failed to
   load.
-* `build.sh` wipes `build/` if the repository moved (`build/.configured_from`). `build.bat` finds `HFS` (env var, then
-  the registry's ActiveVersion, then the newest `Program Files\Side Effects Software\Houdini X.Y.Z`); `test.bat` and
-  `make_examples.bat` copy that block, so change all three together.
+* Single-config generators default to `CMAKE_BUILD_TYPE=Release` when none is given.
+* `build.sh` and `build.bat` both wipe `build/` if the repository moved (`build/.configured_from`, rewritten every
+  build). `build.sh` finds `HFS` (env var, else the newest `/opt/hfs*` or macOS `/Applications/Houdini` install);
+  `build.bat` (env var, then the registry's ActiveVersion, then the newest `Program Files\Side Effects Software\Houdini
+  X.Y.Z`, in `tools\find_houdini.bat`, which `test.bat` and `make_examples.bat` share).
+* `python tools/b3d.py test|examples|ctest|hfs` is the cross-platform launcher (`tools/b3d.py`: the same HFS search
+  for Windows, Linux and macOS, then hython on `tests/houdini/run_tests.py` or `examples/make_examples.py`, or
+  `ctest`). Its search duplicates `find_houdini.bat` and `build.sh`: change all three together.
 
 ## Box3D Packed Object asset
 

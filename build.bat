@@ -34,12 +34,15 @@ rem --- Configure (every build, so BOX3DDOP_DEBUG never keeps a stale cached val
 if exist build\CMakeCache.txt goto :reconfigure
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DBOX3DDOP_DEBUG=!DBG!
 if not "%errorlevel%"=="0" goto :fail
->"%MARKER%" echo %CD%
-goto :build
+goto :marker
 
 :reconfigure
 cmake -S . -B build -DBOX3DDOP_DEBUG=!DBG!
 if not "%errorlevel%"=="0" goto :fail
+
+:marker
+rem --- Remember where build\ was configured (also for a build\ made without this script) ---
+>"%MARKER%" echo %CD%
 
 :build
 rem --- Build ---------------------------------------------------------------
