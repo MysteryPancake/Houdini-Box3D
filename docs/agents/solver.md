@@ -50,15 +50,18 @@ worldData = findOrCreateWorldData(objects)     first object carrying "Box3DWorld
 rebuild if invalid / thread count changed / stamp mismatch -> createFreshWorld
 lock st->mutex
 stepDt = dt * timescale; world.applyTuning(currentWorldSettings())   (stepDt stays the whole frame's time)
-syncFromGeometry   per object syncObject(); remove gone bodies; pruneHulls; warnings
-applyExternalForces  Use Force DOPs: SIM_Force data per object -> getForce at each dynamic body's centre of mass -> applyForceByHandle
+syncFromGeometry   per object syncObject(); syncAffectorBodies (Static Objects); remove gone bodies; syncJoints;
+                   pruneHulls; warnings
 world.step         n = Substeps (`stepsperframe`, 1..64; 1 when stepDt is 0). Each of the n steps: applyExternalForces (Box3D clears
                    forces every step), b3World_Step(stepDt / n, subSteps = Solver Passes), then its move events are merged
-                   into st.moves by body (Box3D clears them every step; the last event wins, so fell-asleep survives)
+                   into st.moves by body (Box3D clears them every step; the last event wins, so fell-asleep survives).
+                   applyExternalForces (Use Force DOPs): SIM_Force data per object -> getForce at each dynamic body's
+                   centre of mass, plus point force / torque -> applyForceByHandle
 writeResultsBack   awake dynamic bodies (move events): P / orient / v / w / packed transform / awake
+jointsAfterStep    broken joints, feedback and live frames onto the networks (joints.md)
 recordImpacts      Add Impact Data -> SIM_Impacts (only on steps with an impact)
-writePointAttrs    queued point writes: bullet_autofit_valid = 1, computed mass
-ageObjects         Enable Aging
+writePointAttrs    queued point writes: bullet_autofit_valid = 1, computed mass, rest attributes
+ageObjects         Enable Aging only
 deleteDeadPoints   `dead` points
 stamp = now
 ```
@@ -104,7 +107,7 @@ finds `kBox3DDataLegacyName`, the top-level `"Box3DData"` of older scenes; SIM_B
 `planSlots`, `reserveMirror`, `ApplyPass` (pass 2) and `NameIndex` (the `name` map for joint anchors). A cancel in
 `planSlots` or `ApplyPass::run` makes `syncObject` return early.
 
-1. Read-locks the `SIM_Geometry` (objects without one are skipped). `PointAttrs` binds `id, active, v, w, orient`.
+1. Read-locks the `SIM_Geometry` (objects without one are skipped). `PointAttrs` binds `id, active, v, w, orient, restxform`.
 2. Box3D Data: body type and `BodyProps` (its values that change existing bodies), plus Add Impact Data.
 3. **Skip check** (see below). On a skip, the object's entries are counted and nothing per point runs.
 4. Otherwise binds the remaining attributes and builds the `ScanContext` (world, geometry, attributes, node settings,

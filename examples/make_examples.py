@@ -306,8 +306,8 @@ def network_sop(name, lines):
 
 def packed_pieces(dop, pieces_path, name="pieces"):
     """The pieces' DOP object: a Box3D Packed Object (the asset the build makes), which keeps the
-    points' own attributes (density, v ...) and stamps none. Without the asset: an RBD Packed Object
-    keeping the points' v."""
+    points' own attributes (density, v ...) and writes only the settings changed on it (none here).
+    Without the asset: an RBD Packed Object keeping the points' v."""
     try:
         obj = dop.createNode("box3d_packedobject", name)
     except hou.OperationFailed:

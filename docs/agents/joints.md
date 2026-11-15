@@ -53,7 +53,12 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   (the inverse, for node defaults). Used by the nodes and by the primitive overrides (for everything but floats,
   which multiply); a test round-trips every setting.
 * `createJoint(type, bodyA, bodyB, frameA, frameB, settings, userData)`: frames are world space (anchor P +
-  orient) and converted to each body's local frame from its current transform (`toLocal`). A null BodyHandle is the
+  orient) and converted to each body's local frame from its current transform (`toLocal`). The sync passes authored anchors
+  (world space at rest) through `restToNow` first: each moved with its packed body since rest (restxform rotation and
+  rest position, `Box3DBodyMirror::restPos`), as Bullet maps anchors through restxform, so a joint made after its
+  pieces moved (a new primitive, a remake after an upstream edit) lands where the anchor sits on the piece now. Live
+  frames (`current_*`) and saved local frames are already current and skip it; the world, affectors, whole objects
+  and plain points are unchanged. A null BodyHandle is the
   world: one shapeless static body per world, made on first use (`Impl::anchor`, not in `bodyCount`). Settings are
   clamped first (`sanitized`) to what Box3D asserts on: non-negative stiffness / damping / caps, ordered limits,
   cone angle 0..pi/2, revolute target -pi..pi, finite vectors, unit quaternions (the test checks
@@ -63,8 +68,10 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
 * `jointFeedback`: constraint force / torque (vectors), linear / angular separation, and per-type readings named
   `current_*` (plus `motor_torque`, `motor_force`, `spin_torque`) so no reading shares a name with a setting (a
   test checks). Box3D's `b3Joint_GetAngularSeparation` compares the bodies' rotations, not the joint frames
-  (`relQ = inv(qA) * qB` in joint.c), so a held joint between bodies that started rotated reports a non-zero angle;
-  it is passed on as Box3D gives it.
+  (`relQ = inv(qA) * qB` in joint.c), so a held joint between bodies that started rotated reports a non-zero angle.
+  The `angle` attribute is therefore the plugin's own (`angleSinceRest`): the bodies' relative rotation since rest
+  (`Box3DJointEntry::restRotA` / `B`: a packed body's restxform rotation, else its rotation when the joint was made,
+  identity for the world), as Bullet. Box3D's value is only the fallback when a body's pose cannot be read.
   For wheel joints Box3D's angular separation is a `// todo` that asserts, so it is reported as 0.
 * Breaking: Box3D raises a joint event when force / torque passes the threshold (solver.c) but does not break the
   joint; `brokenJoints` returns the events' user data and the caller destroys them. `b3DestroyBody` destroys a
@@ -107,8 +114,8 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
 * After the step (`jointsAfterStep`): broken joints are destroyed and flagged (never remade, even if the
   primitive changes), and written back through the relationship's `getGeometry()` (non-const: a `SIM_GeometryCopy`)
   or the object's ConstraintGeometry (made a `SIM_GeometryCopy` once, like the object geometry): the `broken`
-  primitive group, then `force` / `torque` (magnitudes), `distance` / `angle` (linear / angular separation, angle
-  in radians, the Constraint Network DOP's names and units) and the per-type `current_*` readings (degrees) every step. The fingerprint is re-recorded after the write so it is not seen as an edit. A network that
+  primitive group, then `force` / `torque` (magnitudes), `distance` / `angle` (linear separation, the angle since
+  rest above, in radians, the Constraint Network DOP's names and units) and the per-type `current_*` readings (degrees) every step. The fingerprint is re-recorded after the write so it is not seen as an edit. A network that
   re-imports its SOP every step (Overwrite with SOP) overwrites the group; `Box3DJointEntry::broken` still holds until
   a world rebuild. `Box3DJointNetwork::writable` is false when the last write found no geometry; such a network keeps
   its frames in the joint signature (see below).
@@ -134,8 +141,8 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
     relative, quaternion dot 1 - 1e-6), which holds when all three were written after the same step and fails for
     a renamed, moved or new anchor (a zero `local_orient` means none). This makes rebuilds exact: going through
     float world positions loses ~1 float step at the coordinates' size per rebuild (4.6e-4 at x = 12000 in the
-    test), the local frames are small offsets kept bit for bit (`asLocal` only renormalises a quaternion that is
-    not already unit length). The live `current_*` are still read: to make new joints and to see edits.
+    test), the local frames are small offsets kept bit for bit (`asLocalFrame` in Box3DWorld.cpp only renormalises a quaternion
+    that is not already unit length). The live `current_*` are still read: to make new joints and to see edits.
   * Edits: the entry remembers the authored anchors it was made from (`authA` / `authB`) and what it wrote
     (`wroteA` / `wroteB`), as stored in float. A reprocessed network whose `P` / `orient` differ from the first, or
     whose `current_*` differ from the second (1e-5 relative; q and -q equal), was edited upstream (a SOP Solver): the

@@ -64,8 +64,20 @@ equal to what its body was built with.
   deletes it in the same step, else the next sync does. Parallel past `kMinParallelPoints`.
 * **Time Scale**: Box3D steps by `stepDt = dt * timescale`.
 
-**Point writes after the step** (`Box3DPointWrite`: `kAutofitValid`, `kMass`): grouped per object
+**Point writes after the step** (`Box3DPointWrite`: `kAutofitValid`, `kMass`, `kRest`): grouped per object
 (`forEachObjectRun`), offsets via `resolvePointOffsets`, then `recordFingerprintAfterWrite`.
+
+**Rest transform** (packed points, Bullet's convention): `restxform` (4x4, the packed transform at rest; all zero =
+unset), `pivot` (P at rest) and `orient` = the rotation since rest, so Transform Pieces needs no rest input. Bodies
+stay absolute inside: `readPointState` reads `restRotation(restxform) * orient` (`box3dRestToAbsolute`) once restxform is
+set, else the packed rotation; the write-back writes `orient` with `box3dAbsoluteToRest` from the entry's `restRot` and the
+packed transform as before. A new packed body (`initRest`) takes `restRot` from a set restxform, else from its packed
+transform stored as float (what the attribute will hold, so both paths split the same matrix) and queues `kRest`:
+restxform, `pivot` = P, `orient` from the mirror's pose (identity unless it moved this step). As Bullet's solver, an
+incoming restxform is kept: resetting it when an object is created is the object's job (the Box3D Packed Object's SOP
+stage, as RBD Packed Object's; [build.md](build.md)), so a world rebuilt mid-simulation keeps the rest too. Editing only a packed
+transform after rest is ignored, as in Bullet: edit `orient` / `P`. `restPos` (the packed pivot through restxform)
+is where the body's origin was at rest; joints map authored anchors with it ([joints.md](joints.md)).
 
 ## Building shapes (`addPointBody`, `planShapes`, `buildShapes`)
 
@@ -91,7 +103,8 @@ equal to what its body was built with.
   first point's starting `v`, is not copied.
 * Notes become one node warning per kind, on the step a shape is built.
 * Point attributes win over Box3D Data, as in Bullet. `noteOverriddenData` lists the attributes present that replace
-  a Box3D Data value (once per object, `overridesReported`); the warning points at the Box3D Packed Object.
+  a Box3D Data value changed from its default (`nodeBodyDefaults`; once per object, `overridesReported`): a value left
+  at its default is not reported, so the Box3D Packed Object's attributes over its default Box3D Data are not.
 
 **AutoFit** (`fitShapeOriented`, also for whole objects): the smallest box among the body axes and, from a throwaway
 hull, each face normal paired with each of its edges. A turned frame must beat the body axes by `kTurnedFitGain`;

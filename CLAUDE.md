@@ -14,7 +14,7 @@ body engine, C17, a git submodule in `extern/box3d`). It registers these `SIM_Da
 | Box3D Data | `SIM_Box3DData` | Per-object defaults (fallbacks for missing point attributes) |
 | (hidden) Box3D World | `SIM_Box3DWorld` | Holds the live Box3D world; not a DOP node |
 | Box3D <Type> Constraint Relationship | `SIM_Box3DConRel<Type>` | One per joint type: the joint's settings, named by `constraint_name` in a Constraint Network |
-| Box3D Packed Object | (digital asset) | Empty Object + SOP Geometry + Box3D Data, built by `tools/make_packed_object.py` |
+| Box3D Packed Object | (digital asset) | RBD Packed Object for Box3D: a SOP stage writes its settings as point attributes, built by `tools/make_packed_object.py` |
 | Box3D Solver (SOP) | (digital asset) | SOP wrapping a DOP network with the nodes above, built by `tools/make_solver_sop.py` |
 | Box3D Configure (SOP) | (digital asset) | Box3D Data's settings as point attributes, built by `tools/make_configure_sop.py` |
 
@@ -88,6 +88,7 @@ extern/box3d/         Box3D submodule (never edit; static lib, EXCLUDE_FROM_ALL)
 icons/box3d.svg     Node icon; the build copies it to config/Icons as DOP_<node name>.svg for every node
 src/                  The include root: includes are written "core/Box3DWorld.h" (bare name within a folder)
   core/               Houdini-free; built as b3dop_core and covered by the tests
+    Box3DMath.h         Header-only: unit constants, finite checks, small copies, quaternion helpers, xformPoint
     Box3DShapes.h       Header-only: shape math, packed-prim matrices, hashing
     Box3DJoints.h       Header-only: joint types, JointSettings, the joint parameter table
     Box3DSideFX.h/.cpp  SideFX's Glue / Hard / Spring / Bullet Soft / Cone Twist data -> Box3D joints (mapping, frame offsets)
@@ -105,6 +106,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     SIM_Box3DRegister.cpp  initializeSIM(); includes UT_DSOVersion.h (exactly once, keep it here)
   sync/               Houdini data -> the Box3D world, used by the solver
     Box3DState.h           Box3DSharedState: mirror entries, per-object sync records, affector bodies, joint entries, scratch
+    Box3DAttribNames.h     The point attributes the solver reads, by name (PointAttrs and the prop markers come from it)
     Box3DSolverInternal.h  What the solver's parts share (namespace box3dsolver); only the solver's files include it
     Box3DShapeBuild.cpp    Packed primitives, collision source geometry (pieces, summary cache), buildShapes
     Box3DPointSync.cpp     One body per point: point state, fingerprint, body settings, shape plans, syncObject
@@ -118,10 +120,15 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
                         options of SIM data by name (box3dDataOption)
     Box3DHoudiniTasks.h TaskRunner on Houdini's TBB pool (UT_TaskGroup). Only SIM_Box3DWorld.cpp includes it
 examples/            make_examples.py: builds demo scenes into examples/scenes (git-ignored)
+package/             Box3D.json.in: the Houdini package file the build configures
 tools/               make_packed_object.py, make_configure_sop.py, make_solver_sop.py (the assets, run by the build with
-                     hython), check_docs.py
+                     hython), b3d_prepare.py (the input packing both SOP assets share), b3d_settings.py (Box3D Data's
+                     settings as point attributes and the creation-frame rest, for Configure and the Packed Object),
+                     check_docs.py,
+                     houdini_network_dump.py (dumps a node's networks to text, for reading SideFX assets)
 docs/agents/         Technical notes by area; CLAUDE.md is the index ("Where to look")
 tests/
+  TestUtil.h          CHECK macro and failure counter shared by the core tests
   KeyedWorld.h        Test-only Box3DWorld subclass: bodies by caller-chosen id, over the handle API
   core_smoke.cpp      Version print + world create/destroy
   core_physics.cpp    Unit + physics checks (CHECK macro, nonzero exit on failure)
@@ -132,6 +139,8 @@ tests/
   core_joints.cpp     Every joint type, world anchors, live updates, breaking, feedback, the parameter table
   core_sidefx.cpp     SideFX constraint data: option table, mapping per type / constraint_type, frame offsets, behaviour
   core_rbdobject.cpp  RBD Object settings without Box3D Data: defaults, invalid values, Bullet Data shapes, density -> mass
+  houdini/            Houdini checks: run_tests.py (runner), checks_*.py (tests by area), b3dtest.py (helpers),
+                      review.py (tidies saved scenes), baseline.json; out/ holds each test's scene (git-ignored)
 ```
 
 Layering (keep it):
@@ -150,7 +159,8 @@ Layering (keep it):
   registered in `initializeSIM`.
 * The solver's parts live in `namespace box3dsolver`; anything one part uses from another is declared in
   `Box3DSolverInternal.h` (default arguments there, not on the definitions). Small Houdini helpers used by several
-  files go in `Box3DHoudiniUtil.h`, Houdini-free math (`kDegToRad`, `quatsDiffer`, `xformPoint`) in `Box3DShapes.h`.
+  files go in `Box3DHoudiniUtil.h`, Houdini-free math (`kDegToRad`, `quatsDiffer`, `xformPoint`) in `Box3DMath.h`, shape math and hashing in
+  `Box3DShapes.h`.
 * Node messages go through `SIM_SolverBox3D::message` / `warnCount` ("Box3D: " prefix, first object; counts only when
   non-zero). Whole objects count separately from points (`failedObjects`, `objectFallbacks`).
 * Anything kept in the world must be reconstructible from point attributes, or a scrub / reload loses it.

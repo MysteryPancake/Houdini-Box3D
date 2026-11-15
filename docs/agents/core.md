@@ -34,9 +34,9 @@ accepts all of them on a disabled body (proxies are only touched when they exist
 
 **World settings.** `WorldSettings` (Box3D's defaults, except standard gravity): gravity, `subSteps`, `workerCount`,
 `enableSleep`, `enableContinuous`, `contactStiffness` (Hz), `contactDampingRatio`, `contactPushSpeed`,
-`restitutionThreshold`, `maxLinearSpeed`. `applyTuning` pushes changes into the live world (`b3World_SetGravity`,
-`EnableSleeping`, `EnableContinuous`, `SetContactTuning`, `SetRestitutionThreshold`,
-`SetMaximumLinearSpeed`); `workerCount` (parallel tasks per step) is fixed at creation and needs a new world.
+`restitutionThreshold`, `maxLinearSpeed`, `contactRecycleDistance` (and those in the section below). `applyTuning`
+pushes changes into the live world (`b3World_SetGravity`, `EnableSleeping`, `EnableContinuous`, `SetContactTuning`,
+`SetRestitutionThreshold`, `SetMaximumLinearSpeed`, `SetContactRecycleDistance`, ...); `workerCount` (parallel tasks per step) is fixed at creation and needs a new world.
 Box3D also limits the contact stiffness to 1/8 of the pass rate (`physics_world.c`: fps x Substeps x Solver Passes, where
 Solver Passes is the `subSteps` setting here), so 24 fps with 1 pass runs at 3 Hz whatever `contactStiffness` says (the
 `substeps_fps` test expects a stack to sink there).
@@ -84,8 +84,12 @@ in `GeorepLookup`); `makeShapeSpec` (`pscale * scale` as a bounding box, compone
 (`Box3DShapes.h`) by `clampExtent`; sphere diameter = largest component; capsule radius = half of
 max(x, z)); `PrimOverrides` / `applyPrimOverrides`; `matrixRowLengths`; `packedPointsToBodyLocal` (`(p - pivot) * S`);
 `packedScale` (row lengths rounded to 5 significant digits, so rotated instances share a hull; ~1e-5 scale error);
-`packedHullKey` (kind 1 merged, 2 per piece); `connectedSets` (union-find); `fitShapeInFrame` / `fitShapeToPoints` / `canonicalFrame` (and `Box3DWorld::fitShapeOriented`, which needs a Box3D hull); `sanitizeQuat` /
-`storedPosition` (shared by the read path and the write-back's prediction).
+`packedHullKey` (kind 1 merged, 2 per piece); `connectedSets` (union-find); `fitShapeInFrame` / `fitShapeToPoints` / `canonicalFrame` (and `Box3DWorld::fitShapeOriented`, which needs a Box3D hull); hashing (`kHashSeed`,
+`mixHash`, `hashFloats`).
+
+**`Box3DMath.h`** (no dependencies; included by `Box3DShapes.h` and `Box3DJoints.h`): `kDegToRad`, `finite3`, `copy3` /
+`copy4`, `quatsDiffer`, `xformPoint`, `sanitizeQuat` and `storedPosition` (shared by the read path and the
+write-back's prediction).
 
 ## World settings added from the Box3D world API
 

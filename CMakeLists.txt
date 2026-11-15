@@ -77,6 +77,7 @@ target_compile_definitions(box3d PUBLIC B3_MAX_WORLDS=${BOX3DDOP_MAX_WORLDS})
 # Core: plain C++ wrapper around Box3D. No Houdini headers in here.
 # ---------------------------------------------------------------------------
 add_library(b3dop_core STATIC
+    src/core/Box3DMath.h
     src/core/Box3DShapes.h
     src/core/Box3DJoints.h
     src/core/Box3DSideFX.h
@@ -203,7 +204,7 @@ add_custom_command(TARGET Box3DDOP POST_BUILD
 
 # The digital assets, built with hython after the plugin into houdiniX.Y/otls next to dso/:
 # Box3D Packed Object (tools/make_packed_object.py), Box3D Configure (tools/make_configure_sop.py),
-# then the Box3D Solver SOP (tools/make_solver_sop.py), which contains the Packed Object. Both copy parameters from the plugin just built, so
+# then the Box3D Solver SOP (tools/make_solver_sop.py), which contains the Packed Object. All three copy parameters from the plugin just built, so
 # they are remade every time the plugin is. Problems print a warning and never fail the build.
 option(BOX3DDOP_MAKE_HDA "Build the Box3D digital assets (Packed Object, Configure, Solver SOP) with hython after the plugin" ON)
 if(BOX3DDOP_MAKE_HDA)

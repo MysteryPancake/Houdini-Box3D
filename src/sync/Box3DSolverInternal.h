@@ -197,6 +197,9 @@ struct PackedInfo {
 
 bool splitPackedMatrix(const double m3[9], float q[4], double scale[3]);
 void composePackedMatrix(const float q[4], const double sc[3], double out[9]);
+// Packed points' Bullet convention (docs/agents/bodies.md, "Rest transform"):
+// `orient` is the rotation since `restxform` (box3dRestToAbsolute).
+bool restRotation(const UT_Matrix4F &m, float q[4]);
 void fetchFull4(const GU_PrimPacked &p, double out[16]);
 void setLocal3(GU_PrimPacked &p, const double m[9]);
 PackedInfo getPackedInfo(const GU_Detail *gdp, GA_Offset ptoff);

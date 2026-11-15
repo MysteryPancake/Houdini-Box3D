@@ -50,6 +50,24 @@ void composePackedMatrix(const float q[4], const double sc[3], double out[9]) {
       out[row * 3 + col] = sc[row] * r(row, col);
 }
 
+// The rotation of a packed point's `restxform` (row-vector 4x4 as stored), the
+// way splitPackedMatrix splits a packed 3x3. False while it is unset (all zero:
+// the value of a point added after the attribute) or degenerate.
+bool restRotation(const UT_Matrix4F &m, float q[4]) {
+  bool any = false;
+  for (int r = 0; r < 4 && !any; ++r)
+    for (int c = 0; c < 4 && !any; ++c)
+      any = m(r, c) != 0.0f;
+  if (!any)
+    return false;
+  double m3[9];
+  for (int r = 0; r < 3; ++r)
+    for (int c = 0; c < 3; ++c)
+      m3[r * 3 + c] = static_cast<double>(m(r, c));
+  double scale[3];
+  return splitPackedMatrix(m3, q, scale);
+}
+
 // The primitive's full transform, row-major.
 void fetchFull4(const GU_PrimPacked &p, double out[16]) {
   UT_Matrix4D m;

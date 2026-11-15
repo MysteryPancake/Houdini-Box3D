@@ -86,6 +86,13 @@ struct Box3DBodyMirror : Box3DBodyPose {
   int64_t primOff = -1; // GA_Offset of the primitive
   double m3[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
   double rowScale[3] = {1, 1, 1};
+  // Packed: the rotation of the point's `restxform` (read when the body was
+  // made, or the rotation it was made with when the solver sets restxform), so
+  // the write-back can write `orient` as the rotation since rest.
+  // restPos: the body's origin at rest (the packed pivot through restxform).
+  bool hasRest = false;
+  float restRot[4] = {0, 0, 0, 1};
+  double restPos[3] = {0, 0, 0};
 
   // The body's handle and the type the solver last set.
   b3dop::BodyHandle handle = 0;
@@ -139,12 +146,16 @@ struct Box3DWriteItem {
 
 // A point attribute written after the step, for any body (not only awake ones).
 struct Box3DPointWrite {
-  enum : unsigned { kAutofitValid = 1, kMass = 2 };
+  enum : unsigned { kAutofitValid = 1, kMass = 2, kRest = 4 };
   GA_Offset off = GA_INVALID_OFFSET;
   Box3DBodyMirror *entry = nullptr;
   int objectId = 0;
   unsigned flags = 0;
   float mass = 0.0f; // kMass: computed mass (computemass)
+  // kRest: a new packed body's `restxform` (its packed transform when it was
+  // made, row-major) and `pivot` (its P then), as Bullet initializes them.
+  float restxform[16] = {};
+  float pivot[3] = {};
 };
 
 // A `dead` point to delete after the step (its body is already gone).
@@ -300,6 +311,12 @@ struct Box3DJointEntry {
   // (b3dop::sideFXFrameOffsets), so the anchors written back are the anchors,
   // not the frames. Identity for Box3D nodes.
   b3dop::JointFrame adjA, adjB;
+
+  // Each body's rotation at rest (its restxform's, else its rotation when the
+  // joint was made; identity for the world), for the `angle` reading: the
+  // bodies' relative rotation since rest, as Bullet.
+  float restRotA[4] = {0, 0, 0, 1};
+  float restRotB[4] = {0, 0, 0, 1};
 };
 
 // The constraint data a `constraint_name` refers to (a Box3D constraint

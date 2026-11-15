@@ -168,10 +168,15 @@ def test_ui():
            (["Solver", "Collision", "Forces", "Misc", "Advanced"], True))
     misc = next((f for f in solver_tabs if f.label() == "Misc"), None)
     expect("Solver Misc tab holds simple Sleeping and Aging folders",
-           [(f.label(), f.folderType() == hou.folderType.Simple, sorted(c.name() for c in f.parmTemplates()))
+           [(f.label(), f.folderType() == hou.folderType.Simple,
+             sorted(c.name() for c in f.parmTemplates() if not c.name().startswith("parmop")))
             for f in (misc.parmTemplates() if misc else []) if f.type() == hou.parmTemplateType.Folder],
-           [("Sleeping", True, ["enablesleep", "forceswake"]),
+           [("Sleeping", True, ["enablesleep"]),
             ("Aging", True, ["enableaging", "reapatframeend", "reapdead"])])
+    forces_tab = next((f for f in solver_tabs if f.label() == "Forces"), None)
+    expect("Solver Forces tab ends with Use Force DOPs, then Forces Wake Bodies",
+           [pt.name() for pt in (forces_tab.parmTemplates() if forces_tab else [])
+            if not pt.name().startswith("parmop")][-2:], ["useforces", "forceswake"])
     expect("Solver Contact Stiffness default", solver.parm("contactstiffness").parmTemplate().defaultValue()[0], 60.0)
     expect("Solver Contact Damping Ratio default", solver.parm("contactdamping").parmTemplate().defaultValue()[0], 3.0)
     expect("Enable Spring label", rev.parm("enable_spring").parmTemplate().label(), "Enable Spring")

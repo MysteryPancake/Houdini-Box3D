@@ -3,7 +3,7 @@
 The one list of what is unverified, broken or still to do. Index and rules: [CLAUDE.md](../../CLAUDE.md). Keep each
 item to a line or two; remove it once settled (the test that settles it is the record, not this file).
 
-Last full run (Houdini 22.0.502, MSVC): every check passes, 144 PASS and 20 INFO; the baseline (recorded on 22.0.479)
+Last full run (Houdini 22.0.502, MSVC): every check passes, 178 PASS and 21 INFO; the baseline (recorded on 22.0.479)
 matches exactly. What no script checks: Escape mid-step, the viewport, motion blur, how greyed-out parameters look.
 
 ## Unverified
@@ -25,14 +25,18 @@ matches exactly. What no script checks: Escape mid-step, the viewport, motion bl
 * Scenes saved before a default changed (Default Shape, solver substeps / contact tuning): whether Houdini kept the old
   value in the file.
 
-
-* `Box3DParms::subfolder()` (the solver's Misc tab): a nested simple folder counted as one parameter of its tab, as
-  Houdini's switcher counts expect (the `ui` test checks the result).
-
-**Box3D Configure** (`tools/make_configure_sop.py`, test `configure`: not run in Houdini yet)
-* The generated VEX, the group selection button, labels hidden on the checkboxes.
+**Box3D Configure** (`tools/make_configure_sop.py`, tests `configure`, `configure_packs`)
+* The packing (`b3d_prepare.py`): Transfer Groups carrying primitive groups onto the pieces, the Assembles' path /
+  fragment parameters from the asset, geometry-only and proxy-only inputs.
+* The group selection button, labels hidden on the checkboxes.
 
 **Bullet semantics not compared**
+* The rest convention (`restxform`, `pivot`, `orient` since rest) against an RBD Bullet Solver run of the same pieces;
+  the extra `restRotation` split per packed point in every full scan.
+* Solve on Creation Frame on the SOP (`solver_sop_solve_first_frame`) for the collider, against Bullet's.
+* Before-start outputs, Export Broken Constraints and Detach Faces (`solver_sop_before_start`, `solver_sop_keep_broken`,
+  `solver_sop_detach_faces`): the repack with nested packed colliders.
+* Joints from authored anchors through `restToNow` and the `angle` since rest, against Bullet.
 * `animated`, `deforming` and `bullet_autofit_valid` toggles; `bullet_primR` rotation order (taken as XYZ Euler
   degrees) and `bullet_length` (taken as the capsule's straight part); AutoFit on whole objects and fractured pieces.
 * Impact normal direction; whether a fresh `SIM_Impacts` each step suits Houdini's impact tools.
@@ -42,12 +46,12 @@ matches exactly. What no script checks: Escape mid-step, the viewport, motion bl
 * RBD Point Object makes no objects in a scripted setup (`other_rbd_objects`); check by hand.
 * An RBD Object without Box3D Data colliding as its convex hull; `bullet_primT` / `bullet_primS` meaning there.
 
-**Box3D Solver SOP** (`tools/make_solver_sop.py` builds cleanly on 22.0; `tests/houdini/checks_sop.py` not run yet)
-* Simulation results: everything below, and Unpack's Transfer Attributes name in the proxy test.
+**Box3D Solver SOP** (`tools/make_solver_sop.py`, `tests/houdini/checks_sop.py`)
 * Animated Collision: whether SOP Geometry's Set Always re-imports every step (the build prints which menus it drives),
   and the solver's cost of a full rescan of the collider each step.
-* `dopcontextgeo` through the Packed Object's channel reference.
 * Transform Pieces with packed transforms that carry scale or shear.
+* Constraints output through Transform Pieces: constraints between collision pieces (not in the simulation points, so
+  not moved).
 * FORCES: the Multiple Solver with nothing wired into PRESOLVE / POSTSOLVE (no warning expected); that diving into
   the asset lands in FORCES (the build's check passes); FORCES editable in a locked instance (`EditableNodes`).
 
@@ -55,6 +59,8 @@ matches exactly. What no script checks: Escape mid-step, the viewport, motion bl
 
 * Packed primitive spheres and nested packed primitives collide as one point, half sunk (`odd_packed_contents`).
 * Mirrored packed pieces lose their mirror once they move (`mirrored_piece`).
+* Box3D Configure's Group takes a group name only, not a pattern such as `@name=piece0` or `piece*` (RBD
+  Configure's does): the wrangle tests membership with `inpointgroup` / `inprimgroup`.
 * SideFX Glue breaks under static load (Break Force = strength / timestep) where Bullet's holds (`sidefx_glue`).
 * Results depend slightly on point order even with `id` (`point_order`): bodies are created in point order.
 * Objects solved by another solver: packed ones are ignored as colliders; one-way collision with polygons untested.
@@ -64,7 +70,8 @@ matches exactly. What no script checks: Escape mid-step, the viewport, motion bl
 
 ## TODO
 
-* Box3D Packed Object: Overwrite with SOP / deforming import, initial velocity controls, a `Colliders` label (other
+* Box3D Packed Object: RBD Packed Object's Overwrite Attributes from SOP, deforming import, initial velocity
+  controls, a `Colliders` label (other
   solvers use it to collide with it), a Box3D Tab submenu.
 * Concave meshes: one mesh shared between instances, static RBD Objects as meshes, drawing meshes in the guide.
 * Height fields: holes from a mask layer, height fields on points. `cylinder` / `plane` shapes (hull or box stand-ins).
@@ -79,16 +86,16 @@ matches exactly. What no script checks: Escape mid-step, the viewport, motion bl
   collision filtering, `enabled`, initial `v` / `w`, `deforming`, hand-set `bullet_prim*` shapes), a Pin / animated
   shortcut like RBD Configure's, viewport group selection.
 * Box3D Solver SOP:
-  * Unpacked input: pack Geometry, Proxy and Collision by `name` (RBD Bullet Solver does); now each point of unpacked
-    geometry is a body, and collision geometry must be packed.
-  * Collision: deforming colliders (`deforming`), a Static Object option (height fields, one mesh), its own shape,
-    friction and bounce on the node.
+  * Collision: RBD Bullet Solver's Collision Type Deforming (`deforming` on the colliders): without it an unpacked
+    collider that turns or changes shape keeps its first frame's shape, as with Bullet's Animated
+    (`unpacked_turning_collider`); a Static Object option (height fields, one mesh), its own shape, friction and
+    bounce on the node.
   * Constraint relationship parameters on the node (Glue strength, Weld break force ...), or setting the inner ones to
     1 so primitive attributes are absolute.
-  * Output tab: Import Constraints / Proxy toggles, attributes to keep, `v` / `w` on Geometry; Transform Pieces
-    options; hires geometry for pieces the solver deleted (dead).
+  * Output tab: Import Constraints / Proxy toggles, `v` / `w` on Geometry; Transform Pieces options.
+  * World Scale on joint node settings and primitive attributes that are lengths, and on FORCES.
   * Guide Options (Show Collision Shapes), initial velocity controls,
-    Set Always for animated solver parameters, a Tab submenu, a help card, Solve on Creation Frame.
+    Set Always for animated solver parameters, a Tab submenu, a help card.
 
 ## HDK calls checked
 

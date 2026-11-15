@@ -12,9 +12,16 @@ setting with an add<name> checkbox. Only ticked settings are written. A point at
 Box3D Data, so this sets values per piece where Box3D Data sets them per object.
 
     Inputs / outputs: Geometry, Constraint Geometry (pink), Proxy Geometry, as the Box3D Solver
-    SOP's first three. target (Proxy when it has points, else Geometry) -> set_attributes (one point
-    wrangle looping over the entries) -> the proxy output, or the geometry output without a proxy;
-    every other stream passes through unchanged.
+    SOP's first three. Geometry and Proxy are packed first, as RBD Configure does (b3d_prepare.py,
+    the chain the Box3D Solver SOP also runs): packed primitives kept, the rest assembled into named
+    packed pieces, every piece named on its point. target (packed Proxy when it has points, else
+    packed Geometry) -> set_attributes (one point wrangle looping over the entries) -> the proxy
+    output, or the geometry output without a proxy (or without geometry); constraints pass through.
+
+Packing parameters, as RBD Configure's: Name Prefix, Transfer Simulation Attributes (onto pieces
+assembled from the simulated stream), Transfer Render Geo Attributes (onto the Geometry's pieces;
+the simulation ones too when there is no proxy), Create Path Attribute / Path Attribute and Create
+Packed Fragments (the Assembles').
 
 Like RBD Configure's wrangle, each write creates its attribute first if missing, with Box3D Data's
 default (addpointattrib), then sets the point (setpointattrib). Never @ bindings: a binding creates
@@ -31,6 +38,11 @@ import traceback
 
 import hou
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import b3d_prepare  # noqa: E402  (beside this script)
+import b3d_settings  # noqa: E402
+from b3d_settings import GEOREP_VALUES, literal  # noqa: E402
+
 TYPE_NAME = "box3d_configure"
 LABEL = "Box3D Configure"
 ICON = "DOP_box3d_data"  # installed by the build for Box3D Data (config/Icons)
@@ -39,20 +51,6 @@ ICON = "DOP_box3d_data"  # installed by the build for Box3D Data (config/Icons)
 # when it has points, else onto the geometry; everything else passes through.
 LABELS = ["Geometry", "Constraint Geometry", "Proxy Geometry"]
 INPUT_COLORS = {1: (1.0, 0.6, 0.8)}  # constraints pink, as the Box3D Solver SOP
-
-# Box3D Data parameter -> how it is written. "same": the attribute of the same name. Anything
-# else is a special case handled in vex_for(). Parameters not listed (hullperconnected,
-# flipwinding, addimpact) are object-level only: no point attribute.
-MAPPING = {
-    "defaultshape": "bullet_georep",
-    "autofit": "bullet_autofit",
-    "bodytype": "active/animated",
-    "startasleep": "awake",
-}
-SKIP = {"hullperconnected", "flipwinding", "addimpact"}
-
-# Default Shape's menu order (SIM_Box3DData.cpp) as bullet_georep values.
-GEOREP_VALUES = ["box", "sphere", "convexhull", "concave", "capsule", "none"]
 
 # Labels and help for the settings whose attribute is not their name.
 SPECIAL_LABELS = {
@@ -63,16 +61,39 @@ SPECIAL_LABELS = {
     "startasleep": (None, "Pieces begin asleep until touched. Writes awake."),
 }
 
-NO_VALUE = {hou.parmTemplateType.Folder, hou.parmTemplateType.FolderSet,
-            hou.parmTemplateType.Separator, hou.parmTemplateType.Label,
-            hou.parmTemplateType.Button}
-
 
 def warn(msg):
     print(f"make_configure_sop: WARNING: {msg}")
 
 
 MULTIPARM = "attributes"  # Number of Attributes, as RBD Configure
+# Box3D Data folders shown collapsible (closed) in each entry, as RBD Configure's Collision Shapes,
+# Collisions and Speed Limit; Body and Material stay simple, as its Physical Attributes.
+COLLAPSED_FOLDERS = {"Shape", "Sleep & Contacts"}
+
+# Packing parameters, RBD Configure's names and defaults (its Attributes folder, above the entries).
+TRANSFER_GROUPS = "* ^*inside ^*outside"  # RBD Configure's: groups onto the packed pieces
+
+
+def packing_templates():
+    path = hou.StringParmTemplate("path", "Path Attribute", 1, default_value=("op:`opfullpath('.')`",),
+                                  help="The path attribute value of each packed piece.")
+    path.setConditional(hou.parmCondType.DisableWhen, "{ createpath == 0 }")
+    return [
+        hou.StringParmTemplate("nameprefix", "Name Prefix", 1, default_value=(b3d_prepare.DEFAULT_PREFIX,),
+                               help="Prefix of the names given to pieces that have none."),
+        hou.StringParmTemplate("transfer_attributes", "Transfer Simulation Attributes", 1,
+                               default_value=("v w",),
+                               help="Attributes copied onto the pieces packed from the simulated geometry."),
+        hou.StringParmTemplate("transfer_renderattributes", "Transfer Render Geo Attributes", 1,
+                               default_value=("shop_materialpath path",),
+                               help="Attributes copied onto the pieces packed from the Geometry input."),
+        hou.ToggleParmTemplate("createpath", "Create Path Attribute", default_value=False,
+                               help="Gives each packed piece a path attribute."),
+        path,
+        hou.ToggleParmTemplate("createpackedfragments", "Create Packed Fragments", default_value=True,
+                               help="Packs pieces as fragments of one shared geometry instead of one geometry each."),
+    ]
 
 
 def toggle_name(name):
@@ -80,26 +101,9 @@ def toggle_name(name):
     return f"add{name}"
 
 
-def without_parmops(entries):
-    out = []
-    for pt in entries:
-        if pt.name().startswith("parmop"):
-            continue
-        if pt.type() == hou.parmTemplateType.Folder:
-            pt = pt.clone()
-            pt.setParmTemplates(without_parmops(pt.parmTemplates()))
-        out.append(pt)
-    return out
-
-
 def first_sentence(text):
     m = re.match(r"(.+?[.;])(\s|$)", text or "")
     return m.group(1) if m else (text or "")
-
-
-def num(x):
-    text = f"{float(x):.6g}"
-    return text if any(c in text for c in ".en") else text + ".0"
 
 
 def rewrite_condition(cond, names):
@@ -117,41 +121,8 @@ def rewrite_condition(cond, names):
 
 
 def settings(data):
-    """Box3D Data's folders as (folder label, [(template, kind)]): kind is the attribute type
-    for same-name settings (f, i, v) or the MAPPING entry."""
-    folders = []
-    for f in without_parmops(data.parmTemplateGroup().entries()):
-        if f.type() != hou.parmTemplateType.Folder:
-            continue  # DOP data settings outside the folders (Activation, Data Name ...)
-        rows = []
-        for pt in f.parmTemplates():
-            if pt.type() in NO_VALUE or pt.name() in SKIP:
-                continue
-            if pt.name() in MAPPING:
-                rows.append((pt, MAPPING[pt.name()]))
-            elif pt.type() == hou.parmTemplateType.Toggle:
-                rows.append((pt, "i"))
-            elif pt.type() == hou.parmTemplateType.Float and pt.numComponents() == 3:
-                rows.append((pt, "v"))
-            elif pt.type() == hou.parmTemplateType.Float:
-                rows.append((pt, "f"))
-            elif pt.type() == hou.parmTemplateType.Int:
-                rows.append((pt, "i"))
-            else:
-                warn(f"Box3D Data's {pt.name()} ({pt.type()}) has no point attribute mapping; left out")
-        if rows:
-            folders.append((f.label(), rows))
-    return folders
-
-
-def literal(pt, kind):
-    """Box3D Data's default as a VEX literal."""
-    d = pt.defaultValue()
-    if kind == "v":
-        return "{" + ", ".join(num(x) for x in d) + "}"
-    if kind == "f":
-        return num(d[0])
-    return str(int(d if isinstance(d, (bool, int)) else d[0]))
+    """Box3D Data's folders as (folder label, [(template, kind)]) (b3d_settings.settings)."""
+    return b3d_settings.settings(data, warn)
 
 
 def setting_vex(pt, kind):
@@ -239,11 +210,14 @@ def ui(folders):
                 f"{{ {toggle_name(n)}# == 0 }} {{ enable# == 0 }}"
             value.setConditional(hou.parmCondType.DisableWhen, new)
             items += [box, value]
-        entry.append(hou.FolderParmTemplate(f"b3dcfg_folder{i}_#", label, items,
-                                            folder_type=hou.folderType.Simple))
+        # As RBD Configure's entries: the main folders simple, the secondary ones collapsible (closed).
+        kind = hou.folderType.Collapsible if label in COLLAPSED_FOLDERS else hou.folderType.Simple
+        entry.append(hou.FolderParmTemplate(f"b3dcfg_folder{i}_#", label, items, folder_type=kind))
     multi = hou.FolderParmTemplate(MULTIPARM, "Number of Attributes", entry,
                                    folder_type=hou.folderType.TabbedMultiparmBlock, default_value=1)
     group = hou.ParmTemplateGroup()
+    group.append(hou.FolderParmTemplate("b3dcfg_packing", "Packing", packing_templates(),
+                                        folder_type=hou.folderType.Simple))
     group.append(multi)
     return group
 
@@ -262,12 +236,31 @@ def build_network(sub, rows):
         nulls.append(n)
     geo_in, con_in, proxy_in = nulls
 
-    target = switch_on_proxy(sub, "target", geo_in, proxy_in, proxy_in)  # what gets configured
+    # Both streams packed and named as RBD Configure does. Expressions are relative to the nodes
+    # inside each prepare subnet: ../../ is the asset.
+    asset_parms = {k: f'ch("../../{k}")' for k in ("createpath", "createpackedfragments")}
+    asset_parms["path"] = 'chs("../../path")'
+    sim_attrs = 'chs("../../transfer_attributes")'
+    geo_attrs = (f'ifs(npoints("../../{proxy_in.name()}") > 0, "", {sim_attrs} + " ") + '
+                 'chs("../../transfer_renderattributes")')
+    packed = []
+    for stream, attrs in ((geo_in, geo_attrs), (proxy_in, sim_attrs)):
+        packed.append(b3d_prepare.prepare_input(
+            sub, stream, f"pack_{stream.name()[3:]}", True, warn, prefix_expr='chs("../../nameprefix")',
+            remove_unused_groups=True,  # RBD Configure's Split (RBD Bullet Solver leaves it off)
+            assemble_parms={"transfer_groups": TRANSFER_GROUPS},
+            assemble_exprs=dict(asset_parms, transfer_attributes=attrs)))
+    geo_packed, proxy_packed = packed
+
+    target = switch_on_proxy(sub, "target", geo_packed, proxy_packed, proxy_packed)  # what gets configured
     setter = sub.createNode("attribwrangle", "set_attributes")
     setter.setInput(0, target)
     setter.parm("snippet").set(wrangle_vex(rows))
-    geo_out = switch_on_proxy(sub, "geometry_result", setter, geo_in, proxy_in)
-    proxy_out = switch_on_proxy(sub, "proxy_result", proxy_in, setter, proxy_in)
+    # With a proxy the geometry passes through (packed), unless there is none: then, as RBD Configure,
+    # the configured proxy stands in for it.
+    geo_out = switch_on_proxy(sub, "geometry_result", setter, geo_packed, proxy_packed,
+                              extra=geo_packed)
+    proxy_out = switch_on_proxy(sub, "proxy_result", proxy_packed, setter, proxy_packed)
 
     for idx, src in enumerate([geo_out, con_in, proxy_out]):
         out = sub.createNode("output", f"OUT_{['geometry', 'constraints', 'proxy'][idx]}")
@@ -281,18 +274,23 @@ def build_network(sub, rows):
     sub.layoutChildren()
 
 
-def switch_on_proxy(sub, name, without, with_proxy, proxy):
+def switch_on_proxy(sub, name, without, with_proxy, proxy, extra=None):
     """A Switch passing `with_proxy` while `proxy` has points, else `without`: `proxy` is its spare
-    input, the selection npoints(-1) > 0 (as the Box3D Solver SOP and SideFX's solvers)."""
+    input, the selection npoints(-1) > 0 (as the Box3D Solver SOP and SideFX's solvers). `extra`
+    (second spare input, -2) must have points too."""
     sw = sub.createNode("switch", name)
     sw.setInput(0, without)
     sw.setInput(1, with_proxy)
-    sw.addSpareParmTuple(hou.StringParmTemplate(
-        "spare_input0", "Spare Input 0", 1, string_type=hou.stringParmType.NodeReference,
-        help="Geometry the expressions on this node read as input -1.",
-        tags={"opfilter": "!!SOP!!", "oprelative": "."}))
-    sw.parm("spare_input0").set(sw.relativePathTo(proxy))
-    sw.parm("input").setExpression("npoints(-1) > 0", hou.exprLanguage.Hscript)
+    expr = "npoints(-1) > 0"
+    for i, node in enumerate([proxy] + ([extra] if extra is not None else [])):
+        sw.addSpareParmTuple(hou.StringParmTemplate(
+            f"spare_input{i}", f"Spare Input {i}", 1, string_type=hou.stringParmType.NodeReference,
+            help=f"Geometry the expressions on this node read as input {-1 - i}.",
+            tags={"opfilter": "!!SOP!!", "oprelative": "."}))
+        sw.parm(f"spare_input{i}").set(sw.relativePathTo(node))
+    if extra is not None:
+        expr += " && npoints(-2) > 0"
+    sw.parm("input").setExpression(expr, hou.exprLanguage.Hscript)
     return sw
 
 
@@ -325,6 +323,12 @@ def build(out_path):
     for child in geo.children():
         child.destroy()
     sub = geo.createNode("subnet", TYPE_NAME)
+    # The Packing parameters first (spare, replaced by the asset's interface below), so the expressions
+    # build_network sets on the Assembles and wrangles find them while the network is built.
+    spare = sub.parmTemplateGroup()
+    spare.append(hou.FolderParmTemplate("b3dcfg_packing", "Packing", packing_templates(),
+                                        folder_type=hou.folderType.Simple))
+    sub.setParmTemplateGroup(spare)
     build_network(sub, rows)
 
     if os.path.exists(out_path):
@@ -353,15 +357,21 @@ def build(out_path):
 
 
 def check(out_path):
-    """On a fresh instance: friction and Body Type Static written by entry 1 to a group only."""
+    """On a fresh instance: two unpacked boxes come out as two named packed pieces, friction and Body
+    Type Static written by entry 1 to the group's piece only; with a proxy, the settings go onto it."""
     hou.hda.installFile(out_path, force_use_assets=True)
     geo = hou.node("/obj").createNode("geo", "probe_geo")
     for child in geo.children():
         child.destroy()
-    pts = geo.createNode("attribwrangle", "points")
-    pts.parm("class").set(0)
-    pts.parm("snippet").set('for (int i = 0; i < 2; i++) { int p = addpoint(0, set(i, 0, 0)); '
-                            'if (i == 0) setpointgroup(0, "chosen", p, 1); }')
+    merge = geo.createNode("merge", "boxes")
+    for i in range(2):
+        box = geo.createNode("box", f"box{i}")
+        box.parmTuple("t").set((2.0 * i, 0.0, 0.0))
+        merge.setInput(i, box)
+    pts = geo.createNode("attribwrangle", "chosen")  # the first box's faces: group chosen
+    pts.setInput(0, merge)
+    pts.parm("class").set("primitive")
+    pts.parm("snippet").set('if (@P.x < 1) setprimgroup(0, "chosen", @primnum, 1);')
     cfg = geo.createNode(TYPE_NAME, "probe")
     cfg.setInput(0, pts)
     for n, v in (("group1", "chosen"), ("addfriction1", 1), ("friction1", 0.25), ("addbodytype1", 1),
@@ -374,16 +384,19 @@ def check(out_path):
     if cfg.geometry(2) is not None and len(cfg.geometry(2).points()):
         warn("probe: the proxy output has points with no proxy connected")
     g = cfg.geometry()
-    got = [(round(p.attribValue("friction"), 4), p.attribValue("active")) for p in g.points()] if g else []
-    want = None
-    if got:
-        want = [(0.25, 0), (round(float(cfg.parmTuple("friction1").parmTemplate().defaultValue()[0]), 4), 1)]
+    if g is None or len(g.prims()) != 2 or any("Packed" not in p.type().name() for p in g.prims()):
+        warn(f"probe: expected 2 packed pieces, got {[p.type().name() for p in g.prims()] if g else None}")
+    if g is not None and (g.findPointAttrib("name") is None or g.findPrimAttrib("name") is not None):
+        warn("probe: the packed pieces' name is not a point attribute only")
+    got = sorted((round(p.attribValue("friction"), 4), p.attribValue("active")) for p in g.points()) \
+        if g is not None and g.findPointAttrib("friction") else []
+    want = sorted([(0.25, 0),
+                   (round(float(cfg.parmTuple("friction1").parmTemplate().defaultValue()[0]), 4), 1)])
     if got != want:
-        warn(f"probe: (friction, active) per point {got}, expected {want} (only the group set, the rest "
-             "Box3D Data's defaults)")
-    # With a proxy: the settings go onto it, the geometry passes through untouched.
+        warn(f"probe: (friction, active) per piece {got}, expected {want} (only the group's piece set, the "
+             "other Box3D Data's defaults)")
+    # With a proxy: the settings go onto it, the geometry passes through untouched (packed).
     cfg.setInput(2, pts)
-    cfg.setInput(0, geo.createNode("add", "hires"))  # empty: only its attributes are checked
     out0, out2 = cfg.geometry(0), cfg.geometry(2)
     if out0 is None or out0.findPointAttrib("friction") is not None:
         warn("probe: with a proxy, the geometry output got the settings too")

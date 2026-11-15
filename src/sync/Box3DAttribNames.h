@@ -19,9 +19,10 @@
   X(id, "id", I)         /* else the point number */                           \
   X(active, "active", I) /* 0 = inactive (static, or kinematic if animated) */ \
   X(v, "v", V3)                                                                \
-  X(w, "w", V3) /* radians / second */                                         \
-  X(orient, "orient",                                                          \
-    Q) /* ignored for packed points (the primitive's transform) */
+  X(w, "w", V3)          /* radians / second */                                \
+  X(orient, "orient", Q) /* packed: the rotation since restxform, as Bullet */ \
+  X(restxform, "restxform",                                                    \
+    M4) /* packed: the transform at rest (unset: all zero) */
 
 // The fingerprint's prop markers, in marker order: the attributes whose data
 // ids say "settings changed, compare every body". Bound with bindBuildAttrs()

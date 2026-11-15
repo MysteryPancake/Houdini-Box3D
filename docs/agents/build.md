@@ -9,9 +9,13 @@ How the project is built, tested and packaged. Index and rules: [CLAUDE.md](../.
   into `~/houdiniX.Y/dso` (`Documents/houdiniX.Y/dso` on Windows; close Houdini to overwrite it there).
 * Post-build steps:
   * `icons/box3d.svg` to `<dso>/../config/Icons/DOP_<node name>.svg` for every node in `BOX3DDOP_NODES` (Houdini's
-    default icon name is `<TABLE>_<name>`; renaming a node means renaming its icon).
-  * The Box3D Packed Object asset (`BOX3DDOP_MAKE_HDA`, default ON): `tools/make_packed_object.py` under hython (found
-    at `${Houdini_DIR}/../../bin` or `$HFS/bin`) writes `<dso>/../otls/box3d_packedobject.hda`. See below.
+    default icon name is `<TABLE>_<name>`; renaming a node means renaming its icon). The two SOP assets reuse DOP
+    icons (`ICON` in their scripts), so they are not in the list.
+  * The digital assets (`BOX3DDOP_MAKE_HDA`, default ON), with hython (found at `${Houdini_DIR}/../../bin` or
+    `$HFS/bin`), into `<dso>/../otls/`, in this order: `tools/make_packed_object.py` (`box3d_packedobject.hda`),
+    `tools/make_configure_sop.py` (`box3d_configure.hda`), `tools/make_solver_sop.py` (`box3d_solver_sop.hda`, which
+    contains the Packed Object, so it comes after it). Without hython a configure warning names the scripts to run by
+    hand. All three copy parameters from the plugin just built. See below.
 * Warnings: `b3dop_warnings(target)` adds `-Wall -Wextra -Wshadow -Wconversion` (`/W4` on MSVC) to our targets, never to
   Box3D; Houdini's headers are system includes. `BOX3DDOP_WARNINGS_AS_ERRORS` (default OFF, on in CI) adds `-Werror` /
   `/WX`.
@@ -40,27 +44,46 @@ How the project is built, tested and packaged. Index and rules: [CLAUDE.md](../.
 
 ## Box3D Packed Object asset
 
-`tools/make_packed_object.py` builds it from the plugin just compiled, so it always matches Box3D Data. Inside: Empty
-Object -> SOP Geometry (data name `Geometry`) -> Box3D Data, which is the output (no input). Parameters: an Object tab
-(Object Name `$OS`, Creation Frame, Solve on Creation Frame, SOP Path, Use Object Transform), then each Box3D Data
-folder as a tab, every inner parameter a channel reference to the outer one. No Colliders label, so the solver syncs
-it per point. The script prints one line, or warnings, and never fails the build.
+`tools/make_packed_object.py` builds it from the plugin just compiled, so it always matches Box3D Data. It copies RBD
+Packed Object (read from a `houdini_network_dump.py` dump of RBD Bullet Solver): Empty Object -> SOP Geometry (data name
+`Geometry`) -> Box3D Data, which is the output (no input); SOP Geometry reads a SOP stage inside the asset (`STAGE`,
+RBD Packed Object's `create_or_overwrite_attributes`): Object Merge of the asset's SOP Path (Use Object Transform drives
+its Transform, Into This Object: the DOP network's space; SOP Geometry's own stays off, as 22.0's has no OBJ Path to
+point at an object) -> `setup_defaults` -> `create_name` -> `set_rest` on the creation frame only -> `OUT`. The stage's
+references to the asset's parameters are set once the asset exists (`wire_stage`).
+* `setup_defaults` (detail wrangle, `b3d_settings.packed_defaults_vex`): each per-body setting whose value differs from
+  Box3D Data's default becomes a point attribute holding it, unless the points already have it (RBD Packed Object's
+  Attribute Creates with Write Values off), so a point attribute wins and untouched settings write nothing. Names map as
+  Box3D Configure's (`b3d_settings.MAPPING`).
+* `create_name`: a point `name` where there is none: the primitive's, else `<object name>_<primitive number>` (RBD
+  Packed Object's, which ignores the primitive's).
+* `set_rest` (`b3d_settings.REST_VEX`): the rest reset and the `orient` / `pscale` / `scale` bake of RBD Packed
+  Object's `set_rest_and_initial_xform`, with `orient` kept as the rotation since rest (see its comment). Switched in
+  only on the creation frame: SOP Geometry stamps `$SF` and `$OBJCF`, which a `STAMPS` null reads, so a re-import
+  (the Solver SOP's Animated Collision) keeps the rest it was given.
+* Parameters: an Object tab (Object Name `$OS`, Creation Frame, Solve on Creation Frame, SOP Path, Use Object
+  Transform), then each Box3D Data folder as a tab, read by the stage. Only the object-level settings
+  (`b3d_settings.SKIP`: Hull per Connected, Flip Winding, Add Impact Data) are channel references into the inner Box3D
+  Data, whose other values stay at the defaults, so a missing attribute means the default. Settings change
+  mid-simulation through the attributes, not the asset's parameters. No Colliders label, so the solver syncs it per
+  point. The script prints one line, or warnings, and never fails the build; its `check` cooks the stage of a fresh
+  instance.
 
 Traps it handles:
 * Parameters are found by label, skipping the `parmop_*` menus that share their labels.
 * Empty Object has no creation frame: its Activation is `$SF == ch("../createframe")`, as RBD Packed Object's.
-* Every inner `parmop_*` is set to Set Initial: a new data node starts at Use Default, and only an edit (not a channel
-  reference) switches it, so the node would otherwise keep its built-in values.
+* The inner Box3D Data's `parmop_*` are set to Set Initial: a new data node starts at Use Default, and only an edit (not
+  a channel reference) switches it, so the linked object-level settings would otherwise keep their built-in values.
 * Box3D Data's own DOP settings outside its folders (Activation, Group, Data Name) are not promoted: promoted copies
   kept it from attaching.
-* A second Box3D Data after the asset only changes Set Always parameters: Set Initial applies when the data is created,
-  and the asset's already has been.
+* A second Box3D Data after the asset only changes Set Always parameters (Set Initial applies when the data is
+  created, and the asset's already has been), and only for settings the asset left at their defaults.
 
 ## Box3D Solver SOP asset
 
 `tools/make_solver_sop.py <out.hda> [<packedobject.hda>]` builds `box3d_solver` in the SOP table (the DOP of the same
 name is another table), after the Packed Object, which it installs first. The module docstring draws the network.
-Four inputs, four matching outputs: Geometry, Constraints, Proxy, Collision.
+Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry, Constraints, Proxy, Simulation Points).
 * A SOP-level DOP network whose inputs 0-2 are the simulated pieces (Geometry, or Proxy when connected), Constraints
   and Collision, read inside with `dopcontextgeo(".", i)`.
   Pieces and collision are Box3D Packed Objects, Use Object Transform off (SOP space). Unconnected inputs are switched
@@ -83,18 +106,71 @@ Four inputs, four matching outputs: Geometry, Constraints, Proxy, Collision.
   disk. A DOP subnet always shows four outputs. A Multiple Solver takes the objects and runs PRESOLVE, the Box3D Solver, POSTSOLVE.
   A POP Force on PRESOLVE writes `force`, applied and cleared by the solver in the same step; on POSTSOLVE it is
   applied the next step (see [forces-affectors.md](forces-affectors.md)).
-* Proxy: Transform Pieces moves Geometry by `name` from the proxy as connected (rest) to the simulated proxy, wired
-  straight in (it reads packed transforms itself).
-* Constraints output: DOP Import of the pieces object, Geometry Data Path `ConstraintGeometry`, so it carries `broken`,
-  `force` and the rest.
+* Input preparation (`tools/b3d_prepare.py`, shared with Box3D Configure): node for node RBD Bullet Solver's
+  Housekeeping (pack mode, `prepare_pieces` after `sim_source`), Collisions (collision mode, `prepare_collision`) and
+  Housecleaning (names mode, `names_geometry` / `names_proxy`) boxes, read from a `houdini_network_dump.py` dump.
+  Packed primitives are found by shape (one point, not a polygon, alone in its connectivity class: SideFX's own test)
+  and split off; packed pieces are named on their points before the merge, the rest assembled by `name`
+  (connectivity when unnamed). The Assembles use Bullet's settings (`prepare_input` here: Create Path Attribute,
+  `PACK_PATH`; collision mode `COLLISION_PREFIX`, Connect Inside Edges off). The rest and the `orient` / `pscale` /
+  `scale` bake happen in the Box3D Packed Objects' SOP stage, as RBD Packed Object does them inside RBD Bullet Solver.
+  The collision then takes its rest from a Time Shift to the asset's Start Frame (`collision_rest`, `COLLISION_REST_VEX`, as RBD Bullet Solver's
+  collision repack), so an animated collider re-imported every step keeps its starting `restxform` and gets `orient`
+  as the rotation since. Box3D Configure's pack mode differs only in Split's Delete Unused Groups (on, as RBD
+  Configure's; `remove_unused_groups`).
+* Simulation Points: DOP Import of the pieces object, Fetch Geometry (`POINTS_TOGGLES`), primitives removed (an Add
+  SOP's Delete Geometry But Keep the Points, found by `POINTS_ONLY_LABELS`; a `removeprim` wrangle only if not), point
+  attributes cut to `POINTS_KEEP` plus the asset's `transferattributes`. Not Create Points to Represent Objects: that
+  makes a point per packed primitive only for SideFX's RBD Packed Object, one per DOP object for ours, so this is
+  the one place the asset does not copy RBD Bullet Solver (its `dopimport` uses that style). The points carry
+  Bullet's rest convention ([bodies.md](bodies.md), "Rest transform").
+* Geometry and Proxy outputs: Transform Pieces of the named Geometry / simulated source onto the simulation points by
+  `name`, no rest input, as RBD Bullet Solver: points only, so it builds each transform from `pivot`, `orient` and `P`
+  (on a one-vertex primitive's point it would use the packed transform instead). Before it, `remove_deleted_*`
+  (`REMOVE_DELETED_VEX`, Bullet's `remove_deleted`) drops pieces the solver deleted: no simulation point of their
+  name, and for Geometry, one in what was simulated.
+* World Scale (`WORLD_SCALE_TOGGLE` / `WORLD_SCALE`, first on the Solver tab; Bullet's usescale / Bullet World Scale):
+  Transform SOPs scale every input (`world_scale_*`; the before-start outputs pass the unscaled inputs);
+  `scale_attributes` (`SCALE_ATTRIBS_VEX`) then divides `density` by the cube and `w` back, and scales the hand-set
+  `bullet_prim*` sizes and `sleepthreshold` (Bullet leaves those). `scale_settings` turns the channel references in
+  `SCALED_SETTINGS` (lengths and speeds of the solver, the pieces' and collider's Box3D Data) into reference x scale.
+  The outputs come back through `unscale_*` (Transform SOPs; `UNSCALE_*_VEX` for the simulation points, the
+  constraints' `force` / `distance` / `torque` and the impact records). Every wrangle sits behind a Switch
+  (`SCALE_ACTIVE`), so World Scale 1 costs nothing. Not scaled: joint node settings and primitive attributes that
+  are lengths, and FORCES, which runs in the scaled world.
+* Constraints output: DOP Import of the pieces object, Geometry Data Path `ConstraintGeometry`, nothing transformed,
+  packed or tagged (`CONSTRAINTS_TOGGLES`), so it carries `broken`, `force` and the rest. The solver does not move its
+  points, so a Transform Pieces onto the simulation points carries them with their pieces; world-anchored points
+  (`name` empty or `-1`) keep theirs. Export Broken Constraints (`KEEP_BROKEN`, Output tab, off) removes the `broken`
+  group's primitives first, as RBD Bullet Solver's `switchif_keepbroken`.
+* Solve on Creation Frame, as RBD Bullet Solver: `solvefirstframe` on the Solver tab (before Cache Simulation) is
+  linked to both the pieces' and the collider's Packed Object (one toggle, as RBD Bullet Solver's). The build checks
+  both links.
+* Before the Start Frame the Geometry, Constraints and Proxy outputs are the inputs (`before_start`, RBD Bullet
+  Solver's `switchif_beforestart`; the proxy output shows the simulated source). A Switch-If takes its second input
+  while its expression is true.
+* Detach Faces (`DETACH_FACES`, Collision tab, off; hidden on RBD Bullet Solver): `detach_faces` copies Bullet's
+  branch: colliders assembled by name, unpacked ones' points split and packed again, packed ones repacked (`REPACK_*`:
+  unpacked about the origin, split, packed with an origin pivot, transform restored relative to the start frame).
+* Output tab, as RBD Bullet Solver's: Impact Data, a collapsible folder whose header toggle is the pieces' Add Impact
+  Data (`sidefx::header_toggle`), with the solver's Impact Min Speed and Fetch Impacts; the solver's Aging folder (out of
+  Misc); Transfer Attributes, with Transfer to Geometry / Proxy Geometry driving each Transform Pieces' Attributes to
+  Copy toggle (`TRANSFER_TO`; the toggle found by label or from the list's disable condition). Fetch Impacts makes (or reuses) an Object Merge of the asset's `IMPACTS` null beside the
+  asset, fed by a DOP Import Records of the pieces' `Impacts` data (its parameters set by label, `set_by_labels`).
 * Parameters: Reset Simulation and Start Frame above the tabs, then the solver's tabs (folders found under its Data
   Options, a tab of simple folders such as Misc kept whole; Guide Options skipped; `TAB_RENAMES` / `TAB_MOVES` cover older plugins). Tab order: Solver, Collision, Forces,
-  Pieces, any other solver tabs, then Misc and Advanced always last. Solver: the solver's own settings, Cache Simulation, then the
+  Pieces, any other solver tabs, then Misc, Advanced and Output always last. Solver: the solver's own settings, Cache Simulation, then the
   solver's Collision tab (contact settings) as a Contacts folder. Collision: Use External Collisions
   (`usecollisions`), Animated Collision and the collision object's Shape, Material and Sleep & Contacts folders (`COLLIDER_FOLDERS`,
-  all named `collision_*`). Pieces: the pieces' Box3D Data folders; names the solver uses get `piece_`
-  (`enablesleep`). Conditions are rewritten with the names. Inner solver `parmop_*` set to
-  Set Initial, as in the Packed Object.
+  all named `collision_*`), the last cut to Contact Recycling as Contacts (`COLLIDER_DROPPED`: the rest does
+  nothing for a Static / Kinematic body). Pieces: the pieces' Box3D Data folders without Allow Sleeping
+  (`PIECES_DROPPED`: the solver's is the one switch for every body; `drop_templates`); names the solver also uses
+  would get `piece_`. Conditions are rewritten with the names (the pieces' Start Asleep and Sleep Threshold grey out
+  with the solver's Allow Sleeping). Inner solver `parmop_*` set to
+  Set Initial, as in the Packed Object. Inside each tab the settings sit in collapsible folders, as RBD Bullet
+  Solver's (`TAB_GROUPS`, `group_tab`): main groups open (Contacts too), secondary ones closed; Collision is one open Collision
+  Geometry folder with the collider's folders simple inside it, Pieces an open Pieces folder (Shape, Body, Material)
+  beside an open Sleep & Contacts.
 * Input / output labels are written into the DialogScript after the last `updateFromNode` (no hou setter). Wire
   colours come from the subnet's indirect input nodes (`INPUT_COLORS`: the constraints input pink, and its IN /
   OUT nodes).
@@ -102,27 +178,57 @@ Four inputs, four matching outputs: Geometry, Constraints, Proxy, Collision.
 ## Box3D Configure asset
 
 `tools/make_configure_sop.py <out.hda>` builds `box3d_configure` (SOP): Box3D Data's settings, copied from the node
-(labels, defaults, ranges, conditions), each with a `set_<name>` checkbox, written as point attributes on the points in
-Group. Names map one to one except `MAPPING`: Default Shape -> `bullet_georep` (`GEOREP_VALUES`, menu order), Auto Fit
+(labels, defaults, ranges, conditions), written as point attributes. Laid out as RBD Configure: a tabbed multiparm
+(`MULTIPARM`, Number of Attributes) of entries, each with Enable (`enable#`), Group (`group#`) and Box3D Data's folders
+(`b3dcfg_folder<i>_#`), every setting `<name>#` with an `add<name>#` checkbox (`toggle_name`, label hidden); the Packing
+folder sits above the entries. Names map one to one except `MAPPING`: Default Shape -> `bullet_georep` (`GEOREP_VALUES`, menu order), Auto Fit
 -> `bullet_autofit`, Body Type -> `active` / `animated`, Start Asleep -> `awake` (inverted); `SKIP` holds the
 object-level ones (Hull per Connected, Flip Winding, Add Impact Data). Disable conditions also need the referenced
-setting ticked (`rewrite_condition`).
-* Two wrangles: a detail one creates each ticked attribute with Box3D Data's default, then a point one sets the group.
-  VEX would give points outside the group 0 (`active` 0 is static).
-* The point wrangle uses `setpointattrib`, never `@` bindings: a binding creates its attribute on every point at
-  compile time, even inside an `if` that never runs.
-* The build checks a fresh instance: a group of one of two points gets friction and Static, the other keeps defaults.
+setting ticked (`rewrite_condition`). Shape and Sleep & Contacts are collapsible (closed) in each entry, Body and
+Material simple, as RBD Configure's secondary and main folders (`COLLAPSED_FOLDERS`).
+* Geometry and Proxy are packed first, as RBD Configure does, by the chain the Box3D Solver SOP runs
+  (`tools/b3d_prepare.py`, `prepare_input` in pack mode without the rest attributes): packed primitives kept, the rest
+  assembled into packed pieces named on their points. RBD Configure's packing parameters drive the Assembles (Name
+  Prefix, Transfer Simulation / Render Geo Attributes, Create Path Attribute, Path Attribute, Create Packed Fragments;
+  `packing_templates`), and Transfer Groups is RBD Configure's (`TRANSFER_GROUPS`) so Group still finds the pieces.
+  Without a proxy (or without geometry) the configured stream is the geometry output; with both, the packed geometry
+  passes through and the proxy gets the settings.
+* One point wrangle (`set_attributes`, `wrangle_vex`) loops over the entries: an enabled entry whose group holds the
+  point writes each ticked setting, creating the attribute with Box3D Data's default first (`addpointattrib`) so
+  points outside the group keep the default rather than VEX's 0 (`active` 0 is static). Group is tested with
+  `inpointgroup` / `inprimgroup`, so it takes a group name, not a pattern; empty is every piece.
+* It uses `setpointattrib`, never `@` bindings: a binding creates its attribute on every point at compile time, even
+  inside an `if` that never runs.
+* The build checks a fresh instance: two unpacked boxes come out as two packed pieces named on their points, the
+  group's piece gets friction and Static, the other keeps defaults; with a proxy only the proxy gets them.
+
+## Network dump
+
+`tools/houdini_network_dump.py` is not part of the build: run it in Houdini (Python Source Editor, a shelf tool, or
+`main(node_path, out_path)` in hython) to write a node and everything inside it to a text file: the HDA's interface
+and text sections, a hierarchy tree, and per network an ASCII layout, boxes, notes, wiring and each node's
+non-default parameters (VEX, expressions, references). It dumps an unlocked temporary copy (`WORK_ON_COPY`), so the
+scene's assets stay locked. This is how RBD Bullet Solver's and RBD Configure's packing were read for
+`b3d_prepare.py`.
+
+## Example scenes
+
+`examples/make_examples.py` (or `make_examples.bat`; `--check` also simulates each and prints timings) builds the demo
+scenes listed in its docstring into `examples/scenes/<number>_<name>.hip` (git-ignored), each from ordinary SOPs and one
+Box3D Packed Object, with a sticky note saying what to try. Not part of the build or the tests.
 
 ## Tests
 
-Houdini checks: `hython tests/houdini/run_tests.py` (`--list`, `--failed`, `--info`, `--update-baseline`), or `test.bat`
-on Windows. Each test builds its scene from scratch in its own hython process (a crash is reported as CRASH), prints
-PASS / FAIL / INFO, and saves the scene to `tests/houdini/out/` tidied for opening by hand (`review.py`, with a sticky
+Houdini checks: `hython tests/houdini/run_tests.py` (test names, `--list`, `--failed`, `--info`, `--repeat N`,
+`--update-baseline`), or `test.bat` on Windows. Each test builds its scene from scratch in its own hython process (a
+crash, or no result after 30 minutes, is reported as CRASH; an exception as ERROR), prints PASS / FAIL / INFO, and
+saves the scene to `tests/houdini/out/` tidied for opening by hand (`review.py`, with a sticky
 note holding the test's docstring and results, so write docstrings for a reader of the scene). SETUP means the script
 guessed a node or parameter name wrong; the message lists the real ones. The last status of each test is in
 `tests/houdini/out/last_results.json`.
 
-Tests are in `tests/houdini/checks_*.py` by area, each module with a `TESTS` dict; helpers in `b3dtest.py`. A test
+Tests are in `tests/houdini/checks_*.py` by area, each module with a `TESTS` dict listed in `MODULES`
+(`run_tests.py`); helpers in `b3dtest.py`. The exit code is 1 if anything failed, errored or crashed. A test
 function can carry `.env` (environment for its process, e.g. `HOUDINI_MAXTHREADS=1`). When a check settles an item in
 [status.md](status.md), delete the item.
 
@@ -136,8 +242,11 @@ file's header comment says what it covers.
 
 ## Debug logging (`Box3DDebug.h`)
 
-`B3D_LOG` for one-off events (rebuilds, bodies added / removed, fallbacks); `B3D_LOG_VERBOSE` / `B3D_LOG_IF` per step,
-printed only with `BOX3DDOP_VERBOSE=1`. All compile to nothing without `BOX3DDOP_DEBUG`. Output: stderr, `[b3dop]`.
+`B3D_LOG` for one-off events (rebuilds, bodies added / removed, fallbacks); `B3D_LOG_VERBOSE` per step, printed only
+with `BOX3DDOP_VERBOSE=1`; `B3D_LOG_IF(cond, ...)` always when `cond`, else only when verbose. All compile to nothing
+without `BOX3DDOP_DEBUG`. Output: stderr, `[b3dop]`. Other environment variables of debug builds (the header lists
+them): `BOX3DDOP_REQUESTED_CACHE` (what `getRequestedCacheSubclass` returns) and `BOX3DDOP_VERIFY_READBACK=1`
+([solver.md](solver.md), writeResultsBack).
 
 ## Package
 

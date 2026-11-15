@@ -55,7 +55,7 @@ cpack -G ZIP -C Release
 
 (`-C Release` is needed on Windows; on Linux plain `cpack -G ZIP` works.) This makes `Box3D-Houdini-<version>-<system>.zip`. Extract it into your `houdiniX.Y/packages` folder so `Box3D.json` sits directly inside it. It only loads in the Houdini version it was built for.
 
-The zip includes the Box3D Packed Object and Box3D Solver SOP assets only if hython was found during the build. If you test the package on the machine you built on, first remove the copies the build put in your `houdiniX.Y/dso` and `otls` folders.
+The zip includes the Box3D Packed Object, Box3D Configure and Box3D Solver SOP assets only if hython was found during the build. If you test the package on the machine you built on, first remove the copies the build put in your `houdiniX.Y/dso` and `otls` folders.
 
 ## Quick start
 
@@ -71,12 +71,12 @@ Example scenes: run `make_examples.bat` (Linux: `hython examples/make_examples.p
 |---|---|
 | Box3D Solver | The solver |
 | Box3D Packed Object | Packed geometry as a Box3D object, with Box3D Data's settings on the node |
-| Box3D Solver (SOP) | Like RBD Bullet Solver: packed geometry, constraints, proxy and collision in, simulated out |
-| Box3D Configure (SOP) | Like RBD Configure: Box3D Data's settings as point attributes on a group of pieces |
+| Box3D Solver (SOP) | Like RBD Bullet Solver: geometry (packed or not), constraints, proxy and collision in, simulated out |
+| Box3D Configure (SOP) | Like RBD Configure: packs geometry and proxy, then sets Box3D Data's settings as point attributes on a group of pieces (a group name, not a pattern) |
 | Box3D Data | Per-object settings, for objects made by other nodes |
 | Box3D Weld / Spherical / Revolute / Prismatic / Distance / Motor / Parallel / Wheel / Filter Constraint Relationship | Joint types, used with a Constraint Network |
 
-RBD Packed Object also works, but writes its own `mass`, `density`, `computemass`, `friction` and `bounce` onto every point, which win over Box3D Data (the solver warns). A Box3D Data after a Box3D Packed Object only changes parameters set to Set Always. SideFX's Glue, Hard, Spring, Bullet Soft and Cone Twist Constraint Relationships also work, approximately.
+RBD Packed Object also works, but writes its own `mass`, `density`, `computemass`, `friction` and `bounce` onto every point, which win over Box3D Data (the solver warns when you set those on a Box3D Data). A Box3D Packed Object writes the settings you change on it as point attributes when its object is created; change them mid-simulation by editing the attributes (SOP Solver, POP Wrangle). SideFX's Glue, Hard, Spring, Bullet Soft and Cone Twist Constraint Relationships also work, approximately.
 
 ## Point attributes
 
@@ -85,7 +85,8 @@ All are optional except `P`; a missing one uses the Box3D Data value. Every step
 | Attribute | Type | Meaning |
 |---|---|---|
 | `P` | vector | Position (required) |
-| `orient` | quaternion | Rotation |
+| `orient` | quaternion | Rotation. On packed pieces, the rotation since the start, as Bullet |
+| `restxform`, `pivot` | matrix / vector | Packed pieces: the transform and position at the start, set when the object is created (Box3D Packed Object) or by the solver |
 | `v` / `w` | vector | Linear / angular velocity (radians/s) |
 | `id` | int | Stable point id. Use it if points can be deleted or reordered |
 | `active` | int | `0` = static |
@@ -111,7 +112,7 @@ All are optional except `P`; a missing one uses the Box3D Data value. Every step
 | `collision_category`, `collision_mask`, `collision_group` | int | Collision filtering (below) |
 | `bullet_georep` | string | Collision shape (see [Shapes](#shapes)) |
 | `bullet_autofit`, `bullet_primS`, `bullet_radius`, `bullet_length`, `bullet_primT`, `bullet_primR` | various | Hand-set box, sphere or capsule |
-| `pscale` / `scale` | float / vector | Size of the shape on plain points |
+| `pscale` / `scale` | float / vector | Size of the shape on plain points; on packed pieces, baked into the packed transform by a Box3D Packed Object |
 | `deforming` | int | Nonzero = rebuild the collision shape every step |
 | `bullet_autofit_valid` | int | `0` = rebuild the collision shape once |
 | `force` / `torque` | vector | Applied for one step, then cleared |
@@ -145,10 +146,10 @@ A **Static Object** collides with solved objects through a collision relationshi
 Joints use Houdini's **Constraint Network** DOP: wire Box3D Constraint Relationship nodes into its second input. Each two-point line is one joint:
 
 - `constraint_name` names a relationship's Data Name (by default its type: `Weld`, `Revolute`, ...).
-- Each end's `name` picks a piece (empty = the world); its `P` and `orient` are the joint frame.
+- Each end's `name` picks a piece (empty = the world); its `P` and `orient` are the joint frame, placed on the pieces as they were at the start (like Bullet).
 - Primitive attributes named like the node's parameters modify them: floats multiply, others replace.
 - With **Breakable** on, a joint past its Break Force or Torque goes into the `broken` group, or switches to its `next_constraint_name`.
-- Each step the solver writes `force`, `distance`, `torque` and `angle` (radians) onto each line.
+- Each step the solver writes `force`, `distance`, `torque` and `angle` (radians, the pieces' rotation relative to each other since the start) onto each line.
 
 ## Things to know
 
@@ -157,6 +158,7 @@ Joints use Houdini's **Constraint Network** DOP: wire Box3D Constraint Relations
 - Points sharing a `name` are separate bodies, as with Bullet.
 - Sleeping a body also sleeps the bodies touching it.
 - Solve On Creation Frame works as with Bullet: off, a new object starts moving one frame after it appears.
+- As with Bullet, a Box3D Packed Object resets each piece's rest (`restxform`) when its object is created and bakes `orient`, `pscale` and `scale` into the packed pieces. The Box3D Solver SOP's World Scale simulates the scene scaled, for pieces far from 1 unit.
 - Show Collision Shapes (Guide Options on the solver) draws the bodies' collision shapes.
 - Escape cancels a step.
 

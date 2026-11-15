@@ -98,8 +98,8 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
           .integer("restitutioniterations", "Bounce Iterations", 2, R{0, 10},
                    "Extra solver passes that compute bounce. More passes give "
                    "better bounce on stacked pieces.")
-          // Both menus list the rules in the same order (kMixingMenu*); the
-          // stored value is the menu index. Defaults are Bullet's rules as
+          // Both menus list the rules in the same order (currentWorldSettings);
+          // the stored value is the menu index. Defaults are Bullet's rules as
           // measured in Houdini (test bullet_mixing): multiply friction, take
           // the smaller bounce.
           .menu("frictionmixing", "Friction Mixing", 4,
@@ -108,15 +108,18 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
           .menu("restitutionmixing", "Bounce Mixing", 1,
                 {"Geometric Mean", "Minimum", "Maximum", "Average", "Multiply"},
                 "How the bounce of two touching bodies is combined.")
+          .toggle("useforces", "Use Force DOPs", true,
+                  "Apply Force DOPs connected to the objects (Wind, Fan, "
+                  "etc.). Set Gravity to 0 when using a Gravity Force.")
+          .toggle("forceswake", "Forces Wake Bodies", false,
+                  "Let forces wake sleeping bodies, e.g. wind that should blow "
+                  "resting pieces away.",
+                  "{ useforces == 0 }")
           .tab("Misc")
           .subfolder("Sleeping")
           .toggle("enablesleep", "Allow Sleeping", true,
                   "Let resting bodies stop simulating until touched. Off keeps "
                   "every body awake, whatever Box3D Data says.")
-          .toggle("forceswake", "Forces Wake Bodies", false,
-                  "Let forces wake sleeping bodies, e.g. wind that should blow "
-                  "resting pieces away.",
-                  "{ useforces == 0 }")
           .subfolder("Aging")
           .toggle("enableaging", "Enable Aging", false,
                   "Add the frame time step (not Time Scale-adjusted) to each "
@@ -135,9 +138,6 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
           .toggle("enablecontinuous", "Continuous Collision", true,
                   "Stop fast bodies passing through static ones (and through "
                   "moving ones, for Box3D Data's Fast Object).")
-          .toggle("useforces", "Use Force DOPs", true,
-                  "Apply Force DOPs connected to the objects (Wind, Fan, "
-                  "etc.). Set Gravity to 0 when using a Gravity Force.")
           .toggle("autothreads", "Use All Threads", false,
                   autoThreadsHelp.c_str())
           .integer("threads", "Threads", b3dop::defaultWorkerCount(),
@@ -669,9 +669,9 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
     message(objects, "point attribute(s) " + names +
                          " override Box3D Data on " +
                          std::to_string(counts.overriddenObjects) +
-                         " object(s). RBD Packed Object writes these from its "
-                         "own parameters: set the values there, or use a "
-                         "Box3D Packed Object, which writes none");
+                         " object(s): the points' values are used. RBD Packed "
+                         "Object writes these from its own parameters: set "
+                         "them there, or on a Box3D Packed Object");
   }
   warnCount(objects, counts.failed,
             "point(s) could not be turned into a body and are not simulated");

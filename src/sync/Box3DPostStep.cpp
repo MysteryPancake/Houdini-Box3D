@@ -24,6 +24,15 @@ static bool addPointAttribIfMissing(GU_Detail *gdp, const char *name,
   return true;
 }
 
+// A new quaternion attribute is 0,0,0,0: start every point at identity.
+static void startOrientAtIdentity(GU_Detail *gdp) {
+  GA_RWHandleQ qOut(gdp, GA_ATTRIB_POINT, "orient");
+  if (!qOut.isValid())
+    return;
+  for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it)
+    qOut.set(*it, UT_QuaternionF(0.0f, 0.0f, 0.0f, 1.0f));
+}
+
 // Creates `orient`, `v`, `w` if missing. True if `orient` was created.
 bool ensureResultAttribs(GU_Detail *gdp) {
   addPointAttribIfMissing(gdp, "v", 3, GA_TYPE_VECTOR);
@@ -308,9 +317,11 @@ void recordImpacts(Box3DSharedState &st, SIM_ObjectArray &objects,
   st.impactObjects.swap(wrote);
 }
 
-// The queued point writes: bullet_autofit_valid = 1 and the computed `mass`. A
-// point that cannot be found keeps its value (a missed bullet_autofit_valid
-// just refits again).
+// The queued point writes: bullet_autofit_valid = 1, the computed `mass`, and a
+// new packed body's `restxform`, `pivot` and `orient` (the rotation since rest:
+// identity unless the body already moved this step). A point that cannot be
+// found keeps its value (a missed bullet_autofit_valid just refits again; a
+// missed restxform leaves the point on its packed rotation, which agrees).
 void writePointAttrs(Box3DSharedState &st, SIM_ObjectArray &objects) {
   std::vector<Box3DPointWrite> &items = st.pointWrites;
   if (items.empty())
@@ -334,8 +345,20 @@ void writePointAttrs(Box3DSharedState &st, SIM_ObjectArray &objects) {
         return;
       if ((want & Box3DPointWrite::kMass) && !gdp->findPointAttribute("mass"))
         gdp->addFloatTuple(GA_ATTRIB_POINT, "mass", 1);
+      if (want & Box3DPointWrite::kRest) {
+        // A new restxform is all zero (unset) on the other points.
+        addPointAttribIfMissing(gdp, "restxform", 16, GA_TYPE_TRANSFORM);
+        addPointAttribIfMissing(gdp, "pivot", 3, GA_TYPE_POINT);
+        if (addPointAttribIfMissing(gdp, "orient", 4, GA_TYPE_QUATERNION))
+          startOrientAtIdentity(gdp);
+      }
       GA_RWHandleI valid(gdp, GA_ATTRIB_POINT, "bullet_autofit_valid");
       GA_RWHandleF mass(gdp, GA_ATTRIB_POINT, "mass");
+      GA_RWHandleM4 restxform(gdp, GA_ATTRIB_POINT, "restxform");
+      GA_RWHandleV3 pivot(gdp, GA_ATTRIB_POINT, "pivot");
+      GA_RWHandleQ orient(gdp, GA_ATTRIB_POINT, "orient");
+      const bool restOk =
+          restxform.isValid() && pivot.isValid() && orient.isValid();
       const PointAttrs a(gdp);
       resolvePointOffsets(gdp, a, items, begin, end);
       for (size_t k = begin; k < end; ++k) {
@@ -350,11 +373,28 @@ void writePointAttrs(Box3DSharedState &st, SIM_ObjectArray &objects) {
           mass.set(w.off, w.mass);
           wrote |= Box3DPointWrite::kMass;
         }
+        if ((w.flags & Box3DPointWrite::kRest) && restOk) {
+          UT_Matrix4F m;
+          for (int r = 0; r < 4; ++r)
+            for (int c = 0; c < 4; ++c)
+              m(r, c) = w.restxform[r * 4 + c];
+          restxform.set(w.off, m);
+          pivot.set(w.off, UT_Vector3F(w.pivot[0], w.pivot[1], w.pivot[2]));
+          float q[4];
+          box3dAbsoluteToRest(w.entry->restRot, w.entry->rot, q);
+          orient.set(w.off, UT_QuaternionF(q[0], q[1], q[2], q[3]));
+          wrote |= Box3DPointWrite::kRest;
+        }
       }
       if (wrote & Box3DPointWrite::kAutofitValid)
         valid.getAttribute()->bumpDataId();
       if (wrote & Box3DPointWrite::kMass)
         mass.getAttribute()->bumpDataId();
+      if (wrote & Box3DPointWrite::kRest) {
+        restxform.getAttribute()->bumpDataId();
+        pivot.getAttribute()->bumpDataId();
+        orient.getAttribute()->bumpDataId();
+      }
     }
     if (wrote)
       recordFingerprintAfterWrite(st, *obj);
@@ -595,15 +635,6 @@ void readVelocities(Box3DSharedState &st) {
       minParallelWrite());
 }
 
-// A new quaternion attribute is 0,0,0,0: start every point at identity.
-void startOrientAtIdentity(GU_Detail *gdp) {
-  GA_RWHandleQ qOut(gdp, GA_ATTRIB_POINT, "orient");
-  if (!qOut.isValid())
-    return;
-  for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it)
-    qOut.set(*it, UT_QuaternionF(0.0f, 0.0f, 0.0f, 1.0f));
-}
-
 // ---- step 2 (parallel): write one body's attributes
 // ------------------------------ The attribute handles of one object's
 // geometry, and what it takes to write one item. write() touches only its own
@@ -659,8 +690,14 @@ private:
       myP.set(off, UT_Vector3(static_cast<float>(mv.pos[0]),
                               static_cast<float>(mv.pos[1]),
                               static_cast<float>(mv.pos[2])));
-    if (myQ.isValid())
-      myQ.set(off, UT_QuaternionF(mv.rot[0], mv.rot[1], mv.rot[2], mv.rot[3]));
+    if (myQ.isValid()) {
+      // Packed with a rest: the rotation since rest (Bullet's orient); the
+      // packed transform below carries the absolute one.
+      float q[4] = {mv.rot[0], mv.rot[1], mv.rot[2], mv.rot[3]};
+      if (w.entry->packed && w.entry->hasRest)
+        box3dAbsoluteToRest(w.entry->restRot, mv.rot, q);
+      myQ.set(off, UT_QuaternionF(q[0], q[1], q[2], q[3]));
+    }
     if (myV.isValid())
       myV.set(off, UT_Vector3(w.lin[0], w.lin[1], w.lin[2]));
     if (myW.isValid())

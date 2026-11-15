@@ -228,6 +228,13 @@ uint64_t networkFingerprint(const GU_Detail *gdp) {
                  broken ? static_cast<uint64_t>(broken->getDataId()) : ~0ull);
 }
 
+// A resolved anchor: its body (0: the world) and, for a point body, its mirror
+// entry (the rest pose).
+struct AnchorBody {
+  b3dop::BodyHandle handle = 0;
+  const Box3DBodyMirror *entry = nullptr;
+};
+
 // Anchor names -> bodies, over the objects of this solve (in their order) and
 // the affectors. The name tables are built on the first resolve(): a step whose
 // networks are all unchanged never resolves a name, so it pays nothing for
@@ -251,8 +258,8 @@ public:
   // Empty: the world (0). Else a piece's `name` in any object, "object/piece",
   // an object with a single body, or an affector object. False if nothing
   // matches.
-  bool resolve(const std::string &name, b3dop::BodyHandle &out) const {
-    out = 0;
+  bool resolve(const std::string &name, AnchorBody &out) const {
+    out = AnchorBody();
     if (name.empty())
       return true;
     buildTables();
@@ -276,14 +283,21 @@ public:
   }
 
 private:
-  using HandleTable = std::unordered_map<std::string, b3dop::BodyHandle>;
+  using HandleTable = std::unordered_map<std::string, AnchorBody>;
+
+  static AnchorBody bodyOf(const Box3DBodyMirror *e) {
+    AnchorBody b;
+    b.handle = e->handle;
+    b.entry = e;
+    return b;
+  }
 
   static bool findIn(const Box3DObjectSync &os, const std::string &piece,
-                     b3dop::BodyHandle &out) {
+                     AnchorBody &out) {
     const auto it = os.byName.find(piece);
     if (it == os.byName.end() || !it->second->handle)
       return false;
-    out = it->second->handle;
+    out = bodyOf(it->second);
     return true;
   }
 
@@ -297,13 +311,16 @@ private:
       myObjectByName.try_emplace(o.first, o.second);
       for (const auto &p : o.second->byName)
         if (p.second->handle)
-          myPiece.try_emplace(p.first, p.second->handle);
+          myPiece.try_emplace(p.first, bodyOf(p.second));
       if (o.second->bodies.size() == 1 && o.second->bodies[0]->handle)
-        mySingleBody.try_emplace(o.first, o.second->bodies[0]->handle);
+        mySingleBody.try_emplace(o.first, bodyOf(o.second->bodies[0]));
     }
     for (const auto &kv : myState.affectors)
-      if (kv.second.handle)
-        myAffector.try_emplace(kv.second.name, kv.second.handle);
+      if (kv.second.handle) {
+        AnchorBody b;
+        b.handle = kv.second.handle;
+        myAffector.try_emplace(kv.second.name, b);
+      }
   }
 
   const Box3DSharedState &myState;
@@ -661,6 +678,55 @@ bool localFrameAgrees(const b3dop::Box3DWorld &world, b3dop::BodyHandle body,
   return !b3dop::quatsDiffer(w.rot, live.rot);
 }
 
+// An authored anchor frame (world space at rest) moved with its body since
+// rest, as Bullet maps anchors through restxform: so a joint made after its
+// pieces moved (a new primitive, a remake after an upstream edit) attaches
+// where the anchor sits on the piece now. Unchanged for the world, affectors,
+// whole objects and points without a rest; identity before anything moved.
+b3dop::JointFrame restToNow(const b3dop::Box3DWorld &world,
+                            const AnchorBody &body,
+                            const b3dop::JointFrame &f) {
+  const Box3DBodyMirror *e = body.entry;
+  double pos[3];
+  float rot[4];
+  if (!body.handle || !e || !e->packed || !e->hasRest ||
+      !world.getTransformByHandle(body.handle, pos, rot))
+    return f;
+  float since[4];
+  box3dAbsoluteToRest(e->restRot, rot, since);
+  UT_DMatrix3 d;
+  UT_QuaternionD(since[0], since[1], since[2], since[3]).getRotationMatrix(d);
+  const UT_Vector3D offset(f.pos[0] - e->restPos[0], f.pos[1] - e->restPos[1],
+                           f.pos[2] - e->restPos[2]);
+  const UT_Vector3D moved = offset * d;
+  b3dop::JointFrame out;
+  for (int k = 0; k < 3; ++k)
+    out.pos[k] = moved[k] + pos[k];
+  float frameRot[4] = {f.rot[0], f.rot[1], f.rot[2], f.rot[3]};
+  b3dop::sanitizeQuat(frameRot);
+  box3dRestToAbsolute(frameRot, since, out.rot);
+  return out;
+}
+
+// A body's rotation at rest for the `angle` reading: its restxform's, else its
+// rotation now (when the joint is made), identity for the world.
+void restRotationOf(const b3dop::Box3DWorld &world, const AnchorBody &body,
+                    float out[4]) {
+  out[0] = out[1] = out[2] = 0.0f;
+  out[3] = 1.0f;
+  if (!body.handle)
+    return;
+  if (body.entry && body.entry->packed && body.entry->hasRest) {
+    b3dop::copy4(out, body.entry->restRot);
+    return;
+  }
+  double pos[3];
+  if (!world.getTransformByHandle(body.handle, pos, out)) {
+    out[0] = out[1] = out[2] = 0.0f;
+    out[3] = 1.0f;
+  }
+}
+
 struct NetworkRef {
   SIM_Object *object =
       nullptr; // an object of this solve the network was found on
@@ -758,10 +824,11 @@ private:
   // / orient, and the local frames are saved after the step. The local frames
   // are the joint's (with any SideFX offset), so they are compared with the
   // frames the anchors give now.
-  void makeJoint(Box3DJointEntry &e, const JointSpec &j, b3dop::BodyHandle a,
-                 b3dop::BodyHandle b, GA_Offset p0, GA_Offset p1,
+  void makeJoint(Box3DJointEntry &e, const JointSpec &j, const AnchorBody &ab,
+                 const AnchorBody &bb, GA_Offset p0, GA_Offset p1,
                  const b3dop::JointFrame &fa, const b3dop::JointFrame &fb,
-                 uint64_t sig, bool edited) {
+                 uint64_t sig, bool edited, bool fromLive) {
+    const b3dop::BodyHandle a = ab.handle, b = bb.handle;
     dropJoint(e);
     e.type = j.type;
     e.bodyA = a;
@@ -778,6 +845,8 @@ private:
       e.madeRestLength =
           static_cast<float>(std::sqrt(dx * dx + dy * dy + dz * dz));
     }
+    restRotationOf(myWorld, ab, e.restRotA);
+    restRotationOf(myWorld, bb, e.restRotB);
     const b3dop::JointFrame ja = jointFrameOf(fa, j.adjA),
                             jb = jointFrameOf(fb, j.adjB);
     b3dop::JointFrame la, lb;
@@ -785,9 +854,18 @@ private:
                           myRd.savedLocal(p1, lb) &&
                           localFrameAgrees(myWorld, a, la, ja) &&
                           localFrameAgrees(myWorld, b, lb, jb);
-    e.handle = useLocal
-                   ? myWorld.createJoint(j.type, a, b, la, lb, j.s, &e, true)
-                   : myWorld.createJoint(j.type, a, b, ja, jb, j.s, &e);
+    // Live frames are where the anchors are now; authored ones are at rest, so
+    // a distance joint measuring its own length takes it at rest (what
+    // auto_restlength keeps), not between the moved anchors.
+    b3dop::JointSettings restSettings = j.s;
+    if (e.madeRestLength >= 0.0f)
+      restSettings.restLength = e.madeRestLength;
+    e.handle =
+        useLocal ? myWorld.createJoint(j.type, a, b, la, lb, j.s, &e, true)
+        : fromLive
+            ? myWorld.createJoint(j.type, a, b, ja, jb, j.s, &e)
+            : myWorld.createJoint(j.type, a, b, restToNow(myWorld, ab, ja),
+                                  restToNow(myWorld, bb, jb), restSettings, &e);
     e.writeLocal = !useLocal;
     if (e.handle)
       ++myCounts.created;
@@ -817,13 +895,14 @@ private:
     }
 
     const GA_Offset p0 = prim.getPointOffset(0), p1 = prim.getPointOffset(1);
-    b3dop::BodyHandle a = 0, b = 0;
-    if (!myAnchors.resolve(myRd.anchorName(p0), a) ||
-        !myAnchors.resolve(myRd.anchorName(p1), b)) {
+    AnchorBody ab, bb;
+    if (!myAnchors.resolve(myRd.anchorName(p0), ab) ||
+        !myAnchors.resolve(myRd.anchorName(p1), bb)) {
       ++myCounts.unresolved;
       dropJoint(e);
       return; // not stamped: removed; retried when bodies change
     }
+    const b3dop::BodyHandle a = ab.handle, b = bb.handle;
     // On a written network current_P / current_orient say where the anchors
     // are now, so a world rebuilt mid-simulation makes its joints from them
     // exactly as frame 1 does from the authored P / orient.
@@ -858,7 +937,7 @@ private:
         ++myCounts.updated;
       }
     } else {
-      makeJoint(e, j, a, b, p0, p1, fa, fb, sig, edited);
+      makeJoint(e, j, ab, bb, p0, p1, fa, fb, sig, edited, useLive);
       e.authA = authA;
       e.authB = authB;
       e.made = true;
@@ -1204,6 +1283,26 @@ bool writeBrokenJoints(const b3dop::Box3DWorld &world, GU_Detail *gdp,
   return switched;
 }
 
+// The bodies' relative rotation since rest, in radians (Bullet's `angle`): 0
+// while the joint holds them as they started, however they were rotated then.
+// Box3D's own reading compares the bodies' absolute rotations instead.
+float angleSinceRest(const b3dop::Box3DWorld &world, const Box3DJointEntry &e,
+                     float fallback) {
+  float now[2][4] = {{0, 0, 0, 1}, {0, 0, 0, 1}};
+  const b3dop::BodyHandle bodies[2] = {e.bodyA, e.bodyB};
+  for (int i = 0; i < 2; ++i) {
+    double pos[3];
+    if (bodies[i] && !world.getTransformByHandle(bodies[i], pos, now[i]))
+      return fallback;
+  }
+  float sinceA[4], sinceB[4], rel[4];
+  box3dAbsoluteToRest(e.restRotA, now[0], sinceA);
+  box3dAbsoluteToRest(e.restRotB, now[1], sinceB);
+  box3dAbsoluteToRest(sinceA, sinceB, rel);
+  const float w = std::min(1.0f, std::fabs(rel[3]));
+  return 2.0f * std::acos(w);
+}
+
 // Feedback, under the Constraint Network DOP's names: force / distance for the
 // linear part, torque / angle (radians) for the angular part, plus the per-type
 // readings.
@@ -1239,7 +1338,7 @@ void writeFeedback(const b3dop::Box3DWorld &world, GU_Detail *gdp,
     if (torqueH.isValid())
       torqueH.set(e->prim, length(fb.torque));
     if (angleH.isValid())
-      angleH.set(e->prim, fb.angularSeparation);
+      angleH.set(e->prim, angleSinceRest(world, *e, fb.angularSeparation));
     for (int k = 0; k < fb.extraCount; ++k) {
       GA_RWHandleF &h = scalar(fb.extraName[k]);
       if (h.isValid())

@@ -11,10 +11,11 @@ namespace box3dsolver {
 // Point state
 // ---------------------------------------------------------------------------
 
-// P / rotation / v / w of one point (a packed point's rotation from its
-// primitive). False if P is not finite. A non-finite v or w is read as zero
-// (Box3D asserts on it, and a NaN velocity would spread to the body's
-// position); *badVelocity says so.
+// P / rotation / v / w of one point. A packed point's rotation: its
+// `restxform`'s times `orient` (the rotation since, as Bullet) once restxform
+// is set, else its primitive's. False if P is not finite. A non-finite v or w
+// is read as zero (Box3D asserts on it, and a NaN velocity would spread to the
+// body's position); *badVelocity says so.
 bool readPointState(const GU_Detail *gdp, const PointAttrs &a, GA_Offset off,
                     const PackedInfo &pk, Box3DBodyPose &out,
                     bool *badVelocity) {
@@ -30,7 +31,14 @@ bool readPointState(const GU_Detail *gdp, const PointAttrs &a, GA_Offset off,
 
   out.rot[0] = out.rot[1] = out.rot[2] = 0.0f;
   out.rot[3] = 1.0f;
-  if (pk.prim) {
+  float rest[4];
+  if (pk.prim && a.orient.isValid() && a.restxform.isValid() &&
+      restRotation(a.restxform.get(off), rest)) {
+    const UT_QuaternionF q = a.orient.get(off);
+    float since[4] = {q.x(), q.y(), q.z(), q.w()};
+    b3dop::sanitizeQuat(since);
+    box3dRestToAbsolute(rest, since, out.rot);
+  } else if (pk.prim) {
     b3dop::copy4(out.rot, pk.rot);
     b3dop::sanitizeQuat(out.rot);
   } else if (a.orient.isValid()) {
@@ -337,37 +345,48 @@ bool startAwakeFor(const b3dop::BodySettings &node, const PointAttrs &a,
   return a.awake.isValid() ? a.awake.get(off) != 0 : node.startAwake;
 }
 
-// Point attributes that replace a Box3D Data value on an object with a Box3D
-// Data node. RBD Packed Object writes several of them onto every point from its
-// own parameters (mass, density, computemass, friction, bounce in Houdini
-// 22.0), so its Box3D Data values for those do nothing; this makes that
-// visible. Reported once per object: on its first full scan, and again only if
-// the set changes. (`active` is left out: it only takes over Body Type when 0.)
+// Point attributes that replace a Box3D Data value the user changed, on an
+// object with a Box3D Data node. RBD Packed Object writes several of them onto
+// every point from its own parameters (mass, density, computemass, friction,
+// bounce in Houdini 22.0), so a Box3D Data value set for those does nothing;
+// this makes that visible. A value left at its default is not reported: then
+// the attribute is the only setting (the Box3D Packed Object writes the
+// settings that differ from the defaults as attributes, and its Box3D Data
+// keeps them all at the defaults). Reported once per object: on its first full
+// scan, and again only if the set changes. (`active` is left out: it only takes
+// over Body Type when 0.)
 void noteOverriddenData(const GU_Detail *gdp, Box3DObjectSync &os,
-                        SyncCounts &c) {
-  static const char *const kOverriding[] = {"mass",
-                                            "density",
-                                            "computemass",
-                                            "friction",
-                                            "bounce",
-                                            "rollingresistance",
-                                            "tangentvelocity",
-                                            "lineardamping",
-                                            "angulardamping",
-                                            "gravityscale",
-                                            "enablesleep",
-                                            "awake",
-                                            "sleepthreshold",
-                                            "ccdthreshold",
-                                            "fastobject",
-                                            "contactrecycling",
-                                            "bullet_georep",
-                                            "bullet_autofit"};
+                        SyncCounts &c, const b3dop::BodySettings &node) {
+  const b3dop::BodySettings d = b3dop::nodeBodyDefaults();
+  const b3dop::BodyProps &n = node.props, &p = d.props;
+  auto differs = [](float a, float b) { return a != b && (a == a || b == b); };
+  const bool tangent = differs(n.tangentVelocity[0], p.tangentVelocity[0]) ||
+                       differs(n.tangentVelocity[1], p.tangentVelocity[1]) ||
+                       differs(n.tangentVelocity[2], p.tangentVelocity[2]);
+  const std::pair<const char *, bool> overriding[] = {
+      {"mass", differs(n.mass, p.mass)},
+      {"density", differs(n.density, p.density)},
+      {"computemass", n.computeMass != p.computeMass},
+      {"friction", differs(n.friction, p.friction)},
+      {"bounce", differs(n.restitution, p.restitution)},
+      {"rollingresistance", differs(n.rollingResistance, p.rollingResistance)},
+      {"tangentvelocity", tangent},
+      {"lineardamping", differs(n.linearDamping, p.linearDamping)},
+      {"angulardamping", differs(n.angularDamping, p.angularDamping)},
+      {"gravityscale", differs(n.gravityScale, p.gravityScale)},
+      {"enablesleep", n.enableSleep != p.enableSleep},
+      {"awake", node.startAwake != d.startAwake},
+      {"sleepthreshold", differs(n.sleepThreshold, p.sleepThreshold)},
+      {"ccdthreshold", differs(n.ccdThreshold, p.ccdThreshold)},
+      {"fastobject", n.fastObject != p.fastObject},
+      {"contactrecycling", n.contactRecycling != p.contactRecycling},
+      {"bullet_georep", node.defaultShape != d.defaultShape},
+      {"bullet_autofit", node.autoFit != d.autoFit}};
   std::string found;
-  for (const char *name : kOverriding)
-    if (gdp->findPointAttribute(name)) {
+  for (const auto &o : overriding)
+    if (o.second && gdp->findPointAttribute(o.first)) {
       found += found.empty() ? "" : " ";
-      found += name;
+      found += o.first;
     }
   if (found == os.overridesReported)
     return;
@@ -375,9 +394,9 @@ void noteOverriddenData(const GU_Detail *gdp, Box3DObjectSync &os,
   if (found.empty())
     return;
   ++c.overriddenObjects;
-  for (const char *name : kOverriding)
-    if (gdp->findPointAttribute(name))
-      ++c.overriddenData[name];
+  for (const auto &o : overriding)
+    if (o.second && gdp->findPointAttribute(o.first))
+      ++c.overriddenData[o.first];
 }
 
 // pscale / scale (a packed point's size is its transform; these only size its
@@ -1129,6 +1148,48 @@ private:
     return true;
   }
 
+  // A new packed body's rest (docs/agents/bodies.md, "Rest transform"): the
+  // point's `restxform` if set; else its transform now, which the solver then
+  // writes as `restxform` with `pivot` = P (kRest, filled into `pending`).
+  void initRest(const Box3DPointSlot &s, Box3DBodyMirror &entry,
+                unsigned &writes, Box3DPointWrite &pending) {
+    entry.hasRest = false;
+    if (!s.packed)
+      return;
+    const PackedInfo pk = myCtx.packedInfo(s.off); // with the pivot
+    if (!pk.prim)
+      return;
+    const PointAttrs &a = myCtx.a;
+    float rest[4];
+    UT_Matrix4F m;
+    bool set = false;
+    if (a.restxform.isValid()) {
+      m = a.restxform.get(s.off);
+      set = restRotation(m, rest);
+    }
+    if (!set) {
+      // As the attribute will store it, so the read path splits the same
+      // matrix.
+      for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c) {
+          pending.restxform[r * 4 + c] = static_cast<float>(pk.m4[r * 4 + c]);
+          m(r, c) = pending.restxform[r * 4 + c];
+        }
+      if (!restRotation(m, rest))
+        return;
+      for (int i = 0; i < 3; ++i)
+        pending.pivot[i] = static_cast<float>(s.cur.pos[i]);
+      writes |= Box3DPointWrite::kRest;
+    }
+    b3dop::copy4(entry.restRot, rest);
+    // The packed pivot (its own space) through restxform: where the body's
+    // origin was at rest.
+    for (int c = 0; c < 3; ++c)
+      entry.restPos[c] = pk.pivot[0] * m(0, c) + pk.pivot[1] * m(1, c) +
+                         pk.pivot[2] * m(2, c) + m(3, c);
+    entry.hasRest = true;
+  }
+
   // Every body this scan keeps: its point as read now, for the write-back and
   // later scans.
   void stampEntry(const Box3DPointSlot &s, Box3DBodyMirror &entry) {
@@ -1186,15 +1247,24 @@ private:
       dropFresh(ref, s);
       return;
     }
+    Box3DPointWrite rest;
+    if (ref.fresh)
+      initRest(s, *entry, writes, rest);
 
     stampEntry(s, *entry);
     if (!ref.fresh)
       updateExistingBody(myCtx, mySt, s, *entry, animated, myCheckProps,
                          myPlans, myC, writes, anyDriven);
 
-    if (writes)
+    if (writes) {
       queuePointWrite(mySt, *entry, writes,
                       effectiveMass(entry->props, entry->volume));
+      if (writes & Box3DPointWrite::kRest) {
+        Box3DPointWrite &w = mySt.pointWrites.back();
+        std::copy(rest.restxform, rest.restxform + 16, w.restxform);
+        std::copy(rest.pivot, rest.pivot + 3, w.pivot);
+      }
+    }
     myOs.bodies.push_back(entry);
     myNames.add(myOs, off, entry);
   }
@@ -1263,7 +1333,7 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
   os.liveStamp = st.syncStamp;
   const int problems0 = c.failed + c.duplicates + c.badP;
   if (dataNode)
-    noteOverriddenData(gdp, os, c);
+    noteOverriddenData(gdp, os, c, node);
   else
     os.overridesReported.clear(); // reported afresh if a Box3D Data comes back
 

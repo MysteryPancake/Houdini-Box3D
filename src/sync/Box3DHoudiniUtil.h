@@ -2,7 +2,8 @@
 //
 // Small Houdini helpers shared by the solver, the joint sync and the affectors:
 // writable geometry data, objects by id, matrices as plain arrays, Euler angles
-// to quaternions, options of SIM data whose class is not in the HDK.
+// to quaternions, rotations since rest, options of SIM data whose class is not
+// in the HDK.
 #pragma once
 
 #include <GU/GU_Detail.h>
@@ -14,12 +15,47 @@
 #include <SIM/SIM_Options.h>
 #include <SIM/SIM_OptionsUser.h>
 #include <SIM/SIM_Query.h>
+#include <UT/UT_Matrix3.h>
 #include <UT/UT_Quaternion.h>
 #include <UT/UT_StringHolder.h>
 #include <UT/UT_Vector3.h>
 #include <UT/UT_XformOrder.h>
 
 #include "core/Box3DShapes.h"
+
+// Rotations as row-vector matrices with Houdini's quaternion convention.
+inline UT_DMatrix3 box3dRotationMatrix(const float q[4]) {
+  UT_DMatrix3 m;
+  UT_QuaternionD(q[0], q[1], q[2], q[3]).getRotationMatrix(m);
+  return m;
+}
+
+inline void box3dQuatOf(const UT_DMatrix3 &m, float out[4]) {
+  UT_QuaternionD q;
+  q.updateFromRotationMatrix(m);
+  q.normalize();
+  out[0] = static_cast<float>(q.x());
+  out[1] = static_cast<float>(q.y());
+  out[2] = static_cast<float>(q.z());
+  out[3] = static_cast<float>(q.w());
+  b3dop::sanitizeQuat(out);
+}
+
+// Bullet's packed convention: absolute = rest * since (row vectors, rest
+// first), `since` being the point's `orient` and `rest` its restxform's
+// rotation.
+inline void box3dRestToAbsolute(const float rest[4], const float since[4],
+                                float out[4]) {
+  box3dQuatOf(box3dRotationMatrix(rest) * box3dRotationMatrix(since), out);
+}
+
+// The inverse: since = rest^T * absolute.
+inline void box3dAbsoluteToRest(const float rest[4], const float absolute[4],
+                                float out[4]) {
+  UT_DMatrix3 r = box3dRotationMatrix(rest);
+  r.transpose();
+  box3dQuatOf(r * box3dRotationMatrix(absolute), out);
+}
 
 // A writable SIM_GeometryCopy for the object's data `name`, or null. A plain
 // SIM_Geometry (RBD Packed Object, a SOP Geometry DOP) is replaced once by a

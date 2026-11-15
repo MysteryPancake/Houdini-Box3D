@@ -300,6 +300,39 @@ def test_written_velocity():
     return results
 
 
+def test_rest_reset():
+    """A Box3D Packed Object whose piece carries a restxform from somewhere else (turned 90 degrees
+    about z) and orient identity: its SOP stage resets the rest to where the piece is on the creation
+    frame, as RBD Packed Object does, so the piece stays upright (with the old rest kept it would be
+    read as turned 90 degrees and jump). The restxform is the piece's own transform."""
+    path, names = packed_boxes("rest_reset", [{"size": (2, 1, 1), "center": (0, 3, 0)}])
+    geo = new_geo("rest_reset_stale")
+    src = create(geo, "object_merge", "piece")
+    set_parm(src, ["objpath1"], path)
+    stale = create(geo, "attribwrangle", "stale_rest")
+    stale.setInput(0, src)
+    set_parm(stale, ["snippet"], 'matrix m = ident(); rotate(m, radians(90), {0, 0, 1}); 4@restxform = m; '
+                                 'p@orient = {0, 0, 0, 1}; v@pivot = v@P;')
+    display(stale)
+    dop = new_dopnet("rest_reset")
+    finish(dop, box3d_solver(dop, box3d_packed_object(dop, "piece", stale.path()), gravity=(0, 0, 0)))
+
+    def sample(sim, f):
+        if f != 6:
+            return None
+        return packed_transform(sim, "piece"), point_attributes(sim, "piece", names[0], ["restxform"])
+
+    r, attrs = step(dop, 6, sample)[6]
+    rest = attrs["restxform"] if attrs else None
+    upright = r is not None and close(r[0][0], 1.0, 1e-3) and close(r[1][1], 1.0, 1e-3)
+    rest_own = rest is not None and close(rest[0], 1.0, 1e-3) and close(rest[5], 1.0, 1e-3)
+    return [Result("rest_reset", Result.PASS if upright and rest_own else Result.FAIL,
+                   f"packed x axis on frame 6: {tuple(round(v, 3) for v in r[0]) if r else None} (expected "
+                   f"(1, 0, 0): upright); restxform rows 0-1 diagonal "
+                   f"{(round(rest[0], 3), round(rest[5], 3)) if rest else None} (expected (1, 1): the piece's own, "
+                   "not the stale 90 degree one)")]
+
+
 # ---------------------------------------------------------------------------
 # Impacts (status: addPointImpact arguments; impulse in N*s)
 # ---------------------------------------------------------------------------
@@ -524,11 +557,23 @@ def _push_test(tag, make_object, piece_attrs=None):
     return x, sorted(set(warned)) + [f"[Box3D Data friction on the object: {data[0] if data else '?'}]"]
 
 
+def stage_points(obj):
+    """The first point of a Box3D Packed Object's SOP stage output (create_attributes/OUT), cooked
+    outside the simulation (the creation-frame branch), as {attribute: value}; None if missing."""
+    out = obj.node("create_attributes/OUT")
+    g = out.geometry() if out is not None else None
+    if g is None or not g.points():
+        return None
+    pt = g.points()[0]
+    return {a.name(): pt.attribValue(a) for a in g.pointAttribs()}
+
+
 def test_box3d_packed_object():
-    """The Box3D Packed Object asset brings packed geometry in without RBD Packed Object's stamped
-    attributes, so its Box3D Data settings apply: a box pushed at 3 m/s with its Friction 0 slides
-    about 3 m in 1 s (RBD Packed Object with a Box3D Data Friction 0 stops: its stamped friction 1
-    wins, and the solver warns). A point's own attribute still wins (friction 1 on the point: it
+    """The Box3D Packed Object, like RBD Packed Object, turns its settings into point attributes when
+    the object is created, but only those that differ from Box3D Data's defaults: a box pushed at
+    3 m/s with the asset's Friction 0 slides about 3 m in 1 s, with no warning (its own Box3D Data
+    stays at the defaults). RBD Packed Object with a Box3D Data Friction 0 stops: its stamped friction
+    1 wins, and the solver warns. A point's own attribute still wins (friction 1 on the point: it
     stops). A dropped box falls as with RBD Packed Object, and Creation Frame 10 makes the object
     appear on frame 10."""
     results = []
@@ -537,27 +582,27 @@ def test_box3d_packed_object():
         dop, packed_object(dop, "pieces", p, keep_velocity=True), "data", friction=0.0))
     x_attr, _ = _push_test("attr", lambda dop, p: box3d_packed_object(dop, "pieces", p, friction=0.0),
                            {"friction": 1.0})
-    # Does the asset's Friction reach the Box3D Data inside it?
-    probe_dop = new_dopnet("probe_link")
-    probe = box3d_packed_object(probe_dop, "pieces", "", friction=0.25)
-    inner = probe.node("box3d_data")
-    inner_f = inner.parm("friction") if inner is not None else None
-    op = inner.parm("parmop_friction") if inner is not None else None
-    link_note = (f"inside, box3d_data Friction = {inner_f.eval()} after setting the asset's to 0.25 "
-                 f"(references {inner_f.getReferencedParm().path()}; its operation "
-                 f"{op.evalAsString() if op is not None else '?'})" if inner_f is not None else
-                 f"no box3d_data inside the asset (children: {[c.name() for c in probe.children()]})")
+    # The stage's output: Friction 0.25 becomes a friction attribute, Bounce (at its default) none.
+    probe_dop = new_dopnet("probe_stage")
+    path, _ = packed_boxes("probe_stage_box", [{"size": (1, 1, 1), "center": (0, 1, 0)}])
+    probe = box3d_packed_object(probe_dop, "pieces", path, friction=0.25)
+    attrs = stage_points(probe)
+    stage_ok = attrs is not None and close(attrs.get("friction", -1), 0.25, 1e-6) and "bounce" not in attrs
+    stage_note = (f"stage output: friction {attrs.get('friction')} (expected 0.25), bounce "
+                  f"{'written' if 'bounce' in attrs else 'not written'} (expected not written)" if attrs is not None
+                  else f"no create_attributes/OUT in the asset (children: {[c.name() for c in probe.children()]})")
+
     def warnings(w):
         return [m for m in w if not m.startswith("[")]
 
-    ok = x_ours > 2.5 and not warnings(w_ours) and x_rbd < 2.0 and bool(warnings(w_rbd)) and x_attr < 2.0
+    ok = x_ours > 2.5 and not warnings(w_ours) and x_rbd < 2.0 and bool(warnings(w_rbd)) and x_attr < 2.0 and stage_ok
     results.append(Result("box3d_packed_object", Result.PASS if ok else Result.FAIL,
                           f"Friction 0 on Box3D Packed Object: box at x={x_ours:.2f} after 1 s (expected about 3, "
                           f"slid), warnings {warnings(w_ours) or 'none'} (expected none) "
                           f"{' '.join(m for m in w_ours if m.startswith('['))}; RBD Packed Object + Box3D Data "
                           f"Friction 0: x={x_rbd:.2f} (expected stopped, below 2), warning "
                           f"{'shown' if warnings(w_rbd) else 'none'} (expected shown); point friction 1 on Box3D Packed "
-                          f"Object: x={x_attr:.2f} (expected stopped: the point's value wins); {link_note}"))
+                          f"Object: x={x_attr:.2f} (expected stopped: the point's value wins); {stage_note}"))
 
     # A dropped box: the same fall as RBD Packed Object; Creation Frame 10.
     falls = {}
@@ -591,18 +636,88 @@ def test_box3d_packed_object():
     return results
 
 
+def test_packed_object_attributes():
+    """The Box3D Packed Object's SOP stage, as RBD Packed Object's: Body Type Static and Default Shape
+    Sphere become active 0 and bullet_georep "sphere", untouched settings write nothing, every piece
+    gets a point name, and on the creation frame an input orient / pscale is baked into the packed
+    transform (a 2 x 1 x 1 box with orient 90 degrees about y and pscale 0.5 is simulated 0.5 wide in
+    x and 1 deep in z, orient kept as the rotation since rest)."""
+    results = []
+    path, _ = packed_boxes("po_attr_box", [{"size": (1, 1, 1), "center": (0, 3, 0)}])
+    dop = new_dopnet("po_attr")
+    obj = box3d_packed_object(dop, "pieces", path, bodytype=0, defaultshape=1)
+    attrs = stage_points(obj) or {}
+    untouched = [n for n in ("friction", "bounce", "density", "mass", "lineardamping", "bullet_autofit", "awake")
+                 if n in attrs]
+    ok = attrs.get("active") == 0 and attrs.get("bullet_georep") == "sphere" and not untouched and attrs.get("name")
+    results.append(Result("packed_object_attributes", Result.PASS if ok else Result.FAIL,
+                          f"stage output: active {attrs.get('active')} (expected 0), bullet_georep "
+                          f"{attrs.get('bullet_georep')!r} (expected 'sphere'), untouched settings written: "
+                          f"{untouched or 'none'}, name {attrs.get('name')!r}"))
+
+    geo = new_geo("po_bake_in")
+    src = create(geo, "object_merge", "pieces")
+    path, _ = packed_boxes("po_bake_box", [{"size": (2, 1, 1), "center": (0, 3, 0)}])
+    set_parm(src, ["objpath1"], path)
+    wr = create(geo, "attribwrangle", "orient_pscale")
+    wr.setInput(0, src)
+    set_parm(wr, ["snippet"], "p@orient = quaternion(radians(90), {0, 1, 0}); f@pscale = 0.5;")
+    display(wr)
+    dop = new_dopnet("po_bake")
+    finish(dop, box3d_solver(dop, box3d_packed_object(dop, "pieces", wr.path()), gravity=(0, 0, 0)))
+
+    def sample(sim, f):
+        if f != 3:
+            return None
+        o = sim.findObject("pieces")
+        g = o.geometry() if o is not None else None
+        if g is None or not g.prims():
+            return None
+        b = g.prims()[0].intrinsicValue("bounds")
+        q = g.points()[0].attribValue("orient") if g.findPointAttrib("orient") else None
+        return (round(b[1] - b[0], 4), round(b[5] - b[4], 4)), q
+
+    got = step(dop, 3, sample)[3]
+    ext, q = got if got else (None, None)
+    turned = q is not None and close(abs(q[1]), 0.7071, 1e-3) and close(abs(q[3]), 0.7071, 1e-3)
+    ok = ext is not None and close(ext[0], 0.5, 1e-3) and close(ext[1], 1.0, 1e-3) and turned
+    results.append(Result("packed_object_attributes", Result.PASS if ok else Result.FAIL,
+                          f"baked piece (x, z) extent {ext} (expected (0.5, 1)); orient "
+                          f"{tuple(round(v, 4) for v in q) if q else None} (expected 90 degrees about y)"))
+    return results
+
+
+def test_packed_object_use_transform():
+    """The Box3D Packed Object's Use Object Transform, as RBD Packed Object's: with it on, a piece whose
+    SOP object is moved up 5 starts 5 higher, once (the stage's Object Merge applies the transform and
+    SOP Geometry does not again); off, it starts where its SOP puts it."""
+    path, names = packed_boxes("po_xform_box", [{"size": (1, 1, 1), "center": (0, 3, 0)}])
+    hou.node(path).parent().parm("ty").set(5.0)
+    got = {}
+    for on in (1, 0):
+        dop = new_dopnet(f"po_xform_{on}")
+        finish(dop, box3d_solver(dop, box3d_packed_object(dop, "pieces", path, usetransform=on), gravity=(0, 0, 0)))
+        track = step(dop, 6, lambda sim, f: (packed_positions(sim, "pieces") or {}).get(names[0]) if f in (1, 6) else None)
+        got[on] = (track[1][1] if track[1] else None, track[6][1] if track[6] else None)
+    ok = all(v is not None for pair in got.values() for v in pair) and \
+        close(got[1][0], 8.0, 1e-3) and close(got[1][1], 8.0, 1e-3) and close(got[0][0], 3.0, 1e-3) and \
+        close(got[0][1], 3.0, 1e-3)
+    return [Result("packed_object_use_transform", Result.PASS if ok else Result.FAIL,
+                   f"Use Object Transform on: piece y {got[1][0]} on frame 1, {got[1][1]} on frame 6 (expected 8, 8); "
+                   f"off: {got[0][0]}, {got[0][1]} (expected 3, 3)")]
+
+
 def test_data_under_geometry():
-    """Box3D Data attaches under the object's Geometry (Geometry/Box3DData), as Bullet Data does
-    (Geometry/BulletData), not at the object's top level; it is still there after the solver has
-    replaced the geometry with its own writable copy, and its settings still reach the bodies
-    (Friction 0: a pushed box slides)."""
+    """Box3D Data attaches under the object's Geometry (Geometry/BulletData's place), not at the
+    object's top level; it is still there after the solver has replaced the geometry with its own
+    writable copy, and its settings still reach bodies without the attribute: a Box3D Data after a
+    Box3D Packed Object with Friction 0 at Set Always (the asset's own Box3D Data was made at its
+    creation, so only Set Always values change it) makes a pushed box slide."""
     path, names = packed_boxes("data_geo", [GROUND, {"size": (1, 1, 1), "center": (0, 0.5, 0),
                                                      "attrs": {"v": (3.0, 0.0, 0.0)}}])
     dop = new_dopnet("data_geo")
-    # Box3D Packed Object's own Box3D Data (Friction 0 on the asset). A second Box3D Data after it
-    # would not change it: its Set Initial values only apply when it creates the data, and the
-    # asset already has (Set Always would).
-    obj = box3d_packed_object(dop, "pieces", path, friction=0.0)
+    obj = box3d_data(dop, box3d_packed_object(dop, "pieces", path), "data", friction=0.0)
+    set_menu_by_label(obj, ["parmop_friction"], "Always")
     finish(dop, box3d_solver(dop, obj))
 
     def sample(sim, f):
@@ -622,6 +737,9 @@ def test_data_under_geometry():
 
 TESTS = {
     "rbd_packed_attributes": test_rbd_packed_attributes,
+    "rest_reset": test_rest_reset,
+    "packed_object_attributes": test_packed_object_attributes,
+    "packed_object_use_transform": test_packed_object_use_transform,
     "data_under_geometry": test_data_under_geometry,
     "box3d_packed_object": test_box3d_packed_object,
     "collision_masks": test_collision_masks,
