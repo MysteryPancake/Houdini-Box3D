@@ -156,24 +156,35 @@ int main() {
     CHECK(rbdObjectSetup(r).node.type == BodySettings::Type::Dynamic);
   }
 
-  // ---- custom inertia tensor: only a usable one is taken ----
+  // ---- inertia type: bounding box only with Compute Inertial Tensor on ----
   {
     RbdObjectSettings r = houdiniDefaults();
-    r.inverseInertia[0] = 0.1f;
-    r.inverseInertia[1] = 0.05f;
-    r.inverseInertia[2] = 0.025f;
-    CHECK(!rbdObjectSetup(r).customInertia); // not custom: ignored
-    r.hasCustomInertia = true;
-    WholeObjectSetup s = rbdObjectSetup(r);
-    CHECK(s.customInertia && s.inverseInertia[0] == 0.1f &&
-          s.inverseInertia[2] == 0.025f);
-    r.inverseInertia[1] = 0.0f; // infinite inertia about y: not usable
-    CHECK(!rbdObjectSetup(r).customInertia);
-    r.inverseInertia[1] = NAN;
-    CHECK(!rbdObjectSetup(r).customInertia);
-    r.inverseInertia[1] = 0.05f;
-    r.inverseInertia[3] = 0.2f; // xy larger than sqrt(xx yy): indefinite
-    CHECK(!rbdObjectSetup(r).customInertia);
+    CHECK(!rbdObjectSetup(r).boundsInertia); // type not read: computed
+    r.hasInertiaType = true;
+    CHECK(!rbdObjectSetup(r).boundsInertia); // Use Volume
+    r.boundsInertiaType = true;
+    CHECK(rbdObjectSetup(r).boundsInertia);
+    r.hasComputeInertia = true;
+    r.computeInertia = true;
+    CHECK(rbdObjectSetup(r).boundsInertia);
+    r.computeInertia = false; // toggle off: the computed inertia stays
+    CHECK(!rbdObjectSetup(r).boundsInertia);
+  }
+
+  // ---- boundsInverseInertia ----
+  {
+    float inv[6];
+    const float ext[3] = {1.0f, 2.0f, 3.0f};
+    CHECK(boundsInverseInertia(ext, 12.0f, inv));
+    // I = m (b^2 + c^2) / 12: xx 13, yy 10, zz 5
+    CHECK(near(inv[0], 1.0 / 13.0, 1e-6) && near(inv[1], 1.0 / 10.0, 1e-6) &&
+          near(inv[2], 1.0 / 5.0, 1e-6));
+    CHECK(inv[3] == 0.0f && inv[4] == 0.0f && inv[5] == 0.0f);
+    CHECK(!boundsInverseInertia(ext, 0.0f, inv));
+    const float flat[3] = {1.0f, 0.0f, 3.0f};
+    CHECK(!boundsInverseInertia(flat, 12.0f, inv));
+    const float bad[3] = {1.0f, NAN, 3.0f};
+    CHECK(!boundsInverseInertia(bad, 12.0f, inv));
   }
 
   // ---- invertSymmetric3 ----

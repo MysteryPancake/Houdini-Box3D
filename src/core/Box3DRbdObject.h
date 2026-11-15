@@ -17,9 +17,9 @@
 
 namespace b3dop {
 
-// RBD State's `computeinertialtensortype` value for a custom tensor, the menu
-// index of "Custom".
-constexpr int kRbdInertiaTypeCustom = 1;
+// RBD State's `computeinertialtensortype` menu index of "Use Bounding Box"
+// (0 is "Use Volume", Houdini 22.0).
+constexpr int kRbdInertiaTypeBounds = 1;
 
 // Option names on the three data (Houdini 22.0 probe). They match the point
 // attributes.
@@ -33,11 +33,12 @@ struct RbdObjectSettings {
   float mass = 1.0f; // mass
   bool hasInertia = false;
   float inertiaStiffness = 1.0f; // inertialtensorstiffness
-  // The inertial tensor type is "custom" (`computeinertialtensortype`) and
-  // `itensorlocalinv` was read: the inverse inertia, object space, as xx yy zz
-  // xy xz yz (BodyProps::inverseInertia).
-  bool hasCustomInertia = false;
-  float inverseInertia[6] = {0, 0, 0, 0, 0, 0};
+  // `computeinertialtensor` (off keeps the computed inertia) and
+  // `computeinertialtensortype` at Use Bounding Box.
+  bool hasComputeInertia = false;
+  bool computeInertia = true;
+  bool hasInertiaType = false;
+  bool boundsInertiaType = false;
 
   // SolverParms (`ActiveValue`, Create Active Object)
   bool hasActive = false;
@@ -71,9 +72,8 @@ struct RbdObjectSettings {
 struct WholeObjectSetup {
   BodySettings
       node; // Box3D Data's defaults with the RBD Object's values on top
-  // A usable custom inertia (BodyProps::customInertia / inverseInertia)
-  bool customInertia = false;
-  float inverseInertia[6] = {0, 0, 0, 0, 0, 0};
+  // Inertia of the geometry's bounding box (BodyProps::boundsInertia)
+  bool boundsInertia = false;
   bool explicitShape =
       false; // AutoFit off on a box / sphere / capsule: `spec`, not fitted
   ShapeSpec spec;
@@ -100,14 +100,9 @@ inline WholeObjectSetup rbdObjectSetup(const RbdObjectSettings &r) {
   if (r.hasActive && !r.active)
     n.type = BodySettings::Type::Static;
 
-  // A tensor that is not positive definite (a zero entry on the diagonal
-  // means infinite inertia) keeps the computed inertia.
-  float unused[6];
-  if (r.hasCustomInertia && invertSymmetric3(r.inverseInertia, unused)) {
-    out.customInertia = true;
-    for (int i = 0; i < 6; ++i)
-      out.inverseInertia[i] = r.inverseInertia[i];
-  }
+  // Compute Inertial Tensor on with Use Bounding Box.
+  out.boundsInertia = r.hasInertiaType && r.boundsInertiaType &&
+                      !(r.hasComputeInertia && !r.computeInertia);
 
   if (r.hasFriction && isNonNeg(r.friction))
     p.friction = r.friction;

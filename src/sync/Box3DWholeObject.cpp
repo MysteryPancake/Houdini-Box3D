@@ -5,6 +5,7 @@
 #include "Box3DSolverInternal.h"
 #include "core/Box3DRbdObject.h"
 
+#include <algorithm>
 #include <cctype>
 #include <type_traits>
 
@@ -75,47 +76,51 @@ bool readWholePose(const SIM_Object &obj, double pivot[3], Box3DBodyPose &out) {
   return true;
 }
 
-// RBD State's custom inertial tensor: `computeinertialtensortype` is the
-// custom menu entry (an index, or the token "custom"), and `itensorlocalinv` is
-// the inverse tensor in object space (a matrix; a vector is its diagonal).
-// Nothing is set otherwise, so the inertia stays the computed one.
-void readCustomInertia(const SIM_Data *state, b3dop::RbdObjectSettings &r) {
+// RBD State's inertia options: `computeinertialtensor` (off keeps the computed
+// inertia) and `computeinertialtensortype` (Use Volume / Use Bounding Box, an
+// index or a token naming the box).
+void readInertiaType(const SIM_Data *state, b3dop::RbdObjectSettings &r) {
   if (!state)
     return;
-  bool custom = false;
-  fpreal64 type = 0.0;
+  fpreal64 v = 0.0;
+  if (box3dDataOption(*state, "computeinertialtensor", v)) {
+    r.hasComputeInertia = true;
+    r.computeInertia = v != 0.0;
+  }
   UT_StringHolder token;
-  if (box3dDataOption(*state, "computeinertialtensortype", type))
-    custom = static_cast<int>(type) == b3dop::kRbdInertiaTypeCustom;
-  else if (box3dDataOption(*state, "computeinertialtensortype", token) &&
-           token.isstring()) {
+  if (box3dDataOption(*state, "computeinertialtensortype", v)) {
+    r.hasInertiaType = true;
+    r.boundsInertiaType = static_cast<int>(v) == b3dop::kRbdInertiaTypeBounds;
+  } else if (box3dDataOption(*state, "computeinertialtensortype", token) &&
+             token.isstring()) {
     std::string t(token.c_str());
     std::transform(t.begin(), t.end(), t.begin(), [](unsigned char ch) {
       return static_cast<char>(std::tolower(ch));
     });
-    custom = t == "custom";
+    r.hasInertiaType = true;
+    r.boundsInertiaType =
+        t.find("box") != std::string::npos || t.find("bound") != std::string::npos;
   }
-  if (!custom)
-    return;
-  UT_Matrix3 m;
-  UT_Vector3D d;
-  float *v = r.inverseInertia;
-  if (box3dDataOption(*state, "itensorlocalinv", m)) {
-    v[0] = m(0, 0);
-    v[1] = m(1, 1);
-    v[2] = m(2, 2);
-    // symmetric by construction; average away float noise
-    v[3] = 0.5f * (m(0, 1) + m(1, 0));
-    v[4] = 0.5f * (m(0, 2) + m(2, 0));
-    v[5] = 0.5f * (m(1, 2) + m(2, 1));
-  } else if (box3dDataOption(*state, "itensorlocalinv", d)) {
-    v[0] = static_cast<float>(d.x());
-    v[1] = static_cast<float>(d.y());
-    v[2] = static_cast<float>(d.z());
-    v[3] = v[4] = v[5] = 0.0f;
-  } else
-    return;
-  r.hasCustomInertia = true;
+}
+
+// Full side lengths of the geometry's bounding box in object space.
+void objectBoundsExtents(const GU_Detail *gdp, const double m[16],
+                         float extents[3]) {
+  PieceGroup g;
+  collectPieces(gdp, g);
+  double lo[3] = {1e300, 1e300, 1e300}, hi[3] = {-1e300, -1e300, -1e300};
+  for (const NamedPiece &np : g.pieces)
+    for (size_t k = 0; k + 2 < np.xyz.size(); k += 3) {
+      const double p[3] = {np.xyz[k], np.xyz[k + 1], np.xyz[k + 2]};
+      double o[3];
+      b3dop::xformPoint(m, p, o);
+      for (int c = 0; c < 3; ++c) {
+        lo[c] = std::min(lo[c], o[c]);
+        hi[c] = std::max(hi[c], o[c]);
+      }
+    }
+  for (int c = 0; c < 3; ++c)
+    extents[c] = hi[c] >= lo[c] ? static_cast<float>(hi[c] - lo[c]) : 0.0f;
 }
 
 // The RBD Object's own settings (used without Box3D Data): mass and inertia
@@ -153,7 +158,7 @@ b3dop::RbdObjectSettings readRbdObjectSettings(const SIM_Object &obj,
   number(state, "density", r.hasDensity, r.density);
   number(state, "mass", r.hasMass, r.mass);
   number(state, "inertialtensorstiffness", r.hasInertia, r.inertiaStiffness);
-  readCustomInertia(state, r);
+  readInertiaType(state, r);
 
   // Create Active Object
   toggle(obj.getConstNamedSubData("SolverParms"), "ActiveValue", r.hasActive,
@@ -446,9 +451,9 @@ void syncWholeObject(Box3DSharedState &st, const SIM_Object &obj,
 
   PointAttrs none(gdp); // build attributes left unbound: Box3D Data values only
   b3dop::BodyProps p = readDynamicProps(setup.node, none, GA_Offset(0));
-  if (setup.customInertia) {
-    p.customInertia = true;
-    std::copy(setup.inverseInertia, setup.inverseInertia + 6, p.inverseInertia);
+  if (setup.boundsInertia) {
+    p.boundsInertia = true;
+    objectBoundsExtents(gdp, m, p.boundsExtents);
   }
   const WholeObjectScan scan{st.world,
                              gdp,

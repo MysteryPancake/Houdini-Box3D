@@ -51,6 +51,36 @@ inline bool quatsDiffer(const float a[4], const float b[4], double eps = 1e-5) {
   return false;
 }
 
+// The inverse inertia of a solid box of `mass` whose full side lengths are
+// `extents`, about its centre, as xx yy zz xy xz yz (the layout of
+// BodyProps::inverseInertia). False, `out` untouched, if the mass or a side is
+// not positive and finite.
+inline bool boundsInverseInertia(const float extents[3], float mass,
+                                 float out[6]) {
+  if (!(mass > 0.0f) || !std::isfinite(mass))
+    return false;
+  double sq[3];
+  for (int i = 0; i < 3; ++i) {
+    if (!(extents[i] > 0.0f) || !std::isfinite(extents[i]))
+      return false;
+    sq[i] = static_cast<double>(extents[i]) * extents[i];
+  }
+  const double m = mass / 12.0;
+  const double inertia[3] = {m * (sq[1] + sq[2]), m * (sq[0] + sq[2]),
+                             m * (sq[0] + sq[1])};
+  float inv[3];
+  for (int i = 0; i < 3; ++i) {
+    inv[i] = static_cast<float>(1.0 / inertia[i]);
+    if (!std::isfinite(inv[i]))
+      return false;
+  }
+  out[0] = inv[0];
+  out[1] = inv[1];
+  out[2] = inv[2];
+  out[3] = out[4] = out[5] = 0.0f;
+  return true;
+}
+
 // Inverse of a symmetric 3x3 matrix stored as xx, yy, zz, xy, xz, yz (the
 // layout of BodyProps::inverseInertia). False, `out` untouched, if the matrix
 // is not finite or not positive definite (an inertia tensor and its inverse

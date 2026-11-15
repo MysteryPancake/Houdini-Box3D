@@ -1,7 +1,7 @@
 """Constraint and whole-object checks: breaking and the broken group, attributes multiplying the
 node's values, next_constraint_name, feedback attributes, centroid anchors, Hard / Spring compared
 with Bullet; RBD Object first-frame drift, initial velocity and spin, Use Object Transform, other
-RBD object types, an RBD Object's Create Active Object and custom inertia, a Box3D Data change
+RBD object types, an RBD Object's Create Active Object and inertia type, a Box3D Data change
 mid-simulation, a Static Object's object transform."""
 
 import math
@@ -435,36 +435,108 @@ def test_rbd_object_active():
     return results
 
 
-def test_rbd_object_custom_inertia():
-    """An RBD Object spinning about its vertical axis on the ground (90 deg/s): with RBD State's
-    custom inertial tensor set to a huge inertia (itensorlocalinv, the inverse, 1e-5) it keeps
-    turning, while with the computed inertia (1000 kg cube: 167 kg m^2) friction stops it within
-    a fraction of a second. Reports the menu items of computeinertialtensortype: the solver
-    takes kRbdInertiaTypeCustom (Box3DRbdObject.h) as the index of Custom."""
+def _inertia_node(dop, upstream, name):
+    """The RBD Object has no inertia parameters: they belong to the RBD State data. Looks for a
+    DOP node type that has computeinertialtensortype (tried on a throw-away node, so the search
+    does not guess a name), wires the first match after `upstream` and returns (node, tried).
+    Returns (None, tried) when no node type has it."""
+    tried = []
+    cat = hou.dopNodeTypeCategory()
+    names = sorted(n for n in cat.nodeTypes() if any(k in n.lower() for k in ("rbd", "state", "inertia", "motion")))
+    for type_name in names:
+        probe = None
+        try:
+            probe = dop.createNode(type_name, f"probe_{type_name}"[:40])
+            if probe.parm("computeinertialtensortype") is not None:
+                probe.destroy()
+                node = dop.createNode(type_name, name)
+                node.setInput(0, upstream)
+                return node, tried
+            tried.append(type_name)
+        except hou.Error:
+            tried.append(f"{type_name} (cannot create)")
+        finally:
+            if probe is not None:
+                try:
+                    probe.destroy()
+                except hou.Error:
+                    pass
+    return None, tried
+
+
+def _disc_sop(name):
+    """A SOP object holding a flat 12-sided disc (radius 0.5, height 0.2, centre at y 0.1)."""
+
+    def build(geo):
+        tube = create(geo, "tube")
+        set_parm(tube, ["rad"], (0.5, 0.5))
+        set_parm(tube, ["height"], 0.2)
+        set_parm(tube, ["cap"], 1)
+        xf = create(geo, "xform")
+        xf.setInput(0, tube)
+        set_parm(xf, ["t"], (0, 0.1, 0))
+        return xf
+
+    return single_object_geo(name, build)
+
+
+def _position_options(sim_object, key):
+    """The options of the object's Position data whose name contains `key`, for a failure message."""
+    try:
+        data = sim_object.findSubData("Position")
+        opts = data.options()
+        return {n: opts.field(n) for n in opts.fieldNames() if key in n.lower()}
+    except Exception as e:  # diagnostics only
+        return f"could not read: {e}"
+
+
+def test_rbd_object_inertia_type():
+    """An RBD Object's RBD State has Compute Inertial Tensor (computeinertialtensor) and a type
+    menu, Use Volume / Use Bounding Box (computeinertialtensortype). A flat disc spinning about
+    its axis on the ground is slowed by friction in proportion to its inertia: the bounding box
+    of the disc (1 x 0.2 x 1) is a solid box with a third more inertia than the disc itself, so
+    with Use Bounding Box it turns about a third further before friction stops it. The RBD Object
+    node has no such parameters, so they are set on the node that has computeinertialtensortype
+    (found by _inertia_node). Also checks that Compute Inertial Tensor off keeps the volume
+    inertia."""
     results = []
     turned = {}
-    for label, custom in (("computed", False), ("custom", True)):
+    seen = {}
+    cases = (("volume", "volume", 1), ("bounds", "bounding", 1), ("bounds_but_off", "bounding", 0))
+    for label, menu_label, compute in cases:
         dop = new_dopnet(f"rbd_inertia_{label}")
-        obj = rbd_object(dop, "box", box_sop(f"rbd_inertia_{label}_box", (0, 0.5, 0)), angvel=(0, 90, 0))
-        if custom:
-            menu = obj.parm("computeinertialtensortype")
-            if menu is not None:
-                results.append(Result("rbd_object_custom_inertia", Result.INFO,
-                                      f"computeinertialtensortype items {list(menu.menuItems())}, "
-                                      f"labels {list(menu.menuLabels())}"))
-            set_menu_by_label(obj, ["computeinertialtensortype"], "custom")
-            set_parm(obj, ["itensorlocalinv"], (1e-5, 0, 0, 0, 1e-5, 0, 0, 0, 1e-5))
-        finish(dop, box3d_solver(dop, merge(dop, [ground_object(dop), obj])))
+        obj = rbd_object(dop, "disc", _disc_sop(f"rbd_inertia_{label}_disc"), angvel=(0, 573, 0))
+        holder = obj if obj.parm("computeinertialtensortype") is not None else None
+        if holder is None:
+            holder, tried = _inertia_node(dop, obj, "inertia_state")
+        if holder is None:
+            results.append(Result("rbd_object_inertia_type", Result.INFO,
+                                  f"no node type has computeinertialtensortype; tried: {tried}"))
+            return results
+        set_menu_by_label(holder, ["computeinertialtensortype"], menu_label)
+        set_parm(holder, ["computeinertialtensor"], compute)
+        # The object already has its RBD State: only Set Always changes it.
+        for name in ("parmop_computeinertialtensortype", "parmop_computeinertialtensor"):
+            set_menu_by_label(holder, [name], "Always")
+        finish(dop, box3d_solver(dop, merge(dop, [ground_object(dop), holder])))
 
         def sample(sim, f):
-            m = sim.findObject("box").transform()
+            node = sim.findObject("disc")
+            if f == 1:
+                seen[label] = _position_options(node, "inertial")
+            m = node.transform()
             return math.degrees(math.atan2(-m.at(0, 2), m.at(0, 0)))
 
-        turned[label] = step(dop, 25, sample)[25]
-    ok = turned["custom"] > 60.0 and abs(turned["computed"]) < 20.0
-    results.append(Result("rbd_object_custom_inertia", Result.PASS if ok else Result.FAIL,
-                          f"after 1 s the box turned {turned['computed']:.1f} degrees with the computed inertia "
-                          f"(expected under 20) and {turned['custom']:.1f} with the custom one (expected about 90)"))
+        turned[label] = abs(step(dop, 37, sample)[37])
+    vol, box, off = turned["volume"], turned["bounds"], turned["bounds_but_off"]
+    ok = vol > 20.0 and box > 1.15 * vol and close(off, vol, 0.1 * vol)
+    results.append(Result("rbd_object_inertia_type", Result.PASS if ok else Result.FAIL,
+                          f"the disc turned {vol:.1f} degrees with Use Volume, {box:.1f} with Use Bounding Box "
+                          f"(expected about a third more) and {off:.1f} with Use Bounding Box but Compute Inertial "
+                          f"Tensor off (expected the same as Use Volume)"
+                          + ("" if ok else f". Inertia options on the object's Position data on frame 1: {seen}. "
+                             "If Use Bounding Box shows a different value than Use Volume but the result is the "
+                             "same, rebuild the plugin (build.bat) or the solver is not reading it")))
     return results
 
 
@@ -527,7 +599,7 @@ TESTS = {
     "rbd_object_transform": test_rbd_object_transform,
     "other_rbd_objects": test_other_rbd_objects,
     "rbd_object_active": test_rbd_object_active,
-    "rbd_object_custom_inertia": test_rbd_object_custom_inertia,
+    "rbd_object_inertia_type": test_rbd_object_inertia_type,
     "data_change_midsim": test_data_change_midsim,
     "static_object_transform": test_static_object_transform,
 }

@@ -54,11 +54,10 @@ Last full run (Houdini 22.0.502, MSVC): every check passes except `baseline`, wh
 **Whole objects**
 * RBD Point Object (`other_rbd_objects`, `point_object_bullet`): needs its Geometry Path menu (`usegeo`) set to Override, else it makes no objects. With that, Bullet and Box3D match: 4 whole objects, both fall to y -2.424 (checked).
 * An RBD Object without Box3D Data colliding as its convex hull; `bullet_primT` / `bullet_primS` meaning there.
-* RBD Object's Create Active Object (`SolverParms/ActiveValue`) and RBD State's custom inertia (tests
-  `rbd_object_active`, `rbd_object_custom_inertia`), written without Houdini: the option names; `kRbdInertiaTypeCustom`
-  (`Box3DRbdObject.h`), a guess at the menu index of Custom for `computeinertialtensortype` (the second test prints
-  the menu); `itensorlocalinv` being the inverse tensor about the pivot in object space, read as a matrix or else a
-  vector (`SIM_Options::importOption(UT_Matrix3 &)` not checked against the HDK).
+* RBD Object's Create Active Object (`SolverParms/ActiveValue`, test `rbd_object_active`), written without Houdini: the option names.
+* RBD State's Use Bounding Box inertia (test `rbd_object_inertia_type`, `Box3DWholeObject.cpp`): the menu index (1) and
+  the option names are from the node's parameters, not a probe of the data; Compute Inertial Tensor off is assumed to
+  mean the computed inertia. Extents come from `collectPieces` each step.
 
 **Box3D Solver SOP** (`tools/make_solver_sop.py`, `tests/houdini/checks_sop.py`)
 * Collision Type Animated / Deforming: whether the Packed Object's Overwrite Attributes from SOP (SOP Geometry's Set Always) re-imports every step (the build prints which menus it drives),
@@ -90,8 +89,6 @@ Last full run (Houdini 22.0.502, MSVC): every check passes except `baseline`, wh
   cones, softness, motors and translation ranges, Hard's angular motors, Spring's Hz following mass changes.
 * Inactive RBD Object (Create Active Object off) is a static body: animating its Position teleports it, where Bullet
   drives it as a kinematic body that pushes what it touches.
-* An RBD State custom inertial tensor that is unusable (not positive definite, e.g. a zero on the diagonal) keeps the
-  computed inertia without a warning.
 * Force DOPs: sphere / area variants, per-substep evaluation, parallel evaluation (needs thread-safe forces).
 * Sticky collisions; contact / sensor events beyond Impacts.
 * Box3D Solver SOP:

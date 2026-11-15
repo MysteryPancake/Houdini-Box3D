@@ -336,15 +336,22 @@ b3dop::BodySettings::Type wantedType(const b3dop::BodySettings &node,
 // The body's mass after shapes are added / replaced or its type changes. As in
 // Houdini RBD the point (pivot) is the centre of mass, so the shapes' centroid
 // is moved there; inertia is scaled by inertialtensorstiffness (a custom
-// inertia tensor replaces it first). Static / kinematic bodies only get shape
+// or bounding box inertia replaces it first). Static / kinematic bodies only get shape
 // densities. setShapeDensity = false for shapes just created with
 // boxDensity(p, volume).
 void applyBodyMass(b3dop::Box3DWorld &world, b3dop::BodyHandle h,
                    const b3dop::BodyProps &p, float volume,
                    bool setShapeDensity) {
+  float boxInverse[6];
+  const float *inverse = nullptr;
+  if (p.customInertia)
+    inverse = p.inverseInertia;
+  else if (p.boundsInertia &&
+           b3dop::boundsInverseInertia(p.boundsExtents, effectiveMass(p, volume),
+                                       boxInverse))
+    inverse = boxInverse;
   world.applyMassByHandle(h, boxDensity(p, volume), true, p.inertiaScale,
-                          setShapeDensity,
-                          p.customInertia ? p.inverseInertia : nullptr);
+                          setShapeDensity, inverse);
 }
 
 // `awake` for a new body: the point's value, else the Box3D Data default.

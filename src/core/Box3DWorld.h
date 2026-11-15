@@ -203,13 +203,17 @@ struct BodyProps {
       false; // `computemass`; solver only: mass = density * volume instead
   // `inertialtensorstiffness`; solver only: scales the inertia of the mass
   float inertiaScale = 1.0f;
-  // A custom inertia tensor (RBD State's `itensorlocalinv`, whole objects
-  // only): the INVERSE inertia about the body origin, in body space, symmetric
-  // as xx yy zz xy xz yz. Replaces the inertia computed from the shapes (the
-  // mass is still computed, and inertiaScale still scales it). An unusable
-  // tensor (see invertSymmetric3) leaves the computed inertia.
+  // A custom inertia tensor: the INVERSE inertia about the body origin, in
+  // body space, symmetric as xx yy zz xy xz yz. Replaces the inertia computed
+  // from the shapes (the mass is still computed, and inertiaScale still scales
+  // it). An unusable tensor (see invertSymmetric3) leaves the computed inertia.
   bool customInertia = false;
   float inverseInertia[6] = {0, 0, 0, 0, 0, 0};
+  // Whole objects only (RBD State's Use Bounding Box): the inertia of a solid
+  // box with these full side lengths and the body's mass, in place of the
+  // computed one. Ignored when customInertia is set.
+  bool boundsInertia = false;
+  float boundsExtents[3] = {0, 0, 0};
   float friction = 0.6f;
   float restitution = 0.0f; // `bounce`
   // `rollingresistance`: 0 .. 1, slows rolling (see b3SurfaceMaterial)
@@ -243,6 +247,12 @@ struct BodyProps {
 
   // The custom inertia matches: both off, or both on with the same tensor.
   bool sameInertia(const BodyProps &o) const {
+    if (boundsInertia != o.boundsInertia)
+      return false;
+    if (boundsInertia)
+      for (int i = 0; i < 3; ++i)
+        if (boundsExtents[i] != o.boundsExtents[i])
+          return false;
     if (customInertia != o.customInertia)
       return false;
     if (!customInertia)

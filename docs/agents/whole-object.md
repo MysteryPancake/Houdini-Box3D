@@ -29,11 +29,11 @@ its state in the object's `Position` data instead of point attributes.
   `box3dDataOption` since none of the classes is in the HDK):
   * RBD State (`Position`, `RBD_State`): `computemass`, `density`, `mass` (the parameter, not a computed mass: Box3D
     computes density x volume from its shapes as for points), `inertialtensorstiffness` (the inertia scale). With
-    `computeinertialtensortype` at `kRbdInertiaTypeCustom` (or the token "custom") `itensorlocalinv`, the inverse
-    tensor about the pivot in object space (a matrix, else a vector as its diagonal), goes to
-    `BodyProps::inverseInertia`: it replaces the computed inertia (the mass stays computed, the inertia scale still
-    applies). A tensor `invertSymmetric3` refuses keeps the computed inertia. Glue options are not read. `p` /
-    `computecom` is the pivot, already read through `getPivot`.
+    `computeinertialtensor` on and `computeinertialtensortype` at Use Bounding Box (index 1, or a token containing
+    "box" / "bound"), the inertia is that of a solid box with the mass and the geometry's object-space bounding box
+    (`BodyProps::boundsInertia`, applied in `applyBodyMass`; the extents are rescanned every step); the scale still
+    applies. `computeinertialtensor` off keeps the computed inertia. The node has no tensor parameter. Glue options are
+    not read. `p` / `computecom` is the pivot, already read through `getPivot`.
   * `SolverParms` (`ActiveValue`, Create Active Object): off makes the body static (`rbdObjectSetup`), as `active = 0`
     does on a point. Read every step, so toggling retypes the body. There is no kinematic whole object, so edited
     Position data teleports it (see Edits).

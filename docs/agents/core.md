@@ -19,7 +19,7 @@ can compare two and call only the setters for what differs.
 `applyMassByHandle` once (required before the next step): it sets every shape's density, applies the mass from the
 shapes and, for dynamic bodies, can move the centre of mass to the body origin (parallel axis theorem) and scale the
 inertia (`b3Body_SetMassData`; skipped when already centred with scale 1). A custom inertia (`BodyProps::inverseInertia`,
-the last argument) replaces the computed inertia of a dynamic body, about the centre of mass at the origin, before the
+the last argument; whole objects pass the inertia of their bounding box, `boundsInverseInertia`) replaces the computed inertia of a dynamic body, about the centre of mass at the origin, before the
 scale; `invertSymmetric3` (`Box3DMath.h`) refuses a tensor that is not positive definite, and then the call returns
 false and the computed inertia stays. `getMassDataByHandle` can return the off-diagonal terms too. `setTypeByHandle`
 recomputes from the shapes, so the caller re-applies after a type change.
