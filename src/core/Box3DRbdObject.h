@@ -109,9 +109,11 @@ inline WholeObjectSetup rbdObjectSetup(const RbdObjectSettings &r) {
   if (r.hasBounce && isNonNeg(r.bounce))
     p.restitution = r.bounce;
 
-  // Unknown names (cylinder, plane) keep the default shape, as for points.
+  // Unknown names and plane keep the default shape: only packed pieces make
+  // planes.
   ShapeType shape = n.defaultShape;
-  if (r.hasGeorep && parseShapeType(r.georep.c_str(), shape))
+  if (r.hasGeorep && parseShapeType(r.georep.c_str(), shape) &&
+      shape != ShapeType::Plane)
     n.defaultShape = shape;
   if (r.hasGroupConnected)
     n.hullPerConnectedSet = r.groupConnected;
@@ -120,7 +122,8 @@ inline WholeObjectSetup rbdObjectSetup(const RbdObjectSettings &r) {
 
   const bool primitive = n.defaultShape == ShapeType::Box ||
                          n.defaultShape == ShapeType::Sphere ||
-                         n.defaultShape == ShapeType::Capsule;
+                         n.defaultShape == ShapeType::Capsule ||
+                         n.defaultShape == ShapeType::Cylinder;
   if (primitive && !n.autoFit) {
     const float one[3] = {1, 1, 1};
     out.spec = makeShapeSpec(n.defaultShape, 1.0f, one);

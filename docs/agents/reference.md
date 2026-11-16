@@ -21,7 +21,7 @@ average, multiply); `currentWorldSettings` maps the index to each enum (their or
 need a setting on the other (sleep, Fast Object, impacts, contact recycling) say so in the tooltip: Houdini can't
 disable across nodes.
 
-Box3D Data (per object): `defaultshape` (menu order: box, sphere, convex hull, concave, capsule, none; the stored value
+Box3D Data (per object): `defaultshape` (menu order: box, sphere, convex hull, concave, capsule, none, plane, cylinder; the stored value
 is the menu index; default convex hull), `autofit`, `hullperconnected`, `flipwinding`, `bodytype` (static, kinematic,
 dynamic), `computemass`, `mass`, `density`, `gravityscale`, `friction`, `bounce`, `rollingresistance`,
 `tangentvelocity` (Conveyor Velocity), `lineardamping`, `angulardamping`, `ccdthreshold`, `fastobject`,

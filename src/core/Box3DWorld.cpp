@@ -642,6 +642,14 @@ bool Box3DWorld::createShape(BodyHandle h, const BodySettings &body,
   case ShapeType::Capsule:
     return capsuleShape(h, body, shape.radius, shape.halfLength, shape.center,
                         shape.rot, updateMass);
+  case ShapeType::Cylinder:
+    return cylinderShape(h, body, shape.radius, shape.halfLength, shape.center,
+                         shape.rot, updateMass);
+  case ShapeType::Plane: {
+    // Through the body origin, facing its +Y (static bodies only).
+    const float up[3] = {0.0f, 1.0f, 0.0f};
+    return createPlaneShape(h, body, up, 0.0f);
+  }
   default:
     return boxShape(h, body, shape.halfExtents, shape.center, shape.rot,
                     updateMass);
@@ -861,6 +869,57 @@ bool Box3DWorld::capsuleShape(BodyHandle h, const BodySettings &b, float radius,
   const b3ShapeDef def = shapeDefFor(b, updateMass);
   const b3ShapeId shape = b3CreateCapsuleShape(b3LoadBodyId(h), &def, &capsule);
   return !B3_IS_NULL(shape);
+}
+
+bool Box3DWorld::cylinderShape(BodyHandle h, const BodySettings &b,
+                               float radius, float halfLength,
+                               const float center[3],
+                               const float rotationXYZW[4], bool updateMass) {
+  if (!h || !std::isfinite(radius) || !std::isfinite(halfLength))
+    return false;
+  // b3CreateCylinder asserts on a zero or negative size.
+  radius = std::max(radius, kMinExtent);
+  halfLength = std::max(halfLength, kMinExtent);
+  const float c[3] = {center ? center[0] : 0.0f, center ? center[1] : 0.0f,
+                      center ? center[2] : 0.0f};
+  const bool turned = !isIdentityRotation(rotationXYZW);
+  const b3Quat q =
+      turned ? b3NormalizeQuat(makeQuat(rotationXYZW)) : b3Quat_identity;
+
+  // One key per size and pose, so instances share the hull.
+  const float keyData[] = {
+      radius, halfLength, c[0],  c[1], c[2],
+      q.v.x,  q.v.y,      q.v.z, q.s,  static_cast<float>(kCylinderSides)};
+  HullId key = hashFloats(keyData, sizeof(keyData) / sizeof(keyData[0]));
+  key = mixHash(key, 0xc711d3ull);
+  if (key == 0)
+    key = 1;
+
+  if (!findHull(key)) {
+    // The cylinder is centred on its own origin: b3CreateCylinder starts at
+    // yOffset and rises by the height.
+    b3HullData *hull = b3CreateCylinder(2.0f * halfLength, radius, -halfLength,
+                                        kCylinderSides);
+    if (!hull)
+      return false;
+    if (turned || c[0] != 0.0f || c[1] != 0.0f || c[2] != 0.0f) {
+      // Move the prism's points and hull them again.
+      const b3Vec3 *src = b3GetHullPoints(hull);
+      std::vector<b3Vec3> pts(static_cast<size_t>(hull->vertexCount));
+      for (size_t i = 0; i < pts.size(); ++i) {
+        const b3Vec3 r = b3RotateVector(q, src[i]);
+        pts[i] = {r.x + c[0], r.y + c[1], r.z + c[2]};
+      }
+      b3DestroyHull(hull);
+      hull = b3CreateHull(pts.data(), static_cast<int>(pts.size()),
+                          B3_MAX_HULL_VERTICES);
+      if (!hull)
+        return false;
+    }
+    const HullRef ref = HullLibrary::instance().insert(key, hull);
+    myImpl->hold(key, ref);
+  }
+  return createHullShape(h, b, key, updateMass);
 }
 
 int Box3DWorld::bodyCount() const { return myImpl->liveBodies; }

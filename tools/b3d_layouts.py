@@ -19,7 +19,7 @@ SOLVER_LAYOUT = [
      ("Constraints", ["world_scale_constraints", "scale_constraint_attribs", "switch_scale_constraint_attribs"],
       {"color": PREPARE}),
      ("Collision", ["world_scale_collision", "prepare_collision", "collision_at_start", "collision_rest",
-                    "collision_deforming"], {"color": PREPARE}),
+                    "collision_deforming", "collision_unpack", "COLLISION_STATIC"], {"color": PREPARE}),
      ("Ground", ["ground_heightfield_in", "ground_heightfield_scale", "switch_ground_scale", "GROUND_HEIGHTFIELD"],
       {"color": GROUND})],
     [("Simulation", ["dopnet"], {"color": SIMULATION})],
@@ -45,7 +45,8 @@ SOLVER_LAYOUT = [
 
 # The DOP network inside it. The relationships are a grid: fourteen nodes with no wires between them.
 DOP_LAYOUT = [
-    [("Objects", ["pieces", "collision"], {"color": PREPARE}),
+    [("Objects", ["pieces", "collision", "collision_static", "collision_static_data", "collision_source"],
+      {"color": PREPARE}),
      ("Relationships", ["weld", "spherical", "revolute", "prismatic", "distance", "motor", "parallel", "wheel",
                         "filter", "glue", "hard", "spring", "soft", "conetwist"], {"grid": 5, "color": EXTRA})],
     [("Constraints", ["relationships", "constraintnetwork", "use_constraints", "pieces_and_collision",

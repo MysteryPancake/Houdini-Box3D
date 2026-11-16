@@ -39,7 +39,7 @@ its state in the object's `Position` data instead of point attributes.
     Position data teleports it (see Edits).
   * `PhysicalParms` (`SIM_PhysicalParms`): `friction`, `bounce`. `dynamicfriction`, `bounceforward`, `temperature`
     have no Box3D equivalent.
-  * `Geometry/BulletData` (`SIM_BulletData`): `bullet_georep` (unknown names such as cylinder / plane: box),
+  * `Geometry/BulletData` (`SIM_BulletData`): `bullet_georep` (unknown names, and plane: the default shape),
     `bullet_groupconnected`, `bullet_autofit`; with AutoFit off a box / sphere / capsule is built from `bullet_primS`
     (half extents, as for points), `bullet_primT` (offset from the pivot), `bullet_primR` (Euler XYZ degrees),
     `bullet_radius`, `bullet_length` instead of being fitted (`wholeObjectShapes`; the spec is in the shape signature).

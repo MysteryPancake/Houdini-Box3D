@@ -42,6 +42,13 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   the nodes are wired, but it is not built or run in Houdini: what the display geometry of a Ground Plane and the Static
   Object's `Geometry` import as, and whether `gl_wireframe` -1 on the merged guide still shows a Shaded plane shaded.
 * Box3D Data under Geometry on Static Objects and RBD Objects.
+* `bullet_georep` `cylinder` (`ShapeType::Cylinder`): the core test drops one; the Bullet comparisons are written and
+  not run: hand-set cases in `bullet_shape_attributes` (whether Bullet reads `bullet_radius` / `bullet_length` or
+  `bullet_primS`) and fitted ones in `bullet_cylinder`. Box3D Data's Default Shape menu (Plane and Cylinder at the end)
+  and the Packed Object / Configure menus built from it are not opened in Houdini.
+* `bullet_georep` `plane` on a packed piece (`ShapeType::Plane`, `buildShapes`): written without building or running. Its
+  Bullet placement (through the piece's origin, +Y, as a Ground Plane) is assumed, and a piece turning moving mid-simulation
+  rebuilds as a box.
 * Ground planes: a Static Object whose SDF Representation is set to Implicit Plane is taken as a plane facing +y through its
   origin, as a Ground Plane DOP's is (only the Ground Plane is tested). A plane tilted off the axes has a large broad-phase box,
   so every body in the world keeps a cheap contact with it. A fast body against a plane uses conservative advancement
@@ -99,6 +106,10 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 **Box3D Solver SOP** (`tools/make_solver_sop.py`, `tests/houdini/checks_sop.py`)
 * Collision Type Animated / Deforming: whether the Packed Object's Overwrite Attributes from SOP (SOP Geometry's Set Always) re-imports every step (the build prints which menus it drives),
   and the solver's cost of a full rescan of the collider each step.
+* Collide As Static Object (`solver_sop_collision_static`): written without building or running. Unchecked: the Unpack
+  SOP, the Static Object's default Collision Detection on a mesh (does it build a distance field?) and on a height
+  field, Hscript `nprims` and `if` in the Switch condition, the fourth DOP network input, and the guide of the
+  `collision` object.
 * Transform Pieces with packed transforms that carry scale or shear.
 * Constraints output through Transform Pieces: constraints between collision pieces (not in the simulation points, so
   not moved).
@@ -122,7 +133,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   on an object that has no such data, then an empty detail in `SIM_GeometryAutoWriteLock`; `setExtraInfo` keeping other
   entries and surviving the later `save`s (Bullet's extra info is `guide=GUIDE_GEO` among colour entries).
 * Concave meshes: one mesh shared between instances, static RBD Objects as meshes, drawing meshes in the guide.
-* Height fields: holes from a mask layer, height fields on points. `cylinder` shapes: see the Box3D fork list. `plane` as a Bullet shape on a packed piece still falls back (Ground Plane DOPs are real planes).
+* Height fields: holes from a mask layer, height fields on points.
 * Constraint networks: point / vertex / agent anchors (`anchor_id`, `anchor_type`); `constraint_type` on our nodes.
 * SideFX constraint data not mapped: Glue half-life / propagation, Soft plasticity, Cone Twist's elliptical and wide
   cones, softness, motors and translation ranges, Hard's angular motors, Spring's Hz following mass changes.
@@ -133,8 +144,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * Sticky collisions; contact / sensor events beyond Impacts.
 * Box3D Solver SOP:
   * Collision: Deforming following an unpacked collider that scales (a turn is checked by
-    `unpacked_turning_collider`); a Static Object option (height fields, one mesh), its own shape, friction and
-    bounce on the node.
+    `unpacked_turning_collider`).
   * Constraint relationship parameters on the node (Glue strength, Weld break force ...), or Attributes Replace
     Values on the inner ones so primitive attributes are absolute.
   * Initial velocity controls, Set Always for animated solver parameters, a help card.
@@ -150,7 +160,6 @@ Features to add in the fork. Once one exists, the wrapper maps it and the entry 
   and twist errors, each with its own spring. The motor joint's angular spring stalls the same way. The weld and
   prismatic ones make the same call and are unchecked. A twist limit avoids it (the car park's bollards). A parallel
   joint with a twist limit also orbited at about 72°: not understood.
-* **Cylinder shape.** `b3ShapeType` has no native cylinder, so `cylinder` falls back to Box3D Data's Default Shape.
 * **Glue: break on accumulated impulse.** Joints break on a per-step force or torque (`forceThreshold`,
   `torqueThreshold`), and joint events name the joints over it without saying by how much. Bullet's Glue strength is
   an accumulated impulse, so Glue maps to Break Force = strength / timestep and also breaks under steady load

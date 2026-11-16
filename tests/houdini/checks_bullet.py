@@ -134,6 +134,14 @@ SHAPE_CASES = (
      (0, 0, 0), (0, 0, 0)),
     ("capsule, radius 0.25 length 1, bullet_primR 0 0 90", "capsule", (1, 1, 1), 0.25, 1.0, (0, 0, 0), (0, 0, 90)),
     ("capsule, radius 0.25 length 1, bullet_primR 0 0 45", "capsule", (1, 1, 1), 0.25, 1.0, (0, 0, 0), (0, 0, 45)),
+    # Box3D takes a cylinder like a capsule: radius and length (the whole height, flat ends) along Y.
+    # Whether Bullet's cylinder reads bullet_radius / bullet_length or bullet_primS is not known: the
+    # second case sets both to the same cylinder, so the first one failing and it passing says which.
+    ("cylinder, radius 0.25 length 1", "cylinder", (1, 1, 1), 0.25, 1.0, (0, 0, 0), (0, 0, 0)),
+    ("cylinder, primS 0.25 0.5 0.25, radius 0.25 length 1", "cylinder", (0.25, 0.5, 0.25), 0.25, 1.0, (0, 0, 0),
+     (0, 0, 0)),
+    ("cylinder, radius 0.25 length 1, bullet_primR 0 0 90", "cylinder", (1, 1, 1), 0.25, 1.0, (0, 0, 0), (0, 0, 90)),
+    ("cylinder, radius 0.25 length 1 offset up 0.3", "cylinder", (1, 1, 1), 0.25, 1.0, (0, 0.3, 0), (0, 0, 0)),
 )
 
 
@@ -329,6 +337,32 @@ def test_bullet_shape_position():
     results.append(Result("bullet_shape_position", Result.INFO,
                           f"dynamic piece with its box offset up 0.3: rests at y {rest['box3d']:.3f} in Box3D, "
                           f"{rest['bullet']:.3f} in Bullet (-0.05 = the offset is from the piece's centre)"))
+    return results
+
+
+def test_bullet_cylinder():
+    """bullet_georep cylinder fitted to its geometry (Auto Fit on) against Bullet. A static piece of
+    0.4 x 1.2 x 0.4 with a plate dropped on it: the top of the fitted cylinder (0.6 if its flat end
+    sits on the bounds). A dynamic 0.6 x 1.0 x 0.3 piece dropped on the ground: where it rests (0.5
+    standing on its flat end), whether the two solvers agree within 0.03. The hand-set cylinder is
+    in bullet_shape_attributes."""
+    results = []
+    fit = dict(shape_attrs("cylinder", (1, 1, 1), 0.5, 1.0, (0, 0, 0), (0, 0, 0)), bullet_autofit=1)
+    top = {kind: shape_top("cylinder_top", kind, fit) for kind in KINDS}
+    results.append(Result("bullet_cylinder", Result.PASS if close(top["box3d"], top["bullet"], 0.03) else Result.FAIL,
+                          f"static fitted cylinder: top {top['box3d']:.3f} above the piece's centre in Box3D, "
+                          f"{top['bullet']:.3f} in Bullet"))
+    rest = {}
+    for kind in KINDS:
+        pieces = [dict(GROUND, attrs=FLAT_GROUND),
+                  {"size": (0.6, 1.0, 0.3), "center": (0.0, 2.0, 0.0), "attrs": dict(fit, active=1)}]
+        path, names = packed_boxes(f"cylinder_rest_{kind}_pieces", pieces)
+        dop = new_dopnet(f"cylinder_rest_{kind}")
+        finish(dop, solver_for(kind, dop, packed_object(dop, "pieces", path, keep_velocity=True)))
+        rest[kind] = step(dop, 120, lambda sim, f: packed_positions(sim, "pieces")[names[1]][1])[120]
+    results.append(Result("bullet_cylinder", Result.PASS if close(rest["box3d"], rest["bullet"], 0.03) else Result.FAIL,
+                          f"dynamic fitted cylinder: rests at y {rest['box3d']:.3f} in Box3D, "
+                          f"{rest['bullet']:.3f} in Bullet"))
     return results
 
 
@@ -675,6 +709,7 @@ TESTS = {
     "bullet_rest_convention": test_bullet_rest_convention,
     "bullet_shape_attributes": test_bullet_shape_attributes,
     "bullet_shape_position": test_bullet_shape_position,
+    "bullet_cylinder": test_bullet_cylinder,
     "bullet_primr_order": test_bullet_primr_order,
     "bullet_shape_probe": test_bullet_shape_probe,
     "bullet_joint_rest": test_bullet_joint_rest,

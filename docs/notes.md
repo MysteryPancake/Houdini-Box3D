@@ -11,4 +11,5 @@
 - Show Collision Shapes draws the bodies' collision shapes. It's in Guide Options on the solver, and Visualization on the Box3D Solver SOP.
 - The Box3D Solver SOP's Ground Collision makes an infinite Ground Plane (Position, Rotation) or a Height Field ground (with Use Deforming Geometry). Friction, Bounce, Rolling Resistance and Conveyor Velocity are under Physical. Show Ground on the Visualization tab draws it.
 - An unpacked collider that turns or scales during the simulation needs Collision Type Deforming on the Box3D Solver SOP. Animated keeps its first shape, as with Bullet.
+- On the Box3D Solver SOP, Collide As Static Object makes the Collision input one static mesh, or a height field. It uses the Material settings, and Flip Mesh Winding if pieces fall through.
 - Escape cancels a step.

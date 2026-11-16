@@ -89,7 +89,10 @@ speculative distance, keyed by vertex index. Fast bodies use `b3PlaneTimeOfImpac
 the sweep's linear and angular speed. Covered by `tests/core_plane.cpp`.
 
 **`Box3DShapes.h`** (all unit-tested): `parseShapeType` (exact lowercase Houdini names; `compound`
-= `concave`; unknown values, including `cylinder` and `plane`, return false; the solver memoises per shared-string handle
+= `concave`; `plane` is `ShapeType::Plane` (static bodies only: `buildShapes` falls back to a box with a note, whole
+objects ignore it); `cylinder` is `ShapeType::Cylinder`, a `ShapeSpec` like a capsule (`radius`, `halfLength` = half the
+height) built by `Box3DWorld::cylinderShape` as a `b3CreateCylinder` hull (`kCylinderSides`), moved and turned by
+re-hulling its points, cached under a key of size and pose; unknown values return false; the solver memoises per shared-string handle
 in `GeorepLookup`); `makeShapeSpec` (`pscale * scale` as a bounding box, components made positive and >= `kMinExtent`
 (`Box3DShapes.h`) by `clampExtent`; sphere diameter = largest component; capsule radius = half of
 max(x, z)); `PrimOverrides` / `applyPrimOverrides`; `matrixRowLengths`; `packedPointsToBodyLocal` (`(p - pivot) * S`);

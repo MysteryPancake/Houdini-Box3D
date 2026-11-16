@@ -218,6 +218,19 @@ void testPointMapping() {
   CHECK(std::fabs(outP[1] - 1.5) < 0.06); // capsule: 3 tall
   CHECK(pw.bodyMass(makeBodyKey(1, 10)) > 0.0f);
 
+  // a cylinder (radius 0.5, 3 tall) dropped upright rests at half its height
+  {
+    const double cylP[3] = {-7.5, 4, 0};
+    CHECK(pw.addBody(makeBodyKey(1, 11), dyn, cylP, qIdentity));
+    CHECK(pw.addShape(makeBodyKey(1, 11),
+                      makeShapeSpec(ShapeType::Cylinder, 1.0f, stand)));
+    for (int i = 0; i < 300; ++i)
+      pw.step(1.0f / 60.0f);
+    CHECK(pw.getTransform(makeBodyKey(1, 11), outP, outQ));
+    CHECK(std::fabs(outP[1] - 1.5) < 0.06);
+    CHECK(pw.bodyMass(makeBodyKey(1, 11)) > 0.0f);
+  }
+
   // a capsule placed off-centre via ShapeSpec::center moves the shape, not
   // the body
   {
@@ -255,8 +268,9 @@ void testConvexShapes() {
   // Houdini values Box3D cannot do are treated as unknown (caller uses its
   // default)
   t = ShapeType::Box;
-  CHECK(!parseShapeType("cylinder", t) && !parseShapeType("plane", t) &&
-        t == ShapeType::Box);
+  CHECK(parseShapeType("plane", t) && t == ShapeType::Plane);
+  CHECK(parseShapeType("cylinder", t) && t == ShapeType::Cylinder);
+  t = ShapeType::Box;
 
   // test fixture: S(2,3,4) * R(0.7 rad about Y), row-vector layout
   const float s45 = std::sin(0.5f * 0.7f), c45 = std::cos(0.5f * 0.7f);
@@ -956,8 +970,8 @@ void testHandleBuild() {
       const char *names[] = {"box",      "sphere",  "convexhull", "concave",
                              "compound", "capsule", "none",       "cylinder",
                              "",         nullptr,   "Box"};
-      const bool ok[] = {true, true,  true,  true,  true, true,
-                         true, false, false, false, false};
+      const bool ok[] = {true, true, true,  true,  true, true,
+                         true, true, false, false, false};
       for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
         ShapeType a = ShapeType::Capsule; // sentinel: unchanged on failure
         CHECK(parseShapeType(names[i], a) == ok[i]);

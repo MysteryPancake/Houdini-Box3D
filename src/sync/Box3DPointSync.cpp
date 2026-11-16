@@ -613,7 +613,10 @@ createBodyWithShapes(b3dop::Box3DWorld &world, const b3dop::BodySettings &b,
 void storePlan(Box3DBodyMirror &m, const ShapePlan &plan) {
   m.shapeSig = plan.sig;
   m.volume = plan.shapes.totalVolume;
-  m.concave = plan.type == b3dop::ShapeType::Concave;
+  // Shapes that depend on the body being static (mesh, plane) rebuild when it
+  // changes.
+  m.concave = plan.type == b3dop::ShapeType::Concave ||
+              plan.type == b3dop::ShapeType::Plane;
   m.plannedStatic = plan.plannedStatic;
   m.meshShapes = plan.shapes.mesh;
   m.autoScale = plan.autoScale;

@@ -135,6 +135,16 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   re-imported each step and the solver turns pose changes into kinematic targets; Deforming also sets `deforming` on
   the colliders (`collision_deforming`). Both are the Packed Object's own parameters, so the nested asset stays locked.
   A point with `active = 0` and no `animated` stays static.
+* Collide As (`collisionsource`: Packed Pieces, Static Object): a `switch` (`collision_source`) between the `collision`
+  Packed Object and a Static Object (`collision_static`, SOP Path the `COLLISION_STATIC` null) through a Box3D Data
+  (`collision_static_data`, Set Initial). The null follows `collision_unpack` (an Unpack SOP, since affectors ignore
+  packed primitives) on the World Scale'd Collision input, also the DOP network's fourth input (`DOP_STATIC`): the
+  `use_collision` Switch counts that input's primitives (a height field has no points) instead of the packed
+  collision's points. Use Deforming Geometry follows Collision Type Deforming only; Animated does not move a Static
+  Object. The collider's Material settings (`GROUND_MATERIAL`) link to both Box3D Data nodes, Flip Mesh Winding
+  (`collision_flipwinding`) to `flipwinding`; Shape and Contacts are disabled for a Static Object. Static Object keeps
+  its default Collision Detection (a height field and a mesh both arrive as affectors,
+  [forces-affectors.md](forces-affectors.md)). Test `solver_sop_collision_static`.
 * The Constraint Network DOP uses Second Context Geometry and Attach Internal Constraints to Object (as RBD Bullet
   Solver), so the network is the pieces object's `ConstraintGeometry`. Only the pieces go through it, the collision
   object is merged after: a second object would get its own copy and make every joint twice. Every relationship in

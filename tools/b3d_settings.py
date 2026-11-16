@@ -21,7 +21,7 @@ MAPPING = {
 SKIP = {"hullperconnected", "flipwinding", "addimpact"}
 
 # Default Shape's menu order (SIM_Box3DData.cpp) as bullet_georep values.
-GEOREP_VALUES = ["box", "sphere", "convexhull", "concave", "capsule", "none"]
+GEOREP_VALUES = ["box", "sphere", "convexhull", "concave", "capsule", "none", "plane", "cylinder"]
 DYNAMIC = 2  # Body Type's Dynamic (Static, Kinematic, Dynamic)
 
 def settings(data, warn):

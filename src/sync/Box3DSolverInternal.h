@@ -380,7 +380,7 @@ struct BuiltShapes {
   std::vector<Piece> pieces;
   float totalVolume = 0.0f;
   const char *note = nullptr; // set when something fell back
-  bool mesh = false;          // the pieces are one triangle mesh
+  bool mesh = false; // static-only pieces: one triangle mesh, or a plane
 };
 
 // staticMesh: the body will be static, so `concave` becomes a triangle mesh of

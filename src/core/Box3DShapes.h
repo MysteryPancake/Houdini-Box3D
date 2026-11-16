@@ -25,18 +25,26 @@ enum class ShapeType : int {
   // several convex hulls on ONE body (packed geometry pieces, grouped by
   // `name`)
   Concave = 3,
-  Capsule = 4, // axis along the body's Y
-  None = 5,    // no collision shape: a static body that nothing collides with
+  Capsule = 4,  // axis along the body's Y
+  None = 5,     // no collision shape: a static body that nothing collides with
+  Plane = 6,    // infinite plane through the body origin, facing the body's +Y;
+                // static bodies only
+  Cylinder = 7, // axis along the body's Y; a polygon prism hull (Box3DWorld)
 };
 
-// A box, sphere or capsule in body-local space. `center` is its offset from the
-// body origin (non-zero e.g. when fitted to packed geometry not centred on the
-// pivot). Convex / concave shapes are hulls instead (Box3DWorld::createHull).
+// Sides of a cylinder's polygon (b3CreateCylinder accepts 3 to 32).
+constexpr int kCylinderSides = 32;
+
+// A box, sphere, capsule or cylinder in body-local space. `center` is its
+// offset from the body origin (non-zero e.g. when fitted to packed geometry not
+// centred on the pivot). Convex / concave shapes are hulls instead
+// (Box3DWorld::createHull).
 struct ShapeSpec {
   ShapeType type = ShapeType::Box;
   float halfExtents[3] = {0.5f, 0.5f, 0.5f}; // Box
-  float radius = 0.5f;                       // Sphere, Capsule
-  float halfLength = 0.5f; // Capsule: half the straight section, along Y
+  float radius = 0.5f;                       // Sphere, Capsule, Cylinder
+  float halfLength = 0.5f; // Capsule: half the straight section, along Y;
+                           // Cylinder: half its height
   float center[3] = {0.0f, 0.0f, 0.0f}; // every primitive
   float rot[4] = {0.0f, 0.0f, 0.0f,
                   // x, y, z, w: orientation in body space. Box and capsule; a
@@ -46,8 +54,7 @@ struct ShapeSpec {
 
 // `bullet_georep` -> ShapeType, Houdini's lowercase names, exact match.
 // `compound` and `concave` are both Concave. False (out untouched) for null,
-// empty or unknown values, including `cylinder` and `plane`, which Box3D has no
-// shape for.
+// empty or unknown values.
 inline bool parseShapeType(const char *name, ShapeType &out) {
   if (!name || !*name)
     return false;
@@ -59,7 +66,8 @@ inline bool parseShapeType(const char *name, ShapeType &out) {
       {"convexhull", ShapeType::Convex}, {"concave", ShapeType::Concave},
       {"box", ShapeType::Box},           {"capsule", ShapeType::Capsule},
       {"compound", ShapeType::Concave},  {"sphere", ShapeType::Sphere},
-      {"none", ShapeType::None},
+      {"none", ShapeType::None},         {"plane", ShapeType::Plane},
+      {"cylinder", ShapeType::Cylinder},
   };
   for (const Entry &e : kEntries)
     if (std::strcmp(name, e.name) == 0) {
@@ -90,12 +98,16 @@ inline ShapeSpec makeShapeSpec(ShapeType type, float pscale,
 
   ShapeSpec s;
   // Convex / concave: the fallback box when there is no geometry to hull.
-  s.type = (type == ShapeType::Sphere || type == ShapeType::Capsule)
+  s.type = (type == ShapeType::Sphere || type == ShapeType::Capsule ||
+            type == ShapeType::Cylinder)
                ? type
                : ShapeType::Box;
   if (type == ShapeType::Sphere)
     s.radius = 0.5f * std::max({sx, sy, sz});
-  else if (type == ShapeType::Capsule) {
+  else if (type == ShapeType::Cylinder) {
+    s.radius = 0.5f * std::max(sx, sz);
+    s.halfLength = 0.5f * sy;
+  } else if (type == ShapeType::Capsule) {
     s.radius = 0.5f * std::max(sx, sz);
     s.halfLength = std::max(0.5f * sy - s.radius, 0.0f);
   } else {
@@ -149,10 +161,12 @@ inline void applyPrimOverrides(ShapeSpec &s, const PrimOverrides &o) {
       s.halfExtents[i] = clampExtent(o.size[i]);
 
   if (o.hasRadius && std::isfinite(o.radius) &&
-      (s.type == ShapeType::Sphere || s.type == ShapeType::Capsule))
+      (s.type == ShapeType::Sphere || s.type == ShapeType::Capsule ||
+       s.type == ShapeType::Cylinder))
     s.radius = clampExtent(o.radius);
 
-  if (o.hasLength && std::isfinite(o.length) && s.type == ShapeType::Capsule)
+  if (o.hasLength && std::isfinite(o.length) &&
+      (s.type == ShapeType::Capsule || s.type == ShapeType::Cylinder))
     s.halfLength = std::max(0.5f * o.length, 0.0f);
 
   if (o.hasPos && finite3(o.pos))
@@ -170,6 +184,10 @@ inline float shapeVolume(const ShapeSpec &s) {
     return (4.0f / 3.0f) * pi * r * r * r;
   case ShapeType::Capsule:
     return pi * r * r * (2.0f * s.halfLength) + (4.0f / 3.0f) * pi * r * r * r;
+  case ShapeType::Cylinder:
+    return pi * r * r * (2.0f * s.halfLength);
+  case ShapeType::Plane:
+    return 0.0f;
   default:
     return 8.0f * s.halfExtents[0] * s.halfExtents[1] * s.halfExtents[2];
   }
@@ -439,18 +457,21 @@ inline bool fitShapeInFrame(ShapeType type, const float *xyz, int count,
     }
     out.type = ShapeType::Sphere;
     out.radius = clampExtent(static_cast<float>(std::sqrt(r2)));
-  } else if (type == ShapeType::Capsule) {
+  } else if (type == ShapeType::Capsule || type == ShapeType::Cylinder) {
     double r2 = 0.0;
     for (int i = 0; i < count; ++i) {
       double along, dist2;
       relative(i, along, dist2);
       r2 = std::max(r2, dist2);
     }
-    out.type = ShapeType::Capsule;
+    out.type = type;
     out.radius = clampExtent(static_cast<float>(std::sqrt(r2)));
     // Bullet keeps the whole capsule within the bounds along the axis: the
-    // caps end where the piece does (a sphere when the radius is larger).
-    out.halfLength = std::max(half[1] - out.radius, 0.0f);
+    // caps end where the piece does (a sphere when the radius is larger). A
+    // cylinder's flat ends sit on the bounds.
+    out.halfLength = type == ShapeType::Cylinder
+                         ? half[1]
+                         : std::max(half[1] - out.radius, 0.0f);
     if (turned)
       quatFromAxes(axes[0], axes[1], axes[2], out.rot);
   } else {

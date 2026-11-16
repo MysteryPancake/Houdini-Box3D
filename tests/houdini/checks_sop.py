@@ -88,6 +88,61 @@ def test_solver_sop_collision():
     return results
 
 
+def test_solver_sop_collision_static():
+    """Collide As Static Object on the Collision input: an unpacked grid and a flat HeightField SOP each hold a
+    box at y = 0.5 (with Use External Collisions on only), a packed collider stays packed pieces by default,
+    the Material settings reach the Static Object's Box3D Data and Flip Mesh Winding does too."""
+    pieces, names = packed_boxes("sop_static_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0)}])
+
+    def settle(sop, frames=72):
+        track = play(sop, frames, lambda s, f: named_positions(s.geometry(0)).get(names[0]) if f == frames else None)
+        return track[frames][1] if track[frames] else None
+
+    results = []
+    grid_geo = new_geo("sop_static_grid")
+    grid = create(grid_geo, "grid", "grid")
+    set_parm(grid, ["sizex"], 10)
+    set_parm(grid, ["sizey"], 10)
+    display(grid)
+    field_geo = new_geo("sop_static_field")
+    field = create(field_geo, "heightfield", "field")
+    set_parm(field, ["sizex"], 20)
+    set_parm(field, ["sizey"], 20)
+    display(field)
+    for label, path in (("polygon grid", grid.path()), ("height field", field.path())):
+        sop = solver_sop(f"sop_static_{label.split()[0]}", geometry=pieces, collision=path)
+        set_parm(sop, ["collisionsource"], 1)
+        y = settle(sop)
+        results.append(Result("solver_sop_collision_static", Result.PASS if close(y or 0, 0.5, 0.05) else Result.FAIL,
+                              f"Static Object, {label}: box at y={y} after 3 s (expected 0.5)"))
+
+    off = solver_sop("sop_static_off", geometry=pieces, collision=grid.path())
+    set_parm(off, ["collisionsource"], 1)
+    set_parm(off, ["usecollisions"], 0)
+    y = settle(off)
+    results.append(Result("solver_sop_collision_static", Result.PASS if y is not None and y < -1.0 else Result.FAIL,
+                          f"Static Object with Use External Collisions off: box at y={y} (expected below -1: fell)"))
+
+    # Packed colliders stay the default: a packed ground box still holds the box.
+    ground, _ = packed_boxes("sop_static_packed_ground", [GROUND])
+    packed = solver_sop("sop_static_packed", geometry=pieces, collision=ground)
+    y = settle(packed)
+    results.append(Result("solver_sop_collision_static", Result.PASS if close(y or 0, 0.5, 0.03) else Result.FAIL,
+                          f"Packed Pieces (the default): box at y={y} (expected 0.5)"))
+
+    # Material and winding reach the Static Object's Box3D Data.
+    mat = solver_sop("sop_static_material", geometry=pieces, collision=grid.path())
+    for name, value in {"collision_friction": 0.3, "collision_bounce": 0.7}.items():
+        set_parm(mat, [name], value)
+    set_parm(mat, ["collision_flipwinding"], 1)
+    data = mat.node("dopnet/collision_static_data")
+    got = (data.parm("friction").eval(), data.parm("bounce").eval(), data.parm("flipwinding").eval())
+    ok = close(got[0], 0.3, 1e-6) and close(got[1], 0.7, 1e-6) and got[2] == 1
+    results.append(Result("solver_sop_collision_static", Result.PASS if ok else Result.FAIL,
+                          f"Static Object's Box3D Data friction, bounce, flipwinding: {got} (expected 0.3, 0.7, 1)"))
+    return results
+
+
 def test_solver_sop_impacts():
     """With Add Impact Data on (the Output tab), a box landing on the ground leaves impact points in the
     asset's IMPACTS node, and Fetch Impacts adds an Object Merge beside the asset that reads them."""
@@ -1075,6 +1130,7 @@ TESTS = {
     "solver_sop_collision_names": test_solver_sop_collision_names,
     "solver_sop_world_scale": test_solver_sop_world_scale,
     "solver_sop_ground": test_solver_sop_ground,
+    "solver_sop_collision_static": test_solver_sop_collision_static,
     "solver_sop_ground_guide": test_solver_sop_ground_guide,
     "solver_sop_collision_prim_names": test_solver_sop_collision_prim_names,
     "solver_sop_collision_rest": test_solver_sop_collision_rest,

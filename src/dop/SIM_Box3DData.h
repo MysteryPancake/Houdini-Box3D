@@ -46,7 +46,7 @@ public:
   GETSET_DATA_FUNCS_B("addimpact", AddImpact); // Impacts data
   GETSET_DATA_FUNCS_I("defaultshape",
                       // 0 box, 1 sphere, 2 convexhull, 3 concave/compound, 4
-                      // capsule, 5 none
+                      // capsule, 5 none, 6 plane, 7 cylinder
                       DefaultShape);
   GETSET_DATA_FUNCS_B("hullperconnected", HullPerConnected);
   GETSET_DATA_FUNCS_B("autofit", AutoFit); // point attribute: bullet_autofit

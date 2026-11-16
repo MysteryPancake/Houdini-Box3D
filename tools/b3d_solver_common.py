@@ -117,6 +117,15 @@ FETCH_IMPACTS = (
 GEO, CONSTRAINTS, PROXY, COLLISION = range(4)  # the asset's inputs
 # The inner DOP network's inputs (read inside with dopcontextgeo(".", i)): not the asset's numbers.
 DOP_PIECES, DOP_CONSTRAINTS, DOP_COLLISION = range(3)
+# Collide As Static Object: the Collision input unpacked (a null the Static Object reads by path), also the
+# DOP network's fourth input so the Switches can count its primitives (a height field has no points).
+DOP_STATIC = 3
+COLLISION_SOURCE = "collisionsource"  # menu: 0 Packed Pieces, 1 Static Object
+COLLISION_FLIP = "collision_flipwinding"  # Static Object mesh winding (Box3D Data's Flip Static Mesh Winding)
+STATIC_NULL = "COLLISION_STATIC"  # the SOP the collision Static Object reads
+STATIC_DATA = "collision_static_data"  # the Box3D Data DOP after the collision Static Object
+# Collider settings that stay on when the collider is a Static Object (Shape and Contacts are for packed pieces).
+STATIC_COLLIDER_FOLDERS = ("Shape", "Contacts")
 
 # Every constraint relationship the solver supports, wired into the constraint network so any
 # constraint_name in the network finds one. (node type candidates, node name). Data Names stay at

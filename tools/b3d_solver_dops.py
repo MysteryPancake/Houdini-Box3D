@@ -4,13 +4,15 @@ import hou
 
 import b3d_hda
 from b3d_hda import labels
-from b3d_solver_ground import build_ground_dops
+from b3d_solver_ground import build_ground_dops, setp
 from b3d_solver_common import (
+    COLLISION_SOURCE,
     COLLISION_TYPE,
     create,
     DOP_COLLISION,
     DOP_CONSTRAINTS,
     DOP_PIECES,
+    DOP_STATIC,
     FORCES,
     FORCES_NOTES,
     FORCES_OUTPUTS,
@@ -20,6 +22,8 @@ from b3d_solver_common import (
     RELATIONSHIPS,
     set_by_label,
     set_menu_item,
+    STATIC_DATA,
+    STATIC_NULL,
     switch_on_context_geo,
     USE_COLLISIONS,
     warn,
@@ -67,6 +71,21 @@ def build_dops(dopnet):
     set_menu_item(collision, "Default Shape", "Convex Hull")
     animate_collision(collision)
 
+    # Collide As Static Object: the Collision input, unpacked, as one Static Object (polygons become one mesh,
+    # a height field a height field), static. Only Deforming rebuilds it every step. A Box3D Data after it takes
+    # the collider's Material settings and the mesh winding.
+    static = create(dopnet, "staticobject", "collision_static")
+    setp(static, "object_name", "collision")
+    setp(static, "soppath", f"../../{STATIC_NULL}")
+    setp(static, "animategeo", expr=f'ch("../../{COLLISION_TYPE}") == 2')
+    static_data = create(dopnet, "box3d_data", STATIC_DATA)
+    static_data.setInput(0, static)
+    b3d_hda.set_operations(static_data, "initial", warn)
+    collider = create(dopnet, "switch", "collision_source")
+    collider.setInput(0, collision)
+    collider.setInput(1, static_data)
+    setp(collider, "input", expr=f'ch("../../{COLLISION_SOURCE}")')
+
     # Constraints: every supported relationship, the network from the second context geometry,
     # attached to the pieces object as its ConstraintGeometry (as RBD Bullet Solver does), so the
     # constraints output can DOP Import it. Only the pieces go through it: the collision object
@@ -93,16 +112,19 @@ def build_dops(dopnet):
 
     both = create(dopnet, "merge", "pieces_and_collision")
     both.setInput(0, constrained)
-    both.setInput(1, collision)
+    both.setInput(1, collider)
     objects = create(dopnet, "switch", "use_collision")
     objects.setInput(0, constrained)
     objects.setInput(1, both)
     p = objects.parm("input")
     if p is None:
         warn(f"{objects.path()} has no Select Input parameter")
-    else:  # Use External Collisions on, and the collision input has points (as RBD Bullet Solver)
-        p.setExpression(f'ch("../../{USE_COLLISIONS}") && (npoints(opinputpath("..", {DOP_COLLISION})) > 0)',
-                        hou.exprLanguage.Hscript)
+    else:  # Use External Collisions on, and the collision input has points (as RBD Bullet Solver), or, as a
+        # Static Object, primitives (a height field has no points)
+        p.setExpression(
+            f'ch("../../{USE_COLLISIONS}") && if(ch("../../{COLLISION_SOURCE}"), '
+            f'nprims(opinputpath("..", {DOP_STATIC})) > 0, npoints(opinputpath("..", {DOP_COLLISION})) > 0)',
+            hou.exprLanguage.Hscript)
 
     # Forces: a FORCES subnet (the asset's dive target) with PRESOLVE and POSTSOLVE outputs, run by
     # a Multiple Solver around the Box3D Solver: PRESOLVE, Box3D Solver, POSTSOLVE. POP forces

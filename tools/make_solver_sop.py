@@ -83,6 +83,8 @@ from b3d_solver_common import (  # noqa: E402
     COLLIDER_DROPPED,
     COLLIDER_FOLDERS,
     COLLIDER_RELABEL,
+    COLLISION_FLIP,
+    COLLISION_SOURCE,
     DIVE_TARGET,
     DOP_COLLISION,
     DOP_PIECES,
@@ -107,6 +109,8 @@ from b3d_solver_common import (  # noqa: E402
     SHAPES_TOGGLE,
     SHOW_COLLISION,
     START_ASLEEP,
+    STATIC_COLLIDER_FOLDERS,
+    STATIC_DATA,
     solver_folders,
     TAB_GROUPS,
     SOLVER_FOLDERS,
@@ -119,7 +123,13 @@ from b3d_solver_common import (  # noqa: E402
     USE_COLLISIONS,
     warn,
 )
-from b3d_solver_ground import finish_ground, GROUND_DATA, ground_items, ground_visualization  # noqa: E402
+from b3d_solver_ground import (  # noqa: E402
+    finish_ground,
+    GROUND_DATA,
+    GROUND_MATERIAL,
+    ground_items,
+    ground_visualization,
+)
 from b3d_solver_network import (  # noqa: E402
     build_network,
     IMPORT_CONSTRAINTS,
@@ -285,9 +295,27 @@ def build(out_path, packed_hda=None):
         label = COLLIDER_RELABEL.get(tab.label(), tab.label())
         collider_folders.append(hou.FolderParmTemplate(f"b3dsop_collider{i}", label, templates,
                                                        folder_type=hou.folderType.Simple))
+    static_data = dopnet.node(STATIC_DATA)
     for old, new in collider_renames.items():
         links.append((sub.relativePathTo(collision), old, new))
         taken.add(new)
+        # The Static Object's Box3D Data takes the same Material settings (friction, bounce ...).
+        if static_data is not None and old in GROUND_MATERIAL:
+            links.append((sub.relativePathTo(static_data), old, new))
+    if static_data is None:
+        warn(f"no {STATIC_DATA} in the DOP network: Collide As Static Object has no material settings")
+    source = hou.MenuParmTemplate(
+        COLLISION_SOURCE, "Collide As", ("0", "1"),  # numeric tokens: the conditions compare numbers
+        menu_labels=("Packed Pieces", "Static Object"), default_value=0,
+        help="Packed Pieces: each piece is a body, as the Geometry input. Static Object: the whole input is one "
+             "static mesh, or a height field if it has one. Only for colliders that never move.")
+    flip = hou.ToggleParmTemplate(
+        COLLISION_FLIP, "Flip Mesh Winding", default_value=False,
+        help="A Static Object mesh is one-sided. Turn on if pieces fall through from the side that should be solid.")
+    flip.setConditional(hou.parmCondType.HideWhen, f"{{ {COLLISION_SOURCE} == 0 }}")
+    if static_data is not None:
+        links.append((sub.relativePathTo(static_data), "flipwinding", COLLISION_FLIP))
+    taken.add(COLLISION_FLIP)
     use_collisions = hou.ToggleParmTemplate(
         USE_COLLISIONS, "Use External Collisions", default_value=True,
         help="Collides the pieces with the Collision input. Off: the Collision input is ignored.")
@@ -295,21 +323,26 @@ def build(out_path, packed_hda=None):
         COLLISION_TYPE, "Collision Type", ("static", "animated", "deforming"),
         menu_labels=("Static", "Animated", "Deforming"), default_value=1,
         help="Static: collision stays where it starts. Animated: it follows its animation and pushes what it hits. "
-             "Deforming: Animated, with its shape rebuilt every step (slower).")
+             "Deforming: Animated, with its shape rebuilt every step (slower). A Static Object only follows "
+             "Deforming.")
     animated.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_COLLISIONS} == 0 }}")
+    source.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_COLLISIONS} == 0 }}")
+    flip.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_COLLISIONS} == 0 }}")
     # One open Collision Geometry folder with Use External Collisions as its header checkbox, laid out as
     # RBD Bullet Solver's: the toggle just before the folder (drawn in its header), the collider's
     # folders simple inside it, each disabled with the toggle off.
     off = f"{{ {USE_COLLISIONS} == 0 }}"
     for f in collider_folders:
-        f.setConditional(hou.parmCondType.DisableWhen, off)
+        # Shape and Contacts are for packed pieces: off for a Static Object (the groups OR together).
+        static_off = f"{off} {{ {COLLISION_SOURCE} == 1 }}" if f.label() in STATIC_COLLIDER_FOLDERS else off
+        f.setConditional(hou.parmCondType.DisableWhen, static_off)
         f.setTags({**f.tags(), "group_type": "simple"})
     # Ground Collision below it, as RBD Bullet Solver's: Ground Type in the folder's header.
     ground_folder, ground_links = ground_items(dopnet.node(GROUND_DATA))
     links += [(sub.relativePathTo(dopnet.node(GROUND_DATA)), inner, outer) for _, inner, outer in ground_links]
     collision_items = [use_collisions,
                        collapsible("b3dsop_collision_geometry", "Collision Geometry",
-                                   [animated] + collider_folders, header_toggle=USE_COLLISIONS),
+                                   [source, animated, flip] + collider_folders, header_toggle=USE_COLLISIONS),
                        ground_folder]
     taken.update([TRANSFER_ATTRIBUTES, KEEP_BROKEN, IMPORT_CONSTRAINTS, IMPORT_PROXY]
                  + list(POINT_VELOCITY_PARMS) + [n for n, _ in TRANSFER_TO.values()])
@@ -569,6 +602,8 @@ def check(out_path):
         warn(f"no {SHOW_COLLISION} parameter on the asset, or it is not on by default")
     for outer, inner_path, inner_name in (("friction", "dopnet/pieces", "friction"),
                                           ("collision_friction", "dopnet/collision", "friction"),
+                                          ("collision_friction", "dopnet/collision_static_data", "friction"),
+                                          ("collision_bounce", "dopnet/collision_static_data", "bounce"),
                                           ("substeps", "dopnet/box3d_solver", "substeps")):
         p, inner = probe.parm(outer), probe.node(inner_path)
         q = inner.parm(inner_name) if inner is not None else None

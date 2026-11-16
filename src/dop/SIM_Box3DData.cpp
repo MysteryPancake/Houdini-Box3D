@@ -23,9 +23,11 @@ const SIM_DopDescription *SIM_Box3DData::getDescription() {
           .menu("defaultshape", "Default Shape",
                 static_cast<int>(b3dop::ShapeType::Convex),
                 {"Box", "Sphere", "Convex Hull",
-                 "Concave / Compound (Hull per Piece)", "Capsule", "None"},
+                 "Concave / Compound (Hull per Piece)", "Capsule", "None",
+                 "Plane", "Cylinder"},
                 "Collision shape for points without a bullet_georep attribute. "
-                "Concave builds one convex hull per piece.")
+                "Concave builds one convex hull per piece. A plane needs a "
+                "static piece.")
           // Off: box / sphere / capsule from bullet_primS / radius / length /
           // primT / primR.
           .toggle(
@@ -141,7 +143,9 @@ static_assert(static_cast<int>(b3dop::ShapeType::Box) == 0 &&
                   static_cast<int>(b3dop::ShapeType::Convex) == 2 &&
                   static_cast<int>(b3dop::ShapeType::Concave) == 3 &&
                   static_cast<int>(b3dop::ShapeType::Capsule) == 4 &&
-                  static_cast<int>(b3dop::ShapeType::None) == 5,
+                  static_cast<int>(b3dop::ShapeType::None) == 5 &&
+                  static_cast<int>(b3dop::ShapeType::Plane) == 6 &&
+                  static_cast<int>(b3dop::ShapeType::Cylinder) == 7,
               "defaultshape menu order");
 
 b3dop::BodySettings SIM_Box3DData::toBodySettings() const {
@@ -152,7 +156,7 @@ b3dop::BodySettings SIM_Box3DData::toBodySettings() const {
   if (bodyType >= 0 && bodyType <= 2)
     s.type = b3dop::BodySettings::Type(bodyType);
   const int shape = static_cast<int>(getDefaultShape());
-  if (shape >= 0 && shape <= 5)
+  if (shape >= 0 && shape <= 7)
     s.defaultShape = b3dop::ShapeType(shape);
 
   b3dop::BodyProps &p = s.props;

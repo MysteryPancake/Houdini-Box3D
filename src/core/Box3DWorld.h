@@ -685,6 +685,11 @@ private:
   bool capsuleShape(BodyHandle h, const BodySettings &b, float radius,
                     float halfLength, const float center[3],
                     const float rotationXYZW[4], bool updateMass);
+  // A kCylinderSides-sided prism hull from b3CreateCylinder, turned and moved
+  // like a capsule; cached by its size and pose.
+  bool cylinderShape(BodyHandle h, const BodySettings &b, float radius,
+                     float halfLength, const float center[3],
+                     const float rotationXYZW[4], bool updateMass);
 
   struct Impl;
   std::unique_ptr<Impl> myImpl;

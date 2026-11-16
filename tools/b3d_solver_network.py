@@ -15,6 +15,7 @@ from b3d_solver_common import (
     DOP_COLLISION,
     DOP_CONSTRAINTS,
     DOP_PIECES,
+    DOP_STATIC,
     GEO,
     IMPACTS,
     INPUT_COLORS,
@@ -35,6 +36,7 @@ from b3d_solver_common import (
     USE_GROUND,
     set_import_style,
     set_toggles,
+    STATIC_NULL,
     switch_on_spare_input,
     template_by_label,
     TRANSFER_ATTRIBUTES,
@@ -134,7 +136,8 @@ SCALED_SETTINGS = [("dopnet/box3d_solver", n, 1) for n in
                     "contactrecycledistance", "impactminspeed")] + \
     [("dopnet/pieces", "density", -3)] + \
     [("dopnet/pieces", n, 1) for n in ("sleepthreshold", "tangentvelocity")] + \
-    [("dopnet/collision", "tangentvelocity", 1), ("dopnet/ground_data", "tangentvelocity", 1)]
+    [("dopnet/collision", "tangentvelocity", 1), ("dopnet/collision_static_data", "tangentvelocity", 1),
+     ("dopnet/ground_data", "tangentvelocity", 1)]
 # (The collider's density and sleep threshold are not promoted: it is never dynamic.)
 
 # World Scale on joints: the power of the scale each inner relationship setting follows. Masses stay
@@ -509,6 +512,11 @@ def build_network(sub):
     deforming.parm("class").set("point")
     deforming.parm("snippet").set(COLLISION_DEFORMING_VEX)
     dopnet.setInput(DOP_COLLISION, deforming)
+    # Collide As Static Object: the same input unpacked, for the Static Object to read by path.
+    unpacked = create(sub, "unpack", "collision_unpack")
+    unpacked.setInput(0, scaled[COLLISION])
+    create(sub, "null", STATIC_NULL).setInput(0, unpacked)
+    dopnet.setInput(DOP_STATIC, sub.node(STATIC_NULL))
     for child in dopnet.children():
         child.destroy()
     solver = build_dops(dopnet)

@@ -535,6 +535,20 @@ BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
     out.pieces.push_back(pc);
   };
 
+  // `plane`: an infinite plane, only on a static body. Otherwise a box (fitted
+  // or pscale sized) with a note.
+  if (type == ShapeType::Plane) {
+    if (staticMesh) {
+      Piece pc;
+      pc.spec.type = ShapeType::Plane;
+      add(pc);
+      out.mesh = true; // static-only shapes
+      return out;
+    }
+    out.note = "a plane needs a static piece; used a box";
+    type = ShapeType::Box;
+  }
+
   // Static concave: the exact polygons as one Box3D triangle mesh (meshes only
   // collide as static). No polygons in it: hulls as for a moving body.
   if (staticMesh && type == ShapeType::Concave && pk.prim) {
