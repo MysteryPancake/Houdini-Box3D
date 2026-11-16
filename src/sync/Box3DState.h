@@ -433,6 +433,13 @@ struct Box3DJointEntry {
   bool glue = false;
   b3dop::GlueParams glueParams;
   float glueImpact = 0.0f;
+
+  // SideFX Spring: its Hz and damping ratio come from the bodies' masses
+  // (Hooke's constant and absolute damping converted, b3dop::mapSideFX), so the
+  // masses they were made from are kept and the joint is remade when they
+  // change.
+  bool massDependent = false;
+  b3dop::SideFXBody massA, massB;
 };
 
 // A body in a Glue network this frame and the impulse its contacts put on it

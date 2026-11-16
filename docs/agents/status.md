@@ -143,7 +143,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   is `position`, where the solver takes `all` (checked against Bullet in `bullet_joint_rest` and `sidefx_hard_*`: rerun
   before changing).
 * SideFX constraint data not mapped: Soft plasticity, Cone Twist's elliptical and wide
-  cones, softness, motors and translation ranges, Hard's angular motors, Spring's Hz following mass changes.
+  cones, softness, motors and translation ranges, Hard's angular motors.
 * Inactive RBD Object (Create Active Object off) is a static body: animating its Position teleports it, where Bullet
   drives it as a kinematic body that pushes what it touches.
 * Force DOPs: evaluation inside Box3D's Solver Passes (needs a callback in the fork); parallel evaluation of circle / sphere

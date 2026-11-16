@@ -203,8 +203,9 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
     length, or a linear-only motor joint when it is ~0; rotation -> angular-only motor joint. Plasticity is ignored.
   * Spring: as Soft, after converting Hooke's constant and absolute damping per joint: Hz = sqrt(k / m) / 2 pi,
     ratio = c / (2 sqrt(k m)), with m the reduced mass of the dynamic bodies (one dynamic body: its mass) for the
-    linear spring, and the mean principal inertia the same way for the angular one. Read when the network is
-    reprocessed, so a mass change alone does not update it.
+    linear spring, and the mean principal inertia the same way for the angular one. The masses it was made from are kept
+    (`massDependent`, `massA` / `massB` on the entry); `syncJoints` compares them with the bodies' now each step and
+    reprocesses a network whose Spring's masses changed, so its Hz and ratio follow (`sidefx_spring_mass`).
   * Cone Twist: spherical joint. Box3D's cone is round: the smaller of Max Up / Max Out, clamped to Box3D's 90 degree
     maximum; 180 or more turns it off (Houdini's default). Twist limit +-Max Twist (180 or more: none). Bullet twists
     about x, Box3D about z, so each frame is turned so z = the twist axis and x = the up axis (constrained axes on

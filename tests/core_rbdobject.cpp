@@ -76,7 +76,11 @@ int main() {
   // ---- shapes from Bullet Data ----
   {
     RbdObjectSettings r = houdiniDefaults();
-    r.georep = "cylinder"; // no Box3D shape: the default (convex hull)
+    r.georep = "cylinder"; // a cylinder hull, hand-set or fitted like a capsule
+    CHECK(rbdObjectSetup(r).node.defaultShape == ShapeType::Cylinder);
+    r.georep = "plane"; // only packed pieces make planes: the default
+    CHECK(rbdObjectSetup(r).node.defaultShape == ShapeType::Convex);
+    r.georep = "bogus"; // an unknown name: the default (convex hull)
     CHECK(rbdObjectSetup(r).node.defaultShape == ShapeType::Convex);
     r.georep = "none";
     CHECK(rbdObjectSetup(r).node.defaultShape == ShapeType::None);

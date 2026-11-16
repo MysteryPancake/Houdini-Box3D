@@ -637,6 +637,16 @@ b3dop::SideFXBody sideFXBody(const b3dop::Box3DWorld &world,
   return body;
 }
 
+// Two readings of a body are the same for the Spring conversion (the same mass
+// and inertia, to a part in ten thousand).
+bool sameSideFXBody(const b3dop::SideFXBody &a, const b3dop::SideFXBody &b) {
+  const auto close = [](float x, float y) {
+    return std::fabs(x - y) <= 1e-4f * std::max(std::fabs(x), std::fabs(y));
+  };
+  return a.dynamic == b.dynamic && close(a.mass, b.mass) &&
+         close(a.inertia, b.inertia);
+}
+
 // What decides where a SideFX joint's frames sit (not the anchors' positions:
 // those are live).
 uint64_t sideFXFrameSignature(const b3dop::SideFXJoint &m) {
@@ -954,6 +964,8 @@ struct JointSpec {
   uint64_t frameSig = 0;
   bool glue = false; // SideFX Glue: breaks on impact impulse (core/Box3DGlue.h)
   b3dop::GlueParams glueParams;
+  bool massDependent = false;     // SideFX Spring: Hz from the bodies' masses
+  b3dop::SideFXBody bodyA, bodyB; // the masses it was converted with
 };
 
 // One network's primitives, read from its geometry, into joints: make, update,
@@ -1014,6 +1026,11 @@ private:
       j.s = m.settings;
       j.frameSig = sideFXFrameSignature(m);
       b3dop::sideFXFrameOffsets(m, fa, fb, j.adjA, j.adjB);
+      if (kind.sideFXType == b3dop::SideFXType::Spring) {
+        j.massDependent = true;
+        j.bodyA = ctx.a;
+        j.bodyB = ctx.b;
+      }
       if (kind.sideFXType == b3dop::SideFXType::Glue) {
         j.glue = true;
         j.glueParams.strength = sf.strength;
@@ -1219,6 +1236,9 @@ private:
     const JointSpec j = specFor(*kind, off, a, b, fa, fb);
     e.glue = j.glue;
     e.glueParams = j.glueParams;
+    e.massDependent = j.massDependent;
+    e.massA = j.bodyA;
+    e.massB = j.bodyB;
     if (j.glue && !e.made && myRd.impact.isValid()) {
       // A world rebuilt mid-simulation: carry on from what the geometry holds.
       const float kept = myRd.impact.get(off);
@@ -1260,7 +1280,8 @@ private:
 };
 
 void processNetwork(Box3DSharedState &st, const NetworkRef &ref,
-                    const Anchors &anchors, Box3DJointCounts &counts) {
+                    const Anchors &anchors, bool massChanged,
+                    Box3DJointCounts &counts) {
   Box3DJointNetwork &net = st.jointNetworks[ref.key];
   net.visited = st.syncStamp;
   net.objectId = ref.object->getObjectId();
@@ -1288,7 +1309,7 @@ void processNetwork(Box3DSharedState &st, const NetworkRef &ref,
   // (they keep liveStamp).
   const uint64_t fp = networkFingerprint(gdp);
   if (fp == net.fingerprint && net.bodyVersion == st.bodyVersion &&
-      !kindsChanged)
+      !kindsChanged && !massChanged)
     return;
   net.fingerprint = fp;
   net.bodyVersion = st.bodyVersion;
@@ -1465,9 +1486,19 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
   counts.networks = static_cast<int>(refs.size());
 
   if (!refs.empty()) {
+    // A Spring whose bodies' masses changed since it was made is reprocessed
+    // (its Hz and damping ratio follow the masses): the networks to read again.
+    std::unordered_set<uint64_t> massChanged;
+    for (const auto &kv : st.joints) {
+      const Box3DJointEntry &e = kv.second;
+      if (e.massDependent && !e.broken && st.world.isJointValid(e.handle) &&
+          (!sameSideFXBody(e.massA, sideFXBody(st.world, e.bodyA)) ||
+           !sameSideFXBody(e.massB, sideFXBody(st.world, e.bodyB))))
+        massChanged.insert(e.network);
+    }
     const Anchors anchors(st, objects);
     for (const NetworkRef &ref : refs)
-      processNetwork(st, ref, anchors, counts);
+      processNetwork(st, ref, anchors, massChanged.count(ref.key) != 0, counts);
   }
 
   // ---- remove: joints whose primitive or network went away ----

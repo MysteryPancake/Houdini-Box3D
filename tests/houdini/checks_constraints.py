@@ -22,6 +22,7 @@ from b3dtest import (
     finish,
     ground_object,
     merge,
+    multisolver,
     new_dopnet,
     new_geo,
     packed_boxes,
@@ -37,6 +38,7 @@ from b3dtest import (
     SetupError,
     single_object_geo,
     solver_for,
+    sop_solver,
     step,
     whole_object_points,
 )
@@ -279,6 +281,50 @@ def test_sidefx_hard_all():
     return [Result("sidefx_hard_all", Result.PASS if ok else Result.FAIL,
                    f"held distance after 2 s: Box3D {d['box3d'][0]:.3f}, Bullet {d['bullet'][0]:.3f} (start 2.06; "
                    "1.0 = the default rest length)")]
+
+
+def spring_mass_run(change):
+    """A 1 kg piece hanging 1 below a fixed one by a SideFX Spring (Hooke's constant 200, damping 60, rest
+    length 0, no collision between the two), anchors at the centres, in Box3D. With `change` its mass
+    becomes 4 kg on frame 13 (a SOP Solver writes `mass`). Returns its height after 5 s."""
+    dop = new_dopnet(f"spring_mass_{int(change)}")
+    pieces = [{"size": (1, 1, 1), "center": (0, 4, 0), "attrs": {"active": 0}},
+              {"size": (1, 1, 1), "center": (0, 3, 0), "attrs": {"active": 1}}]
+    path, names = packed_boxes(f"spring_mass_{int(change)}_pieces", pieces)
+    obj = packed_object(dop, "pieces", path, computemass=0, mass=1.0)
+    spring = create(dop, "springconrel", "spring")
+    for parm, value in (("strength", 200.0), ("damping", 60.0), ("restlength", 0.0), ("disablecollisions", 1)):
+        set_parm(spring, [parm], value)
+    line = (names[0], (0, 4, 0), names[1], (0, 3, 0), parm_value(spring, ["dataname", "data_name", "DataName"]),
+            {"constraint_type": "position"})
+    net = create(dop, "constraintnetwork", "constraint_network")
+    net.setInput(0, obj)
+    set_parm(net, ["soppath", "constraintsoppath", "geosoppath"], constraint_lines(f"spring_mass_{int(change)}_net",
+                                                                                     [line]))
+    net.setInput(1, spring)
+    if change:
+        mover = sop_solver(dop, f'if (@Frame > 12 && s@name == "{names[1]}") f@mass = 4.0;')
+        last = multisolver(dop, net, [mover, box3d_solver(dop, None)])
+    else:
+        last = box3d_solver(dop, net)
+    finish(dop, last)
+    return step(dop, 120, lambda sim, f: packed_positions(sim, "pieces")[names[1]][1] if f == 120 else None)[120]
+
+
+def test_sidefx_spring_mass():
+    """A SideFX Spring's stiffness is Hooke's constant, so it must not change when a piece's mass does (Box3D's
+    own springs are set by frequency: the wrapper recomputes it from the masses). A 1 kg piece hangs from
+    a spring of constant 200 and sits mg/k = 0.049 below the spring's end; when its mass becomes 4 kg it
+    settles 4 x as far (0.196). With a frequency left at the 1 kg value it would not move."""
+    g, k = 9.81, 200.0
+    still = spring_mass_run(False)
+    heavier = spring_mass_run(True)
+    want_still, want_heavier = 4.0 - 1.0 * g / k, 4.0 - 4.0 * g / k
+    ok = close(still, want_still, 0.03) and close(heavier, want_heavier, 0.03)
+    return [Result("sidefx_spring_mass", Result.PASS if ok else Result.FAIL,
+                   f"hanging piece at y {still:.3f} with 1 kg (expected {want_still:.3f}), {heavier:.3f} after its "
+                   f"mass becomes 4 kg (expected {want_heavier:.3f}; {still:.3f} means the spring kept its 1 kg "
+                   "frequency)")]
 
 
 def test_sidefx_spring():
@@ -628,6 +674,7 @@ def test_static_object_transform():
 TESTS = {
     "breaking": test_breaking,
     "anchor_id": test_anchor_id,
+    "sidefx_spring_mass": test_sidefx_spring_mass,
     "attribute_multiplies": test_attribute_multiplies,
     "next_constraint": test_next_constraint,
     "feedback": test_feedback,
