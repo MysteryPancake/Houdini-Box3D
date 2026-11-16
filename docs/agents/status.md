@@ -40,7 +40,6 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * The ground guide (`build_ground_guide`, test `solver_sop_ground_guide`): the builder runs in memory without errors and
   the nodes are wired, but it is not built or run in Houdini: what the display geometry of a Ground Plane and the Static
   Object's `Geometry` import as, and whether `gl_wireframe` -1 on the merged guide still shows a Shaded plane shaded.
-* Box3D Data under Geometry on Static Objects and RBD Objects.
 * Box3D Data's Default Shape menu (Plane and Cylinder at the end) and the Packed Object / Configure menus built from
   it: built, not opened in Houdini. `bullet_cylinder` and the cylinder cases of `bullet_shape_attributes` pass against Bullet.
 * `bullet_georep` `plane` on a packed piece (`ShapeType::Plane`, `buildShapes`): written without building or running. Its

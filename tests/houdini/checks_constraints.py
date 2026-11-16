@@ -652,6 +652,58 @@ def test_data_change_midsim():
                    "parmop_friction = Set Always; ground friction 1)")]
 
 
+def test_data_under_geometry_objects():
+    """Box3D Data applied to a Static Object and to an RBD Object lands under the object's
+    Geometry (Geometry/Box3DData) and is read: Gravity Scale 0 on an RBD Object keeps it in
+    place, and Bounce on a Static Object grid (and on the box) decides whether a dropped RBD
+    Object box rebounds (1) or stays down (0)."""
+    results = []
+    # RBD Object: Gravity Scale 0 holds the box where it starts, 1 lets it fall.
+    held = {}
+    found = {}
+    for label, scale in (("held", 0.0), ("free", 1.0)):
+        dop = new_dopnet(f"data_geometry_{label}")
+        obj = rbd_object(dop, "box", box_sop(f"data_geometry_{label}_box", (0, 3, 0)))
+        data = box3d_data(dop, obj, "data", gravityscale=scale)
+        finish(dop, box3d_solver(dop, data))
+
+        def sample(sim, f):
+            box = sim.findObject("box")
+            sub = box.findSubData("Geometry/Box3DData") if box is not None else None
+            found[label] = sub is not None
+            return centroid(whole_object_points(sim, "box"))[1]
+
+        held[label] = step(dop, 24, sample)[24]
+    ok = (close(held["held"], 3.0, 0.01) and held["free"] < 2.5
+          and found.get("held") and found.get("free"))
+    results.append(Result("data_under_geometry_objects_rbd", Result.PASS if ok else Result.FAIL,
+                          f"after 1 s the box is at y {held['held']:.3f} with Gravity Scale 0 (expected 3.0) "
+                          f"and {held['free']:.3f} with 1; Geometry/Box3DData present: {found}"))
+    # Static Object: the grid's Box3D Data Bounce decides the rebound of a box that has its own Bounce set alike.
+    peaks = {}
+    for label, bounce in (("bouncy", 1.0), ("dead", 0.0)):
+        geo = new_geo(f"data_geometry_grid_{label}")
+        grid = create(geo, "grid")
+        set_parm(grid, ["size"], (10, 10))
+        display(grid)
+        dop = new_dopnet(f"data_geometry_static_{label}")
+        static = create(dop, "staticobject", "collider")
+        set_parm(static, ["soppath"], grid.path())
+        static_data = box3d_data(dop, static, "static_data", bounce=bounce)
+        obj = rbd_object(dop, "box", box_sop(f"data_geometry_static_{label}_box", (0, 3, 0)))
+        box_data = box3d_data(dop, obj, "box_data", bounce=bounce)
+        finish(dop, box3d_solver(dop, merge(dop, [static_data, box_data])))
+        track = step(dop, 72, lambda sim, f: centroid(whole_object_points(sim, "box"))[1])
+        # The lowest frame is the landing: the highest point after it is the rebound.
+        landing = min(range(1, 73), key=lambda f: track[f])
+        peaks[label] = max(track[f] for f in range(landing, 73))
+    ok = peaks["bouncy"] > peaks["dead"] + 0.5
+    results.append(Result("data_under_geometry_objects_static", Result.PASS if ok else Result.FAIL,
+                          f"rebound height after landing: {peaks['bouncy']:.3f} with Bounce 1 and "
+                          f"{peaks['dead']:.3f} with Bounce 0 on the Static Object and the box (expected 1 well above 0)"))
+    return results
+
+
 def test_static_object_transform():
     """A Static Object with Use Object Transform, whose geo object is moved up 1: a box lands on the
     moved grid (rests at y = 1.5)."""
@@ -689,5 +741,6 @@ TESTS = {
     "rbd_object_active": test_rbd_object_active,
     "rbd_object_inertia_type": test_rbd_object_inertia_type,
     "data_change_midsim": test_data_change_midsim,
+    "data_under_geometry_objects": test_data_under_geometry_objects,
     "static_object_transform": test_static_object_transform,
 }
