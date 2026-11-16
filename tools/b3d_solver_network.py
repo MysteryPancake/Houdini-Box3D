@@ -28,7 +28,11 @@ from b3d_solver_common import (
     SHAPES_COLOR,
     SHAPES_DATA,
     SHAPES_TOGGLE,
+    GROUND_OBJECT,
+    SHADE_GROUND,
     SHOW_COLLISION,
+    SHOW_GROUND,
+    USE_GROUND,
     set_import_style,
     set_toggles,
     switch_on_spare_input,
@@ -272,6 +276,59 @@ def before_start(sub, dopnet, name, result, original):
     else:
         sw.parm("expr1").setExpression(f"$FF < {start}", hou.exprLanguage.Hscript)
     return sw
+
+
+def build_ground_guide(sub, dopnet, empty):
+    """The ground in the viewport, as RBD Bullet Solver's: DOP Imports of the ground object, a Ground
+    Plane's display grid (lines, or the polygons while Show Ground as is Shaded) or the height field,
+    chosen by Ground Type and Show Ground, and nothing before the Start Frame. Both are scaled back by
+    World Scale."""
+    def ground_import(name, data_path):
+        node = create(sub, "dopimport", name)
+        node.parm("doppath").set("../dopnet")
+        node.parm("objpattern").set(GROUND_OBJECT)
+        set_import_style(node, "fetch geometry")
+        set_by_label(node, "Geometry Data Path", data_path)
+        set_by_label(node, "Do Not Trigger Simulation", 1)
+        set_by_label(node, "Preserve World Space Positions", 0)
+        return node
+
+    plane = ground_import("import_ground_plane", "DisplayGeometry")
+    try:
+        lines = create(sub, "convertline", "ground_plane_lines")
+        lines.setInput(0, plane)
+    except RuntimeError as e:
+        warn(f"{e}; the ground plane is drawn shaded whatever Show Ground as says")
+        lines = plane
+    shade = create(sub, "switchif", "switch_ground_shaded")
+    shade.setInput(0, lines)
+    shade.setInput(1, plane)
+    if shade.parm("expr1") is not None:
+        shade.parm("expr1").setExpression(f'ch("../{SHADE_GROUND}")', hou.exprLanguage.Hscript)
+    plane_out = scale_xform(sub, "unscale_ground_plane", shade, inverse=True)
+
+    field = ground_import("import_ground_field", "Geometry")
+    field_out = field
+    try:
+        xform = create(sub, "heightfield_xform", "unscale_ground_field")
+        xform.setInput(0, field)
+        if xform.parm("scale") is not None:
+            xform.parm("scale").setExpression(f"1 / {SCALE_FACTOR}", hou.exprLanguage.Hscript)
+        unscale = create(sub, "switch", "switch_unscale_ground_field")
+        unscale.setInput(0, xform)
+        unscale.setInput(1, field)
+        unscale.parm("input").setExpression(
+            f'if(ch("../{WORLD_SCALE_TOGGLE}"), ch("../{WORLD_SCALE}") == 1, 1)', hou.exprLanguage.Hscript)
+        field_out = unscale
+    except RuntimeError as e:
+        warn(f"{e}; World Scale does not scale the ground height field in the viewport")
+
+    choose = create(sub, "switch", "switch_ground_guide")
+    choose.setInput(0, empty)
+    choose.setInput(1, plane_out)
+    choose.setInput(2, field_out)
+    choose.parm("input").setExpression(f'ch("../{USE_GROUND}") * ch("../{SHOW_GROUND}")', hou.exprLanguage.Hscript)
+    return before_start(sub, dopnet, "switchif_beforestart_ground", choose, empty)
 
 
 def scale_xform(sub, name, src, inverse=False):
@@ -595,6 +652,7 @@ def build_network(sub):
     guide = create(sub, "merge", "merge_guide")
     guide.setInput(0, cgeo_out)
     guide.setInput(1, shapes_out)
+    guide.setInput(2, build_ground_guide(sub, dopnet, no_shapes))
     wire = create(sub, ["attribcreate::2.0", "attribcreate"], "guide_wireframe")
     wire.setInput(0, guide)
     wire.parm("name1").set("gl_wireframe")

@@ -37,8 +37,10 @@ SOLVER_LAYOUT = [
     [("Impacts", ["import_impacts", "unscale_impacts", "switch_unscale_impacts", "IMPACTS"], {"color": EXTRA}),
      ("Guide", ["import_shapes", "tint_shapes", "unscale_shapes", "no_shapes", "switch_show_shapes",
                 "switchif_beforestart_shapes", "import_collision_geo", "dim_collision_geo", "unscale_collision_geo",
-                "switch_show_collision_geo", "switchif_beforestart_collision_geo", "merge_guide", "guide_wireframe",
-                "GUIDE_GEO"], {"color": EXTRA})],
+                "switch_show_collision_geo", "switchif_beforestart_collision_geo", "import_ground_plane",
+                "ground_plane_lines", "switch_ground_shaded", "unscale_ground_plane", "import_ground_field",
+                "unscale_ground_field", "switch_unscale_ground_field", "switch_ground_guide",
+                "switchif_beforestart_ground", "merge_guide", "guide_wireframe", "GUIDE_GEO"], {"color": EXTRA})],
 ]
 
 # The DOP network inside it. The relationships are a grid: fourteen nodes with no wires between them.

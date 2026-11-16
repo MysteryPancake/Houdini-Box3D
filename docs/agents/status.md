@@ -38,6 +38,9 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   report `threadsafe()` true is unchecked (a force that does not just stays serial). Circle / Sphere sampling works on a Drag
   Force DOP (the test prints its ratios to Point: 4.6 and 9.2 for a 2 m box); how a force scales over a size is the Force
   DOP's own.
+* The ground guide (`build_ground_guide`, test `solver_sop_ground_guide`): the builder runs in memory without errors and
+  the nodes are wired, but it is not built or run in Houdini: what the display geometry of a Ground Plane and the Static
+  Object's `Geometry` import as, and whether `gl_wireframe` -1 on the merged guide still shows a Shaded plane shaded.
 * Box3D Data under Geometry on Static Objects and RBD Objects.
 * Ground planes: a Static Object whose SDF Representation is set to Implicit Plane is taken as a plane facing +y through its
   origin, as a Ground Plane DOP's is (only the Ground Plane is tested). A plane tilted off the axes has a large broad-phase box,
@@ -58,10 +61,15 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * Joints from authored anchors through `restToNow` and the `angle` since rest, against Bullet (test `bullet_joint_rest`,
   rerun with constraint_type all: with `position` both held the 1.0 rest length, which pushes the boxes into each
   other; with both anchors at one point the centres ended 2.19 and 2.59 apart, past the 2.06 possible).
-* `bullet_primR` rotation order: XYZ Euler degrees matches Bullet (`bullet_primr_order`: a settled thin box has the same
-  face down for 50 70 50 and 0 70 50). Not understood: Bullet's dynamic hand-set box rests at y -0.16 / -0.34 / 0.0
-  (Box3D 0.10, the half thickness), and with primR 30 0 60 it fell through the ground. `bullet_primS`, `bullet_primT`,
-  `bullet_radius` and `bullet_length` match Bullet. Bullet ignores `bullet_primT` for a dynamic piece's rest height
+* `bullet_primR` rotation order: XYZ Euler degrees matches Bullet. Settled thin boxes have the same face down
+  (`bullet_primr_order`), and boxes turned by 90 degrees have the same face up (`bullet_shape_attributes`: 90 90 0,
+  0 90 90, 90 0 90 pick XYZ out of the six orders). A tilted box's top is a corner and the plate test stops on it
+  roughly: Box3D reads 0.44 and Bullet 0.33 for 0 70 50 (true top 0.437), so that case is not compared. Bullet's
+  dynamic hand-set box rests at y = Box3D's (the half thickness, 0.10) minus the shape's vertical half extent as
+  first turned (0.10 unturned, 0.26 for 50 70 50, 0.44 for 0 70 50, 0.52 for 0 0 50, 0.29 for 50 0 0): the rule fits
+  every case probed, so Bullet's reported point sits that much lower, not the shape. Not understood: with primR
+  30 0 60 the piece fell through the ground in Bullet. `bullet_primS`, `bullet_primT`, `bullet_radius` and
+  `bullet_length` match Bullet. Bullet ignores `bullet_primT` for a dynamic piece's rest height
   (0.25, shape centred on the body) where Box3D keeps the offset (-0.05); a static piece away from the origin is
   not found by a plate in Bullet. Not compared: the `deforming` and `bullet_autofit_valid`
   toggles, AutoFit on whole objects and fractured pieces.

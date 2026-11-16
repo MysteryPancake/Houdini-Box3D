@@ -670,6 +670,60 @@ def test_solver_sop_ground():
     return results
 
 
+def test_solver_sop_ground_guide():
+    """The ground in the viewport (the asset's Guide Geometry, GUIDE_GEO), as RBD Bullet Solver's: Ground
+    Type None draws nothing; a Ground Plane is lines (Show Ground as Wireframe) or closed polygons
+    (Shaded), and nothing with Show Ground off; a Height Field is volumes."""
+    pieces, _ = packed_boxes("sop_ground_guide_pieces", [{"size": (1, 1, 1), "center": (0, 4, 0)}])
+
+    def guide(sop):
+        def sample(s, f):
+            return s.node("GUIDE_GEO").geometry() if f == 3 else None
+
+        geo = play(sop, 3, sample)[3]
+        prims = geo.prims()
+        kinds = {"volume": sum(1 for p in prims if p.type() == hou.primType.Volume),
+                 "closed": sum(1 for p in prims if p.type() == hou.primType.Polygon and p.isClosed()),
+                 "open": sum(1 for p in prims if p.type() == hou.primType.Polygon and not p.isClosed())}
+        return kinds
+
+    results = []
+
+    def check(label, sop, want):
+        got = guide(sop)
+        ok = all((got[k] > 0) == (k in want) for k in got)
+        results.append(Result("solver_sop_ground_guide", Result.PASS if ok else Result.FAIL,
+                              f"{label}: {got} (expected {'only ' + ', '.join(sorted(want)) if want else 'nothing'})"))
+
+    none = solver_sop("sop_ground_guide_none", geometry=pieces)
+    check("Ground Type None", none, set())
+
+    wire = solver_sop("sop_ground_guide_wire", geometry=pieces)
+    set_parm(wire, ["useground"], 1)
+    check("Ground Plane, Wireframe", wire, {"open"})
+
+    shaded = solver_sop("sop_ground_guide_shaded", geometry=pieces)
+    set_parm(shaded, ["useground"], 1)
+    set_parm(shaded, ["shadeground"], 1)
+    check("Ground Plane, Shaded", shaded, {"closed"})
+
+    hidden = solver_sop("sop_ground_guide_hidden", geometry=pieces)
+    set_parm(hidden, ["useground"], 1)
+    set_parm(hidden, ["showground"], 0)
+    check("Ground Plane, Show Ground off", hidden, set())
+
+    field_geo = new_geo("sop_ground_guide_field")
+    field = create(field_geo, "heightfield", "field")
+    set_parm(field, ["sizex"], 20)
+    set_parm(field, ["sizey"], 20)
+    display(field)
+    height = solver_sop("sop_ground_guide_height", geometry=pieces)
+    set_parm(height, ["useground"], 2)
+    set_parm(height, ["groundheightfield"], field.path())
+    check("Height Field", height, {"volume"})
+    return results
+
+
 def test_solver_sop_before_start():
     """Before the Start Frame the inputs pass through, as RBD Bullet Solver: with Start Frame 6, a
     box at y = 3 is still at its input position on frame 3 (geometry output) and has fallen by frame 12."""
@@ -740,8 +794,8 @@ def test_solver_sop_layout():
     """The Solver SOP's tabs and folders: Solver, Pieces, Collision, Forces, Visualization, Advanced, Output (no
     Misc); Collision Geometry's header checkbox is Use External Collisions, which sits just before it (as RBD
     Bullet Solver's); the Pieces tab is Shape, Body, Material, CCD & Contacts, Sleep (Start Asleep first); the
-    Solver tab ends with Contacts, Sleeping (the solver's Allow Sleeping) and Aging; Visualization has no
-    folders; no Detach Faces; every collapsible folder open but Impact Data, Sleeping and Aging."""
+    Solver tab ends with Contacts, Sleeping (the solver's Allow Sleeping) and Aging; Visualization has only
+    the Ground folder; no Detach Faces; every collapsible folder open but Impact Data, Sleeping and Aging."""
     sop = solver_sop("sop_layout")
     entries = sop.parmTemplateGroup().entries()
     problems = []
@@ -785,8 +839,9 @@ def test_solver_sop_layout():
            (performance.parmTemplates()[0].isLabelHidden(), performance.parmTemplates()[0].joinsWithNext())
            if performance and performance.parmTemplates() else None, (True, True))
     vis_tab = by_path.get(("Visualization",))
-    expect("Visualization tab (no folders)", [pt.name() for pt in vis_tab.parmTemplates()] if vis_tab else None,
-           ["showcollision", "exportshapes", "shapecolor"])
+    expect("Visualization tab (the Ground folder last)",
+           [pt.name() for pt in vis_tab.parmTemplates()] if vis_tab else None,
+           ["showcollision", "exportshapes", "shapecolor", "b3dsop_show_ground"])
     expect("Detach Faces", sop.parm("collision_detachfaces"), None)
     shut = sorted("/".join(path) for path, pt in folders
                   if pt.folderType() == hou.folderType.Collapsible and pt.tags().get("group_default") != "1")
@@ -1020,6 +1075,7 @@ TESTS = {
     "solver_sop_collision_names": test_solver_sop_collision_names,
     "solver_sop_world_scale": test_solver_sop_world_scale,
     "solver_sop_ground": test_solver_sop_ground,
+    "solver_sop_ground_guide": test_solver_sop_ground_guide,
     "solver_sop_collision_prim_names": test_solver_sop_collision_prim_names,
     "solver_sop_collision_rest": test_solver_sop_collision_rest,
     "solver_sop_world_anchor": test_solver_sop_world_anchor,

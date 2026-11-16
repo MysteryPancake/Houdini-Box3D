@@ -51,7 +51,7 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
           // Outer loop: whole Box3D steps, each with its own collision
           // detection. Slider 1 to 10; minimum 1, more can be typed (capped
           // 64).
-          .integer("substeps", "Substeps", 1, R{1, 10},
+          .integer("substeps", "Substeps", 2, R{1, 10},
                    "Box3D steps per time step. 1 steps once per frame (the "
                    "scene FPS), 2 twice, and so on. Each step detects "
                    "collisions again and runs its own Solver Passes, so more "
@@ -59,7 +59,7 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                    "roughly Substeps x Solver Passes.")
           // Inner loop. Slider 1 to 100; minimum 1 (Box3D clamps to it), more
           // can be typed.
-          .integer("solverpasses", "Solver Passes", 10, R{1, 100},
+          .integer("solverpasses", "Solver Passes", 4, R{1, 100},
                    "Contact and joint solver passes per Box3D step (Box3D's "
                    "counterpart to Constraint Iterations). Each pass is a "
                    "smaller time step, not another pass at the same "
@@ -74,7 +74,7 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
           // Stiffer and less damped than Box3D's own defaults (30 Hz, 10):
           // a more rigid look. Box3D caps the stiffness at 1/8 of the pass
           // rate (fps x Substeps x Solver Passes), so 60 Hz needs 20 in total
-          // at 24 fps; 10 give 30 Hz.
+          // at 24 fps; the defaults (2 x 4 = 8) give 24 Hz.
           .number("contactstiffness", "Contact Stiffness", 60.0, R{0, 120},
                   "How stiff contacts are (cycles per second). Higher values "
                   "recover from overlap faster but can jitter. Capped at 1/8 "

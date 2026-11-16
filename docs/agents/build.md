@@ -123,7 +123,13 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   Rolling Resistance and Conveyor Velocity from the Physical folder (`ground_*`, templates cloned from the node, Conveyor
   Velocity scaled by World Scale). Both go through a Merge with the pieces (mutual affectors) and arrive as affectors
   ([forces-affectors.md](forces-affectors.md)): the Ground Plane as an infinite plane, the Static Object as a height field.
-  No Show Ground guide, no Collision Padding or Dynamic Friction Scale (nothing in Box3D). Test `solver_sop_ground`.
+  The guide (RBD Bullet Solver's, read from its dump; `build_ground_guide`): DOP Imports of the object `groundplane`
+  (`import_ground_plane`, Geometry Data Path `DisplayGeometry`; `import_ground_field`, `Geometry`), the plane as lines
+  (`convertline`) or its polygons by a Switch-If on Show Ground as (`shadeground`: Wireframe, Shaded), both scaled back
+  by World Scale (the field by a HeightField Transform), then `switch_ground_guide` on `useground * showground` and
+  `switchif_beforestart_ground`, into `merge_guide` (so `guide_wireframe` applies to it as to the rest). Show Ground and
+  Show Ground as are the Visualization tab's Ground folder (`ground_visualization`). No Collision Padding or Dynamic
+  Friction Scale (nothing in Box3D). Tests `solver_sop_ground`, `solver_sop_ground_guide`.
 * Collision: Default Shape Convex Hull. Collision Type (Static, Animated default, Deforming) drives Body Type (Kinematic
   unless Static) and the collision Packed Object's Overwrite Attributes from SOP (on unless Static), so the SOP is
   re-imported each step and the solver turns pose changes into kinematic targets; Deforming also sets `deforming` on

@@ -119,7 +119,7 @@ from b3d_solver_common import (  # noqa: E402
     USE_COLLISIONS,
     warn,
 )
-from b3d_solver_ground import finish_ground, GROUND_DATA, ground_items  # noqa: E402
+from b3d_solver_ground import finish_ground, GROUND_DATA, ground_items, ground_visualization  # noqa: E402
 from b3d_solver_network import (  # noqa: E402
     build_network,
     IMPORT_CONSTRAINTS,
@@ -521,7 +521,7 @@ def visualization_tab(shapes):
         SHOW_COLLISION, "Show Collision Geometry", default_value=True,
         help="Draws the external collision geometry in the viewport.")
     geo.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_COLLISIONS} == 0 }}")
-    return [geo, show, color]
+    return [geo, show, color, ground_visualization()]
 
 
 def link(inner, inner_name, outer, outer_name):

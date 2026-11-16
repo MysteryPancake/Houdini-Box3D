@@ -10,7 +10,16 @@ import hou
 
 import b3d_hda
 from b3d_hda import collapsible
-from b3d_solver_common import create, USE_GROUND, WORLD_SCALE, WORLD_SCALE_TOGGLE, warn
+from b3d_solver_common import (
+    create,
+    GROUND_OBJECT,
+    SHADE_GROUND,
+    SHOW_GROUND,
+    USE_GROUND,
+    WORLD_SCALE,
+    WORLD_SCALE_TOGGLE,
+    warn,
+)
 
 GROUND_POS = "ground_pos"
 GROUND_ROT = "ground_rot"
@@ -70,6 +79,21 @@ def build_ground_sops(sub):
     return null
 
 
+def ground_visualization():
+    """The Visualization tab's Ground folder, as RBD Bullet Solver's: Show Ground as its header toggle and
+    Show Ground as (Wireframe, Shaded) as its header menu."""
+    show = hou.ToggleParmTemplate(SHOW_GROUND, "Show Ground", default_value=True,
+                                  help="Draws the ground in the viewport.")
+    show.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_GROUND} == 0 }}")
+    shade = hou.MenuParmTemplate(
+        SHADE_GROUND, "Show Ground as", ("0", "1"), menu_labels=("Wireframe", "Shaded"), default_value=0,
+        help="How a ground plane is drawn. A height field is always shaded.")
+    shade.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_GROUND} != 1 }}")
+    folder = collapsible("b3dsop_show_ground", "Ground", [show, shade])
+    folder.setTags({**folder.tags(), "sidefx::header_parm": SHADE_GROUND, "sidefx::header_toggle": SHOW_GROUND})
+    return folder
+
+
 def finish_ground(asset):
     """Once the asset has its Height Field parameter: the Object Merge reads it. (Not earlier: a reference
     to a parameter that does not exist yet is a warning.)"""
@@ -84,12 +108,13 @@ def build_ground_dops(dopnet):
     """None / Ground Plane / Height Field behind a Switch, then the Box3D Data. Returns the last node."""
     none = create(dopnet, "null", "ground_none")
     plane = create(dopnet, "groundplane", "groundplane")
+    setp(plane, "objname", GROUND_OBJECT)
     for axis in "xyz":
         setp(plane, f"t{axis}", expr=f'ch("../../{GROUND_POS}{axis}") * {scale_here(2)}')
         setp(plane, f"r{axis}", expr=f'ch("../../{GROUND_ROT}{axis}")')
 
     height = create(dopnet, "staticobject", "ground_heightfield")
-    setp(height, "object_name", "groundplane")
+    setp(height, "object_name", GROUND_OBJECT)
     setp(height, "soppath", f"../../{GROUND_HF_NULL}")
     setp(height, "animategeo", expr=f'ch("../../{GROUND_DEFORMING}")')
     # Volume collision in heightfield mode (indices of the Static Object's menus, as RBD Bullet Solver's),
