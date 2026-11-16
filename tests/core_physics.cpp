@@ -2529,10 +2529,41 @@ struct TestCase {
   void (*run)();
 };
 
+// The size of a body's bounding box (what a Force DOP sampling a circle or
+// sphere measures).
+void testBodyExtent() {
+  b3dop::KeyedWorld w;
+  CHECK(w.create(b3dop::WorldSettings()));
+  const double pos[3] = {0, 3.0, 0};
+  b3dop::BodySettings dyn;
+  float e[3] = {-1, -1, -1};
+
+  // No shapes yet: nothing to measure.
+  const b3dop::BodyHandle empty = w.createBody(dyn, pos, qIdentity);
+  CHECK(!w.extentByHandle(empty, e));
+  CHECK(!w.extentByHandle(0, e));
+
+  // A 1 x 2 x 4 box: its bounding box is the same size.
+  CHECK(w.addBody(1, dyn, pos, qIdentity));
+  const float half[3] = {0.5f, 1.0f, 2.0f};
+  CHECK(w.addBoxShape(1, half));
+  CHECK(w.extentByHandle(w.bodyHandle(1), e));
+  CHECK(std::fabs(e[0] - 1.0f) < 0.05f && std::fabs(e[1] - 2.0f) < 0.05f &&
+        std::fabs(e[2] - 4.0f) < 0.05f);
+
+  // A sphere of radius 0.5 is 1 across in every direction.
+  CHECK(w.addBody(2, dyn, pos, qIdentity));
+  CHECK(w.addSphereShape(2, 0.5f));
+  CHECK(w.extentByHandle(w.bodyHandle(2), e));
+  CHECK(std::fabs(e[0] - 1.0f) < 0.05f && std::fabs(e[1] - 1.0f) < 0.05f &&
+        std::fabs(e[2] - 1.0f) < 0.05f);
+}
+
 // The cases, in run order. Keep each entry on one line as {"name", function}:
 // CMake reads the names from these lines to register one CTest test per case.
 const TestCase kTests[] = {
     {"body_basics", testBodyBasics},
+    {"body_extent", testBodyExtent},
     {"point_mapping", testPointMapping},
     {"convex_shapes", testConvexShapes},
     {"primitive_overrides", testPrimitiveOverrides},

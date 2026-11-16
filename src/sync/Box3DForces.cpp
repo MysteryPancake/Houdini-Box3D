@@ -93,11 +93,69 @@ void readPointForces(const SIM_Object &obj, Box3DObjectSync &os,
   }
 }
 
+// The body's bounding box size, read once and only when a force samples a
+// circle or a sphere. Valid is false for a body with no shapes.
+struct BodyExtent {
+  const b3dop::Box3DWorld &world;
+  b3dop::BodyHandle handle;
+  bool read = false, valid = false;
+  float size[3] = {0, 0, 0};
+
+  bool get() {
+    if (!read) {
+      read = true;
+      valid = world.extentByHandle(handle, size);
+    }
+    return valid;
+  }
+};
+
+constexpr float kPi = 3.14159265358979f;
+
+// The force of one Force DOP on the body, by the sampling the force asks for
+// (its Sample Mode): at the centre of mass (a point), over the body as a sphere
+// of the same volume as its bounding box (force per volume), or over the body
+// as a circle facing the force, of the same area as the box seen along it
+// (force per area). A circle needs the force's direction, taken from the point
+// sample. The box is in world axes, so a turned body counts a little larger.
+void sampleForce(const SIM_Force &sf, const SIM_Object &obj,
+                 const UT_Vector3 &pos, const UT_Vector3 &vel,
+                 const UT_Vector3 &angvel, float mass, BodyExtent &extent,
+                 UT_Vector3 &f, UT_Vector3 &t) {
+  const SIM_Force::SIM_ForceSample mode = sf.getOptimalForceSampling();
+  if (mode == SIM_Force::SIM_FORCE_SAMPLESPHERE && extent.get()) {
+    const float volume = extent.size[0] * extent.size[1] * extent.size[2];
+    const float radius = std::cbrt(0.75f * volume / kPi);
+    if (radius > 0.0f) {
+      sf.getForceOnSphere(obj, pos, radius, vel, angvel, mass, f, t);
+      return;
+    }
+  } else if (mode == SIM_Force::SIM_FORCE_SAMPLECIRCLE && extent.get()) {
+    sf.getForce(obj, pos, vel, angvel, mass, f, t);
+    const float len = static_cast<float>(f.length());
+    if (len > 0.0f && std::isfinite(len)) {
+      const UT_Vector3 n = f / len;
+      const float *s = extent.size;
+      const float area = std::fabs(n.x()) * s[1] * s[2] +
+                         std::fabs(n.y()) * s[0] * s[2] +
+                         std::fabs(n.z()) * s[0] * s[1];
+      const float radius = std::sqrt(area / kPi);
+      if (radius > 0.0f) {
+        f = UT_Vector3(0.0f, 0.0f, 0.0f);
+        t = UT_Vector3(0.0f, 0.0f, 0.0f);
+        sf.getForceOnCircle(obj, pos, n, radius, vel, angvel, mass, f, t);
+      }
+    }
+    return;
+  }
+  sf.getForce(obj, pos, vel, angvel, mass, f, t);
+}
+
 // The sum of the Force DOPs at the body's centre of mass, with its mass and
 // velocities (`bs`, read once for the body).
 void addForceDops(const SIM_Object &obj, const b3dop::BodyState &bs,
                   const std::vector<const SIM_Force *> &forces,
-                  UT_Vector3 &force, UT_Vector3 &torque) {
+                  BodyExtent &extent, UT_Vector3 &force, UT_Vector3 &torque) {
   const float mass = bs.mass;
   if (!(mass > 0.0f && std::isfinite(mass)))
     return;
@@ -108,7 +166,7 @@ void addForceDops(const SIM_Object &obj, const b3dop::BodyState &bs,
   const UT_Vector3 angvel(bs.ang[0], bs.ang[1], bs.ang[2]);
   for (const SIM_Force *sf : forces) {
     UT_Vector3 f(0.0f, 0.0f, 0.0f), t(0.0f, 0.0f, 0.0f);
-    sf->getForce(obj, pos, vel, angvel, mass, f, t);
+    sampleForce(*sf, obj, pos, vel, angvel, mass, extent, f, t);
     force += f;
     torque += t;
   }
@@ -129,39 +187,124 @@ void addPointForce(const std::vector<PointForce> &pointForces,
   }
 }
 
-// Force DOPs and point forces onto the object's dynamic bodies.
+// One body's inputs and result: read and applied serially, the Force DOPs
+// between them possibly in parallel.
+struct ForceJob {
+  const Box3DBodyMirror *body = nullptr;
+  b3dop::BodyState state;
+  UT_Vector3 force{0.0f, 0.0f, 0.0f};
+  UT_Vector3 torque{0.0f, 0.0f, 0.0f};
+};
+
+using ResolverPtr = std::unique_ptr<SIM_ForceResolver>;
+
+// The Force DOPs that can run on several threads: sampled at a point, with a
+// resolver that says it is thread-safe (Houdini's own forces mostly are; a
+// custom force gets the generic resolver, which is not). `serial` gets the
+// rest, which keep the per-body evaluation on one thread.
+void splitForces(const SIM_Object &obj,
+                 const std::vector<const SIM_Force *> &forces,
+                 std::vector<ResolverPtr> &parallel,
+                 std::vector<const SIM_Force *> &serial) {
+  for (const SIM_Force *sf : forces) {
+    ResolverPtr resolver;
+    if (sf->getOptimalForceSampling() == SIM_Force::SIM_FORCE_SAMPLEPOINT)
+      resolver.reset(sf->getForceResolver(obj));
+    if (resolver && resolver->threadsafe())
+      parallel.push_back(std::move(resolver));
+    else
+      serial.push_back(sf);
+  }
+}
+
+// What the resolvers add to each job, on Houdini's TBB pool: every range of
+// jobs works with its own copies of the resolvers, as SIM_ForceResolver asks.
+void evaluateResolvers(const std::vector<ResolverPtr> &resolvers,
+                       std::vector<ForceJob> &jobs) {
+  constexpr size_t kGrain = 64;
+  UTparallelFor(UT_BlockedRange<size_t>(0, jobs.size(), kGrain),
+                [&](const UT_BlockedRange<size_t> &range) {
+                  std::vector<ResolverPtr> mine;
+                  mine.reserve(resolvers.size());
+                  for (const ResolverPtr &r : resolvers)
+                    mine.emplace_back(r->copy());
+                  for (size_t i = range.begin(); i != range.end(); ++i) {
+                    ForceJob &job = jobs[i];
+                    const float mass = job.state.mass;
+                    if (!(mass > 0.0f && std::isfinite(mass)))
+                      continue;
+                    const UT_Vector3 pos(static_cast<float>(job.state.com[0]),
+                                         static_cast<float>(job.state.com[1]),
+                                         static_cast<float>(job.state.com[2]));
+                    const UT_Vector3 vel(job.state.lin[0], job.state.lin[1],
+                                         job.state.lin[2]);
+                    const UT_Vector3 angvel(job.state.ang[0], job.state.ang[1],
+                                            job.state.ang[2]);
+                    for (const ResolverPtr &r : mine) {
+                      UT_Vector3 f(0.0f, 0.0f, 0.0f), t(0.0f, 0.0f, 0.0f);
+                      r->getForce(pos, vel, angvel, mass, f, t);
+                      job.force += f;
+                      job.torque += t;
+                    }
+                  }
+                });
+}
+
+// Force DOPs and point forces onto the object's dynamic bodies, in three
+// phases: the bodies' inputs are read (serial: it reads Box3D), the Force DOPs
+// are evaluated (the thread-safe ones in parallel when there are many bodies),
+// and the results go into Box3D (serial).
 void applyToObjectBodies(Box3DSharedState &st, const SIM_Object &obj,
                          const Box3DObjectSync &os,
                          const std::vector<const SIM_Force *> &forces,
                          const std::vector<PointForce> &pointForces, bool wake,
                          ForceStats &stats) {
   b3dop::Box3DWorld &world = st.world;
+
+  std::vector<ForceJob> jobs;
+  jobs.reserve(os.bodies.size());
   for (const Box3DBodyMirror *e : os.bodies) {
     if (!e->handle || !e->dynamic() || !e->props.enabled)
       continue;
     // The body's state is read once, and only when a Force DOP needs it.
-    b3dop::BodyState bs;
+    ForceJob job;
+    job.body = e;
     if (!forces.empty()) {
-      if (!world.bodyStateByHandle(e->handle, bs))
+      if (!world.bodyStateByHandle(e->handle, job.state))
         continue;
-      if (!wake && !bs.awake)
+      if (!wake && !job.state.awake)
         continue; // Box3D would ignore the force anyway
     } else if (!wake && !world.isAwakeByHandle(e->handle))
       continue;
-
-    UT_Vector3 force(0.0f, 0.0f, 0.0f);
-    UT_Vector3 torque(0.0f, 0.0f, 0.0f);
     if (!pointForces.empty())
-      addPointForce(pointForces, *e, force, torque);
-    if (!forces.empty())
-      addForceDops(obj, bs, forces, force, torque);
+      addPointForce(pointForces, *e, job.force, job.torque);
+    jobs.push_back(job);
+  }
 
-    const float fv[3] = {static_cast<float>(force.x()),
-                         static_cast<float>(force.y()),
-                         static_cast<float>(force.z())};
-    const float tv[3] = {static_cast<float>(torque.x()),
-                         static_cast<float>(torque.y()),
-                         static_cast<float>(torque.z())};
+  // The Force DOPs.
+  if (!forces.empty()) {
+    std::vector<ResolverPtr> parallel;
+    std::vector<const SIM_Force *> serial;
+    if (jobs.size() >= minParallelForces())
+      splitForces(obj, forces, parallel, serial);
+    else
+      serial = forces;
+    if (!parallel.empty())
+      evaluateResolvers(parallel, jobs);
+    if (!serial.empty())
+      for (ForceJob &job : jobs) {
+        BodyExtent extent{world, job.body->handle};
+        addForceDops(obj, job.state, serial, extent, job.force, job.torque);
+      }
+  }
+
+  for (const ForceJob &job : jobs) {
+    const float fv[3] = {static_cast<float>(job.force.x()),
+                         static_cast<float>(job.force.y()),
+                         static_cast<float>(job.force.z())};
+    const float tv[3] = {static_cast<float>(job.torque.x()),
+                         static_cast<float>(job.torque.y()),
+                         static_cast<float>(job.torque.z())};
     if (!b3dop::finite3(fv) || !b3dop::finite3(tv)) {
       ++stats.nonFinite;
       continue;
@@ -169,7 +312,7 @@ void applyToObjectBodies(Box3DSharedState &st, const SIM_Object &obj,
     if (fv[0] == 0.0f && fv[1] == 0.0f && fv[2] == 0.0f && tv[0] == 0.0f &&
         tv[1] == 0.0f && tv[2] == 0.0f)
       continue;
-    world.applyForceByHandle(e->handle, fv, tv, wake);
+    world.applyForceByHandle(job.body->handle, fv, tv, wake);
     ++stats.bodies;
   }
 }

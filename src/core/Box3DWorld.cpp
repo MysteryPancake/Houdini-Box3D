@@ -1407,6 +1407,17 @@ bool Box3DWorld::bodyStateByHandle(BodyHandle h, BodyState &out) const {
   return true;
 }
 
+bool Box3DWorld::extentByHandle(BodyHandle h, float out[3]) const {
+  if (!h || b3Body_GetShapeCount(b3LoadBodyId(h)) == 0)
+    return false;
+  const b3AABB box = b3Body_ComputeAABB(b3LoadBodyId(h));
+  const b3Vec3 e = b3Sub(box.upperBound, box.lowerBound);
+  out[0] = e.x;
+  out[1] = e.y;
+  out[2] = e.z;
+  return finite3(out) && out[0] >= 0.0f && out[1] >= 0.0f && out[2] >= 0.0f;
+}
+
 void Box3DWorld::applyForceByHandle(BodyHandle h, const float force[3],
                                     const float torque[3], bool wake) {
   if (!h)

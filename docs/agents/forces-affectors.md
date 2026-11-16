@@ -23,10 +23,21 @@ mass, force, torque)` for every force on the object, summed, and the sum goes in
   bodies, which is what keeps gravity-like forces from holding resting bodies awake; `forceswake` passes `wake = true`.
 * Non-finite sums are skipped and counted (`ForceStats::nonFinite`, one node warning). `applyForceByHandle` also
   sanitizes (`finiteVec3`) because Box3D asserts on non-finite vectors.
-* Evaluation is serial: `SIM_Force::getForce` is user-extensible and nothing guarantees a custom Force DOP is thread-safe. See
-  "TODO" in [status.md](status.md) for the parallel option.
+* Substeps (the solver's, whole Box3D steps) apply the forces again before each step, so a force is evaluated once per
+  step. What stays constant is Box3D's own Solver Passes inside a step (`subStepCount`): no hook runs between them.
+* Evaluation (`applyToObjectBodies`) is three phases per object: read each body's state (serial, it reads Box3D), evaluate
+  the forces, apply the sums (serial). From `kMinParallelForces` bodies, the forces sampled at a point whose
+  `SIM_ForceResolver` reports `threadsafe()` are evaluated on the TBB pool (`evaluateResolvers`: each range of 64 bodies
+  takes its own `copy()` of the resolvers, as the header asks). Everything else stays serial: forces sampled over a circle or
+  sphere (the resolver only has the point call), and a custom Force DOP, whose generic resolver is not thread-safe. Below the
+  threshold all forces are serial, as before.
 * Gravity Force DOP + the solver's `gravity` add up (both are applied). `gravityscale` only scales the solver's gravity.
-* Not used: `getForceOnCircle` / `getForceOnSphere` (area and volume variants), `getPointForces`.
+* Sampling: each force is sampled as its own Sample Mode asks (`SIM_Force::getOptimalForceSampling`, a point unless the
+  Force DOP is set otherwise). Sphere: `getForceOnSphere` with the radius of a sphere of the same volume as the body's
+  bounding box. Circle: the force's direction comes from a point sample, then `getForceOnCircle` with the radius of a circle
+  of the same area as the box seen along that direction. The box is `Box3DWorld::extentByHandle` (world axes, so a turned
+  body counts larger; read only when a force asks). A body with no shapes falls back to the point sample. Not used:
+  `getPointForces`.
 * `useforces` / `forceswake` are plain options read each step; nothing is stored in the world, so they need no rebuild.
 
 ## Force and torque point attributes

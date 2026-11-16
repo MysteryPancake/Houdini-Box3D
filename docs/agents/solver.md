@@ -188,7 +188,7 @@ Worker count: `autothreads` (off by default) = `UT_Thread::getNumProcessors()`, 
 `defaultWorkerCount()`, `Box3DCpu.h`: physical performance cores), never above Houdini's count; a change rebuilds the
 world.
 
-The plugin's loops use `UTparallelFor` past thresholds (`kMinParallelPoints` and neighbours in
+The plugin's loops use `UTparallelFor` past thresholds (`kMinParallelPoints` and neighbours, `kMinParallelForces` for Force DOPs, in
 `Box3DSolverInternal.h`; overridable from the environment in debug builds); parallel lambdas only read shared data or
 write their own element. The world and mirror are touched in serial passes; the shared-state mutex is held for the
 whole step.

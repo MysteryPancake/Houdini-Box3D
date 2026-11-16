@@ -33,7 +33,11 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   looking like edits (debug log `full scan, changed:`).
 * `SourceSummaryCache`: a packed source edited in place without a new unique id or data id gives a stale hull.
 * Box3D's tasks on Houdini's TBB pool with several DOP networks or threaded SOPs cooking at once.
-* Whether `getForce` is thread-safe (Force DOPs are evaluated serially).
+* Parallel Force DOP evaluation (`evaluateResolvers`, `kMinParallelForces`): written against the HDK header, not compiled
+  or run. Needs a scene with a few hundred bodies and a Gravity / Drag / Wind Force DOP, compared against the serial
+  result (`BOX3DDOP_MIN_PARALLEL_FORCES` in a debug build moves the threshold). Whether the built-in forces report
+  `threadsafe()` true is unchecked, and a force that does not just stays serial.
+* Circle and sphere force sampling (`sampleForce`): written against the HDK header, not compiled or run. Needs a Force DOP set to Sample Mode Circle / Sphere on a body.
 * Box3D Data under Geometry on Static Objects and RBD Objects.
 * Ground planes: a Static Object whose SDF Representation is set to Implicit Plane is taken as a plane facing +y through its
   origin, as a Ground Plane DOP's is (only the Ground Plane is tested). A plane tilted off the axes has a large broad-phase box,
@@ -116,7 +120,8 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   cones, softness, motors and translation ranges, Hard's angular motors, Spring's Hz following mass changes.
 * Inactive RBD Object (Create Active Object off) is a static body: animating its Position teleports it, where Bullet
   drives it as a kinematic body that pushes what it touches.
-* Force DOPs: sphere / area variants, per-substep evaluation, parallel evaluation (needs thread-safe forces).
+* Force DOPs: evaluation inside Box3D's Solver Passes (needs a callback in the fork); parallel evaluation of circle / sphere
+  sampled forces (the resolver has only the point call).
 * Sticky collisions; contact / sensor events beyond Impacts.
 * Box3D Solver SOP:
   * Collision: Deforming following an unpacked collider that scales (a turn is checked by

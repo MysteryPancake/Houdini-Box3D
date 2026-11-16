@@ -93,8 +93,8 @@ inline bool invertSymmetric3(const float in[6], float out[6]) {
   const double d = in[3], e = in[4], f = in[5];
   // Leading principal minors, all positive for a positive definite matrix.
   const double m2 = a * b - d * d;
-  const double det = a * (b * c - f * f) - d * (d * c - f * e) +
-                     e * (d * f - b * e);
+  const double det =
+      a * (b * c - f * f) - d * (d * c - f * e) + e * (d * f - b * e);
   if (!(a > 0.0) || !(m2 > 0.0) || !(det > 0.0) || !std::isfinite(det))
     return false;
   const double inv[6] = {(b * c - f * f) / det, (a * c - e * e) / det,

@@ -132,9 +132,10 @@ void readPackedPivot(PackedInfo &pk) {
 // Collision source geometry
 // ---------------------------------------------------------------------------
 
-// A Sphere, Tube, Circle or Metaball primitive has one point and a transform, so its points alone
-// make no shape: its surface is sampled too (Box3DQuadrics.h). Their transform is
-// GEO_Quadric::getTransform (no translation: the position is the point).
+// A Sphere, Tube, Circle or Metaball primitive has one point and a transform,
+// so its points alone make no shape: its surface is sampled too
+// (Box3DQuadrics.h). Their transform is GEO_Quadric::getTransform (no
+// translation: the position is the point).
 void appendQuadricSamples(const GU_Detail *gdp, const GA_Primitive &prim,
                           NamedPiece &np) {
   if (prim.getTypeId() == GA_PRIMPOLY || prim.getVertexCount() < 1)
@@ -147,7 +148,8 @@ void appendQuadricSamples(const GU_Detail *gdp, const GA_Primitive &prim,
   if (!quadric)
     return;
   const UT_Matrix3 &m = quadric->getTransform();
-  // UT_Matrix3 multiplies row vectors (p' = p * m): the math matrix is its transpose.
+  // UT_Matrix3 multiplies row vectors (p' = p * m): the math matrix is its
+  // transpose.
   double a[9];
   for (int r = 0; r < 3; ++r)
     for (int c = 0; c < 3; ++c)
@@ -621,13 +623,16 @@ BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
           keyed ? packedHullKey(sourceHash, pk.pivot, S, kind) : 0;
       Piece pc;
       if (from.size() == 1 && from[0]->sphereValid) {
-        // One Sphere primitive: a real Box3D sphere, through the packed transform.
+        // One Sphere primitive: a real Box3D sphere, through the packed
+        // transform.
         const double c[3] = {from[0]->sphereCentre[0], from[0]->sphereCentre[1],
                              from[0]->sphereCentre[2]};
-        const float two[6] = {static_cast<float>(c[0]), static_cast<float>(c[1]),
+        const float two[6] = {static_cast<float>(c[0]),
+                              static_cast<float>(c[1]),
                               static_cast<float>(c[2]),
                               static_cast<float>(c[0] + from[0]->sphereRadius),
-                              static_cast<float>(c[1]), static_cast<float>(c[2])};
+                              static_cast<float>(c[1]),
+                              static_cast<float>(c[2])};
         float local[6] = {0, 0, 0, 0, 0, 0};
         std::vector<float> outLocal;
         packedPointsToBodyLocal(two, 2, pk.m4, pk.pivot, outLocal);
@@ -637,10 +642,10 @@ BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
           pc.spec.center[0] = local[0];
           pc.spec.center[1] = local[1];
           pc.spec.center[2] = local[2];
-          pc.spec.radius = clampExtent(std::sqrt(
-              (local[3] - local[0]) * (local[3] - local[0]) +
-              (local[4] - local[1]) * (local[4] - local[1]) +
-              (local[5] - local[2]) * (local[5] - local[2])));
+          pc.spec.radius = clampExtent(
+              std::sqrt((local[3] - local[0]) * (local[3] - local[0]) +
+                        (local[4] - local[1]) * (local[4] - local[1]) +
+                        (local[5] - local[2]) * (local[5] - local[2])));
           pc.volume = shapeVolume(pc.spec);
           add(pc);
           return;
@@ -724,7 +729,8 @@ BuiltShapes buildWholeObjectShapes(b3dop::Box3DWorld &world,
     if (from.size() == 1 && from[0]->sphereValid) {
       // One Sphere primitive: a real Box3D sphere.
       const NamedPiece &np = *from[0];
-      const double c[3] = {np.sphereCentre[0], np.sphereCentre[1], np.sphereCentre[2]};
+      const double c[3] = {np.sphereCentre[0], np.sphereCentre[1],
+                           np.sphereCentre[2]};
       const double e[3] = {c[0] + np.sphereRadius, c[1], c[2]};
       double oc[3], oe[3];
       b3dop::xformPoint(m, c, oc);
@@ -732,10 +738,10 @@ BuiltShapes buildWholeObjectShapes(b3dop::Box3DWorld &world,
       pc.spec.type = b3dop::ShapeType::Sphere;
       for (int k = 0; k < 3; ++k)
         pc.spec.center[k] = static_cast<float>(oc[k] - pivot[k]);
-      pc.spec.radius = b3dop::clampExtent(static_cast<float>(
-          std::sqrt((oe[0] - oc[0]) * (oe[0] - oc[0]) +
-                    (oe[1] - oc[1]) * (oe[1] - oc[1]) +
-                    (oe[2] - oc[2]) * (oe[2] - oc[2]))));
+      pc.spec.radius = b3dop::clampExtent(
+          static_cast<float>(std::sqrt((oe[0] - oc[0]) * (oe[0] - oc[0]) +
+                                       (oe[1] - oc[1]) * (oe[1] - oc[1]) +
+                                       (oe[2] - oc[2]) * (oe[2] - oc[2]))));
       pc.volume = b3dop::shapeVolume(pc.spec);
       out.totalVolume += pc.volume;
       out.pieces.push_back(pc);

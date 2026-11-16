@@ -448,6 +448,9 @@ public:
   // World position of the body's centre of mass (where forces act). False for
   // no body.
   bool getCenterOfMassByHandle(BodyHandle h, double outPos[3]) const;
+  // The size (x, y, z) of the body's bounding box in world axes, from its
+  // shapes. False for a null handle or a body with no shapes (zero size).
+  bool extentByHandle(BodyHandle h, float out[3]) const;
   // A force (N) through the centre of mass and a torque (N*m) about it, in
   // world space, for the NEXT step only: Box3D adds both to its integration in
   // every substep and clears them when the step ends, so call this once per

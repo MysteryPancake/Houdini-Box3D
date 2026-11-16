@@ -98,11 +98,14 @@ constexpr size_t kMinParallelReadPlain =
 constexpr size_t kMinParallelReadPacked =
     2048;                                  // sync read, geometry has primitives
 constexpr size_t kMinParallelWrite = 1024; // write-back
+// Bodies of one object before its Force DOPs are evaluated in parallel.
+constexpr size_t kMinParallelForces = 256;
 
 // The thresholds in use. In BOX3DDOP_DEBUG builds an environment variable
 // overrides each one (a decimal count, read once per process), so a benchmark
 // can sweep them without rebuilding:
-//   BOX3DDOP_MIN_PARALLEL_POINTS / _READ_PLAIN / _READ_PACKED / _WRITE
+//   BOX3DDOP_MIN_PARALLEL_POINTS / _READ_PLAIN / _READ_PACKED / _WRITE /
+//   _FORCES
 // Release builds always use the constants above.
 inline size_t tunedMinParallel(const char *envName, size_t fallback) {
 #ifdef BOX3DDOP_DEBUG
@@ -134,6 +137,12 @@ inline size_t minParallelReadPacked() {
 inline size_t minParallelWrite() {
   static const size_t v =
       tunedMinParallel("BOX3DDOP_MIN_PARALLEL_WRITE", kMinParallelWrite);
+  return v;
+}
+
+inline size_t minParallelForces() {
+  static const size_t v =
+      tunedMinParallel("BOX3DDOP_MIN_PARALLEL_FORCES", kMinParallelForces);
   return v;
 }
 
@@ -214,9 +223,11 @@ struct NamedPiece {
   std::string name;
   std::vector<GA_Offset>
       points; // while collecting (finishPieces reads and drops them)
-  std::vector<float> samples; // quadric primitives' surface points (Box3DQuadrics.h), added to xyz
-  // The piece is one Sphere primitive of uniform scale (sphereValid, after finishPieces): its centre
-  // and radius in the source's space, built as a Box3D sphere instead of a hull.
+  std::vector<float> samples; // quadric primitives' surface points
+                              // (Box3DQuadrics.h), added to xyz
+  // The piece is one Sphere primitive of uniform scale (sphereValid, after
+  // finishPieces): its centre and radius in the source's space, built as a
+  // Box3D sphere instead of a hull.
   int primCount = 0;
   bool sphereValid = false;
   double sphereCentre[3] = {0, 0, 0};

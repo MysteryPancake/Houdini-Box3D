@@ -223,7 +223,8 @@ int main() {
 
     // computed: a 1000 kg cube is 1000 / 6 on every axis
     BodyHandle h = makeBody(1.0f, nullptr);
-    CHECK(w.getMassDataByHandle(h, mass, c, I, off) && near(mass, 1000.0, 1e-2));
+    CHECK(w.getMassDataByHandle(h, mass, c, I, off) &&
+          near(mass, 1000.0, 1e-2));
     CHECK(near(I[0], 1000.0 / 6.0, 0.05) && near(I[1], 1000.0 / 6.0, 0.05) &&
           near(I[2], 1000.0 / 6.0, 0.05));
 
