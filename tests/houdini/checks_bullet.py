@@ -366,6 +366,70 @@ def test_bullet_cylinder():
     return results
 
 
+def anchor_id_run(kind, k, anchor_type):
+    """A fixed box A at (0, 4, 0) and a free box B at (2, 4, 0), no gravity, joined by a SideFX Hard (position)
+    constraint: A's anchor at A's centre, B's anchor at the decoy P (6, 4, 3) with `anchor_id` k (and
+    `anchor_type` when given). The constraint pulls B's anchor to (0, 4, 0), so B's centre after 1 s says where
+    the anchor was on B."""
+    def edit(path):
+        net = hou.node(path)
+        wr = create(net.parent(), "attribwrangle", "anchor_ids")
+        wr.setInput(0, net)
+        set_parm(wr, ["class"], 0)
+        code = f'addpointattrib(0, "anchor_id", -1); setpointattrib(0, "anchor_id", 1, {k});'
+        if anchor_type:
+            code += f' addpointattrib(0, "anchor_type", ""); setpointattrib(0, "anchor_type", 1, "{anchor_type}");'
+        set_parm(wr, ["snippet"], code)
+        display(wr)
+        return wr.path()
+
+    pieces = [{"size": (1, 1, 1), "center": (0, 4, 0), "attrs": {"active": 0}},
+              {"size": (1, 1, 1), "center": (2, 4, 0), "attrs": {"active": 1}}]
+    dop, names = hanging_pair(f"anchor_id_{kind}_{k}_{anchor_type or 'point'}", None,
+                              line_attrs={"constraint_type": "position"}, conrels=[("hardconrel", {})],
+                              solver_kind=kind, pieces=pieces, anchors=((0, 4, 0), (6, 4, 3)),
+                              gravity=(0, 0, 0), network_edit=edit)
+    if kind == "bullet":
+        set_parm(dop.node("gravity"), ["force"], (0, 0, 0))
+    frames = int(round(hou.fps()))
+    return step(dop, frames, lambda sim, f: packed_positions(sim, "pieces")[names[1]])[frames]
+
+
+def test_bullet_anchor_id():
+    """What a point anchor (`anchor_id`) on a packed piece means in Bullet. Box B's anchor has P (6, 4, 3), far
+    from B, and an anchor_id; the Hard constraint pulls that anchor to (0, 4, 0), so B's centre ends at
+    (0, 4, 0) minus the anchor's offset from B's centre. The offset says which point Bullet took: P itself (the id
+    ignored: B ends at (-4, 4, -3)); point k of B's own box (the piece's inner geometry); point k of the object's
+    points (one per piece: A is point 0, B point 1); or point k of the unpacked geometry (box A's points 0 to 7, then
+    B's). Reports Bullet's and Box3D's B and the readings each fits (0.15). INFO: it decides how packed pieces read
+    anchor_id, not a pass mark. For ids 0 and 5, each as a point and as a vertex."""
+    box = create(new_geo("anchor_id_ref"), "box")
+    box_points = [pt.position() for pt in box.geometry().points()]
+    centres = [hou.Vector3(0, 4, 0), hou.Vector3(2, 4, 0)]
+    results = []
+    for k in (0, 5):
+        for anchor_type in (None, "vertex"):
+            got = {kind: anchor_id_run(kind, k, anchor_type) for kind in KINDS}
+            # Offsets of the anchor from B's centre under each reading; B ends at (0, 4, 0) minus the offset.
+            unpacked = box_points[k] + centres[0] if k < 8 else box_points[k - 8] + centres[1]
+            readings = {
+                "P (id ignored)": hou.Vector3(6, 4, 3) - centres[1],
+                "B's own point": box_points[k],
+                "object point k": (centres[k] if k < 2 else centres[1]) - centres[1],
+                "unpacked point k": unpacked - centres[1],
+            }
+            fits = {}
+            for kind, pos in got.items():
+                fits[kind] = [name for name, off in readings.items()
+                              if (hou.Vector3(0, 4, 0) - off - pos).length() < 0.15] or ["none"]
+            what = f"anchor_id {k}" + (f", anchor_type {anchor_type}" if anchor_type else "")
+            fmt = lambda p: "(" + ", ".join(f"{c:.2f}" for c in p) + ")"  # noqa: E731
+            results.append(Result("bullet_anchor_id", Result.INFO,
+                                  f"{what}: B ends at {fmt(got['bullet'])} in Bullet (fits {fits['bullet']}), "
+                                  f"{fmt(got['box3d'])} in Box3D (fits {fits['box3d']})"))
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Joints on a piece that has already turned, and Cone Twist's goal end
 # ---------------------------------------------------------------------------
@@ -710,6 +774,7 @@ TESTS = {
     "bullet_shape_attributes": test_bullet_shape_attributes,
     "bullet_shape_position": test_bullet_shape_position,
     "bullet_cylinder": test_bullet_cylinder,
+    "bullet_anchor_id": test_bullet_anchor_id,
     "bullet_primr_order": test_bullet_primr_order,
     "bullet_shape_probe": test_bullet_shape_probe,
     "bullet_joint_rest": test_bullet_joint_rest,

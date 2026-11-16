@@ -135,7 +135,7 @@ SCALED_SETTINGS = [("dopnet/box3d_solver", n, 1) for n in
                    ("gravity", "maxlinearspeed", "contactpushspeed", "bouncethreshold",
                     "contactrecycledistance", "impactminspeed")] + \
     [("dopnet/pieces", "density", -3)] + \
-    [("dopnet/pieces", n, 1) for n in ("sleepthreshold", "tangentvelocity")] + \
+    [("dopnet/pieces", n, 1) for n in ("sleepthreshold", "tangentvelocity", "vel")] + \
     [("dopnet/collision", "tangentvelocity", 1), ("dopnet/collision_static_data", "tangentvelocity", 1),
      ("dopnet/ground_data", "tangentvelocity", 1)]
 # (The collider's density and sleep threshold are not promoted: it is never dynamic.)
@@ -402,6 +402,7 @@ def scale_joint_settings(asset):
             pname = pt.name()
             if pt.type() != hou.parmTemplateType.Float or pname.startswith("parmop"):
                 continue
+            # (A setting on the Constraints tab is already a channel reference: the scale multiplies it.)
             if not box3d:
                 power = SIDEFX_SCALE_POWERS.get(name, {}).get(pname, 0)
             elif (name, pname) in JOINT_SCALE_BY_NODE:
@@ -414,9 +415,13 @@ def scale_joint_settings(asset):
             if not power:
                 continue
             for p in node.parmTuple(pname):
-                value = p.eval()
+                try:
+                    expr = p.expression()
+                except hou.OperationFailed:
+                    expr = None
+                base = f"({expr})" if expr else repr(p.eval())
                 scaled = factor if power == 1 else f"pow({factor}, {power})"
-                p.setExpression(f"{value!r} * {scaled}", hou.exprLanguage.Hscript)
+                p.setExpression(f"{base} * {scaled}", hou.exprLanguage.Hscript)
             set_operation(node, pname, "initial", warn)
 
 

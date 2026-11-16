@@ -145,6 +145,14 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   (`collision_flipwinding`) to `flipwinding`; Shape and Contacts are disabled for a Static Object. Static Object keeps
   its default Collision Detection (a height field and a mesh both arrive as affectors,
   [forces-affectors.md](forces-affectors.md)). Test `solver_sop_collision_static`.
+* Initial State (`INITIAL_STATE`: Inherit Velocity from Point Velocity, Velocity, Angular Velocity) is the Packed Object's
+  own, cloned into an Initial State folder on the Pieces tab before Sleep and linked to `pieces`. Velocity is in
+  `SCALED_SETTINGS` (the Packed Object writes `v` after World Scale scaled the input); the angular one is not.
+* Constraints tab (`b3d_solver_constraints.py`): every relationship in `RELATIONSHIPS` gets a closed folder with its settings
+  (those in the node's parameter folders, else all but `DATA_PARMS`), named `<node>_<setting>`, linked to the inner node
+  and Set Initial (`finish_constraints`). `scale_joint_settings` wraps the existing channel reference
+  instead of replacing it, so World Scale multiplies the promoted value.
+* Help card: `HELP_CARD` (`b3d_solver_help.py`, Houdini wiki markup) as the definition's `Help` section.
 * The Constraint Network DOP uses Second Context Geometry and Attach Internal Constraints to Object (as RBD Bullet
   Solver), so the network is the pieces object's `ConstraintGeometry`. Only the pieces go through it, the collision
   object is merged after: a second object would get its own copy and make every joint twice. Every relationship in
@@ -232,7 +240,8 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   the solver's Allow Sleeping is in the Solver tab's Sleeping folder instead (one switch for every body); names the solver also uses would
   get `piece_`. Conditions are rewritten with the names (the pieces' Start Asleep and Sleep Threshold grey out
   with the solver's Allow Sleeping). Inner solver `parmop_*` set to
-  Set Initial, as in the Packed Object. Inside each tab the settings sit in collapsible folders, as RBD Bullet
+  Set Always (the solver reads its settings every step, so an animated one acts mid-simulation; test
+  `solver_sop_animated_setting`). The pieces' and collider's Box3D Data, the relationships and the ground stay Set Initial. Inside each tab the settings sit in collapsible folders, as RBD Bullet
   Solver's (`TAB_GROUPS`, `group_tab`) and with its tags (`group_type`, `group_default`, `sidefx::header_toggle`),
   every one open except Output's Impact Data and the Solver tab's Sleeping and Aging; Collision is one Collision Geometry folder with the collider's folders
   simple inside it (each disabled with Use External Collisions off), Pieces is Shape, Body, Material, CCD & Contacts

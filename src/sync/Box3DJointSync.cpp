@@ -16,6 +16,8 @@
 #include <SIM/SIM_ObjectArray.h>
 #include <SIM/SIM_Relationship.h>
 #include <SIM/SIM_RelationshipArray.h>
+#include <SIM/SIM_Utils.h>
+#include <UT/UT_Matrix4.h>
 #include <UT/UT_Quaternion.h>
 #include <UT/UT_String.h>
 #include <UT/UT_StringHolder.h>
@@ -47,6 +49,11 @@ const char *const kAutoRestLength = "auto_restlength";
 // so writing the live frames there drew every moving anchor twice as far.
 const char *const kCurrentP = "current_P";
 const char *const kCurrentOrient = "current_orient";
+// The Constraint Network's anchor attributes: anchor_id (point attribute, int)
+// binds an anchor to a point (or vertex) of the named object; anchor_type
+// (string "point" / "vertex" / "agent", or an int 0 / 1 / 2) says which.
+const char *const kAnchorId = "anchor_id";
+const char *const kAnchorType = "anchor_type";
 
 // The Constraint Network data a relationship carries, or null for other
 // relationships.
@@ -210,6 +217,8 @@ uint64_t networkFingerprint(const GU_Detail *gdp) {
   h = mixHash(h, idOf(gdp->findPointAttribute("orient")));
   h = mixHash(h, idOf(gdp->findPointAttribute(kCurrentP)));
   h = mixHash(h, idOf(gdp->findPointAttribute(kCurrentOrient)));
+  h = mixHash(h, idOf(gdp->findPointAttribute(kAnchorId)));
+  h = mixHash(h, idOf(gdp->findPointAttribute(kAnchorType)));
   h = mixHash(h, idOf(gdp->findPrimitiveAttribute(kConstraintName)));
   h = mixHash(h, idOf(gdp->findPrimitiveAttribute(kAutoRestLength)));
   h = mixHash(h, idOf(gdp->findPrimitiveAttribute(kConstraintType)));
@@ -227,7 +236,49 @@ uint64_t networkFingerprint(const GU_Detail *gdp) {
 struct AnchorBody {
   b3dop::BodyHandle handle = 0;
   const Box3DBodyMirror *entry = nullptr;
+  // The DOP object of a whole-object body (an anchor_id names a point of its
+  // geometry), else null.
+  const SIM_Object *object = nullptr;
 };
+
+// An anchor's anchor_type.
+enum class AnchorKind { Point, Vertex, Agent };
+
+// World position of point (or vertex) `id` of the object's geometry through its
+// geometry transform. False if the object has no geometry or no such point.
+bool pointAnchorWorld(const SIM_Object &obj, int id, bool vertex,
+                      double out[3]) {
+  const SIM_Geometry *geo = obj.getGeometry();
+  if (!geo || id < 0)
+    return false;
+  SIM_GeometryAutoReadLock lock(geo);
+  const GU_Detail *gdp = lock.getGdp();
+  if (!gdp)
+    return false;
+  GA_Offset pt = GA_INVALID_OFFSET;
+  if (vertex) {
+    if (static_cast<GA_Size>(id) >= gdp->getNumVertices())
+      return false;
+    pt = gdp->vertexPoint(gdp->vertexOffset(static_cast<GA_Index>(id)));
+  } else {
+    if (static_cast<GA_Size>(id) >= gdp->getNumPoints())
+      return false;
+    pt = gdp->pointOffset(static_cast<GA_Index>(id));
+  }
+  if (!GAisValid(pt))
+    return false;
+  UT_DMatrix4 xf;
+  SIMgetGeometryTransform(xf, obj);
+  const UT_Vector3 p = gdp->getPos3(pt);
+  UT_Vector3D w(p.x(), p.y(), p.z());
+  w.rowVecMult(xf);
+  for (int k = 0; k < 3; ++k) {
+    if (!std::isfinite(w[k]))
+      return false;
+    out[k] = w[k];
+  }
+  return true;
+}
 
 // Anchor names -> bodies, over the objects of this solve (in their order) and
 // the affectors. The name tables are built on the first resolve(): a step whose
@@ -243,9 +294,9 @@ public:
       if (it == st.objectSync.end() || it->second.visited != st.syncStamp)
         continue;
       const UT_String &nm = obj->getName();
-      myObjects.emplace_back(nm.isstring() ? std::string(nm.buffer())
-                                           : std::string(),
-                             &it->second);
+      myObjects.push_back(
+          {nm.isstring() ? std::string(nm.buffer()) : std::string(),
+           &it->second, obj});
     }
   }
 
@@ -302,12 +353,17 @@ private:
       return;
     myBuilt = true;
     for (const auto &o : myObjects) {
-      myObjectByName.try_emplace(o.first, o.second);
-      for (const auto &p : o.second->byName)
+      myObjectByName.try_emplace(o.name, o.sync);
+      for (const auto &p : o.sync->byName)
         if (p.second->handle)
           myPiece.try_emplace(p.first, bodyOf(p.second));
-      if (o.second->bodies.size() == 1 && o.second->bodies[0]->handle)
-        mySingleBody.try_emplace(o.first, bodyOf(o.second->bodies[0]));
+      if (o.sync->bodies.size() == 1 && o.sync->bodies[0]->handle) {
+        AnchorBody b = bodyOf(o.sync->bodies[0]);
+        // A whole object's points are its geometry's: anchor_id can name one.
+        if (b.entry->wholeObject)
+          b.object = o.object;
+        mySingleBody.try_emplace(o.name, b);
+      }
     }
     for (const auto &kv : myState.affectors)
       if (kv.second.handle) {
@@ -318,7 +374,12 @@ private:
   }
 
   const Box3DSharedState &myState;
-  std::vector<std::pair<std::string, const Box3DObjectSync *>> myObjects;
+  struct ObjectRef {
+    std::string name;
+    const Box3DObjectSync *sync;
+    const SIM_Object *object;
+  };
+  std::vector<ObjectRef> myObjects;
 
   mutable bool myBuilt = false;
   mutable std::unordered_map<std::string, const Box3DObjectSync *>
@@ -545,6 +606,8 @@ struct NetworkReader {
   const GA_ROHandleQ orient, localQ, currentQ;
   const GA_ROHandleV3 localP, currentP;
   const GA_PrimitiveGroup *broken;
+  const GA_ROHandleI anchorIdH, anchorTypeI;
+  const GA_ROHandleS anchorTypeS;
 
   explicit NetworkReader(const GU_Detail *g)
       : gdp(g), conName(g, GA_ATTRIB_PRIMITIVE, kConstraintName),
@@ -556,7 +619,35 @@ struct NetworkReader {
         currentQ(g, GA_ATTRIB_POINT, kCurrentOrient),
         localP(g, GA_ATTRIB_POINT, "local_P"),
         currentP(g, GA_ATTRIB_POINT, kCurrentP),
-        broken(g->findPrimitiveGroup(kBrokenGroup)) {}
+        broken(g->findPrimitiveGroup(kBrokenGroup)),
+        anchorIdH(g, GA_ATTRIB_POINT, kAnchorId),
+        anchorTypeI(g, GA_ATTRIB_POINT, kAnchorType),
+        anchorTypeS(g, GA_ATTRIB_POINT, kAnchorType) {}
+
+  // The anchor's anchor_id: -1 (also: no attribute) is the object's own
+  // offset, which P / orient already give.
+  int anchorId(GA_Offset pt) const {
+    return anchorIdH.isValid() ? anchorIdH.get(pt) : -1;
+  }
+
+  // The anchor's anchor_type: a string ("point", "vertex", "agent") or an int
+  // (0, 1, 2); missing or unknown: point.
+  AnchorKind anchorKind(GA_Offset pt) const {
+    if (anchorTypeS.isValid()) {
+      const char *t = static_cast<const char *>(anchorTypeS.get(pt));
+      if (t && UT_String(t).equal("vertex", false))
+        return AnchorKind::Vertex;
+      if (t && UT_String(t).equal("agent", false))
+        return AnchorKind::Agent;
+    } else if (anchorTypeI.isValid()) {
+      const int t = anchorTypeI.get(pt);
+      if (t == 1)
+        return AnchorKind::Vertex;
+      if (t == 2)
+        return AnchorKind::Agent;
+    }
+    return AnchorKind::Point;
+  }
 
   std::string anchorName(GA_Offset pt) const {
     const char *n =
@@ -877,6 +968,39 @@ private:
       ++myCounts.failed;
   }
 
+  // The anchor as authored (P / orient). With an anchor_id on a whole object it
+  // sits at that point (or vertex) of the object's geometry, as it was the
+  // first time this joint saw it: kept in the entry, so the object moving is no
+  // edit. `bad` is set when the id names no point.
+  b3dop::JointFrame authoredAnchor(Box3DJointEntry &e, bool second,
+                                   GA_Offset pt, const AnchorBody &body,
+                                   bool &bad) const {
+    b3dop::JointFrame f = myRd.authored(pt);
+    b3dop::JointFrame &pin = second ? e.pinB : e.pinA;
+    int &pinId = second ? e.pinIdB : e.pinIdA;
+    bool &pinVertex = second ? e.pinVertexB : e.pinVertexA;
+    const int id = myRd.anchorId(pt);
+    if (id < 0 || !body.handle || !body.object) {
+      pinId = -1; // no point to follow (the id is ignored on a piece or world)
+      return f;
+    }
+    const bool vertex = myRd.anchorKind(pt) == AnchorKind::Vertex;
+    if (pinId != id || pinVertex != vertex) {
+      double w[3];
+      if (!pointAnchorWorld(*body.object, id, vertex, w)) {
+        bad = true;
+        return f;
+      }
+      for (int k = 0; k < 3; ++k)
+        pin.pos[k] = w[k];
+      pinId = id;
+      pinVertex = vertex;
+    }
+    for (int k = 0; k < 3; ++k)
+      f.pos[k] = pin.pos[k];
+    return f;
+  }
+
   void processPrimitive(const GA_Primitive &prim, GA_Offset off) {
     if (prim.getVertexCount() != 2) {
       ++myCounts.notLines;
@@ -899,6 +1023,14 @@ private:
     }
 
     const GA_Offset p0 = prim.getPointOffset(0), p1 = prim.getPointOffset(1);
+    // Agent anchors name a transform of an agent's rig: nothing here simulates
+    // one.
+    if (myRd.anchorKind(p0) == AnchorKind::Agent ||
+        myRd.anchorKind(p1) == AnchorKind::Agent) {
+      ++myCounts.agentAnchors;
+      dropJoint(e);
+      return;
+    }
     AnchorBody ab, bb;
     if (!myAnchors.resolve(myRd.anchorName(p0), ab) ||
         !myAnchors.resolve(myRd.anchorName(p1), bb)) {
@@ -910,8 +1042,16 @@ private:
     // On a written network current_P / current_orient say where the anchors
     // are now, so a world rebuilt mid-simulation makes its joints from them
     // exactly as frame 1 does from the authored P / orient.
-    const b3dop::JointFrame authA = asStored(myRd.authored(p0)),
-                            authB = asStored(myRd.authored(p1));
+    bool badAnchor = false;
+    const b3dop::JointFrame authA = asStored(
+                                authoredAnchor(e, false, p0, ab, badAnchor)),
+                            authB = asStored(
+                                authoredAnchor(e, true, p1, bb, badAnchor));
+    if (badAnchor) {
+      ++myCounts.badAnchorId;
+      dropJoint(e);
+      return; // not stamped: removed
+    }
     b3dop::JointFrame la, lb;
     const bool hasLive = myRd.live(p0, la) && myRd.live(p1, lb);
     // Edited upstream (a SOP Solver): the authored anchors differ from the ones

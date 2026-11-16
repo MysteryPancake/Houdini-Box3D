@@ -110,6 +110,17 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   SOP, the Static Object's default Collision Detection on a mesh (does it build a distance field?) and on a height
   field, Hscript `nprims` and `if` in the Switch condition, the fourth DOP network input, and the guide of the
   `collision` object.
+* The Solver SOP's Initial State folder, Constraints tab and help card (`solver_sop_initial_state`,
+  `solver_sop_constraint_settings`): written without building or running. Unchecked: which parameters SideFX's Glue,
+  Hard, Spring, Soft and Cone Twist nodes have in folders (`node_settings` falls back to every setting but
+  `DATA_PARMS` and prints the list), conditions between promoted settings after the rename, the `Help` section's
+  wiki markup, and Velocity under World Scale.
+* The solver's settings at Set Always (`solver_sop_animated_setting`): written without running. Unchecked: that every
+  setting tolerates being re-applied each step (one that needs a new world, like Threads, only acts when its value
+  changes).
+* `anchor_id` / `anchor_type` on whole objects (`anchor_id`, `pointAnchorWorld`): written without building or running.
+  Unchecked: `UT_Vector3D::rowVecMult` with `SIMgetGeometryTransform` for the point's world position, whether SideFX's
+  `anchor_type` is a string or an int (both are read), and the object name an RBD Object's anchors resolve by.
 * Transform Pieces with packed transforms that carry scale or shear.
 * Constraints output through Transform Pieces: constraints between collision pieces (not in the simulation points, so
   not moved).
@@ -134,7 +145,10 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   entries and surviving the later `save`s (Bullet's extra info is `guide=GUIDE_GEO` among colour entries).
 * Concave meshes: one mesh shared between instances, static RBD Objects as meshes, drawing meshes in the guide.
 * Height fields: holes from a mask layer, height fields on points.
-* Constraint networks: point / vertex / agent anchors (`anchor_id`, `anchor_type`); `constraint_type` on our nodes.
+* Constraint networks: agent anchors (`anchor_type` agent), `anchor_id` on packed pieces and Static Objects, the
+  `anchor_pid` / `anchor_vid` matching; `constraint_type` on our nodes. SideFX's help says a missing `constraint_type`
+  is `position`, where the solver takes `all` (checked against Bullet in `bullet_joint_rest` and `sidefx_hard_*`: rerun
+  before changing).
 * SideFX constraint data not mapped: Glue half-life / propagation, Soft plasticity, Cone Twist's elliptical and wide
   cones, softness, motors and translation ranges, Hard's angular motors, Spring's Hz following mass changes.
 * Inactive RBD Object (Create Active Object off) is a static body: animating its Position teleports it, where Bullet
@@ -145,9 +159,8 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * Box3D Solver SOP:
   * Collision: Deforming following an unpacked collider that scales (a turn is checked by
     `unpacked_turning_collider`).
-  * Constraint relationship parameters on the node (Glue strength, Weld break force ...), or Attributes Replace
-    Values on the inner ones so primitive attributes are absolute.
-  * Initial velocity controls, Set Always for animated solver parameters, a help card.
+  * Set Always for the Box3D Data settings of the pieces and collider, the relationships and the ground (the solver's
+    own settings are Set Always already).
 
 ## Box3D fork (`extern/box3d`)
 

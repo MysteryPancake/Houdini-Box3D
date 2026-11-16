@@ -93,6 +93,7 @@ from b3d_solver_common import (  # noqa: E402
     FETCH_IMPACTS,
     group_tab,
     ICON,
+    INITIAL_STATE,
     IMPACT_SPEED,
     IMPACT_TOGGLE,
     IMPACTS,
@@ -123,6 +124,8 @@ from b3d_solver_common import (  # noqa: E402
     USE_COLLISIONS,
     warn,
 )
+from b3d_solver_constraints import constraint_items, finish_constraints  # noqa: E402
+from b3d_solver_help import HELP_CARD  # noqa: E402
 from b3d_solver_ground import (  # noqa: E402
     finish_ground,
     GROUND_DATA,
@@ -185,6 +188,17 @@ def moved_settings(packed):
         if pt is None:
             warn(f"{packed.path()} has no {name}: not on the Solver SOP")
     return {name: pt.clone() for name, pt in found.items() if pt is not None}
+
+
+def initial_state_folder(packed):
+    """An open Initial State folder with the Packed Object's INITIAL_STATE parameters (cloned: same names and
+    conditions). None, with a warning, when one is missing."""
+    group = packed.parmTemplateGroup()
+    found = [group.find(name) for name in INITIAL_STATE]
+    if any(pt is None for pt in found):
+        warn(f"{packed.path()} lacks some of {INITIAL_STATE}: no Initial State folder on the Pieces tab")
+        return None
+    return collapsible("b3dsop_initial_state", "Initial State", [pt.clone() for pt in found])
 
 
 def build(out_path, packed_hda=None):
@@ -344,6 +358,10 @@ def build(out_path, packed_hda=None):
                        collapsible("b3dsop_collision_geometry", "Collision Geometry",
                                    [source, animated, flip] + collider_folders, header_toggle=USE_COLLISIONS),
                        ground_folder]
+    # The Constraints tab: every relationship's own settings (b3d_solver_constraints.py).
+    constraint_folders, constraint_links = constraint_items(dopnet, sub)
+    links += constraint_links
+    taken.update(new for _, _, new in constraint_links)
     taken.update([TRANSFER_ATTRIBUTES, KEEP_BROKEN, IMPORT_CONSTRAINTS, IMPORT_PROXY]
                  + list(POINT_VELOCITY_PARMS) + [n for n, _ in TRANSFER_TO.values()])
 
@@ -387,6 +405,8 @@ def build(out_path, packed_hda=None):
     ordered = [("Solver", [use_scale, world_scale] + by_label.pop("Solver", []) + solver_extra),
                ("Pieces", None),  # filled below
                ("Collision", collision_items)]
+    if constraint_folders:
+        ordered.append(("Constraints", constraint_folders))
     last = [(label, by_label.pop(label)) for label in ("Advanced",) if label in by_label]
     if "Forces" in by_label:
         ordered.append(("Forces", by_label.pop("Forces")))
@@ -421,12 +441,18 @@ def build(out_path, packed_hda=None):
     # The Pieces tab: the Box3D Data folders (Shape, Body, Material, CCD & Contacts, Sleep), each an open
     # collapsible folder (the folder Add Impact Data came out of may be left empty: dropped).
     pieces_items = [as_collapsible(f) for f in folders if f.parmTemplates()]
+    # Initial State (the Packed Object's Velocity, Angular Velocity and Inherit Velocity) before Sleep.
+    initial = initial_state_folder(pieces)
+    if initial is not None:
+        at = next((i for i, f in enumerate(pieces_items) if f.label() == "Sleep"), len(pieces_items))
+        pieces_items.insert(at, initial)
+        links += [(sub.relativePathTo(pieces), name, name) for name in INITIAL_STATE]
     velocity = velocity_templates(sub.node("transform_geometry"))
     output_items = output_tab(impact, speed, velocity)
     vis_items = visualization_tab(shapes)
     for i, (label, contents) in enumerate(ordered):
         contents = {"Pieces": pieces_items, "Output": output_items, "Visualization": vis_items,
-                    "Collision": contents}.get(
+                    "Collision": contents, "Constraints": contents}.get(
             label, group_tab(label, contents, advanced_groups if label == "Advanced" else None)
             if contents is not None else contents)
         group.append(hou.FolderParmTemplate(f"b3dsop_tab{i}", label, contents, folder_type=hou.folderType.Tabs))
@@ -452,6 +478,7 @@ def build(out_path, packed_hda=None):
     # Diving into the asset lands in FORCES (the DiveTarget section holds the relative path), and
     # FORCES is an editable node, so forces can be added without unlocking the asset (the
     # EditableNodes section: space-separated relative paths).
+    definition.addSection("Help", HELP_CARD)
     definition.addSection("DiveTarget", DIVE_TARGET)
     definition.addSection("EditableNodes", DIVE_TARGET)
 
@@ -459,9 +486,12 @@ def build(out_path, packed_hda=None):
     for inner_path, inner_name, outer_name in links:
         link(asset.node(inner_path), inner_name, asset, outer_name)
     finish_ground(asset)
+    finish_constraints(asset, constraint_links)
     scale_settings(asset)
     scale_joint_settings(asset)
-    b3d_hda.set_operations(asset.node("dopnet/box3d_solver"), "initial", warn)
+    # Set Always, not Set Initial: the solver's settings are read every step, so an animated one (Gravity keyed
+    # or driven by an expression) changes the simulation while it plays.
+    b3d_hda.set_operations(asset.node("dopnet/box3d_solver"), "always", warn)
     definition.updateFromNode(asset)
     set_guide_geometry(definition)
     definition.save(out_path, asset)
@@ -602,6 +632,7 @@ def check(out_path):
         warn(f"no {SHOW_COLLISION} parameter on the asset, or it is not on by default")
     for outer, inner_path, inner_name in (("friction", "dopnet/pieces", "friction"),
                                           ("collision_friction", "dopnet/collision", "friction"),
+                                          ("weld_torque_threshold", "dopnet/weld", "torque_threshold"),
                                           ("collision_friction", "dopnet/collision_static_data", "friction"),
                                           ("collision_bounce", "dopnet/collision_static_data", "bounce"),
                                           ("substeps", "dopnet/box3d_solver", "substeps")):

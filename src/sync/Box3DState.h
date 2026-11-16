@@ -397,6 +397,12 @@ struct Box3DJointEntry {
   // upstream edit of them remakes the joint.
   b3dop::JointFrame authA, authB;
   bool made = false;
+  // A point / vertex anchor (anchor_id) on a whole object: where that point
+  // was the first time this joint saw it, so the object moving is not an edit.
+  // pin*Id is the id it was taken for (-1: none), pin*Vertex whether a vertex.
+  b3dop::JointFrame pinA, pinB;
+  int pinIdA = -1, pinIdB = -1;
+  bool pinVertexA = false, pinVertexB = false;
   // distance made with restlength < 0: written to `auto_restlength` once
   float madeRestLength = -1.0f;
   // made from P / orient: write local_P / local_orient after the step

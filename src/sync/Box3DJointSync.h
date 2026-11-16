@@ -38,8 +38,10 @@ struct Box3DJointCounts {
   // primitives whose constraint_name names no Box3D or supported SideFX
   // constraint relationship
   int unknown = 0;
-  int unresolved = 0; // an anchor name that matches no body
-  int notLines = 0;   // primitives that are not two-point lines
+  int unresolved = 0;   // an anchor name that matches no body
+  int badAnchorId = 0;  // an anchor_id that is no point / vertex of its object
+  int agentAnchors = 0; // anchor_type agent (not simulated here)
+  int notLines = 0;     // primitives that are not two-point lines
   int failed =
       0; // Box3D refused (both ends the world, the same body twice, ...)
 };

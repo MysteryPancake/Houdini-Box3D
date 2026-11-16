@@ -106,6 +106,9 @@ CONSTRAINTS_TOGGLES = {"Pack Geometry Before Merging": False,
 # folder's header toggle, the solver's Impact Min Speed, Fetch Impacts; closed), then Transfer Attributes.
 IMPACT_TOGGLE = "addimpact"  # the pieces' Box3D Data toggle (on the Packed Object's Object tab)
 START_ASLEEP = "startasleep"  # the pieces' Box3D Data toggle (on the Packed Object's Initial State tab)
+# The Packed Object's Initial State parameters shown on the Pieces tab, in this order: Inherit Velocity from Point
+# Velocity, Velocity (scaled by World Scale), Angular Velocity (degrees per second, not scaled).
+INITIAL_STATE = ("inheritvelocity", "vel", "angvel")
 IMPACT_SPEED = "impactminspeed"  # the solver's, moved from Advanced
 IMPACTS = "IMPACTS"  # the null holding the imported impact records, what Fetch Impacts merges
 # Fetch Impacts: an Object Merge of IMPACTS beside the asset (reused if there), selected.

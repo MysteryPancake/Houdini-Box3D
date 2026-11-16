@@ -647,6 +647,12 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
     warnCount(objects, jointCounts.unresolved,
               "constraint primitive(s) name a piece or object that does not "
               "exist and are ignored");
+    warnCount(objects, jointCounts.badAnchorId,
+              "constraint anchor(s) have an anchor_id that is not a point or "
+              "vertex of the named object and are ignored");
+    warnCount(objects, jointCounts.agentAnchors,
+              "constraint anchor(s) have anchor_type agent, which is not "
+              "supported, and are ignored");
     warnCount(
         objects, jointCounts.notLines,
         "constraint primitive(s) are not two-point lines and are ignored");

@@ -143,6 +143,68 @@ def test_solver_sop_collision_static():
     return results
 
 
+def test_solver_sop_initial_state():
+    """Initial State on the Pieces tab: with Inherit Velocity from Point Velocity off, Velocity (3, 0, 0) moves a
+    box 3 units in a second without gravity, also with World Scale 2 (the output is back at real size)."""
+    pieces, names = packed_boxes("sop_initial_pieces", [{"size": (1, 1, 1), "center": (0, 5, 0)}])
+    results = []
+    for scale in (1, 2):
+        sop = solver_sop(f"sop_initial_{scale}", geometry=pieces)
+        set_parm(sop, ["gravity"], (0, 0, 0))
+        set_parm(sop, ["inheritvelocity"], 0)
+        set_parm(sop, ["vel"], (3, 0, 0))
+        if scale != 1:
+            set_parm(sop, ["usescale"], 1)
+            set_parm(sop, ["scale"], scale)
+        fps = hou.fps()
+        frames = int(round(fps)) + 1  # a second of motion
+        pos = play(sop, frames, lambda s, f: named_positions(s.geometry(0)).get(names[0]) if f == frames else None)[frames]
+        x = pos[0] if pos else None
+        results.append(Result("solver_sop_initial_state", Result.PASS if x is not None and close(x, 3.0, 0.3) else Result.FAIL,
+                              f"Velocity 3 along x, World Scale {scale}: box at x={x} after 1 s (expected 3)"))
+    return results
+
+
+def test_solver_sop_animated_setting():
+    """A solver setting driven by an expression changes the simulation while it plays (the inner solver's
+    parameters are Set Always): Gravity is 0 until frame 12 and then -9.81, so a box hangs at y 5 and then falls."""
+    pieces, names = packed_boxes("sop_animated_pieces", [{"size": (1, 1, 1), "center": (0, 5, 0)}])
+    sop = solver_sop("sop_animated", geometry=pieces)
+    sop.parmTuple("gravity")[1].setExpression("if($F < 13, 0, -9.81)", hou.exprLanguage.Hscript)
+    track = play(sop, 36, lambda s, f: named_positions(s.geometry(0)).get(names[0]) if f in (12, 36) else None)
+    early, late = track[12], track[36]
+    ok = early is not None and late is not None and close(early[1], 5.0, 0.02) and late[1] < 3.0
+    return [Result("solver_sop_animated_setting", Result.PASS if ok else Result.FAIL,
+                   f"box at y={early[1] if early else None} on frame 12 (expected 5, no gravity) and "
+                   f"{late[1] if late else None} on frame 36 (expected below 3, falling)")]
+
+
+def test_solver_sop_constraint_settings():
+    """The Constraints tab: a Weld's Torque Threshold on the node reaches the inner Weld node, and World Scale 2
+    makes it four times as large there (a torque is the square of the scale). The asset has its help card."""
+    sop = solver_sop("sop_constraints_tab")
+    inner = sop.node("dopnet/weld")
+    parm = sop.parm("weld_torque_threshold")
+    if inner is None or parm is None or inner.parm("torque_threshold") is None:
+        return [Result("solver_sop_constraint_settings", Result.FAIL,
+                       "no weld_torque_threshold on the asset, or no inner dopnet/weld torque_threshold")]
+    parm.set(5.0)
+    plain = inner.parm("torque_threshold").eval()
+    set_parm(sop, ["usescale"], 1)
+    set_parm(sop, ["scale"], 2)
+    scaled = inner.parm("torque_threshold").eval()
+    ok = close(plain, 5.0, 1e-6) and close(scaled, 20.0, 1e-6)
+    results = [Result("solver_sop_constraint_settings", Result.PASS if ok else Result.FAIL,
+                      f"Weld Torque Threshold 5: inner {plain}, with World Scale 2 inner {scaled} (expected 5, 20)")]
+    glue = [p.name() for p in sop.parms() if p.name().startswith("glue_")]
+    results.append(Result("solver_sop_constraint_settings", Result.PASS if glue else Result.FAIL,
+                          f"Glue settings on the Constraints tab: {glue[:6]}"))
+    helped = "Help" in sop.type().definition().sections()
+    results.append(Result("solver_sop_constraint_settings", Result.PASS if helped else Result.FAIL,
+                          f"the asset has a Help section: {helped}"))
+    return results
+
+
 def test_solver_sop_impacts():
     """With Add Impact Data on (the Output tab), a box landing on the ground leaves impact points in the
     asset's IMPACTS node, and Fetch Impacts adds an Object Merge beside the asset that reads them."""
@@ -1131,6 +1193,9 @@ TESTS = {
     "solver_sop_world_scale": test_solver_sop_world_scale,
     "solver_sop_ground": test_solver_sop_ground,
     "solver_sop_collision_static": test_solver_sop_collision_static,
+    "solver_sop_initial_state": test_solver_sop_initial_state,
+    "solver_sop_animated_setting": test_solver_sop_animated_setting,
+    "solver_sop_constraint_settings": test_solver_sop_constraint_settings,
     "solver_sop_ground_guide": test_solver_sop_ground_guide,
     "solver_sop_collision_prim_names": test_solver_sop_collision_prim_names,
     "solver_sop_collision_rest": test_solver_sop_collision_rest,

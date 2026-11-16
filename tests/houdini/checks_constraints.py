@@ -196,6 +196,45 @@ def test_centroid_anchors():
                    f"centroids 1.0 apart at the start, {d:.3f} after 2 s (SideFX Glue / Hard would keep 1.0)")]
 
 
+def test_anchor_id():
+    """anchor_id on a whole object: a Weld between a world anchor at (0, 4, 0) and point 0 (or vertex 0) of an RBD
+    Object box, whose anchor's own P is far away (50, 50, 50), pulls that point of the box to the world anchor, so
+    the box ends at (0, 4, 0) minus the point's offset from the box's centre. Without anchor_id the weld would go
+    to P instead."""
+    results = []
+    box_path = box_sop("anchor_id_box", (0, 3, 0))
+    box_geo = hou.node(box_path).geometry()
+    for label, kind_attrs, vertex in (("point 0", None, False), ("vertex 0", "vertex", True)):
+        dop = new_dopnet(f"anchor_id_{label.split()[0]}")
+        obj = rbd_object(dop, "box", box_path)
+        node = create(dop, "box3d_weldconrel", "joint0")
+        network_path = constraint_lines(f"anchor_id_{label.split()[0]}_network",
+                                        [("", (0, 4, 0), "box", (50, 50, 50), parm_value(node, ["dataname", "data_name"]))])
+        net_geo = hou.node(network_path).parent()
+        wr = create(net_geo, "attribwrangle", "anchor_ids")
+        wr.setInput(0, hou.node(network_path))
+        set_parm(wr, ["class"], 0)
+        code = 'if (!haspointattrib(0, "anchor_id")) addpointattrib(0, "anchor_id", -1); setpointattrib(0, "anchor_id", 1, 0);'
+        if kind_attrs:
+            code += ' addpointattrib(0, "anchor_type", ""); setpointattrib(0, "anchor_type", 1, "vertex");'
+        set_parm(wr, ["snippet"], code)
+        display(wr)
+        net = create(dop, "constraintnetwork", "constraint_network")
+        net.setInput(0, obj)
+        set_parm(net, ["soppath", "constraintsoppath", "geosoppath"], wr.path())
+        net.setInput(1, node)
+        finish(dop, box3d_solver(dop, net, gravity=(0, 0, 0)))
+        point = box_geo.iterPoints()[0].position() if not vertex else \
+            box_geo.prim(0).vertex(0).point().position()
+        want = hou.Vector3(0, 4, 0) - (point - hou.Vector3(0, 3, 0))
+        track = step(dop, 48, lambda sim, f: centroid(whole_object_points(sim, "box")))
+        got = track[48]
+        results.append(Result("anchor_id", Result.PASS if (got - want).length() < 0.1 else Result.FAIL,
+                              f"Weld to {label}: box centre ends at {tuple(round(c, 2) for c in got)} "
+                              f"(expected {tuple(round(c, 2) for c in want)}; its anchor's P was (50, 50, 50))"))
+    return results
+
+
 def sidefx_compare(kind, conrel_type, line_attrs, spin=None, anchors=None):
     """A piece 2 below a fixed one, held by a SideFX constraint with anchors at the centroids,
     in Box3D and in Bullet. Returns {solver: (centroid distance, rotation angle in degrees)}
@@ -588,6 +627,7 @@ def test_static_object_transform():
 
 TESTS = {
     "breaking": test_breaking,
+    "anchor_id": test_anchor_id,
     "attribute_multiplies": test_attribute_multiplies,
     "next_constraint": test_next_constraint,
     "feedback": test_feedback,
