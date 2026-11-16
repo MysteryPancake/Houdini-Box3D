@@ -650,7 +650,6 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
   {
     UT_PerfMonAutoSolveEvent perf(this, "Updating Constraints");
     syncJoints(*st, objects, jointCounts);
-    prepareGlue(*st);
   }
   {
     warnCount(objects, jointCounts.unknown,

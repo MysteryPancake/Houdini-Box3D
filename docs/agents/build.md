@@ -21,6 +21,8 @@ How the project is built, tested and packaged. Index and rules: [CLAUDE.md](../.
 * Warnings: `b3dop_warnings(target)` adds `-Wall -Wextra -Wshadow -Wconversion` (`/W4` on MSVC) to our targets, never to
   Box3D; Houdini's headers are system includes. `BOX3DDOP_WARNINGS_AS_ERRORS` (default OFF, on in CI) adds `-Werror` /
   `/WX`.
+* `BOX3DDOP_PCH` (default ON) precompiles the HDK and standard headers most plugin files include (`target_precompile_headers`
+  on `Box3DDOP`: no Box3D headers, no `UT_DSOVersion.h`); turn it off if a header ever needs a different include order.
 * `CMAKE_EXPORT_COMPILE_COMMANDS` feeds clang-tidy (`.clang-tidy`); the plugin's files only appear in it after an HDK
   build. `format` / `format-check` targets run clang-format; `.githooks/pre-commit` checks staged files once enabled
   (`git config core.hooksPath .githooks`).

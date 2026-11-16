@@ -1625,6 +1625,19 @@ void testCollisionFiltering() {
     }
   CHECK(sawD1);
 
+  // the lighter call adds up the same impulses, and leaves out the bodies it is
+  // told to
+  float total = 0.0f, fromD1 = 0.0f;
+  for (const ContactPoint &c : cps) {
+    total += c.impulse;
+    if (c.other == d1)
+      fromD1 += c.impulse;
+  }
+  CHECK(std::fabs(fw.contactImpulseByHandle(gh, nullptr, 0) - total) <=
+        1e-3f * total + 1e-6f);
+  CHECK(std::fabs(fw.contactImpulseByHandle(gh, &d1, 1) - (total - fromD1)) <=
+        1e-3f * total + 1e-6f);
+
   // live tuning is harmless and applied
   WorldSettings tuned;
   tuned.contactPushSpeed = 1.0f;

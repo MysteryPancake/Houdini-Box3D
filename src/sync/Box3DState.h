@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <deque>
 #include <iterator>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <type_traits>
@@ -376,6 +377,26 @@ struct Box3DAffectorBody {
 };
 
 // One joint made from a primitive of a constraint network (Box3DJointSync.cpp).
+// The parts of a joint entry that few joints use (Box3DJointEntry::extra).
+struct Box3DJointExtra {
+  // A point / vertex anchor (anchor_id) on a whole object or packed piece:
+  // where that point was the first time this joint saw it, so the body moving
+  // is not an edit. pin*Id is the id it was taken for (-1: none), pin*Vertex
+  // whether a vertex.
+  b3dop::JointFrame pinA, pinB;
+  int pinIdA = -1, pinIdB = -1;
+  bool pinVertexA = false, pinVertexB = false;
+  // SideFX Glue: the bond's options, and its accumulated `impact` (the
+  // attribute of the same name), kept from step to step.
+  b3dop::GlueParams glueParams;
+  float glueImpact = 0.0f;
+  // SideFX Spring: the masses its Hz and damping ratio were converted with.
+  b3dop::SideFXBody massA, massB;
+  // A joint that broke: its local frames at the break, so a next constraint can
+  // start from them (switchFrames).
+  b3dop::JointFrame brokeLocalA, brokeLocalB;
+};
+
 struct Box3DJointEntry {
   b3dop::JointHandle handle =
       0; // 0: none (broken, or its anchors did not resolve)
@@ -398,12 +419,6 @@ struct Box3DJointEntry {
   // upstream edit of them remakes the joint.
   b3dop::JointFrame authA, authB;
   bool made = false;
-  // A point / vertex anchor (anchor_id) on a whole object: where that point
-  // was the first time this joint saw it, so the object moving is not an edit.
-  // pin*Id is the id it was taken for (-1: none), pin*Vertex whether a vertex.
-  b3dop::JointFrame pinA, pinB;
-  int pinIdA = -1, pinIdB = -1;
-  bool pinVertexA = false, pinVertexB = false;
   // distance made with restlength < 0: written to `auto_restlength` once
   float madeRestLength = -1.0f;
   // made from P / orient: write local_P / local_orient after the step
@@ -412,7 +427,7 @@ struct Box3DJointEntry {
   // next_constraint_name: the broken joint's local frames, so the anchors can
   // be put where its frames were at the break (switchFrames) and the next
   // constraint made exactly from there.
-  b3dop::JointFrame brokeLocalA, brokeLocalB;
+  // (the frames themselves are in `extra`)
   bool brokeLocalKnown = false;
   bool switchFrames = false;
 
@@ -428,18 +443,23 @@ struct Box3DJointEntry {
   float restRotB[4] = {0, 0, 0, 1};
 
   // SideFX Glue: breaks on the impulse of the hits its bodies take, not on a
-  // load (core/Box3DGlue.h, docs/agents/joints.md). glueImpact is Glue's
-  // `impact` attribute, kept from step to step.
+  // load (core/Box3DGlue.h, docs/agents/joints.md); its bond and `impact` are
+  // in `extra`.
   bool glue = false;
-  b3dop::GlueParams glueParams;
-  float glueImpact = 0.0f;
-
   // SideFX Spring: its Hz and damping ratio come from the bodies' masses
   // (Hooke's constant and absolute damping converted, b3dop::mapSideFX), so the
-  // masses they were made from are kept and the joint is remade when they
-  // change.
+  // masses they were made from are kept (in `extra`) and the joint is remade
+  // when they change.
   bool massDependent = false;
-  b3dop::SideFXBody massA, massB;
+
+  // What only some joints keep, made on first use so the others do not carry
+  // it (about a quarter of an entry).
+  std::unique_ptr<Box3DJointExtra> extra;
+  Box3DJointExtra &ensureExtra() {
+    if (!extra)
+      extra = std::make_unique<Box3DJointExtra>();
+    return *extra;
+  }
 };
 
 // A body in a Glue network this frame and the impulse its contacts put on it
@@ -555,13 +575,16 @@ struct Box3DSharedState {
   // brokenCollected is set.
   std::vector<void *> brokenThisFrame;
   bool brokenCollected = false;
-  // Glue (prepareGlue, collectGlueHits, advanceGlue in Box3DJointSync.cpp): the
+  // Glue (syncJoints, collectGlueHits, advanceGlue in Box3DJointSync.cpp): the
   // live bonds and their bodies this frame, and the bonds that went over their
   // strength (joint user data, broken by jointsAfterStep with the force ones).
   std::vector<Box3DGlueNode> glueNodes;
   std::unordered_map<b3dop::BodyHandle, int> glueNodeOf;
   std::vector<Box3DJointEntry *> glueBonds;
   std::vector<void *> glueBroken;
+  // Live SideFX Spring joints last step: syncJoints looks for changed masses
+  // only while there are any.
+  size_t springEntries = 0;
   // The same for hit events (Impact Min Speed): hitPairs already holds every
   // Box3D step of this frame, so recordImpacts must not refill it from the
   // last.

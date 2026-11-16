@@ -501,6 +501,13 @@ public:
   // cleared first.
   int getContactsByHandle(BodyHandle h, std::vector<ContactPoint> &out) const;
 
+  // The total normal impulse (N*s) of the body's contacts in the last step,
+  // leaving out those with the `skipCount` bodies at `skip` (a body's glued
+  // neighbours): what getContactsByHandle's records add up to, without
+  // building them.
+  float contactImpulseByHandle(BodyHandle h, const BodyHandle *skip,
+                               size_t skipCount) const;
+
   // Hit events of the last step (pairs that approached faster than
   // impactMinSpeed).
   // append: keep the pairs already collected (Box3D clears its hit events every

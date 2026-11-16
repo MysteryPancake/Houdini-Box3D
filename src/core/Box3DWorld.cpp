@@ -1612,18 +1612,59 @@ void Box3DWorld::setTargetTransformByHandle(BodyHandle h, const double pos[3],
   b3Body_SetTargetTransform(b3LoadBodyId(h), t, timeStep, true);
 }
 
+namespace {
+
+// The body's contacts into `data` (a scratch buffer that only grows, so a call
+// does not zero what it is about to overwrite); how many.
+int fetchContacts(b3BodyId id, std::vector<b3ContactData> &data) {
+  const int cap = b3Body_GetContactCapacity(id);
+  if (cap <= 0)
+    return 0;
+  if (data.size() < static_cast<size_t>(cap))
+    data.resize(static_cast<size_t>(cap));
+  return b3Body_GetContactData(id, data.data(), cap);
+}
+
+} // namespace
+
+float Box3DWorld::contactImpulseByHandle(BodyHandle h, const BodyHandle *skip,
+                                         size_t skipCount) const {
+  if (!h)
+    return 0.0f;
+  const b3BodyId id = b3LoadBodyId(h);
+  thread_local std::vector<b3ContactData> data;
+  const int n = fetchContacts(id, data);
+  float total = 0.0f;
+  for (int i = 0; i < n; ++i) {
+    const b3ContactData &cd = data[static_cast<size_t>(i)];
+    if (skipCount > 0) {
+      const b3BodyId a = b3Shape_GetBody(cd.shapeIdA);
+      const b3BodyId other = (a.index1 == id.index1 && a.world0 == id.world0 &&
+                              a.generation == id.generation)
+                                 ? b3Shape_GetBody(cd.shapeIdB)
+                                 : a;
+      if (std::find(skip, skip + skipCount, b3StoreBodyId(other)) !=
+          skip + skipCount)
+        continue;
+    }
+    for (int m = 0; m < cd.manifoldCount; ++m) {
+      const b3Manifold &man = cd.manifolds[m];
+      for (int k = 0; k < man.pointCount; ++k)
+        if (man.points[k].totalNormalImpulse > 0.0f)
+          total += man.points[k].totalNormalImpulse;
+    }
+  }
+  return total;
+}
+
 int Box3DWorld::getContactsByHandle(BodyHandle h,
                                     std::vector<ContactPoint> &out) const {
   out.clear();
   if (!h)
     return 0;
   const b3BodyId id = b3LoadBodyId(h);
-  const int cap = b3Body_GetContactCapacity(id);
-  if (cap <= 0)
-    return 0;
   thread_local std::vector<b3ContactData> data;
-  data.resize(static_cast<size_t>(cap));
-  const int n = b3Body_GetContactData(id, data.data(), cap);
+  const int n = fetchContacts(id, data);
   for (int i = 0; i < n; ++i) {
     const b3ContactData &cd = data[static_cast<size_t>(i)];
     const b3BodyId a = b3Shape_GetBody(cd.shapeIdA);

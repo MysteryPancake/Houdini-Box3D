@@ -116,6 +116,10 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   piles, several contacts, different masses), the half-life and propagation against Bullet, the global propagation
   iteration count (the `propagate_iteration` detail attribute is not read), and the cost of reading every glued body's
   contacts each step on a large network.
+* The joint-pass, contact-impulse, entry-size and precompiled-header changes (`Box3DJointExtra`, `springEntries`,
+  `contactImpulseByHandle`, `BOX3DDOP_PCH`): written without building or running the plugin. Unchecked: that the plugin
+  builds and `glue_impact_scale`, `sidefx_spring_mass`, `anchor_id` and `bullet_anchor_id` still pass, and what the
+  precompiled headers save (not measured).
 * Transform Pieces with packed transforms that carry scale or shear.
 * Constraints output through Transform Pieces: constraints between collision pieces (not in the simulation points, so
   not moved).

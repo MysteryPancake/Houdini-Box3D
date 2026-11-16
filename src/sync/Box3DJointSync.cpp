@@ -1127,18 +1127,21 @@ private:
                                    GA_Offset pt, const AnchorBody &body,
                                    AnchorLookup &bad) const {
     b3dop::JointFrame f = myRd.authored(pt);
-    b3dop::JointFrame &pin = second ? e.pinB : e.pinA;
-    int &pinId = second ? e.pinIdB : e.pinIdA;
-    bool &pinVertex = second ? e.pinVertexB : e.pinVertexA;
     const int id = myRd.anchorId(pt);
     // A whole object's geometry points, or a packed piece's own geometry's.
     const bool whole = body.entry && body.entry->wholeObject;
     const bool piece = body.entry && body.entry->packed && !whole;
     if (id < 0 || !body.handle || !body.object || !(whole || piece)) {
-      pinId = -1; // no point to follow (the id is ignored on the world and
-                  // affectors)
+      // No point to follow (the id is ignored on the world and affectors):
+      // forget a pin from an earlier id.
+      if (e.extra)
+        (second ? e.extra->pinIdB : e.extra->pinIdA) = -1;
       return f;
     }
+    Box3DJointExtra &x = e.ensureExtra();
+    b3dop::JointFrame &pin = second ? x.pinB : x.pinA;
+    int &pinId = second ? x.pinIdB : x.pinIdA;
+    bool &pinVertex = second ? x.pinVertexB : x.pinVertexA;
     const bool vertex = myRd.anchorKind(pt) == AnchorKind::Vertex;
     if (pinId != id || pinVertex != vertex) {
       double w[3];
@@ -1235,14 +1238,21 @@ private:
                             fb = useLive ? lb : authB;
     const JointSpec j = specFor(*kind, off, a, b, fa, fb);
     e.glue = j.glue;
-    e.glueParams = j.glueParams;
     e.massDependent = j.massDependent;
-    e.massA = j.bodyA;
-    e.massB = j.bodyB;
-    if (j.glue && !e.made && myRd.impact.isValid()) {
-      // A world rebuilt mid-simulation: carry on from what the geometry holds.
-      const float kept = myRd.impact.get(off);
-      e.glueImpact = std::isfinite(kept) && kept > 0.0f ? kept : 0.0f;
+    if (j.glue || j.massDependent) {
+      Box3DJointExtra &x = e.ensureExtra();
+      if (j.glue)
+        x.glueParams = j.glueParams;
+      if (j.massDependent) {
+        x.massA = j.bodyA;
+        x.massB = j.bodyB;
+      }
+      if (j.glue && !e.made && myRd.impact.isValid()) {
+        // A world rebuilt mid-simulation: carry on from what the geometry
+        // holds.
+        const float kept = myRd.impact.get(off);
+        x.glueImpact = std::isfinite(kept) && kept > 0.0f ? kept : 0.0f;
+      }
     }
 
     const bool live = myNet.writable;
@@ -1485,49 +1495,34 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
   }
   counts.networks = static_cast<int>(refs.size());
 
+  // The Glue bonds of this step are listed by the removal loop below (it visits
+  // every live joint anyway); the bonds that broke last step are gone.
+  st.glueNodes.clear();
+  st.glueNodeOf.clear();
+  st.glueBonds.clear();
+  st.glueBroken.clear();
+
   if (!refs.empty()) {
     // A Spring whose bodies' masses changed since it was made is reprocessed
     // (its Hz and damping ratio follow the masses): the networks to read again.
+    // Only while there are Springs (counted by the removal loop last step).
     std::unordered_set<uint64_t> massChanged;
-    for (const auto &kv : st.joints) {
-      const Box3DJointEntry &e = kv.second;
-      if (e.massDependent && !e.broken && st.world.isJointValid(e.handle) &&
-          (!sameSideFXBody(e.massA, sideFXBody(st.world, e.bodyA)) ||
-           !sameSideFXBody(e.massB, sideFXBody(st.world, e.bodyB))))
-        massChanged.insert(e.network);
-    }
+    if (st.springEntries > 0)
+      for (const auto &kv : st.joints) {
+        const Box3DJointEntry &e = kv.second;
+        if (e.massDependent && e.extra && !e.broken &&
+            st.world.isJointValid(e.handle) &&
+            (!sameSideFXBody(e.extra->massA, sideFXBody(st.world, e.bodyA)) ||
+             !sameSideFXBody(e.extra->massB, sideFXBody(st.world, e.bodyB))))
+          massChanged.insert(e.network);
+      }
     const Anchors anchors(st, objects);
     for (const NetworkRef &ref : refs)
       processNetwork(st, ref, anchors, massChanged.count(ref.key) != 0, counts);
   }
 
-  // ---- remove: joints whose primitive or network went away ----
-  for (auto it = st.joints.begin(); it != st.joints.end();) {
-    const Box3DJointEntry &e = it->second;
-    const auto net = st.jointNetworks.find(e.network);
-    const bool live = net != st.jointNetworks.end() &&
-                      net->second.visited == st.syncStamp &&
-                      e.stamp == net->second.liveStamp;
-    if (live) {
-      ++it;
-      continue;
-    }
-    if (st.world.isJointValid(e.handle)) {
-      st.world.destroyJoint(e.handle);
-      ++counts.removed;
-    }
-    it = st.joints.erase(it);
-  }
-  for (auto it = st.jointNetworks.begin(); it != st.jointNetworks.end();)
-    it = (it->second.visited == st.syncStamp) ? std::next(it)
-                                              : st.jointNetworks.erase(it);
-}
-
-void prepareGlue(Box3DSharedState &st) {
-  st.glueNodes.clear();
-  st.glueNodeOf.clear();
-  st.glueBonds.clear();
-  st.glueBroken.clear();
+  // ---- remove: joints whose primitive or network went away; list the Glue
+  // bonds and count the Springs of the rest ----
   auto nodeOf = [&st](b3dop::BodyHandle h) {
     const auto ins =
         st.glueNodeOf.try_emplace(h, static_cast<int>(st.glueNodes.size()));
@@ -1537,17 +1532,37 @@ void prepareGlue(Box3DSharedState &st) {
     }
     return ins.first->second;
   };
-  for (auto &kv : st.joints) {
-    Box3DJointEntry &e = kv.second;
-    // Glue to the world is not a bond (Bullet does not support it either).
-    if (!e.glue || e.broken || !e.bodyA || !e.bodyB ||
-        !st.world.isJointValid(e.handle))
+  size_t springs = 0;
+  for (auto it = st.joints.begin(); it != st.joints.end();) {
+    Box3DJointEntry &e = it->second;
+    const auto net = st.jointNetworks.find(e.network);
+    const bool live = net != st.jointNetworks.end() &&
+                      net->second.visited == st.syncStamp &&
+                      e.stamp == net->second.liveStamp;
+    if (live) {
+      if (e.massDependent && !e.broken)
+        ++springs;
+      // Glue to the world is not a bond (Bullet does not support it either).
+      if (e.glue && e.extra && !e.broken && e.bodyA && e.bodyB &&
+          st.world.isJointValid(e.handle)) {
+        const int a = nodeOf(e.bodyA), b = nodeOf(e.bodyB);
+        st.glueNodes[static_cast<size_t>(a)].partners.push_back(e.bodyB);
+        st.glueNodes[static_cast<size_t>(b)].partners.push_back(e.bodyA);
+        st.glueBonds.push_back(&e);
+      }
+      ++it;
       continue;
-    const int a = nodeOf(e.bodyA), b = nodeOf(e.bodyB);
-    st.glueNodes[static_cast<size_t>(a)].partners.push_back(e.bodyB);
-    st.glueNodes[static_cast<size_t>(b)].partners.push_back(e.bodyA);
-    st.glueBonds.push_back(&e);
+    }
+    if (st.world.isJointValid(e.handle)) {
+      st.world.destroyJoint(e.handle);
+      ++counts.removed;
+    }
+    it = st.joints.erase(it);
   }
+  st.springEntries = springs;
+  for (auto it = st.jointNetworks.begin(); it != st.jointNetworks.end();)
+    it = (it->second.visited == st.syncStamp) ? std::next(it)
+                                              : st.jointNetworks.erase(it);
 }
 
 void collectGlueHits(Box3DSharedState &st) {
@@ -1557,12 +1572,9 @@ void collectGlueHits(Box3DSharedState &st) {
     if (world.typeByHandle(n.body) != b3dop::BodySettings::Type::Dynamic ||
         !world.isAwakeByHandle(n.body))
       continue;
-    world.getContactsByHandle(n.body, st.contacts);
-    for (const b3dop::ContactPoint &cp : st.contacts)
-      // A glued neighbour is not a hit (the pair never collides anyway).
-      if (std::find(n.partners.begin(), n.partners.end(), cp.other) ==
-          n.partners.end())
-        n.hits += cp.impulse;
+    // A glued neighbour is not a hit (the pair never collides anyway).
+    n.hits += world.contactImpulseByHandle(n.body, n.partners.data(),
+                                           n.partners.size());
   }
 }
 
@@ -1578,14 +1590,14 @@ void advanceGlue(Box3DSharedState &st, float dt) {
     b3dop::GlueBond g;
     g.a = st.glueNodeOf[e->bodyA];
     g.b = st.glueNodeOf[e->bodyB];
-    g.params = e->glueParams;
-    g.impact = e->glueImpact;
+    g.params = e->extra->glueParams;
+    g.impact = e->extra->glueImpact;
     bonds.push_back(g);
   }
   std::vector<int> broken;
   b3dop::glueAdvance(bonds, std::move(hits), dt, broken);
   for (size_t i = 0; i < bonds.size(); ++i)
-    st.glueBonds[i]->glueImpact = bonds[i].impact;
+    st.glueBonds[i]->extra->glueImpact = bonds[i].impact;
   for (const int i : broken)
     st.glueBroken.push_back(st.glueBonds[static_cast<size_t>(i)]);
   for (Box3DGlueNode &n : st.glueNodes)
@@ -1615,8 +1627,9 @@ int breakJoints(Box3DSharedState &st, EntriesByNetwork &brokeIn) {
     Box3DJointEntry *e = static_cast<Box3DJointEntry *>(p);
     if (!e || !e->handle)
       continue;
+    Box3DJointExtra &x = e->ensureExtra();
     e->brokeLocalKnown =
-        world.jointLocalFrames(e->handle, e->brokeLocalA, e->brokeLocalB);
+        world.jointLocalFrames(e->handle, x.brokeLocalA, x.brokeLocalB);
     world.destroyJoint(e->handle);
     e->handle = 0;
     e->broken = true;
@@ -1643,8 +1656,9 @@ void switchToNextConstraint(const b3dop::Box3DWorld &world,
                             Box3DJointEntry &e) {
   e.broken = false;
   b3dop::JointFrame fa, fb;
-  if (e.brokeLocalKnown && world.localToWorld(e.bodyA, e.brokeLocalA, fa) &&
-      world.localToWorld(e.bodyB, e.brokeLocalB, fb)) {
+  if (e.brokeLocalKnown && e.extra &&
+      world.localToWorld(e.bodyA, e.extra->brokeLocalA, fa) &&
+      world.localToWorld(e.bodyB, e.extra->brokeLocalB, fb)) {
     e.wroteA = asStored(anchorFrameOf(fa, e.adjA));
     e.wroteB = asStored(anchorFrameOf(fb, e.adjB));
     e.wrote = true;
@@ -1736,10 +1750,10 @@ void writeFeedback(const b3dop::Box3DWorld &world, GU_Detail *gdp,
   GA_RWHandleF &torqueH = scalar("torque");
   GA_RWHandleF &angleH = scalar("angle");
   for (const Box3DJointEntry *e : entries) {
-    if (e->glue && primOk(e->prim)) {
+    if (e->glue && e->extra && primOk(e->prim)) {
       GA_RWHandleF &impactH = scalar(kImpact);
       if (impactH.isValid())
-        impactH.set(e->prim, e->glueImpact);
+        impactH.set(e->prim, e->extra->glueImpact);
     }
     b3dop::JointFeedback fb;
     if (!primOk(e->prim) || !world.jointFeedback(e->handle, e->type, fb))

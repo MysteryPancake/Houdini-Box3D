@@ -871,15 +871,17 @@ def test_solver_sop_solve_first_frame():
 
 
 def test_solver_sop_keep_broken():
-    """Export Broken Constraints, as RBD Bullet Solver: a SideFX Glue far too weak to hold a hanging
-    piece breaks; off, the constraints output drops it; on, it keeps it in the broken group."""
-    pieces, names = packed_boxes("sop_broken_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0), "attrs": {"active": 0}},
-                                                       {"size": (1, 1, 1), "center": (0, 2, 0), "attrs": {"active": 1}}])
+    """Export Broken Constraints, as RBD Bullet Solver: a glued pair (SideFX Glue far too weak to hold
+    a landing) dropped onto the ground breaks on the landing (Glue breaks on hit impulse, so a pair that never hits
+    anything holds); off, the constraints output drops it; on, it keeps it in the broken group."""
+    pieces, names = packed_boxes("sop_broken_pieces", [{"size": (1, 1, 1), "center": (0, 2, 0), "attrs": {"active": 1}},
+                                                       {"size": (1, 1, 1), "center": (0, 1, 0), "attrs": {"active": 1}}])
+    ground, _ = packed_boxes("sop_broken_ground", [GROUND])
     lines = constraint_lines("sop_broken_network",
-                             [(names[0], (0, 2.5, 0), names[1], (0, 2.5, 0), "Glue", {"strength": 1e-6})])
+                             [(names[0], (0, 1.5, 0), names[1], (0, 1.5, 0), "Glue", {"strength": 1e-6})])
     results = []
     for keep in (0, 1):
-        sop = solver_sop(f"sop_keep_broken_{keep}", geometry=pieces, constraints=lines)
+        sop = solver_sop(f"sop_keep_broken_{keep}", geometry=pieces, constraints=lines, collision=ground)
         set_parm(sop, ["constraint_keepbroken"], keep)
 
         def sample(s, f):

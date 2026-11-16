@@ -205,6 +205,36 @@ add_library(Box3DDOP SHARED
 )
 target_link_libraries(Box3DDOP PRIVATE Houdini b3dop_core)
 b3dop_warnings(Box3DDOP)
+# Precompiled headers: the HDK headers most of the plugin's files include (about 25 each in the
+# largest) are compiled once. Only HDK and standard headers: Box3D's stay out of plugin code, and
+# UT_DSOVersion.h stays in SIM_Box3DRegister.cpp (it must be included exactly once).
+option(BOX3DDOP_PCH "Use precompiled headers for the plugin" ON)
+if(BOX3DDOP_PCH)
+    target_precompile_headers(Box3DDOP PRIVATE
+        <GA/GA_Handle.h>
+        <GU/GU_Detail.h>
+        <SIM/SIM_Data.h>
+        <SIM/SIM_DataUtils.h>
+        <SIM/SIM_Geometry.h>
+        <SIM/SIM_GeometryCopy.h>
+        <SIM/SIM_Object.h>
+        <SIM/SIM_ObjectArray.h>
+        <SIM/SIM_OptionsUser.h>
+        <SIM/SIM_Utils.h>
+        <UT/UT_Matrix3.h>
+        <UT/UT_Matrix4.h>
+        <UT/UT_Quaternion.h>
+        <UT/UT_StringHolder.h>
+        <UT/UT_Vector3.h>
+        <algorithm>
+        <cmath>
+        <memory>
+        <mutex>
+        <string>
+        <unordered_map>
+        <unordered_set>
+        <vector>)
+endif()
 if(BOX3DDOP_DEBUG)
     target_compile_definitions(Box3DDOP PRIVATE BOX3DDOP_DEBUG=1)
 endif()
