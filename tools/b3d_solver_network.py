@@ -35,8 +35,11 @@ from b3d_solver_common import (
     TRANSFER_ATTRIBUTES,
     TRANSFER_TO,
     USE_COLLISIONS,
+    WORLD_SCALE,
+    WORLD_SCALE_TOGGLE,
     warn,
 )
+from b3d_solver_ground import build_ground_sops
 from b3d_solver_dops import build_dops
 
 
@@ -118,8 +121,6 @@ POINTS_ONLY_VEX = "removeprim(0, @primnum, 0);"
 # simulation and every output scaled back, so pieces far from about 1 unit simulate at a size Box3D
 # is tuned for. Lengths and speeds among the solver's and Box3D Data's settings follow it
 # (SCALED_SETTINGS), densities by its cube, so masses stay the same.
-WORLD_SCALE_TOGGLE = "usescale"
-WORLD_SCALE = "scale"
 SCALE_FACTOR = f'if(ch("../{WORLD_SCALE_TOGGLE}"), ch("../{WORLD_SCALE}"), 1)'  # from a node inside the asset
 SCALE_ACTIVE = f'if(ch("../{WORLD_SCALE_TOGGLE}"), ch("../{WORLD_SCALE}") != 1, 0)'  # switches: input 1 when scaling
 # (inner node relative to the asset, parameter tuple, power of the scale it follows).
@@ -128,7 +129,7 @@ SCALED_SETTINGS = [("dopnet/box3d_solver", n, 1) for n in
                     "contactrecycledistance", "impactminspeed")] + \
     [("dopnet/pieces", "density", -3)] + \
     [("dopnet/pieces", n, 1) for n in ("sleepthreshold", "tangentvelocity")] + \
-    [("dopnet/collision", "tangentvelocity", 1)]
+    [("dopnet/collision", "tangentvelocity", 1), ("dopnet/ground_data", "tangentvelocity", 1)]
 # (The collider's density and sleep threshold are not promoted: it is never dynamic.)
 
 # World Scale on joints: the power of the scale each inner relationship setting follows. Masses stay
@@ -434,6 +435,9 @@ def build_network(sub):
     switch_on_spare_input(sim_input, nulls[PROXY])
     sim_pieces = prepare_input(sub, sim_source, "prepare_pieces", pack=True)
     sim_scaled = scale_wrangle(sub, "scale_attributes", sim_pieces, SCALE_ATTRIBS_VEX, inverse=False)
+
+    # Ground Collision: the Height Field chain (the DOP network reads its end).
+    build_ground_sops(sub)
 
     # The DOP network, its context geometry three streams (dopcontextgeo(".", i) inside).
     dopnet = create(sub, "dopnet", "dopnet")

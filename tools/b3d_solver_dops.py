@@ -4,6 +4,7 @@ import hou
 
 import b3d_hda
 from b3d_hda import labels
+from b3d_solver_ground import build_ground_dops
 from b3d_solver_common import (
     COLLISION_TYPE,
     create,
@@ -109,7 +110,11 @@ def build_dops(dopnet):
     forces = build_forces(dopnet)
     solver = create(dopnet, "box3d_solver", "box3d_solver")
     multi = create(dopnet, "multisolver", "multisolver")
-    multi.setInput(0, objects)
+    # Ground Collision: None, a Ground Plane or a Static Object, merged with the pieces (mutual affectors).
+    with_ground = create(dopnet, "merge", "objects_and_ground")
+    with_ground.setInput(0, objects)
+    with_ground.setInput(1, build_ground_dops(dopnet))
+    multi.setInput(0, with_ground)
     multi.setInput(1, forces, FORCES_OUTPUTS.index("PRESOLVE"))
     multi.setInput(2, solver)
     multi.setInput(3, forces, FORCES_OUTPUTS.index("POSTSOLVE"))

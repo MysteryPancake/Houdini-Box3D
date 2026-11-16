@@ -591,6 +591,85 @@ def test_solver_sop_world_scale():
                        for k in got) + " (expected the same fall in each, resting at 0.5)")]
 
 
+def test_solver_sop_ground():
+    """The Ground Collision menu on the Box3D Solver SOP: None lets a box fall, Ground Plane (Position and
+    Rotation) holds it at the plane, Height Field holds it on a flat HeightField SOP (also with Use
+    Deforming Geometry), and the Physical settings reach the ground's Box3D Data."""
+    pieces, names = packed_boxes("sop_ground_pieces", [{"size": (1, 1, 1), "center": (0, 4, 0)}])
+
+    def settle(sop, frames=96):
+        track = play(sop, frames, lambda s, f: named_positions(s.geometry(0)).get(names[0]) if f == frames else None)
+        pos = track[frames]
+        return pos[1] if pos else None
+
+    results = []
+    none = solver_sop("sop_ground_none", geometry=pieces)
+    y = settle(none)
+    results.append(Result("solver_sop_ground", Result.PASS if y is not None and y < -1.0 else Result.FAIL,
+                          f"Ground Type None: box at y={y} after 3 s (expected below -1: fell)"))
+
+    plane = solver_sop("sop_ground_plane", geometry=pieces)
+    set_parm(plane, ["useground"], 1)
+    set_parm(plane, ["ground_pos"], (0, 1, 0))
+    y = settle(plane)
+    results.append(Result("solver_sop_ground", Result.PASS if close(y or 0, 1.5, 0.05) else Result.FAIL,
+                          f"Ground Plane at y=1: box at y={y} after 3 s (expected 1.5)"))
+
+    scaled = solver_sop("sop_ground_scaled", geometry=pieces)
+    set_parm(scaled, ["useground"], 1)
+    set_parm(scaled, ["ground_pos"], (0, 1, 0))
+    set_parm(scaled, ["usescale"], 1)
+    set_parm(scaled, ["scale"], 10)
+    y = settle(scaled)
+    results.append(Result("solver_sop_ground", Result.PASS if close(y or 0, 1.5, 0.05) else Result.FAIL,
+                          f"Ground Plane at y=1 with World Scale 10: box at y={y} after 3 s (expected 1.5)"))
+
+    # Rotation: a plane turned -90 degrees about z faces +x through the origin: a box starting at x = 3 rests
+    # against it with its face at x = 0.5.
+    wall_pieces, wall_names = packed_boxes("sop_ground_wall_pieces", [{"size": (1, 1, 1), "center": (3, 0, 0)}])
+    wall = solver_sop("sop_ground_wall", geometry=wall_pieces)
+    set_parm(wall, ["useground"], 1)
+    set_parm(wall, ["ground_rot"], (0, 0, -90))
+    set_parm(wall, ["gravity"], (-9.81, 0, 0))
+    track = play(wall, 96, lambda s, f: named_positions(s.geometry(0)).get(wall_names[0]) if f == 96 else None)
+    x = track[96][0] if track[96] else None
+    results.append(Result("solver_sop_ground", Result.PASS if x is not None and close(x, 0.5, 0.05) else Result.FAIL,
+                          f"Ground Plane turned -90 degrees about z, gravity along -x: box at x={x} (expected 0.5)"))
+
+    def flat_field(name):
+        geo = new_geo(name)
+        field = create(geo, "heightfield", "field")
+        set_parm(field, ["sizex"], 20)
+        set_parm(field, ["sizey"], 20)
+        display(field)
+        return field.path()
+
+    for deforming in (0, 1):
+        height = solver_sop(f"sop_ground_height{deforming}", geometry=pieces)
+        set_parm(height, ["useground"], 2)
+        set_parm(height, ["groundheightfield"], flat_field(f"sop_ground_field{deforming}"))
+        set_parm(height, ["ground_animategeo"], deforming)
+        y = settle(height)
+        results.append(Result("solver_sop_ground", Result.PASS if close(y or 0, 0.5, 0.05) else Result.FAIL,
+                              f"Height Field (Use Deforming Geometry {deforming}): box at y={y} after 3 s (expected 0.5)"))
+
+    # Physical: the settings reach the ground's Box3D Data (friction, bounce, rolling resistance, conveyor velocity).
+    phys = solver_sop("sop_ground_physical", geometry=pieces)
+    values = {"ground_friction": 0.3, "ground_bounce": 0.7, "ground_rollingresistance": 0.2}
+    for name, value in values.items():
+        set_parm(phys, [name], value)
+    set_parm(phys, ["ground_tangentvelocity"], (1, 0, 2))
+    data = phys.node("dopnet/ground_data")
+    got = {"friction": data.parm("friction").eval(), "bounce": data.parm("bounce").eval(),
+           "rollingresistance": data.parm("rollingresistance").eval(),
+           "tangentvelocity": tuple(data.parmTuple("tangentvelocity").eval())}
+    ok = (close(got["friction"], 0.3, 1e-6) and close(got["bounce"], 0.7, 1e-6)
+          and close(got["rollingresistance"], 0.2, 1e-6) and got["tangentvelocity"] == (1.0, 0.0, 2.0))
+    results.append(Result("solver_sop_ground", Result.PASS if ok else Result.FAIL,
+                          f"ground Box3D Data takes the Physical settings: {got}"))
+    return results
+
+
 def test_solver_sop_before_start():
     """Before the Start Frame the inputs pass through, as RBD Bullet Solver: with Start Frame 6, a
     box at y = 3 is still at its input position on frame 3 (geometry output) and has fallen by frame 12."""
@@ -940,6 +1019,7 @@ TESTS = {
     "solver_sop_removed_pieces": test_solver_sop_removed_pieces,
     "solver_sop_collision_names": test_solver_sop_collision_names,
     "solver_sop_world_scale": test_solver_sop_world_scale,
+    "solver_sop_ground": test_solver_sop_ground,
     "solver_sop_collision_prim_names": test_solver_sop_collision_prim_names,
     "solver_sop_collision_rest": test_solver_sop_collision_rest,
     "solver_sop_world_anchor": test_solver_sop_world_anchor,

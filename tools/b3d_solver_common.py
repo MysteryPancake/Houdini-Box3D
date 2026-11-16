@@ -19,6 +19,9 @@ INPUT_COLORS = {1: (1.0, 0.6, 0.8)}
 COLLISION_TYPE = "collisiontype"  # menu: 0 Static, 1 Animated, 2 Deforming (RBD Bullet Solver's Collision Type)
 OVERWRITE_FROM_SOP = "overwritefromsop"  # the Box3D Packed Object's toggle: re-import the SOP every step
 USE_COLLISIONS = "usecollisions"
+USE_GROUND = "useground"  # the Ground Type menu: 0 None, 1 Ground Plane, 2 Height Field
+WORLD_SCALE_TOGGLE = "usescale"  # World Scale, as RBD Bullet Solver (see b3d_solver_network.py)
+WORLD_SCALE = "scale"
 COLLIDER_FOLDERS = ["Shape", "Material", "CCD & Contacts"]  # the collision object's Box3D Data folders on the Collision tab
 # Of the collider's CCD & Contacts folder only Contact Recycling acts on a Static / Kinematic body
 # (shown as Collider Contacts); the rest, and the pieces' Allow Sleeping, are left out: on the SOP the

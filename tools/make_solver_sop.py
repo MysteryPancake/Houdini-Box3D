@@ -119,6 +119,7 @@ from b3d_solver_common import (  # noqa: E402
     USE_COLLISIONS,
     warn,
 )
+from b3d_solver_ground import finish_ground, GROUND_DATA, ground_items  # noqa: E402
 from b3d_solver_network import (  # noqa: E402
     build_network,
     IMPORT_CONSTRAINTS,
@@ -303,9 +304,13 @@ def build(out_path, packed_hda=None):
     for f in collider_folders:
         f.setConditional(hou.parmCondType.DisableWhen, off)
         f.setTags({**f.tags(), "group_type": "simple"})
+    # Ground Collision below it, as RBD Bullet Solver's: Ground Type in the folder's header.
+    ground_folder, ground_links = ground_items(dopnet.node(GROUND_DATA))
+    links += [(sub.relativePathTo(dopnet.node(GROUND_DATA)), inner, outer) for _, inner, outer in ground_links]
     collision_items = [use_collisions,
                        collapsible("b3dsop_collision_geometry", "Collision Geometry",
-                                   [animated] + collider_folders, header_toggle=USE_COLLISIONS)]
+                                   [animated] + collider_folders, header_toggle=USE_COLLISIONS),
+                       ground_folder]
     taken.update([TRANSFER_ATTRIBUTES, KEEP_BROKEN, IMPORT_CONSTRAINTS, IMPORT_PROXY]
                  + list(POINT_VELOCITY_PARMS) + [n for n, _ in TRANSFER_TO.values()])
 
@@ -420,6 +425,7 @@ def build(out_path, packed_hda=None):
     asset.allowEditingOfContents()
     for inner_path, inner_name, outer_name in links:
         link(asset.node(inner_path), inner_name, asset, outer_name)
+    finish_ground(asset)
     scale_settings(asset)
     scale_joint_settings(asset)
     b3d_hda.set_operations(asset.node("dopnet/box3d_solver"), "initial", warn)

@@ -114,6 +114,16 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   out by point count, so an empty input counts as unconnected everywhere alike: SOP Switches with the input's `IN_*`
   null as spare input and `npoints(-1) > 0`, DOP Switches with `npoints(opinputpath("..", i)) > 0` (the DOP
   network's inputs; collision also needs Use External Collisions), as RBD Bullet Solver does.
+* Ground Collision (`b3d_solver_ground.py`, Collision tab, a collapsible folder with Ground Type as its header, as RBD Bullet
+  Solver's): `useground` None / Ground Plane / Height Field drives a DOP Switch (`switch_ground`) over a Null, a Ground
+  Plane (Position `ground_pos` x World Scale, Rotation `ground_rot`) and a Static Object (SOP Path the `GROUND_HEIGHTFIELD`
+  null, Use Deforming Geometry `ground_animategeo`, Collision Detection Volume, Mode Heightfield). The SOP side is an Object
+  Merge of the Height Field parameter (`groundheightfield`, set after the promotion by `finish_ground`), a HeightField
+  Transform for World Scale and a Switch. A Box3D Data (`ground_data`, Set Initial) after the Switch takes Friction, Bounce,
+  Rolling Resistance and Conveyor Velocity from the Physical folder (`ground_*`, templates cloned from the node, Conveyor
+  Velocity scaled by World Scale). Both go through a Merge with the pieces (mutual affectors) and arrive as affectors
+  ([forces-affectors.md](forces-affectors.md)): the Ground Plane as an infinite plane, the Static Object as a height field.
+  No Show Ground guide, no Collision Padding or Dynamic Friction Scale (nothing in Box3D). Test `solver_sop_ground`.
 * Collision: Default Shape Convex Hull. Collision Type (Static, Animated default, Deforming) drives Body Type (Kinematic
   unless Static) and the collision Packed Object's Overwrite Attributes from SOP (on unless Static), so the SOP is
   re-imported each step and the solver turns pose changes into kinematic targets; Deforming also sets `deforming` on
