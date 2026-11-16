@@ -1,3 +1,5 @@
+<img src="icons/box3d.svg?raw=true" width="64" align="left">
+
 # Houdini Box3D
 
 Houdini DOP wrapper for [Box3D](https://github.com/erincatto/box3d), currently one of the fastest rigid body solvers.
@@ -7,9 +9,9 @@ My goal is keeping Box3D's great performance preserved in Houdini as much as pos
 I made design decisions based on the RBD Bullet Solver where possible, so it should feel familiar to use.
 
 > [!CAUTION]
-> This is heavily AI generated, as it was made for fun! For my own work, see [Houdini VBD](https://github.com/MysteryPancake/Houdini-VBD).
+> Most code here is AI generated, as it was made for fun! For my own work, see [Houdini VBD](https://github.com/MysteryPancake/Houdini-VBD).
 >
-> Note that I've tested all the features, optimized and cleaned as much as possible.
+> Note I've tested all the features, optimized and cleaned up as much as possible.
 >
 > This isn't normally how I develop software, I just wanted to give it a try.
 
