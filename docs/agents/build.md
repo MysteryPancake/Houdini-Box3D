@@ -49,6 +49,8 @@ How the project is built, tested and packaged. Index and rules: [CLAUDE.md](../.
   for Windows, Linux and macOS, then hython on `tests/houdini/run_tests.py` or `examples/make_examples.py`, or
   `ctest`). Its search duplicates `find_houdini.bat` and `build.sh`: change all three together.
 
+Node layout in every asset network is `b3d_hda.tidy` (not `layoutChildren`): rows by longest path from the inputs, hidden stops for wires that skip rows, barycenter ordering plus adjacent swaps to cut crossings, columns centred under the inputs with room for each name. Nodes with no wires sit in a column on the right. The FORCES subnet keeps its own layout (`layout_forces`).
+
 ## Box3D Packed Object asset
 
 `tools/make_packed_object.py` builds it from the plugin just compiled, so it always matches Box3D Data. It copies RBD

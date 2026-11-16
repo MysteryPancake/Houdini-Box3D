@@ -3,7 +3,7 @@
 import hou
 
 import b3d_prepare
-from b3d_hda import set_operation
+from b3d_hda import set_operation, tidy
 from b3d_solver_common import (
     COLLISION,
     COLLISION_TYPE,
@@ -622,5 +622,5 @@ def build_network(sub):
         if idx == 0:
             out.setDisplayFlag(True)
             out.setRenderFlag(True)
-    sub.layoutChildren()
+    tidy(sub)
     return dopnet, solver, dopnet.node("pieces")

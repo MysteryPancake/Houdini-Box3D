@@ -56,12 +56,13 @@ def warner(tool):
 def create(parent, type_names, name):
     """Creates a node of the first of `type_names` (one name, or a list to try in order: the node
     type differs between Houdini versions) that exists in `parent`."""
+    last = None
     for t in [type_names] if isinstance(type_names, str) else type_names:
         try:
             return parent.createNode(t, name)
-        except hou.OperationFailed:
-            continue
-    raise RuntimeError(f"none of the node types {type_names} exist in {parent.path()}")
+        except hou.OperationFailed as err:
+            last = err
+    raise RuntimeError(f"none of the node types {type_names} exist in {parent.path()}: {last}")
 
 
 def set_operation(node, name, token, warn):
@@ -189,3 +190,169 @@ def collapsible(name, label, contents, open_folder=True, header_toggle=None):
     if header_toggle:
         tags["sidefx::header_toggle"] = header_toggle
     return hou.FolderParmTemplate(name, label, contents, folder_type=hou.folderType.Collapsible, tags=tags)
+
+
+def tidy(net, row_gap=1.1, margin=0.5):
+    """Lays out the nodes of `net` top to bottom in rows, instead of `layoutChildren`.
+
+    A node sits one row below its lowest input (an input that feeds nothing but a deep node is pulled
+    down next to it). A wire that skips rows gets a hidden stop in each row it crosses, so rows are
+    ordered to cut crossings and nothing is drawn through a node. Each node is centred under its
+    inputs, with room for the name drawn to its right. Nodes with no wires go in a column to the
+    right. The subnet's own inputs, if any, are placed with the other nodes."""
+    items = list(net.children())
+    try:
+        items = list(net.indirectInputs()) + items
+    except (AttributeError, hou.Error):
+        pass
+    if not items:
+        return
+    count = len(items)
+    index = {it.path(): i for i, it in enumerate(items)}
+
+    parents = [[] for _ in items]
+    for i, it in enumerate(items):
+        if not hasattr(it, "inputConnections"):
+            continue
+        for conn in it.inputConnections():
+            src = conn.inputItem() if hasattr(conn, "inputItem") else conn.inputNode()
+            j = index.get(src.path()) if src is not None else None
+            if j is not None and j != i and j not in parents[i]:
+                parents[i].append(j)
+    children = [[] for _ in items]
+    for i, ps in enumerate(parents):
+        for j in ps:
+            children[j].append(i)
+
+    # Rows: longest path from a source, then sources pulled down to just above their first user.
+    layer = [None] * count
+
+    def depth(i, active):
+        if layer[i] is not None:
+            return layer[i]
+        if i in active:
+            return 0  # a loop: ignore the wire
+        active.add(i)
+        layer[i] = 1 + max((depth(j, active) for j in parents[i]), default=-1)
+        active.discard(i)
+        return layer[i]
+
+    for i in range(count):
+        depth(i, set())
+    for i in range(count):
+        if not parents[i] and children[i]:
+            layer[i] = min(layer[c] for c in children[i]) - 1
+    low = min(layer)
+    layer = [row - low for row in layer]
+
+    loose = [i for i in range(count) if not parents[i] and not children[i]]
+    main = [i for i in range(count) if i not in loose]
+
+    # Hidden stops for wires that skip rows (ids from `count` up).
+    for c in list(main):
+        for k, p in enumerate(list(parents[c])):
+            if layer[c] - layer[p] <= 1:
+                continue
+            children[p].remove(c)
+            previous = p
+            for row in range(layer[p] + 1, layer[c]):
+                stop = len(layer)
+                layer.append(row)
+                parents.append([previous])
+                children.append([])
+                children[previous].append(stop)
+                previous = stop
+            children[previous].append(c)
+            parents[c][k] = previous
+    everyone = main + list(range(count, len(layer)))
+    rows = {}
+    for i in everyone:
+        rows.setdefault(layer[i], []).append(i)
+    row_ids = sorted(rows)
+
+    order = {}
+
+    def renumber(row):
+        for k, i in enumerate(rows[row]):
+            order[i] = k
+
+    for row in row_ids:
+        renumber(row)
+
+    def sweep(rows_in_order, links):
+        for row in rows_in_order:
+            def bary(i):
+                near = [order[j] for j in links[i]]
+                return sum(near) / len(near) if near else order[i]
+            rows[row].sort(key=bary)
+            renumber(row)
+
+    def crossings(upper):
+        """Wire crossings between row `upper` and the row below it."""
+        wires = [(order[p], order[c]) for c in rows.get(upper + 1, []) for p in parents[c]]
+        return sum(1 for a in range(len(wires)) for b in range(a + 1, len(wires))
+                   if (wires[a][0] - wires[b][0]) * (wires[a][1] - wires[b][1]) < 0)
+
+    def swap_pass():
+        for row in row_ids:
+            members = rows[row]
+            for k in range(len(members) - 1):
+                before = crossings(row - 1) + crossings(row)
+                members[k], members[k + 1] = members[k + 1], members[k]
+                renumber(row)
+                if crossings(row - 1) + crossings(row) >= before:
+                    members[k], members[k + 1] = members[k + 1], members[k]
+                    renumber(row)
+
+    for _ in range(8):
+        sweep(row_ids[1:], parents)
+        sweep(reversed(row_ids[:-1]), children)
+    for _ in range(4):
+        swap_pass()
+
+    # Columns: packed with room for each name, then pulled under the inputs and over the users.
+    def size(i):
+        if i >= count:
+            return 0.6
+        try:
+            w = items[i].size()[0]
+        except (AttributeError, hou.Error):
+            w = 1.0
+        return w + 0.5 + 0.11 * len(items[i].name())
+
+    centre = {}
+    for row in row_ids:
+        x = 0.0
+        for i in rows[row]:
+            centre[i] = x + size(i) / 2
+            x += size(i)
+        for i in rows[row]:
+            centre[i] -= x / 2
+
+    def place(row, links):
+        members = rows[row]
+        want = []
+        for i in members:
+            near = [centre[j] for j in links[i]]
+            want.append(sum(near) / len(near) if near else centre[i])
+        pos = []
+        for k, i in enumerate(members):
+            lo = pos[-1] + (size(members[k - 1]) + size(i)) / 2 if k else want[k]
+            pos.append(max(want[k], lo))
+        shift = sum(p - w for p, w in zip(pos, want)) / len(pos)
+        for i, p in zip(members, pos):
+            centre[i] = p - shift
+
+    for _ in range(6):
+        for row in row_ids[1:]:
+            place(row, parents)
+        for row in reversed(row_ids[:-1]):
+            place(row, children)
+
+    left = min((centre[i] - size(i) / 2 for i in everyone), default=0.0)
+    for i in main:
+        w = items[i].size()[0] if hasattr(items[i], "size") else 1.0
+        items[i].setPosition(hou.Vector2(centre[i] - left - w / 2, -layer[i] * row_gap))
+    right = max((centre[i] - left + size(i) / 2 for i in everyone), default=0.0) + margin
+    for k, i in enumerate(loose):
+        items[i].setPosition(hou.Vector2(right, -k * row_gap))

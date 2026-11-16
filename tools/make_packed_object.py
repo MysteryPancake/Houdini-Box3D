@@ -176,7 +176,7 @@ def build_hires(guide):
     set_parm(points, "donotsim", 1)
     end.setDisplayFlag(True)
     end.setRenderFlag(True)
-    guide.layoutChildren()
+    b3d_hda.tidy(guide)
 
 
 def wire_hires(asset, transform_parm):
@@ -277,7 +277,7 @@ def build_stage(sub, rows):
     out.setInput(0, deforming)
     out.setDisplayFlag(True)
     out.setRenderFlag(True)
-    net.layoutChildren()
+    b3d_hda.tidy(net)
     return out
 
 
@@ -437,7 +437,7 @@ the simulation. Off: read once when the object is created.")
     build_stage(sub, rows)
     stamp_sop_geometry(geo)
     promoted = [(node, pt) for node, pt in promoted if pt.name() not in (sop_path_parm, transform_parm)]
-    sub.layoutChildren()
+    b3d_hda.tidy(sub)
 
     if os.path.exists(out_path):
         try:

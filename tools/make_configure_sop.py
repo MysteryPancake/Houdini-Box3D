@@ -439,7 +439,7 @@ def build_network(sub, rows):
         if idx == 0:
             out.setDisplayFlag(True)
             out.setRenderFlag(True)
-    sub.layoutChildren()
+    b3d_hda.tidy(sub)
 
 
 def inside_bounds(sub, target, bounds_in):

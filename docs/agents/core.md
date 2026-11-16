@@ -86,7 +86,7 @@ a zero or non-finite normal or a non-finite offset is refused. Box3D's broad pha
 covers `B3_PLANE_EXTENT` (a quarter of `B3_HUGE`) around its body: far beyond that, or as deep below, nothing collides.
 It collides with spheres, capsules and hulls. A hull gives at most four points, picked by area from the vertices within the
 speculative distance, keyed by vertex index. Fast bodies use `b3PlaneTimeOfImpact`, a conservative advancement bounded by
-the sweep's linear and angular speed. Test `core_plane`.
+the sweep's linear and angular speed. Covered by `tests/core_plane.cpp`.
 
 **`Box3DShapes.h`** (all unit-tested): `parseShapeType` (exact lowercase Houdini names; `compound`
 = `concave`; unknown values, including `cylinder` and `plane`, return false; the solver memoises per shared-string handle

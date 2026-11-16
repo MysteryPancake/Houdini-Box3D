@@ -17,6 +17,7 @@ Not a build script: imported by the two builders (run with hython, so this folde
 """
 
 import hou
+from b3d_hda import tidy
 
 PACKED_GROUP = "__packed"
 DEFAULT_PREFIX = "piece"  # Assemble's and RBD Configure's Name Prefix
@@ -190,5 +191,5 @@ def prepare_input(parent, src, name, pack, warn, prefix=DEFAULT_PREFIX, prefix_e
     out = node("output", "output0", [ungroup])
     out.setDisplayFlag(True)
     out.setRenderFlag(True)
-    net.layoutChildren()
+    tidy(net)
     return net
