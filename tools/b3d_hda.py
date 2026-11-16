@@ -192,7 +192,7 @@ def collapsible(name, label, contents, open_folder=True, header_toggle=None):
     return hou.FolderParmTemplate(name, label, contents, folder_type=hou.folderType.Collapsible, tags=tags)
 
 
-def tidy(net, row_gap=1.1, margin=0.5):
+def tidy(net, row_gap=1.1, margin=0.5, items=None, apply=True):
     """Lays out the nodes of `net` top to bottom in rows, instead of `layoutChildren`.
 
     A node sits one row below its lowest input (an input that feeds nothing but a deep node is pulled
@@ -200,13 +200,14 @@ def tidy(net, row_gap=1.1, margin=0.5):
     ordered to cut crossings and nothing is drawn through a node. Each node is centred under its
     inputs, with room for the name drawn to its right. Nodes with no wires go in a column to the
     right. The subnet's own inputs, if any, are placed with the other nodes."""
-    items = list(net.children())
-    try:
-        items = list(net.indirectInputs()) + items
-    except (AttributeError, hou.Error):
-        pass
+    if items is None:
+        items = list(net.children())
+        try:
+            items = list(net.indirectInputs()) + items
+        except (AttributeError, hou.Error):
+            pass
     if not items:
-        return
+        return {}
     count = len(items)
     index = {it.path(): i for i, it in enumerate(items)}
 
@@ -350,9 +351,101 @@ def tidy(net, row_gap=1.1, margin=0.5):
             place(row, children)
 
     left = min((centre[i] - size(i) / 2 for i in everyone), default=0.0)
+    placed = {}
     for i in main:
         w = items[i].size()[0] if hasattr(items[i], "size") else 1.0
-        items[i].setPosition(hou.Vector2(centre[i] - left - w / 2, -layer[i] * row_gap))
+        placed[i] = (centre[i] - left - w / 2, -layer[i] * row_gap)
     right = max((centre[i] - left + size(i) / 2 for i in everyone), default=0.0) + margin
     for k, i in enumerate(loose):
-        items[i].setPosition(hou.Vector2(right, -k * row_gap))
+        placed[i] = (right if main else 0.0, -k * row_gap)
+    if apply:
+        for i, (x, y) in placed.items():
+            items[i].setPosition(hou.Vector2(x, y))
+    return {items[i].path(): (x, y) for i, (x, y) in placed.items()}
+
+
+def layout(net, rows, gap=2.0, row_gap=1.1, colors=None):
+    """Lays out `net` by hand in labelled boxes. `rows` is a list of rows, each a list of boxes
+    `(title, names)` or `(title, names, options)`, placed left to right, rows top to bottom (flow runs
+    down the page). A name is a node's name, or `#0`, `#1` ... for a subnet's inputs. Inside a box the
+    nodes are laid out by `tidy`; options: `grid` (columns) puts the nodes in a grid in the order given, `color`
+    is an RGB tuple. A node named in no box goes in an extra box at the end, with a warning."""
+    inputs = []
+    try:
+        inputs = list(net.indirectInputs())
+    except (AttributeError, hou.Error):
+        pass
+
+    def find(name):
+        if name.startswith("#"):
+            k = int(name[1:])
+            return inputs[k] if k < len(inputs) else None
+        return net.node(name)
+
+    listed = set()
+    boxes = []
+    for r, row in enumerate(rows):
+        for spec in row:
+            title, names = spec[0], spec[1]
+            options = spec[2] if len(spec) > 2 else {}
+            members = []
+            for name in names:
+                item = find(name)
+                if item is None:
+                    continue  # not in this build (a node type that does not exist here)
+                members.append(item)
+                listed.add(item.path())
+            if members:
+                boxes.append((r, title, members, options))
+    rest = [c for c in net.children() if c.path() not in listed]
+    if rest:
+        print(f"b3d_hda.layout: {net.path()}: not in any box: {', '.join(c.name() for c in rest)}")
+        boxes.append((len(rows), "Other", rest, {}))
+
+    def label_width(item):
+        return item.size()[0] + 0.5 + 0.11 * len(item.name())
+
+    # Each box laid out on its own: (positions relative to its top-left, width, height).
+    laid = []
+    for r, title, members, options in boxes:
+        columns = options.get("grid")
+        if columns:
+            cell = max(label_width(m) for m in members) + 0.4
+            local = {m.path(): ((k % columns) * cell, -(k // columns) * row_gap) for k, m in enumerate(members)}
+        else:
+            local = tidy(net, row_gap=row_gap, items=members, apply=False)
+        width = max(local[m.path()][0] + label_width(m) for m in members)
+        height = -min(y for _, y in local.values()) + 0.5
+        laid.append((r, title, members, options, local, width, height))
+
+    by_row = {}
+    for entry in laid:
+        by_row.setdefault(entry[0], []).append(entry)
+    pad = 0.8  # between a box's edge and its nodes
+    y = 0.0
+    for r in sorted(by_row):
+        x = 0.0
+        tallest = 0.0
+        for _, title, members, options, local, width, height in by_row[r]:
+            for m in members:
+                px, py = local[m.path()]
+                m.setPosition(hou.Vector2(x + pad + px, y - pad - 0.6 + py))
+            box = net.createNetworkBox()
+            box.setComment(title)
+            color = options.get("color") or (colors or {}).get(title)
+            if color:
+                box.setColor(hou.Color(color))
+            for m in members:
+                try:
+                    box.addItem(m)
+                except hou.Error:
+                    pass
+            box.fitAroundContents()
+            # Names are drawn right of their nodes and the title along the top: make the box wide enough.
+            need = max(m.position()[0] + label_width(m) for m in members) + 0.4 - box.position()[0]
+            need = max(need, 0.2 * len(title) + 1.5)
+            if box.size()[0] < need:
+                box.setSize(hou.Vector2(need, box.size()[1]))
+            x += width + 2 * pad + gap
+            tallest = max(tallest, height + 2 * pad + 0.6)
+        y -= tallest + gap

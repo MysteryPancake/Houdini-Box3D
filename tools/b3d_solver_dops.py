@@ -121,7 +121,6 @@ def build_dops(dopnet):
     out = create(dopnet, "output", "output")
     out.setInput(0, multi)
     out.setDisplayFlag(True)
-    b3d_hda.tidy(dopnet)
     return solver
 
 

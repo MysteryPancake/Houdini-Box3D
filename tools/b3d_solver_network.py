@@ -3,7 +3,8 @@
 import hou
 
 import b3d_prepare
-from b3d_hda import set_operation, tidy
+from b3d_hda import layout, set_operation
+from b3d_layouts import DOP_LAYOUT, SOLVER_LAYOUT
 from b3d_solver_common import (
     COLLISION,
     COLLISION_TYPE,
@@ -455,6 +456,7 @@ def build_network(sub):
         child.destroy()
     solver = build_dops(dopnet)
     scale_forces(dopnet)
+    layout(dopnet, DOP_LAYOUT)
 
     # Simulation points, the fourth output, as RBD Bullet Solver's: one point per piece with P, name,
     # orient (the rotation since rest), pivot (the rest position), restxform (the packed transform at
@@ -626,5 +628,5 @@ def build_network(sub):
         if idx == 0:
             out.setDisplayFlag(True)
             out.setRenderFlag(True)
-    tidy(sub)
+    layout(sub, SOLVER_LAYOUT)
     return dopnet, solver, dopnet.node("pieces")

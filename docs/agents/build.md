@@ -49,7 +49,7 @@ How the project is built, tested and packaged. Index and rules: [CLAUDE.md](../.
   for Windows, Linux and macOS, then hython on `tests/houdini/run_tests.py` or `examples/make_examples.py`, or
   `ctest`). Its search duplicates `find_houdini.bat` and `build.sh`: change all three together.
 
-Node layout in every asset network is `b3d_hda.tidy` (not `layoutChildren`): rows by longest path from the inputs, hidden stops for wires that skip rows, barycenter ordering plus adjacent swaps to cut crossings, columns centred under the inputs with room for each name. Nodes with no wires sit in a column on the right. The FORCES subnet keeps its own layout (`layout_forces`).
+Node layout: small networks (the packing subnets, the Packed Object's stage) use `b3d_hda.tidy` (rows by longest path from the inputs, hidden stops for wires that skip rows, barycenter ordering plus adjacent swaps to cut crossings, columns centred under the inputs with room for each name, unwired nodes in a column on the right). The Box3D Solver SOP, its DOP network and Box3D Configure use `b3d_hda.layout` with the tables in `tools/b3d_layouts.py`: rows of labelled network boxes, flow down the page, each box laid out by `tidy` (or a grid). A node the table does not name goes in an "Other" box and the build prints it, so a new node needs a line there. The FORCES subnet keeps its own layout (`layout_forces`).
 
 ## Box3D Packed Object asset
 

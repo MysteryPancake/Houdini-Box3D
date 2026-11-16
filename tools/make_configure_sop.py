@@ -42,6 +42,7 @@ import hou
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import b3d_hda  # noqa: E402  (beside this script)
+from b3d_layouts import CONFIGURE_LAYOUT  # noqa: E402
 import b3d_prepare  # noqa: E402
 import b3d_settings  # noqa: E402
 from b3d_settings import GEOREP_VALUES, literal  # noqa: E402
@@ -439,7 +440,7 @@ def build_network(sub, rows):
         if idx == 0:
             out.setDisplayFlag(True)
             out.setRenderFlag(True)
-    b3d_hda.tidy(sub)
+    b3d_hda.layout(sub, CONFIGURE_LAYOUT)
 
 
 def inside_bounds(sub, target, bounds_in):
