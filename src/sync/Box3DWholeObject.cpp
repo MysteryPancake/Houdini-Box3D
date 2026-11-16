@@ -32,8 +32,11 @@ bool isWholeObject(const SIM_Object &obj) {
 // The body's pose from the object's Position data: the world position of the
 // pivot and the orientation, plus the velocities of a SIM_Motion (RBD Object's
 // RBD State is one). False if the object has no Position data (pose and pivot
-// untouched then).
-bool readWholePose(const SIM_Object &obj, double pivot[3], Box3DBodyPose &out) {
+// untouched then). `forcePivot` (object space) replaces the data's pivot: the
+// pose is the same transform, the pivot only picks which point of the object
+// the body origin is.
+bool readWholePose(const SIM_Object &obj, double pivot[3], Box3DBodyPose &out,
+                   const double *forcePivot) {
   const SIM_Position *pos =
       SIM_DATA_GETCONST(obj, SIM_POSITION_DATANAME, SIM_Position);
   if (!pos)
@@ -44,7 +47,9 @@ bool readWholePose(const SIM_Object &obj, double pivot[3], Box3DBodyPose &out) {
   pos->getTransform(xf);
   double m[16];
   box3dToArray(xf, m);
-  const double pvd[3] = {pv.x(), pv.y(), pv.z()};
+  const double pvd[3] = {forcePivot ? forcePivot[0] : pv.x(),
+                         forcePivot ? forcePivot[1] : pv.y(),
+                         forcePivot ? forcePivot[2] : pv.z()};
   double wp[3];
   b3dop::xformPoint(m, pvd, wp);
   if (!std::isfinite(wp[0]) || !std::isfinite(wp[1]) || !std::isfinite(wp[2]))
@@ -285,13 +290,55 @@ void boundsCentre(const GU_Detail *gdp, const double m[16], double centre[3]) {
     centre[i] = 0.5 * (lo[i] + hi[i]);
 }
 
+// The centroid of the convex hull of the geometry's points in object space
+// (the centre of mass of a uniform solid, as Bullet takes it); the bounding box
+// centre when no hull can be made (flat or fewer than four points).
+void objectCentreOfMass(const GU_Detail *gdp, const double m[16],
+                        double centre[3]) {
+  PieceGroup g;
+  collectPieces(gdp, g);
+  std::vector<float> pts;
+  for (const NamedPiece &np : g.pieces)
+    for (size_t k = 0; k + 2 < np.xyz.size(); k += 3) {
+      const double p[3] = {np.xyz[k], np.xyz[k + 1], np.xyz[k + 2]};
+      double o[3];
+      b3dop::xformPoint(m, p, o);
+      for (double d : o)
+        pts.push_back(static_cast<float>(d));
+    }
+  if (!b3dop::Box3DWorld::hullCentroid(
+          pts.data(), static_cast<int>(pts.size() / 3), centre))
+    boundsCentre(gdp, m, centre);
+}
+
 // The body's pose and pivot: Position data, else (no write-back yet) the object
 // where its geometry is, about the centre of its bounding box (an existing body
-// keeps its pivot).
+// keeps its pivot). `pivotKey` is set when the pivot was computed from the
+// geometry (see below), so the next sync can reuse it.
 void wholeObjectPose(const SIM_Object &obj, const GU_Detail *gdp,
                      const double m[16], const Box3DBodyMirror *entry,
-                     double pivot[3], Box3DBodyPose &cur) {
-  if (readWholePose(obj, pivot, cur))
+                     double pivot[3], Box3DBodyPose &cur, uint64_t &pivotKey) {
+  pivotKey = 0;
+  // RBD State with Compute Center of Mass on: Houdini's solvers fill its pivot
+  // `p` in themselves and it is (0, 0, 0) until then, so the pivot is the
+  // centre of the geometry's convex hull instead. It only changes with the
+  // geometry, so the last one is reused until then.
+  fpreal64 computeCom = 0.0;
+  const SIM_Data *state = obj.getConstNamedSubData(SIM_POSITION_DATANAME);
+  if (state && box3dDataOption(*state, "computecom", computeCom) &&
+      computeCom != 0.0) {
+    uint64_t key = geometryIdentity(gdp);
+    for (int i = 0; i < 16; ++i)
+      key = b3dop::mixDouble(key, m[i]);
+    pivotKey = key ? key : 1;
+    double centre[3];
+    if (entry && entry->pivotKey == pivotKey)
+      std::copy(entry->pivot, entry->pivot + 3, centre);
+    else
+      objectCentreOfMass(gdp, m, centre);
+    if (readWholePose(obj, pivot, cur, centre))
+      return;
+  } else if (readWholePose(obj, pivot, cur))
     return;
   if (entry)
     std::copy(entry->pivot, entry->pivot + 3, pivot);
@@ -448,7 +495,8 @@ void syncWholeObject(Box3DSharedState &st, const SIM_Object &obj,
 
   double pivot[3] = {0, 0, 0};
   Box3DBodyPose cur;
-  wholeObjectPose(obj, gdp, m, entry, pivot, cur);
+  uint64_t pivotKey = 0;
+  wholeObjectPose(obj, gdp, m, entry, pivot, cur, pivotKey);
 
   PointAttrs none(gdp); // build attributes left unbound: Box3D Data values only
   b3dop::BodyProps p = readDynamicProps(setup.node, none, GA_Offset(0));
@@ -474,6 +522,7 @@ void syncWholeObject(Box3DSharedState &st, const SIM_Object &obj,
       return;
   }
 
+  entry->pivotKey = pivotKey;
   entry->pointOff = -1;
   entry->pointId = kWholeObjectId;
   entry->pointIndex = -1;

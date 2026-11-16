@@ -2556,6 +2556,57 @@ struct TestCase {
   void (*run)();
 };
 
+// The centroid of a convex hull of points: a box, a pyramid, two boxes apart.
+void testHullCentroid() {
+  using b3dop::Box3DWorld;
+  auto box = [](std::vector<float> &v, float cx, float cy, float cz, float sx,
+                float sy, float sz) {
+    for (int dx = -1; dx <= 1; dx += 2)
+      for (int dy = -1; dy <= 1; dy += 2)
+        for (int dz = -1; dz <= 1; dz += 2) {
+          v.push_back(cx + 0.5f * sx * static_cast<float>(dx));
+          v.push_back(cy + 0.5f * sy * static_cast<float>(dy));
+          v.push_back(cz + 0.5f * sz * static_cast<float>(dz));
+        }
+  };
+  double c[3];
+  {
+    std::vector<float> v;
+    box(v, 1, 2, 3, 1, 2, 3);
+    CHECK(Box3DWorld::hullCentroid(v.data(), 8, c));
+    CHECK(std::fabs(c[0] - 1) < 1e-4 && std::fabs(c[1] - 2) < 1e-4 &&
+          std::fabs(c[2] - 3) < 1e-4);
+  }
+  {
+    // Square pyramid, base y 0 (half side 1), apex y 2: centroid a quarter of
+    // the height up. The mean of the points is not.
+    const float v[] = {-1, 0, -1, 1, 0, -1, 1, 0, 1, -1, 0, 1, 0, 2, 0};
+    CHECK(Box3DWorld::hullCentroid(v, 5, c));
+    CHECK(std::fabs(c[0]) < 1e-4 && std::fabs(c[1] - 0.5) < 1e-4 &&
+          std::fabs(c[2]) < 1e-4);
+  }
+  {
+    // An L of two boxes: the hull's centroid, not the boxes' (0.4, 0.6).
+    std::vector<float> v;
+    box(v, 0, 0, 0, 3, 1, 1);
+    box(v, 1, 1.5f, 0, 1, 2, 1);
+    CHECK(Box3DWorld::hullCentroid(v.data(), 16, c));
+    CHECK(std::fabs(c[0] - 10.0 / 42.0) < 2e-3 &&
+          std::fabs(c[1] - 32.0 / 42.0) < 2e-3 && std::fabs(c[2]) < 1e-4);
+  }
+  {
+    // Refused: too few points, flat input, non-finite input.
+    const float few[] = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+    CHECK(!Box3DWorld::hullCentroid(few, 3, c));
+    const float flat[] = {0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1};
+    CHECK(!Box3DWorld::hullCentroid(flat, 4, c));
+    std::vector<float> v;
+    box(v, 0, 0, 0, 1, 1, 1);
+    v[4] = std::nanf("");
+    CHECK(!Box3DWorld::hullCentroid(v.data(), 8, c));
+  }
+}
+
 // The size of a body's bounding box (what a Force DOP sampling a circle or
 // sphere measures).
 void testBodyExtent() {
@@ -2591,6 +2642,7 @@ void testBodyExtent() {
 const TestCase kTests[] = {
     {"body_basics", testBodyBasics},
     {"body_extent", testBodyExtent},
+    {"hull_centroid", testHullCentroid},
     {"point_mapping", testPointMapping},
     {"convex_shapes", testConvexShapes},
     {"primitive_overrides", testPrimitiveOverrides},

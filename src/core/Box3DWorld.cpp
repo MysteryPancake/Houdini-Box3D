@@ -1079,6 +1079,34 @@ bool Box3DWorld::bodyShapeOutlines(BodyHandle h,
   return true;
 }
 
+bool Box3DWorld::hullCentroid(const float *xyz, int count, double out[3]) {
+  if (!xyz || count < 4)
+    return false;
+  for (int i = 0; i < count * 3; ++i)
+    if (!std::isfinite(xyz[i]))
+      return false;
+  std::vector<b3Vec3> pts(static_cast<size_t>(count));
+  for (int i = 0; i < count; ++i)
+    pts[static_cast<size_t>(i)] = makeVec3(xyz + 3 * i);
+  b3HullData *hull = nullptr;
+  for (int budget : {B3_MAX_HULL_VERTICES, 44, 32, 16, 8}) {
+    hull = b3CreateHull(pts.data(), count, budget);
+    if (hull)
+      break;
+  }
+  if (!hull)
+    return false;
+  const b3MassData md = b3ComputeHullMass(hull, 1.0f);
+  b3DestroyHull(hull);
+  if (!(md.mass > 1e-9f) || !std::isfinite(md.center.x) ||
+      !std::isfinite(md.center.y) || !std::isfinite(md.center.z))
+    return false;
+  out[0] = static_cast<double>(md.center.x);
+  out[1] = static_cast<double>(md.center.y);
+  out[2] = static_cast<double>(md.center.z);
+  return true;
+}
+
 bool Box3DWorld::fitShapeOriented(ShapeType type, const float *xyz, int count,
                                   ShapeSpec &out) {
   if (!xyz || count < 4)

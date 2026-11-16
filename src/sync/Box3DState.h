@@ -74,6 +74,9 @@ struct Box3DBodyMirror : Box3DBodyPose {
   // space).
   bool wholeObject = false;
   double pivot[3] = {0, 0, 0};
+  // What the pivot was computed from (0: it was not), so it is not recomputed
+  // while the geometry is unchanged.
+  uint64_t pivotKey = 0;
 
   // The body's point, refreshed by every sync, so the write-back needs no
   // lookup. Box3D's body user data points at this entry, so entries never move

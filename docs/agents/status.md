@@ -85,8 +85,9 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   dropped from x 2 ends at x 0, z 0 (plus `bullet_primT`'s x and z), so Bullet drops the piece's position, and its
   height follows `bullet_primT`'s y (0.3 up gives 0.25 to 0.3, 0.3 down gives -0.3) rather than the shape. Box3D keeps
   the piece where it is with primT as an offset. Not copied: it would move every hand-set piece to the world origin.
-* A whole RBD Object box in Box3D is still moving at frame 120 and sits at y 0.54 (Bullet: 0.500, settled), for every box
-  type; packed pieces settle at 0.500 in both. Not yet looked into (test `bullet_primitive_types`).
+* Whole RBD Object pivot (`wholeObjectPose`): the hull centroid (`hull_centroid`, `bullet_rbd_pivot`), written without a build or
+  run of the sync side. Bullet's `p` is 0.03 off the hull centroid Box3D gives for boxes (an L: (0.205, 0.795) against
+  (0.238, 0.762); two boxes apart (0.767, 0.428) against (0.800, 0.401)), unexplained. A concave object with Hull per Piece is not checked against Bullet.
 * Which end is Cone Twist's goal (taken as point 1; test `bullet_cone_twist_goal`): Bullet's piece fell freely with both
   anchors at one point, turned or not, so it cannot say. Needs a Bullet Cone Twist setup that holds.
 * Unpacked geometry (`unpacked_geometry_bullet`): an object of polygons only is skipped by both (ours warns). Bullet

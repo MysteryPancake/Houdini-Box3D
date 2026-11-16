@@ -552,8 +552,10 @@ inline constexpr int64_t kWholeObjectId = -1;
 
 bool isWholeObject(const SIM_Object &obj);
 // The body's pose from the object's Position data (pivot in object space, pose
-// at the pivot). False if the object has none.
-bool readWholePose(const SIM_Object &obj, double pivot[3], Box3DBodyPose &out);
+// at the pivot). False if the object has none. `forcePivot` (object space)
+// replaces the data's pivot.
+bool readWholePose(const SIM_Object &obj, double pivot[3], Box3DBodyPose &out,
+                   const double *forcePivot = nullptr);
 void syncWholeObject(Box3DSharedState &st, const SIM_Object &obj,
                      const SIM_Geometry &geo, const GU_Detail *gdp,
                      SyncCounts &c);

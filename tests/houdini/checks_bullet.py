@@ -455,7 +455,7 @@ CENTRES = ((0.0, 4.0, 0.0), (0.5, 2.0, 0.0))  # the fixed piece and the hanging 
 SHARED = ((0.25, 3.0, 0.0), (0.25, 3.0, 0.0))  # one point between them: the centres end up at most 2.06 apart
 
 
-def joint_run(tag, kind, conrel_type, line_attrs, hang_rotate, anchors, spin):
+def joint_run(tag, kind, conrel_type, line_attrs, hang_rotate, anchors, spin, conrel_parms=None):
     """A piece hanging 2 below a fixed one through a SideFX constraint, the hanging piece turned by
     `hang_rotate` before the start: (centre distance, how far it turned since frame 1 in degrees)
     after 2 s."""
@@ -463,7 +463,7 @@ def joint_run(tag, kind, conrel_type, line_attrs, hang_rotate, anchors, spin):
     fixed = {"active": 0, "w": (0.0, 0.0, 0.0)}
     pieces = [{"size": (1, 1, 1), "center": CENTRES[0], "attrs": fixed},
               {"size": (1, 1, 1), "center": CENTRES[1], "rotate": hang_rotate, "attrs": hang}]
-    dop, names = hanging_pair(f"{tag}_{kind}", None, line_attrs=line_attrs, conrels=[(conrel_type, {})],
+    dop, names = hanging_pair(f"{tag}_{kind}", None, line_attrs=line_attrs, conrels=[(conrel_type, dict(conrel_parms or {}))],
                               solver_kind=kind, pieces=pieces, anchors=anchors, keep_velocity=True)
 
     def sample(sim, f):
@@ -496,6 +496,148 @@ def test_bullet_joint_rest():
                           f"Hard, both anchors at (0.25, 3, 0), hanging piece turned 30 deg: distance after 2 s "
                           f"Box3D {d['box3d'][0]:.3f}, Bullet {d['bullet'][0]:.3f} (at most 2.06 if the anchors "
                           f"stay together); turned {d['box3d'][1]:.0f} / {d['bullet'][1]:.0f} deg"))
+    return results
+
+
+def test_bullet_joint_rest_held():
+    """The joint-rest case with a start that can be held: SideFX Hard (constraint_type all), anchors at
+    the two centroids, Rest Length set to the 2.06 start distance, hanging piece turned 30 degrees about z.
+    Nothing pulls the boxes together, so both solvers should keep the distance near the start and turn
+    by about the same angle: distances within 0.1 of the start and of each other, turns within 10 degrees."""
+    start = math.dist(CENTRES[0], CENTRES[1])
+    d = {kind: joint_run("joint_rest_held", kind, "hardconrel", {"constraint_type": "all"}, (0.0, 0.0, 30.0),
+                         CENTRES, (0.0, 0.0, 0.0), conrel_parms={"restlength": start}) for kind in KINDS}
+    ok = (all(close(d[k][0], start, 0.1) for k in KINDS) and close(d["box3d"][0], d["bullet"][0], 0.1)
+          and abs(d["box3d"][1] - d["bullet"][1]) < 10.0)
+    return [Result("bullet_joint_rest_held", Result.PASS if ok else Result.FAIL,
+                   f"Hard (all), Rest Length {start:.3f}, hanging piece turned 30 deg: distance after 2 s Box3D "
+                   f"{d['box3d'][0]:.3f}, Bullet {d['bullet'][0]:.3f} (start {start:.3f}); turned "
+                   f"{d['box3d'][1]:.0f} / {d['bullet'][1]:.0f} deg")]
+
+
+def rbd_box_trace(kind, frames=240, offset=(0.0, 0.0, 0.0)):
+    """A 1 m polygon box dropped from y 2 as a whole RBD Object onto the ground: its mean point height per
+    frame, and the messages of the solver."""
+    tag = f"rbd_box_{kind}"
+    sop_path = primitive_sop(tag, "box", None, {("size",): (1.0, 1.0, 1.0)}, False)
+    set_parm(hou.node(sop_path), ["t"], (offset[0], 2.0 + offset[1], offset[2]))
+    dop = new_dopnet(tag)
+    obj = rbd_object(dop, "obj", sop_path)
+    ground = ground_object(dop, tag + "_ground")
+    solver = solver_for(kind, dop, merge(dop, [ground, obj]))
+    finish(dop, solver)
+
+    def sample(sim, f):
+        pts = whole_object_points(sim, "obj")
+        return sum(p[1] for p in pts) / len(pts) if pts else None
+
+    return step(dop, frames, sample), node_messages(solver)
+
+
+def test_bullet_rbd_box_settle():
+    """Whole RBD Object box dropped from y 2, once above the origin and once 5 m away in x and z (the object's
+    pivot is not at the origin then). Bullet is at rest (0.500) from about frame 30 on. Prints each solver's
+    height at several frames and its movement over frames 109 to 120, and passes when both have stopped there
+    (under 0.005) at the same height (within 0.01)."""
+    results = []
+    for label, offset in (("at the origin", (0.0, 0.0, 0.0)), ("offset 5 in x and z", (5.0, 0.0, 5.0))):
+        got = {kind: rbd_box_trace(kind, 120, offset) for kind in KINDS}
+        marks = (30, 60, 90, 120)
+        rows, final, moving = [], {}, {}
+        for kind in KINDS:
+            track = got[kind][0]
+            tail = [track[f] for f in range(109, 121) if track[f] is not None]
+            final[kind] = track[120]
+            moving[kind] = (max(tail) - min(tail)) if tail else None
+            text = ", ".join(f"{f}: {track[f]:.3f}" for f in marks if track[f] is not None)
+            rows.append(f"{kind} [{text}] moved {moving[kind]:.4f} over frames 109 to 120"
+                        if moving[kind] is not None else f"{kind}: nothing left")
+        ok = (all(final[k] is not None and moving[k] < 0.005 for k in KINDS)
+              and abs(final["box3d"] - final["bullet"]) < 0.01)
+        results.append(Result("bullet_rbd_box_settle", Result.PASS if ok else Result.FAIL,
+                              f"{label}: " + "; ".join(rows)))
+    return results
+
+
+def rbd_state_pivot(sim, obj_name="obj"):
+    """The pivot `p` of an object's Position data (RBD State), or None."""
+    obj = sim.findObject(obj_name)
+    pos = obj.findSubData("Position") if obj is not None else None
+    if pos is None:
+        return None
+    options = pos.record("Options")
+    return tuple(options.field("p")) if "p" in options.fieldNames() else None
+
+
+def pivot_boxes(boxes):
+    """A SOP object of the given boxes ((size, centre) each) merged and moved up 3: its xform node's path."""
+    geo = new_geo("rbd_pivot_geo")
+    merged = create(geo, "merge")
+    for i, (size, centre) in enumerate(boxes):
+        b = create(geo, "box")
+        set_parm(b, ["size"], size)
+        set_parm(b, ["t"], centre)
+        merged.setInput(i, b)
+    xf = create(geo, "xform")
+    xf.setInput(0, merged)
+    set_parm(xf, ["t"], (0.0, 3.0, 0.0))
+    display(xf)
+    return xf.path()
+
+
+def pivot_cone():
+    """A 4-sided cone (base radius 1, height 2; the tube's first radius is its top, so the apex points down) moved up 3: its xform node's path."""
+    geo = new_geo("rbd_pivot_cone_geo")
+    tube = create(geo, "tube")
+    set_parm(tube, ["type"], 1)  # Polygon
+    set_parm(tube, ["rad"], (1.0, 0.0))
+    set_parm(tube, ["height"], 2.0)
+    set_parm(tube, ["cols"], 4)
+    set_parm(tube, ["cap"], 1)
+    xf = create(geo, "xform")
+    xf.setInput(0, tube)
+    set_parm(xf, ["t"], (0.0, 3.0, 0.0))
+    display(xf)
+    return xf.path()
+
+
+def test_bullet_rbd_pivot():
+    """What pivot (RBD State `p`) an RBD Object gets with Compute Center of Mass on, in Bullet and in Box3D,
+    for shapes where the candidate answers differ (positions are relative to the object, which is 3 m up):
+    a single box; a 3 x 1 x 1 box with a 1 x 2 x 1 box on its right end; a 1 m box and a 2 m box 4 m apart; a
+    cone. Reports `p` after the first step in both against the bounding box centre, the point mean, the
+    volume centroid and the convex hull's centroid. Passes when Box3D's is within 0.06 of Bullet's (Bullet's
+    is about 0.03 off the hull centroid for the boxes)."""
+    cases = [
+        ("one box", pivot_boxes([((1.0, 1.0, 1.0), (0.0, 0.0, 0.0))]),
+         {"box centre": (0.0, 0.0, 0.0)}),
+        ("L", pivot_boxes([((3.0, 1.0, 1.0), (0.0, 0.0, 0.0)), ((1.0, 2.0, 1.0), (1.0, 1.5, 0.0))]),
+         {"bounding box centre": (0.0, 1.0, 0.0), "point mean": (0.5, 0.75, 0.0),
+          "volume centroid": (0.4, 0.6, 0.0), "hull centroid": (0.238, 0.762, 0.0)}),
+        ("two apart", pivot_boxes([((1.0, 1.0, 1.0), (-2.0, 0.0, 0.0)), ((2.0, 2.0, 2.0), (2.0, 0.5, 0.0))]),
+         {"bounding box centre": (0.25, 0.5, 0.0), "point mean": (0.0, 0.25, 0.0),
+          "volume centroid": (1.556, 0.389, 0.0), "hull centroid": (0.800, 0.401, 0.0)}),
+        ("cone", pivot_cone(),
+         {"bounding box centre": (0.0, 0.0, 0.0), "hull centroid": (0.0, 0.5, 0.0)}),
+    ]
+    fmt = lambda v: "n/a" if v is None else "(" + ", ".join(f"{c:.3f}" for c in v) + ")"  # noqa: E731
+    results = []
+    for label, path, candidates in cases:
+        got = {}
+        for kind in KINDS:
+            tag = f"rbd_pivot_{label.replace(' ', '_')}_{kind}"
+            dop = new_dopnet(tag)
+            obj = rbd_object(dop, "obj", path)
+            ground = ground_object(dop, tag + "_ground")
+            finish(dop, solver_for(kind, dop, merge(dop, [ground, obj])))
+            got[kind] = step(dop, 3, lambda sim, f: rbd_state_pivot(sim))[3]
+        rel = {k: None if v is None else (v[0], v[1] - 3.0, v[2]) for k, v in got.items()}
+        ok = (rel["bullet"] is not None and rel["box3d"] is not None
+              and max(abs(a - b) for a, b in zip(rel["bullet"], rel["box3d"])) < 0.06)
+        results.append(Result("bullet_rbd_pivot", Result.PASS if ok else Result.FAIL,
+                              f"{label}: p relative to the object: Bullet {fmt(rel['bullet'])}, Box3D "
+                              f"{fmt(rel['box3d'])}; candidates: "
+                              + ", ".join(f"{name} {fmt(c)}" for name, c in candidates.items())))
     return results
 
 
@@ -795,6 +937,9 @@ TESTS = {
     "bullet_primr_order": test_bullet_primr_order,
     "bullet_shape_probe": test_bullet_shape_probe,
     "bullet_joint_rest": test_bullet_joint_rest,
+    "bullet_joint_rest_held": test_bullet_joint_rest_held,
+    "bullet_rbd_box_settle": test_bullet_rbd_box_settle,
+    "bullet_rbd_pivot": test_bullet_rbd_pivot,
     "bullet_cone_twist_goal": test_bullet_cone_twist_goal,
     "bullet_impact_normal": test_bullet_impact_normal,
     "bullet_kinematic_push": test_bullet_kinematic_push,

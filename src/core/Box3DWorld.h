@@ -634,6 +634,11 @@ public:
   // points or no hull: the body axes. Thread-safe, nothing cached.
   static bool fitShapeOriented(ShapeType type, const float *xyz, int count,
                                ShapeSpec &out);
+  // The centroid of the convex hull of the points (the centre of its volume,
+  // as Bullet's RBD Object takes its pivot), in the points' own space. False
+  // for fewer than 4 points, non-finite or flat input. Thread-safe, nothing
+  // cached.
+  static bool hullCentroid(const float *xyz, int count, double out[3]);
   int hullCacheSize() const; // hulls this world holds
 
   // A rough size of this world in memory, in bytes: Box3D's bodies, shapes,
