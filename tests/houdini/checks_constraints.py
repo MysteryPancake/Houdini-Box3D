@@ -467,6 +467,9 @@ def _disc_sop(name):
 
     def build(geo):
         tube = create(geo, "tube")
+        # The default Primitive Type is Primitive: one quadric primitive on one point, which has
+        # no extent as far as the points go (mass 8e-6, a bounding box of 0)
+        set_menu_by_label(tube, ["type"], "polygon")
         set_parm(tube, ["rad"], (0.5, 0.5))
         set_parm(tube, ["height"], 0.2)
         set_parm(tube, ["cap"], 1)

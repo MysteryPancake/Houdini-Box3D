@@ -3,8 +3,7 @@
 The one list of what is unverified or still to do. Index and rules: [CLAUDE.md](../../CLAUDE.md). Keep each
 item to a line or two; remove it once settled (the test that settles it is the record, not this file).
 
-Last full run (Houdini 22.0.502, MSVC, the Box3D fork): every check passes except `baseline` and
-`rbd_object_inertia_type` (TODO). `baseline` holds the old hull of a rotated box: a tilted pile diverges chaotically
+Last full run (Houdini 22.0.502, MSVC, the Box3D fork): every check passes except `baseline`, which holds the old hull of a rotated box: a tilted pile diverges chaotically
 between that hull and `b3MakeTransformedBoxHull` (same mass data; a 1e-6 nudge of one box moves a 24-box pile 0.16), so
 re-record it with `run_tests.py baseline --update-baseline`. What no script checks: Escape mid-step, the viewport,
 motion blur, how greyed-out parameters look.
@@ -78,9 +77,8 @@ motion blur, how greyed-out parameters look.
 ## TODO
 
 * Packed primitive spheres and nested packed primitives collide as one point, half sunk (`odd_packed_contents`).
-* `rbd_object_inertia_type` fails: the disc turns 74.8° under Use Volume, Use Bounding Box and Compute Inertial Tensor
-  off alike, though the Position data carries the three settings. The core applies a custom inertia (`core_rbdobject`),
-  so look at what the whole-object sync reads and passes (`Box3DWholeObject.cpp`).
+* An RBD Object built from a quadric primitive (Sphere / Tube SOP at Primitive Type Primitive): the plugin reads points
+  only, so it gets a near-zero shape (mass 8e-6). What it should do is not decided.
 * SideFX Glue breaks under static load (Break Force = strength / timestep) where Bullet's holds (`sidefx_glue`).
 * Results depend slightly on point order even with `id` (`point_order`): bodies are created in point order.
 * Objects solved by another solver: packed ones are ignored as colliders; one-way collision with polygons untested.

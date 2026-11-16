@@ -292,7 +292,8 @@ file's header comment says what it covers.
 
 `B3D_LOG` for one-off events (rebuilds, bodies added / removed, fallbacks); `B3D_LOG_VERBOSE` per step, printed only
 with `BOX3DDOP_VERBOSE=1`; `B3D_LOG_IF(cond, ...)` always when `cond`, else only when verbose. All compile to nothing
-without `BOX3DDOP_DEBUG`. Output: stderr, `[b3dop]`. Other environment variables of debug builds (the header lists
+without `BOX3DDOP_DEBUG`. Output: stderr, `[b3dop]`; `run_tests.py` drops a test's stderr, so set `BOX3DDOP_TEST_LOG=1`
+to print its `[b3dop]` lines. Other environment variables of debug builds (the header lists
 them): `BOX3DDOP_REQUESTED_CACHE` (what `getRequestedCacheSubclass` returns) and `BOX3DDOP_VERIFY_READBACK=1`
 ([solver.md](solver.md), writeResultsBack).
 

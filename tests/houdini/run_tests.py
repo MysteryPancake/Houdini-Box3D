@@ -117,6 +117,10 @@ def run_isolated(name, out_dir):
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1800, env=env)
         output = (proc.stdout or "") + (proc.stderr or "")
         code = proc.returncode
+        if os.environ.get("BOX3DDOP_TEST_LOG"):  # a debug build's [b3dop] lines, else dropped
+            for line in output.splitlines():
+                if line.startswith("[b3dop]"):
+                    print(line, flush=True)
     except subprocess.TimeoutExpired:
         return [Result(name, Result.CRASH, "no result after 30 minutes (hang?)")]
     if not os.path.exists(result_file):
