@@ -237,7 +237,8 @@ def test_odd_packed_contents():
 
 def test_mirrored_piece():
     """A packed piece with a mirrored transform (scale -1 in x): does it land correctly, and is it
-    still mirrored once it moves? INFO: the notes say the write-back drops the mirror."""
+    still mirrored once it moves? INFO: the write-back keeps the mirror, so the determinant should stay
+    negative."""
     geo = new_geo("mirror_piece")
     box = create(geo, "box")
     set_parm(box, ["size"], (1, 1, 1))

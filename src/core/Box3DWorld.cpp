@@ -781,32 +781,21 @@ bool Box3DWorld::boxShape(BodyHandle h, const BodySettings &b,
   if (!h)
     return false;
 
-  // A rotated box is the hull of its 8 rotated corners (cached by content).
-  if (!isIdentityRotation(rotationXYZW)) {
-    float pts[24];
-    int n = 0;
-    for (int sx = -1; sx <= 1; sx += 2)
-      for (int sy = -1; sy <= 1; sy += 2)
-        for (int sz = -1; sz <= 1; sz += 2) {
-          const float corner[3] = {static_cast<float>(sx) * halfExtents[0],
-                                   static_cast<float>(sy) * halfExtents[1],
-                                   static_cast<float>(sz) * halfExtents[2]};
-          const b3Vec3 r =
-              b3RotateVector(makeQuat(rotationXYZW), makeVec3(corner));
-          pts[n++] = r.x + (center ? center[0] : 0.0f);
-          pts[n++] = r.y + (center ? center[1] : 0.0f);
-          pts[n++] = r.z + (center ? center[2] : 0.0f);
-        }
-    const HullId hull = createHull(pts, 8, nullptr);
-    return hull && createHullShape(h, b, hull, updateMass);
-  }
-
   const bool offset =
       center && (center[0] != 0.0f || center[1] != 0.0f || center[2] != 0.0f);
-  const b3BoxHull hull =
-      offset ? b3MakeOffsetBoxHull(halfExtents[0], halfExtents[1],
-                                   halfExtents[2], makeVec3(center))
-             : b3MakeBoxHull(halfExtents[0], halfExtents[1], halfExtents[2]);
+  b3BoxHull hull;
+  if (!isIdentityRotation(rotationXYZW)) {
+    b3Transform local;
+    local.p = makeVec3(center);
+    local.q = b3NormalizeQuat(makeQuat(rotationXYZW));
+    hull = b3MakeTransformedBoxHull(halfExtents[0], halfExtents[1],
+                                    halfExtents[2], local);
+  } else if (offset) {
+    hull = b3MakeOffsetBoxHull(halfExtents[0], halfExtents[1], halfExtents[2],
+                               makeVec3(center));
+  } else {
+    hull = b3MakeBoxHull(halfExtents[0], halfExtents[1], halfExtents[2]);
+  }
   const b3ShapeDef def = shapeDefFor(b, updateMass);
   const b3ShapeId shape = b3CreateHullShape(b3LoadBodyId(h), &def, &hull.base);
   return !B3_IS_NULL(shape);
@@ -1110,28 +1099,14 @@ void Box3DWorld::pruneHulls() {
   myImpl->held.clear();
 }
 
-// Average bytes Box3D allocates per object, measured with b3GetByteCount on
-// box hull shapes (8000 bodies, one worker): a body 510 plus 210 of solver
-// arrays after its first step, an extra shape 400, a touching contact 1330
-// (manifolds included), a revolute joint 600.
-constexpr size_t kBodyBytes = 720;
-constexpr size_t kShapeBytes = 400;
-constexpr size_t kContactBytes = 1330;
-constexpr size_t kJointBytes = 600;
-
+// The world's own figure (its arrays, contacts, joints and the hulls it cloned
+// into its database), plus the meshes and height fields we own: Box3D keeps
+// pointers to those instead of copying them.
 size_t Box3DWorld::estimatedBytes() const {
   if (!isValid())
     return 0;
   const b3Counters c = b3World_GetCounters(myImpl->worldId);
-  size_t bytes = static_cast<size_t>(c.bodyCount) * kBodyBytes +
-                 static_cast<size_t>(c.shapeCount) * kShapeBytes +
-                 static_cast<size_t>(c.contactCount) * kContactBytes +
-                 static_cast<size_t>(c.jointCount) * kJointBytes;
-  {
-    std::lock_guard<std::mutex> lock(myImpl->held_mutex);
-    for (const auto &kv : myImpl->held)
-      bytes += kv.second->bytes;
-  }
+  size_t bytes = c.byteCount > 0 ? static_cast<size_t>(c.byteCount) : 0;
   for (const auto &kv : myImpl->bodyGeometry) {
     for (const b3MeshData *m : kv.second.meshes)
       bytes += static_cast<size_t>(m->byteCount);

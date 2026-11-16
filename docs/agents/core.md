@@ -50,8 +50,7 @@ puts it on every shape (`toB3Filter`) and Box3D checks pairs inline in its broad
 `b3Shape_SetFilter(..., invokeContacts = true)` on each shape, which resets the proxy (dropping contacts that no longer
 pass) and is a no-op for an unchanged filter. No custom filter callback, no shape user data.
 
-**Shapes and hull cache.** A box is a Box3D hull (`b3MakeBoxHull` / `b3MakeOffsetBoxHull`; a rotated box is the hull of
-its 8 corners); sphere and capsule (along Y; Box3D turns a too-short one into a sphere) are native.
+**Shapes and hull cache.** A box is a Box3D hull (`b3MakeBoxHull` / `b3MakeOffsetBoxHull`; `b3MakeTransformedBoxHull` when rotated); sphere and capsule (along Y; Box3D turns a too-short one into a sphere) are native.
 `bodyShapeOutlines` reads a body's shapes back in body space (hull vertices and face loops, sphere, capsule) for the
 solver's guide geometry. `createHull` keys by
 content (`hashFloats` of the points; hashing mixes 8 bytes per round); packed instances pass their own key (`findHull`
@@ -86,7 +85,9 @@ over their own height range; `holes` become `B3_HEIGHT_FIELD_HOLE` cells.
 in `GeorepLookup`); `makeShapeSpec` (`pscale * scale` as a bounding box, components made positive and >= `kMinExtent`
 (`Box3DShapes.h`) by `clampExtent`; sphere diameter = largest component; capsule radius = half of
 max(x, z)); `PrimOverrides` / `applyPrimOverrides`; `matrixRowLengths`; `packedPointsToBodyLocal` (`(p - pivot) * S`);
-`packedScale` (row lengths rounded to 5 significant digits, so rotated instances share a hull; ~1e-5 scale error);
+`packedScale` (row lengths rounded to 5 significant digits, so rotated instances share a hull; ~1e-5 scale error;
+the third entry is negative for a mirroring 3x3, which mirrors the hull points and keys a mirrored piece apart; `keepMirror`
+puts the mirror back on a 3x3 written from a rotation);
 `packedHullKey` (kind 1 merged, 2 per piece); `connectedSets` (union-find); `fitShapeInFrame` / `fitShapeToPoints` / `canonicalFrame` (and `Box3DWorld::fitShapeOriented`, which needs a Box3D hull); hashing (`kHashSeed`,
 `mixHash`, `hashFloats`).
 

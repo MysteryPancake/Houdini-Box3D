@@ -12,8 +12,9 @@ namespace box3dsolver {
 
 // Packed 3x3 (row-vector, M = S * R) split into per-row scale and a unit
 // quaternion with the HDK, so packed rotations follow Houdini's own quaternion
-// convention. Shear and mirroring are dropped; false (identity, scale 1) if
-// degenerate.
+// convention. Shear is dropped. A mirror is split off as a flip of the third
+// row (the hull points are mirrored to match, packedScale; the write-back puts
+// the flip back, keepMirror). False (identity, scale 1) if degenerate.
 bool splitPackedMatrix(const double m3[9], float q[4], double scale[3]) {
   q[0] = q[1] = q[2] = 0.0f;
   q[3] = 1.0f;
@@ -420,8 +421,12 @@ staticMeshPiece(ShapeSources &src, const PackedInfo &pk, bool houdiniWinding) {
                                  pk.pivot, mesh->xyz);
   mesh->tris = raw->tris;
   // Houdini's front faces wind clockwise, Box3D's counter-clockwise (meshes are
-  // one-sided), as for Static Object meshes.
-  if (houdiniWinding)
+  // one-sided), as for Static Object meshes. A mirrored piece's points are
+  // mirrored too (packedPointsToBodyLocal), which flips the winding again.
+  double m3[9];
+  b3dop::upper3x3(pk.m4, m3);
+  const bool mirrored = b3dop::matrixDeterminant(m3) < 0.0;
+  if (houdiniWinding != mirrored)
     for (size_t t = 0; t + 2 < mesh->tris.size(); t += 3)
       std::swap(mesh->tris[t + 1], mesh->tris[t + 2]);
   return mesh;

@@ -3,8 +3,11 @@
 The one list of what is unverified or still to do. Index and rules: [CLAUDE.md](../../CLAUDE.md). Keep each
 item to a line or two; remove it once settled (the test that settles it is the record, not this file).
 
-Last full run (Houdini 22.0.502, MSVC): every check passes except `baseline`, which was recorded on 22.0.479
-(`run_tests.py baseline --update-baseline` records it again). What no script checks: Escape mid-step, the viewport, motion blur, how greyed-out parameters look.
+Last full run (Houdini 22.0.502, MSVC, the Box3D fork): every check passes except `baseline` and
+`rbd_object_inertia_type` (TODO). `baseline` holds the old hull of a rotated box: a tilted pile diverges chaotically
+between that hull and `b3MakeTransformedBoxHull` (same mass data; a 1e-6 nudge of one box moves a 24-box pile 0.16), so
+re-record it with `run_tests.py baseline --update-baseline`. What no script checks: Escape mid-step, the viewport,
+motion blur, how greyed-out parameters look.
 
 ## Unverified
 
@@ -24,6 +27,10 @@ Last full run (Houdini 22.0.502, MSVC): every check passes except `baseline`, wh
 * The Threads default (`performanceCoreCount`) on macOS (`hw.perflevel0`) and ARM Linux (`cpu_capacity`).
 
 **Houdini behaviour**
+* Mirrored packed pieces (`mirrored_piece`): the hull points are mirrored (`packedScale`'s negative third entry), meshes
+  keep their winding, and the write-back keeps the mirror (`keepMirror`); core test `mirrored_packed`. The plugin
+  files were edited without an HDK build. Not run: the determinant staying negative on later frames, the piece resting
+  right, and a piece that turns mirrored mid-simulation (the shape rebuild is keyed on the row lengths, not the sign).
 * Escape mid-step: the step is discarded and re-cooked, earlier frames stay cached, the re-cook rebuilds once.
 * Data ids surviving the DOP copy between timesteps (the sync skip; debug log `scan skipped`); our own writes not
   looking like edits (debug log `full scan, changed:`).
@@ -71,12 +78,9 @@ Last full run (Houdini 22.0.502, MSVC): every check passes except `baseline`, wh
 ## TODO
 
 * Packed primitive spheres and nested packed primitives collide as one point, half sunk (`odd_packed_contents`).
-* Mirrored packed pieces lose their mirror once they move (`mirrored_piece`). The fork's `b3CloneAndTransformHull`
-  takes a mirroring scale: try it.
-* `Box3DWorld::boxShape` makes a rotated box as the hull of its 8 corners through the hull cache. The fork has
-  `b3MakeTransformedBoxHull`.
-* `Box3DWorld::estimatedBytes` prices objects at constants measured with `b3GetByteCount` (`kBodyBytes` ...).
-  `b3World_GetCounters(...).byteCount` is a per-world figure that includes the hull database: try it.
+* `rbd_object_inertia_type` fails: the disc turns 74.8° under Use Volume, Use Bounding Box and Compute Inertial Tensor
+  off alike, though the Position data carries the three settings. The core applies a custom inertia (`core_rbdobject`),
+  so look at what the whole-object sync reads and passes (`Box3DWholeObject.cpp`).
 * SideFX Glue breaks under static load (Break Force = strength / timestep) where Bullet's holds (`sidefx_glue`).
 * Results depend slightly on point order even with `id` (`point_order`): bodies are created in point order.
 * Objects solved by another solver: packed ones are ignored as colliders; one-way collision with polygons untested.

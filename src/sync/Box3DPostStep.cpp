@@ -734,6 +734,7 @@ private:
     if (!(myAnyPrims && me.packed && pw))
       return nullptr;
     composePackedMatrix(mv.rot, me.rowScale, pw->newM3);
+    b3dop::keepMirror(me.m3, pw->newM3); // a mirrored piece stays mirrored
     pw->primOff = GA_Offset(me.primOff);
     pw->has = true;
     std::copy(pw->newM3, pw->newM3 + 9,

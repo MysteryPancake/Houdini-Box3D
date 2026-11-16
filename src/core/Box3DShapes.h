@@ -216,9 +216,30 @@ inline bool matrixRowLengths(const double m[9], double out[3]) {
   return true;
 }
 
+// A 3x3's determinant: negative when the matrix mirrors.
+inline double matrixDeterminant(const double m[9]) {
+  return m[0] * (m[4] * m[8] - m[5] * m[7]) -
+         m[1] * (m[3] * m[8] - m[5] * m[6]) +
+         m[2] * (m[3] * m[7] - m[4] * m[6]);
+}
+
+// A mirrored packed 3x3 is read as its rotation and scale with the third row
+// negated (splitPackedMatrix), which leaves a local z flip in front of them:
+// M = diag(1, 1, -1) * S * R. This negates `m`'s third row when `before`
+// (the 3x3 the last sync read) mirrored, so a 3x3 composed from a new rotation
+// keeps the mirror.
+inline void keepMirror(const double before[9], double m[9]) {
+  if (!(matrixDeterminant(before) < 0.0))
+    return;
+  for (int c = 0; c < 3; ++c)
+    m[6 + c] = -m[6 + c];
+}
+
 // The scale packedPointsToBodyLocal bakes in: m4's row lengths, rounded to 5
-// significant digits so instances differing by float noise share a hull. False
-// if degenerate.
+// significant digits so instances differing by float noise share a hull. A
+// mirroring 3x3 has a negative third entry (the local z flip), so the points
+// come out mirrored and the hull key differs from the unmirrored piece's.
+// False if degenerate.
 inline bool packedScale(const double m4[16], double S[3]) {
   double m3[9];
   upper3x3(m4, m3);
@@ -233,6 +254,8 @@ inline bool packedScale(const double m4[16], double S[3]) {
         std::pow(10.0, std::floor(std::log10(std::fabs(v))) - 4.0);
     S[j] = std::round(v / step) * step;
   }
+  if (matrixDeterminant(m3) < 0.0)
+    S[2] = -S[2];
   return true;
 }
 

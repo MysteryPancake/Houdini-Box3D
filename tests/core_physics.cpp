@@ -2302,8 +2302,9 @@ void testEstimatedBytes() {
     CHECK(w.addBoxShape(100 + i, half));
   }
   const size_t bodies = w.estimatedBytes();
-  // At least a body and a shape each, and not wildly more.
-  CHECK(bodies >= empty + static_cast<size_t>(count) * 1000);
+  // At least a body and a shape each (Box3D's own figure, about 900 bytes
+  // apiece here), and not wildly more.
+  CHECK(bodies >= empty + static_cast<size_t>(count) * 500);
   CHECK(bodies <= empty + static_cast<size_t>(count) * 3000);
   for (int i = 0; i < 10; ++i)
     w.step(1.0f / 60.0f);
@@ -2440,6 +2441,89 @@ void testSleepEnable() {
   std::printf("sleep / enable state checks done\n");
 }
 
+// Mirrored packed transforms. M = diag(1, 1, -1) * S * R (the sync reads the
+// rotation and scale from the matrix with its third row negated): the hull
+// points come out mirrored so that body rotation R puts them where M does, the
+// hull key differs from the unmirrored piece's, and keepMirror puts back the
+// flip that a matrix composed from a rotation and a scale does not have.
+void testMirroredPacked() {
+  using namespace b3dop;
+  const double S[3] = {2.0, 3.0, 4.0};
+  auto rotationRows = [](double degrees, double rows[3][3]) {
+    const double a = degrees * 3.14159265358979323846 / 180.0;
+    const double c = std::cos(a), s = std::sin(a);
+    const double r[3][3] = {{c, 0, -s}, {0, 1, 0}, {s, 0, c}}; // about Y
+    std::memcpy(rows, r, sizeof r);
+  };
+  // S * R as a 3x3 (row scale), optionally mirrored (third row negated).
+  auto compose = [&](double degrees, bool mirror, double m3[9]) {
+    double rows[3][3];
+    rotationRows(degrees, rows);
+    for (int r = 0; r < 3; ++r)
+      for (int c = 0; c < 3; ++c)
+        m3[r * 3 + c] = S[r] * rows[r][c] * ((mirror && r == 2) ? -1.0 : 1.0);
+  };
+  auto toM4 = [](const double m3[9], double m4[16]) {
+    std::memset(m4, 0, 16 * sizeof(double));
+    for (int r = 0; r < 3; ++r)
+      for (int c = 0; c < 3; ++c)
+        m4[r * 4 + c] = m3[r * 3 + c];
+    m4[15] = 1.0;
+  };
+
+  double mirrored3[9], plain3[9], mirrored4[16], plain4[16];
+  compose(30.0, true, mirrored3);
+  compose(30.0, false, plain3);
+  toM4(mirrored3, mirrored4);
+  toM4(plain3, plain4);
+  CHECK(matrixDeterminant(mirrored3) < 0.0);
+  CHECK(matrixDeterminant(plain3) > 0.0);
+
+  double Sm[3], Sp[3];
+  CHECK(packedScale(mirrored4, Sm) && packedScale(plain4, Sp));
+  CHECK(Sm[0] > 0.0 && Sm[1] > 0.0 && Sm[2] < 0.0); // the local z flip
+  CHECK(Sp[0] > 0.0 && Sp[1] > 0.0 && Sp[2] > 0.0);
+  CHECK(std::fabs(std::fabs(Sm[2]) - Sp[2]) < 1e-9);
+  const double pivot[3] = {0, 0, 0};
+  CHECK(packedHullKey(77, pivot, Sm, 1) != packedHullKey(77, pivot, Sp, 1));
+
+  // The body-local points turned by the split rotation land where the packed
+  // matrix puts the source points (p * M).
+  const std::vector<float> src = {1, 2, 3, -2, 0.5f, 1, 0.25f, -1, 2};
+  std::vector<float> local;
+  packedPointsToBodyLocal(src.data(), 3, mirrored4, pivot, local);
+  double rows[3][3];
+  rotationRows(30.0, rows);
+  for (int i = 0; i < 3; ++i) {
+    for (int c = 0; c < 3; ++c) {
+      double viaBody = 0.0, viaMatrix = 0.0;
+      for (int r = 0; r < 3; ++r) {
+        viaBody += static_cast<double>(local[static_cast<size_t>(3 * i + r)]) *
+                   rows[r][c];
+        viaMatrix += static_cast<double>(src[static_cast<size_t>(3 * i + r)]) *
+                     mirrored3[r * 3 + c];
+      }
+      CHECK(std::fabs(viaBody - viaMatrix) < 1e-4);
+    }
+  }
+
+  // Write-back: a matrix composed from a new rotation and the same scale has
+  // no mirror. keepMirror gives it back only when the last read had one.
+  double composed[9], kept[9], untouched[9];
+  compose(75.0, false, composed);
+  std::memcpy(kept, composed, sizeof composed);
+  keepMirror(mirrored3, kept);
+  CHECK(matrixDeterminant(kept) < 0.0);
+  for (int c = 0; c < 3; ++c) {
+    CHECK(kept[c] == composed[c] && kept[3 + c] == composed[3 + c]);
+    CHECK(kept[6 + c] == -composed[6 + c]);
+  }
+  std::memcpy(untouched, composed, sizeof composed);
+  keepMirror(plain3, untouched);
+  CHECK(std::memcmp(untouched, composed, sizeof composed) == 0);
+  std::printf("mirrored packed checks done\n");
+}
+
 struct TestCase {
   const char *name;
   void (*run)();
@@ -2467,6 +2551,7 @@ const TestCase kTests[] = {
     {"surface_material", testSurfaceMaterial},
     {"world_settings", testWorldSettings},
     {"hull_cache", testHullCache},
+    {"mirrored_packed", testMirroredPacked},
     {"estimated_bytes", testEstimatedBytes},
     {"sleep_enable", testSleepEnable},
 };
