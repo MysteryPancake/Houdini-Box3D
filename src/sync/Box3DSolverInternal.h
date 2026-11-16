@@ -214,6 +214,13 @@ struct NamedPiece {
   std::string name;
   std::vector<GA_Offset>
       points; // while collecting (finishPieces reads and drops them)
+  std::vector<float> samples; // quadric primitives' surface points (Box3DQuadrics.h), added to xyz
+  // The piece is one Sphere primitive of uniform scale (sphereValid, after finishPieces): its centre
+  // and radius in the source's space, built as a Box3D sphere instead of a hull.
+  int primCount = 0;
+  bool sphereValid = false;
+  double sphereCentre[3] = {0, 0, 0};
+  double sphereRadius = 0;
   std::vector<float> xyz;
   uint64_t hash = 0; // of xyz
 };

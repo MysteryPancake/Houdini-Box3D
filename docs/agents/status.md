@@ -50,15 +50,24 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * Joints from authored anchors through `restToNow` and the `angle` since rest, against Bullet (test `bullet_joint_rest`,
   rerun with constraint_type all: with `position` both held the 1.0 rest length, which pushes the boxes into each
   other; with both anchors at one point the centres ended 2.19 and 2.59 apart, past the 2.06 possible).
-* `bullet_primR` rotation order (taken as XYZ Euler degrees): the first run disagreed with Bullet on 50 70 50 but its
-  plate was narrower than the shape, so rerun `bullet_shape_attributes`. `bullet_primS`, `bullet_primT`,
-  `bullet_radius` and `bullet_length` match Bullet. Not compared: the `deforming` and `bullet_autofit_valid`
+* `bullet_primR` rotation order: XYZ Euler degrees matches Bullet (`bullet_primr_order`: a settled thin box has the same
+  face down for 50 70 50 and 0 70 50). Not understood: Bullet's dynamic hand-set box rests at y -0.16 / -0.34 / 0.0
+  (Box3D 0.10, the half thickness), and with primR 30 0 60 it fell through the ground. `bullet_primS`, `bullet_primT`,
+  `bullet_radius` and `bullet_length` match Bullet. Bullet ignores `bullet_primT` for a dynamic piece's rest height
+  (0.25, shape centred on the body) where Box3D keeps the offset (-0.05); a static piece away from the origin is
+  not found by a plate in Bullet. Not compared: the `deforming` and `bullet_autofit_valid`
   toggles, AutoFit on whole objects and fractured pieces.
 * Where Bullet puts a hand-set shape on a static piece away from the origin: a plate over a piece at x 3 never
   stopped in Bullet, where Box3D has the shape on the piece (`bullet_shape_position`; its dynamic case is rerun, the
   first run had made the ground a hand-set box too).
 * Impact normal direction (test `bullet_impact_normal`, rerun: both solvers write a `normal` field, the first run
   could not read it as a Houdini vector); whether a fresh `SIM_Impacts` each step suits Houdini's impact tools.
+* Bullet's placement of a hand-set shape (`bullet_shape_probe`, the same with a neutral ground): a dynamic hand-set piece
+  dropped from x 2 ends at x 0, z 0 (plus `bullet_primT`'s x and z), so Bullet drops the piece's position, and its
+  height follows `bullet_primT`'s y (0.3 up gives 0.25 to 0.3, 0.3 down gives -0.3) rather than the shape. Box3D keeps
+  the piece where it is with primT as an offset. Not copied: it would move every hand-set piece to the world origin.
+* A whole RBD Object box in Box3D is still moving at frame 120 and sits at y 0.54 (Bullet: 0.500, settled), for every box
+  type; packed pieces settle at 0.500 in both. Not yet looked into (test `bullet_primitive_types`).
 * Which end is Cone Twist's goal (taken as point 1; test `bullet_cone_twist_goal`): Bullet's piece fell freely with both
   anchors at one point, turned or not, so it cannot say. Needs a Bullet Cone Twist setup that holds.
 * Unpacked geometry (`unpacked_geometry_bullet`): an object of polygons only is skipped by both (ours warns). This
@@ -83,12 +92,13 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 ## TODO
 
 * Packed primitive spheres and nested packed primitives collide as one point, half sunk (`odd_packed_contents`).
-* Quadric primitives (Sphere, Tube, Circle at Primitive Type Primitive, and metaballs), packed or as RBD Objects: the
-  plugin reads points only, so the shape is a point and the piece rests at y 0.001. Bullet sizes them: a radius 0.5
-  sphere and a height 1 tube rest at 0.5, a radius 0.5 circle at 0.355, a radius 0.5 metaball at 0.25, a volume packed
-  falls through and as an RBD Object stays at 2. NURBS, Bezier and Mesh surfaces match (hulls of the control points,
-  0.46 to 0.50). Test `bullet_primitive_types`, which now tries every Primitive Type of the Box, Sphere, Tube and
-  Circle SOPs; the Box SOP's types have not been run.
+* Quadric primitives (Sphere, Tube, Circle, Metaball), packed or as RBD Objects: sampled on their surface
+  (`Box3DQuadrics.h`, `appendQuadricSamples` in `Box3DShapeBuild.cpp`) and sized like Bullet's. Run (`bullet_primitive_types`):
+  sphere 0.500 and metaball 0.250 match Bullet; a Sphere that is the only primitive of its piece and uniformly scaled
+  is a real Box3D sphere (`NamedPiece::sphereValid`). The tube rested at 1.0 (unit tube taken as y -1 to 1), now taken
+  as -0.5 to 0.5: rerun. A circle packed settles flat at 0.02; as an RBD Object it stood on its edge. Not done:
+  quadrics inside a Convex hull Per Connected Set, volumes (Bullet: packed falls through, RBD Object stays at 2),
+  tube taper.
 * SideFX Glue breaks under static load (Break Force = strength / timestep) where Bullet's holds (`sidefx_glue`).
 * Results depend slightly on point order even with `id` (`point_order`): bodies are created in point order.
 * Objects solved by another solver: packed ones are ignored as colliders; one-way collision with polygons untested.

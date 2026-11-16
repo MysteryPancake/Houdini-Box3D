@@ -4,7 +4,11 @@
 // the Box3D shapes built from it, for points and for whole objects.
 #include "Box3DSolverInternal.h"
 
+#include "core/Box3DQuadrics.h"
+
 #include <GA/GA_PrimitiveTypes.h>
+#include <GEO/GEO_Quadric.h>
+#include <UT/UT_Matrix3.h>
 
 #include <cmath>
 
@@ -128,10 +132,45 @@ void readPackedPivot(PackedInfo &pk) {
 // Collision source geometry
 // ---------------------------------------------------------------------------
 
-void appendPrimPoints(const GA_Primitive &prim, NamedPiece &np) {
+// A Sphere, Tube, Circle or Metaball primitive has one point and a transform, so its points alone
+// make no shape: its surface is sampled too (Box3DQuadrics.h). Their transform is
+// GEO_Quadric::getTransform (no translation: the position is the point).
+void appendQuadricSamples(const GU_Detail *gdp, const GA_Primitive &prim,
+                          NamedPiece &np) {
+  if (prim.getTypeId() == GA_PRIMPOLY || prim.getVertexCount() < 1)
+    return;
+  const b3dop::QuadricKind kind =
+      b3dop::quadricKindFromName(prim.getTypeName());
+  if (kind == b3dop::QuadricKind::None)
+    return;
+  const GEO_Quadric *quadric = dynamic_cast<const GEO_Quadric *>(&prim);
+  if (!quadric)
+    return;
+  const UT_Matrix3 &m = quadric->getTransform();
+  // UT_Matrix3 multiplies row vectors (p' = p * m): the math matrix is its transpose.
+  double a[9];
+  for (int r = 0; r < 3; ++r)
+    for (int c = 0; c < 3; ++c)
+      a[c * 3 + r] = m(r, c);
+  const UT_Vector3 p = gdp->getPos3(prim.getPointOffset(0));
+  const double centre[3] = {p.x(), p.y(), p.z()};
+  b3dop::appendQuadricPoints(kind, a, centre, np.samples);
+  double radius = 0;
+  if (kind == b3dop::QuadricKind::Sphere &&
+      b3dop::quadricSphereRadius(a, radius)) {
+    np.sphereValid = true;
+    np.sphereRadius = radius;
+    std::copy(centre, centre + 3, np.sphereCentre);
+  }
+}
+
+void appendPrimPoints(const GU_Detail *gdp, const GA_Primitive &prim,
+                      NamedPiece &np) {
   const GA_Size nv = prim.getVertexCount();
   for (GA_Size i = 0; i < nv; ++i)
     np.points.push_back(prim.getPointOffset(i));
+  ++np.primCount;
+  appendQuadricSamples(gdp, prim, np);
 }
 
 // Each piece's points once (in offset order) into xyz, then the hashes of each
@@ -150,6 +189,10 @@ void finishPieces(const GU_Detail *gdp, PieceGroup &g) {
       np.xyz.push_back(p.y());
       np.xyz.push_back(p.z());
     }
+    if (np.primCount != 1) // only a piece that is one sphere is a sphere
+      np.sphereValid = false;
+    np.xyz.insert(np.xyz.end(), np.samples.begin(), np.samples.end());
+    np.samples = std::vector<float>();
     np.points = std::vector<GA_Offset>();
     np.hash = b3dop::hashFloats(np.xyz.data(), np.xyz.size());
     g.hash = b3dop::mixHash(g.hash, np.hash);
@@ -175,7 +218,7 @@ void collectPieces(const GU_Detail *gdp, PieceGroup &out) {
     if (nameH.isValid())
       if (const char *n = nameH.get(*it))
         name = n;
-    appendPrimPoints(*prim, out.piece(name));
+    appendPrimPoints(gdp, *prim, out.piece(name));
   }
   if (!anyPrim) {
     NamedPiece &np = out.piece(std::string());
@@ -215,7 +258,7 @@ void collectFragmentPiece(const GU_Detail *gdp, const GA_Range &range,
   NamedPiece &np = out.piece(name);
   for (GA_Iterator it(range); !it.atEnd(); ++it)
     if (const GA_Primitive *prim = gdp->getPrimitive(*it))
-      appendPrimPoints(*prim, np);
+      appendPrimPoints(gdp, *prim, np);
   finishPieces(gdp, out);
 }
 
@@ -577,6 +620,32 @@ BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
       const uint64_t key =
           keyed ? packedHullKey(sourceHash, pk.pivot, S, kind) : 0;
       Piece pc;
+      if (from.size() == 1 && from[0]->sphereValid) {
+        // One Sphere primitive: a real Box3D sphere, through the packed transform.
+        const double c[3] = {from[0]->sphereCentre[0], from[0]->sphereCentre[1],
+                             from[0]->sphereCentre[2]};
+        const float two[6] = {static_cast<float>(c[0]), static_cast<float>(c[1]),
+                              static_cast<float>(c[2]),
+                              static_cast<float>(c[0] + from[0]->sphereRadius),
+                              static_cast<float>(c[1]), static_cast<float>(c[2])};
+        float local[6] = {0, 0, 0, 0, 0, 0};
+        std::vector<float> outLocal;
+        packedPointsToBodyLocal(two, 2, pk.m4, pk.pivot, outLocal);
+        if (outLocal.size() >= 6) {
+          std::copy(outLocal.begin(), outLocal.begin() + 6, local);
+          pc.spec.type = ShapeType::Sphere;
+          pc.spec.center[0] = local[0];
+          pc.spec.center[1] = local[1];
+          pc.spec.center[2] = local[2];
+          pc.spec.radius = clampExtent(std::sqrt(
+              (local[3] - local[0]) * (local[3] - local[0]) +
+              (local[4] - local[1]) * (local[4] - local[1]) +
+              (local[5] - local[2]) * (local[5] - local[2])));
+          pc.volume = shapeVolume(pc.spec);
+          add(pc);
+          return;
+        }
+      }
       if (pieceFromPoints(
               world, key, b3dop::mixHash(sourceHash, kind),
               [&](std::vector<float> &dst) { toBodyLocal(from, dst); }, pts, pc,
@@ -652,6 +721,26 @@ BuiltShapes buildWholeObjectShapes(b3dop::Box3DWorld &world,
   std::vector<float> pts;
   auto addHull = [&](const std::vector<const NamedPiece *> &from) {
     Piece pc;
+    if (from.size() == 1 && from[0]->sphereValid) {
+      // One Sphere primitive: a real Box3D sphere.
+      const NamedPiece &np = *from[0];
+      const double c[3] = {np.sphereCentre[0], np.sphereCentre[1], np.sphereCentre[2]};
+      const double e[3] = {c[0] + np.sphereRadius, c[1], c[2]};
+      double oc[3], oe[3];
+      b3dop::xformPoint(m, c, oc);
+      b3dop::xformPoint(m, e, oe);
+      pc.spec.type = b3dop::ShapeType::Sphere;
+      for (int k = 0; k < 3; ++k)
+        pc.spec.center[k] = static_cast<float>(oc[k] - pivot[k]);
+      pc.spec.radius = b3dop::clampExtent(static_cast<float>(
+          std::sqrt((oe[0] - oc[0]) * (oe[0] - oc[0]) +
+                    (oe[1] - oc[1]) * (oe[1] - oc[1]) +
+                    (oe[2] - oc[2]) * (oe[2] - oc[2]))));
+      pc.volume = b3dop::shapeVolume(pc.spec);
+      out.totalVolume += pc.volume;
+      out.pieces.push_back(pc);
+      return;
+    }
     if (pieceFromPoints(
             world, 0, 0,
             [&](std::vector<float> &dst) {

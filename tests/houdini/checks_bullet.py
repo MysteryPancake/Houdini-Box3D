@@ -138,6 +138,12 @@ def shape_attrs(georep, prim_s, radius, length, prim_t, prim_r):
             "w": (0.0, 0.0, 0.0)}
 
 
+# The ground in the tests that drop a hand-set piece: fitted to its own geometry (Auto Fit on), with the
+# hand-set attributes (every piece needs them) at nothing: no offset, no turn.
+FLAT_GROUND = dict(shape_attrs("box", (0.5, 0.5, 0.5), 0.5, 1.0, (0, 0, 0), (0, 0, 0)), active=0,
+                   bullet_georep="box", bullet_autofit=1)
+
+
 def shape_top(tag, kind, attrs, center=(0.0, 0.0, 0.0), frames=60):
     """Height of the top of a static hand-set shape above its piece's centre: a plate wider than the
     shape is dropped on it, and the first frame its fall stops is where it touched (no bounce; it
@@ -173,13 +179,129 @@ def test_bullet_shape_attributes():
     return results
 
 
+def rotation(axis, degrees):
+    c, s = math.cos(math.radians(degrees)), math.sin(math.radians(degrees))
+    return [[[1, 0, 0], [0, c, -s], [0, s, c]], [[c, 0, s], [0, 1, 0], [-s, 0, c]],
+            [[c, -s, 0], [s, c, 0], [0, 0, 1]]][axis]
+
+
+def matmul(a, b):
+    return [[sum(a[i][k] * b[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
+
+
+EULER_ORDERS = {"XYZ": (0, 1, 2), "XZY": (0, 2, 1), "YXZ": (1, 0, 2), "YZX": (1, 2, 0), "ZXY": (2, 0, 1),
+                "ZYX": (2, 1, 0)}
+
+
+def thin_axis_by_order(angles):
+    """{name: the shape's thin (y) axis in body space} for bullet_primR `angles` taken in each Euler
+    order, as column-vector rotations (first axis applied first: "XYZ") and as their transposes
+    ("XYZ^T"). A shape lying on its large face has this axis pointing at the world's up."""
+    out = {}
+    for name, order in EULER_ORDERS.items():
+        m = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+        for axis in order:
+            m = matmul(rotation(axis, angles[axis]), m)
+        out[name] = (m[0][1], m[1][1], m[2][1])
+        out[name + "^T"] = (m[1][0], m[1][1], m[1][2])
+    return out
+
+
+def matching_orders(up, angles):
+    """The Euler orders whose thin axis lines up with `up` (either way), best first."""
+    found = [(abs(sum(a * b for a, b in zip(up, v))), n) for n, v in thin_axis_by_order(angles).items()]
+    return [n for d, n in sorted(found, reverse=True) if d > 0.98]
+
+
+def primr_rest(kind, prim_r, frames=120):
+    """A 0.6 x 0.1 x 0.3 (half extents) hand-set box with bullet_primR `prim_r` dropped on the ground:
+    (its height, the body-space direction of the world's up) once it has settled."""
+    attrs = shape_attrs("box", (0.6, 0.1, 0.3), 0.5, 1.0, (0, 0, 0), prim_r)
+    flat = FLAT_GROUND
+    pieces = [dict(GROUND, attrs=flat), {"size": (1, 1, 1), "center": (0, 1.5, 0), "attrs": dict(attrs, active=1)}]
+    tag = f"primr_{int(sum(prim_r))}_{prim_r[0]:g}_{kind}"
+    path, names = packed_boxes(tag + "_pieces", pieces)
+    dop = new_dopnet(tag)
+    finish(dop, solver_for(kind, dop, packed_object(dop, "pieces", path, keep_velocity=True)))
+
+    def sample(sim, f):
+        rot = packed_transform(sim, "pieces", names[1])
+        return packed_positions(sim, "pieces")[names[1]][1], (rot[0][1], rot[1][1], rot[2][1])
+
+    return step(dop, frames, sample)[frames]
+
+
+PROBE_CASES = (
+    # label, half extents, bullet_primT, bullet_primR
+    ("box 0.5 0.25 0.5", (0.5, 0.25, 0.5), (0, 0, 0), (0, 0, 0)),
+    ("box 0.5 0.25 0.5, primT up 0.3", (0.5, 0.25, 0.5), (0, 0.3, 0), (0, 0, 0)),
+    ("box 0.5 0.25 0.5, primT x 0.3", (0.5, 0.25, 0.5), (0.3, 0, 0), (0, 0, 0)),
+    ("box 0.5 0.25 0.5, primT down 0.3", (0.5, 0.25, 0.5), (0, -0.3, 0), (0, 0, 0)),
+    ("box 0.6 0.1 0.3", (0.6, 0.1, 0.3), (0, 0, 0), (0, 0, 0)),
+    ("box 0.6 0.1 0.3, primR 0 0 90", (0.6, 0.1, 0.3), (0, 0, 0), (0, 0, 90)),
+    ("box 0.6 0.1 0.3, primR 0 70 50", (0.6, 0.1, 0.3), (0, 0, 0), (0, 70, 50)),
+    ("box 0.6 0.1 0.3, primT up 0.3, primR 0 0 90", (0.6, 0.1, 0.3), (0, 0.3, 0), (0, 0, 90)),
+)
+
+
+def probe_rest(kind, half, prim_t, prim_r, tag, frames=150):
+    """A dynamic hand-set box dropped from (2, 1.5, 0) onto a ground piece: the piece's point after it
+    settles, (x, y, z)."""
+    attrs = shape_attrs("box", half, 0.5, 1.0, prim_t, prim_r)
+    flat = FLAT_GROUND
+    pieces = [dict(GROUND, attrs=flat),
+              {"size": (1, 1, 1), "center": (2.0, 1.5, 0.0), "attrs": dict(attrs, active=1)}]
+    path, names = packed_boxes(f"{tag}_{kind}_pieces", pieces)
+    dop = new_dopnet(f"{tag}_{kind}")
+    finish(dop, solver_for(kind, dop, packed_object(dop, "pieces", path, keep_velocity=True)))
+    return tuple(step(dop, frames, lambda sim, f: packed_positions(sim, "pieces")[names[1]])[frames])
+
+
+def test_bullet_shape_probe():
+    """Where a dynamic hand-set box ends up relative to its piece's point, for different sizes,
+    bullet_primT and bullet_primR, in Box3D and in Bullet: the piece's point after landing on the
+    ground. INFO: read the Bullet column for the rule (the shape's lowest point sits at y 0, so
+    the point's height says where the shape is relative to it) and compare with Box3D's."""
+    results = []
+    for i, (label, half, prim_t, prim_r) in enumerate(PROBE_CASES):
+        got = {kind: probe_rest(kind, half, prim_t, prim_r, f"probe_{i}") for kind in KINDS}
+        fmt = lambda p: "(" + ", ".join(f"{c:.3f}" for c in p) + ")"  # noqa: E731
+        diff = tuple(b - a for a, b in zip(got["box3d"], got["bullet"]))
+        results.append(Result("bullet_shape_probe", Result.INFO,
+                              f"{label}: Box3D {fmt(got['box3d'])}, Bullet {fmt(got['bullet'])}, "
+                              f"Bullet minus Box3D {fmt(diff)}"))
+    return results
+
+
+def test_bullet_primr_order():
+    """The order of bullet_primR's Euler angles, against Bullet, from how a thin box ends up: it lands
+    on its large face, so the body-space direction of the world's up is the shape's thin axis,
+    which depends on the order and not on how it fell (the turn about the vertical is free). The
+    two solvers' directions agree to within 0.98 (a dot product, either way up). The message lists
+    the Euler orders each one fits, as column-vector rotations and as their transposes (^T)."""
+    results = []
+    for prim_r in ((50, 70, 50), (0, 70, 50), (30, 0, 60), (0, 0, 0)):
+        got = {kind: primr_rest(kind, prim_r) for kind in KINDS}
+        (yb, ub), (yt, ut) = got["box3d"], got["bullet"]
+        agree = abs(sum(a * b for a, b in zip(ub, ut)))
+        ok = agree > 0.98
+        status = Result.INFO if yt < -1.0 else (Result.PASS if ok else Result.FAIL)  # fell through: nothing to compare
+        results.append(Result("bullet_primr_order", status,
+                              f"bullet_primR {prim_r}: Box3D rests at y {yb:.3f} with up in the body at "
+                              f"{tuple(round(c, 2) for c in ub)}, fits {matching_orders(ub, prim_r) or 'none'}; "
+                              f"Bullet y {yt:.3f}, {tuple(round(c, 2) for c in ut)}, fits "
+                              f"{matching_orders(ut, prim_r) or 'none'} (flat on the large face: y 0.1)"))
+    return results
+
+
 def test_bullet_shape_position():
     """Where a hand-set shape is: Bullet's static ones were seen at the world origin, whatever the
     piece's position (a plate dropped over a piece at x 3 landed on a shape at the origin). A static
     piece at (3, 1, 0) with a box of half extents 0.5 0.25 0.5: the top of the shape above the piece's
     centre (0.25 if it follows the piece). Then a dynamic piece with the same shape offset up 0.3
-    (primT) dropped on the ground: where it rests (-0.05 if the shape follows it). Both within
-    0.03 of each other."""
+    (primT) dropped on the ground: where it rests (-0.05 if the offset is from the point; 0.25, the
+    half height, if the shape is centred on the body as Bullet's centre of mass would be). Both
+    within 0.03 of each other."""
     results = []
     attrs = shape_attrs("box", (0.5, 0.25, 0.5), 0.5, 1.0, (0, 0, 0), (0, 0, 0))
     top = {kind: shape_top("shape_pos_static", kind, attrs, center=(3.0, 1.0, 0.0)) for kind in KINDS}
@@ -190,7 +312,7 @@ def test_bullet_shape_position():
     rest = {}
     offset = shape_attrs("box", (0.5, 0.25, 0.5), 0.5, 1.0, (0, 0.3, 0), (0, 0, 0))
     for kind in KINDS:
-        pieces = [dict(GROUND, attrs=dict(offset, active=0, bullet_georep="box", bullet_autofit=1)),
+        pieces = [dict(GROUND, attrs=FLAT_GROUND),
                   {"size": (1, 1, 1), "center": (3.0, 1.5, 0.0), "attrs": dict(offset, active=1)}]
         path, names = packed_boxes(f"shape_pos_dynamic_{kind}_pieces", pieces)
         dop = new_dopnet(f"shape_pos_dynamic_{kind}")
@@ -233,9 +355,9 @@ def test_bullet_joint_rest():
     """Joints from authored anchors on a piece that starts turned 30 degrees about z: SideFX Hard
     (constraint_type all) with the anchors at the two centroids, held distance and how far the
     piece turned in 2 s in Box3D and in Bullet. This is where the anchors' rest-to-now conversion
-    (restToNow) and the `angle` since rest show: a piece held rigidly stays at 2.06 and does not
-    turn. (constraint_type position holds the 1.0 rest length instead, which pulls the two boxes
-    into each other.) Distances within 0.1, turns within 15 degrees. With both anchors at one point
+    (restToNow) and the `angle` since rest show. Both solvers pull the pieces to the 1.0 rest length
+    (the 2.06 start is not held, with `all` or `position`), so the boxes touch and the turn is
+    contact noise: distances within 0.1, turns within 15 degrees. With both anchors at one point
     between the pieces the centres can be at most 2.06 apart: INFO."""
     results = []
     d = {kind: joint_run("joint_rest", kind, "hardconrel", {"constraint_type": "all"}, (0.0, 0.0, 30.0),
@@ -480,9 +602,10 @@ def primitive_sop(tag, sop_type, menu_item, parms, pack):
     return xf.path()
 
 
-def primitive_rest(tag, kind, sop_path, packed, frames=72):
+def primitive_rest(tag, kind, sop_path, packed, frames=120):
     """Where a primitive dropped on the ground ends up: the height of its centre (a packed piece's
-    point, or the mean of a whole object's points) on the last frame, and the solver's messages."""
+    point, or the mean of a whole object's points) on the last frame, whether it was still moving
+    (more than 0.01 over the last 12 frames), and the solver's messages."""
     dop = new_dopnet(tag)
     obj = packed_object(dop, "obj", sop_path) if packed else rbd_object(dop, "obj", sop_path)
     ground = ground_object(dop, tag + "_ground")
@@ -498,7 +621,9 @@ def primitive_rest(tag, kind, sop_path, packed, frames=72):
         pts = whole_object_points(sim, "obj")
         return sum(p[1] for p in pts) / len(pts) if pts else None
 
-    return step(dop, frames, sample)[frames], messages
+    track = step(dop, frames, sample)
+    tail = [track[f] for f in range(frames - 11, frames + 1) if track[f] is not None]
+    return track[frames], bool(tail) and max(tail) - min(tail) > 0.01, messages
 
 
 def test_bullet_primitive_types():
@@ -522,10 +647,11 @@ def test_bullet_primitive_types():
                 continue
 
             def show(kind):
-                y, messages = got[kind]
+                y, moving, messages = got[kind]
                 if y is None:
                     return "nothing left"
                 text = "fell through" if y < -1.0 else f"y {y:.3f}"
+                text += " (still moving)" if moving else ""
                 return text + (f" ({messages[0][:70]})" if messages else "")
 
             yb, yt = got["box3d"][0], got["bullet"][0]
@@ -541,6 +667,8 @@ TESTS = {
     "bullet_rest_convention": test_bullet_rest_convention,
     "bullet_shape_attributes": test_bullet_shape_attributes,
     "bullet_shape_position": test_bullet_shape_position,
+    "bullet_primr_order": test_bullet_primr_order,
+    "bullet_shape_probe": test_bullet_shape_probe,
     "bullet_joint_rest": test_bullet_joint_rest,
     "bullet_cone_twist_goal": test_bullet_cone_twist_goal,
     "bullet_impact_normal": test_bullet_impact_normal,
