@@ -908,11 +908,12 @@ def _folders(entries, path=()):
 
 
 def test_solver_sop_layout():
-    """The Solver SOP's tabs and folders: Solver, Pieces, Collision, Forces, Visualization, Advanced, Output (no
-    Misc); Collision Geometry's header checkbox is Use External Collisions, which sits just before it (as RBD
-    Bullet Solver's); the Pieces tab is Shape, Body, Material, CCD & Contacts, Sleep (Start Asleep first); the
-    Solver tab ends with Contacts, Sleeping (the solver's Allow Sleeping) and Aging; Visualization has only
-    the Ground folder; no Detach Faces; every collapsible folder open but Impact Data, Sleeping and Aging."""
+    """The Solver SOP's tabs and folders: Solver, Pieces, Collision, Constraints, Forces, Visualization, Advanced,
+    Output (no Misc); Collision Geometry's header checkbox is Use External Collisions, which sits just before it
+    (as RBD Bullet Solver's); the Pieces tab is Shape, Body, Material, CCD & Contacts, Initial State, Sleep (Start
+    Asleep first); the Solver tab ends with Contacts, Sleeping (the solver's Allow Sleeping) and Aging;
+    Visualization has only the Ground folder; no Detach Faces; every collapsible folder open but Impact Data,
+    Sleeping, Aging and the Constraints tab's folders."""
     sop = solver_sop("sop_layout")
     entries = sop.parmTemplateGroup().entries()
     problems = []
@@ -922,7 +923,8 @@ def test_solver_sop_layout():
             problems.append(f"{what}: {got!r}, expected {want!r}")
 
     tabs = [pt.label() for pt in entries if pt.type() == hou.parmTemplateType.Folder]
-    expect("tabs", tabs, ["Solver", "Pieces", "Collision", "Forces", "Visualization", "Advanced", "Output"])
+    expect("tabs", tabs,
+           ["Solver", "Pieces", "Collision", "Constraints", "Forces", "Visualization", "Advanced", "Output"])
     folders = _folders(entries)
     by_path = {path: pt for path, pt in folders}
     coll = by_path.get(("Collision", "Collision Geometry"))
@@ -937,7 +939,7 @@ def test_solver_sop_layout():
     expect("Collision Geometry group_type", coll.tags().get("group_type") if coll else None, "collapsible")
     pieces_tab = by_path.get(("Pieces",))
     expect("Pieces tab folders", [pt.label() for pt in pieces_tab.parmTemplates()] if pieces_tab else None,
-           ["Shape", "Body", "Material", "CCD & Contacts", "Sleep"])
+           ["Shape", "Body", "Material", "CCD & Contacts", "Initial State", "Sleep"])
     solver_tab = by_path.get(("Solver",))
     expect("Solver tab ends with", [pt.label() for pt in solver_tab.parmTemplates()][-3:] if solver_tab else None,
            ["Contacts", "Sleeping", "Aging"])
@@ -962,7 +964,13 @@ def test_solver_sop_layout():
     expect("Detach Faces", sop.parm("collision_detachfaces"), None)
     shut = sorted("/".join(path) for path, pt in folders
                   if pt.folderType() == hou.folderType.Collapsible and pt.tags().get("group_default") != "1")
-    expect("closed folders", shut, ["Output/Impact Data", "Solver/Aging", "Solver/Sleeping"])
+    expect("closed folders", [p for p in shut if not p.startswith("Constraints/")],
+           ["Output/Impact Data", "Solver/Aging", "Solver/Sleeping"])
+    constraint_folders = [p for p in shut if p.startswith("Constraints/")]
+    all_constraint = [path for path, pt in folders if path[0] == "Constraints" and len(path) == 2]
+    expect("Constraints folders, all closed (one per constraint type)", len(constraint_folders),
+           len(all_constraint))
+    expect("Constraints tab has folders", len(all_constraint) > 0, True)
     if problems:
         return [Result("solver_sop_layout", Result.FAIL, "; ".join(problems))]
     return [Result("solver_sop_layout", Result.PASS,

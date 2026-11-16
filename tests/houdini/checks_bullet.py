@@ -368,9 +368,9 @@ def test_bullet_cylinder():
 
 def anchor_id_run(kind, k, anchor_type):
     """A fixed box A at (0, 4, 0) and a free box B at (2, 4, 0), no gravity, joined by a SideFX Hard (position)
-    constraint: A's anchor at A's centre, B's anchor at the decoy P (6, 4, 3) with `anchor_id` k (and
-    `anchor_type` when given). The constraint pulls B's anchor to (0, 4, 0), so B's centre after 1 s says where
-    the anchor was on B."""
+    constraint (constraint_type all, Rest Length 0: the anchors meet and B cannot turn): A's anchor at A's centre,
+    B's anchor at the decoy P (3, 4, 1) with `anchor_id` k (and `anchor_type` when given). The constraint pulls B's
+    anchor to (0, 4, 0), so B's centre after 1 s says where the anchor was on B."""
     def edit(path):
         net = hou.node(path)
         wr = create(net.parent(), "attribwrangle", "anchor_ids")
@@ -386,8 +386,9 @@ def anchor_id_run(kind, k, anchor_type):
     pieces = [{"size": (1, 1, 1), "center": (0, 4, 0), "attrs": {"active": 0}},
               {"size": (1, 1, 1), "center": (2, 4, 0), "attrs": {"active": 1}}]
     dop, names = hanging_pair(f"anchor_id_{kind}_{k}_{anchor_type or 'point'}", None,
-                              line_attrs={"constraint_type": "position"}, conrels=[("hardconrel", {})],
-                              solver_kind=kind, pieces=pieces, anchors=((0, 4, 0), (6, 4, 3)),
+                              line_attrs={"constraint_type": "all", "restlength": 0.0},
+                              conrels=[("hardconrel", {})], solver_kind=kind, pieces=pieces,
+                              anchors=((0, 4, 0), (3, 4, 1)),
                               gravity=(0, 0, 0), network_edit=edit)
     if kind == "bullet":
         set_parm(dop.node("gravity"), ["force"], (0, 0, 0))
@@ -396,10 +397,10 @@ def anchor_id_run(kind, k, anchor_type):
 
 
 def test_bullet_anchor_id():
-    """What a point anchor (`anchor_id`) on a packed piece means in Bullet. Box B's anchor has P (6, 4, 3), far
-    from B, and an anchor_id; the Hard constraint pulls that anchor to (0, 4, 0), so B's centre ends at
-    (0, 4, 0) minus the anchor's offset from B's centre. The offset says which point Bullet took: P itself (the id
-    ignored: B ends at (-4, 4, -3)); point k of B's own box (the piece's inner geometry); point k of the object's
+    """What a point anchor (`anchor_id`) on a packed piece means in Bullet. Box B's anchor has P (3, 4, 1), near
+    B, and an anchor_id; the Hard constraint (Rest Length 0, constraint_type all) pulls that anchor to (0, 4, 0)
+    without turning B, so B's centre ends at (0, 4, 0) minus the anchor's offset from B's centre. The offset says
+    which point Bullet took: P itself (the id ignored: B ends at (-1, 4, -1)); point k of B's own box (the piece's inner geometry); point k of the object's
     points (one per piece: A is point 0, B point 1); or point k of the unpacked geometry (box A's points 0 to 7, then
     B's). Reports Bullet's and Box3D's B and the readings each fits (0.15). INFO: it decides how packed pieces read
     anchor_id, not a pass mark. For ids 0 and 5, each as a point and as a vertex."""
@@ -413,7 +414,7 @@ def test_bullet_anchor_id():
             # Offsets of the anchor from B's centre under each reading; B ends at (0, 4, 0) minus the offset.
             unpacked = box_points[k] + centres[0] if k < 8 else box_points[k - 8] + centres[1]
             readings = {
-                "P (id ignored)": hou.Vector3(6, 4, 3) - centres[1],
+                "P (id ignored)": hou.Vector3(3, 4, 1) - centres[1],
                 "B's own point": box_points[k],
                 "object point k": (centres[k] if k < 2 else centres[1]) - centres[1],
                 "unpacked point k": unpacked - centres[1],

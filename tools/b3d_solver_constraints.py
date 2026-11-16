@@ -24,15 +24,22 @@ def folder_label(node):
     return re.sub(r"\s+Constraint Relationship$", "", label)
 
 
+def is_setting(node, pt):
+    """A setting the simulation reads: one with a Parameter Operation menu (parmop_<name>). SideFX's guide and
+    display parameters (colour, radius, show link, guide_*) have none and are left off."""
+    return node.parm(f"parmop_{pt.name()}") is not None and not pt.name().lower().startswith("guide")
+
+
 def node_settings(node):
     """The value templates holding `node`'s settings: those in its parameter folders (a DOP data node's own
-    parameters, Activation and Data Name, sit outside them), else every one but DATA_PARMS."""
+    parameters, Activation and Data Name, sit outside them), else every one but DATA_PARMS. Only the ones
+    `is_setting` accepts."""
     entries = without_parmops(node.parmTemplateGroup().entries())
     found = [pt for e in entries if e.type() == hou.parmTemplateType.Folder
-             for pt in value_templates(e.parmTemplates())]
+             for pt in value_templates(e.parmTemplates()) if is_setting(node, pt)]
     if found:
         return found
-    found = [pt for pt in value_templates(entries) if pt.name().lower() not in DATA_PARMS]
+    found = [pt for pt in value_templates(entries) if pt.name().lower() not in DATA_PARMS and is_setting(node, pt)]
     if found:
         warn(f"{node.path()} has no parameter folders: promoted every setting but {sorted(DATA_PARMS)}: "
              f"{[pt.name() for pt in found]}")

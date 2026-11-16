@@ -243,12 +243,21 @@ void forEachObjectRun(std::vector<Item> &items, const F &f) {
 // where neither body is awake are skipped, as are asleep dynamic bodies.
 // Normal: of the surface hit, pointing at the body that gets the impact. No
 // Feedback data (that is for interaction with other solvers).
-void recordImpacts(Box3DSharedState &st, SIM_ObjectArray &objects,
-                   const SIM_Time &now) {
+bool wantsImpacts(const Box3DSharedState &st) {
+  for (const auto &kv : st.objectSync)
+    if (kv.second.visited == st.syncStamp && kv.second.addImpact)
+      return true;
+  return false;
+}
+
+void collectImpacts(Box3DSharedState &st,
+                    const std::vector<b3dop::BodyMove> &moves, bool append) {
   using Hit = Box3DImpactHit;
+  st.impactsCollected = true;
   // Per-object hits in st scratch (objects are few: linear search). Groups are
   // reused, not freed, so the hit vectors keep their capacity.
-  st.impactGroupCount = 0;
+  if (!append)
+    st.impactGroupCount = 0;
   auto hitsFor = [&st](int objectId) -> std::vector<Hit> & {
     for (size_t i = 0; i < st.impactGroupCount; ++i)
       if (st.impactGroups[i].objectId == objectId)
@@ -261,15 +270,12 @@ void recordImpacts(Box3DSharedState &st, SIM_ObjectArray &objects,
     return g.hits;
   };
 
-  bool any = false;
-  for (const auto &kv : st.objectSync)
-    any = any || (kv.second.visited == st.syncStamp && kv.second.addImpact);
-  if (any) {
+  if (wantsImpacts(st)) {
     b3dop::Box3DWorld &world = st.world;
     const bool speedFilter = world.settings().impactMinSpeed > 0.0f;
     if (speedFilter && !st.hitsCollected)
       world.updateHitEvents();
-    for (const b3dop::BodyMove &mv : st.moves) {
+    for (const b3dop::BodyMove &mv : moves) {
       const Box3DBodyMirror *e =
           static_cast<const Box3DBodyMirror *>(mv.userData);
       if (!e || !e->handle || !st.isLive(*e) ||
@@ -295,6 +301,15 @@ void recordImpacts(Box3DSharedState &st, SIM_ObjectArray &objects,
       }
     }
   }
+}
+
+void recordImpacts(Box3DSharedState &st, SIM_ObjectArray &objects,
+                   const SIM_Time &now) {
+  using Hit = Box3DImpactHit;
+  // One step: the contacts of this step's move events. Substeps: the loop
+  // collected them after every step.
+  if (!st.impactsCollected)
+    collectImpacts(st, st.moves, false);
 
   std::vector<int> wrote;
   for (size_t gi = 0; gi < st.impactGroupCount; ++gi) {

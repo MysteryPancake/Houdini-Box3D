@@ -536,6 +536,10 @@ struct Box3DSharedState {
   // Box3D step of this frame, so recordImpacts must not refill it from the
   // last.
   bool hitsCollected = false;
+  // The frame's impact hits were collected after each Box3D step already
+  // (Substeps > 1; collectImpacts): the impulses of every step add up, where
+  // reading the contacts after the last alone found a resting body's.
+  bool impactsCollected = false;
 
   double stampTime = 0.0; // SIM_Engine::getSimulationTime() at the last solve
   bool stamped = false;

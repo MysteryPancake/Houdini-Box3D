@@ -34,13 +34,6 @@ void forceAttribIds(const GU_Detail *gdp, GA_DataId &forceId,
 
 namespace {
 
-// A point's non-zero `force` / `torque` (what POP Force and other POP / SOP
-// nodes write).
-struct PointForce {
-  GA_Offset off;
-  UT_Vector3 force, torque;
-};
-
 // The SIM_Force data on the object.
 void collectForceDops(const SIM_Object &obj,
                       std::vector<const SIM_Force *> &forces) {
@@ -371,11 +364,12 @@ void recordClearedForces(Box3DSharedState &st,
 // set that to 0 when using one. Only the bodies of objects that have forces are
 // visited (Box3DObjectSync::bodies).
 ForceStats applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects,
-                               bool wake) {
+                               bool wake, PointForceCarry *carry) {
   ForceStats stats;
   std::vector<const SIM_Force *> forces;
   std::vector<PointForce> pointForces;
   std::vector<SIM_Object *> cleared;
+  const bool replay = carry && carry->replay;
 
   for (exint i = 0; i < objects.entries(); ++i) {
     SIM_Object *obj = objects(i);
@@ -386,12 +380,23 @@ ForceStats applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects,
     Box3DObjectSync &os = osIt->second;
 
     collectForceDops(*obj, forces);
-    readPointForces(*obj, os, pointForces);
+    if (replay) {
+      // The attributes were cleared by the frame's first step: apply what it
+      // read.
+      const auto kept = carry->byObject.find(obj->getObjectId());
+      pointForces.clear();
+      if (kept != carry->byObject.end())
+        pointForces = kept->second;
+    } else {
+      readPointForces(*obj, os, pointForces);
+      if (carry && !pointForces.empty())
+        carry->byObject[obj->getObjectId()] = pointForces;
+    }
     if (forces.empty() && pointForces.empty())
       continue;
 
     applyToObjectBodies(st, *obj, os, forces, pointForces, wake, stats);
-    if (!pointForces.empty() && clearPointForces(*obj, pointForces))
+    if (!replay && !pointForces.empty() && clearPointForces(*obj, pointForces))
       cleared.push_back(obj);
   }
 

@@ -296,7 +296,9 @@ def build(out_path, packed_hda=None):
     collider_tabs = [t for t in data_folders(collision) if t.label() in COLLIDER_FOLDERS]
     if len(collider_tabs) != len(COLLIDER_FOLDERS):
         warn(f"collider folders found: {[t.label() for t in collider_tabs]}, expected {COLLIDER_FOLDERS}")
-    collider_tabs = drop_templates(collider_tabs, COLLIDER_DROPPED)
+    # Flip Static Mesh Winding is the collider's Shape setting already; it is dropped here and comes back as
+    # COLLISION_FLIP above the folders, so a Static Object (whose Shape folder is off) has it too.
+    collider_tabs = drop_templates(collider_tabs, COLLIDER_DROPPED | {"flipwinding"})
     collider_renames = {pt.name(): f"collision_{pt.name()}" for pt in value_templates(collider_tabs)}
     collider_folders = []
     for i, tab in enumerate(rename_templates(collider_tabs, collider_renames)):
@@ -325,10 +327,11 @@ def build(out_path, packed_hda=None):
              "static mesh, or a height field if it has one. Only for colliders that never move.")
     flip = hou.ToggleParmTemplate(
         COLLISION_FLIP, "Flip Mesh Winding", default_value=False,
-        help="A Static Object mesh is one-sided. Turn on if pieces fall through from the side that should be solid.")
-    flip.setConditional(hou.parmCondType.HideWhen, f"{{ {COLLISION_SOURCE} == 0 }}")
-    if static_data is not None:
-        links.append((sub.relativePathTo(static_data), "flipwinding", COLLISION_FLIP))
+        help="Static meshes are one-sided. Turn on if pieces fall through from the side that should be solid.")
+    # Both colliders: a static concave piece is a mesh too.
+    for node in (collision, static_data):
+        if node is not None:
+            links.append((sub.relativePathTo(node), "flipwinding", COLLISION_FLIP))
     taken.add(COLLISION_FLIP)
     use_collisions = hou.ToggleParmTemplate(
         USE_COLLISIONS, "Use External Collisions", default_value=True,
@@ -468,6 +471,11 @@ def build(out_path, packed_hda=None):
     asset = sub.createDigitalAsset(name=TYPE_NAME, hda_file_name=out_path, description=LABEL,
                                    min_num_inputs=1, max_num_inputs=4)
     definition = asset.type().definition()
+    seen, clashes = set(), set()
+    for pt in group.entriesWithoutFolders():
+        (clashes if pt.name() in seen else seen).add(pt.name())
+    if clashes:
+        warn(f"parameter names used twice on the asset: {sorted(clashes)}")
     definition.setParmTemplateGroup(group)
     definition.setMaxNumOutputs(4)
     definition.setIcon(ICON)

@@ -419,6 +419,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   // result is always a whole step.
   st->brokenCollected = false;
   st->hitsCollected = false;
+  st->impactsCollected = false;
   if (n == 1) { // the usual case: one step, nothing to merge
     if (getUseForces()) {
       UT_PerfMonAutoSolveEvent perf(this, "Applying Forces");
@@ -441,13 +442,17 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
     std::vector<b3dop::BodyMove> events;
     std::vector<void *> broken;
     ForceStats forceStats;
+    PointForceCarry carry;
+    const bool collectImpactHits = wantsImpacts(*st);
     for (int i = 0; i < n; ++i) {
       // Force DOPs go into the bodies for one Box3D step only (it clears them
-      // afterwards), so every step applies them again.
+      // afterwards), so every step applies them again, the point forces (read
+      // and cleared by the first) from `carry`.
       if (getUseForces()) {
         UT_PerfMonAutoSolveEvent perf(this, "Applying Forces");
+        carry.replay = i > 0;
         const ForceStats fs =
-            applyExternalForces(*st, objects, getForcesWake());
+            applyExternalForces(*st, objects, getForcesWake(), &carry);
         forceStats.nonFinite = std::max(forceStats.nonFinite, fs.nonFinite);
       }
       {
@@ -463,6 +468,10 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
           if (std::find(st->brokenThisFrame.begin(), st->brokenThisFrame.end(),
                         p) == st->brokenThisFrame.end())
             st->brokenThisFrame.push_back(p);
+        // This step's contacts are impacts too (their impulses add up over
+        // the frame).
+        if (collectImpactHits)
+          collectImpacts(*st, events, i > 0);
       }
       // Box3D clears its move events every step, so merge them: the last
       // event of a body is its final pose (and its fell-asleep flag).

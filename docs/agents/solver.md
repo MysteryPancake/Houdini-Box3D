@@ -35,17 +35,18 @@ pointer to its object's record (`sync`), valid because records are erased only a
 
 ## Solver step (`solveObjectsSubclass`)
 
-**Two step counts.** *Substeps* (`substeps`, default 1) splits the DOP step into whole Box3D steps, each with its
+**Two step counts.** *Substeps* (`substeps`) splits the DOP step into whole Box3D steps, each with its
 own `b3Collide` (contact detection), so collisions are found `fps * Substeps` times a second. *Solver Passes*
-(`solverpasses`, default 10) is Box3D's own
+(`solverpasses`) is Box3D's own
 `subStepCount`: each pass is a smaller time step for the contact / joint solve, not another iteration at the same
 positions (Box3D runs one solve and one relax per pass). Not to be confused with `restitutionIterations`. Kinematic
 targets (`setTargetTransformByHandle`) and the Glue break force use the whole frame's `stepDt`, so they hold for any
 Substeps. Box3D clears its move, joint and hit events at the start of every step, so each is merged after every Box3D step:
 moves by body, joints over their force / torque threshold into `brokenThisFrame` (broken once, in Updating Constraint
-States), and hit pairs into `hitPairs` when Impact Min Speed is on (`hitsCollected`). Recording Impacts still reads the
-contacts themselves once, after the last step, so with the speed filter off a hit that has already separated by the end
-of the frame is not recorded.
+States), and hit pairs into `hitPairs` when Impact Min Speed is on (`hitsCollected`). Impacts read the contacts after
+every Box3D step (`collectImpacts`, `impactsCollected`, appended) when some object has Add Impact Data, so a frame's
+impulses add up over its steps; with one step they are read after it. Point `force` / `torque` are read and cleared by
+the first step and applied again from `PointForceCarry` in the others.
 
 ```
 StepProgress (UTgetInterrupt)                  Escape checks; Houdini's own "Stepping simulation" bar stays

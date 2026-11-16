@@ -142,14 +142,16 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   `use_collision` Switch counts that input's primitives (a height field has no points) instead of the packed
   collision's points. Use Deforming Geometry follows Collision Type Deforming only; Animated does not move a Static
   Object. The collider's Material settings (`GROUND_MATERIAL`) link to both Box3D Data nodes, Flip Mesh Winding
-  (`collision_flipwinding`) to `flipwinding`; Shape and Contacts are disabled for a Static Object. Static Object keeps
+  (`collision_flipwinding`, above the folders, linked to `flipwinding` of both colliders: it is dropped from the Shape
+  folder, which would otherwise promote the same name); Shape and Contacts are disabled for a Static Object. Static Object keeps
   its default Collision Detection (a height field and a mesh both arrive as affectors,
   [forces-affectors.md](forces-affectors.md)). Test `solver_sop_collision_static`.
 * Initial State (`INITIAL_STATE`: Inherit Velocity from Point Velocity, Velocity, Angular Velocity) is the Packed Object's
   own, cloned into an Initial State folder on the Pieces tab before Sleep and linked to `pieces`. Velocity is in
   `SCALED_SETTINGS` (the Packed Object writes `v` after World Scale scaled the input); the angular one is not.
 * Constraints tab (`b3d_solver_constraints.py`): every relationship in `RELATIONSHIPS` gets a closed folder with its settings
-  (those in the node's parameter folders, else all but `DATA_PARMS`), named `<node>_<setting>`, linked to the inner node
+  (those in the node's parameter folders, else all but `DATA_PARMS`, that have a `parmop_*` menu: SideFX's colour, radius,
+  link and `guide_*` display settings have none and stay off), named `<node>_<setting>`, linked to the inner node
   and Set Initial (`finish_constraints`). `scale_joint_settings` wraps the existing channel reference
   instead of replacing it, so World Scale multiplies the promoted value.
 * Help card: `HELP_CARD` (`b3d_solver_help.py`, Houdini wiki markup) as the definition's `Help` section.

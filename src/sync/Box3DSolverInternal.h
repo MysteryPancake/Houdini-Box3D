@@ -566,6 +566,14 @@ bool writeWholeObject(SIM_Object &obj, Box3DBodyMirror &e, const double pos[3],
 SIM_GeometryCopy *getOrMakeWritableGeometry(SIM_Object &obj);
 void recordFingerprintAfterWrite(Box3DSharedState &st, const SIM_Object &obj);
 void forceScan(Box3DSharedState &st, int objectId);
+// Some solved object has Add Impact Data on.
+bool wantsImpacts(const Box3DSharedState &st);
+// The contacts of the bodies in `moves` (a Box3D step's move events) as this
+// frame's impact hits; `append` keeps the earlier steps' (Substeps > 1: every
+// step's contacts are impacts, so the frame's impulses add up). Sets
+// st.impactsCollected.
+void collectImpacts(Box3DSharedState &st,
+                    const std::vector<b3dop::BodyMove> &moves, bool append);
 void recordImpacts(Box3DSharedState &st, SIM_ObjectArray &objects,
                    const SIM_Time &now);
 void writePointAttrs(Box3DSharedState &st, SIM_ObjectArray &objects);
@@ -578,8 +586,24 @@ struct ForceStats {
       0; // bodies whose force DOPs returned NaN / inf (those are skipped)
 };
 
+// A point's non-zero `force` / `torque` (what POP Force and other POP / SOP
+// nodes write).
+struct PointForce {
+  GA_Offset off;
+  UT_Vector3 force, torque;
+};
+
+// The point forces of one frame's Box3D steps (Substeps > 1): the first call
+// reads and clears the attributes and keeps what it read; `replay` makes the
+// later calls apply the kept ones again, so the frame's force acts in every
+// step, not only the first.
+struct PointForceCarry {
+  bool replay = false;
+  std::unordered_map<int, std::vector<PointForce>> byObject; // object id
+};
+
 ForceStats applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects,
-                               bool wake);
+                               bool wake, PointForceCarry *carry = nullptr);
 
 // ---- guide geometry (Box3DGuide.cpp) ----
 

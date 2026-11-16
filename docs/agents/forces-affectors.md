@@ -24,7 +24,8 @@ mass, force, torque)` for every force on the object, summed, and the sum goes in
 * Non-finite sums are skipped and counted (`ForceStats::nonFinite`, one node warning). `applyForceByHandle` also
   sanitizes (`finiteVec3`) because Box3D asserts on non-finite vectors.
 * Substeps (the solver's, whole Box3D steps) apply the forces again before each step, so a force is evaluated once per
-  step. What stays constant is Box3D's own Solver Passes inside a step (`subStepCount`): no hook runs between them.
+  step. The point `force` / `torque` the first step read and cleared are applied again in the others
+  (`PointForceCarry`), so the frame's force acts in every step. What stays constant is Box3D's own Solver Passes inside a step (`subStepCount`): no hook runs between them.
 * Evaluation (`applyToObjectBodies`) is three phases per object: read each body's state (serial, it reads Box3D), evaluate
   the forces, apply the sums (serial). From `kMinParallelForces` bodies, the forces sampled at a point whose
   `SIM_ForceResolver` reports `threadsafe()` are evaluated on the TBB pool (`evaluateResolvers`: each range of 64 bodies

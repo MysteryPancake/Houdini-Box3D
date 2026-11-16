@@ -42,10 +42,8 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   the nodes are wired, but it is not built or run in Houdini: what the display geometry of a Ground Plane and the Static
   Object's `Geometry` import as, and whether `gl_wireframe` -1 on the merged guide still shows a Shaded plane shaded.
 * Box3D Data under Geometry on Static Objects and RBD Objects.
-* `bullet_georep` `cylinder` (`ShapeType::Cylinder`): the core test drops one; the Bullet comparisons are written and
-  not run: hand-set cases in `bullet_shape_attributes` (whether Bullet reads `bullet_radius` / `bullet_length` or
-  `bullet_primS`) and fitted ones in `bullet_cylinder`. Box3D Data's Default Shape menu (Plane and Cylinder at the end)
-  and the Packed Object / Configure menus built from it are not opened in Houdini.
+* Box3D Data's Default Shape menu (Plane and Cylinder at the end) and the Packed Object / Configure menus built from
+  it: built, not opened in Houdini. `bullet_cylinder` and the cylinder cases of `bullet_shape_attributes` pass against Bullet.
 * `bullet_georep` `plane` on a packed piece (`ShapeType::Plane`, `buildShapes`): written without building or running. Its
   Bullet placement (through the piece's origin, +Y, as a Ground Plane) is assumed, and a piece turning moving mid-simulation
   rebuilds as a box.
@@ -106,21 +104,12 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 **Box3D Solver SOP** (`tools/make_solver_sop.py`, `tests/houdini/checks_sop.py`)
 * Collision Type Animated / Deforming: whether the Packed Object's Overwrite Attributes from SOP (SOP Geometry's Set Always) re-imports every step (the build prints which menus it drives),
   and the solver's cost of a full rescan of the collider each step.
-* Collide As Static Object (`solver_sop_collision_static`): written without building or running. Unchecked: the Unpack
-  SOP, the Static Object's default Collision Detection on a mesh (does it build a distance field?) and on a height
-  field, Hscript `nprims` and `if` in the Switch condition, the fourth DOP network input, and the guide of the
-  `collision` object.
-* The Solver SOP's Initial State folder, Constraints tab and help card (`solver_sop_initial_state`,
-  `solver_sop_constraint_settings`): written without building or running. Unchecked: which parameters SideFX's Glue,
-  Hard, Spring, Soft and Cone Twist nodes have in folders (`node_settings` falls back to every setting but
-  `DATA_PARMS` and prints the list), conditions between promoted settings after the rename, the `Help` section's
-  wiki markup, and Velocity under World Scale.
-* The solver's settings at Set Always (`solver_sop_animated_setting`): written without running. Unchecked: that every
-  setting tolerates being re-applied each step (one that needs a new world, like Threads, only acts when its value
-  changes).
-* `anchor_id` / `anchor_type` on whole objects (`anchor_id`, `pointAnchorWorld`): written without building or running.
-  Unchecked: `UT_Vector3D::rowVecMult` with `SIMgetGeometryTransform` for the point's world position, whether SideFX's
-  `anchor_type` is a string or an int (both are read), and the object name an RBD Object's anchors resolve by.
+* The Solver SOP's Collide As Static Object, Initial State, Constraints tab, help card and Set Always settings pass
+  their tests. Still unchecked: the Static Object's default Collision Detection on a mesh (distance field cost), the
+  help card's wiki markup rendering, and whether every setting tolerates being re-applied each step.
+* `anchor_id` / `anchor_type` on whole objects passes (`anchor_id`). On packed pieces Bullet does read the id (its
+  result changes with the id and with point / vertex) but `bullet_anchor_id` could not say which point: its Hard
+  constraint kept the anchors a Rest Length apart. The test now sets Rest Length 0 and constraint_type all: rerun it.
 * Transform Pieces with packed transforms that carry scale or shear.
 * Constraints output through Transform Pieces: constraints between collision pieces (not in the simulation points, so
   not moved).
@@ -206,8 +195,8 @@ Workarounds in the wrapper that the engine could own, roughly by value:
 * **Events across steps, and impulse in hit events.** Box3D clears move, joint and hit events at the start of each
   `b3World_Step`, so with Substeps the solver merges them after every step (`brokenThisFrame`, `st.moves`,
   `hitPairs`). `b3ContactHitEvent` has point, normal and approach speed but no impulse, so Impacts scan every awake
-  body's contacts after the last step (`getContactsByHandle`) and match pairs against the hit events: with Impact Min
-  Speed off, a hit that has separated by the end of the frame is lost. Wanted: events that accumulate until cleared,
+  body's contacts after each step (`getContactsByHandle`) and match pairs against the hit events: with Impact Min
+  Speed off, a hit that separates within one step is lost. Wanted: events that accumulate until cleared,
   and the normal impulse in the hit event. Impacts could then come from events alone.
 * **Live contact recycling flag.** `b3Body_EnableContactRecycling` only reaches contacts made afterwards (`contact.c`
   sets the flag at creation), so `setContactRecyclingByHandle` disables and enables the body (`rebuildContacts`).
