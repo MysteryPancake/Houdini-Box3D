@@ -338,7 +338,7 @@ AnchorLookup packedAnchorWorld(const SIM_Object &obj, int64_t pointOff, int id,
   const GU_Detail *gdp = lock.getGdp();
   if (!gdp)
     return AnchorLookup::NoGeometry;
-  const GA_Offset ppt = GA_Offset(pointOff);
+  const GA_Offset ppt = static_cast<GA_Offset>(pointOff);
   const GA_Offset vtx = gdp->pointVertex(ppt);
   if (!GAisValid(vtx))
     return AnchorLookup::NoGeometry;

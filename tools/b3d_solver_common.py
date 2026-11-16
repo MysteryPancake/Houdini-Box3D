@@ -161,15 +161,7 @@ SKIP_SOLVER_FOLDERS = {"guide options"}
 
 warn = b3d_hda.warner("make_solver_sop")
 create = b3d_hda.create
-
-
-def template_by_label(node, label):
-    for pt in node.parmTemplateGroup().entriesWithoutFolders():
-        if pt.name().startswith("parmop") or pt.type() in NO_VALUE:
-            continue
-        if pt.label().lower() == label.lower():
-            return pt
-    return None
+template_by_label = b3d_hda.template_by_label
 
 
 def row_by_label(node, label):

@@ -170,7 +170,7 @@ void addForceDops(const SIM_Object &obj, const b3dop::BodyState &bs,
 void addPointForce(const std::vector<PointForce> &pointForces,
                    const Box3DBodyMirror &e, UT_Vector3 &force,
                    UT_Vector3 &torque) {
-  const GA_Offset po = GA_Offset(e.pointOff);
+  const GA_Offset po = static_cast<GA_Offset>(e.pointOff);
   const auto it = std::lower_bound(
       pointForces.begin(), pointForces.end(), po,
       [](const PointForce &pf, GA_Offset o) { return pf.off < o; });

@@ -53,7 +53,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import b3d_hda  # noqa: E402  (beside this script)
 import b3d_settings  # noqa: E402
-from b3d_hda import NO_VALUE, labels, pull, value_templates, without_parmops  # noqa: E402
+from b3d_hda import labels, pull, template_by_label, value_templates, without_parmops  # noqa: E402
 
 TYPE_NAME = "box3d_packedobject"
 LABEL = "Box3D Packed Object"
@@ -197,17 +197,6 @@ def wire_hires(asset, transform_parm):
 
 
 warn = b3d_hda.warner("make_packed_object")
-
-
-def template_by_label(node, label):
-    """The parameter labelled `label`. DOP data nodes give each parameter a Parameter Operation menu
-    (parmop_<name>) with the same label: those are skipped."""
-    for pt in node.parmTemplateGroup().entriesWithoutFolders():
-        if pt.name().startswith("parmop") or pt.type() in NO_VALUE:
-            continue
-        if pt.label().lower() == label.lower():
-            return pt
-    return None
 
 
 def link(inner, outer, name):

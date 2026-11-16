@@ -355,7 +355,8 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
         std::snprintf(
             reasonBuf, sizeof(reasonBuf),
             "stamp mismatch: stamped=%d stamp=%g now=%g dt=%g (now-stamp=%g)",
-            (int)st->stamped, st->stampTime, now, dt, now - st->stampTime);
+            static_cast<int>(st->stamped), st->stampTime, now, dt,
+            now - st->stampTime);
         reason = reasonBuf;
       }
     }

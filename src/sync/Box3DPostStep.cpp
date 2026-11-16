@@ -84,8 +84,8 @@ void hardenWrittenPages(const GU_Detail *gdp,
       while (e + 1 < numBuckets && hit[e + 1])
         ++e;
       attr->hardenAllPages(
-          GA_Offset(static_cast<int64_t>(b) << kBucketBits),
-          GA_Offset(static_cast<int64_t>(e + 1) << kBucketBits));
+          static_cast<GA_Offset>(static_cast<int64_t>(b) << kBucketBits),
+          static_cast<GA_Offset>(static_cast<int64_t>(e + 1) << kBucketBits));
       b = e + 1;
     }
   }
@@ -103,7 +103,7 @@ void resolvePointOffsets(const GU_Detail *gdp, const PointAttrs &a,
   for (size_t k = begin; k < end; ++k) {
     Item &w = items[k];
     const Box3DBodyMirror &m = *w.entry;
-    const GA_Offset stored = GA_Offset(m.pointOff);
+    const GA_Offset stored = static_cast<GA_Offset>(m.pointOff);
 
     bool ok = stored >= 0 && stored < gdp->getNumPointOffsets() &&
               !gdp->getPointMap().isOffsetVacant(stored);
@@ -120,7 +120,7 @@ void resolvePointOffsets(const GU_Detail *gdp, const PointAttrs &a,
     if (!a.id.isValid()) {
       if (m.pointId >= 0 &&
           m.pointId < static_cast<int64_t>(gdp->getNumPoints()))
-        w.off = gdp->pointOffset(GA_Index(m.pointId));
+        w.off = gdp->pointOffset(static_cast<GA_Index>(m.pointId));
       continue;
     }
     if (!builtById) {
@@ -183,11 +183,15 @@ void forEachObjectRun(std::vector<Item> &items, const F &f) {
 
   // Pass 1: the bucket of every item, and the size of every bucket.
   // Object ids in first-seen order: the index is the bucket. Objects are few,
-  // so a linear search beats a hash map; kept between calls: no allocation.
+  // so a linear search beats a hash map. The vectors are kept between calls (no
+  // allocation); `bucket` is fully overwritten below.
   thread_local std::vector<int> bucketIds;
+  thread_local std::vector<uint32_t> bucket;
+  // The size of a bucket, then its first slot.
+  thread_local std::vector<size_t> start;
   bucketIds.clear();
-  std::vector<uint32_t> bucket(n);
-  std::vector<size_t> start; // size of a bucket, then its first slot
+  start.clear();
+  bucket.resize(n);
   size_t runs = 0;
   int lastId = items[0].objectId;
   uint32_t lastBucket = 0;
@@ -750,7 +754,7 @@ private:
       return nullptr;
     composePackedMatrix(mv.rot, me.rowScale, pw->newM3);
     b3dop::keepMirror(me.m3, pw->newM3); // a mirrored piece stays mirrored
-    pw->primOff = GA_Offset(me.primOff);
+    pw->primOff = static_cast<GA_Offset>(me.primOff);
     pw->has = true;
     std::copy(pw->newM3, pw->newM3 + 9,
               me.m3); // a skipped sync does not refresh it
@@ -797,11 +801,11 @@ private:
       B3D_LOG("  READBACK MISMATCH object=%d point=%lld: predicted pos=(%.9g "
               "%.9g %.9g) rot=(%.9g %.9g %.9g %.9g) "
               "read pos=(%.9g %.9g %.9g) rot=(%.9g %.9g %.9g %.9g)",
-              w.objectId, (long long)w.entry->pointId, mirror.pos[0],
-              mirror.pos[1], mirror.pos[2], mirror.rot[0], mirror.rot[1],
-              mirror.rot[2], mirror.rot[3], stored.pos[0], stored.pos[1],
-              stored.pos[2], stored.rot[0], stored.rot[1], stored.rot[2],
-              stored.rot[3]);
+              w.objectId, static_cast<long long>(w.entry->pointId),
+              mirror.pos[0], mirror.pos[1], mirror.pos[2], mirror.rot[0],
+              mirror.rot[1], mirror.rot[2], mirror.rot[3], stored.pos[0],
+              stored.pos[1], stored.pos[2], stored.rot[0], stored.rot[1],
+              stored.rot[2], stored.rot[3]);
     }
   }
 #endif

@@ -1642,6 +1642,11 @@ void Box3DWorld::setTargetTransformByHandle(BodyHandle h, const double pos[3],
 
 namespace {
 
+bool sameBody(const b3BodyId &a, const b3BodyId &b) {
+  return a.index1 == b.index1 && a.world0 == b.world0 &&
+         a.generation == b.generation;
+}
+
 // The body's contacts into `data` (a scratch buffer that only grows, so a call
 // does not zero what it is about to overwrite); how many.
 int fetchContacts(b3BodyId id, std::vector<b3ContactData> &data) {
@@ -1667,10 +1672,7 @@ float Box3DWorld::contactImpulseByHandle(BodyHandle h, const BodyHandle *skip,
     const b3ContactData &cd = data[static_cast<size_t>(i)];
     if (skipCount > 0) {
       const b3BodyId a = b3Shape_GetBody(cd.shapeIdA);
-      const b3BodyId other = (a.index1 == id.index1 && a.world0 == id.world0 &&
-                              a.generation == id.generation)
-                                 ? b3Shape_GetBody(cd.shapeIdB)
-                                 : a;
+      const b3BodyId other = sameBody(a, id) ? b3Shape_GetBody(cd.shapeIdB) : a;
       if (std::find(skip, skip + skipCount, b3StoreBodyId(other)) !=
           skip + skipCount)
         continue;
@@ -1697,8 +1699,7 @@ int Box3DWorld::getContactsByHandle(BodyHandle h,
     const b3ContactData &cd = data[static_cast<size_t>(i)];
     const b3BodyId a = b3Shape_GetBody(cd.shapeIdA);
     const b3BodyId b = b3Shape_GetBody(cd.shapeIdB);
-    const bool thisIsA = a.index1 == id.index1 && a.world0 == id.world0 &&
-                         a.generation == id.generation;
+    const bool thisIsA = sameBody(a, id);
     const b3BodyId other = thisIsA ? b : a;
     const b3Pos centerA =
         b3Body_GetWorldCenter(a); // anchors are relative to A's centre of mass

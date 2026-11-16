@@ -503,20 +503,6 @@ def switch_on_proxy(sub, name, without, with_proxy, proxy, extra=None):
     return sw
 
 
-def edit_dialog_script(definition):
-    """Input / output labels in the DialogScript (hou has no setter for them)."""
-    section = definition.sections().get("DialogScript")
-    if section is None:
-        warn("the asset has no DialogScript section: input / output labels not set")
-        return
-    lines = [ln for ln in section.contents().splitlines()
-             if not re.match(r"\s*(inputlabel|outputlabel)\b", ln)]
-    extra = [f'    inputlabel\t{i + 1}\t"{lab}"' for i, lab in enumerate(INPUT_LABELS)]
-    extra += [f'    outputlabel\t{i + 1}\t"{lab}"' for i, lab in enumerate(LABELS)]
-    at = next((i + 1 for i, ln in enumerate(lines) if re.match(r"\s*label\b", ln)), 1)
-    section.setContents("\n".join(lines[:at] + extra + lines[at:]) + "\n")
-
-
 def build(out_path):
     hou.hipFile.clear(suppress_save_prompt=True)
     dopnet = hou.node("/obj").createNode("dopnet", "templates")
@@ -559,7 +545,7 @@ def build(out_path):
                           "like RBD Configure. Point attributes win over Box3D Data.")
     definition.updateFromNode(asset)
     definition.save(out_path, asset)
-    edit_dialog_script(definition)  # labels last, saved without the node (see make_solver_sop.py)
+    b3d_hda.edit_dialog_script(definition, INPUT_LABELS, LABELS, warn)  # labels last, saved without the node (see make_solver_sop.py)
     definition.save(out_path)
 
     check(out_path)

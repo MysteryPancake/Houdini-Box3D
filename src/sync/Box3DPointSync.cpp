@@ -118,10 +118,20 @@ Box3DSyncFingerprint makeFingerprint(const GU_Detail *gdp, const PointAttrs &a,
   fp.idId = idOf(a.id);
   fp.activeId = idOf(a.active);
   fp.nodeType = nodeType;
-  // By name: `a` has only the sync-critical handles bound at this point.
-  for (int i = 0; i < Box3DSyncFingerprint::kNumPropIds; ++i) {
-    const GA_Attribute *attr = gdp->findPointAttribute(kPropAttribNames[i]);
-    fp.propIds[i] = attr ? attr->getDataId() : Box3DSyncFingerprint::kNoId;
+  // By name: `a` has only the sync-critical handles bound at this point. One
+  // pass over the point attributes rather than a lookup per marker.
+  static const std::unordered_map<std::string_view, int> propIndex = [] {
+    std::unordered_map<std::string_view, int> index;
+    for (int i = 0; i < Box3DSyncFingerprint::kNumPropIds; ++i)
+      index.emplace(kPropAttribNames[i], i);
+    return index;
+  }();
+  for (const GA_Attribute *attr :
+       gdp->getAttributeDict(GA_ATTRIB_POINT).range(GA_SCOPE_PUBLIC)) {
+    const auto found =
+        propIndex.find(std::string_view(attr->getName().c_str()));
+    if (found != propIndex.end())
+      fp.propIds[static_cast<size_t>(found->second)] = attr->getDataId();
   }
   // The primitive list's data id is the marker for packed transforms
   // (intrinsics have no attribute id). Bumping it is up to whoever edits a
@@ -148,17 +158,17 @@ std::string describeFingerprintDifference(const Box3DSyncFingerprint &was,
   };
   add("point count", was.numPoints, now.numPoints);
   add("offset range", was.numOffsets, now.numOffsets);
-  add("P", (long long)was.pId, (long long)now.pId);
-  add("orient", (long long)was.orientId, (long long)now.orientId);
-  add("v", (long long)was.vId, (long long)now.vId);
-  add("w", (long long)was.wId, (long long)now.wId);
-  add("id", (long long)was.idId, (long long)now.idId);
-  add("active", (long long)was.activeId, (long long)now.activeId);
+  auto ll = [](GA_DataId id) { return static_cast<long long>(id); };
+  add("P", ll(was.pId), ll(now.pId));
+  add("orient", ll(was.orientId), ll(now.orientId));
+  add("v", ll(was.vId), ll(now.vId));
+  add("w", ll(was.wId), ll(now.wId));
+  add("id", ll(was.idId), ll(now.idId));
+  add("active", ll(was.activeId), ll(now.activeId));
   add("body type", was.nodeType, now.nodeType);
-  for (int i = 0; i < Box3DSyncFingerprint::kNumPropIds; ++i)
-    add(kPropAttribNames[i], (long long)was.propIds[i],
-        (long long)now.propIds[i]);
-  add("primitives", (long long)was.primsId, (long long)now.primsId);
+  for (size_t i = 0; i < was.propIds.size(); ++i)
+    add(kPropAttribNames[i], ll(was.propIds[i]), ll(now.propIds[i]));
+  add("primitives", ll(was.primsId), ll(now.primsId));
   if (was.nodeProps != now.nodeProps || was.addImpact != now.addImpact)
     out += out.empty() ? "Box3D Data values" : ", Box3D Data values";
   return out;
@@ -551,7 +561,8 @@ ShapePlan planShapes(ScanContext &ctx, GA_Offset off, int64_t bodyId,
                             readPrimOverrides(a, off), staticBody,
                             !ctx.node.flipMeshWinding);
   if (plan.shapes.note)
-    B3D_LOG("  body id=%lld: %s", (long long)bodyId, plan.shapes.note);
+    B3D_LOG("  body id=%lld: %s", static_cast<long long>(bodyId),
+            plan.shapes.note);
   plan.sig = shapeSignature(plan.type, plan.shapes);
 
   // Convex / concave follow scale changes (as in Houdini); primitives do not.
@@ -623,12 +634,24 @@ void storePlan(Box3DBodyMirror &m, const ShapePlan &plan) {
   b3dop::copy3(m.sizeKey, plan.sizeKey);
 }
 
+// The slot's packed primitive with its pivot: the one pass 1 kept, else read
+// now into `scratch`.
+const PackedInfo &slotPackedInfo(const ScanContext &ctx,
+                                 const Box3DPointSlot &s, PackedInfo &scratch) {
+  if (s.packedForPlan)
+    return *s.packedForPlan;
+  scratch = ctx.packedInfo(s.off);
+  return scratch;
+}
+
 // The slot's plan from the parallel pre-pass (moved out), else made now.
 ShapePlan takePlan(ScanContext &ctx, const Box3DPointSlot &s,
                    std::vector<ShapePlan> &plans) {
   if (s.plan >= 0)
     return std::move(plans[static_cast<size_t>(s.plan)]);
-  return planShapes(ctx, s.off, s.bid, ctx.packedInfo(s.off), s.staticBody);
+  PackedInfo scratch;
+  return planShapes(ctx, s.off, s.bid, slotPackedInfo(ctx, s, scratch),
+                    s.staticBody);
 }
 
 // Create the body for slot `s` (settings `p`), its shapes and initial velocity.
@@ -694,7 +717,8 @@ bool rebuildPointShapes(ScanContext &ctx, const Box3DPointSlot &s,
   applyBodyMass(world, h, p, plan.shapes.totalVolume,
                 false);  // even with no shapes: clears Box3D's dirty mass
   world.wakeByHandle(h); // let it re-settle
-  B3D_LOG_VERBOSE("  body id=%lld: collision shape rebuilt", (long long)s.bid);
+  B3D_LOG_VERBOSE("  body id=%lld: collision shape rebuilt",
+                  static_cast<long long>(s.bid));
   return true;
 }
 
@@ -952,6 +976,7 @@ void readSlot(const ScanContext &ctx, int objectId, Box3DPointSlot &s) {
   }
 
   s.plan = -1;
+  s.packedForPlan.reset();
   s.deforming = a.deforming.isValid() && a.deforming.get(s.off) != 0;
   s.refitWanted = a.autofitValid.isValid() && a.autofitValid.get(s.off) == 0;
   s.rebuild = false;
@@ -974,6 +999,13 @@ void readSlot(const ScanContext &ctx, int objectId, Box3DPointSlot &s) {
       s.rebuild =
           sizeKey(s.packed, s.m3, ps, sc, sk) && !sameSizeKey(sk, e->sizeKey);
     }
+  }
+  // A new body or a rebuild is planned from this packed primitive (see
+  // slotsNeedingPlans).
+  if (s.packed && (!s.entry || s.rebuild)) {
+    auto kept = std::make_shared<PackedInfo>(pk);
+    readPackedPivot(*kept);
+    s.packedForPlan = std::move(kept);
   }
 }
 
@@ -1019,8 +1051,9 @@ bool planSlots(ScanContext &ctx, SlotList &snaps, std::vector<ShapePlan> &plans,
         c1 - c0,
         [&](size_t j) {
           Box3DPointSlot &s = snaps[want[c0 + j]];
-          plans[c0 + j] = planShapes(ctx, s.off, s.bid, ctx.packedInfo(s.off),
-                                     s.staticBody);
+          PackedInfo scratch;
+          plans[c0 + j] = planShapes(
+              ctx, s.off, s.bid, slotPackedInfo(ctx, s, scratch), s.staticBody);
           s.plan = static_cast<int32_t>(c0 + j);
         },
         2);
@@ -1117,6 +1150,7 @@ public:
       if (pointIndex++ % kProgressEvery == 0 && progress.check())
         return false;
       applyPoint(s);
+      s.packedForPlan.reset(); // not kept between steps
     }
     return true;
   }
@@ -1192,7 +1226,8 @@ private:
     entry.hasRest = false;
     if (!s.packed)
       return;
-    const PackedInfo pk = myCtx.packedInfo(s.off); // with the pivot
+    PackedInfo scratch;
+    const PackedInfo &pk = slotPackedInfo(myCtx, s, scratch); // with the pivot
     if (!pk.prim)
       return;
     const PointAttrs &a = myCtx.a;

@@ -420,7 +420,6 @@ public:
                           bool enableSleep); // the world switch applies on top
   void setBulletByHandle(BodyHandle h, bool flag);
   void setFastRotationByHandle(BodyHandle h, bool flag);
-  bool fastRotationByHandle(BodyHandle h) const;
   // Box3D copies a body's recycling flag into each contact when the contact is
   // made, so on its own a change only reaches new contacts. For an awake
   // dynamic body the existing ones are dropped too (disable + enable, velocity
@@ -429,12 +428,8 @@ public:
   void setContactRecyclingByHandle(BodyHandle h, bool flag);
   void setMotionLocksByHandle(
       BodyHandle h, const MotionLocks &locks); // zeroes newly locked velocity
-  MotionLocks motionLocksByHandle(BodyHandle h) const;
-  void setDensityByHandle(BodyHandle h,
-                          float density); // every shape, then mass from shapes
   void setEnabledByHandle(BodyHandle h,
                           bool enabled); // disabled: no motion, no collisions
-  bool isEnabledByHandle(BodyHandle h) const;
   // Remove every shape (releasing its hulls, dropping its contacts) so new ones
   // can be added with updateMass = false, followed by one mass update.
   void destroyShapesByHandle(BodyHandle h);
@@ -445,9 +440,6 @@ public:
   // split), so check isAwakeByHandle if it matters.
   void sleepByHandle(BodyHandle h);
   // ---- external forces (handle API) -----------------------------------------
-  // World position of the body's centre of mass (where forces act). False for
-  // no body.
-  bool getCenterOfMassByHandle(BodyHandle h, double outPos[3]) const;
   // The size (x, y, z) of the body's bounding box in world axes, from its
   // shapes. False for a null handle or a body with no shapes (zero size).
   bool extentByHandle(BodyHandle h, float out[3]) const;
@@ -461,8 +453,8 @@ public:
                           const float torque[3], bool wake);
   // isAwake, mass, world centre of mass and both velocities in one call: what a
   // force evaluation reads per body. Same values as isAwakeByHandle /
-  // massByHandle / getCenterOfMassByHandle / getVelocityByHandle. False for no
-  // body (out untouched).
+  // massByHandle / getCenterOfMassByHandle / getVelocityByHandle (the first
+  // two are in the test-only section). False for no body (out untouched).
   bool bodyStateByHandle(BodyHandle h, BodyState &out) const;
 
   // Set every shape's density (skipped with setShapeDensity = false, for shapes
@@ -486,10 +478,8 @@ public:
   // Box3D's single sleep threshold on |v| + |w| * extent. Negative = Box3D's
   // default.
   void setSleepThresholdByHandle(BodyHandle h, float threshold);
-  float sleepThresholdByHandle(BodyHandle h) const;
   void setCcdThresholdByHandle(
       BodyHandle h, float threshold); // negative / non-finite: Box3D's default
-  float ccdThresholdByHandle(BodyHandle h) const;
 
   // Kinematic body: reach this pose in timeStep (Box3D sets the velocity, so it
   // pushes what it touches). The velocity remains afterwards; zero it when the
@@ -562,7 +552,13 @@ public:
   // new world).
   void applyTuning(const WorldSettings &s);
 
-  // Read back (tests, debugging). Material is the first shape's; 0 / false if
+  int recycledContactCount()
+      const; // contacts recycled in the most recent step (0 if no world)
+  bool isAwakeByHandle(BodyHandle h) const;
+
+  // ---- test-only inspection ---------------------------------------------
+  // Only the tests call these; the plugin does not.
+  // Read back what was set. Material is the first shape's; 0 / false if
   // unknown.
   bool getMaterialByHandle(BodyHandle h, float &friction,
                            float &restitution) const;
@@ -571,12 +567,26 @@ public:
   bool getDampingByHandle(BodyHandle h, float &linear, float &angular) const;
   float gravityScaleByHandle(BodyHandle h) const;
   bool contactRecyclingByHandle(BodyHandle h) const;
-  int recycledContactCount()
-      const; // contacts recycled in the most recent step (0 if no world)
   bool isSleepEnabledByHandle(BodyHandle h) const;
-  bool isAwakeByHandle(BodyHandle h) const;
+  bool isEnabledByHandle(BodyHandle h) const;
+  bool fastRotationByHandle(BodyHandle h) const;
+  MotionLocks motionLocksByHandle(BodyHandle h) const;
+  float sleepThresholdByHandle(BodyHandle h) const;
+  float ccdThresholdByHandle(BodyHandle h) const;
   float massByHandle(BodyHandle h) const;
   int shapeCountByHandle(BodyHandle h) const;
+  // World position of the body's centre of mass. False for no body.
+  bool getCenterOfMassByHandle(BodyHandle h, double outPos[3]) const;
+  // Set every shape's density, then the mass from the shapes.
+  void setDensityByHandle(BodyHandle h, float density);
+  // Move events one at a time (the solver reads getMoveEvents).
+  int moveEventCount() const;
+  bool getMoveEvent(int index, BodyMove &out) const;
+  // Hulls this world holds, hull builds / attempts (b3CreateHull calls) and the
+  // shared cache's bytes.
+  int hullCacheSize() const;
+  static size_t sharedHullBytes();
+  static int hullBuildAttempts();
 
   int bodyCount() const; // all live bodies
 
@@ -639,7 +649,6 @@ public:
   // for fewer than 4 points, non-finite or flat input. Thread-safe, nothing
   // cached.
   static bool hullCentroid(const float *xyz, int count, double out[3]);
-  int hullCacheSize() const; // hulls this world holds
 
   // A rough size of this world in memory, in bytes: Box3D's bodies, shapes,
   // contacts and joints at measured average sizes, plus the hulls, meshes and
@@ -648,13 +657,11 @@ public:
   size_t estimatedBytes() const;
 
   // The shared cache: entries, bytes, and the byte budget past which the least
-  // recently used entries are evicted (default 256 MB). Builds / attempts count
+  // recently used entries are evicted (default 256 MB). Builds count
   // b3CreateHull calls (tests).
   static int sharedHullCount();
-  static size_t sharedHullBytes();
   static void setSharedHullBudget(size_t bytes);
   static int hullBuildCount();
-  static int hullBuildAttempts();
 
   // ---- pose and velocity (never pass a stale handle)
   // -------------------------
@@ -669,8 +676,6 @@ public:
 
   // ---- move events (valid until the next step or a body is removed)
   // ----------
-  int moveEventCount() const;
-  bool getMoveEvent(int index, BodyMove &out) const;
   int getMoveEvents(
       std::vector<BodyMove> &out) const; // resizes `out`; returns the count
   void setBodyUserData(BodyHandle h,

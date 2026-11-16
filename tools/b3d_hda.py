@@ -4,6 +4,8 @@ make_solver_sop.py).
 Not a build script: imported by the builders (run with hython, so this folder is on sys.path).
 """
 
+import re
+
 import hou
 
 
@@ -41,6 +43,31 @@ def labels(node):
     """`node`'s parameters as "Label (name)", for the message when one is not found."""
     return ", ".join(sorted({f"{pt.label()} ({pt.name()})" for pt in node.parmTemplateGroup().entriesWithoutFolders()
                              if not pt.name().startswith("parmop") and pt.type() not in NO_VALUE}))
+
+
+def template_by_label(node, label):
+    """The parameter labelled `label`. DOP data nodes give each parameter a Parameter Operation menu
+    (parmop_<name>) with the same label: those are skipped."""
+    for pt in node.parmTemplateGroup().entriesWithoutFolders():
+        if pt.name().startswith("parmop") or pt.type() in NO_VALUE:
+            continue
+        if pt.label().lower() == label.lower():
+            return pt
+    return None
+
+
+def edit_dialog_script(definition, input_labels, output_labels, warn):
+    """Input / output labels, in the DialogScript (hou has no setter for them)."""
+    section = definition.sections().get("DialogScript")
+    if section is None:
+        warn("the asset has no DialogScript section: input / output labels not set")
+        return
+    lines = [ln for ln in section.contents().splitlines()
+             if not re.match(r"\s*(inputlabel|outputlabel)\b", ln)]
+    extra = [f'    inputlabel\t{i + 1}\t"{lab}"' for i, lab in enumerate(input_labels)]
+    extra += [f'    outputlabel\t{i + 1}\t"{lab}"' for i, lab in enumerate(output_labels)]
+    at = next((i + 1 for i, ln in enumerate(lines) if re.match(r"\s*label\b", ln)), 1)
+    section.setContents("\n".join(lines[:at] + extra + lines[at:]) + "\n")
 
 
 def warner(tool):

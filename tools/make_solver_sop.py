@@ -64,7 +64,6 @@ Never fails the build: problems are printed as warnings and the script exits 0.
 """
 
 import os
-import re
 import sys
 import traceback
 
@@ -151,20 +150,6 @@ from b3d_solver_network import (  # noqa: E402
 # Global Substeps: the DOP network's own Substeps (`substep`).
 GLOBAL_SUBSTEPS = "globalsubsteps"
 DOP_SUBSTEPS = "substep"
-
-
-def edit_dialog_script(definition):
-    """Input / output labels, in the DialogScript (hou has no setter for them)."""
-    section = definition.sections().get("DialogScript")
-    if section is None:
-        warn("the asset has no DialogScript section: input / output labels not set")
-        return
-    lines = [ln for ln in section.contents().splitlines()
-             if not re.match(r"\s*(inputlabel|outputlabel)\b", ln)]
-    extra = [f'    inputlabel\t{i + 1}\t"{lab}"' for i, lab in enumerate(INPUT_LABELS)]
-    extra += [f'    outputlabel\t{i + 1}\t"{lab}"' for i, lab in enumerate(OUTPUT_LABELS)]
-    at = next((i + 1 for i, ln in enumerate(lines) if re.match(r"\s*label\b", ln)), 1)
-    section.setContents("\n".join(lines[:at] + extra + lines[at:]) + "\n")
 
 
 
@@ -522,7 +507,7 @@ def build(out_path, packed_hda=None):
     set_guide_geometry(definition)
     definition.save(out_path, asset)
     # Labels last, saved without the node so nothing regenerates the DialogScript over them.
-    edit_dialog_script(definition)
+    b3d_hda.edit_dialog_script(definition, INPUT_LABELS, OUTPUT_LABELS, warn)
     definition.save(out_path)
 
     check(out_path)

@@ -183,12 +183,6 @@ Features to add in the fork. Once one exists, the wrapper maps it and the entry 
 
 Workarounds in the wrapper that the engine could own, roughly by value:
 
-* **Public world snapshot.** The fork serializes a world internally (`b3SerializeWorld`, `b3DeserializeIntoShell` in
-  `world_snapshot.c`, for the recording player's keyframes) but exposes only recording and replay. So the world is a
-  rebuildable cache ([solver.md](solver.md)): a scrub, re-solve, cache reload or thread change rebuilds it from point
-  attributes, which loses warm starting, contact impulses and sleep state, and a saved sim cannot reload one. Expose
-  save and restore into a new world. The DOP cache could then hold snapshots, and simulating on from an earlier frame
-  would not need extra live worlds ("world limit reached", README).
 * **Worlds allocated on demand.** `B3_MAX_WORLDS` sizes the static `b3_worlds` array at compile time, so the build
   passes `BOX3DDOP_MAX_WORLDS` through to Box3D and the solver reports "world limit reached" past it.
 * **A hull build that always succeeds.** `b3CreateHull` fails when the vertex, face or edge limits are exceeded, so

@@ -499,7 +499,8 @@ void syncWholeObject(Box3DSharedState &st, const SIM_Object &obj,
   wholeObjectPose(obj, gdp, m, entry, pivot, cur, pivotKey);
 
   PointAttrs none(gdp); // build attributes left unbound: Box3D Data values only
-  b3dop::BodyProps p = readDynamicProps(setup.node, none, GA_Offset(0));
+  b3dop::BodyProps p =
+      readDynamicProps(setup.node, none, static_cast<GA_Offset>(0));
   if (setup.boundsInertia) {
     p.boundsInertia = true;
     objectBoundsExtents(gdp, m, p.boundsExtents);

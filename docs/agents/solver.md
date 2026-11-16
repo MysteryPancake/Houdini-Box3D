@@ -5,7 +5,7 @@ The shared world state, the step order, the sync pass, the skip fingerprint, wri
 ## Shared state (`SIM_Box3DWorld`)
 
 The Box3D world is a **rebuildable cache**; the DOP objects' point attributes (a whole object's `Position` data) are
-authoritative.
+authoritative. Snapshotting the world into the DOP cache is too slow, so don't.
 
 * DOPs copy `SIM_Data` (`makeEqual`) every step, so copies share a `std::shared_ptr<Box3DSharedState>`.
 * The stamp (`stampTime`, `stamped`) lives in the shared state, so an older timestep cannot claim the world is current.
