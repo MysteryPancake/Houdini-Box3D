@@ -35,6 +35,10 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * Box3D's tasks on Houdini's TBB pool with several DOP networks or threaded SOPs cooking at once.
 * Whether `getForce` is thread-safe (Force DOPs are evaluated serially).
 * Box3D Data under Geometry on Static Objects and RBD Objects.
+* Ground planes: a Static Object whose SDF Representation is set to Implicit Plane is taken as a plane facing +y through its
+  origin, as a Ground Plane DOP's is (only the Ground Plane is tested). A plane tilted off the axes has a large broad-phase box,
+  so every body in the world keeps a cheap contact with it. A fast body against a plane uses conservative advancement
+  (`b3PlaneTimeOfImpact`), checked only by a straight 400 m/s sphere drop (`core_plane`).
 
 **Box3D Configure** (`tools/make_configure_sop.py`, tests `configure`, `configure_packs`)
 * The packing (`b3d_prepare.py`): Transfer Groups carrying primitive groups onto the pieces, the Assembles' path /
@@ -106,7 +110,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   on an object that has no such data, then an empty detail in `SIM_GeometryAutoWriteLock`; `setExtraInfo` keeping other
   entries and surviving the later `save`s (Bullet's extra info is `guide=GUIDE_GEO` among colour entries).
 * Concave meshes: one mesh shared between instances, static RBD Objects as meshes, drawing meshes in the guide.
-* Height fields: holes from a mask layer, height fields on points. `cylinder` and `plane` shapes: see the Box3D fork list.
+* Height fields: holes from a mask layer, height fields on points. `cylinder` shapes: see the Box3D fork list. `plane` as a Bullet shape on a packed piece still falls back (Ground Plane DOPs are real planes).
 * Constraint networks: point / vertex / agent anchors (`anchor_id`, `anchor_type`); `constraint_type` on our nodes.
 * SideFX constraint data not mapped: Glue half-life / propagation, Soft plasticity, Cone Twist's elliptical and wide
   cones, softness, motors and translation ranges, Hard's angular motors, Spring's Hz following mass changes.
@@ -133,10 +137,7 @@ Features to add in the fork. Once one exists, the wrapper maps it and the entry 
   and twist errors, each with its own spring. The motor joint's angular spring stalls the same way. The weld and
   prismatic ones make the same call and are unchecked. A twist limit avoids it (the car park's bollards). A parallel
   joint with a twist limit also orbited at about 72°: not understood.
-* **Ground planes.** An infinite static plane shape, several per world, each with its own friction and bounce.
-  `b3ShapeType` has none, so `plane` falls back to Box3D Data's Default Shape. It has no finite AABB, so it needs its
-  own path past the broad phase, and contact against sphere, capsule and hull (a mesh if cheap). Also a native
-  `cylinder` shape, which has the same fallback.
+* **Cylinder shape.** `b3ShapeType` has no native cylinder, so `cylinder` falls back to Box3D Data's Default Shape.
 * **Glue: break on accumulated impulse.** Joints break on a per-step force or torque (`forceThreshold`,
   `torqueThreshold`), and joint events name the joints over it without saying by how much. Bullet's Glue strength is
   an accumulated impulse, so Glue maps to Break Force = strength / timestep and also breaks under steady load

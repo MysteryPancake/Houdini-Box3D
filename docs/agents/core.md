@@ -80,6 +80,14 @@ rule) and validate their input (indices, finiteness, positive scale, at least 2 
 mesh's scale changes in place (`setMeshScaleByHandle`); a height field's cannot. Height fields are quantised to 16 bits
 over their own height range; `holes` become `B3_HEIGHT_FIELD_HOLE` cells.
 
+**Planes.** `createPlaneShape(h, body, normal, offset)` is the fork's `b3_planeShape` (`extern/box3d/src/plane.c`): a static
+half-space, solid where `dot(normal, x) <= offset` in body space. Normal and offset are normalised here; a dynamic body,
+a zero or non-finite normal or a non-finite offset is refused. Box3D's broad phase needs a finite box, so a plane only
+covers `B3_PLANE_EXTENT` (a quarter of `B3_HUGE`) around its body: far beyond that, or as deep below, nothing collides.
+It collides with spheres, capsules and hulls. A hull gives at most four points, picked by area from the vertices within the
+speculative distance, keyed by vertex index. Fast bodies use `b3PlaneTimeOfImpact`, a conservative advancement bounded by
+the sweep's linear and angular speed. Test `core_plane`.
+
 **`Box3DShapes.h`** (all unit-tested): `parseShapeType` (exact lowercase Houdini names; `compound`
 = `concave`; unknown values, including `cylinder` and `plane`, return false; the solver memoises per shared-string handle
 in `GeorepLookup`); `makeShapeSpec` (`pscale * scale` as a bounding box, components made positive and >= `kMinExtent`

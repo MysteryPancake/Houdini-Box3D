@@ -383,6 +383,14 @@ public:
                               const float *heights, int countX, int countZ,
                               const float scale[3],
                               const uint8_t *holes = nullptr);
+  // A static infinite plane: everything with dot(normal, x) <= offset (body
+  // space) is solid, so the normal points out into free space. The normal is
+  // normalised; false for a non-static body, a zero or non-finite normal, or
+  // a non-finite offset. It covers a large area around the body origin, not
+  // truly infinity (`B3_PLANE_EXTENT` in Box3D). Collides with spheres,
+  // capsules and hulls.
+  bool createPlaneShape(BodyHandle h, const BodySettings &body,
+                        const float normal[3], float offset);
   void
   setMeshScaleByHandle(BodyHandle h,
                        const float scale[3]); // every mesh shape of the body

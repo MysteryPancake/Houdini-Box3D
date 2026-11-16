@@ -770,6 +770,24 @@ bool Box3DWorld::createHeightFieldShape(BodyHandle h, const BodySettings &body,
   return true;
 }
 
+bool Box3DWorld::createPlaneShape(BodyHandle h, const BodySettings &body,
+                                  const float normal[3], float offset) {
+  if (!h || !normal || !finite3(normal) || !std::isfinite(offset))
+    return false;
+  const float len = std::sqrt(normal[0] * normal[0] + normal[1] * normal[1] +
+                              normal[2] * normal[2]);
+  if (!(len > 1e-12f))
+    return false;
+  if (b3Body_GetType(b3LoadBodyId(h)) != b3_staticBody)
+    return false;
+
+  b3Plane plane;
+  plane.normal = {normal[0] / len, normal[1] / len, normal[2] / len};
+  plane.offset = offset / len;
+  const b3ShapeDef def = shapeDefFor(body, false);
+  return !B3_IS_NULL(b3CreatePlaneShape(b3LoadBodyId(h), &def, &plane));
+}
+
 void Box3DWorld::applyMassFromShapes(BodyHandle h) {
   if (h)
     b3Body_ApplyMassFromShapes(b3LoadBodyId(h));

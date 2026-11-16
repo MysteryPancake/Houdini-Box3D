@@ -407,6 +407,64 @@ def test_winding():
 
 
 # ---------------------------------------------------------------------------
+# Ground Plane DOP: infinite planes, several at once
+# ---------------------------------------------------------------------------
+
+
+def ground_plane_scene(name, planes, pieces, frames=120):
+    """Drops boxes on Ground Plane DOPs (a list of dicts of parameter values, or a position and
+    rotation each). Returns each box's final position and the solver's messages."""
+    dop = new_dopnet(name)
+    path, names = packed_boxes(name + "_box", pieces)
+    box = packed_object(dop, "box", path)
+    colliders = []
+    for i, plane in enumerate(planes):
+        node = create(dop, "groundplane", f"plane{i}")
+        for parm, value in plane.items():
+            set_parm(node, [parm], value)
+        colliders.append(node)
+    solver = box3d_solver(dop, merge(dop, [box] + colliders))
+    finish(dop, solver)
+    messages = []
+
+    def sample(sim, f):
+        messages.extend(node_messages(solver))
+        return packed_positions(sim, "box")
+
+    track = step(dop, frames, sample)
+    return [track[frames][n] for n in names], messages
+
+
+def test_ground_plane():
+    """A Ground Plane DOP is an infinite plane: a box lands on it at its Position, also far outside
+    the 10 x 10 guide grid; two tilted planes (Rotation) make a trough that holds a box in the
+    middle. No collision-geometry warning."""
+    results = []
+
+    # Raised plane, boxes under the grid and 300 m away from it.
+    final, msgs = ground_plane_scene(
+        "ground_plane_flat", [{"ty": 1.0}],
+        [{"size": (1, 1, 1), "center": (0, 3, 0)}, {"size": (1, 1, 1), "center": (300, 3, 0)}])
+    near, far = final[0][1], final[1][1]
+    results.append(Result("ground_plane", Result.PASS if close(near, 1.5, 0.05) and close(far, 1.5, 0.05)
+                          else Result.FAIL,
+                          f"boxes on a plane at y=1 rest at y={near:.3f} and, 300 m out, y={far:.3f} (expected 1.5)"))
+    warned = [m for m in msgs if "usable collision" in m]
+    results.append(Result("ground_plane", Result.FAIL if warned else Result.PASS,
+                          warned[0] if warned else "no collision-geometry warning"))
+
+    # A V trough: rz = +45 rises towards +x, rz = -45 towards -x.
+    final, _ = ground_plane_scene(
+        "ground_plane_trough", [{"rz": 45.0}, {"rz": -45.0}],
+        [{"size": (1, 1, 1), "center": (0.2, 3, 0)}], frames=240)
+    x, y = final[0][0], final[0][1]
+    results.append(Result("ground_plane", Result.PASS if abs(x) < 0.15 and 0.5 < y < 0.8 else Result.FAIL,
+                          f"a box in a 90 degree trough of two planes rests at x={x:.3f}, y={y:.3f} "
+                          "(expected x near 0, y near 0.71)"))
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Item 44: a default RBD Object (no Box3D Data) has mass = density x volume, bounce 0.5, hull shape
 # ---------------------------------------------------------------------------
 
@@ -478,6 +536,7 @@ TESTS = {
     "new_objects": test_new_objects,
     "pscale": test_pscale,
     "winding": test_winding,
+    "ground_plane": test_ground_plane,
     "rbd_defaults": test_rbd_defaults,
     "probe_weld_alone": test_probe_weld_alone,
     "probe_data_alone": test_probe_data_alone,

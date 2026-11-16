@@ -16,6 +16,7 @@
 #include <SIM/SIM_Names.h>
 #include <SIM/SIM_Object.h>
 #include <SIM/SIM_ObjectArray.h>
+#include <SIM/SIM_SDF.h>
 #include <SIM/SIM_Utils.h>
 #include <UT/UT_Matrix3.h>
 #include <UT/UT_Matrix4.h>
@@ -28,6 +29,7 @@
 #include <cstdint>
 #include <cstring>
 #include <initializer_list>
+#include <memory>
 #include <unordered_set>
 #include <vector>
 
@@ -37,6 +39,10 @@ namespace {
 // data type name: SideFX's own hair solver passes "SIM_RelationshipSource" the
 // same way).
 const char *const kCollideRelationship = "SIM_RelationshipCollide";
+
+// SIM_SDF's Mode menu index for Implicit Plane (the SDF Representation DOP's
+// menu, which a Ground Plane DOP sets on its Volume data).
+constexpr int kImplicitPlaneMode = 4;
 
 // Triangles from the object's polygons (fan-triangulated; open curves, packed
 // primitives and the like are ignored). Vertices are the object's points, in
@@ -287,7 +293,21 @@ struct AffectorInput {
   bool heightField = false;
   bool transposed =
       false; // grid columns along a2 (keeps the frame right-handed)
+
+  // An infinite plane (a Ground Plane DOP): the object's local y = 0, facing
+  // +y, posed by pos / rot. The geometry and scale are ignored.
+  bool plane = false;
 };
+
+// A Ground Plane DOP (or any object whose Volume representation is an Implicit
+// Plane): its collision is the infinite plane, not the guide grid.
+bool isGroundPlane(const SIM_Object &obj) {
+  const SIM_Geometry *geo = obj.getGeometry();
+  if (!geo)
+    return false;
+  const SIM_SDF *sdf = SIM_DATA_GETCONST(*geo, "Volume", SIM_SDF);
+  return sdf && sdf->getMode() == kImplicitPlaneMode;
+}
 
 // The object's world transform (position + any scale). False if it is not
 // finite.
@@ -340,6 +360,13 @@ uint64_t affectorSignature(const GU_Detail *gdp, const AffectorInput &in) {
     for (double d : in.m)
       sig = b3dop::mixDouble(sig, d);
   return sig;
+}
+
+// A plane depends only on its material: the pose is the body's.
+uint64_t planeSignature(const AffectorInput &in) {
+  const float mat[2] = {in.body.props.friction, in.body.props.restitution};
+  return b3dop::mixHash(b3dop::mixHash(b3dop::kHashSeed, 5),
+                        b3dop::hashFloats(mat, 2));
 }
 
 // A height-field affector. The Box3D height field's frame (columns along x,
@@ -537,6 +564,31 @@ void buildAffector(Box3DSharedState &st, Box3DAffectorBody &ab, int objectId,
   ab.poseKnown = true;
   const b3dop::BodySettings &body = in.body;
 
+  if (in.plane) {
+    const float normal[3] = {0.0f, 1.0f, 0.0f};
+    const b3dop::BodyHandle h =
+        st.world.createBody(body, in.pos, in.rot, nullptr);
+    if (!h) {
+      ++counts.failed;
+      return;
+    }
+    if (!st.world.createPlaneShape(h, body, normal, 0.0f)) {
+      st.world.destroyBody(h);
+      ++counts.failed;
+      return;
+    }
+    ab.handle = h;
+    ab.rolling = body.props.rollingResistance;
+    b3dop::copy3(ab.tangent, body.props.tangentVelocity);
+    b3dop::copy3(ab.pos, in.pos);
+    b3dop::copy4(ab.rot, in.rot);
+    b3dop::copy3(ab.scale, in.scale);
+    ++counts.added;
+    ++counts.planes;
+    B3D_LOG("  affector id=%d: static plane built", objectId);
+    return;
+  }
+
   if (in.heightField) {
     if (!buildHeightFieldBody(st, ab, in, heights, baked)) {
       ++counts.failed;
@@ -626,16 +678,23 @@ void syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects,
   TriMesh mesh;
   std::vector<float> baked, heights;
   for (const SIM_Object *obj : affectors) {
+    // A ground plane needs no geometry: its grid is only a guide.
+    const bool plane = isGroundPlane(*obj);
     const SIM_Geometry *geo = obj->getGeometry();
-    if (!geo) {
+    if (!geo && !plane) {
       ++counts.noGeo;
       continue;
     }
-    SIM_GeometryAutoReadLock lock(geo);
-    const GU_Detail *gdp = lock.getGdp();
-    if (!gdp) {
-      ++counts.noGeo;
-      continue;
+    // The lock and detail exist for the polygons and height fields only.
+    std::unique_ptr<SIM_GeometryAutoReadLock> lock;
+    const GU_Detail *gdp = nullptr;
+    if (!plane) {
+      lock = std::make_unique<SIM_GeometryAutoReadLock>(geo);
+      gdp = lock->getGdp();
+      if (!gdp) {
+        ++counts.noGeo;
+        continue;
+      }
     }
 
     Box3DAffectorBody &ab = st.affectors[obj->getObjectId()];
@@ -651,6 +710,25 @@ void syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects,
       continue;
     }
     in.body = affectorBodySettings(*obj);
+
+    if (plane) {
+      // Pose only: a scale on the object does not change an infinite plane.
+      if (!in.rigid) {
+        destroyAffector(st, ab);
+        ab.poseKnown = false;
+        ++counts.failed;
+        continue;
+      }
+      in.plane = true;
+      in.scale[0] = in.scale[1] = in.scale[2] = 1.0f;
+      in.sig = planeSignature(in);
+      if (ab.poseKnown && ab.signature == in.sig)
+        updateAffector(st, ab, in, counts);
+      else
+        buildAffector(st, ab, obj->getObjectId(), in, mesh, baked, heights,
+                      counts);
+      continue;
+    }
 
     // A height layer makes the affector a height field (its other primitives
     // are ignored); otherwise its polygons are a mesh.
