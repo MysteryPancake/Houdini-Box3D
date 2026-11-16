@@ -74,7 +74,7 @@ import hou
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import b3d_hda  # noqa: E402  (beside this script)
-from b3d_hda import labels, value_templates, without_parmops  # noqa: E402
+from b3d_hda import labels, pull, value_templates, without_parmops  # noqa: E402
 from b3d_solver_common import (  # noqa: E402
     CACHE_MEMORY,
     COLLISION_TYPE,
@@ -101,7 +101,6 @@ from b3d_solver_common import (  # noqa: E402
     parm_by_label,
     row_by_label,
     PIECES_DROPPED,
-    pull,
     rename_templates,
     GUIDE_GEO,
     SHAPES_COLOR,

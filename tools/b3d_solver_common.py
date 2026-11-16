@@ -6,7 +6,7 @@ import re
 import hou
 
 import b3d_hda
-from b3d_hda import collapsible, labels, NO_VALUE, pull, value_templates
+from b3d_hda import collapsible, labels, NO_VALUE, value_templates
 
 
 TYPE_NAME = "box3d_solver"  # a SOP; the DOP of the same name lives in another node table

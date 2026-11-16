@@ -283,6 +283,11 @@ function can carry `.env` (environment for its process, e.g. `HOUDINI_MAXTHREADS
 `baseline` (`checks_regress.py`) compares one fixed mixed scene on frame 48 with `tests/houdini/baseline.json` (1e-3).
 After an intended change of behaviour, or of `baseline_scene`, re-record it with `--update-baseline`.
 
+`checks_bullet.py` runs one scene in Box3D and in RBD Bullet Solver and compares the numbers (`solver_for`).
+`python -I tests/python/test_harness.py` needs no Houdini: it loads the Houdini checks against a stand-in `hou` and checks
+that every module is registered and every test named and documented, lint (pyflakes, if installed), the pure helpers, that
+the docs name tests that exist, `baseline.json`, and that no file mixes line endings.
+
 Core tests (`ctest`; each `tests/core_<name>.cpp` is `b3dop_core_<name>`, see `CMakeLists.txt`): smoke, physics
 (handle API, shapes, mass, setters, locks, CCD, filtering, forces, ...), mesh, heightfield, joints, sidefx, rbdobject,
 taskrunner and threads (`[workers] ...` arguments; threads fails if 1 vs N workers differ by more than 1e-4). The

@@ -3,10 +3,10 @@
 The one list of what is unverified or still to do. Index and rules: [CLAUDE.md](../../CLAUDE.md). Keep each
 item to a line or two; remove it once settled (the test that settles it is the record, not this file).
 
-Last full run (Houdini 22.0.502, MSVC, the Box3D fork): every check passes except `baseline`, which holds the old hull of a rotated box: a tilted pile diverges chaotically
-between that hull and `b3MakeTransformedBoxHull` (same mass data; a 1e-6 nudge of one box moves a 24-box pile 0.16), so
-re-record it with `run_tests.py baseline --update-baseline`. What no script checks: Escape mid-step, the viewport,
-motion blur, how greyed-out parameters look.
+Last full run (Houdini 22.0.502, MSVC, the Box3D fork): every check passes except `baseline`, which holds the old hull
+of a rotated box. A tilted pile diverges chaotically between that hull and `b3MakeTransformedBoxHull` (same mass data;
+a 1e-6 nudge of one box moves a 24-box pile 0.16), so re-record it with `run_tests.py baseline --update-baseline`.
+What no script checks: Escape mid-step, the viewport, motion blur, how greyed-out parameters look.
 
 ## Unverified
 
@@ -26,10 +26,8 @@ motion blur, how greyed-out parameters look.
 * The Threads default (`performanceCoreCount`) on macOS (`hw.perflevel0`) and ARM Linux (`cpu_capacity`).
 
 **Houdini behaviour**
-* Mirrored packed pieces (`mirrored_piece`): the hull points are mirrored (`packedScale`'s negative third entry), meshes
-  keep their winding, and the write-back keeps the mirror (`keepMirror`); core test `mirrored_packed`. The plugin
-  files were edited without an HDK build. Not run: the determinant staying negative on later frames, the piece resting
-  right, and a piece that turns mirrored mid-simulation (the shape rebuild is keyed on the row lengths, not the sign).
+* A packed piece that turns mirrored mid-simulation: the shape rebuild is keyed on the row lengths, not the sign
+  (`mirrored_piece` covers a piece that starts mirrored).
 * Escape mid-step: the step is discarded and re-cooked, earlier frames stay cached, the re-cook rebuilds once.
 * Data ids surviving the DOP copy between timesteps (the sync skip; debug log `scan skipped`); our own writes not
   looking like edits (debug log `full scan, changed:`).
@@ -44,15 +42,25 @@ motion blur, how greyed-out parameters look.
 * The group selection button, labels hidden on the checkboxes.
 
 **Bullet semantics not compared**
-* The rest convention (`restxform`, `pivot`, `orient` since rest) against an RBD Bullet Solver run of the same pieces;
-  the extra `restRotation` split per packed point in every full scan.
+* The extra `restRotation` split per packed point in every full scan (the rest convention itself matches Bullet:
+  `bullet_rest_convention`).
 * Solve on Creation Frame on the SOP (`solver_sop_solve_first_frame`) for the collider, against Bullet's.
-* Before-start outputs and Export Broken Constraints (`solver_sop_before_start`, `solver_sop_keep_broken`).
-* Joints from authored anchors through `restToNow` and the `angle` since rest, against Bullet.
-* `animated`, `deforming` and `bullet_autofit_valid` toggles; `bullet_primR` rotation order (taken as XYZ Euler
-  degrees) and `bullet_length` (taken as the capsule's straight part); AutoFit on whole objects and fractured pieces.
-* Impact normal direction; whether a fresh `SIM_Impacts` each step suits Houdini's impact tools.
-* Which end is Cone Twist's goal (taken as point 1).
+* Before-start outputs and Export Broken Constraints (`solver_sop_before_start`, `solver_sop_keep_broken`). Both need
+  a run of the RBD Bullet Solver SOP beside ours, which no test builds yet.
+* Joints from authored anchors through `restToNow` and the `angle` since rest, against Bullet (test `bullet_joint_rest`,
+  rerun with constraint_type all: with `position` both held the 1.0 rest length, which pushes the boxes into each
+  other; with both anchors at one point the centres ended 2.19 and 2.59 apart, past the 2.06 possible).
+* `bullet_primR` rotation order (taken as XYZ Euler degrees): the first run disagreed with Bullet on 50 70 50 but its
+  plate was narrower than the shape, so rerun `bullet_shape_attributes`. `bullet_primS`, `bullet_primT`,
+  `bullet_radius` and `bullet_length` match Bullet. Not compared: the `deforming` and `bullet_autofit_valid`
+  toggles, AutoFit on whole objects and fractured pieces.
+* Where Bullet puts a hand-set shape on a static piece away from the origin: a plate over a piece at x 3 never
+  stopped in Bullet, where Box3D has the shape on the piece (`bullet_shape_position`; its dynamic case is rerun, the
+  first run had made the ground a hand-set box too).
+* Impact normal direction (test `bullet_impact_normal`, rerun: both solvers write a `normal` field, the first run
+  could not read it as a Houdini vector); whether a fresh `SIM_Impacts` each step suits Houdini's impact tools.
+* Which end is Cone Twist's goal (taken as point 1; test `bullet_cone_twist_goal`): Bullet's piece fell freely with both
+  anchors at one point, turned or not, so it cannot say. Needs a Bullet Cone Twist setup that holds.
 * Unpacked geometry (`unpacked_geometry_bullet`): an object of polygons only is skipped by both (ours warns). This
   file had Bullet's message as an error, the author reports a warning: rerun to settle. Bullet ignores loose polygons
   beside packed pieces without a message (ours warns) and gives that message for loose points (ours simulates them).
@@ -61,9 +69,7 @@ motion blur, how greyed-out parameters look.
 * RBD Point Object (`other_rbd_objects`, `point_object_bullet`): needs its Geometry Path menu (`usegeo`) set to Override, else it makes no objects. With that, Bullet and Box3D match: 4 whole objects, both fall to y -2.424 (checked).
 * An RBD Object without Box3D Data colliding as its convex hull; `bullet_primT` / `bullet_primS` meaning there.
 * RBD Object's Create Active Object (`SolverParms/ActiveValue`, test `rbd_object_active`), written without Houdini: the option names.
-* RBD State's Use Bounding Box inertia (test `rbd_object_inertia_type`, `Box3DWholeObject.cpp`): the menu index (1) and
-  the option names are from the node's parameters, not a probe of the data; Compute Inertial Tensor off is assumed to
-  mean the computed inertia. Extents come from `collectPieces` each step.
+* RBD State's Compute Inertial Tensor off is assumed to mean the computed inertia (`rbd_object_inertia_type`).
 
 **Box3D Solver SOP** (`tools/make_solver_sop.py`, `tests/houdini/checks_sop.py`)
 * Collision Type Animated / Deforming: whether the Packed Object's Overwrite Attributes from SOP (SOP Geometry's Set Always) re-imports every step (the build prints which menus it drives),
@@ -77,8 +83,12 @@ motion blur, how greyed-out parameters look.
 ## TODO
 
 * Packed primitive spheres and nested packed primitives collide as one point, half sunk (`odd_packed_contents`).
-* An RBD Object built from a quadric primitive (Sphere / Tube SOP at Primitive Type Primitive): the plugin reads points
-  only, so it gets a near-zero shape (mass 8e-6). What it should do is not decided.
+* Quadric primitives (Sphere, Tube, Circle at Primitive Type Primitive, and metaballs), packed or as RBD Objects: the
+  plugin reads points only, so the shape is a point and the piece rests at y 0.001. Bullet sizes them: a radius 0.5
+  sphere and a height 1 tube rest at 0.5, a radius 0.5 circle at 0.355, a radius 0.5 metaball at 0.25, a volume packed
+  falls through and as an RBD Object stays at 2. NURBS, Bezier and Mesh surfaces match (hulls of the control points,
+  0.46 to 0.50). Test `bullet_primitive_types`, which now tries every Primitive Type of the Box, Sphere, Tube and
+  Circle SOPs; the Box SOP's types have not been run.
 * SideFX Glue breaks under static load (Break Force = strength / timestep) where Bullet's holds (`sidefx_glue`).
 * Results depend slightly on point order even with `id` (`point_order`): bodies are created in point order.
 * Objects solved by another solver: packed ones are ignored as colliders; one-way collision with polygons untested.

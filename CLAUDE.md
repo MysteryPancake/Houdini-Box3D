@@ -146,6 +146,7 @@ tests/
   core_rbdobject.cpp  RBD Object settings without Box3D Data: defaults, invalid values, Bullet Data shapes, density -> mass
   houdini/            Houdini checks: run_tests.py (runner), checks_*.py (tests by area), b3dtest.py (helpers),
                       review.py (tidies saved scenes), baseline.json; out/ holds each test's scene (git-ignored)
+  python/             test_harness.py: checks on the Houdini scripts that need no Houdini (stand-in `hou`)
 ```
 
 Layering (keep it):

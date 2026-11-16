@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md)
 
-All are optional except `P`. A missing one uses the Box3D Data value. Every step the solver writes `P`, `orient`, `v` and `w` back to the moving points. Most can change mid-simulation, but collision shapes are kept once built (set `bullet_autofit_valid = 0` or `deforming = 1` to rebuild them).
+All are optional except `P`. A missing one uses the Box3D Data value. Every step the solver writes `P`, `orient`, `v` and `w` back to the moving points. Most can change mid-simulation, but collision shapes are kept once built.
 
 | Attribute | Type | Meaning |
 |---|---|---|

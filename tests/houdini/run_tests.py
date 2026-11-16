@@ -37,6 +37,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import hou  # noqa: E402
 
+import checks_bullet  # noqa: E402
 import checks_constraints  # noqa: E402
 import checks_core  # noqa: E402
 import checks_contact  # noqa: E402
@@ -55,7 +56,7 @@ import b3dtest  # noqa: E402
 from b3dtest import Result, SetupError  # noqa: E402
 
 # Every test, in run order: module by module.
-MODULES = [checks_core, checks_solver, checks_output, checks_constraints, checks_more, checks_joints, checks_mixing, checks_determinism, checks_contact,
+MODULES = [checks_core, checks_solver, checks_output, checks_constraints, checks_more, checks_joints, checks_mixing, checks_bullet, checks_determinism, checks_contact,
            checks_robustness, checks_heightfield, checks_sop, checks_regress]
 TESTS = {}
 for module in MODULES:
