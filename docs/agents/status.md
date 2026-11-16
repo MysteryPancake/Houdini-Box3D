@@ -61,9 +61,9 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * Solve on Creation Frame on the SOP (`solver_sop_solve_first_frame`) for the collider, against Bullet's.
 * Before-start outputs and Export Broken Constraints (`solver_sop_before_start`, `solver_sop_keep_broken`). Both need
   a run of the RBD Bullet Solver SOP beside ours, which no test builds yet.
-* Joints from authored anchors through `restToNow` and the `angle` since rest, against Bullet (test `bullet_joint_rest`,
-  with `position` both held the 1.0 rest length, which pushes the boxes into each other; with both anchors at one
-  point the centres ended 2.19 and 2.59 apart, past the 2.06 possible).
+* Joints from authored anchors through `restToNow` and the `angle` since rest, against Bullet: `bullet_joint_rest_held`
+  (Hard, Rest Length set to the start distance, piece turned 30 degrees) holds in both but never turns, so the `angle` is
+  untested. With both anchors at one point (`bullet_joint_rest`, INFO) the centres end 2.19 and 2.59 apart, past the 2.06 possible.
 * `bullet_primR` rotation order: XYZ Euler degrees matches Bullet. Settled thin boxes have the same face down
   (`bullet_primr_order`), and boxes turned by 90 degrees have the same face up (`bullet_shape_attributes`: 90 90 0,
   0 90 90, 90 0 90 pick XYZ out of the six orders). A tilted box's top is a corner and the plate test stops on it
@@ -85,9 +85,9 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   dropped from x 2 ends at x 0, z 0 (plus `bullet_primT`'s x and z), so Bullet drops the piece's position, and its
   height follows `bullet_primT`'s y (0.3 up gives 0.25 to 0.3, 0.3 down gives -0.3) rather than the shape. Box3D keeps
   the piece where it is with primT as an offset. Not copied: it would move every hand-set piece to the world origin.
-* Whole RBD Object pivot (`wholeObjectPose`): the hull centroid (`hull_centroid`, `bullet_rbd_pivot`), written without a build or
-  run of the sync side. Bullet's `p` is 0.03 off the hull centroid Box3D gives for boxes (an L: (0.205, 0.795) against
-  (0.238, 0.762); two boxes apart (0.767, 0.428) against (0.800, 0.401)), unexplained. A concave object with Hull per Piece is not checked against Bullet.
+* Whole RBD Object pivot (`wholeObjectPose`, tests `hull_centroid`, `bullet_rbd_pivot`): Bullet's `p` is 0.03 off the hull
+  centroid Box3D gives for boxes (an L: (0.205, 0.795) against (0.238, 0.762)), unexplained. A concave object with Hull per
+  Piece is not checked against Bullet.
 * Which end is Cone Twist's goal (taken as point 1; test `bullet_cone_twist_goal`): Bullet's piece fell freely with both
   anchors at one point, turned or not, so it cannot say. Needs a Bullet Cone Twist setup that holds.
 * Unpacked geometry (`unpacked_geometry_bullet`): an object of polygons only is skipped by both (ours warns). Bullet
@@ -129,10 +129,11 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * Quadric primitives (Sphere, Tube, Circle, Metaball), packed or as RBD Objects: sampled on their surface
   (`Box3DQuadrics.h`, `appendQuadricSamples` in `Box3DShapeBuild.cpp`) and sized like Bullet's. Run (`bullet_primitive_types`):
   sphere 0.500 and metaball 0.250 match Bullet; a Sphere that is the only primitive of its piece and uniformly scaled
-  is a real Box3D sphere (`NamedPiece::sphereValid`). A tube packed rests at 0.500 in both; as an RBD Object Box3D
-  reads 0.525 (still moving). A circle packed settles flat at 0.02; as an RBD Object it stood on its edge. Not done:
-  quadrics inside a Convex hull Per Connected Set, volumes (Bullet: packed falls through, RBD Object stays at 2),
-  tube taper.
+  is a real Box3D sphere (`NamedPiece::sphereValid`). Tubes and Sphere Primitives rest at 0.500 in both, packed or as an
+  RBD Object. As an RBD Object a polygon Sphere rests 0 to 0.04 low in Box3D (0.46 to 0.48) and a metaball at 0.224
+  (Bullet 0.250); a Circle given as polygons or curves rests at 0.001 with a node message (Bullet 0.020). Not done:
+  quadrics inside a Convex hull Per Connected Set, volumes (Bullet: packed falls through, RBD Object stays at 2, Box3D's
+  falls), tube taper.
 * Results depend slightly on point order even with `id` (`point_order`): bodies are created in point order.
 * Objects solved by another solver: packed ones are ignored as colliders; one-way collision with polygons untested.
 * Export Collision Shapes (unverified): `SIM_DATA_CREATE(obj, "Box3DShapes", SIM_GeometryCopy, SIM_DATA_RETURN_EXISTING)`
