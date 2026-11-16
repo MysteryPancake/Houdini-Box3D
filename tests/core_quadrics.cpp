@@ -1,5 +1,6 @@
 // Surface points for Houdini's quadric primitives (Box3DQuadrics.h): sizes,
 // position, transform.
+#include "TestUtil.h"
 #include "core/Box3DQuadrics.h"
 #include <algorithm>
 #include <cstdio>
@@ -15,9 +16,6 @@ struct Bounds {
       }
   }
 };
-bool near(double a, double b, double tol = 1e-5) {
-  return std::fabs(a - b) <= tol;
-}
 int failures = 0;
 void check(bool ok, const char *what) {
   if (!ok) {

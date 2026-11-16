@@ -10,9 +10,14 @@
 
 namespace b3dop {
 
-// Non-finite check for a 3-vector.
-inline bool finite3(const float v[3]) {
+// Every component of a 3-vector (float or double) is finite.
+template <class T> inline bool finite3(const T *v) {
   return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
+}
+
+// Finite and >= 0, else `fallback` (a negative value is replaced, not clamped).
+inline float nonNegOr(float v, float fallback = 0.0f) {
+  return (std::isfinite(v) && v >= 0.0f) ? v : fallback;
 }
 
 // dst[0..2] = src[0..2] / dst[0..3] = src[0..3]. The element types may differ

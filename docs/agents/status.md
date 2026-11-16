@@ -187,7 +187,7 @@ Workarounds in the wrapper that the engine could own, roughly by value:
   passes `BOX3DDOP_MAX_WORLDS` through to Box3D and the solver reports "world limit reached" past it.
 * **A hull build that always succeeds.** `b3CreateHull` fails when the vertex, face or edge limits are exceeded, so
   `createHullWithKey` retries smaller vertex budgets (a triangulated hull hits the half-edge limit well below the
-  vertex limit), `fitShapeOriented` repeats the ladder, and a per-group hint remembers the budget that worked. Wanted:
+  vertex limit), `fitShapeOriented` and `hullCentroid` use the same ladder (`kHullBudgets`), and a per-group hint remembers the budget that worked. Wanted:
   simplify until it fits, or say which limit failed.
 * **Mass overrides that persist.** Houdini's point is the centre of mass. `applyMassByHandle` therefore moves the
   centre to the body origin (parallel axis theorem by hand), scales the inertia or installs an explicit one with

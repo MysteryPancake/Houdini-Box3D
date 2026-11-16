@@ -201,10 +201,6 @@ private:
   std::unordered_map<uint64_t, uint32_t> index_;
 };
 
-namespace box3dsolver {
-struct PackedInfo;
-}
-
 // One point as syncObject() reads it. Kept between steps; `entry` caches the
 // mirror entry while the point's offset and key are unchanged (all slots are
 // dropped when an entry is erased).
@@ -217,7 +213,8 @@ struct Box3DPointSlot {
   bool ok = false;          // readPointState succeeded (P is finite)
   bool badVelocity = false; // v or w was not finite (read as zero)
   bool active = true;
-  bool packed = false; // the point belongs to a packed primitive
+  bool animated = false; // inactive and `animated`: a kinematic body
+  bool packed = false;   // the point belongs to a packed primitive
   // The point belongs to a primitive that is not packed (a polygon's point):
   // no body, as RBD Bullet Solver (docs/agents/bodies.md, "Unpacked geometry").
   bool unpackedPrim = false;
@@ -232,11 +229,9 @@ struct Box3DPointSlot {
   bool staticBody = false;  // the body wanted is static (concave: a mesh)
   bool dead =
       false; // `dead` != 0, read once in pass 1 (pass 1b and pass 2 reuse it)
+  // Index into this scan's shape plans and their packed primitives
+  // (SlotPlans in Box3DPointSync.cpp).
   int32_t plan = -1;
-  // Pass 1 keeps the packed primitive (with its pivot) of a point that needs a
-  // plan, so planning and the rest transform do not read it again. Dropped
-  // after the point is applied.
-  std::shared_ptr<const box3dsolver::PackedInfo> packedForPlan;
 };
 
 // One awake body's result on its way to the geometry. Its pose is the move

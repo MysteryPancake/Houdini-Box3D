@@ -18,11 +18,6 @@ namespace b3dop {
 
 namespace {
 
-// Finite and >= 0, else `fallback` (a negative value is replaced, not clamped).
-float nonNegOr(float v, float fallback = 0.0f) {
-  return (std::isfinite(v) && v >= 0.0f) ? v : fallback;
-}
-
 // A cap: < 0 (or non-finite) is unlimited.
 float cap(float v) { return (std::isfinite(v) && v >= 0.0f) ? v : FLT_MAX; }
 
@@ -488,9 +483,7 @@ JointHandle Box3DWorld::createJoint(JointType type, BodyHandle a, BodyHandle b,
                                     bool framesAreLocal) {
   if (!isValid() || (!a && !b) || a == b)
     return 0;
-  if (!std::isfinite(frameA.pos[0]) || !std::isfinite(frameA.pos[1]) ||
-      !std::isfinite(frameA.pos[2]) || !std::isfinite(frameB.pos[0]) ||
-      !std::isfinite(frameB.pos[1]) || !std::isfinite(frameB.pos[2]))
+  if (!finite3(frameA.pos) || !finite3(frameB.pos))
     return 0;
   auto bodyOf = [&](BodyHandle h) -> b3BodyId {
     if (h)

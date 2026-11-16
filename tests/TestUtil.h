@@ -6,7 +6,13 @@
 // failure.
 #pragma once
 
+#include <cmath>
 #include <cstdio>
+
+// |a - b| <= tol.
+inline bool near(double a, double b, double tol = 1e-5) {
+  return std::fabs(a - b) <= tol;
+}
 
 // One counter per test executable (each test is a single translation unit).
 inline int fails = 0;

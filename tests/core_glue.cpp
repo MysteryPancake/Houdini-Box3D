@@ -11,8 +11,6 @@ using namespace b3dop;
 
 namespace {
 
-bool near(double a, double b, double tol) { return std::fabs(a - b) <= tol; }
-
 GlueBond bond(int a, int b, float rate = 1.0f, float strength = 1e9f,
               int iterations = 1, float halfLife = 0.1f) {
   GlueBond g;

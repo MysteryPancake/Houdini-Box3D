@@ -52,7 +52,7 @@ bool readWholePose(const SIM_Object &obj, double pivot[3], Box3DBodyPose &out,
                          forcePivot ? forcePivot[2] : pv.z()};
   double wp[3];
   b3dop::xformPoint(m, pvd, wp);
-  if (!std::isfinite(wp[0]) || !std::isfinite(wp[1]) || !std::isfinite(wp[2]))
+  if (!b3dop::finite3(wp))
     return false;
   for (int i = 0; i < 3; ++i) {
     pivot[i] = pvd[i];

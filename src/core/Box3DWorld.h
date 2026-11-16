@@ -453,8 +453,8 @@ public:
                           const float torque[3], bool wake);
   // isAwake, mass, world centre of mass and both velocities in one call: what a
   // force evaluation reads per body. Same values as isAwakeByHandle /
-  // massByHandle / getCenterOfMassByHandle / getVelocityByHandle (the first
-  // two are in the test-only section). False for no body (out untouched).
+  // massByHandle / getVelocityByHandle (the first two are in the test-only
+  // section). False for no body (out untouched).
   bool bodyStateByHandle(BodyHandle h, BodyState &out) const;
 
   // Set every shape's density (skipped with setShapeDensity = false, for shapes
@@ -575,13 +575,6 @@ public:
   float ccdThresholdByHandle(BodyHandle h) const;
   float massByHandle(BodyHandle h) const;
   int shapeCountByHandle(BodyHandle h) const;
-  // World position of the body's centre of mass. False for no body.
-  bool getCenterOfMassByHandle(BodyHandle h, double outPos[3]) const;
-  // Set every shape's density, then the mass from the shapes.
-  void setDensityByHandle(BodyHandle h, float density);
-  // Move events one at a time (the solver reads getMoveEvents).
-  int moveEventCount() const;
-  bool getMoveEvent(int index, BodyMove &out) const;
   // Hulls this world holds, hull builds / attempts (b3CreateHull calls) and the
   // shared cache's bytes.
   int hullCacheSize() const;
@@ -641,7 +634,8 @@ public:
   // fractured piece turned inside its packed geometry gets a shape turned
   // with it. A turned frame wins only when its box is clearly smaller, so
   // geometry along the body axes keeps the body axes exactly. Fewer than 4
-  // points or no hull: the body axes. Thread-safe, nothing cached.
+  // points or no hull: the body axes. Thread-safe. Results are cached
+  // process-wide by the points' content, so identical pieces fit once.
   static bool fitShapeOriented(ShapeType type, const float *xyz, int count,
                                ShapeSpec &out);
   // The centroid of the convex hull of the points (the centre of its volume,
@@ -656,10 +650,9 @@ public:
   // steps, from the thread that steps the world.
   size_t estimatedBytes() const;
 
-  // The shared cache: entries, bytes, and the byte budget past which the least
-  // recently used entries are evicted (default 256 MB). Builds count
-  // b3CreateHull calls (tests).
-  static int sharedHullCount();
+  // The shared cache: the byte budget past which the least recently used
+  // entries are evicted (default 256 MB). Builds count b3CreateHull calls
+  // (tests).
   static void setSharedHullBudget(size_t bytes);
   static int hullBuildCount();
 

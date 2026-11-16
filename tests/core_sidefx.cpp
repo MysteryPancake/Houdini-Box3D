@@ -80,8 +80,6 @@ JointHandle make(Box3DWorld &w, SideFXType t, const SideFXSettings &s,
                        applyFrameOffset(fb, adjB), j.settings);
 }
 
-bool near(double a, double b, double tol) { return std::fabs(a - b) <= tol; }
-
 } // namespace
 
 int main() {

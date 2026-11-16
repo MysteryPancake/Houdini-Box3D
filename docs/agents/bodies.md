@@ -120,6 +120,8 @@ hull, each face normal paired with each of its edges. A turned frame must beat t
 `canonicalFrame` picks the equivalent frame closest to them. In that frame (`fitShapeInFrame`, Box3DShapes.h), as
 measured against Bullet (`autofit_bullet`): box = the bounds; sphere = centred on them, through the farthest point;
 capsule = along the axis nearest body Y, radius through the farthest point from it, caps ending at the bounds.
+Fits are cached process-wide by point content and shape type (`FitLibrary`, Box3DWorld.cpp), so instances of one piece
+fit once.
 `fitShapeToPoints` (body axes) is the fallback when a piece cannot be hulled.
 
 **Explicit primitives** (autofit off, `box` / `sphere` / `capsule`): `bullet_primS` = box half extents,

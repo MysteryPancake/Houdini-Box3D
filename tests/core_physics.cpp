@@ -249,24 +249,18 @@ void testMoveEvents() {
   int tag = 7;
   ew.setBodyUserData(ew.bodyHandle(2), &tag);
 
-  CHECK(ew.moveEventCount() == 0); // nothing stepped yet
+  std::vector<b3dop::BodyMove> all;
+  CHECK(ew.getMoveEvents(all) == 0 && all.empty()); // nothing stepped yet
   ew.step(1.0f / 60.0f);
-  CHECK(ew.moveEventCount() == 1); // the static ground never moves
-  b3dop::BodyMove mv;
-  CHECK(ew.getMoveEvent(0, mv));
+  // the static ground never moves
+  CHECK(ew.getMoveEvents(all) == 1 && all.size() == 1);
+  const b3dop::BodyMove mv = all[0];
   CHECK(mv.userData == &tag && mv.handle == ew.bodyHandle(2));
   double p[3];
   float q[4];
   CHECK(ew.getTransformByHandle(mv.handle, p, q));
   CHECK(mv.pos[0] == p[0] && mv.pos[1] == p[1] && mv.pos[2] == p[2]);
   CHECK(mv.rot[0] == q[0] && mv.rot[3] == q[3]);
-  CHECK(!ew.getMoveEvent(1, mv) && !ew.getMoveEvent(-1, mv));
-
-  // the bulk accessor agrees with the single one, and reuses the vector
-  std::vector<b3dop::BodyMove> all;
-  CHECK(ew.getMoveEvents(all) == 1 && all.size() == 1);
-  CHECK(all[0].userData == &tag && all[0].handle == mv.handle &&
-        all[0].pos[1] == mv.pos[1]);
 
   // releasing the build settings keeps type queries and changes working
   // (Box3D answers)
@@ -284,16 +278,16 @@ void testMoveEvents() {
   int lastCount = 1;
   for (int i = 0; i < 600 && lastCount > 0; ++i) {
     ew.step(1.0f / 60.0f);
-    lastCount = ew.moveEventCount();
-    if (lastCount && ew.getMoveEvent(0, mv) && mv.fellAsleep)
+    lastCount = ew.getMoveEvents(all);
+    if (lastCount && all[0].fellAsleep)
       sawSleep = true;
   }
   CHECK(sawSleep);
-  CHECK(ew.moveEventCount() == 0);
+  CHECK(ew.getMoveEvents(all) == 0);
   // a transform set by the caller is not a move event
   const double np[3] = {5, 0.5, 0};
   CHECK(ew.setTransformByHandle(ew.bodyHandle(2), np, q0));
-  CHECK(ew.moveEventCount() == 0);
+  CHECK(ew.getMoveEvents(all) == 0);
   std::printf("move-event checks done\n");
 }
 
@@ -395,9 +389,10 @@ void testHandleBuild() {
     CHECK(hw.setVelocityByHandle(falling, lin, ang));
     hw.step(1.0f / 60.0f);
     bool sawTag = false;
-    BodyMove mv;
-    for (int i = 0; i < hw.moveEventCount(); ++i)
-      if (hw.getMoveEvent(i, mv) && mv.handle == falling && mv.userData == &tag)
+    std::vector<BodyMove> moves;
+    hw.getMoveEvents(moves);
+    for (const BodyMove &mv : moves)
+      if (mv.handle == falling && mv.userData == &tag)
         sawTag = true;
     CHECK(sawTag);
 
@@ -572,7 +567,7 @@ void testMidSimChanges() {
   CHECK(dw.gravityScaleByHandle(b) == -1.0f);
 
   // mass via density (volume 1 -> mass = density); inertia follows the shape
-  dw.setDensityByHandle(b, 7.0f);
+  dw.applyMassByHandle(b, 7.0f, false, 1.0f, true);
   CHECK(std::fabs(dw.massByHandle(b) - 7.0f) < 1e-4f);
 
   // gravity scale -1 floats the body up
@@ -652,7 +647,7 @@ void testMidSimChanges() {
   dw.setDampingByHandle(0, 1, 1);
   dw.setGravityScaleByHandle(0, 1);
   dw.setSleepEnabledByHandle(0, true);
-  dw.setDensityByHandle(0, 1);
+  dw.applyMassByHandle(0, 1, false, 1, true);
   dw.setEnabledByHandle(0, false);
   dw.destroyShapesByHandle(0);
   dw.wakeByHandle(0);

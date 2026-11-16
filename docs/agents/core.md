@@ -26,8 +26,8 @@ recomputes from the shapes, so the caller re-applies after a type change.
 
 **Changes to existing bodies.** `setMaterialByHandle` (every shape; Box3D re-mixes contact friction / restitution every
 step, so touching contacts follow), `setDampingByHandle`, `setGravityScaleByHandle`, `setSleepEnabledByHandle` (the
-world switch applies on top; disabling wakes the body), `getCenterOfMassByHandle` / `bodyStateByHandle` (awake, mass, centre of mass and velocities in one call) / `applyForceByHandle` (external forces, per step, see below), `setSleepThresholdByHandle` (Box3D's single threshold on
-`|v| + |w * maxExtent|`; negative = default), `setBulletByHandle`, `setDensityByHandle`, `setEnabledByHandle`
+world switch applies on top; disabling wakes the body), `bodyStateByHandle` (awake, mass, centre of mass and velocities in one call) / `applyForceByHandle` (external forces, per step, see below), `setSleepThresholdByHandle` (Box3D's single threshold on
+`|v| + |w * maxExtent|`; negative = default), `setBulletByHandle`, `setEnabledByHandle`
 (`b3Body_Disable`: no motion, no collisions, shapes kept), `destroyShapesByHandle` (releases the body's hulls; the
 caller re-adds shapes and applies the mass), `wakeByHandle`, `setTargetTransformByHandle` (kinematic: Box3D sets the
 velocity that reaches the pose in `timeStep`; it remains until cleared) and `getContactsByHandle` (one `ContactPoint`
@@ -67,7 +67,7 @@ Entries are `shared_ptr`s; a world holds the ones it found or built (`Impl::held
 calls at the end of each sync, so eviction never frees a hull between `findHull` and `createHullShape`. Past the byte
 budget (`setSharedHullBudget`; the default is in `HullLibrary`, `Box3DWorld.cpp`) the least recently used entries are evicted down to 3/4 of it.
 `findHull`, `createHull` and `createHullWithKey` are thread-safe (the solver's shape pre-pass); nothing else is.
-`hullCacheSize()` is the hulls a world holds; `sharedHullCount/Bytes`, `hullBuildCount/Attempts` report on the cache.
+`hullCacheSize()` is the hulls a world holds; `sharedHullBytes`, `hullBuildCount/Attempts` report on the cache.
 
 Packed sources also get a **source summary** (`SourceSummaryCache` in Box3DShapeBuild.cpp, process-wide): the group and
 piece hashes, keyed by the source detail's identity (`geometryIdentity`: `getUniqueId`, `P` and primitive-list data ids, counts, fragment,

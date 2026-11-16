@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <mutex>
 #include <unordered_map>
 #include <utility>
@@ -83,10 +84,6 @@ public:
     myHints[group] = budget;
   }
 
-  int count() {
-    std::lock_guard<std::mutex> lock(myMutex);
-    return static_cast<int>(myEntries.size());
-  }
   size_t bytes() {
     std::lock_guard<std::mutex> lock(myMutex);
     return myBytes;
@@ -132,9 +129,36 @@ private:
   uint64_t myTick = 0;
 };
 
-} // namespace
+// ---- the process-wide fit cache
+// --------------------------------------------------------------- What
+// fitShapeOriented found for a point set (by content and shape type), so many
+// packed instances of one piece fit once. Cleared when it grows too big.
+class FitLibrary {
+public:
+  static FitLibrary &instance() {
+    static FitLibrary lib;
+    return lib;
+  }
+  bool find(uint64_t key, ShapeSpec &out) {
+    std::lock_guard<std::mutex> lock(myMutex);
+    const auto it = myEntries.find(key);
+    if (it == myEntries.end())
+      return false;
+    out = it->second;
+    return true;
+  }
+  void insert(uint64_t key, const ShapeSpec &spec) {
+    std::lock_guard<std::mutex> lock(myMutex);
+    if (myEntries.size() >= kMaxFitEntries)
+      myEntries.clear();
+    myEntries.emplace(key, spec);
+  }
 
-namespace {
+private:
+  static constexpr size_t kMaxFitEntries = 65536;
+  std::mutex myMutex;
+  std::unordered_map<uint64_t, ShapeSpec> myEntries;
+};
 
 // ---- Box3D assertion and log handlers ---------------------------------------
 // Box3D's default assert handler breaks to the debugger, which kills the host
@@ -227,11 +251,51 @@ HullId hashPoints(const float *xyz, int count) {
   return h ? h : 1ull;
 }
 
-// Null, or a rotation within float noise of identity (qx, qy, qz ~ 0, w ~ +-1).
+// The points as b3Vec3. False if any is not finite (Box3D asserts on them).
+bool loadPoints(const float *xyz, int count, std::vector<b3Vec3> &pts) {
+  for (int i = 0; i < count * 3; ++i)
+    if (!std::isfinite(xyz[i]))
+      return false;
+  pts.resize(static_cast<size_t>(count));
+  for (int i = 0; i < count; ++i)
+    pts[static_cast<size_t>(i)] = makeVec3(xyz + 3 * i);
+  return true;
+}
+
+// b3CreateHull fails for degenerate input or when the result would exceed
+// Box3D's vertex / face / edge limits; a smaller vertex budget keeps fewer
+// vertices, so dense input still gets a (slightly smaller) hull. A
+// triangulated hull hits the 256 half-edge limit at about 44 vertices, which
+// is why there is no rung between the maximum and 44: a 64-vertex budget
+// fails whenever the maximum did.
+constexpr int kHullBudgets[] = {B3_MAX_HULL_VERTICES, 44, 32, 16, 8};
+
+// The hull with the largest budget that works, skipping budgets above
+// `maxBudget` (0: none skipped). `usedBudget` is the budget that worked,
+// `tries` the b3CreateHull calls made. Null if none works.
+b3HullData *createHullLadder(const std::vector<b3Vec3> &pts, int maxBudget,
+                             int &usedBudget, int &tries) {
+  usedBudget = 0;
+  tries = 0;
+  for (const int budget : kHullBudgets) {
+    if (maxBudget && budget > maxBudget)
+      continue;
+    ++tries;
+    b3HullData *hull =
+        b3CreateHull(pts.data(), static_cast<int>(pts.size()), budget);
+    if (hull) {
+      usedBudget = budget;
+      return hull;
+    }
+  }
+  return nullptr;
+}
+
 // fitShapeOriented: a turned frame must make the box at least this much
 // smaller (relative volume) to replace the body axes.
 constexpr double kTurnedFitGain = 1e-3;
 
+// Null, or a rotation within float noise of identity (qx, qy, qz ~ 0, w ~ +-1).
 bool isIdentityRotation(const float q[4]) {
   return !q || (std::fabs(q[0]) < 1e-6f && std::fabs(q[1]) < 1e-6f &&
                 std::fabs(q[2]) < 1e-6f);
@@ -257,14 +321,9 @@ b3Filter toB3Filter(const CollisionFilter &f) {
 }
 
 // Box3D asserts on a negative or non-finite rolling resistance and tangent
-// velocity: clean them.
-float cleanRolling(float v) {
-  return (std::isfinite(v) && v > 0.0f) ? v : 0.0f;
-}
-
+// velocity: clean them (the rolling resistance with nonNegOr).
 void cleanTangent(const float in[3], float out[3]) {
-  const bool ok =
-      std::isfinite(in[0]) && std::isfinite(in[1]) && std::isfinite(in[2]);
+  const bool ok = finite3(in);
   for (int i = 0; i < 3; ++i)
     out[i] = ok ? in[i] : 0.0f;
 }
@@ -278,7 +337,7 @@ b3ShapeDef shapeDefFor(const BodySettings &b, bool updateMass) {
   def.density = p.density;
   def.baseMaterial.friction = p.friction;
   def.baseMaterial.restitution = p.restitution;
-  def.baseMaterial.rollingResistance = cleanRolling(p.rollingResistance);
+  def.baseMaterial.rollingResistance = nonNegOr(p.rollingResistance);
   cleanTangent(p.tangentVelocity, tangent);
   def.baseMaterial.tangentVelocity = makeVec3(tangent);
   def.filter = toB3Filter(p.filter);
@@ -345,10 +404,6 @@ b3RestitutionCallback *restitutionRule(WorldSettings::RestitutionMixing mode) {
   }
   return nullptr;
 }
-
-} // namespace
-
-namespace {
 
 // Box3D's task hooks, forwarding to the world's TaskRunner (userContext).
 void *enqueueTask(b3TaskCallback *task, void *taskContext, void *userContext,
@@ -827,6 +882,7 @@ HullId Box3DWorld::createHull(const float *xyz, int pointCount,
     *outVolume = 0.0f;
   if (!xyz || pointCount < 4)
     return 0;
+  // Before hashing: a non-finite point must not find a cached hull.
   for (int i = 0; i < pointCount * 3; ++i)
     if (!std::isfinite(xyz[i]))
       return 0;
@@ -860,37 +916,20 @@ HullId Box3DWorld::createHullWithKey(HullId key, const float *xyz,
     return 0;
   if (const HullId hit = findHull(key, outVolume))
     return hit;
-  for (int i = 0; i < pointCount * 3; ++i)
-    if (!std::isfinite(xyz[i]))
-      return 0;
+  std::vector<b3Vec3> pts;
+  if (!loadPoints(xyz, pointCount, pts))
+    return 0;
 
-  std::vector<b3Vec3> pts(static_cast<size_t>(pointCount));
-  for (int i = 0; i < pointCount; ++i)
-    pts[static_cast<size_t>(i)] = makeVec3(xyz + 3 * i);
-
-  // b3CreateHull fails for degenerate input or when the result would exceed
-  // Box3D's vertex / face / edge limits; a smaller vertex budget keeps fewer
-  // vertices, so dense input still gets a (slightly smaller) hull. A
-  // triangulated hull hits the 256 half-edge limit at about 44 vertices, which
-  // is why there is no rung between the maximum and 44: a 64-vertex budget
-  // fails whenever the maximum did. The group's last working budget is tried
-  // first.
+  // The group's last working budget is tried first.
   HullLibrary &lib = HullLibrary::instance();
   const int hint = lib.budgetHint(budgetGroup);
-  b3HullData *hull = nullptr;
-  for (int budget : {B3_MAX_HULL_VERTICES, 44, 32, 16, 8}) {
-    if (hint && budget > hint)
-      continue;
-    lib.attempts.fetch_add(1, std::memory_order_relaxed);
-    hull = b3CreateHull(pts.data(), pointCount, budget);
-    if (hull) {
-      if (budget != hint)
-        lib.setBudgetHint(budgetGroup, budget);
-      break;
-    }
-  }
+  int budget = 0, tries = 0;
+  b3HullData *hull = createHullLadder(pts, hint, budget, tries);
+  lib.attempts.fetch_add(tries, std::memory_order_relaxed);
   if (!hull)
     return 0;
+  if (budget != hint)
+    lib.setBudgetHint(budgetGroup, budget);
   lib.builds.fetch_add(1, std::memory_order_relaxed);
 
   if (!(hull->volume > 1e-9f) || !std::isfinite(hull->volume)) {
@@ -973,20 +1012,11 @@ bool Box3DWorld::bodyShapeOutlines(BodyHandle h,
 }
 
 bool Box3DWorld::hullCentroid(const float *xyz, int count, double out[3]) {
-  if (!xyz || count < 4)
+  std::vector<b3Vec3> pts;
+  if (!xyz || count < 4 || !loadPoints(xyz, count, pts))
     return false;
-  for (int i = 0; i < count * 3; ++i)
-    if (!std::isfinite(xyz[i]))
-      return false;
-  std::vector<b3Vec3> pts(static_cast<size_t>(count));
-  for (int i = 0; i < count; ++i)
-    pts[static_cast<size_t>(i)] = makeVec3(xyz + 3 * i);
-  b3HullData *hull = nullptr;
-  for (int budget : {B3_MAX_HULL_VERTICES, 44, 32, 16, 8}) {
-    hull = b3CreateHull(pts.data(), count, budget);
-    if (hull)
-      break;
-  }
+  int budget = 0, tries = 0;
+  b3HullData *hull = createHullLadder(pts, 0, budget, tries);
   if (!hull)
     return false;
   const b3MassData md = b3ComputeHullMass(hull, 1.0f);
@@ -1000,25 +1030,15 @@ bool Box3DWorld::hullCentroid(const float *xyz, int count, double out[3]) {
   return true;
 }
 
-bool Box3DWorld::fitShapeOriented(ShapeType type, const float *xyz, int count,
-                                  ShapeSpec &out) {
-  if (!xyz || count < 4)
-    return fitShapeToPoints(type, xyz, count, out);
-  for (int i = 0; i < count * 3; ++i)
-    if (!std::isfinite(xyz[i]))
-      return false;
+namespace {
 
-  std::vector<b3Vec3> pts(static_cast<size_t>(count));
-  for (int i = 0; i < count; ++i)
-    pts[static_cast<size_t>(i)] = makeVec3(xyz + 3 * i);
+// fitShapeOriented without the cache. `pts`: the points, all finite.
+bool fitOrientedUncached(ShapeType type, const float *xyz, int count,
+                         const std::vector<b3Vec3> &pts, ShapeSpec &out) {
   // Only the hull's directions are used, so a reduced budget is fine (the
   // extents are measured over every point).
-  b3HullData *hull = nullptr;
-  for (int budget : {B3_MAX_HULL_VERTICES, 44, 32, 16, 8}) {
-    hull = b3CreateHull(pts.data(), count, budget);
-    if (hull)
-      break;
-  }
+  int budget = 0, tries = 0;
+  b3HullData *hull = createHullLadder(pts, 0, budget, tries);
   if (!hull)
     return fitShapeToPoints(type, xyz, count, out);
 
@@ -1092,6 +1112,26 @@ bool Box3DWorld::fitShapeOriented(ShapeType type, const float *xyz, int count,
   return fitShapeInFrame(type, xyz, count, best, out);
 }
 
+} // namespace
+
+bool Box3DWorld::fitShapeOriented(ShapeType type, const float *xyz, int count,
+                                  ShapeSpec &out) {
+  if (!xyz || count < 4)
+    return fitShapeToPoints(type, xyz, count, out);
+  std::vector<b3Vec3> pts;
+  if (!loadPoints(xyz, count, pts))
+    return false;
+  const uint64_t key = mixHash(hashPoints(xyz, count),
+                               static_cast<uint64_t>(static_cast<int>(type)));
+  FitLibrary &lib = FitLibrary::instance();
+  if (lib.find(key, out))
+    return true;
+  if (!fitOrientedUncached(type, xyz, count, pts, out))
+    return false;
+  lib.insert(key, out);
+  return true;
+}
+
 void Box3DWorld::pruneHulls() {
   std::lock_guard<std::mutex> lock(myImpl->held_mutex);
   myImpl->held.clear();
@@ -1119,7 +1159,6 @@ int Box3DWorld::hullCacheSize() const {
   return static_cast<int>(myImpl->held.size());
 }
 
-int Box3DWorld::sharedHullCount() { return HullLibrary::instance().count(); }
 size_t Box3DWorld::sharedHullBytes() { return HullLibrary::instance().bytes(); }
 void Box3DWorld::setSharedHullBudget(size_t b) {
   HullLibrary::instance().setBudget(b);
@@ -1266,7 +1305,7 @@ void Box3DWorld::setSurfaceByHandle(BodyHandle h, float rollingResistance,
   if (!h)
     return;
   const b3BodyId id = b3LoadBodyId(h);
-  const float rolling = cleanRolling(rollingResistance);
+  const float rolling = nonNegOr(rollingResistance);
   float tangent[3];
   cleanTangent(tangentVelocity, tangent);
   const b3Vec3 tv = makeVec3(tangent);
@@ -1312,17 +1351,6 @@ void Box3DWorld::setBulletByHandle(BodyHandle h, bool flag) {
     b3Body_SetBullet(b3LoadBodyId(h), flag);
 }
 
-void Box3DWorld::setDensityByHandle(BodyHandle h, float density) {
-  if (!h || !(density >= 0.0f) || !std::isfinite(density))
-    return;
-  const b3BodyId id = b3LoadBodyId(h);
-  const int n = bodyShapes(id, tShapes);
-  for (int i = 0; i < n; ++i)
-    b3Shape_SetDensity(tShapes[static_cast<size_t>(i)], density, false);
-  if (n > 0)
-    b3Body_ApplyMassFromShapes(id);
-}
-
 void Box3DWorld::setEnabledByHandle(BodyHandle h, bool enabled) {
   if (!h)
     return;
@@ -1366,13 +1394,6 @@ void Box3DWorld::sleepByHandle(BodyHandle h) {
       !b3Body_IsSleepEnabled(id))
     return;
   b3Body_SetAwake(id, false);
-}
-
-bool Box3DWorld::getCenterOfMassByHandle(BodyHandle h, double outPos[3]) const {
-  if (!h)
-    return false;
-  storePos(b3Body_GetWorldCenter(b3LoadBodyId(h)), outPos);
-  return true;
 }
 
 bool Box3DWorld::bodyStateByHandle(BodyHandle h, BodyState &out) const {
@@ -1811,22 +1832,6 @@ bool Box3DWorld::setVelocityByHandle(BodyHandle h, const float linear[3],
   const b3BodyId id = b3LoadBodyId(h);
   b3Body_SetLinearVelocity(id, finiteVec3(linear));
   b3Body_SetAngularVelocity(id, finiteVec3(angular));
-  return true;
-}
-
-int Box3DWorld::moveEventCount() const {
-  if (!isValid())
-    return 0;
-  return b3World_GetBodyEvents(myImpl->worldId).moveCount;
-}
-
-bool Box3DWorld::getMoveEvent(int index, BodyMove &out) const {
-  if (!isValid())
-    return false;
-  const b3BodyEvents ev = b3World_GetBodyEvents(myImpl->worldId);
-  if (index < 0 || index >= ev.moveCount)
-    return false;
-  toBodyMove(ev.moveEvents[index], out);
   return true;
 }
 

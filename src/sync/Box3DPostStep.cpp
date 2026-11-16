@@ -12,14 +12,19 @@
 
 namespace box3dsolver {
 
-// Adds the float point attribute `name` with the given type info unless it
-// exists. True if added.
+// Adds the float (or, with `integer`, int) point attribute `name` with the
+// given type info unless it exists. True if added.
 static bool addPointAttribIfMissing(GU_Detail *gdp, const char *name,
-                                    int tupleSize, GA_TypeInfo typeInfo) {
+                                    int tupleSize,
+                                    GA_TypeInfo typeInfo = GA_TYPE_VOID,
+                                    bool integer = false) {
   if (gdp->findPointAttribute(name))
     return false;
-  // addFloatTuple returns the new attribute, so no second lookup.
-  if (GA_Attribute *attr = gdp->addFloatTuple(GA_ATTRIB_POINT, name, tupleSize))
+  // The add returns the new attribute, so no second lookup.
+  GA_Attribute *attr =
+      integer ? gdp->addIntTuple(GA_ATTRIB_POINT, name, tupleSize)
+              : gdp->addFloatTuple(GA_ATTRIB_POINT, name, tupleSize);
+  if (attr && typeInfo != GA_TYPE_VOID)
     attr->setTypeInfo(typeInfo);
   return true;
 }
@@ -376,8 +381,8 @@ void writePointAttrs(Box3DSharedState &st, SIM_ObjectArray &objects) {
       GU_Detail *gdp = &lock.getGdp();
       if (!gdp)
         return;
-      if ((want & Box3DPointWrite::kMass) && !gdp->findPointAttribute("mass"))
-        gdp->addFloatTuple(GA_ATTRIB_POINT, "mass", 1);
+      if (want & Box3DPointWrite::kMass)
+        addPointAttribIfMissing(gdp, "mass", 1);
       if (want & Box3DPointWrite::kRest) {
         // A new restxform is all zero (unset) on the other points.
         addPointAttribIfMissing(gdp, "restxform", 16, GA_TYPE_TRANSFORM);
@@ -456,11 +461,10 @@ void ageObjects(Box3DSharedState &st, SIM_ObjectArray &objects, float dt) {
       GU_Detail *gdp = &lock.getGdp();
       if (!gdp)
         continue;
-      if (!gdp->findPointAttribute("age"))
-        gdp->addFloatTuple(GA_ATTRIB_POINT, "age", 1);
+      addPointAttribIfMissing(gdp, "age", 1);
       const bool hasLife = gdp->findPointAttribute("life") != nullptr;
-      if (hasLife && !gdp->findPointAttribute("dead"))
-        gdp->addIntTuple(GA_ATTRIB_POINT, "dead", 1);
+      if (hasLife)
+        addPointAttribIfMissing(gdp, "dead", 1, GA_TYPE_VOID, true);
       GA_RWHandleF age(gdp, GA_ATTRIB_POINT, "age");
       GA_ROHandleF life(gdp, GA_ATTRIB_POINT, "life");
       GA_RWHandleI dead(gdp, GA_ATTRIB_POINT, "dead");
@@ -839,7 +843,7 @@ int writePackedRotations(GU_Detail *gdp,
     if (w.packedIdx < 0 || !packedWrites[static_cast<size_t>(w.packedIdx)].has)
       continue;
     const Box3DPackedWrite &pw = packedWrites[static_cast<size_t>(w.packedIdx)];
-    const GA_Primitive *raw =
+    GA_Primitive *raw =
         (pw.primOff >= 0 && pw.primOff < gdp->getNumPrimitiveOffsets())
             ? gdp->getPrimitive(pw.primOff)
             : nullptr;
@@ -847,8 +851,7 @@ int writePackedRotations(GU_Detail *gdp,
       ++missing;
       continue;
     }
-    setLocal3(*static_cast<GU_PrimPacked *>(gdp->getPrimitive(pw.primOff)),
-              pw.newM3);
+    setLocal3(*static_cast<GU_PrimPacked *>(raw), pw.newM3);
     wrotePacked = true;
   }
   // setLocalTransform does not mark the primitive list dirty; the HDK leaves

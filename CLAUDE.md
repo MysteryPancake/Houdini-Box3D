@@ -94,6 +94,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
   core/               Houdini-free; built as b3dop_core and covered by the tests
     Box3DMath.h         Header-only: unit constants, finite checks, small copies, quaternion helpers, xformPoint
     Box3DShapes.h       Header-only: shape math, packed-prim matrices, hashing
+    Box3DQuadrics.h     Header-only: surface points for Houdini's quadric primitives (Sphere, Tube, Circle, Metaball)
     Box3DJoints.h       Header-only: joint types, JointSettings, the joint parameter table
     Box3DSideFX.h/.cpp  SideFX's Glue / Hard / Spring / Bullet Soft / Cone Twist data -> Box3D joints (mapping, frame offsets)
     Box3DGlue.h         Header-only: SideFX Glue's impulse model (spread over bonds, half-life, break on strength)
@@ -131,7 +132,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
 examples/            make_examples.py: builds demo scenes into examples/scenes (git-ignored)
 package/             Box3D.json.in: the Houdini package file the build configures
 tools/               make_assets.py (runs the three asset builders in one hython, as the build does),
-                     make_packed_object.py, make_configure_sop.py, make_solver_sop.py (the assets; the Solver SOP's inner builders are in b3d_solver_common.py, b3d_solver_network.py, b3d_solver_dops.py, b3d_solver_constraints.py and b3d_solver_help.py),
+                     make_packed_object.py, make_configure_sop.py, make_solver_sop.py (the assets; the Solver SOP's inner builders are in b3d_solver_common.py, b3d_solver_network.py, b3d_solver_dops.py, b3d_solver_ground.py, b3d_solver_constraints.py and b3d_solver_help.py; b3d_layouts.py places both SOP assets' nodes),
                      b3d.py (finds Houdini; runs the checks, examples or ctest on any OS), b3d_hda.py (warn, create, set_operations and the parameter-template helpers the asset builders share), b3d_prepare.py (the input packing both SOP assets share), b3d_settings.py (Box3D Data's
                      settings as point attributes and the creation-frame rest, for Configure and the Packed Object),
                      check_docs.py,
@@ -146,8 +147,11 @@ tests/
   physics_bodies.cpp  Physics cases for body settings, filtering, forces, sleep and world settings
   core_mesh.cpp       Static triangle meshes, mesh scale, decomposeScaledRigid
   core_heightfield.cpp Static height fields: pose, scale, ramps, holes, refused input
+  core_plane.cpp      Static infinite planes: resting, troughs, slopes, no tunnelling, refused input
+  core_quadrics.cpp   Quadric primitive surface points: sizes, position, transform
   core_threads.cpp    1 worker vs N workers: timing + determinism
   core_taskrunner.cpp Host-supplied TaskRunner shared by 40+ worlds: no extra threads, same results as 1 worker
+  core_worlds.cpp     Threads creating, stepping and destroying their own worlds at once
   core_joints.cpp     Every joint type, world anchors, live updates, breaking, feedback, the parameter table
   core_glue.cpp       Glue's impulse model: the Glue help's example, rounds, decay, breaking
   core_sidefx.cpp     SideFX constraint data: option table, mapping per type / constraint_type, frame offsets, behaviour

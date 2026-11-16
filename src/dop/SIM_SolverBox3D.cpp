@@ -387,8 +387,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   st->stepDt = static_cast<float>(dt * timeScale);
   // Solver parameters may be animated; only the thread count needs a new world.
   const b3dop::WorldSettings tuning = currentWorldSettings();
-  if (!std::isfinite(tuning.gravity[0]) || !std::isfinite(tuning.gravity[1]) ||
-      !std::isfinite(tuning.gravity[2]))
+  if (!b3dop::finite3(tuning.gravity))
     message(objects,
             "Gravity is not a finite number; the previous gravity is kept");
   st->world.applyTuning(tuning); // ignores non-finite gravity

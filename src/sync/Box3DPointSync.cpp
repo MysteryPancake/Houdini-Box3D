@@ -28,8 +28,7 @@ bool readPointState(const GU_Detail *gdp, const PointAttrs &a, GA_Offset off,
   out.pos[0] = p.x();
   out.pos[1] = p.y();
   out.pos[2] = p.z();
-  if (!std::isfinite(out.pos[0]) || !std::isfinite(out.pos[1]) ||
-      !std::isfinite(out.pos[2]))
+  if (!b3dop::finite3(out.pos))
     return false;
 
   out.rot[0] = out.rot[1] = out.rot[2] = 0.0f;
@@ -205,7 +204,7 @@ b3dop::BodyProps readDynamicProps(const b3dop::BodySettings &node,
         clampNonNeg(a.rollingResistance.get(off), p.rollingResistance);
   if (a.tangentVelocity.isValid()) {
     const UT_Vector3 t = a.tangentVelocity.get(off);
-    if (std::isfinite(t.x()) && std::isfinite(t.y()) && std::isfinite(t.z()))
+    if (b3dop::finite3(t.data()))
       for (int i = 0; i < 3; ++i)
         p.tangentVelocity[i] = static_cast<float>(t(i));
   }
@@ -400,9 +399,11 @@ void noteOverriddenData(const GU_Detail *gdp, Box3DObjectSync &os,
       {"contactrecycling", n.contactRecycling != p.contactRecycling},
       {"bullet_georep", node.defaultShape != d.defaultShape},
       {"bullet_autofit", node.autoFit != d.autoFit}};
+  std::vector<const char *> names;
   std::string found;
   for (const auto &o : overriding)
     if (o.second && gdp->findPointAttribute(o.first)) {
+      names.push_back(o.first);
       found += found.empty() ? "" : " ";
       found += o.first;
     }
@@ -412,9 +413,8 @@ void noteOverriddenData(const GU_Detail *gdp, Box3DObjectSync &os,
   if (found.empty())
     return;
   ++c.overriddenObjects;
-  for (const auto &o : overriding)
-    if (o.second && gdp->findPointAttribute(o.first))
-      ++c.overriddenData[o.first];
+  for (const char *name : names)
+    ++c.overriddenData[name];
 }
 
 // pscale / scale (a packed point's size is its transform; these only size its
@@ -503,7 +503,7 @@ b3dop::PrimOverrides readPrimOverrides(const PointAttrs &a, GA_Offset off) {
   if (a.primR.isValid()) {
     const UT_Vector3 v = a.primR.get(off);
     // Euler degrees, Houdini's XYZ rotate order. Non-finite: no override.
-    if (SYSisFinite(v.x()) && SYSisFinite(v.y()) && SYSisFinite(v.z())) {
+    if (b3dop::finite3(v.data())) {
       const float deg[3] = {v.x(), v.y(), v.z()};
       box3dEulerToQuat(deg, ov.rot);
       ov.hasRot = true;
@@ -634,23 +634,31 @@ void storePlan(Box3DBodyMirror &m, const ShapePlan &plan) {
   b3dop::copy3(m.sizeKey, plan.sizeKey);
 }
 
-// The slot's packed primitive with its pivot: the one pass 1 kept, else read
+// This scan's shape plans for new and rebuilt bodies, and the packed
+// primitive (with its pivot) each was planned from, by Box3DPointSlot::plan.
+struct SlotPlans {
+  std::vector<ShapePlan> shapes;
+  std::vector<PackedInfo> packed;
+};
+
+// The slot's packed primitive with its pivot: the one planning read, else read
 // now into `scratch`.
 const PackedInfo &slotPackedInfo(const ScanContext &ctx,
-                                 const Box3DPointSlot &s, PackedInfo &scratch) {
-  if (s.packedForPlan)
-    return *s.packedForPlan;
+                                 const Box3DPointSlot &s,
+                                 const SlotPlans &plans, PackedInfo &scratch) {
+  if (s.plan >= 0)
+    return plans.packed[static_cast<size_t>(s.plan)];
   scratch = ctx.packedInfo(s.off);
   return scratch;
 }
 
 // The slot's plan from the parallel pre-pass (moved out), else made now.
 ShapePlan takePlan(ScanContext &ctx, const Box3DPointSlot &s,
-                   std::vector<ShapePlan> &plans) {
+                   SlotPlans &plans) {
   if (s.plan >= 0)
-    return std::move(plans[static_cast<size_t>(s.plan)]);
+    return std::move(plans.shapes[static_cast<size_t>(s.plan)]);
   PackedInfo scratch;
-  return planShapes(ctx, s.off, s.bid, slotPackedInfo(ctx, s, scratch),
+  return planShapes(ctx, s.off, s.bid, slotPackedInfo(ctx, s, plans, scratch),
                     s.staticBody);
 }
 
@@ -817,9 +825,8 @@ void storePacked(Box3DBodyMirror &m, const Box3DPointSlot &s) {
 // attributes to write after the step.
 void updateExistingBody(ScanContext &ctx, Box3DSharedState &st,
                         Box3DPointSlot &s, Box3DBodyMirror &entry,
-                        bool animated, bool checkProps,
-                        std::vector<ShapePlan> &plans, SyncCounts &c,
-                        unsigned &writes, bool &anyDriven) {
+                        bool animated, bool checkProps, SlotPlans &plans,
+                        SyncCounts &c, unsigned &writes, bool &anyDriven) {
   b3dop::Box3DWorld &world = ctx.world;
   const PointAttrs &a = ctx.a;
   const GA_Offset off = s.off;
@@ -960,12 +967,9 @@ void readSlot(const ScanContext &ctx, int objectId, Box3DPointSlot &s) {
       ctx.anyPrims ? getPackedInfo(ctx.gdp, s.off) : PackedInfo();
   s.ok = readPointState(ctx.gdp, a, s.off, pk, s.cur, &s.badVelocity);
   s.active = !a.active.isValid() || a.active.get(s.off) != 0;
-  {
-    const bool animated =
-        !s.active && a.animated.isValid() && a.animated.get(s.off) != 0;
-    s.staticBody = wantedType(ctx.node, s.active, animated, false) ==
-                   b3dop::BodySettings::Type::Static;
-  }
+  s.animated = !s.active && a.animated.isValid() && a.animated.get(s.off) != 0;
+  s.staticBody = wantedType(ctx.node, s.active, s.animated, false) ==
+                 b3dop::BodySettings::Type::Static;
   s.packed = pk.prim != nullptr;
   s.unpackedPrim =
       !s.packed && ctx.anyPrims && GAisValid(ctx.gdp->pointVertex(s.off));
@@ -976,7 +980,6 @@ void readSlot(const ScanContext &ctx, int objectId, Box3DPointSlot &s) {
   }
 
   s.plan = -1;
-  s.packedForPlan.reset();
   s.deforming = a.deforming.isValid() && a.deforming.get(s.off) != 0;
   s.refitWanted = a.autofitValid.isValid() && a.autofitValid.get(s.off) == 0;
   s.rebuild = false;
@@ -1000,13 +1003,6 @@ void readSlot(const ScanContext &ctx, int objectId, Box3DPointSlot &s) {
           sizeKey(s.packed, s.m3, ps, sc, sk) && !sameSizeKey(sk, e->sizeKey);
     }
   }
-  // A new body or a rebuild is planned from this packed primitive (see
-  // slotsNeedingPlans).
-  if (s.packed && (!s.entry || s.rebuild)) {
-    auto kept = std::make_shared<PackedInfo>(pk);
-    readPackedPivot(*kept);
-    s.packedForPlan = std::move(kept);
-  }
 }
 
 // The problems that keep an object scanning every step (retried and reported).
@@ -1025,7 +1021,9 @@ void readSlots(const ScanContext &ctx, int objectId, SlotList &snaps) {
 // ------ Building hulls is the slow part of a new world and of deforming
 // bodies. Box3DWorld's hull calls, ShapeSources and GeorepLookup are
 // thread-safe, so the plans are made here in parallel and the apply pass only
-// creates bodies. Chunked, so Escape is checked in between.
+// creates bodies. Chunked, so Escape is checked in between. Each planned
+// slot's packed primitive is read again here, into one array per scan, rather
+// than kept from step 2 (a heap copy per new body).
 
 // The slots that need a plan: new bodies (unless `dead`) and existing ones
 // being rebuilt.
@@ -1039,10 +1037,11 @@ std::vector<size_t> slotsNeedingPlans(const SlotList &snaps) {
 }
 
 // False if the user cancelled.
-bool planSlots(ScanContext &ctx, SlotList &snaps, std::vector<ShapePlan> &plans,
+bool planSlots(ScanContext &ctx, SlotList &snaps, SlotPlans &plans,
                StepProgress &progress) {
   const std::vector<size_t> want = slotsNeedingPlans(snaps);
-  plans.resize(want.size());
+  plans.shapes.resize(want.size());
+  plans.packed.resize(want.size());
   for (size_t c0 = 0; c0 < want.size(); c0 += kPlanChunk) {
     if (progress.check())
       return false;
@@ -1051,9 +1050,11 @@ bool planSlots(ScanContext &ctx, SlotList &snaps, std::vector<ShapePlan> &plans,
         c1 - c0,
         [&](size_t j) {
           Box3DPointSlot &s = snaps[want[c0 + j]];
-          PackedInfo scratch;
-          plans[c0 + j] = planShapes(
-              ctx, s.off, s.bid, slotPackedInfo(ctx, s, scratch), s.staticBody);
+          PackedInfo &pk = plans.packed[c0 + j];
+          if (s.packed)
+            pk = ctx.packedInfo(s.off);
+          plans.shapes[c0 + j] =
+              planShapes(ctx, s.off, s.bid, pk, s.staticBody);
           s.plan = static_cast<int32_t>(c0 + j);
         },
         2);
@@ -1138,7 +1139,7 @@ private:
 class ApplyPass {
 public:
   ApplyPass(ScanContext &ctx, Box3DObjectSync &os, SyncCounts &c,
-            std::vector<ShapePlan> &plans, const NameIndex &names, int objectId,
+            SlotPlans &plans, const NameIndex &names, int objectId,
             bool checkProps)
       : myCtx(ctx), mySt(ctx.st), myOs(os), myC(c), myPlans(plans),
         myNames(names), myObjectId(objectId), myCheckProps(checkProps) {}
@@ -1150,7 +1151,6 @@ public:
       if (pointIndex++ % kProgressEvery == 0 && progress.check())
         return false;
       applyPoint(s);
-      s.packedForPlan.reset(); // not kept between steps
     }
     return true;
   }
@@ -1227,7 +1227,8 @@ private:
     if (!s.packed)
       return;
     PackedInfo scratch;
-    const PackedInfo &pk = slotPackedInfo(myCtx, s, scratch); // with the pivot
+    const PackedInfo &pk =
+        slotPackedInfo(myCtx, s, myPlans, scratch); // with the pivot
     if (!pk.prim)
       return;
     const PointAttrs &a = myCtx.a;
@@ -1276,7 +1277,6 @@ private:
   }
 
   void applyPoint(Box3DPointSlot &s) {
-    const PointAttrs &a = myCtx.a;
     const GA_Offset off = s.off;
 
     // A polygon's (or other unpacked primitive's) point: no body. Not stamped,
@@ -1316,12 +1316,10 @@ private:
       return;
     }
 
-    const bool animated =
-        !s.active && a.animated.isValid() && a.animated.get(off) != 0;
     anyDeforming = anyDeforming || s.deforming;
     unsigned writes = s.refitWanted ? Box3DPointWrite::kAutofitValid : 0u;
 
-    if (ref.fresh && !addBody(s, *entry, animated, writes)) {
+    if (ref.fresh && !addBody(s, *entry, s.animated, writes)) {
       dropFresh(ref, s);
       return;
     }
@@ -1331,7 +1329,7 @@ private:
 
     stampEntry(s, *entry);
     if (!ref.fresh)
-      updateExistingBody(myCtx, mySt, s, *entry, animated, myCheckProps,
+      updateExistingBody(myCtx, mySt, s, *entry, s.animated, myCheckProps,
                          myPlans, myC, writes, anyDriven);
 
     if (writes) {
@@ -1351,7 +1349,7 @@ private:
   Box3DSharedState &mySt;
   Box3DObjectSync &myOs;
   SyncCounts &myC;
-  std::vector<ShapePlan> &myPlans;
+  SlotPlans &myPlans;
   const NameIndex &myNames;
   const int myObjectId;
   const bool myCheckProps;
@@ -1451,7 +1449,7 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
     }
     c.unpackedPrimPoints += unpacked;
   }
-  std::vector<ShapePlan> plans;
+  SlotPlans plans;
   if (!planSlots(ctx, snaps, plans, progress))
     return;
   reserveMirror(st, snaps);

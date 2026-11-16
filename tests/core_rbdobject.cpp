@@ -11,8 +11,6 @@ using namespace b3dop;
 
 namespace {
 
-bool near(double a, double b, double tol) { return std::fabs(a - b) <= tol; }
-
 // Houdini 22.0's RBD Object defaults, as the probe read them.
 RbdObjectSettings houdiniDefaults() {
   RbdObjectSettings r;
