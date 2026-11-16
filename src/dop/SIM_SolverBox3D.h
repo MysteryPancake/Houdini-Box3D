@@ -32,7 +32,8 @@ public:
       "useforces", UseForces); // apply the Force DOPs attached to the objects
   GETSET_DATA_FUNCS_B("forceswake",
                       ForcesWake); // a force also wakes a sleeping body
-  // "solverpasses": solver passes per Box3D step (labelled Solver Passes).
+  // "solverpasses": constraint iterations per Box3D step (labelled Constraint
+  // Iterations).
   GETSET_DATA_FUNCS_I("solverpasses", SolverPasses);
   // "substeps": full Box3D steps per DOP step (labelled Substeps).
   GETSET_DATA_FUNCS_I("substeps", Substeps);

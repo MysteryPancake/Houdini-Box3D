@@ -57,13 +57,18 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 
 **Bullet semantics not compared**
 * The extra `restRotation` split per packed point in every full scan (the rest convention itself matches Bullet:
-  `bullet_rest_convention`).
-* Solve on Creation Frame on the SOP (`solver_sop_solve_first_frame`) for the collider, against Bullet's.
-* Before-start outputs and Export Broken Constraints (`solver_sop_before_start`, `solver_sop_keep_broken`). Both need
-  a run of the RBD Bullet Solver SOP beside ours, which no test builds yet.
+  `bullet_rest_convention`; `bullet_rest_rescan` forces a scan every step and matches).
+* Solve on Creation Frame on the SOP for the collider, against Bullet's (`solver_sop_solve_first_frame_bullet`): the
+  free-falling box matches with the option off and on. A box on a collider lifted 0.5 a frame ends at 1.1 to 2.3 in Box3D
+  (the box clips into the collider: a bug in Box3D, see the fork list) and stays at 1.0 in Bullet, whose collider may not
+  be moving (set as `collision_initialstate` 1).
+* Before-start outputs and Export Broken Constraints (`solver_sop_before_start`, `solver_sop_keep_broken`), against the
+  RBD Bullet Solver SOP: `solver_sop_keep_broken_bullet` matches. `solver_sop_before_start_bullet` matches on the box and on the
+  geometry, constraints and points outputs; the proxy output with no proxy input is a copy of the geometry in Box3D and
+  empty in Bullet.
 * Joints from authored anchors through `restToNow` and the `angle` since rest, against Bullet: `bullet_joint_rest_held`
   (Hard, Rest Length set to the start distance, piece turned 30 degrees) holds in both but never turns, so the `angle` is
-  untested. With both anchors at one point (`bullet_joint_rest`, INFO) the centres end 2.19 and 2.59 apart, past the 2.06 possible.
+  untested: `bullet_joint_angle` (spin, other axes) holds with a turn of 0 in both too. With both anchors at one point (`bullet_joint_rest`, INFO) the centres end 2.19 and 2.59 apart, past the 2.06 possible.
 * `bullet_primR` rotation order: XYZ Euler degrees matches Bullet. Settled thin boxes have the same face down
   (`bullet_primr_order`), and boxes turned by 90 degrees have the same face up (`bullet_shape_attributes`: 90 90 0,
   0 90 90, 90 0 90 pick XYZ out of the six orders). A tilted box's top is a corner and the plate test stops on it
@@ -71,7 +76,8 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   dynamic hand-set box rests at y = Box3D's (the half thickness, 0.10) minus the shape's vertical half extent as
   first turned (0.10 unturned, 0.26 for 50 70 50, 0.44 for 0 70 50, 0.52 for 0 0 50, 0.29 for 50 0 0): the rule fits
   every case probed, so Bullet's reported point sits that much lower, not the shape. Not understood: with primR
-  30 0 60 the piece fell through the ground in Bullet. `bullet_primS`, `bullet_primT`, `bullet_radius` and
+  30 0 60 the piece fell through the ground in Bullet (`bullet_primr_through`: 30 0 0, 0 0 30, 0 0 60, 30 0 30 and 0 0 45 end
+  0.14 to 0.47 below it, 0 30 0 and 0 60 0 on it, Box3D always at 0.10). `bullet_primS`, `bullet_primT`, `bullet_radius` and
   `bullet_length` match Bullet. Bullet ignores `bullet_primT` for a dynamic piece's rest height
   (0.25, shape centred on the body) where Box3D keeps the offset (-0.05); a static piece away from the origin is
   not found by a plate in Bullet. Not compared: the `deforming` and `bullet_autofit_valid`
@@ -80,19 +86,21 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   stopped in Bullet, where Box3D has the shape on the piece (`bullet_shape_position`; its dynamic case is rerun, the
   first run had made the ground a hand-set box too).
 * Whether a fresh `SIM_Impacts` each step suits Houdini's impact tools (the normal direction matches Bullet:
-  `bullet_impact_normal`).
+  `bullet_impact_normal`). A box landing and resting for 3 s has Box3D records on 13 frames (at most 8 on one), Bullet's on
+  49 (at most 40): Bullet keeps writing contacts while at rest (`bullet_impact_fresh`).
 * Bullet's placement of a hand-set shape (`bullet_shape_probe`, the same with a neutral ground): a dynamic hand-set piece
   dropped from x 2 ends at x 0, z 0 (plus `bullet_primT`'s x and z), so Bullet drops the piece's position, and its
   height follows `bullet_primT`'s y (0.3 up gives 0.25 to 0.3, 0.3 down gives -0.3) rather than the shape. Box3D keeps
   the piece where it is with primT as an offset. Not copied: it would move every hand-set piece to the world origin.
 * Whole RBD Object pivot (`wholeObjectPose`, tests `hull_centroid`, `bullet_rbd_pivot`): Bullet's `p` is 0.03 off the hull
-  centroid Box3D gives for boxes (an L: (0.205, 0.795) against (0.238, 0.762)), unexplained. A concave object with Hull per
-  Piece is not checked against Bullet.
+  centroid Box3D gives for boxes (an L: (0.205, 0.795) against (0.238, 0.762)), unexplained, the same for an L moved 5 in x and a T
+  (`bullet_rbd_pivot_far`). A concave object with Hull per Piece is not checked against Bullet.
 * Which end is Cone Twist's goal (taken as point 1; test `bullet_cone_twist_goal`): Bullet's piece fell freely with both
-  anchors at one point, turned or not, so it cannot say. Needs a Bullet Cone Twist setup that holds.
-* Unpacked geometry (`unpacked_geometry_bullet`): an object of polygons only is skipped by both (ours warns). Bullet
+  anchors at one point, turned or not, so it cannot say. With the anchors apart (`bullet_cone_twist_goal_apart`) it fell
+  freely again (distance 20.9).
+* Unpacked geometry (`unpacked_geometry_bullet`, `unpacked_geometry_match`): an object of polygons only is skipped by both (ours warns). Bullet
   ignores loose polygons beside packed pieces without a message (ours warns) and gives that message for loose points
-  (ours simulates them).
+  (ours simulates them). Loose points beside a packed piece: Bullet ignores them without a message, ours simulates them.
 
 **Whole objects**
 * RBD Point Object (`other_rbd_objects`, `point_object_bullet`): needs its Geometry Path menu (`usegeo`) set to Override, else it makes no objects. With that, Bullet and Box3D match: 4 whole objects, both fall to y -2.424 (checked).
@@ -148,7 +156,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   cones, softness, motors and translation ranges, Hard's angular motors.
 * Inactive RBD Object (Create Active Object off) is a static body: animating its Position teleports it, where Bullet
   drives it as a kinematic body that pushes what it touches.
-* Force DOPs: evaluation inside Box3D's Solver Passes (needs a callback in the fork); parallel evaluation of circle / sphere
+* Force DOPs: evaluation inside Box3D's Constraint Iterations (needs a callback in the fork); parallel evaluation of circle / sphere
   sampled forces (the resolver has only the point call).
 * Sticky collisions; contact / sensor events beyond Impacts.
 * Box3D Solver SOP:
@@ -168,6 +176,8 @@ Features to add in the fork. Once one exists, the wrapper maps it and the entry 
   and twist errors, each with its own spring. The motor joint's angular spring stalls the same way. The weld and
   prismatic ones make the same call and are unchecked. A twist limit avoids it (the car park's bollards). A parallel
   joint with a twist limit also orbited at about 72°: not understood.
+* **Clipping into a fast kinematic collider.** A box resting on a collider lifted 0.5 a frame sinks into it instead of
+  riding on top (`solver_sop_solve_first_frame_bullet`, INFO).
 * **Wide and elliptical cones.** `b3SphericalJoint_SetConeLimit` asserts the angle is at most 90°, and the cone is round.
   Cone Twist's wider and elliptical cones (unmapped above) need both lifted.
 

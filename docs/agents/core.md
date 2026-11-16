@@ -40,8 +40,8 @@ accepts all of them on a disabled body (proxies are only touched when they exist
 `restitutionThreshold`, `maxLinearSpeed`, `contactRecycleDistance` (and those in the section below). `applyTuning`
 pushes changes into the live world (`b3World_SetGravity`, `EnableSleeping`, `EnableContinuous`, `SetContactTuning`,
 `SetRestitutionThreshold`, `SetMaximumLinearSpeed`, `SetContactRecycleDistance`, ...); `workerCount` (parallel tasks per step) is fixed at creation and needs a new world.
-Box3D also limits the contact stiffness to 1/8 of the pass rate (`physics_world.c`: fps x Substeps x Solver Passes, where
-Solver Passes is the `subSteps` setting here), so 24 fps with 1 pass runs at 3 Hz whatever `contactStiffness` says (the
+Box3D also limits the contact stiffness to 1/8 of the pass rate (`physics_world.c`: fps x Substeps x Constraint Iterations, where
+Constraint Iterations is the `subSteps` setting here), so 24 fps with 1 pass runs at 3 Hz whatever `contactStiffness` says (the
 `substeps_fps` test expects a stack to sink there).
 
 **Collision filtering.** Box3D's own `b3Filter`, nothing custom. `CollisionFilter` (`Box3DWorld.h`: category, mask,

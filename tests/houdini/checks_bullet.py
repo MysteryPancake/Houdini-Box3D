@@ -928,7 +928,226 @@ def test_bullet_primitive_types():
     return results
 
 
+# ---------------------------------------------------------------------------
+# More comparisons for what status.md lists as not compared
+# ---------------------------------------------------------------------------
+
+
+def rescan_fall(kind, frames=10):
+    """free_fall's first case with a SOP Solver writing a point attribute every step before the physics
+    solver, so the points change between steps and the solver cannot skip its scan: (position, packed
+    rotation, orient) after `frames` frames."""
+    piece = {"size": (0.6, 0.4, 0.8), "center": (0, 20, 0), "rotate": REST_CASES[1][1],
+             "attrs": {"active": 1, "v": (1.0, 0.0, 0.0), "w": REST_CASES[1][2]}}
+    path, names = packed_boxes(f"rescan_{kind}_pieces", [piece])
+    dop = new_dopnet(f"rescan_{kind}")
+    obj = packed_object(dop, "pieces", path, keep_velocity=True)
+    toucher = sop_solver(dop, "f@scan_probe = @Frame;")
+    if kind == "box3d":
+        last = multisolver(dop, obj, [toucher, box3d_solver(dop, None)])
+    else:
+        last = create(dop, "gravity", "gravity")
+        last.setInput(0, multisolver(dop, obj, [toucher, create(dop, "bulletrbdsolver", "bullet_solver")]))
+    finish(dop, last)
+
+    def sample(sim, f):
+        attrs = point_attributes(sim, "pieces", names[0], ["orient"]) or {}
+        return (packed_positions(sim, "pieces")[names[0]], packed_transform(sim, "pieces", names[0]),
+                attrs.get("orient"))
+
+    return step(dop, frames, sample)[frames]
+
+
+def test_bullet_rest_rescan():
+    """The rest rotation of a turned, spinning piece (the case of bullet_rest_convention) when the points
+    are edited every step, so every step does the full scan that splits the rest rotation per point: Box3D
+    gives the same position, rotation and `orient` as without the edits (within 0.001 and 1 degree), and
+    the same as Bullet (0.02 and 3 degrees)."""
+    got = {kind: rescan_fall(kind) for kind in KINDS}
+    plain = free_fall("rescan_plain", "box3d", REST_CASES[1][1], REST_CASES[1][2])
+    (pb, rb, ob), (pt, rt, ot), (pp, rp, op) = got["box3d"], got["bullet"], plain
+    own = (pb - pp).length(), rotation_angle(rb, rp), quat_angle(ob, op) if ob is not None and op is not None else 0.0
+    other = ((pb - pt).length(), rotation_angle(rb, rt),
+             quat_angle(ob, ot) if ob is not None and ot is not None else 0.0)
+    ok = own[0] < 0.001 and own[1] < 1.0 and own[2] < 1.0 and other[0] < 0.02 and other[1] < 3.0 and other[2] < 3.0
+    return [Result("bullet_rest_rescan", Result.PASS if ok else Result.FAIL,
+                   f"against the same run without edits: position {own[0]:.4f}, rotation {own[1]:.2f} deg, orient "
+                   f"{own[2]:.2f} deg; against Bullet: {other[0]:.4f}, {other[1]:.2f} deg, {other[2]:.2f} deg")]
+
+
+JOINT_ANGLE_CASES = (
+    # label, the hanging piece's own rotation in degrees, its initial spin (radians/s)
+    ("turned 30 degrees about z, spinning about y", (0.0, 0.0, 30.0), (0.0, 2.0, 0.0)),
+    ("turned 40 degrees about x, spinning about z", (40.0, 0.0, 0.0), (0.0, 0.0, 2.0)),
+    ("turned (20, 35, 10), not spinning", (20.0, 35.0, 10.0), (0.0, 0.0, 0.0)),
+)
+
+
+def test_bullet_joint_angle():
+    """The `angle` since rest of a joint made on a piece that starts turned: SideFX Hard (constraint_type
+    all) with the anchors at the two centroids and Rest Length set to the start distance (so nothing
+    pulls the boxes together), the hanging piece turned and spinning at the start. Distance after 2 s
+    within 0.1 of the start and of Bullet's, and the turn since frame 1 within 10 degrees of Bullet's."""
+    start = math.dist(CENTRES[0], CENTRES[1])
+    results = []
+    for i, (label, rotate, spin) in enumerate(JOINT_ANGLE_CASES):
+        d = {kind: joint_run(f"joint_angle_{i}", kind, "hardconrel", {"constraint_type": "all"}, rotate, CENTRES,
+                             spin, conrel_parms={"restlength": start}) for kind in KINDS}
+        ok = (all(close(d[k][0], start, 0.1) for k in KINDS) and close(d["box3d"][0], d["bullet"][0], 0.1)
+              and abs(d["box3d"][1] - d["bullet"][1]) < 10.0)
+        results.append(Result("bullet_joint_angle", Result.PASS if ok else Result.FAIL,
+                              f"Hard (all), Rest Length {start:.3f}, hanging piece {label}: distance after 2 s Box3D "
+                              f"{d['box3d'][0]:.3f}, Bullet {d['bullet'][0]:.3f}; turned {d['box3d'][1]:.0f} / "
+                              f"{d['bullet'][1]:.0f} deg"))
+    return results
+
+
+APART = ((0.0, 3.5, 0.0), (0.5, 2.5, 0.0))  # the fixed piece's bottom face and the hanging piece's top face
+
+
+def test_bullet_cone_twist_goal_apart():
+    """Which end of a SideFX Cone Twist is its goal, with the two anchors apart (the bottom of the fixed
+    piece and the top of the hanging one) so the joint has something to hold, which one point shared by
+    both ends did not give (bullet_cone_twist_goal). The hanging piece is not turned and then turned 45
+    degrees about z, spinning about y: distance and turn after 2 s in both solvers. INFO when Bullet's piece
+    fell freely, else distances within 0.15 and turns within 15 degrees."""
+    results = []
+    for label, rotate in (("not turned", (0.0, 0.0, 0.0)), ("turned 45 deg about z", (0.0, 0.0, 45.0))):
+        d = {kind: joint_run("cone_goal_apart", kind, "conetwistconrel", {}, rotate, APART, (0.0, 3.0, 0.0))
+             for kind in KINDS}
+        held = d["bullet"][0] < 10.0
+        ok = abs(d["box3d"][1] - d["bullet"][1]) < 15.0 and close(d["box3d"][0], d["bullet"][0], 0.15)
+        status = Result.INFO if not held else (Result.PASS if ok else Result.FAIL)
+        results.append(Result("bullet_cone_twist_goal_apart", status,
+                              f"Cone Twist between (0, 3.5, 0) and (0.5, 2.5, 0), hanging piece {label} and spinning "
+                              f"3 rad/s about y: Box3D distance {d['box3d'][0]:.3f}, turned {d['box3d'][1]:.0f} deg; "
+                              f"Bullet distance {d['bullet'][0]:.3f}, turned {d['bullet'][1]:.0f} deg"
+                              + ("" if held else " (Bullet's piece fell freely)")))
+    return results
+
+
+PRIMR_THROUGH_CASES = ((30, 0, 60), (30, 0, 0), (0, 0, 60), (30, 0, 30), (0, 0, 30), (0, 0, 45), (0, 30, 0),
+                       (0, 60, 0))
+
+
+def test_bullet_primr_through():
+    """Which bullet_primR makes Bullet's hand-set box fall through the ground (30 0 60 did in
+    bullet_primr_order): the same 0.6 x 0.1 x 0.3 box dropped on the ground with the angles on their own,
+    in pairs and in the failing mix. Reports the height each solver rests at and whether it fell through
+    (below -1). INFO: it narrows down what Bullet does, it is not a pass mark."""
+    rows = []
+    for prim_r in PRIMR_THROUGH_CASES:
+        got = {kind: primr_rest(kind, prim_r)[0] for kind in KINDS}
+        show = lambda y: "fell through" if y < -1.0 else f"y {y:.3f}"  # noqa: E731
+        rows.append(f"primR {prim_r}: Box3D {show(got['box3d'])}, Bullet {show(got['bullet'])}")
+    return [Result("bullet_primr_through", Result.INFO, "; ".join(rows))]
+
+
+PRIMT_PRIMR_CASES = (
+    # label, half extents, bullet_primT, bullet_primR
+    ("box 0.6 0.1 0.3, primT up 0.3, primR 0 0 90", (0.6, 0.1, 0.3), (0, 0.3, 0), (0, 0, 90)),
+    ("box 0.6 0.1 0.3, primT x 0.4, primR 0 0 90", (0.6, 0.1, 0.3), (0.4, 0, 0), (0, 0, 90)),
+    ("box 0.6 0.1 0.3, primT (0.2, 0.3, -0.2), primR 90 90 0", (0.6, 0.1, 0.3), (0.2, 0.3, -0.2), (90, 90, 0)),
+    ("box 0.5 0.25 0.5, primT down 0.2, primR 0 90 0", (0.5, 0.25, 0.5), (0, -0.2, 0), (0, 90, 0)),
+)
+
+
+def test_bullet_primt_primr():
+    """bullet_primT together with bullet_primR on a static hand-set box at the origin: the height of its
+    top (a plate dropped on it stops there), within 0.03 of Bullet's. The angles are multiples of 90
+    degrees so the top is a flat face; the offset is applied to the turned shape in both."""
+    results = []
+    for i, (label, half, prim_t, prim_r) in enumerate(PRIMT_PRIMR_CASES):
+        attrs = shape_attrs("box", half, 0.5, 1.0, prim_t, prim_r)
+        top = {kind: shape_top(f"primt_primr_{i}", kind, attrs) for kind in KINDS}
+        ok = close(top["box3d"], top["bullet"], 0.03)
+        results.append(Result("bullet_primt_primr", Result.PASS if ok else Result.FAIL,
+                              f"{label}: top {top['box3d']:.3f} above the piece's centre in Box3D, "
+                              f"{top['bullet']:.3f} in Bullet"))
+    return results
+
+
+def impact_track(kind, frames=90):
+    """first_impact's scene (a 1 kg box dropped on the ground, Impacts on) over `frames` frames: {frame: (the
+    simulation time, the records' time fields, the number of records)}."""
+    tag = f"impact_fresh_{kind}"
+    path, _ = packed_boxes(tag + "_piece", [{"size": (1, 1, 1), "center": (0, 1.5, 0)}])
+    dop = new_dopnet(tag)
+    obj = packed_object(dop, "piece", path, computemass=0, mass=1.0, bounce=0.0)
+    ground = ground_object(dop, tag + "_ground", bounce=0.0)
+    if kind == "box3d":
+        last = box3d_solver(dop, merge(dop, [ground, box3d_data(dop, obj, "data", addimpact=1)]))
+    else:
+        last = solver_for(kind, dop, merge(dop, [ground, obj]))
+        solver = next(n for n in dop.children() if n.type().name() == "bulletrbdsolver")
+        for node, name in impact_switches(obj, solver):
+            set_parm(node, [name], 1)
+    finish(dop, last)
+
+    def sample(sim, f):
+        records = impact_records(sim, "piece")
+        times = [v for r in records for n, v in r.items() if "time" in n.lower() and isinstance(v, (int, float))]
+        return sim.time(), times, len(records)
+
+    return step(dop, frames, sample)
+
+
+def test_bullet_impact_fresh():
+    """Impacts data is fresh each step, which is how SIM_Impacts is meant to be used: a box dropped on the
+    ground and left to rest for 3 s. Box3D's records on a frame must not be older than two frames (their
+    time field, when they have one), and it must record on the landing frame. Bullet's record count per
+    frame and the frames it records on are INFO beside it (Bullet needs its Impacts toggle found by name,
+    see bullet_impact_normal)."""
+    track = {kind: impact_track(kind) for kind in KINDS}
+    frames = {kind: [f for f in sorted(t) if t[f][2]] for kind, t in track.items()}
+    stale = [f for f, (now, times, _) in track["box3d"].items() if any(now - x > 2.0 / hou.fps() + 1e-6 for x in times)]
+    has_time = any(t[1] for t in track["box3d"].values())
+    ok = bool(frames["box3d"]) and not stale
+    lines = []
+    for kind in KINDS:
+        most = max((t[2] for t in track[kind].values()), default=0)
+        lines.append(f"{kind}: records on {len(frames[kind])} of {len(track[kind])} frames, first {frames[kind][:1]}, "
+                     f"at most {most} per frame")
+    return [Result("bullet_impact_fresh", Result.PASS if ok else Result.FAIL,
+                   "; ".join(lines) + (f"; Box3D records older than 2 frames on frames {stale}" if stale else "")
+                   + ("" if has_time else "; Box3D records have no time field, so their age was not checked"))]
+
+
+def test_bullet_rbd_pivot_far():
+    """The RBD Object pivot (`p`) for shapes away from the origin, where the 0.03 gap to Bullet shows or
+    not: the L of bullet_rbd_pivot moved 5 along x, and a T (a 3 x 1 x 1 bar with a 1 x 2 x 1 box centred
+    under it), both with Compute Center of Mass on. Passes when Box3D's `p` is within 0.06 of Bullet's
+    in every component, as it is taken straight from the state (not relative to the object)."""
+    cases = [
+        ("L moved 5 in x", pivot_boxes([((3.0, 1.0, 1.0), (5.0, 0.0, 0.0)), ((1.0, 2.0, 1.0), (6.0, 1.5, 0.0))])),
+        ("T", pivot_boxes([((3.0, 1.0, 1.0), (0.0, 0.0, 0.0)), ((1.0, 2.0, 1.0), (0.0, -1.5, 0.0))])),
+    ]
+    fmt = lambda v: "n/a" if v is None else "(" + ", ".join(f"{c:.3f}" for c in v) + ")"  # noqa: E731
+    results = []
+    for label, path in cases:
+        got = {}
+        for kind in KINDS:
+            tag = f"rbd_pivot_far_{label.split()[0]}_{kind}"
+            dop = new_dopnet(tag)
+            obj = rbd_object(dop, "obj", path)
+            ground = ground_object(dop, tag + "_ground")
+            finish(dop, solver_for(kind, dop, merge(dop, [ground, obj])))
+            got[kind] = step(dop, 3, lambda sim, f: rbd_state_pivot(sim))[3]
+        ok = (got["bullet"] is not None and got["box3d"] is not None
+              and max(abs(a - b) for a, b in zip(got["bullet"], got["box3d"])) < 0.06)
+        results.append(Result("bullet_rbd_pivot_far", Result.PASS if ok else Result.FAIL,
+                              f"{label}: p Bullet {fmt(got['bullet'])}, Box3D {fmt(got['box3d'])}"))
+    return results
+
+
 TESTS = {
+    "bullet_rest_rescan": test_bullet_rest_rescan,
+    "bullet_joint_angle": test_bullet_joint_angle,
+    "bullet_cone_twist_goal_apart": test_bullet_cone_twist_goal_apart,
+    "bullet_primr_through": test_bullet_primr_through,
+    "bullet_primt_primr": test_bullet_primt_primr,
+    "bullet_impact_fresh": test_bullet_impact_fresh,
+    "bullet_rbd_pivot_far": test_bullet_rbd_pivot_far,
     "bullet_rest_convention": test_bullet_rest_convention,
     "bullet_shape_attributes": test_bullet_shape_attributes,
     "bullet_shape_position": test_bullet_shape_position,

@@ -36,7 +36,7 @@ pointer to its object's record (`sync`), valid because records are erased only a
 ## Solver step (`solveObjectsSubclass`)
 
 **Two step counts.** *Substeps* (`substeps`) splits the DOP step into whole Box3D steps, each with its
-own `b3Collide` (contact detection), so collisions are found `fps * Substeps` times a second. *Solver Passes*
+own `b3Collide` (contact detection), so collisions are found `fps * Substeps` times a second. *Constraint Iterations*
 (`solverpasses`) is Box3D's own
 `subStepCount`: each pass is a smaller time step for the contact / joint solve, not another iteration at the same
 positions (Box3D runs one solve and one relax per pass). Not to be confused with `restitutionIterations`. Kinematic
@@ -57,7 +57,7 @@ stepDt = dt * timescale; world.applyTuning(currentWorldSettings())   (stepDt sta
 syncFromGeometry   per object syncObject(); syncAffectorBodies (Static Objects); remove gone bodies; syncJoints;
                    pruneHulls; warnings
 world.step         n = Substeps (`substeps`, 1..64; 1 when stepDt is 0). Each of the n steps: applyExternalForces (Box3D clears
-                   forces every step), b3World_Step(stepDt / n, subSteps = Solver Passes), then its move events are merged
+                   forces every step), b3World_Step(stepDt / n, subSteps = Constraint Iterations), then its move events are merged
                    into st.moves by body (Box3D clears them every step; the last event wins, so fell-asleep survives).
                    applyExternalForces (Use Force DOPs): SIM_Force data per object -> getForce at each dynamic body's
                    centre of mass, plus point force / torque -> applyForceByHandle

@@ -133,9 +133,9 @@ def test_ui():
     expect("Solver Reap At Frame End default (on, as POP)",
            solver.parm("reapatframeend").parmTemplate().defaultValue(), True)
     t = solver.parm("solverpasses").parmTemplate()
-    expect("Solver Passes (parm solverpasses) label", t.label(), "Solver Passes")
-    expect("Solver Passes default", t.defaultValue()[0], 4)
-    expect("Solver Passes slider 1..100 (hard minimum only)",
+    expect("Constraint Iterations (parm solverpasses) label", t.label(), "Constraint Iterations")
+    expect("Constraint Iterations default", t.defaultValue()[0], 4)
+    expect("Constraint Iterations slider 1..100 (hard minimum only)",
            (t.minValue(), t.minIsStrict(), t.maxValue(), t.maxIsStrict()), (1, True, 100, False))
     t = solver.parm("substeps").parmTemplate()
     expect("Solver Substeps (parm substeps) label", t.label(), "Substeps")

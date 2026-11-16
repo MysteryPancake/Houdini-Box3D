@@ -8,7 +8,7 @@ Defaults, ranges and menus are defined once, in the `Box3DParms` tables: the sol
 Box3D Data's in `src/dop/SIM_Box3DData.cpp`. Look values up there; do not copy them into docs. The worker-count bounds
 are `b3dop::kDefaultWorkerCount` / `kMaxWorkerCount` (`Box3DWorld.h`).
 
-Solver (read every step; only the thread count rebuilds the world): `gravity`, `substeps` (Substeps), `solverpasses` (Solver Passes), `autothreads`, `threads`
+Solver (read every step; only the thread count rebuilds the world): `gravity`, `substeps` (Substeps), `solverpasses` (Constraint Iterations), `autothreads`, `threads`
 (default `b3dop::defaultWorkerCount()` in `Box3DCpu.h`: the machine's physical performance cores, as Box3D recommends;
 `WorldSettings` keeps `kDefaultWorkerCount`), `enablesleep`, `timescale`, `enableaging`, `reapdead`, `reapatframeend` (disabled while `reapdead` is off), and Box3D's tuning
 (Box3D's defaults except the contact stiffness and damping, tuned for bouncier, more rigid contacts): `contactstiffness`, `contactdamping`, `contactpushspeed`, `bouncethreshold`,
@@ -77,7 +77,7 @@ optional disable condition). It keeps the names, defaults, ranges, menus and con
 `tab()` groups share one `PRM_SWITCHER` (`PRM_Default(count, label)` per tab, switcher `b3dtabs`); `folder()` groups
 are simple folders, each a one-folder switcher with `PRM_SpareData::groupTypeSimple` named `<prefix><index>`. A builder
 uses one kind, except `subfolder()`: a simple folder inside a tab (`<prefix>sub<index>`), counted as one parameter of
-the tab. The solver uses tabs by subject: Solver (time scale, Substeps, Solver Passes, Allow Sleeping), Collision (simple
+the tab. The solver uses tabs by subject: Solver (time scale, Substeps, Constraint Iterations, Allow Sleeping; the SOP labels Substeps "Box3D Substeps" and adds Global Substeps above it, driving the DOP network's own Substeps), Collision (simple
 folders Contacts: contact tuning, recycling; Bounce / Friction: bounce settings, friction / bounce mixing),
 Forces (gravity, Use Force DOPs, Forces Wake Bodies), Aging (Enable Aging, Reap Dead Points, Reap At Frame End),
 Output (Export Collision Shapes, Impact Min Speed), Advanced (Warm Starting,

@@ -861,6 +861,19 @@ def _unpacked_geometry(name, kind):
     'mixed' (a packed box at x = -2 and an unpacked one at x = 2, both at y = 3) or 'points' (two
     loose points at y = 3). Returns its SOP path."""
     geo = new_geo(name)
+    if kind == "packedpoints":  # a packed box at x = -2 and two loose points at y = 3
+        pack = create(geo, "pack", "pack")
+        box = create(geo, "box", "box_packed")
+        xf = create(geo, "xform", "place_packed")
+        xf.setInput(0, box)
+        set_parm(xf, ["t"], (-2.0, 3.0, 0.0))
+        pack.setInput(0, xf)
+        wr = create(geo, "attribwrangle", "points")
+        wr.setInput(0, pack)
+        set_parm(wr, ["class"], 0)  # detail
+        set_parm(wr, ["snippet"], "addpoint(0, {1, 3, 0}); addpoint(0, {3, 3, 0});")
+        display(wr)
+        return wr.path()
     if kind == "points":
         wr = create(geo, "attribwrangle", "points")
         set_parm(wr, ["class"], 0)  # detail
@@ -978,6 +991,34 @@ def test_unpacked_geometry_bullet():
     return [Result("unpacked_geometry_bullet", Result.INFO, "; ".join(rows))]
 
 
+def test_unpacked_geometry_match():
+    """The same four inputs as unpacked_geometry (polygons only, packed + polygons, loose points, packed +
+    loose points) through Box3D and RBD Bullet Solver, compared: for polygons only and packed + polygons the two
+    agree on what falls (the packed points, the other points, the valid box) and on whether the
+    unsupported-geometry message appears. Loose points are INFO: Box3D simulates them and Bullet is documented
+    not to (status.md)."""
+    results = []
+    for kind in ("polygons", "mixed", "points", "packedpoints"):
+        runs = {name: _unpacked_run(f"match_{name}_{kind}", kind, bullet=(name == "bullet"))
+                for name in ("box3d", "bullet")}
+
+        def summary(run):
+            y1, y25, good_y, msgs = run
+            if y25 is None:
+                return None
+            fell = {key: y < 0.0 for key, y in y25.items()}
+            return fell, good_y is not None and good_y < 0.0, any(UNSUPPORTED in m for m in msgs)
+
+        got = {name: summary(run) for name, run in runs.items()}
+        same = got["box3d"] is not None and got["box3d"] == got["bullet"]
+        status = Result.INFO if kind in ("points", "packedpoints") else (Result.PASS if same else Result.FAIL)
+        results.append(Result("unpacked_geometry_match", status,
+                              f"{kind}: (what fell, valid box fell, unsupported-geometry message) Box3D {got['box3d']}, "
+                              f"Bullet {got['bullet']}; messages Box3D {runs['box3d'][3] or 'none'}, Bullet "
+                              f"{runs['bullet'][3] or 'none'}"))
+    return results
+
+
 def _point_object_run(tag, bullet):
     """Drops four points (a 2 x 2 grid at y = 3) with an RBD Point Object, each instancing a unit
     box, for 1 s, with the Box3D Solver (bullet: RBD Bullet Solver). Returns (lowest y of each
@@ -1062,6 +1103,7 @@ TESTS = {
     "box3d_packed_object": test_box3d_packed_object,
     "unpacked_geometry": test_unpacked_geometry,
     "unpacked_geometry_bullet": test_unpacked_geometry_bullet,
+    "unpacked_geometry_match": test_unpacked_geometry_match,
     "point_object_bullet": test_point_object_bullet,
     "collision_masks": test_collision_masks,
     "offset_pivot": test_offset_pivot,

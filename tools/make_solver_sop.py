@@ -148,6 +148,11 @@ from b3d_solver_network import (  # noqa: E402
 )
 
 
+# Global Substeps: the DOP network's own Substeps (`substep`).
+GLOBAL_SUBSTEPS = "globalsubsteps"
+DOP_SUBSTEPS = "substep"
+
+
 def edit_dialog_script(definition):
     """Input / output labels, in the DialogScript (hou has no setter for them)."""
     section = definition.sections().get("DialogScript")
@@ -280,11 +285,19 @@ def build(out_path, packed_hda=None):
              "much smaller or larger than about 1 unit.")
     world_scale.setConditional(hou.parmCondType.DisableWhen, f"{{ {WORLD_SCALE_TOGGLE} == 0 }}")
 
+    # Slider 1 to 10, no upper limit when typed. Above Box3D Substeps on the Solver tab.
+    global_substeps = hou.IntParmTemplate(
+        GLOBAL_SUBSTEPS, "Global Substeps", 1, default_value=(1,), min=1, max=10, min_is_strict=True,
+        max_is_strict=False,
+        help="Splits each time step into this many smaller ones. Raise it for fast or fine motion.")
+    links.append((sub.relativePathTo(dopnet), DOP_SUBSTEPS, GLOBAL_SUBSTEPS))
+
     solver_tabs = solver_folders(without_parmops(solver.parmTemplateGroup().entries()))
     if not solver_tabs:
         warn(f"no parameter folders found on {solver.path()}: the solver's parameters are not promoted")
     taken = {pt.name() for pt in top + solver_first + cache_items} | {USE_COLLISIONS, COLLISION_TYPE,
-                                                       WORLD_SCALE_TOGGLE, WORLD_SCALE}
+                                                       WORLD_SCALE_TOGGLE, WORLD_SCALE,
+                                                       GLOBAL_SUBSTEPS}
     for tab in solver_tabs:
         for pt in value_templates(tab.parmTemplates()):
             links.append((sub.relativePathTo(solver), pt.name(), pt.name()))
@@ -405,7 +418,12 @@ def build(out_path, packed_hda=None):
     by_label["Advanced"] = cache_items + by_label.get("Advanced", [])
     advanced_groups = [(glabel, names + [pt.name() for pt in cache_items] if glabel == "Performance" else names)
                        for glabel, names in TAB_GROUPS["Advanced"]]
-    ordered = [("Solver", [use_scale, world_scale] + by_label.pop("Solver", []) + solver_extra),
+    solver_items = by_label.pop("Solver", [])
+    at = next((i for i, pt in enumerate(solver_items) if pt.name() == "substeps"), len(solver_items))
+    if at < len(solver_items):
+        solver_items[at].setLabel("Box3D Substeps")  # the DOP's Substeps, told apart from Global Substeps
+    solver_items.insert(at, global_substeps)
+    ordered = [("Solver", [use_scale, world_scale] + solver_items + solver_extra),
                ("Pieces", None),  # filled below
                ("Collision", collision_items)]
     if constraint_folders:
@@ -643,7 +661,8 @@ def check(out_path):
                                           ("weld_torque_threshold", "dopnet/weld", "torque_threshold"),
                                           ("collision_friction", "dopnet/collision_static_data", "friction"),
                                           ("collision_bounce", "dopnet/collision_static_data", "bounce"),
-                                          ("substeps", "dopnet/box3d_solver", "substeps")):
+                                          ("substeps", "dopnet/box3d_solver", "substeps"),
+                                          (GLOBAL_SUBSTEPS, "dopnet", DOP_SUBSTEPS)):
         p, inner = probe.parm(outer), probe.node(inner_path)
         q = inner.parm(inner_name) if inner is not None else None
         if p is None or q is None:

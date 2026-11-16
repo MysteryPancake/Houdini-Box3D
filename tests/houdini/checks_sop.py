@@ -16,6 +16,7 @@ from b3dtest import (
     new_geo,
     packed_boxes,
     set_parm,
+    set_parm_by_label,
 )
 
 
@@ -899,6 +900,163 @@ def test_solver_sop_keep_broken():
     return results
 
 
+def bullet_sop(name, geometry=None, constraints=None, proxy=None, collision=None):
+    """solver_sop's scene with the RBD Bullet Solver SOP (rbdbulletsolver) in place of ours: same inputs,
+    same order. SetupError if the node does not exist."""
+    geo = new_geo(name)
+    solver = create(geo, "rbdbulletsolver", "rbdbulletsolver")
+    for i, path in enumerate((geometry, constraints, proxy, collision)):
+        if path is None:
+            continue
+        merge = create(geo, "object_merge", f"input{i}")
+        set_parm(merge, ["objpath1"], path)
+        solver.setInput(i, merge)
+    display(solver)
+    return solver
+
+
+def _both_sops(name, **inputs):
+    """{"box3d": our Solver SOP, "bullet": RBD Bullet Solver SOP} on the same inputs."""
+    return {"box3d": solver_sop(f"{name}_box3d", **inputs), "bullet": bullet_sop(f"{name}_bullet", **inputs)}
+
+
+def _counts(sop):
+    """(points, primitives) of each of the SOP's four outputs: None for an output it does not have."""
+    out = []
+    for i in range(4):
+        try:
+            geo = sop.geometry(i)
+        except hou.Error:
+            geo = None
+        out.append((len(geo.points()), len(geo.prims())) if geo is not None else None)
+    return out
+
+
+def test_solver_sop_before_start_bullet():
+    """Before the Start Frame, against the RBD Bullet Solver SOP: the same pieces, a constraint line and a
+    collision ground, Start Frame 6. On frame 3 the box is still at its input height in both, and every
+    output (geometry, constraints, proxy, simulation points) has the same number of points and
+    primitives (not the proxy output, which Box3D fills from the geometry and Bullet leaves empty with no proxy
+    input); on frame 12 both have dropped it."""
+    pieces, names = packed_boxes("sop_before_b_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0), "attrs": {"active": 1}},
+                                                         {"size": (1, 1, 1), "center": (0, 4, 0), "attrs": {"active": 1}}])
+    ground, _ = packed_boxes("sop_before_b_ground", [GROUND])
+    lines = constraint_lines("sop_before_b_network", [(names[0], (0, 3.5, 0), names[1], (0, 3.5, 0), "Glue")])
+    sops = _both_sops("sop_before_b", geometry=pieces, constraints=lines, collision=ground)
+    got = {}
+    for kind, sop in sops.items():
+        if kind == "box3d":
+            set_parm(sop, ["startframe"], 6)
+        else:
+            set_parm_by_label(sop, "start frame", 6)
+        track = play(sop, 12, lambda s, f: (named_positions(s.geometry(0)).get(names[0]), _counts(s))
+                     if f in (3, 12) else None)
+        got[kind] = track
+    early = {k: got[k][3][0] for k in got}
+    late = {k: got[k][12][0] for k in got}
+    # The proxy output (index 2) is left out: with no proxy input Box3D passes the geometry through it and
+    # Bullet gives nothing.
+    keep = (0, 1, 3)
+    same_counts = all(got["box3d"][3][1][i] == got["bullet"][3][1][i] for i in keep)
+    ok = (all(e is not None and close(e[1], 3.0, 1e-4) for e in early.values())
+          and all(l is not None and l[1] < 2.9 for l in late.values()) and same_counts)
+    return [Result("solver_sop_before_start_bullet", Result.PASS if ok else Result.FAIL,
+                   f"frame 3 (before Start Frame 6): box y {[early[k][1] if early[k] else None for k in got]}, "
+                   f"output (points, prims) Box3D {got['box3d'][3][1]}, Bullet {got['bullet'][3][1]} (the proxy, third, is "
+                   f"not compared); frame 12 box y "
+                   f"{[late[k][1] if late[k] else None for k in got]} (kinds: {list(got)})")]
+
+
+def test_solver_sop_solve_first_frame_bullet():
+    """Solve on Creation Frame, against the RBD Bullet Solver SOP, off and on: a free-falling box must be at the
+    same height in both on frames 1 to 3 (within 0.05). A box resting on a box that the Collision input lifts
+    0.5 a frame (Collision Type Animated) is INFO beside it: Bullet's stayed at its start, so either its
+    collider did not move or the option does not mean the same. Box3D's box clipping into the collider is a known
+    Box3D bug, so the case is not a pass mark."""
+    pieces, names = packed_boxes("sop_first_b_pieces", [
+        {"size": (1, 1, 1), "center": (0, 1.0, 0), "attrs": {"active": 1}},
+        {"size": (1, 1, 1), "center": (5, 6.0, 0), "attrs": {"active": 1}}])
+    geo = new_geo("sop_first_b_lift")
+    lift = create(geo, "box", "lift")
+    set_parm(lift, ["size"], (3.0, 1.0, 3.0))
+    move = create(geo, "xform", "move")
+    move.setInput(0, lift)
+    move.parm("ty").setExpression("($F - 1) * 0.5", hou.exprLanguage.Hscript)
+    display(move)
+    results = []
+    for on in (0, 1):
+        sops = _both_sops(f"sop_first_b_{on}", geometry=pieces, collision=move.path())
+        set_parm(sops["box3d"], ["collisiontype"], 1)
+        set_parm(sops["bullet"], ["collision_initialstate"], 1)
+        set_parm(sops["box3d"], ["solvefirstframe"], on)
+        set_parm_by_label(sops["bullet"], "creation frame", on)
+        ys = {kind: play(sop, 3, lambda s, f: named_positions(s.geometry(0))) for kind, sop in sops.items()}
+        for label, name, status in (("free-falling box", names[1], None), ("box on the lifted collider", names[0], Result.INFO)):
+            ok = all(name in ys[k][f] for k in ys for f in (1, 2, 3)) and                 all(close(ys["box3d"][f][name][1], ys["bullet"][f][name][1], 0.05) for f in (1, 2, 3))
+            show = lambda k: [round(ys[k][f][name][1], 3) if name in ys[k][f] else None for f in (1, 2, 3)]  # noqa: E731
+            results.append(Result("solver_sop_solve_first_frame_bullet",
+                                  status or (Result.PASS if ok else Result.FAIL),
+                                  f"Solve on Creation Frame {on}, {label}: y on frames 1 to 3, Box3D {show('box3d')}, "
+                                  f"Bullet {show('bullet')}"))
+    return results
+
+
+def test_solver_sop_keep_broken_bullet():
+    """Export Broken Constraints, against the RBD Bullet Solver SOP, on the scene of solver_sop_keep_broken (a
+    glued pair dropped on the ground, Glue far too weak to hold the landing): with it off and on, the number of
+    constraint primitives and of those in the `broken` group on frame 12 are the same in both."""
+    pieces, names = packed_boxes("sop_broken_b_pieces", [{"size": (1, 1, 1), "center": (0, 2, 0), "attrs": {"active": 1}},
+                                                         {"size": (1, 1, 1), "center": (0, 1, 0), "attrs": {"active": 1}}])
+    ground, _ = packed_boxes("sop_broken_b_ground", [GROUND])
+    lines = constraint_lines("sop_broken_b_network",
+                             [(names[0], (0, 1.5, 0), names[1], (0, 1.5, 0), "Glue", {"strength": 1e-6})])
+    results = []
+    for keep in (0, 1):
+        sops = _both_sops(f"sop_keep_broken_b{keep}", geometry=pieces, constraints=lines, collision=ground)
+        set_parm(sops["box3d"], ["constraint_keepbroken"], keep)
+        set_parm_by_label(sops["bullet"], "export broken", keep)
+
+        def sample(s, f):
+            if f != 12:
+                return None
+            con = s.geometry(1)
+            grp = con.findPrimGroup("broken")
+            return len(con.prims()), len(grp.prims()) if grp else 0
+
+        got = {kind: play(sop, 12, sample)[12] for kind, sop in sops.items()}
+        results.append(Result("solver_sop_keep_broken_bullet", Result.PASS if got["box3d"] == got["bullet"] else Result.FAIL,
+                              f"Export Broken Constraints {keep}: (constraints, broken) on frame 12 Box3D "
+                              f"{got['box3d']}, Bullet {got['bullet']}"))
+    return results
+
+
+def test_solver_sop_global_substeps():
+    """Global Substeps on the Solver tab, just above Box3D Substeps: a slider from 1 with no upper limit, default 1,
+    and it sets the Substeps of the DOP network inside. Two global substeps give nearly the same height after
+    0.5 s as one (within 0.05), and values above 10 can be set."""
+    sop = solver_sop("sop_global_substeps")
+    names = [pt.name() for pt in sop.parmTemplateGroup().entriesWithoutFolders()]
+    pt = sop.parmTemplateGroup().find("globalsubsteps")
+    at = names.index("globalsubsteps") if "globalsubsteps" in names else -1
+    placed = at >= 0 and names[at + 1] == "substeps" and sop.parm("substeps").parmTemplate().label() == "Box3D Substeps"
+    rng = pt is not None and (pt.minValue(), pt.maxValue(), pt.minIsStrict(), pt.maxIsStrict(), pt.defaultValue()) ==         (1, 10, True, False, (1,))
+    sop.parm("globalsubsteps").set(14)
+    linked = sop.node("dopnet").parm("substep").eval() == 14
+    sop.parm("globalsubsteps").set(1)
+    pieces, pnames = packed_boxes("sop_global_pieces", [{"size": (1, 1, 1), "center": (0, 6, 0)}])
+    ys = {}
+    for n in (1, 2):
+        run = solver_sop(f"sop_global_run{n}", geometry=pieces)
+        set_parm(run, ["globalsubsteps"], n)
+        pos = play(run, 12, lambda s, f: named_positions(s.geometry(0)).get(pnames[0]) if f == 12 else None)[12]
+        ys[n] = pos[1] if pos else None
+    ok = placed and rng and linked and ys[1] is not None and ys[2] is not None and close(ys[1], ys[2], 0.05)
+    return [Result("solver_sop_global_substeps", Result.PASS if ok else Result.FAIL,
+                   f"just above Box3D Substeps: {placed}; range 1 to 10, only the minimum strict, default 1: {rng}; sets "
+                   f"the DOP network's Substeps (14 here): {linked}; height after 0.5 s with 1 / 2: "
+                   f"{ys[1]} / {ys[2]}")]
+
+
 def _folders(entries, path=()):
     """(path of labels, folder template) for every folder under `entries`, depth first."""
     out = []
@@ -1192,6 +1350,10 @@ def test_configure_pin():
 TESTS = {
     "solver_sop_collision": test_solver_sop_collision,
     "solver_sop_pieces": test_solver_sop_pieces,
+    "solver_sop_global_substeps": test_solver_sop_global_substeps,
+    "solver_sop_before_start_bullet": test_solver_sop_before_start_bullet,
+    "solver_sop_solve_first_frame_bullet": test_solver_sop_solve_first_frame_bullet,
+    "solver_sop_keep_broken_bullet": test_solver_sop_keep_broken_bullet,
     "solver_sop_before_start": test_solver_sop_before_start,
     "solver_sop_solve_first_frame": test_solver_sop_solve_first_frame,
     "solver_sop_keep_broken": test_solver_sop_keep_broken,
