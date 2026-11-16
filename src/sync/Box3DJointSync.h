@@ -41,7 +41,8 @@ struct Box3DJointCounts {
   int unresolved = 0;   // an anchor name that matches no body
   int badAnchorId = 0;  // an anchor_id that is no point / vertex of its object
   int agentAnchors = 0; // anchor_type agent (not simulated here)
-  int notLines = 0;     // primitives that are not two-point lines
+  int anchorNoGeometry = 0; // anchor_id on a body whose geometry was not read
+  int notLines = 0;         // primitives that are not two-point lines
   int failed =
       0; // Box3D refused (both ends the world, the same body twice, ...)
 };

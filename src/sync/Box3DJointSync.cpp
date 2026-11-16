@@ -9,6 +9,9 @@
 #include <GA/GA_Iterator.h>
 #include <GA/GA_Primitive.h>
 #include <GU/GU_Detail.h>
+#include <GU/GU_DetailHandle.h>
+#include <GU/GU_PackedFragment.h>
+#include <GU/GU_PrimPacked.h>
 #include <SIM/SIM_ConstraintNetworkRelationship.h>
 #include <SIM/SIM_Geometry.h>
 #include <SIM/SIM_GeometryCopy.h>
@@ -236,13 +239,28 @@ uint64_t networkFingerprint(const GU_Detail *gdp) {
 struct AnchorBody {
   b3dop::BodyHandle handle = 0;
   const Box3DBodyMirror *entry = nullptr;
-  // The DOP object of a whole-object body (an anchor_id names a point of its
-  // geometry), else null.
+  // The DOP object of a body in a solved object (an anchor_id names a point of
+  // a whole object's geometry, or of a packed piece's own), else null.
   const SIM_Object *object = nullptr;
 };
 
 // An anchor's anchor_type.
 enum class AnchorKind { Point, Vertex, Agent };
+
+// Point `id` of `gdp`, or the point of its vertex `id`. Invalid if there is no
+// such one.
+GA_Offset anchorPointOf(const GU_Detail &gdp, int id, bool vertex) {
+  if (id < 0)
+    return GA_INVALID_OFFSET;
+  if (vertex) {
+    if (static_cast<GA_Size>(id) >= gdp.getNumVertices())
+      return GA_INVALID_OFFSET;
+    return gdp.vertexPoint(gdp.vertexOffset(static_cast<GA_Index>(id)));
+  }
+  if (static_cast<GA_Size>(id) >= gdp.getNumPoints())
+    return GA_INVALID_OFFSET;
+  return gdp.pointOffset(static_cast<GA_Index>(id));
+}
 
 // World position of point (or vertex) `id` of the object's geometry through its
 // geometry transform. False if the object has no geometry or no such point.
@@ -255,16 +273,7 @@ bool pointAnchorWorld(const SIM_Object &obj, int id, bool vertex,
   const GU_Detail *gdp = lock.getGdp();
   if (!gdp)
     return false;
-  GA_Offset pt = GA_INVALID_OFFSET;
-  if (vertex) {
-    if (static_cast<GA_Size>(id) >= gdp->getNumVertices())
-      return false;
-    pt = gdp->vertexPoint(gdp->vertexOffset(static_cast<GA_Index>(id)));
-  } else {
-    if (static_cast<GA_Size>(id) >= gdp->getNumPoints())
-      return false;
-    pt = gdp->pointOffset(static_cast<GA_Index>(id));
-  }
+  const GA_Offset pt = anchorPointOf(*gdp, id, vertex);
   if (!GAisValid(pt))
     return false;
   UT_DMatrix4 xf;
@@ -278,6 +287,95 @@ bool pointAnchorWorld(const SIM_Object &obj, int id, bool vertex,
     out[k] = w[k];
   }
   return true;
+}
+
+// Why an anchor_id found no point.
+enum class AnchorLookup { Ok, NoPoint, NoGeometry };
+
+// Point `id` (or vertex `id`'s point) among the points of a packed fragment's
+// own primitives in the shared source geometry: its points in source order, its
+// vertices in primitive order, as the fragment on its own would number them
+// (Bullet: `bullet_anchor_id`). Invalid if there is no such one.
+GA_Offset fragmentAnchorPoint(const GU_Detail &src, const GA_Range &prims,
+                              int id, bool vertex) {
+  if (id < 0)
+    return GA_INVALID_OFFSET;
+  std::vector<GA_Offset> points;
+  GA_Size vertexNumber = 0;
+  for (GA_Iterator it(prims); !it.atEnd(); ++it) {
+    const GA_Primitive *prim = src.getPrimitive(*it);
+    if (!prim)
+      continue;
+    for (GA_Size i = 0; i < prim->getVertexCount(); ++i) {
+      const GA_Offset pt = prim->getPointOffset(i);
+      if (vertex && vertexNumber++ == static_cast<GA_Size>(id))
+        return pt;
+      points.push_back(pt);
+    }
+  }
+  if (vertex)
+    return GA_INVALID_OFFSET;
+  std::sort(points.begin(), points.end());
+  points.erase(std::unique(points.begin(), points.end()), points.end());
+  return static_cast<size_t>(id) < points.size()
+             ? points[static_cast<size_t>(id)]
+             : GA_INVALID_OFFSET;
+}
+
+// World position of point (or vertex) `id` of a packed piece's own geometry (a
+// fragment's own primitives of the shared source), now: the packed point's
+// position plus the geometry point from the pivot through the piece's matrix.
+// `pointOff` is the piece's point in the object's geometry.
+AnchorLookup packedAnchorWorld(const SIM_Object &obj, int64_t pointOff, int id,
+                               bool vertex, double out[3]) {
+  const SIM_Geometry *geo = obj.getGeometry();
+  if (!geo || pointOff < 0)
+    return AnchorLookup::NoGeometry;
+  SIM_GeometryAutoReadLock lock(geo);
+  const GU_Detail *gdp = lock.getGdp();
+  if (!gdp)
+    return AnchorLookup::NoGeometry;
+  const GA_Offset ppt = GA_Offset(pointOff);
+  const GA_Offset vtx = gdp->pointVertex(ppt);
+  if (!GAisValid(vtx))
+    return AnchorLookup::NoGeometry;
+  const GA_Offset po = gdp->vertexPrimitive(vtx);
+  const GA_Primitive *prim = GAisValid(po) ? gdp->getPrimitive(po) : nullptr;
+  if (!prim || !GU_PrimPacked::isPackedPrimitive(*prim))
+    return AnchorLookup::NoGeometry;
+  const GU_PrimPacked &packed = static_cast<const GU_PrimPacked &>(*prim);
+
+  const GU_PackedFragment *frag =
+      dynamic_cast<const GU_PackedFragment *>(packed.sharedImplementation());
+  GU_DetailHandleAutoReadLock inner(frag ? frag->detailPtr()
+                                         : packed.getPackedDetail());
+  const GU_Detail *igdp = inner.getGdp();
+  if (!igdp)
+    return AnchorLookup::NoGeometry;
+  const GA_Offset ipt =
+      frag ? fragmentAnchorPoint(*igdp, frag->getPrimitiveRange(), id, vertex)
+           : anchorPointOf(*igdp, id, vertex);
+  if (!GAisValid(ipt))
+    return AnchorLookup::NoPoint;
+
+  UT_Matrix4D xf;
+  packed.getFullTransform4(xf);
+  UT_Vector3 pv(0, 0, 0);
+  packed.getPivot(pv);
+  const UT_Vector3 p = igdp->getPos3(ipt);
+  const UT_Vector3 at = gdp->getPos3(ppt);
+  // (p - pivot) * M3: scale and turn about the pivot; the packed point is
+  // where the pivot is.
+  const UT_Vector3D rel(static_cast<double>(p.x()) - pv.x(),
+                        static_cast<double>(p.y()) - pv.y(),
+                        static_cast<double>(p.z()) - pv.z());
+  for (int k = 0; k < 3; ++k) {
+    out[k] = static_cast<double>(at[k]) + rel.x() * xf(0, k) +
+             rel.y() * xf(1, k) + rel.z() * xf(2, k);
+    if (!std::isfinite(out[k]))
+      return AnchorLookup::NoGeometry;
+  }
+  return AnchorLookup::Ok;
 }
 
 // Anchor names -> bodies, over the objects of this solve (in their order) and
@@ -330,19 +428,28 @@ public:
 private:
   using HandleTable = std::unordered_map<std::string, AnchorBody>;
 
-  static AnchorBody bodyOf(const Box3DBodyMirror *e) {
+  // `object`: the DOP object the body is in (an anchor_id names a point of its
+  // geometry).
+  static AnchorBody bodyOf(const Box3DBodyMirror *e, const SIM_Object *object) {
     AnchorBody b;
     b.handle = e->handle;
     b.entry = e;
+    b.object = object;
     return b;
   }
 
-  static bool findIn(const Box3DObjectSync &os, const std::string &piece,
+  struct ObjectRef {
+    std::string name;
+    const Box3DObjectSync *sync;
+    const SIM_Object *object;
+  };
+
+  static bool findIn(const ObjectRef &o, const std::string &piece,
                      AnchorBody &out) {
-    const auto it = os.byName.find(piece);
-    if (it == os.byName.end() || !it->second->handle)
+    const auto it = o.sync->byName.find(piece);
+    if (it == o.sync->byName.end() || !it->second->handle)
       return false;
-    out = bodyOf(it->second);
+    out = bodyOf(it->second, o.object);
     return true;
   }
 
@@ -353,17 +460,12 @@ private:
       return;
     myBuilt = true;
     for (const auto &o : myObjects) {
-      myObjectByName.try_emplace(o.name, o.sync);
+      myObjectByName.try_emplace(o.name, &o);
       for (const auto &p : o.sync->byName)
         if (p.second->handle)
-          myPiece.try_emplace(p.first, bodyOf(p.second));
-      if (o.sync->bodies.size() == 1 && o.sync->bodies[0]->handle) {
-        AnchorBody b = bodyOf(o.sync->bodies[0]);
-        // A whole object's points are its geometry's: anchor_id can name one.
-        if (b.entry->wholeObject)
-          b.object = o.object;
-        mySingleBody.try_emplace(o.name, b);
-      }
+          myPiece.try_emplace(p.first, bodyOf(p.second, o.object));
+      if (o.sync->bodies.size() == 1 && o.sync->bodies[0]->handle)
+        mySingleBody.try_emplace(o.name, bodyOf(o.sync->bodies[0], o.object));
     }
     for (const auto &kv : myState.affectors)
       if (kv.second.handle) {
@@ -374,16 +476,10 @@ private:
   }
 
   const Box3DSharedState &myState;
-  struct ObjectRef {
-    std::string name;
-    const Box3DObjectSync *sync;
-    const SIM_Object *object;
-  };
   std::vector<ObjectRef> myObjects;
 
   mutable bool myBuilt = false;
-  mutable std::unordered_map<std::string, const Box3DObjectSync *>
-      myObjectByName;
+  mutable std::unordered_map<std::string, const ObjectRef *> myObjectByName;
   mutable HandleTable myPiece;
   mutable HandleTable mySingleBody;
   mutable HandleTable myAffector;
@@ -794,6 +890,28 @@ b3dop::JointFrame restToNow(const b3dop::Box3DWorld &world,
   return out;
 }
 
+// The inverse of restToNow for a position: where the world position `p` of a
+// point on the piece now was at rest. Unchanged where restToNow leaves a frame
+// alone.
+void nowToRest(const b3dop::Box3DWorld &world, const AnchorBody &body,
+               double p[3]) {
+  const Box3DBodyMirror *e = body.entry;
+  double pos[3];
+  float rot[4];
+  if (!body.handle || !e || !e->packed || !e->hasRest ||
+      !world.getTransformByHandle(body.handle, pos, rot))
+    return;
+  float since[4];
+  box3dAbsoluteToRest(e->restRot, rot, since);
+  UT_DMatrix3 d;
+  UT_QuaternionD(since[0], since[1], since[2], since[3]).getRotationMatrix(d);
+  d.transpose(); // a rotation: its transpose is its inverse
+  const UT_Vector3D moved(p[0] - pos[0], p[1] - pos[1], p[2] - pos[2]);
+  const UT_Vector3D offset = moved * d;
+  for (int k = 0; k < 3; ++k)
+    p[k] = offset[k] + e->restPos[k];
+}
+
 // A body's rotation at rest for the `angle` reading: its restxform's, else its
 // rotation now (when the joint is made), identity for the world.
 void restRotationOf(const b3dop::Box3DWorld &world, const AnchorBody &body,
@@ -968,29 +1086,46 @@ private:
       ++myCounts.failed;
   }
 
-  // The anchor as authored (P / orient). With an anchor_id on a whole object it
-  // sits at that point (or vertex) of the object's geometry, as it was the
-  // first time this joint saw it: kept in the entry, so the object moving is no
-  // edit. `bad` is set when the id names no point.
+  // The anchor as authored (P / orient). With an anchor_id on a whole object or
+  // a packed piece it sits at that point (or vertex) of the object's geometry
+  // (a piece's own geometry), as it was the first time this joint saw it: kept
+  // in the entry, so the body moving is no edit. `bad` is set when the id names
+  // no point.
   b3dop::JointFrame authoredAnchor(Box3DJointEntry &e, bool second,
                                    GA_Offset pt, const AnchorBody &body,
-                                   bool &bad) const {
+                                   AnchorLookup &bad) const {
     b3dop::JointFrame f = myRd.authored(pt);
     b3dop::JointFrame &pin = second ? e.pinB : e.pinA;
     int &pinId = second ? e.pinIdB : e.pinIdA;
     bool &pinVertex = second ? e.pinVertexB : e.pinVertexA;
     const int id = myRd.anchorId(pt);
-    if (id < 0 || !body.handle || !body.object) {
-      pinId = -1; // no point to follow (the id is ignored on a piece or world)
+    // A whole object's geometry points, or a packed piece's own geometry's.
+    const bool whole = body.entry && body.entry->wholeObject;
+    const bool piece = body.entry && body.entry->packed && !whole;
+    if (id < 0 || !body.handle || !body.object || !(whole || piece)) {
+      pinId = -1; // no point to follow (the id is ignored on the world and
+                  // affectors)
       return f;
     }
     const bool vertex = myRd.anchorKind(pt) == AnchorKind::Vertex;
     if (pinId != id || pinVertex != vertex) {
       double w[3];
-      if (!pointAnchorWorld(*body.object, id, vertex, w)) {
-        bad = true;
+      AnchorLookup found = AnchorLookup::Ok;
+      if (whole)
+        found = pointAnchorWorld(*body.object, id, vertex, w)
+                    ? AnchorLookup::Ok
+                    : AnchorLookup::NoPoint;
+      else
+        found = packedAnchorWorld(*body.object, body.entry->pointOff, id,
+                                  vertex, w);
+      if (found != AnchorLookup::Ok) {
+        bad = found;
         return f;
       }
+      // Authored anchors are at rest: a piece that has moved gives the point
+      // where it was.
+      if (piece)
+        nowToRest(myWorld, body, w);
       for (int k = 0; k < 3; ++k)
         pin.pos[k] = w[k];
       pinId = id;
@@ -1042,13 +1177,14 @@ private:
     // On a written network current_P / current_orient say where the anchors
     // are now, so a world rebuilt mid-simulation makes its joints from them
     // exactly as frame 1 does from the authored P / orient.
-    bool badAnchor = false;
+    AnchorLookup badAnchor = AnchorLookup::Ok;
     const b3dop::JointFrame authA = asStored(
                                 authoredAnchor(e, false, p0, ab, badAnchor)),
                             authB = asStored(
                                 authoredAnchor(e, true, p1, bb, badAnchor));
-    if (badAnchor) {
-      ++myCounts.badAnchorId;
+    if (badAnchor != AnchorLookup::Ok) {
+      ++(badAnchor == AnchorLookup::NoGeometry ? myCounts.anchorNoGeometry
+                                               : myCounts.badAnchorId);
       dropJoint(e);
       return; // not stamped: removed
     }

@@ -361,7 +361,8 @@ def test_body_types():
     path, names = packed_boxes("bodies_pieces", pieces)
     piece = dict(zip(labels, names))
     dop = new_dopnet("bodies")
-    obj = packed_object(dop, "pieces", path)
+    # Bounce 0: the boxes dropped from y 5 are still bouncing at 2 s with RBD Packed Object's default 0.5.
+    obj = packed_object(dop, "pieces", path, bounce=0.0)
     mover = sop_solver(dop, f'if (s@name == "{piece["kinematic"]}") @P.y = 3 + @Time;')
     finish(dop, multisolver(dop, obj, [mover, box3d_solver(dop, None)]))
     final = step(dop, 49, lambda sim, f: packed_positions(sim, "pieces") if f == 49 else None)[49]

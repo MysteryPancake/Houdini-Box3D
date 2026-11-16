@@ -104,14 +104,17 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
 * Per two-point primitive: `constraint_name` -> kind (missing or unknown: counted, ignored), anchors resolved
   (`Anchors::resolve`, hash tables built on the first resolve of a step, first match in object order: empty = world; a piece name in any object in object order; `object/piece`; an object with
   exactly one body; an affector object's name -> its static mesh body). Unresolved: no joint, retried when bodies
-  change. **`anchor_id`** (point attribute, with `anchor_type` string `point` / `vertex`, or int 0 / 1): on an anchor
-  that resolves to a whole object (an RBD Object: `AnchorBody::object`) the anchor sits at that point (vertex's point) of
-  the object's geometry through its geometry transform (`pointAnchorWorld`), not at `P`; `orient` still applies. The
-  position is kept in the entry (`pinA` / `pinB`, with the id it was taken for) at first sight, so the object moving is
-  no edit. An id that is no point is `badAnchorId`: no joint. `-1` or a missing attribute: `P`. On a packed piece, an
-  affector or the world the id is ignored. `anchor_type` agent is `agentAnchors`: no joint (nothing simulates an agent
-  rig). `anchor_id` / `anchor_type` are in the network fingerprint. The `anchor_pid` / `anchor_vid` id matching is
-  not read. Settings = the kind's + matching primitive attributes, the Constraint Network DOP's rule: float attributes
+  change. **`anchor_id`** (point attribute, with `anchor_type` string `point` / `vertex`, or int 0 / 1): on an anchor that
+  resolves to a whole object (an RBD Object) the anchor sits at that point (vertex's point) of the object's geometry
+  through its geometry transform (`pointAnchorWorld`); on a packed piece, at that point of the piece's own geometry
+  through its full transform (`packedAnchorWorld`: the packed point's position plus the geometry point from the pivot through the piece's
+  matrix, then `nowToRest`: authored anchors are at rest), as Bullet (`bullet_anchor_id`: its `distance` feedback fits "the
+  piece's own point" for ids 0 and 5, points and vertices). A packed fragment's own points are those of its primitives
+  in the shared source (points in source order, vertices in primitive order: `fragmentAnchorPoint`). `orient` still applies. The position is kept in the entry (`pinA` /
+  `pinB`, with the id it was taken for) at first sight, so the body moving is no edit. An id that is no point is
+  `badAnchorId`: no joint. `-1` or a missing attribute: `P`. On the world and affectors the id is ignored.
+  `anchor_type` agent is `agentAnchors`: no joint (nothing simulates an agent rig). `anchor_id` / `anchor_type` are
+  in the network fingerprint. The `anchor_pid` / `anchor_vid` id matching is not read. Settings = the kind's + matching primitive attributes, the Constraint Network DOP's rule: float attributes
   multiply the node's value (angles too: the attribute is a factor, so no degree conversion), toggles (int), vectors
   and Euler rotations (degrees) replace it. So a node value of 0 (most limits and targets) or a negative "never /
   unlimited" cap cannot be changed per primitive, unless the node's Attributes Replace Values

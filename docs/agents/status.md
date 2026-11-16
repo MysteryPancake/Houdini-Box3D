@@ -3,9 +3,8 @@
 The one list of what is unverified or still to do. Index and rules: [CLAUDE.md](../../CLAUDE.md). Keep each
 item to a line or two; remove it once settled (the test that settles it is the record, not this file).
 
-Last full run (Houdini 22.0.502, MSVC, the Box3D fork): every check passes except `baseline`, which holds the old hull
-of a rotated box. A tilted pile diverges chaotically between that hull and `b3MakeTransformedBoxHull` (same mass data;
-a 1e-6 nudge of one box moves a 24-box pile 0.16), so re-record it with `run_tests.py baseline --update-baseline`.
+Last full run (Houdini 22.0.502, MSVC, the Box3D fork): every check passes, `baseline` included. The INFO results
+are not pass marks.
 What no script checks: Escape mid-step, the viewport, motion blur, how greyed-out parameters look.
 
 ## Unverified
@@ -107,9 +106,10 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * The Solver SOP's Collide As Static Object, Initial State, Constraints tab, help card and Set Always settings pass
   their tests. Still unchecked: the Static Object's default Collision Detection on a mesh (distance field cost), the
   help card's wiki markup rendering, and whether every setting tolerates being re-applied each step.
-* `anchor_id` / `anchor_type` on whole objects passes (`anchor_id`). On packed pieces Bullet does read the id (its
-  result changes with the id and with point / vertex) but `bullet_anchor_id` could not say which point: its Hard
-  constraint kept the anchors a Rest Length apart. The test now sets Rest Length 0 and constraint_type all: rerun it.
+* `anchor_id` passes on whole objects (`anchor_id`) and on packed pieces against Bullet (`bullet_anchor_id`, ids 0 and 5,
+  points and vertices; the test's pieces are fragments). Untested: other ids (a fragment's points are taken in source order,
+  its vertices in primitive order), a piece that has moved before its joint is made (`nowToRest`), and non-fragment packed
+  pieces.
 * Transform Pieces with packed transforms that carry scale or shear.
 * Constraints output through Transform Pieces: constraints between collision pieces (not in the simulation points, so
   not moved).
@@ -134,8 +134,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   entries and surviving the later `save`s (Bullet's extra info is `guide=GUIDE_GEO` among colour entries).
 * Concave meshes: one mesh shared between instances, static RBD Objects as meshes, drawing meshes in the guide.
 * Height fields: holes from a mask layer, height fields on points.
-* Constraint networks: agent anchors (`anchor_type` agent), `anchor_id` on packed pieces and Static Objects, the
-  `anchor_pid` / `anchor_vid` matching; `constraint_type` on our nodes. SideFX's help says a missing `constraint_type`
+* Constraint networks: agent anchors (`anchor_type` agent), the `anchor_pid` / `anchor_vid` matching; `constraint_type` on our nodes. SideFX's help says a missing `constraint_type`
   is `position`, where the solver takes `all` (checked against Bullet in `bullet_joint_rest` and `sidefx_hard_*`: rerun
   before changing).
 * SideFX constraint data not mapped: Glue half-life / propagation, Soft plasticity, Cone Twist's elliptical and wide

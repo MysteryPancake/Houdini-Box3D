@@ -16,6 +16,7 @@ from b3dtest import (
     close,
     create,
     display,
+    find_network_geometry,
     finish,
     GROUND,
     ground_object,
@@ -367,10 +368,11 @@ def test_bullet_cylinder():
 
 
 def anchor_id_run(kind, k, anchor_type):
-    """A fixed box A at (0, 4, 0) and a free box B at (2, 4, 0), no gravity, joined by a SideFX Hard (position)
-    constraint (constraint_type all, Rest Length 0: the anchors meet and B cannot turn): A's anchor at A's centre,
-    B's anchor at the decoy P (3, 4, 1) with `anchor_id` k (and `anchor_type` when given). The constraint pulls B's
-    anchor to (0, 4, 0), so B's centre after 1 s says where the anchor was on B."""
+    """Two fixed boxes, A at (0, 4, 0) and B at (2, 4, 0), no gravity, joined by a SideFX Hard constraint: A's anchor at
+    A's centre, B's anchor at the decoy P (3, 4, 1) with `anchor_id` k (and `anchor_type` when given). Neither can
+    move (a heavy B was not enough: a joint's position correction moves a body at the same speed whatever its
+    mass), so the solver's `distance` feedback (the gap between the two anchors) on frame 2, if it writes one for
+    two fixed bodies, is the anchors' starting gap: |B's anchor - (0, 4, 0)|."""
     def edit(path):
         net = hou.node(path)
         wr = create(net.parent(), "attribwrangle", "anchor_ids")
@@ -384,50 +386,64 @@ def anchor_id_run(kind, k, anchor_type):
         return wr.path()
 
     pieces = [{"size": (1, 1, 1), "center": (0, 4, 0), "attrs": {"active": 0}},
-              {"size": (1, 1, 1), "center": (2, 4, 0), "attrs": {"active": 1}}]
+              {"size": (1, 1, 1), "center": (2, 4, 0), "attrs": {"active": 0}}]
     dop, names = hanging_pair(f"anchor_id_{kind}_{k}_{anchor_type or 'point'}", None,
-                              line_attrs={"constraint_type": "all", "restlength": 0.0},
-                              conrels=[("hardconrel", {})], solver_kind=kind, pieces=pieces,
-                              anchors=((0, 4, 0), (3, 4, 1)),
+                              line_attrs={"constraint_type": "position"}, conrels=[("hardconrel", {})],
+                              solver_kind=kind, pieces=pieces, anchors=((0, 4, 0), (3, 4, 1)),
                               gravity=(0, 0, 0), network_edit=edit)
     if kind == "bullet":
         set_parm(dop.node("gravity"), ["force"], (0, 0, 0))
-    frames = int(round(hou.fps()))
-    return step(dop, frames, lambda sim, f: packed_positions(sim, "pieces")[names[1]])[frames]
+
+    def gap(sim, f):
+        geo = find_network_geometry(sim)
+        prims = list(geo.prims()) if geo is not None else []
+        return prims[0].attribValue("distance") if prims and geo.findPrimAttrib("distance") else None
+
+    value = step(dop, 2, gap)[2]
+    solver = dop.node("box3d_solver") if kind == "box3d" else None
+    return value, (node_messages(solver) if solver is not None else [])
 
 
 def test_bullet_anchor_id():
-    """What a point anchor (`anchor_id`) on a packed piece means in Bullet. Box B's anchor has P (3, 4, 1), near
-    B, and an anchor_id; the Hard constraint (Rest Length 0, constraint_type all) pulls that anchor to (0, 4, 0)
-    without turning B, so B's centre ends at (0, 4, 0) minus the anchor's offset from B's centre. The offset says
-    which point Bullet took: P itself (the id ignored: B ends at (-1, 4, -1)); point k of B's own box (the piece's inner geometry); point k of the object's
-    points (one per piece: A is point 0, B point 1); or point k of the unpacked geometry (box A's points 0 to 7, then
-    B's). Reports Bullet's and Box3D's B and the readings each fits (0.15). INFO: it decides how packed pieces read
-    anchor_id, not a pass mark. For ids 0 and 5, each as a point and as a vertex."""
+    """What a point anchor (`anchor_id`) on a packed piece means in Bullet. Box B's anchor has P (3, 4, 1) and an
+    anchor_id; both boxes are fixed, so the `distance` the solver reports on frame 2 (if it reports one) is how far
+    B's anchor starts from A's anchor (0, 4, 0). That gap says which point Bullet took: P itself (the id ignored:
+    3.16); point k of B's own box; point k of the object's points (one per piece: A is point 0, B point 1; for k 5
+    B's); or point k of the unpacked geometry (box A's points 0 to 7, then B's). Reports Bullet's and Box3D's gap
+    (Box3D's less the Rest Length 1) and the readings each fits (0.05). Bullet fits `B's own point`: the id picks a point of the
+    piece's own geometry; Box3D reads it too. Passes when both fit B's own point. For ids 0 and 5, each as a point and as a vertex."""
     box = create(new_geo("anchor_id_ref"), "box")
-    box_points = [pt.position() for pt in box.geometry().points()]
-    centres = [hou.Vector3(0, 4, 0), hou.Vector3(2, 4, 0)]
+    geometry = box.geometry()
+    box_points = [pt.position() for pt in geometry.points()]
+    box_vertices = [v.point().position() for pr in geometry.prims() for v in pr.vertices()]
+    a_anchor, b_centre, a_centre = hou.Vector3(0, 4, 0), hou.Vector3(2, 4, 0), hou.Vector3(0, 4, 0)
     results = []
     for k in (0, 5):
         for anchor_type in (None, "vertex"):
-            got = {kind: anchor_id_run(kind, k, anchor_type) for kind in KINDS}
-            # Offsets of the anchor from B's centre under each reading; B ends at (0, 4, 0) minus the offset.
-            unpacked = box_points[k] + centres[0] if k < 8 else box_points[k - 8] + centres[1]
+            runs = {kind: anchor_id_run(kind, k, anchor_type) for kind in KINDS}
+            got = {kind: run[0] for kind, run in runs.items()}
+            pts = box_vertices if anchor_type else box_points
             readings = {
-                "P (id ignored)": hou.Vector3(3, 4, 1) - centres[1],
-                "B's own point": box_points[k],
-                "object point k": (centres[k] if k < 2 else centres[1]) - centres[1],
-                "unpacked point k": unpacked - centres[1],
+                "P (id ignored)": hou.Vector3(3, 4, 1),
+                "B's own point": b_centre + pts[k],
+                "object point k": a_centre if k == 0 else b_centre,
+                "unpacked point k": (pts[k] + a_centre) if k < 8 else (pts[k - 8] + b_centre),
             }
             fits = {}
-            for kind, pos in got.items():
-                fits[kind] = [name for name, off in readings.items()
-                              if (hou.Vector3(0, 4, 0) - off - pos).length() < 0.15] or ["none"]
+            # Bullet's `distance` is the gap between the anchors; Box3D's is the separation, the gap less the
+            # Hard constraint's Rest Length (1).
+            rest = {"bullet": 0.0, "box3d": 1.0}
+            for kind, gap in got.items():
+                fits[kind] = [name for name, pos in readings.items()
+                              if gap is not None and abs((pos - a_anchor).length() - rest[kind] - gap) < 0.05]                     or ["none"]
             what = f"anchor_id {k}" + (f", anchor_type {anchor_type}" if anchor_type else "")
-            fmt = lambda p: "(" + ", ".join(f"{c:.2f}" for c in p) + ")"  # noqa: E731
-            results.append(Result("bullet_anchor_id", Result.INFO,
-                                  f"{what}: B ends at {fmt(got['bullet'])} in Bullet (fits {fits['bullet']}), "
-                                  f"{fmt(got['box3d'])} in Box3D (fits {fits['box3d']})"))
+            fmt = lambda g: "n/a" if g is None else f"{g:.3f}"  # noqa: E731
+            wanted = ", ".join(f"{name} {(pos - a_anchor).length():.3f}" for name, pos in readings.items())
+            both = fits["bullet"] == fits["box3d"] == ["B's own point"]
+            results.append(Result("bullet_anchor_id", Result.PASS if both else Result.FAIL,
+                                  f"{what}: gap {fmt(got['bullet'])} in Bullet (fits {fits['bullet']}), "
+                                  f"{fmt(got['box3d'])} in Box3D (fits {fits['box3d']}); the readings give {wanted}"
+                                  + (f"; Box3D messages {runs['box3d'][1]}" if runs["box3d"][1] else "")))
     return results
 
 

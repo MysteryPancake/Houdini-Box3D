@@ -95,7 +95,7 @@ Example scenes: run `make_examples.bat` (Linux: `hython examples/make_examples.p
 
 ## For developers
 
-See [CLAUDE.md](CLAUDE.md). Before committing, format the code with `cmake --build build --target format`. CI checks it with `--target format-check`.
+See [CLAUDE.md](CLAUDE.md).
 
 ## License
 

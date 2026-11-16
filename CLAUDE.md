@@ -175,7 +175,8 @@ Layering (keep it):
 * Row-vector matrices on the Houdini side; never mix with column-vector math.
 * Style: clang-format's default (LLVM) style, pinned by the root `.clang-format`. Run `clang-format -i` on every
   `.cpp` / `.h` file you create or change under `src/` and `tests/` before finishing, and don't hand-format or
-  hand-align around it. Never format `extern/` (it has its own `.clang-format`). Keep comments
+  hand-align around it. Before committing, format the code with `cmake --build build --target format`; CI checks it
+  with `--target format-check`. Never format `extern/` (it has its own `.clang-format`). Keep comments
   inside macros on their own line: a trailing comment after a `\` continuation gets wrapped into the macro. A
   comment too long to sit after its code goes on its own line above it.
 * Casts: `static_cast<T>(x)`, never `T(x)` or `(T)x` (clang-tidy's `google-readability-casting`).

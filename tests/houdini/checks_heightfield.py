@@ -97,7 +97,8 @@ def _drop_on_heightfield(tag, snippet, transform, spots, size=0.3, parent_transf
         set_parm(static, ["objpath", "obj_path"], geo.path())
     else:  # Use Object Transform: the whole matrix, scale and shear included
         set_parm(static, ["usetransform"], 1)
-    solver = box3d_solver(dop, merge(dop, [packed_object(dop, "boxes", path), static]))
+    # Bounce 0: with RBD Packed Object's default 0.5 a box dropped from y 6 may still be bouncing at frame 120.
+    solver = box3d_solver(dop, merge(dop, [packed_object(dop, "boxes", path, bounce=0.0), static]))
     finish(dop, solver)
     msgs = []
 

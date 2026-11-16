@@ -659,6 +659,9 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
     warnCount(objects, jointCounts.badAnchorId,
               "constraint anchor(s) have an anchor_id that is not a point or "
               "vertex of the named object and are ignored");
+    warnCount(objects, jointCounts.anchorNoGeometry,
+              "constraint anchor(s) have an anchor_id on a body whose "
+              "geometry could not be read and are ignored");
     warnCount(objects, jointCounts.agentAnchors,
               "constraint anchor(s) have anchor_type agent, which is not "
               "supported, and are ignored");

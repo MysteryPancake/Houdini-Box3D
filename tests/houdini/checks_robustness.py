@@ -95,7 +95,7 @@ def test_rewire_midsim():
     replaced by a new Box3D Solver at 30. No crash; the box still ends up resting on the ground."""
     path, names = packed_boxes("rewire_pieces", [GROUND, {"size": (1, 1, 1), "center": (0, 4, 0)}])
     dop = new_dopnet("rewire")
-    obj = packed_object(dop, "pieces", path)
+    obj = packed_object(dop, "pieces", path, bounce=0.0)  # the box lands and stays (not bouncing at frame 60)
     solver = box3d_solver(dop, obj)
     out = finish(dop, solver)
     log = []
