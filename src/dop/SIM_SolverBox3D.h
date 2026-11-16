@@ -118,7 +118,7 @@ private:
   // into Box3D. False if the user cancelled (Escape) part way: the world is
   // then half synced.
   bool syncFromGeometry(SIM_Box3DWorld &worldData, SIM_ObjectArray &objects,
-                        float timeStep, StepProgress &progress);
+                        StepProgress &progress);
 
   // P, orient, v, w (and packed transforms) of the awake dynamic bodies. A
   // rebuild only has the geometry to work from.

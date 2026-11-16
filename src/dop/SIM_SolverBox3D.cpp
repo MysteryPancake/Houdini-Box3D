@@ -402,7 +402,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
     message(objects, "step cancelled", UT_ERROR_MESSAGE);
     return SIM_SOLVER_FAIL;
   };
-  if (!syncFromGeometry(*worldData, objects, static_cast<float>(dt), progress))
+  if (!syncFromGeometry(*worldData, objects, progress))
     return cancel();
   if (progress.check())
     return cancel();
@@ -430,6 +430,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
     }
     UT_PerfMonAutoSolveEvent perf(this, "Stepping World");
     st->world.step(subDt);
+    collectGlueHits(*st);
     st->world.getMoveEvents(st->moves); // read once: write-back and impacts
   } else {
     st->moves.clear();
@@ -458,6 +459,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
       {
         UT_PerfMonAutoSolveEvent perf(this, "Stepping World");
         st->world.step(subDt);
+        collectGlueHits(*st);
         st->world.getMoveEvents(events);
         // Joint events are cleared by the next step too: keep every joint that
         // went over its threshold (once each).
@@ -495,6 +497,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   }
   {
     UT_PerfMonAutoSolveEvent perf(this, "Updating Constraint States");
+    advanceGlue(*st, st->stepDt);
     if (const int broke = jointsAfterStep(*st, objects))
       B3D_LOG("  joints: %d broke", broke);
   }
@@ -571,7 +574,7 @@ void SIM_SolverBox3D::reportWorldCreationFailure(SIM_ObjectArray &objects) {
 }
 
 bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
-                                       SIM_ObjectArray &objects, float timeStep,
+                                       SIM_ObjectArray &objects,
                                        StepProgress &progress) {
   Box3DSharedState *st = worldData.state();
 
@@ -646,7 +649,8 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
   Box3DJointCounts jointCounts;
   {
     UT_PerfMonAutoSolveEvent perf(this, "Updating Constraints");
-    syncJoints(*st, objects, timeStep, jointCounts);
+    syncJoints(*st, objects, jointCounts);
+    prepareGlue(*st);
   }
   {
     warnCount(objects, jointCounts.unknown,

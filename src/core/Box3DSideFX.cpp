@@ -196,12 +196,11 @@ SideFXJoint mapSideFX(SideFXType t, const SideFXSettings &s,
     j.settings = Box3DWorld::defaultJointSettings(JointType::Weld);
     j.settings.enableLinearSpring = false;
     j.settings.enableAngularSpring = false;
-    // Bullet's glue is an impulse; Box3D reports a force, so the impulse over
-    // one step.
-    const float dt = c.timeStep > 1e-9f ? c.timeStep : 1e-9f;
-    j.settings.forceThreshold =
-        (s.strength >= 0.0f && std::isfinite(s.strength)) ? s.strength / dt
-                                                          : -1.0f;
+    // Bullet's glue breaks on the impulse of the hits it takes, not on a load:
+    // the weld never breaks by force or torque, and the wrapper breaks it
+    // (Box3DGlue.h).
+    j.settings.forceThreshold = -1.0f;
+    j.settings.torqueThreshold = -1.0f;
     j.holdSeparation = true;
     j.settings.collideConnected = false; // glued pieces never collide in Bullet
     return j;

@@ -182,9 +182,18 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
 * Per primitive: matching primitive attributes modify the options (floats multiply, ints / vectors replace; our
   `jointParams` overrides are not applied), `constraint_type` is read (missing or unknown: all), then `mapSideFX`
   picks the joint:
-  * Glue: rigid weld holding the pieces where they are, never colliding. Bullet's strength is an accumulated impulse;
-    here Break Force = strength / DOP timestep (the force that gives that impulse over one step), < 0 never. Half-life
-    and propagation are ignored, and the weld also sees steady loads (weight), not only impacts.
+  * Glue: rigid weld holding the pieces where they are, never colliding, never broken by force or torque. It breaks
+    on the impulse of the hits it takes, as the Glue help describes Bullet's (`core/Box3DGlue.h`, Houdini-free,
+    `tests/core_glue.cpp`): after every Box3D step `collectGlueHits` adds the normal impulse of each glued body's contacts
+    (not its glued neighbours') to its hits; at the end of the frame `advanceGlue` spreads them over the bonds
+    (`impulse` shares: itself 1, each bond its Propagation Rate, `propagationiterations` rounds), adds the two bodies'
+    results to the bond's `impact` after it decayed by `impulse_halflife`, and queues a bond over its Strength
+    divided by `kGlueStrengthScale` (< 0 never) for `jointsAfterStep`, which breaks it with the force ones (the `broken` group, `next_constraint_name`).
+    `impact` is written to the primitives and read back when a joint is remade. Weight is no hit, so a hanging piece
+    holds at any Strength (`sidefx_glue`); a landing is (`glue_impact`). `impact` matches Bullet's own (peak within
+    ~20%, the same decay: `glue_impact_trace`); a Bullet glue holds from about 5 to 6 times its peak impact, so
+    the break test uses `kGlueStrengthScale` (measured from one scene: `glue_impact_scale`). A negative iteration count is the global one
+    (the `propagate_iteration` detail attribute, not read): one round; the most iterations of any bond set the rounds.
   * Hard: all -> rigid weld with the anchors kept the rest length apart (as Bullet does; held where they are when there
     is no rest length); position -> rigid distance joint at the
     rest length, or spherical when it is ~0; rotation -> motor joint, angular spring only at 60 Hz / ratio 2 with
@@ -214,4 +223,3 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   separation, the hold flag, not the anchor positions) are in the joint signature. Our Weld's Hold Separation
   (`JointSettings::holdSeparation`, `hold_separation`, not a Box3D setting) gets Glue's hold offsets in `specFor`.
   Identity offsets (our other nodes) bypass the math.
-* The DOP timestep reaches `syncJoints` through `syncFromGeometry` (for Glue).

@@ -96,6 +96,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DShapes.h       Header-only: shape math, packed-prim matrices, hashing
     Box3DJoints.h       Header-only: joint types, JointSettings, the joint parameter table
     Box3DSideFX.h/.cpp  SideFX's Glue / Hard / Spring / Bullet Soft / Cone Twist data -> Box3D joints (mapping, frame offsets)
+    Box3DGlue.h         Header-only: SideFX Glue's impulse model (spread over bonds, half-life, break on strength)
     Box3DCpu.h/.cpp     Physical performance core count (the solver's Threads default)
     Box3DRbdObject.h    Header-only: an RBD Object's own mass / friction / bounce / Bullet Data shape -> whole-object settings
     Box3DWorld.h/.cpp   Pimpl wrapper over one b3World. The ONLY file that includes Box3D headers; defines TaskRunner
@@ -142,6 +143,7 @@ tests/
   core_threads.cpp    1 worker vs N workers: timing + determinism
   core_taskrunner.cpp Host-supplied TaskRunner shared by 40+ worlds: no extra threads, same results as 1 worker
   core_joints.cpp     Every joint type, world anchors, live updates, breaking, feedback, the parameter table
+  core_glue.cpp       Glue's impulse model: the Glue help's example, rounds, decay, breaking
   core_sidefx.cpp     SideFX constraint data: option table, mapping per type / constraint_type, frame offsets, behaviour
   core_rbdobject.cpp  RBD Object settings without Box3D Data: defaults, invalid values, Bullet Data shapes, density -> mass
   houdini/            Houdini checks: run_tests.py (runner), checks_*.py (tests by area), b3dtest.py (helpers),

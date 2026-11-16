@@ -110,6 +110,12 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   points and vertices; the test's pieces are fragments). Untested: other ids (a fragment's points are taken in source order,
   its vertices in primitive order), a piece that has moved before its joint is made (`nowToRest`), and non-fragment packed
   pieces.
+* Glue's impulse model (`core/Box3DGlue.h`, `core_glue`, `glue_impact`, `glue_impact_trace`, `sidefx_glue`): `impact` matches
+  Bullet's (same decay, peak within ~20%); a Bullet bond breaks only at about 5 to 6 times that, which is unexplained, so
+  `kGlueStrengthScale` is measured (`glue_impact_scale`, one scene, two drop heights: the thresholds then agree within 14%). Unchecked: other scenes (resting
+  piles, several contacts, different masses), the half-life and propagation against Bullet, the global propagation
+  iteration count (the `propagate_iteration` detail attribute is not read), and the cost of reading every glued body's
+  contacts each step on a large network.
 * Transform Pieces with packed transforms that carry scale or shear.
 * Constraints output through Transform Pieces: constraints between collision pieces (not in the simulation points, so
   not moved).
@@ -126,7 +132,6 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   as -0.5 to 0.5: rerun. A circle packed settles flat at 0.02; as an RBD Object it stood on its edge. Not done:
   quadrics inside a Convex hull Per Connected Set, volumes (Bullet: packed falls through, RBD Object stays at 2),
   tube taper.
-* SideFX Glue breaks under static load (Break Force = strength / timestep) where Bullet's holds (`sidefx_glue`).
 * Results depend slightly on point order even with `id` (`point_order`): bodies are created in point order.
 * Objects solved by another solver: packed ones are ignored as colliders; one-way collision with polygons untested.
 * Export Collision Shapes (unverified): `SIM_DATA_CREATE(obj, "Box3DShapes", SIM_GeometryCopy, SIM_DATA_RETURN_EXISTING)`
@@ -137,7 +142,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * Constraint networks: agent anchors (`anchor_type` agent), the `anchor_pid` / `anchor_vid` matching; `constraint_type` on our nodes. SideFX's help says a missing `constraint_type`
   is `position`, where the solver takes `all` (checked against Bullet in `bullet_joint_rest` and `sidefx_hard_*`: rerun
   before changing).
-* SideFX constraint data not mapped: Glue half-life / propagation, Soft plasticity, Cone Twist's elliptical and wide
+* SideFX constraint data not mapped: Soft plasticity, Cone Twist's elliptical and wide
   cones, softness, motors and translation ranges, Hard's angular motors, Spring's Hz following mass changes.
 * Inactive RBD Object (Create Active Object off) is a static body: animating its Position teleports it, where Bullet
   drives it as a kinematic body that pushes what it touches.
@@ -161,14 +166,6 @@ Features to add in the fork. Once one exists, the wrapper maps it and the entry 
   and twist errors, each with its own spring. The motor joint's angular spring stalls the same way. The weld and
   prismatic ones make the same call and are unchecked. A twist limit avoids it (the car park's bollards). A parallel
   joint with a twist limit also orbited at about 72°: not understood.
-* **Glue: break on accumulated impulse.** Joints break on a per-step force or torque (`forceThreshold`,
-  `torqueThreshold`), and joint events name the joints over it without saying by how much. Bullet's Glue strength is
-  an accumulated impulse, so Glue maps to Break Force = strength / timestep and also breaks under steady load
-  (`sidefx_glue`, [joints.md](joints.md)). Needs a break threshold on impulse that ignores steady load, and the
-  joint's load readable after the step.
-* **Glue: impact propagation.** A broken or overloaded glue joint passes part of its impulse on to the joints around it,
-  fading by a half-life (SideFX Glue's propagation and half-life, unmapped). Box3D has no joint-to-joint spread. Needs
-  the load above, then a pass over the joint graph per step, in Box3D or in the wrapper's `syncJoints`.
 * **Wide and elliptical cones.** `b3SphericalJoint_SetConeLimit` asserts the angle is at most 90°, and the cone is round.
   Cone Twist's wider and elliptical cones (unmapped above) need both lifted.
 

@@ -71,7 +71,6 @@ JointHandle make(Box3DWorld &w, SideFXType t, const SideFXSettings &s,
                  ConstraintMode mode, BodyHandle a, BodyHandle b,
                  const JointFrame &fa, const JointFrame &fb) {
   SideFXContext c;
-  c.timeStep = kDt;
   c.a = bodyOf(w, a);
   c.b = bodyOf(w, b);
   const SideFXJoint j = mapSideFX(t, s, mode, c);
@@ -88,7 +87,6 @@ bool near(double a, double b, double tol) { return std::fabs(a - b) <= tol; }
 int main() {
   const int assertsBefore = Box3DWorld::assertCount();
   SideFXContext ctx;
-  ctx.timeStep = kDt;
 
   // ---- data types and the option table ----
   {
@@ -124,21 +122,28 @@ int main() {
   // ---- mapping ----
   {
     SideFXSettings s;
-    // Glue: rigid weld holding the offset; strength is an impulse per step; -1
-    // never breaks.
+    // Glue: rigid weld holding the offset that never breaks by force: the
+    // wrapper breaks it on the impulse of the hits it takes (Box3DGlue.h).
     SideFXJoint j =
         mapSideFX(SideFXType::Glue, s, ConstraintMode::Position, ctx);
     CHECK(j.type == JointType::Weld && !j.settings.enableLinearSpring &&
           !j.settings.enableAngularSpring);
     CHECK(j.holdSeparation && !j.settings.collideConnected);
-    CHECK(near(j.settings.forceThreshold, 10000.0 / kDt, 1.0) &&
+    CHECK(j.settings.forceThreshold < 0.0f &&
           j.settings.torqueThreshold < 0.0f);
-    s.strength = -1.0f;
+    s.strength = 0.0f; // whatever the strength: the weld itself never breaks
     CHECK(mapSideFX(SideFXType::Glue, s, ConstraintMode::All, ctx)
               .settings.forceThreshold < 0.0f);
-    s.strength = 0.0f;
-    CHECK(mapSideFX(SideFXType::Glue, s, ConstraintMode::All, ctx)
-              .settings.forceThreshold == 0.0f);
+    // Glue's options: Houdini's defaults, and the table reads them.
+    const SideFXSettings gd = defaultSideFXSettings(SideFXType::Glue);
+    CHECK(gd.impulseHalfLife == 0.1f && gd.propagateRate == 1.0f &&
+          gd.propagationIterations == 1);
+    int glueOptions = 0;
+    for (const SideFXParam &p : sideFXParams())
+      if (p.usedBy(SideFXType::Glue))
+        ++glueOptions;
+    CHECK(glueOptions ==
+          4); // strength, impulse_halflife, propagate_rate, iterations
 
     // Hard, by constraint_type.
     s = SideFXSettings();
@@ -329,7 +334,8 @@ int main() {
     std::printf("glue: centres %.4f apart after falling\n", dist(pa, pb));
   }
   {
-    // Glue breaks once the force over a step passes the strength.
+    // Glue does not break under steady load: a piece hanging from the world by
+    // a glue with a tiny strength (its weight is no hit) is still held.
     Box3DWorld w;
     CHECK(w.create(ws));
     const BodyHandle b = box(w, 0, 5, 0);
@@ -337,7 +343,6 @@ int main() {
     s.strength = 0.001f; // far below the weight times a step
     int marker = 0;
     SideFXContext c;
-    c.timeStep = kDt;
     c.b = bodyOf(w, b);
     const SideFXJoint j =
         mapSideFX(SideFXType::Glue, s, ConstraintMode::All, c);
@@ -345,10 +350,12 @@ int main() {
     sideFXFrameOffsets(j, frame(0, 5, 0), frame(0, 5, 0), adjA, adjB);
     CHECK(w.createJoint(j.type, 0, b, frame(0, 5, 0), frame(0, 5, 0),
                         j.settings, &marker) != 0);
-    steps(w, 2);
+    steps(w, 60);
     std::vector<void *> broken;
     w.brokenJoints(broken);
-    CHECK(broken.size() == 1 && broken[0] == &marker);
+    double p[3];
+    pos(w, b, p);
+    CHECK(broken.empty() && near(p[1], 5.0, 1e-2));
   }
   {
     // Soft "all" with a rest length, no gravity: two pieces 1 apart settle 2

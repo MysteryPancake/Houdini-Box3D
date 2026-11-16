@@ -23,6 +23,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/Box3DGlue.h"
 #include "core/Box3DSideFX.h"
 #include "core/Box3DWorld.h"
 #include "sync/Box3DAttribNames.h"
@@ -425,6 +426,21 @@ struct Box3DJointEntry {
   // bodies' relative rotation since rest, as Bullet.
   float restRotA[4] = {0, 0, 0, 1};
   float restRotB[4] = {0, 0, 0, 1};
+
+  // SideFX Glue: breaks on the impulse of the hits its bodies take, not on a
+  // load (core/Box3DGlue.h, docs/agents/joints.md). glueImpact is Glue's
+  // `impact` attribute, kept from step to step.
+  bool glue = false;
+  b3dop::GlueParams glueParams;
+  float glueImpact = 0.0f;
+};
+
+// A body in a Glue network this frame and the impulse its contacts put on it
+// over the frame's Box3D steps.
+struct Box3DGlueNode {
+  b3dop::BodyHandle body = 0;
+  float hits = 0.0f;
+  std::vector<b3dop::BodyHandle> partners; // bodies it is glued to
 };
 
 // The constraint data a `constraint_name` refers to (a Box3D constraint
@@ -532,6 +548,13 @@ struct Box3DSharedState {
   // brokenCollected is set.
   std::vector<void *> brokenThisFrame;
   bool brokenCollected = false;
+  // Glue (prepareGlue, collectGlueHits, advanceGlue in Box3DJointSync.cpp): the
+  // live bonds and their bodies this frame, and the bonds that went over their
+  // strength (joint user data, broken by jointsAfterStep with the force ones).
+  std::vector<Box3DGlueNode> glueNodes;
+  std::unordered_map<b3dop::BodyHandle, int> glueNodeOf;
+  std::vector<Box3DJointEntry *> glueBonds;
+  std::vector<void *> glueBroken;
   // The same for hit events (Impact Min Speed): hitPairs already holds every
   // Box3D step of this frame, so recordImpacts must not refill it from the
   // last.

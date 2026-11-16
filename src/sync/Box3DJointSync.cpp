@@ -57,6 +57,9 @@ const char *const kCurrentOrient = "current_orient";
 // (string "point" / "vertex" / "agent", or an int 0 / 1 / 2) says which.
 const char *const kAnchorId = "anchor_id";
 const char *const kAnchorType = "anchor_type";
+// Glue's feedback: the impulse its hits have accumulated
+// (docs/agents/joints.md).
+const char *const kImpact = "impact";
 
 // The Constraint Network data a relationship carries, or null for other
 // relationships.
@@ -704,6 +707,7 @@ struct NetworkReader {
   const GA_PrimitiveGroup *broken;
   const GA_ROHandleI anchorIdH, anchorTypeI;
   const GA_ROHandleS anchorTypeS;
+  const GA_ROHandleF impact; // Glue's accumulated impact (feedback)
 
   explicit NetworkReader(const GU_Detail *g)
       : gdp(g), conName(g, GA_ATTRIB_PRIMITIVE, kConstraintName),
@@ -718,7 +722,8 @@ struct NetworkReader {
         broken(g->findPrimitiveGroup(kBrokenGroup)),
         anchorIdH(g, GA_ATTRIB_POINT, kAnchorId),
         anchorTypeI(g, GA_ATTRIB_POINT, kAnchorType),
-        anchorTypeS(g, GA_ATTRIB_POINT, kAnchorType) {}
+        anchorTypeS(g, GA_ATTRIB_POINT, kAnchorType),
+        impact(g, GA_ATTRIB_PRIMITIVE, kImpact) {}
 
   // The anchor's anchor_id: -1 (also: no attribute) is the object's own
   // offset, which P / orient already give.
@@ -947,6 +952,8 @@ struct JointSpec {
       adjB; // the frames relative to the anchors: identity but for SideFX data
             // and Hold Separation
   uint64_t frameSig = 0;
+  bool glue = false; // SideFX Glue: breaks on impact impulse (core/Box3DGlue.h)
+  b3dop::GlueParams glueParams;
 };
 
 // One network's primitives, read from its geometry, into joints: make, update,
@@ -955,10 +962,10 @@ class NetworkPass {
 public:
   NetworkPass(Box3DSharedState &st, const NetworkRef &ref,
               Box3DJointNetwork &net, const Anchors &anchors,
-              const GU_Detail *gdp, float timeStep, Box3DJointCounts &counts)
+              const GU_Detail *gdp, Box3DJointCounts &counts)
       : mySt(st), myWorld(st.world), myRef(ref), myNet(net), myAnchors(anchors),
-        myGdp(gdp), myTimeStep(timeStep), myCounts(counts), myRd(gdp),
-        myReaders(bindSettings(gdp)), mySfReaders(bindSideFX(gdp)) {}
+        myGdp(gdp), myCounts(counts), myRd(gdp), myReaders(bindSettings(gdp)),
+        mySfReaders(bindSideFX(gdp)) {}
 
   void run() {
     for (GA_Iterator it(myGdp->getPrimitiveRange()); !it.atEnd(); ++it) {
@@ -999,7 +1006,6 @@ private:
       b3dop::SideFXSettings sf = kind.sideFXSettings;
       applySideFXOverrides(mySfReaders, kind.sideFXType, off, sf);
       b3dop::SideFXContext ctx;
-      ctx.timeStep = myTimeStep;
       ctx.a = sideFXBody(myWorld, a);
       ctx.b = sideFXBody(myWorld, b);
       const b3dop::SideFXJoint m =
@@ -1008,6 +1014,15 @@ private:
       j.s = m.settings;
       j.frameSig = sideFXFrameSignature(m);
       b3dop::sideFXFrameOffsets(m, fa, fb, j.adjA, j.adjB);
+      if (kind.sideFXType == b3dop::SideFXType::Glue) {
+        j.glue = true;
+        j.glueParams.strength = sf.strength;
+        j.glueParams.halfLife = sf.impulseHalfLife;
+        j.glueParams.rate = sf.propagateRate;
+        // A negative count is the network's global one (the detail attribute
+        // propagate_iteration, not read: one round).
+        j.glueParams.iterations = std::max(sf.propagationIterations, 1);
+      }
     } else {
       j.type = kind.type;
       j.s = kind.settings;
@@ -1202,6 +1217,13 @@ private:
     const b3dop::JointFrame fa = useLive ? la : authA,
                             fb = useLive ? lb : authB;
     const JointSpec j = specFor(*kind, off, a, b, fa, fb);
+    e.glue = j.glue;
+    e.glueParams = j.glueParams;
+    if (j.glue && !e.made && myRd.impact.isValid()) {
+      // A world rebuilt mid-simulation: carry on from what the geometry holds.
+      const float kept = myRd.impact.get(off);
+      e.glueImpact = std::isfinite(kept) && kept > 0.0f ? kept : 0.0f;
+    }
 
     const bool live = myNet.writable;
     uint64_t sig = jointSignature(j.type, a, b, fa, fb, !live);
@@ -1231,7 +1253,6 @@ private:
   Box3DJointNetwork &myNet;
   const Anchors &myAnchors;
   const GU_Detail *myGdp;
-  const float myTimeStep;
   Box3DJointCounts &myCounts;
   const NetworkReader myRd;
   const std::vector<SettingReader> myReaders;
@@ -1239,8 +1260,7 @@ private:
 };
 
 void processNetwork(Box3DSharedState &st, const NetworkRef &ref,
-                    const Anchors &anchors, float timeStep,
-                    Box3DJointCounts &counts) {
+                    const Anchors &anchors, Box3DJointCounts &counts) {
   Box3DJointNetwork &net = st.jointNetworks[ref.key];
   net.visited = st.syncStamp;
   net.objectId = ref.object->getObjectId();
@@ -1274,7 +1294,7 @@ void processNetwork(Box3DSharedState &st, const NetworkRef &ref,
   net.bodyVersion = st.bodyVersion;
   net.liveStamp = st.syncStamp;
 
-  NetworkPass(st, ref, net, anchors, gdp, timeStep, counts).run();
+  NetworkPass(st, ref, net, anchors, gdp, counts).run();
 }
 
 // After the step, for a written network: every live joint's anchors get
@@ -1406,7 +1426,7 @@ bool anyJointNetwork(SIM_ObjectArray &objects) {
   return false;
 }
 
-void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects, float timeStep,
+void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
                 Box3DJointCounts &counts) {
   // ---- gather: each Constraint Network relationship once (it is on every
   // object it constrains), and each object's internal ConstraintGeometry ----
@@ -1447,7 +1467,7 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects, float timeStep,
   if (!refs.empty()) {
     const Anchors anchors(st, objects);
     for (const NetworkRef &ref : refs)
-      processNetwork(st, ref, anchors, timeStep, counts);
+      processNetwork(st, ref, anchors, counts);
   }
 
   // ---- remove: joints whose primitive or network went away ----
@@ -1472,6 +1492,75 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects, float timeStep,
                                               : st.jointNetworks.erase(it);
 }
 
+void prepareGlue(Box3DSharedState &st) {
+  st.glueNodes.clear();
+  st.glueNodeOf.clear();
+  st.glueBonds.clear();
+  st.glueBroken.clear();
+  auto nodeOf = [&st](b3dop::BodyHandle h) {
+    const auto ins =
+        st.glueNodeOf.try_emplace(h, static_cast<int>(st.glueNodes.size()));
+    if (ins.second) {
+      st.glueNodes.emplace_back();
+      st.glueNodes.back().body = h;
+    }
+    return ins.first->second;
+  };
+  for (auto &kv : st.joints) {
+    Box3DJointEntry &e = kv.second;
+    // Glue to the world is not a bond (Bullet does not support it either).
+    if (!e.glue || e.broken || !e.bodyA || !e.bodyB ||
+        !st.world.isJointValid(e.handle))
+      continue;
+    const int a = nodeOf(e.bodyA), b = nodeOf(e.bodyB);
+    st.glueNodes[static_cast<size_t>(a)].partners.push_back(e.bodyB);
+    st.glueNodes[static_cast<size_t>(b)].partners.push_back(e.bodyA);
+    st.glueBonds.push_back(&e);
+  }
+}
+
+void collectGlueHits(Box3DSharedState &st) {
+  b3dop::Box3DWorld &world = st.world;
+  for (Box3DGlueNode &n : st.glueNodes) {
+    // Hits land on moving bodies; a sleeping one has none this step.
+    if (world.typeByHandle(n.body) != b3dop::BodySettings::Type::Dynamic ||
+        !world.isAwakeByHandle(n.body))
+      continue;
+    world.getContactsByHandle(n.body, st.contacts);
+    for (const b3dop::ContactPoint &cp : st.contacts)
+      // A glued neighbour is not a hit (the pair never collides anyway).
+      if (std::find(n.partners.begin(), n.partners.end(), cp.other) ==
+          n.partners.end())
+        n.hits += cp.impulse;
+  }
+}
+
+void advanceGlue(Box3DSharedState &st, float dt) {
+  if (st.glueBonds.empty())
+    return;
+  std::vector<float> hits(st.glueNodes.size());
+  for (size_t i = 0; i < hits.size(); ++i)
+    hits[i] = st.glueNodes[i].hits;
+  std::vector<b3dop::GlueBond> bonds;
+  bonds.reserve(st.glueBonds.size());
+  for (const Box3DJointEntry *e : st.glueBonds) {
+    b3dop::GlueBond g;
+    g.a = st.glueNodeOf[e->bodyA];
+    g.b = st.glueNodeOf[e->bodyB];
+    g.params = e->glueParams;
+    g.impact = e->glueImpact;
+    bonds.push_back(g);
+  }
+  std::vector<int> broken;
+  b3dop::glueAdvance(bonds, std::move(hits), dt, broken);
+  for (size_t i = 0; i < bonds.size(); ++i)
+    st.glueBonds[i]->glueImpact = bonds[i].impact;
+  for (const int i : broken)
+    st.glueBroken.push_back(st.glueBonds[static_cast<size_t>(i)]);
+  for (Box3DGlueNode &n : st.glueNodes)
+    n.hits = 0.0f;
+}
+
 namespace {
 
 using EntriesByNetwork =
@@ -1487,6 +1576,9 @@ int breakJoints(Box3DSharedState &st, EntriesByNetwork &brokeIn) {
     events = st.brokenThisFrame;
   else
     world.brokenJoints(events);
+  // Glue bonds over their strength (advanceGlue).
+  events.insert(events.end(), st.glueBroken.begin(), st.glueBroken.end());
+  st.glueBroken.clear();
   int broke = 0;
   for (void *p : events) {
     Box3DJointEntry *e = static_cast<Box3DJointEntry *>(p);
@@ -1613,6 +1705,11 @@ void writeFeedback(const b3dop::Box3DWorld &world, GU_Detail *gdp,
   GA_RWHandleF &torqueH = scalar("torque");
   GA_RWHandleF &angleH = scalar("angle");
   for (const Box3DJointEntry *e : entries) {
+    if (e->glue && primOk(e->prim)) {
+      GA_RWHandleF &impactH = scalar(kImpact);
+      if (impactH.isValid())
+        impactH.set(e->prim, e->glueImpact);
+    }
     b3dop::JointFeedback fb;
     if (!primOk(e->prim) || !world.jointFeedback(e->handle, e->type, fb))
       continue;

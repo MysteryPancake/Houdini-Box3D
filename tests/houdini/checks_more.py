@@ -18,6 +18,7 @@ from b3dtest import (
     close,
     create,
     display,
+    find_network_geometry,
     finish,
     merge,
     multisolver,
@@ -41,7 +42,7 @@ from b3dtest import (
     sop_solver_contents,
     step,
 )
-from checks_constraints import hanging_pair, sidefx_compare
+from checks_constraints import broken_count, hanging_pair, sidefx_compare
 from checks_solver import max_difference, stack_scene
 
 
@@ -484,9 +485,11 @@ def test_internal_constraints():
 
 
 def test_sidefx_glue():
-    """SideFX Glue holding a hanging piece, at several Strengths: whether it breaks in Box3D and in
-    Bullet. INFO: Box3D breaks at strength / timestep (our rule); masses may differ too."""
+    """SideFX Glue holding a hanging piece, at several Strengths (1 to 1e7): its weight is no hit, so
+    it holds at every strength, in Box3D and in Bullet (Glue breaks on the impulse of collisions
+    only: see glue_impact)."""
     rows = []
+    held = True
     for strength in (1.0, 100.0, 1e4, 1e7):
         out = {}
         for kind in ("box3d", "bullet"):
@@ -495,7 +498,129 @@ def test_sidefx_glue():
             y = step(dop, 24, lambda sim, f: packed_positions(sim, "pieces"))[24][names[1]][1]
             out[kind] = "held" if y > 1.9 else "broke"
         rows.append(f"strength {strength:g}: Box3D {out['box3d']}, Bullet {out['bullet']}")
-    return [Result("sidefx_glue", Result.INFO, "; ".join(rows))]
+        held = held and out["box3d"] == "held" and out["bullet"] == "held"
+    return [Result("sidefx_glue", Result.PASS if held else Result.FAIL, "; ".join(rows) + " (expected held)")]
+
+
+def glue_pair_run(kind, strength, height=3.0):
+    """Two glued boxes dropped from `height` onto the ground: the landing is a hit. Returns the
+    number of broken constraint lines on frame 48 (None when the solver reports no `broken` group)
+    and whether the pair is still 1 apart."""
+    pieces = [{"size": (1, 1, 1), "center": (0, height, 0), "attrs": {"active": 1}},
+              {"size": (1, 1, 1), "center": (1, height, 0), "attrs": {"active": 1}},
+              dict(GROUND, attrs={"active": 0})]
+    tag = f"glue_impact_{kind}_{int(strength)}_{int(height * 10)}"
+    dop, names = hanging_pair(tag, None, conrels=[("glueconrel", {"strength": strength})], solver_kind=kind,
+                              pieces=pieces, anchors=((0, height, 0), (1, height, 0)))
+    track = step(dop, 48, lambda sim, f: (packed_positions(sim, "pieces"), broken_count(sim) if f == 48 else None))
+    pos, broke = track[48]
+    apart = (pos[names[0]] - pos[names[1]]).length()
+    return broke, apart
+
+
+def test_glue_impact():
+    """SideFX Glue breaks on the impulse of the hits it takes: two glued boxes dropped onto the ground
+    (the landing is the hit) break at Strength 1 and hold at Strength 1e7, in Box3D (the weld is
+    broken by the wrapper from the contact impulses, with the half-life and propagation). Bullet's
+    outcome is reported beside it."""
+    got = {}
+    for strength in (1.0, 1e7):
+        got[strength] = {kind: glue_pair_run(kind, strength) for kind in ("box3d", "bullet")}
+    low, high = got[1.0]["box3d"][0], got[1e7]["box3d"][0]
+    ok = low is not None and low >= 1 and high == 0
+    rows = [f"Strength {st:g}: Box3D broken {r['box3d'][0]}, Bullet broken {r['bullet'][0]}"
+            for st, r in got.items()]
+    return [Result("glue_impact", Result.PASS if ok else Result.FAIL,
+                   "; ".join(rows) + " (expected Box3D: broken at 1, none at 1e7)")]
+
+
+def glue_threshold(kind, height, lo=500.0, hi=1e7, rounds=7):
+    """The Strength at which a glued pair dropped from `height` stops breaking on landing, found by
+    bisection in log space between `lo` (must break) and `hi` (must hold). None if `lo` already
+    holds or `hi` still breaks."""
+    def breaks(strength):
+        broke = glue_pair_run(kind, strength, height)[0]
+        return broke is not None and broke >= 1
+
+    if not breaks(lo) or breaks(hi):
+        return None
+    for _ in range(rounds):
+        mid = (lo * hi) ** 0.5
+        if breaks(mid):
+            lo = mid
+        else:
+            hi = mid
+    return hi
+
+
+def test_glue_impact_scale():
+    """Whether Box3D's contact impulse is on Bullet's scale: the Strength at which a glued pair stops
+    breaking when it lands, found by bisection (500 to 1e7), from two drop heights (3 and 6). They
+    agree when the two solvers' thresholds are within a factor of 4 at both heights. The message
+    gives the thresholds and their ratios: the same ratio at both heights is a constant factor
+    between the impulses; a ratio that changes with the height is a different dependence on speed."""
+    found = {height: {kind: glue_threshold(kind, height) for kind in ("box3d", "bullet")}
+             for height in (3.0, 6.0)}
+    rows = []
+    ok = True
+    for height, t in found.items():
+        if t["box3d"] is None or t["bullet"] is None:
+            ok = False
+            rows.append(f"height {height:g}: Box3D {t['box3d']}, Bullet {t['bullet']} (no threshold in 500..1e7)")
+            continue
+        ratio = t["bullet"] / t["box3d"]
+        ok = ok and 0.25 <= ratio <= 4.0
+        rows.append(f"height {height:g}: Box3D holds from {t['box3d']:.0f}, Bullet from {t['bullet']:.0f} "
+                    f"(Bullet / Box3D {ratio:.2f})")
+    return [Result("glue_impact_scale", Result.PASS if ok else Result.FAIL,
+                   "; ".join(rows) + " (expected a ratio within 0.25 to 4)")]
+
+
+def glue_impact_series(kind, height, frames=36):
+    """The Glue's `impact` attribute on every frame for a glued pair dropped from `height` with a Strength
+    that never breaks it: {frame: impact}, or None for a frame with no such attribute."""
+    pieces = [{"size": (1, 1, 1), "center": (0, height, 0), "attrs": {"active": 1}},
+              {"size": (1, 1, 1), "center": (1, height, 0), "attrs": {"active": 1}},
+              dict(GROUND, attrs={"active": 0})]
+    dop, names = hanging_pair(f"glue_trace_{kind}_{int(height * 10)}", None,
+                              conrels=[("glueconrel", {"strength": 1e12})], solver_kind=kind, pieces=pieces,
+                              anchors=((0, height, 0), (1, height, 0)))
+
+    def impact(sim, f):
+        geo = find_network_geometry(sim)
+        prims = list(geo.prims()) if geo is not None else []
+        if not prims or geo.findPrimAttrib("impact") is None:
+            return None
+        return prims[0].attribValue("impact")
+
+    return step(dop, frames, impact)
+
+
+def test_glue_impact_trace():
+    """The Glue `impact` attribute over time in Box3D and in Bullet for the same landing (the solver writes
+    the bond's accumulated impulse there): its peak, the frame of the peak, and the values around it.
+    They agree when the peaks are within a factor of 4. The series shows whether a difference is a scale
+    (the same shape) or in how the impulse builds and decays."""
+    rows, ok = [], True
+    for height in (3.0, 6.0):
+        series = {kind: glue_impact_series(kind, height) for kind in ("box3d", "bullet")}
+        peaks = {}
+        for kind, values in series.items():
+            numeric = {f: v for f, v in values.items() if v is not None}
+            if not numeric:
+                rows.append(f"height {height:g}: {kind} wrote no impact attribute")
+                ok = False
+                continue
+            frame = max(numeric, key=numeric.get)
+            peaks[kind] = numeric[frame]
+            around = ", ".join(f"{f}:{numeric.get(f, 0.0):.0f}" for f in range(max(1, frame - 2), frame + 5))
+            rows.append(f"height {height:g} {kind}: peak {numeric[frame]:.0f} on frame {frame} (frames {around})")
+        if len(peaks) == 2:
+            ratio = peaks["bullet"] / peaks["box3d"] if peaks["box3d"] else float("inf")
+            ok = ok and 0.25 <= ratio <= 4.0
+            rows.append(f"height {height:g}: Bullet / Box3D peak {ratio:.2f}")
+    return [Result("glue_impact_trace", Result.PASS if ok else Result.FAIL,
+                   "; ".join(rows) + " (expected the peaks within a factor of 4)")]
 
 
 def test_sidefx_hard_untyped():
@@ -759,6 +884,9 @@ TESTS = {
     "other_solver": test_other_solver,
     "internal_constraints": test_internal_constraints,
     "sidefx_glue": test_sidefx_glue,
+    "glue_impact": test_glue_impact,
+    "glue_impact_scale": test_glue_impact_scale,
+    "glue_impact_trace": test_glue_impact_trace,
     "sidefx_hard_untyped": test_sidefx_hard_untyped,
     "sidefx_cone_twist": test_sidefx_cone_twist,
     "aging_vs_pop": test_aging_vs_pop,

@@ -51,9 +51,17 @@ struct Box3DJointCounts {
 // sync keeps per-object name lookups only while this is true.
 bool anyJointNetwork(SIM_ObjectArray &objects);
 
-// timeStep: the DOP timestep (a Glue's strength is an impulse over it).
-void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects, float timeStep,
+void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
                 Box3DJointCounts &counts);
+
+// SideFX Glue (core/Box3DGlue.h): prepareGlue after syncJoints each step lists
+// the live bonds and their bodies; collectGlueHits after every Box3D step adds
+// the impulse of the glued bodies' contacts; advanceGlue (dt: the whole frame's
+// time) at the end of the frame spreads those over the bonds, adds them to each
+// `impact` and queues the bonds over their strength for jointsAfterStep.
+void prepareGlue(Box3DSharedState &st);
+void collectGlueHits(Box3DSharedState &st);
+void advanceGlue(Box3DSharedState &st, float dt);
 
 // After the step: joints over their force / torque threshold are destroyed and
 // marked broken (`broken` primitive group, or switched to their

@@ -1,12 +1,13 @@
 // Box3DSideFX.h
 //
 // SideFX's own constraint relationships (Glue, Hard, Spring, Bullet Soft, Cone
-// Twist), mapped onto Box3D joints. Approximate: Box3D has no glue impulses, no
-// CFM / ERP, no elliptical cones. The Houdini side reads each data's options
-// and the primitive overrides into SideFXSettings (through sideFXParams(), so
-// the names live in one place); mapSideFX() picks the Box3D joint and its
-// settings, and sideFXFrameOffsets() says where its frames sit relative to the
-// two anchors. Houdini-free, covered by tests/core_sidefx.cpp.
+// Twist), mapped onto Box3D joints. Approximate: Glue's impulses are the
+// wrapper's (Box3DGlue.h); Box3D has no CFM / ERP, no elliptical cones. The
+// Houdini side reads each data's options and the primitive overrides into
+// SideFXSettings (through sideFXParams(), so the names live in one place);
+// mapSideFX() picks the Box3D joint and its settings, and sideFXFrameOffsets()
+// says where its frames sit relative to the two anchors. Houdini-free, covered
+// by tests/core_sidefx.cpp.
 #pragma once
 
 #include <cstring>
@@ -77,9 +78,12 @@ inline ConstraintMode constraintModeFromString(const char *s) {
 struct SideFXSettings {
   float strength =
       10000.0f; // glue: impulse to break, < 0 never; spring: Hooke's constant
-  float restLength = 1.0f;   // hard, spring, soft
-  int disableCollisions = 0; // hard, spring, soft, cone twist
-  float damping = 0.1f;      // spring: absolute (force per speed)
+  float impulseHalfLife = 0.1f;  // glue: seconds for the impulse to halve
+  float propagateRate = 1.0f;    // glue: 0..1, how impulses spread over bonds
+  int propagationIterations = 1; // glue: rounds of spreading; < 0 the global
+  float restLength = 1.0f;       // hard, spring, soft
+  int disableCollisions = 0;     // hard, spring, soft, cone twist
+  float damping = 0.1f;          // spring: absolute (force per speed)
 
   float stiffness = 10.0f; // soft: Hz
   float dampingRatio = 1.0f;
@@ -155,6 +159,9 @@ inline const std::vector<SideFXParam> &sideFXParams() {
   };
   static const std::vector<SideFXParam> kParams = {
       f("strength", G | Sp, &S::strength),
+      f("impulse_halflife", G, &S::impulseHalfLife),
+      f("propagate_rate", G, &S::propagateRate),
+      i("propagationiterations", G, &S::propagationIterations),
       f("restlength", H | Sp | So, &S::restLength),
       i("disablecollisions", H | Sp | So | C, &S::disableCollisions),
       f("damping", Sp, &S::damping),
@@ -208,8 +215,6 @@ struct SideFXBody {
 };
 
 struct SideFXContext {
-  float timeStep =
-      1.0f / 24.0f; // glue: strength (an impulse) / timeStep = break force
   SideFXBody a, b;
 };
 
