@@ -495,6 +495,54 @@ def test_gravity_dop():
     return [Result("gravity_dop", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
 
 
+def test_force_dops_many_and_sampled():
+    """Force DOPs on many bodies and over a body's size. 300 boxes under a Gravity Force DOP (the Force
+    DOPs of an object are evaluated in parallel from a few hundred bodies) all take the same pull:
+    v.y = -g after 1 s. A Drag Force DOP slows a 2 x 2 x 2 box by a different amount when its Sample Mode
+    is Sphere or Circle (force over the body's size) than at a Point (INFO: the ratios)."""
+    results = []
+    count = 300
+    pieces = [{"size": (1, 1, 1), "center": (3.0 * i, 50, 0)} for i in range(count)]
+    path, names = packed_boxes("force_many", pieces)
+    dop = new_dopnet("force_many")
+    solver = box3d_solver(dop, packed_object(dop, "piece", path), gravity=(0, 0, 0))
+    grav = create(dop, "gravity", "gravity_force")
+    grav.setInput(0, solver)
+    finish(dop, grav)
+    attrs = step(dop, 25, lambda sim, f: [point_attributes(sim, "piece", n, ["v"])["v"][1] for n in names]
+                 if f == 25 else None)[25]
+    lo, hi = min(attrs), max(attrs)
+    ok = close(lo, -G, 0.03 * G) and close(hi, -G, 0.03 * G)
+    results.append(Result("force_dops_many_and_sampled", Result.PASS if ok else Result.FAIL,
+                          f"{count} boxes under a Gravity Force DOP: v.y after 1 s from {lo:.3f} to {hi:.3f} "
+                          f"(expected {-G:.3f} for each)"))
+
+    slowed = {}
+    for mode, label in ((1, "Point"), (2, "Circle"), (3, "Sphere")):
+        path, names = packed_boxes(f"force_drag_{label.lower()}",
+                                   [{"size": (2, 2, 2), "center": (0, 50, 0), "attrs": {"v": (10.0, 0.0, 0.0)}}])
+        dop = new_dopnet(f"force_drag_{label.lower()}")
+        solver = box3d_solver(dop, packed_object(dop, "piece", path, keep_velocity=True), gravity=(0, 0, 0))
+        drag = create(dop, "drag", "drag_force")
+        drag.setInput(0, solver)
+        set_parm(drag, ["samplemode"], mode)
+        finish(dop, drag)
+        vx = step(dop, 7, lambda sim, f: point_attributes(sim, "piece", names[0], ["v"]))[7]["v"][0]
+        slowed[label] = 10.0 - vx
+    point = slowed["Point"]
+    results.append(Result("force_dops_many_and_sampled",
+                          Result.PASS if point > 1e-4 and all(
+                              abs(slowed[k] - point) > 0.1 * point for k in ("Circle", "Sphere")) else Result.FAIL,
+                          "Drag Force DOP on a 2 x 2 x 2 box going 10 m/s, speed lost in 0.25 s: "
+                          + ", ".join(f"{k} {v:.4f}" for k, v in slowed.items())
+                          + " (expected Circle and Sphere to differ from Point, which they do when the force is "
+                            "evaluated over the body's size)"))
+    if point > 1e-4:
+        results.append(Result("force_dops_many_and_sampled", Result.INFO,
+                              f"ratios to Point: Circle {slowed['Circle'] / point:.2f}, Sphere {slowed['Sphere'] / point:.2f}"))
+    return results
+
+
 def test_rbd_packed_attributes():
     """Lists the point attributes RBD Packed Object puts on a packed piece (as the solver gets them
     on frame 1), and shows whether a Box3D Data value (Friction 0.123) reaches the body or is
@@ -1027,4 +1075,5 @@ TESTS = {
     "aging": test_aging,
     "point_force": test_point_force,
     "gravity_dop": test_gravity_dop,
+    "force_dops_many_and_sampled": test_force_dops_many_and_sampled,
 }

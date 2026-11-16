@@ -33,11 +33,11 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   looking like edits (debug log `full scan, changed:`).
 * `SourceSummaryCache`: a packed source edited in place without a new unique id or data id gives a stale hull.
 * Box3D's tasks on Houdini's TBB pool with several DOP networks or threaded SOPs cooking at once.
-* Parallel Force DOP evaluation (`evaluateResolvers`, `kMinParallelForces`): written against the HDK header, not compiled
-  or run. Needs a scene with a few hundred bodies and a Gravity / Drag / Wind Force DOP, compared against the serial
-  result (`BOX3DDOP_MIN_PARALLEL_FORCES` in a debug build moves the threshold). Whether the built-in forces report
-  `threadsafe()` true is unchecked, and a force that does not just stays serial.
-* Circle and sphere force sampling (`sampleForce`): written against the HDK header, not compiled or run. Needs a Force DOP set to Sample Mode Circle / Sphere on a body.
+* Parallel Force DOP evaluation (`evaluateResolvers`, `kMinParallelForces`): 300 boxes under a Gravity Force DOP give the
+  right result (`force_dops_many_and_sampled`), but nothing shows that the parallel path ran: whether the built-in forces
+  report `threadsafe()` true is unchecked (a force that does not just stays serial). Circle / Sphere sampling works on a Drag
+  Force DOP (the test prints its ratios to Point: 4.6 and 9.2 for a 2 m box); how a force scales over a size is the Force
+  DOP's own.
 * Box3D Data under Geometry on Static Objects and RBD Objects.
 * Ground planes: a Static Object whose SDF Representation is set to Implicit Plane is taken as a plane facing +y through its
   origin, as a Ground Plane DOP's is (only the Ground Plane is tested). A plane tilted off the axes has a large broad-phase box,
