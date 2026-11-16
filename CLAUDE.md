@@ -88,7 +88,7 @@ CMakeLists.txt        Targets: b3dop_core, the core test exes, Box3DDOP (plugin)
 build.sh / build.bat  Convenience wrappers (HFS discovery, submodule fetch, stale build/ reset)
 test.bat              Runs the Houdini checks (tests/houdini/run_tests.py) with hython (Windows)
 make_examples.bat     Builds the example scenes (examples/make_examples.py) with hython (Windows)
-extern/box3d/         Box3D submodule (never edit; static lib, EXCLUDE_FROM_ALL)
+extern/box3d/         Box3D submodule, the author's fork (MysteryPancake/Box3D-Fork; static lib, EXCLUDE_FROM_ALL)
 icons/box3d.svg     Node icon; the build copies it to config/Icons as DOP_<node name>.svg for every node
 src/                  The include root: includes are written "core/Box3DWorld.h" (bare name within a folder)
   core/               Houdini-free; built as b3dop_core and covered by the tests
@@ -174,7 +174,7 @@ Layering (keep it):
 * Row-vector matrices on the Houdini side; never mix with column-vector math.
 * Style: clang-format's default (LLVM) style, pinned by the root `.clang-format`. Run `clang-format -i` on every
   `.cpp` / `.h` file you create or change under `src/` and `tests/` before finishing, and don't hand-format or
-  hand-align around it. Never format `extern/` (it has its own `.clang-format` and is never edited). Keep comments
+  hand-align around it. Never format `extern/` (it has its own `.clang-format`). Keep comments
   inside macros on their own line: a trailing comment after a `\` continuation gets wrapped into the macro. A
   comment too long to sit after its code goes on its own line above it.
 * Casts: `static_cast<T>(x)`, never `T(x)` or `(T)x` (clang-tidy's `google-readability-casting`).
