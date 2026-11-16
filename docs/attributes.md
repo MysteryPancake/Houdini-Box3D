@@ -14,7 +14,7 @@ All are optional except `P`. A missing one uses the Box3D Data value. Every step
 | `active` | int | `0` = static |
 | `animated` | int | With `active = 0`: follows its animation and pushes what it touches |
 | `enabled` | int | `0` = left out of the simulation |
-| `awake` | int | `0` = asleep. Sets the starting state, and the solver keeps it up to date |
+| `awake` | int | `0` = asleep. Sets the starting state, and is updated as the body sleeps |
 | `dead` | int | Nonzero = remove the body. With Reap Dead Points on, the point is deleted too |
 | `age` / `life` | float | With Enable Aging: `dead` once `age` passes `life` |
 | `mass`, `computemass`, `density` | float / int | Mass, or `computemass` = 1 for `density` × volume |

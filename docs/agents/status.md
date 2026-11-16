@@ -63,8 +63,8 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * Before-start outputs and Export Broken Constraints (`solver_sop_before_start`, `solver_sop_keep_broken`). Both need
   a run of the RBD Bullet Solver SOP beside ours, which no test builds yet.
 * Joints from authored anchors through `restToNow` and the `angle` since rest, against Bullet (test `bullet_joint_rest`,
-  rerun with constraint_type all: with `position` both held the 1.0 rest length, which pushes the boxes into each
-  other; with both anchors at one point the centres ended 2.19 and 2.59 apart, past the 2.06 possible).
+  with `position` both held the 1.0 rest length, which pushes the boxes into each other; with both anchors at one
+  point the centres ended 2.19 and 2.59 apart, past the 2.06 possible).
 * `bullet_primR` rotation order: XYZ Euler degrees matches Bullet. Settled thin boxes have the same face down
   (`bullet_primr_order`), and boxes turned by 90 degrees have the same face up (`bullet_shape_attributes`: 90 90 0,
   0 90 90, 90 0 90 pick XYZ out of the six orders). A tilted box's top is a corner and the plate test stops on it
@@ -80,8 +80,8 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * Where Bullet puts a hand-set shape on a static piece away from the origin: a plate over a piece at x 3 never
   stopped in Bullet, where Box3D has the shape on the piece (`bullet_shape_position`; its dynamic case is rerun, the
   first run had made the ground a hand-set box too).
-* Impact normal direction (test `bullet_impact_normal`, rerun: both solvers write a `normal` field, the first run
-  could not read it as a Houdini vector); whether a fresh `SIM_Impacts` each step suits Houdini's impact tools.
+* Whether a fresh `SIM_Impacts` each step suits Houdini's impact tools (the normal direction matches Bullet:
+  `bullet_impact_normal`).
 * Bullet's placement of a hand-set shape (`bullet_shape_probe`, the same with a neutral ground): a dynamic hand-set piece
   dropped from x 2 ends at x 0, z 0 (plus `bullet_primT`'s x and z), so Bullet drops the piece's position, and its
   height follows `bullet_primT`'s y (0.3 up gives 0.25 to 0.3, 0.3 down gives -0.3) rather than the shape. Box3D keeps
@@ -90,9 +90,9 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   type; packed pieces settle at 0.500 in both. Not yet looked into (test `bullet_primitive_types`).
 * Which end is Cone Twist's goal (taken as point 1; test `bullet_cone_twist_goal`): Bullet's piece fell freely with both
   anchors at one point, turned or not, so it cannot say. Needs a Bullet Cone Twist setup that holds.
-* Unpacked geometry (`unpacked_geometry_bullet`): an object of polygons only is skipped by both (ours warns). This
-  file had Bullet's message as an error, the author reports a warning: rerun to settle. Bullet ignores loose polygons
-  beside packed pieces without a message (ours warns) and gives that message for loose points (ours simulates them).
+* Unpacked geometry (`unpacked_geometry_bullet`): an object of polygons only is skipped by both (ours warns). Bullet
+  ignores loose polygons beside packed pieces without a message (ours warns) and gives that message for loose points
+  (ours simulates them).
 
 **Whole objects**
 * RBD Point Object (`other_rbd_objects`, `point_object_bullet`): needs its Geometry Path menu (`usegeo`) set to Override, else it makes no objects. With that, Bullet and Box3D match: 4 whole objects, both fall to y -2.424 (checked).
@@ -116,10 +116,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   piles, several contacts, different masses), the half-life and propagation against Bullet, the global propagation
   iteration count (the `propagate_iteration` detail attribute is not read), and the cost of reading every glued body's
   contacts each step on a large network.
-* The joint-pass, contact-impulse, entry-size and precompiled-header changes (`Box3DJointExtra`, `springEntries`,
-  `contactImpulseByHandle`, `BOX3DDOP_PCH`): written without building or running the plugin. Unchecked: that the plugin
-  builds and `glue_impact_scale`, `sidefx_spring_mass`, `anchor_id` and `bullet_anchor_id` still pass, and what the
-  precompiled headers save (not measured).
+* What the precompiled headers (`BOX3DDOP_PCH`) save: not measured.
 * Transform Pieces with packed transforms that carry scale or shear.
 * Constraints output through Transform Pieces: constraints between collision pieces (not in the simulation points, so
   not moved).
@@ -132,8 +129,8 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * Quadric primitives (Sphere, Tube, Circle, Metaball), packed or as RBD Objects: sampled on their surface
   (`Box3DQuadrics.h`, `appendQuadricSamples` in `Box3DShapeBuild.cpp`) and sized like Bullet's. Run (`bullet_primitive_types`):
   sphere 0.500 and metaball 0.250 match Bullet; a Sphere that is the only primitive of its piece and uniformly scaled
-  is a real Box3D sphere (`NamedPiece::sphereValid`). The tube rested at 1.0 (unit tube taken as y -1 to 1), now taken
-  as -0.5 to 0.5: rerun. A circle packed settles flat at 0.02; as an RBD Object it stood on its edge. Not done:
+  is a real Box3D sphere (`NamedPiece::sphereValid`). A tube packed rests at 0.500 in both; as an RBD Object Box3D
+  reads 0.525 (still moving). A circle packed settles flat at 0.02; as an RBD Object it stood on its edge. Not done:
   quadrics inside a Convex hull Per Connected Set, volumes (Bullet: packed falls through, RBD Object stays at 2),
   tube taper.
 * Results depend slightly on point order even with `id` (`point_order`): bodies are created in point order.
