@@ -185,19 +185,6 @@ def test_feedback():
                    f"line attributes on frame 24: {vals} (expected force about 9.8 N for 1 kg, distance near 0)")]
 
 
-def test_centroid_anchors():
-    """Two free pieces welded with each anchor at its own centroid (as Connect Adjacent Pieces
-    makes them): how far apart they end up. INFO: the notes say a Box3D weld pulls them together."""
-    pieces = [{"size": (1, 1, 1), "center": (0, 2, 0), "attrs": {"active": 1}},
-              {"size": (1, 1, 1), "center": (1, 2, 0), "attrs": {"active": 1}}]
-    dop, names = hanging_pair("centroid_anchors", "weld", conrels=[("box3d_weldconrel", {})], gravity=(0, 0, 0),
-                              pieces=pieces, anchors=((0, 2, 0), (1, 2, 0)))
-    track = step(dop, 48, lambda sim, f: packed_positions(sim, "pieces"))
-    d = (track[48][names[0]] - track[48][names[1]]).length()
-    return [Result("centroid_anchors", Result.INFO,
-                   f"centroids 1.0 apart at the start, {d:.3f} after 2 s (SideFX Glue / Hard would keep 1.0)")]
-
-
 def test_anchor_id():
     """anchor_id on a whole object: a Weld between a world anchor at (0, 4, 0) and point 0 (or vertex 0) of an RBD
     Object box, whose anchor's own P is far away (50, 50, 50), pulls that point of the box to the world anchor, so
@@ -325,20 +312,6 @@ def test_sidefx_spring_mass():
                    f"hanging piece at y {still:.3f} with 1 kg (expected {want_still:.3f}), {heavier:.3f} after its "
                    f"mass becomes 4 kg (expected {want_heavier:.3f}; {still:.3f} means the spring kept its 1 kg "
                    "frequency)")]
-
-
-def test_sidefx_spring():
-    """SideFX Spring constraint compared with Bullet: how far the hanging piece ends up, and
-    (constraint_type all, piece spinning at the start) whether an angular spring turns it back.
-    INFO."""
-    d = sidefx_compare("spring", "springconrel", {"constraint_type": "position"})
-    a = sidefx_compare("spring_all", "springconrel", {"constraint_type": "all"}, spin=(0.0, 3.0, 0.0))
-    return [Result("sidefx_spring", Result.INFO,
-                   f"position spring, distance after 2 s: Box3D {d['box3d'][0]:.3f}, Bullet {d['bullet'][0]:.3f} "
-                   f"(start 2.06)"),
-            Result("sidefx_spring", Result.INFO,
-                   f"'all' spring, piece started spinning 3 rad/s about y: turned {a['box3d'][1]:.0f} deg in Box3D, "
-                   f"{a['bullet'][1]:.0f} deg in Bullet after 2 s (small = an angular spring pulled it back)")]
 
 
 # ---------------------------------------------------------------------------
@@ -676,7 +649,7 @@ def test_data_under_geometry_objects():
         held[label] = step(dop, 24, sample)[24]
     ok = (close(held["held"], 3.0, 0.01) and held["free"] < 2.5
           and found.get("held") and found.get("free"))
-    results.append(Result("data_under_geometry_objects_rbd", Result.PASS if ok else Result.FAIL,
+    results.append(Result("data_under_geometry_objects", Result.PASS if ok else Result.FAIL,
                           f"after 1 s the box is at y {held['held']:.3f} with Gravity Scale 0 (expected 3.0) "
                           f"and {held['free']:.3f} with 1; Geometry/Box3DData present: {found}"))
     # Static Object: the grid's Box3D Data Bounce decides the rebound of a box that has its own Bounce set alike.
@@ -698,7 +671,7 @@ def test_data_under_geometry_objects():
         landing = min(range(1, 73), key=lambda f: track[f])
         peaks[label] = max(track[f] for f in range(landing, 73))
     ok = peaks["bouncy"] > peaks["dead"] + 0.5
-    results.append(Result("data_under_geometry_objects_static", Result.PASS if ok else Result.FAIL,
+    results.append(Result("data_under_geometry_objects", Result.PASS if ok else Result.FAIL,
                           f"rebound height after landing: {peaks['bouncy']:.3f} with Bounce 1 and "
                           f"{peaks['dead']:.3f} with Bounce 0 on the Static Object and the box (expected 1 well above 0)"))
     return results
@@ -730,10 +703,8 @@ TESTS = {
     "attribute_multiplies": test_attribute_multiplies,
     "next_constraint": test_next_constraint,
     "feedback": test_feedback,
-    "centroid_anchors": test_centroid_anchors,
     "sidefx_hard": test_sidefx_hard,
     "sidefx_hard_all": test_sidefx_hard_all,
-    "sidefx_spring": test_sidefx_spring,
     "rbd_first_frames": test_rbd_first_frames,
     "rbd_initial_motion": test_rbd_initial_motion,
     "rbd_object_transform": test_rbd_object_transform,

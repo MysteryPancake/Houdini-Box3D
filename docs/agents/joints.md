@@ -46,7 +46,7 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   into them while the toggle is off (`jointNodeToggleOf`), so the settings, primitive attributes (floats
   multiply the node's -1) and the SideFX mapping keep their meaning. Not in `jointParams()`: no attribute,
   no fingerprint, no `sameJointSettings` entry. `findJointParam` searches both lists.
-* `jointParamRange(p, type)`: each float's slider; a hard 0 minimum where `sanitized` (Box3DWorld.cpp) would clamp
+* `jointParamRange(p, type)`: each float's slider; a hard 0 minimum where `sanitized` (Box3DWorldJoints.cpp) would clamp
   anyway. `motor_speed` has an angle range on revolute and a linear one elsewhere.
 * Houdini units in one place: `jointParamSize` (1 or 3 values), `setJointParam` (Houdini values -> settings: degrees
   -> radians, toggles, Euler rotations through a caller-supplied converter, `box3dEulerToQuat`) and `getJointParam`
@@ -77,7 +77,7 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   joint; `brokenJoints` returns the events' user data and the caller destroys them. `b3DestroyBody` destroys a
   body's joints, so handles can go stale: `isJointValid` before use.
 
-**Houdini** (`Box3DJointSync.cpp`, `SIM_Box3DConRel.cpp`):
+**Houdini** (`Box3DJointSync.cpp`, `Box3DJointBreak.cpp` for the after-step part, `SIM_Box3DConRel.cpp`):
 * Nodes: `SIM_Box3DConRel` (`SIM_ConRel` + `SIM_OptionsUser`, like SideFX's `SIM_ConRelSpring`; abstract,
   `DECLARE_CLASSNAME` only) and one subclass per joint type from `BOX3D_DECLARE_CONREL`, each with its own automatic DOP
   (`box3d_<type>conrel`, label "Box3D <Type> Constraint Relationship", default Data Name the type label, `Weld` etc., capitalised like SideFX's). `describe(type)`
@@ -153,7 +153,7 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
     relative, quaternion dot 1 - 1e-6), which holds when all three were written after the same step and fails for
     a renamed, moved or new anchor (a zero `local_orient` means none). This makes rebuilds exact: going through
     float world positions loses ~1 float step at the coordinates' size per rebuild (4.6e-4 at x = 12000 in the
-    test), the local frames are small offsets kept bit for bit (`asLocalFrame` in Box3DWorld.cpp only renormalises a quaternion
+    test), the local frames are small offsets kept bit for bit (`asLocalFrame` in Box3DWorldJoints.cpp only renormalises a quaternion
     that is not already unit length). The live `current_*` are still read: to make new joints and to see edits.
   * Edits: the entry remembers the authored anchors it was made from (`authA` / `authB`) and what it wrote
     (`wroteA` / `wroteB`), as stored in float. A reprocessed network whose `P` / `orient` differ from the first, or

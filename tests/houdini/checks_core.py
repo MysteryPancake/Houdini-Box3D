@@ -173,56 +173,6 @@ def test_network():
 
 
 # ---------------------------------------------------------------------------
-# Probes for a crash in `network`: each isolates one suspect. Run on their own if `network`
-# crashes; a CRASH in one of them names the culprit.
-# ---------------------------------------------------------------------------
-
-
-def cook_data_node_alone(type_name):
-    dop = new_dopnet("probe")
-    node = create(dop, type_name, "data")
-    finish(dop, node)
-    step(dop, 3, lambda sim, f: None)
-
-
-def test_probe_weld_alone():
-    """Probe: a Box3D Weld node cooked on its own in a DOP network (no Constraint Network)."""
-    cook_data_node_alone("box3d_weldconrel")
-    return [Result("probe_weld_alone", Result.PASS, "the Box3D Weld node cooks on its own")]
-
-
-def test_probe_data_alone():
-    """Probe (control): a Box3D Data node, which also has folders, cooked on its own."""
-    cook_data_node_alone("box3d_data")
-    return [Result("probe_data_alone", Result.PASS, "the Box3D Data node cooks on its own")]
-
-
-def test_probe_sequence():
-    """Probe: the first run's crash order in one process: joint nodes made and the scene cleared,
-    then the network scene."""
-    test_nodes()
-    rbd_object(new_dopnet("probe_partial"), "A", box_sop("probe_partial_A", (0, 0, 0)))  # as two_rbd left it
-    hou.hipFile.clear(suppress_save_prompt=True)
-    held, _ = welded_pair("probe_sequence")
-    return [Result("probe_sequence", Result.PASS, f"no crash (piece at y={held[1]:.2f})")]
-
-
-def test_probe_glue_box3d():
-    """Probe: a SideFX Glue node in a Constraint Network with the Box3D Solver."""
-    y, messages = welded_pair("probe_glue", conrel_type="glueconrel")
-    return [Result("probe_glue_box3d", Result.PASS if close(y[1], 2.0, 0.1) else Result.INFO,
-                   f"no crash; glued piece at y={y[1]:.3f} (2.0 = held). Messages: {messages[:3]}")]
-
-
-def test_probe_weld_bullet():
-    """Probe: a Box3D Weld node in a Constraint Network with the Bullet solver (which ignores it)."""
-    y, messages = welded_pair("probe_weld_bullet", solver_kind="bullet")
-    return [Result("probe_weld_bullet", Result.PASS,
-                   f"no crash: our node cooks inside the Constraint Network (piece at y={y[1]:.2f}; "
-                   "Bullet doesn't know the joint, so it may fall)")]
-
-
-# ---------------------------------------------------------------------------
 # Item 4: new objects first move one step after they appear, with their initial v
 # ---------------------------------------------------------------------------
 
@@ -538,9 +488,4 @@ TESTS = {
     "winding": test_winding,
     "ground_plane": test_ground_plane,
     "rbd_defaults": test_rbd_defaults,
-    "probe_weld_alone": test_probe_weld_alone,
-    "probe_data_alone": test_probe_data_alone,
-    "probe_sequence": test_probe_sequence,
-    "probe_glue_box3d": test_probe_glue_box3d,
-    "probe_weld_bullet": test_probe_weld_bullet,
 }

@@ -436,33 +436,6 @@ def test_animated_static():
 # ---------------------------------------------------------------------------
 
 
-def test_other_solver():
-    """A Bullet-solved box falls onto a Box3D-solved box resting on the ground: where each ends up,
-    and the Box3D Solver's messages. INFO: the notes expect other solvers' objects to be static
-    polygon colliders for Box3D (one-way), and packed ones to have no usable collision geometry."""
-    path_b, names_b = packed_boxes("other_box3d", [GROUND, {"size": (1, 1, 1), "center": (0, 0.5, 0)}])
-    path_a, names_a = packed_boxes("other_bullet", [{"size": (1, 1, 1), "center": (0, 4, 0)}])
-    dop = new_dopnet("other_solver")
-    b = packed_object(dop, "box3d_obj", path_b)
-    a = packed_object(dop, "bullet_obj", path_a)
-    b_solver = box3d_solver(dop, b)
-    a_chain = bullet_solver(dop, a)
-    finish(dop, merge(dop, [a_chain, b_solver], "both"))
-    msgs = []
-
-    def sample(sim, f):
-        msgs.extend(node_messages(b_solver))
-        return packed_positions(sim, "bullet_obj"), packed_positions(sim, "box3d_obj")
-
-    track = step(dop, 72, sample)
-    ya = track[72][0][names_a[0]][1]
-    pb = track[72][1][names_b[1]]
-    return [Result("other_solver", Result.INFO,
-                   f"Bullet box at y={ya:.2f} (1.5 = on the Box3D box, 0.5 = on the ground, lower = fell through); "
-                   f"Box3D box at ({pb[0]:.2f}, {pb[1]:.2f}) (started at (0, 0.5)); Box3D messages: "
-                   f"{sorted(set(msgs))[:2] or 'none'}")]
-
-
 # ---------------------------------------------------------------------------
 # Attach Internal Constraints to Object (status: ConstraintGeometry on the object)
 # ---------------------------------------------------------------------------
@@ -631,22 +604,6 @@ def test_sidefx_hard_untyped():
     return [Result("sidefx_hard_untyped", Result.PASS if ok else Result.FAIL,
                    f"Box3D: distance {d['box3d'][0]:.3f}, turned {d['box3d'][1]:.0f} deg; Bullet: distance "
                    f"{d['bullet'][0]:.3f}, turned {d['bullet'][1]:.0f} deg")]
-
-
-def test_sidefx_cone_twist():
-    """SideFX Cone Twist constraint, piece spinning at the start: rotation after 2 s in Box3D and in
-    Bullet. INFO (which end is the goal only matters when the two anchors' frames differ)."""
-    results = []
-    # Anchors at the two centroids (2.06 apart), then both anchors at one shared point between them.
-    for label, anchors in (("anchors at the centroids", None), ("both anchors at (0.25, 3, 0)",
-                                                                ((0.25, 3, 0), (0.25, 3, 0)))):
-        d = sidefx_compare("cone_twist" + ("_shared" if anchors else ""), "conetwistconrel", {},
-                           spin=(0.0, 3.0, 0.0), anchors=anchors)
-        results.append(Result("sidefx_cone_twist", Result.INFO,
-                              f"{label}: Box3D distance {d['box3d'][0]:.3f}, turned {d['box3d'][1]:.0f} deg; Bullet "
-                              f"distance {d['bullet'][0]:.3f}, turned {d['bullet'][1]:.0f} deg (start 2.06; about 20 "
-                              f"= fell freely)"))
-    return results
 
 
 # ---------------------------------------------------------------------------
@@ -881,14 +838,12 @@ TESTS = {
     "dop_import": test_dop_import,
     "dead_with_network": test_dead_with_network,
     "animated_static": test_animated_static,
-    "other_solver": test_other_solver,
     "internal_constraints": test_internal_constraints,
     "sidefx_glue": test_sidefx_glue,
     "glue_impact": test_glue_impact,
     "glue_impact_scale": test_glue_impact_scale,
     "glue_impact_trace": test_glue_impact_trace,
     "sidefx_hard_untyped": test_sidefx_hard_untyped,
-    "sidefx_cone_twist": test_sidefx_cone_twist,
     "aging_vs_pop": test_aging_vs_pop,
     "aging_vs_pop_keep": test_aging_vs_pop_keep,
     "aging_vs_pop_noreap": test_aging_vs_pop_noreap,

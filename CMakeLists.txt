@@ -93,6 +93,8 @@ add_library(b3dop_core STATIC
     src/core/Box3DCpu.cpp
     src/core/Box3DWorld.h
     src/core/Box3DWorld.cpp
+    src/core/Box3DWorldJoints.cpp
+    src/core/Box3DWorldInternal.h
     src/core/Box3DAffectorMath.h
     src/core/Box3DDebug.h
 )
@@ -145,6 +147,12 @@ endfunction()
 
 b3dop_add_test(smoke)
 b3dop_add_test(physics)
+# The physics cases are in three files; the case list and main are in core_physics.cpp.
+target_sources(b3dop_core_physics PRIVATE
+    tests/physics_shapes.cpp
+    tests/physics_bodies.cpp
+    tests/PhysicsCases.h
+)
 b3dop_add_test_cases(physics)
 b3dop_add_test(mesh)
 b3dop_add_test(heightfield)
@@ -198,6 +206,8 @@ add_library(Box3DDOP SHARED
     src/sync/Box3DGuide.cpp
     src/sync/Box3DJointSync.h
     src/sync/Box3DJointSync.cpp
+    src/sync/Box3DJointNetwork.h
+    src/sync/Box3DJointBreak.cpp
     src/sync/Box3DAffectors.h
     src/sync/Box3DAffectors.cpp
     src/sync/Box3DHoudiniTasks.h

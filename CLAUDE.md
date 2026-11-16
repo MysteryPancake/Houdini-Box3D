@@ -99,7 +99,9 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DGlue.h         Header-only: SideFX Glue's impulse model (spread over bonds, half-life, break on strength)
     Box3DCpu.h/.cpp     Physical performance core count (the solver's Threads default)
     Box3DRbdObject.h    Header-only: an RBD Object's own mass / friction / bounce / Bullet Data shape -> whole-object settings
-    Box3DWorld.h/.cpp   Pimpl wrapper over one b3World. The ONLY file that includes Box3D headers; defines TaskRunner
+    Box3DWorld.h/.cpp   Pimpl wrapper over one b3World: bodies, shapes, hulls, settings; defines TaskRunner
+    Box3DWorldJoints.cpp  Box3DWorld's joint methods
+    Box3DWorldInternal.h  The world's private state (Impl) shared by those two .cpp files. With them, the ONLY files that include Box3D headers
     Box3DAffectorMath.h Header-only: affector (Static Object) transform math
     Box3DDebug.h        B3D_LOG / counters, compiled out unless BOX3DDOP_DEBUG (args still type-checked, never evaluated)
   dop/                Houdini SIM_Data classes: the nodes and the world cache
@@ -119,7 +121,9 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DPostStep.cpp      After the step: writeResultsBack, Impacts, point writes, aging, dead points
     Box3DForces.cpp        Force DOPs and point force / torque
     Box3DGuide.cpp         The solver's guide geometry: every body's collision shapes
-    Box3DJointSync.*    Constraint networks -> Box3D joints: read, resolve names, create / update / remove, break, feedback
+    Box3DJointSync.*    Constraint networks -> Box3D joints: read, resolve names, create / update / remove
+    Box3DJointBreak.cpp After the step: Glue, breaking, feedback and live frames written onto the networks
+    Box3DJointNetwork.h What those two share: attribute names, network geometry and fingerprint helpers
     Box3DAffectors.*    Affector objects (Static Object DOP etc.) -> static colliders
     Box3DHoudiniUtil.h  Shared Houdini helpers: writable geometry, object by id, 4x4 to array, Euler to quaternion,
                         options of SIM data by name (box3dDataOption)
@@ -137,7 +141,9 @@ tests/
   TestUtil.h          CHECK macro and failure counter shared by the core tests
   KeyedWorld.h        Test-only Box3DWorld subclass: bodies by caller-chosen id, over the handle API
   core_smoke.cpp      Version print + world create/destroy
-  core_physics.cpp    Unit + physics checks (CHECK macro, nonzero exit on failure)
+  core_physics.cpp    Unit + physics checks: the case list, main and the basic body cases (CHECK macro, nonzero exit on failure)
+  physics_shapes.cpp  Physics cases for shapes, hulls, primitive overrides and extents (declared in PhysicsCases.h)
+  physics_bodies.cpp  Physics cases for body settings, filtering, forces, sleep and world settings
   core_mesh.cpp       Static triangle meshes, mesh scale, decomposeScaledRigid
   core_heightfield.cpp Static height fields: pose, scale, ramps, holes, refused input
   core_threads.cpp    1 worker vs N workers: timing + determinism
@@ -163,7 +169,7 @@ Layering (keep it):
 * A `SIM_DopDescription` must live in zero-filled static memory (a function-local static, or placement new into a
   static buffer as `SIM_Box3DConRel::describe` does), never on the heap: heap ones crash Houdini 22 now and then in
   `SIM_DopDescription::computeLiveInput` (a member its constructor leaves unset).
-* Box3D headers only in `Box3DWorld.cpp`; `UT/UT_DSOVersion.h` only in `SIM_Box3DRegister.cpp`; new `SIM_Data` classes
+* Box3D headers only in `Box3DWorld.cpp`, `Box3DWorldJoints.cpp` and `Box3DWorldInternal.h`; `UT/UT_DSOVersion.h` only in `SIM_Box3DRegister.cpp`; new `SIM_Data` classes
   registered in `initializeSIM`.
 * The solver's parts live in `namespace box3dsolver`; anything one part uses from another is declared in
   `Box3DSolverInternal.h` (default arguments there, not on the definitions). Small Houdini helpers used by several
