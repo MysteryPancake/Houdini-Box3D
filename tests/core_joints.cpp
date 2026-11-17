@@ -541,9 +541,8 @@ int main() {
       // Frames are world-space: both at the pivot. Frame B's z-axis lies along
       // the capsule, so its world rotation is the body's turned by frameQ.
       const Q fb = mul(bodyQ, frameQ);
-      const float fbq[4] = {
-          static_cast<float>(fb.x), static_cast<float>(fb.y),
-          static_cast<float>(fb.z), static_cast<float>(fb.w)};
+      const float fbq[4] = {static_cast<float>(fb.x), static_cast<float>(fb.y),
+                            static_cast<float>(fb.z), static_cast<float>(fb.w)};
 
       JointSettings sph =
           Box3DWorld::defaultJointSettings(JointType::Spherical);
@@ -552,8 +551,7 @@ int main() {
       sph.dampingRatio = 1.0f;
       CHECK(w.createJoint(JointType::Spherical, 0, b,
                           frame(pivot[0], pivot[1], pivot[2], fq),
-                          frame(pivot[0], pivot[1], pivot[2], fbq),
-                          sph) != 0);
+                          frame(pivot[0], pivot[1], pivot[2], fbq), sph) != 0);
 
       steps(w, 60 * 8);
       double p[3];
