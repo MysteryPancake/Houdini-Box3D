@@ -501,6 +501,7 @@ def build(out_path, packed_hda=None):
     definition.setMaxNumOutputs(4)
     definition.setIcon(ICON)
     b3d_hda.set_tab_submenu(definition, warn)
+    b3d_hda.add_python_module(definition)
     definition.setComment("Simulates packed pieces with Box3D, like RBD Bullet Solver: geometry, "
                           "constraints, proxy and collision in; geometry, constraints, proxy and "
                           "simulation points out.")

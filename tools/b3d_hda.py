@@ -45,16 +45,18 @@ def labels(node):
                              if not pt.name().startswith("parmop") and pt.type() not in NO_VALUE}))
 
 
-def edit_dialog_script(definition, input_labels, output_labels, warn):
-    """Input / output labels, in the DialogScript (hou has no setter for them)."""
+def edit_dialog_script(definition, input_labels, output_labels, warn, handles=()):
+    """Input / output labels, and `handles` (parameter, handle type, handle name, handle parameter) bindings, in the
+    DialogScript (hou has no setter for them)."""
     section = definition.sections().get("DialogScript")
     if section is None:
         warn("the asset has no DialogScript section: input / output labels not set")
         return
     lines = [ln for ln in section.contents().splitlines()
-             if not re.match(r"\s*(inputlabel|outputlabel)\b", ln)]
+             if not re.match(r"\s*(inputlabel|outputlabel|bindhandle)\b", ln)]
     extra = [f'    inputlabel\t{i + 1}\t"{lab}"' for i, lab in enumerate(input_labels)]
     extra += [f'    outputlabel\t{i + 1}\t"{lab}"' for i, lab in enumerate(output_labels)]
+    extra += [f'    bindhandle {parm} {kind} "{name}" {hparm} ""' for parm, kind, name, hparm in handles]
     at = next((i + 1 for i, ln in enumerate(lines) if re.match(r"\s*label\b", ln)), 1)
     section.setContents("\n".join(lines[:at] + extra + lines[at:]) + "\n")
 
@@ -151,6 +153,17 @@ TOOLS_SHELF = """<?xml version="1.0" encoding="UTF-8"?>
   </tool>
 </shelfDocument>
 """
+
+
+def add_python_module(definition, extra=""):
+    """The asset's Python Module: isVellumNode() true, which makes the viewer connect a new node's inputs
+    automatically (as RBD's SOPs do), plus `extra` source."""
+    code = "def isVellumNode():\n    return True\n"
+    if extra:
+        code += "\n" + extra
+    definition.addSection("PythonModule", code)
+    definition.setExtraFileOption("PythonModule/IsPython", True)
+    definition.setExtraFileOption("PythonModule/IsScript", True)
 
 
 def set_tab_submenu(definition, warn):

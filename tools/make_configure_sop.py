@@ -90,28 +90,64 @@ PIN_TYPES = [("Weld", "Weld"), ("Soft", "Soft")]
 VISUALIZE = ["None", "Active", "Animated", "Deforming", "Sleeping", "Bounce", "Density", "Friction",
              "Rotational Stiffness", "Pinned", "In Bounds"]
 SCALAR_MODES = {5: "bounce", 6: "density", 7: "friction", 8: "inertialtensorstiffness"}  # coloured on a ramp
+# The histogram under the viewer state (RBD Configure's): a grid of HIST_COLS x HIST_ROWS cells, one column per
+# value bin. A piece's bin is `val`, 0..HIST_BINS, set with its colour.
+HIST_COLS, HIST_ROWS = 152, 100
+HIST_BINS = HIST_COLS - 2
+# The Bounds box as RBD Configure's BBox handle: dragged in the viewport, writing Size, Center and Rotation.
+BBOX_HANDLE = ([(f"bbox{p}{a}", "boundingbox", "BBox", f"{p}{a}") for p in ("center", "size") for a in "xyz"] +
+               [(f"bboxr{a}", "boundingbox", "BBox", f"r{a}") for a in "xyz"] +
+               [("bboxonoff", "boundingbox", "BBox", "onoff")])
+STATE_NAME = "box3d_configure.pystate"
+STATE_FILE = "b3d_configure_state.py"  # the viewer state's source, beside this script
 # Shown while any visualization is on (-1: the Visualize output), else the first output.
 VIEW_CALLBACK = ("node = kwargs['node']\n"
-                 "on = node.evalParm('visualize') > 0 or node.evalParm('scale') > 0 or node.evalParm('showbbox')\n"
-                 "node.setOutputForViewFlag(-1 if on else 0)")
+                 "on = node.evalParm('visualize') > 0 or node.evalParm('scale') > 0\n"
+                 "node.setOutputForViewFlag(-1 if on else 0)\n"
+                 "node.hm().enterState(kwargs)")
+# The asset's Python Module: re-enters the node's viewer state when a Visualization parameter changes with the node
+# current but another state active (RBD Configure's enterState).
+PYTHON_MODULE = """\
+def enterState(kwargs):
+    import toolutils
+    node = kwargs["node"]
+    viewer = toolutils.sceneViewer()
+    state = node.type().definition().sections()["DefaultState"].contents()
+    if node == viewer.currentNode() and viewer.currentState() != state:
+        viewer.enterCurrentNodeState(False)
+"""
 
 
 def visualization_templates():
-    tags = {"script_callback": VIEW_CALLBACK, "script_callback_language": "python"}
-    visualize = hou.MenuParmTemplate("visualize", "Visualize", tuple(str(i) for i in range(len(VISUALIZE))),
-                                     tuple(VISUALIZE), default_value=0, tags=tags,
-                                     help="Colours the pieces in the viewport by this value. Bounce, Density, Friction "
-                                          "and Rotational Stiffness run from blue (lowest) to red. Changes nothing "
-                                          "downstream.")
+    tags = {"script_callback": VIEW_CALLBACK, "script_callback_language": "python", "autoscope": "0000000000000000"}
+    # An integer parameter with a menu, as RBD Configure's (not an ordinal menu).
+    visualize = hou.IntParmTemplate("visualize", "Visualize", 1, default_value=(0,), min=0, max=len(VISUALIZE) - 1,
+                                    menu_items=tuple(str(i) for i in range(len(VISUALIZE))),
+                                    menu_labels=tuple(VISUALIZE), tags=tags,
+                                    help="Colours the pieces in the viewport by this value. Bounce, Density, Friction "
+                                         "and Rotational Stiffness run from blue (lowest) to red. Changes nothing "
+                                         "downstream.")
     scale = hou.FloatParmTemplate("scale", "Exploded Scale", 1, default_value=(0.0,), min=0.0, max=2.0, tags=tags,
                                   help="Moves the pieces apart in the viewport to see inside. 0 is off.")
-    bbox = hou.ToggleParmTemplate("showbbox", "Show Bbox", default_value=False, tags=tags,
-                                  help="Draws the Bounds box in the viewport (Bounding Box only).")
-    return [visualize, scale, bbox]
+    scale.setConditional(hou.parmCondType.DisableWhen, "{ visualize == 0 }")
+    # Export level 3 ("export all" in the DialogScript): what makes the viewer show a parameter in the bar along the top
+    # of the viewport, as RBD Configure's two. hou has no public setter.
+    for pt in (visualize, scale):
+        pt._setExportLevel(3)
+    return [visualize, scale]
+
+
+def visualization_folder():
+    """RBD Configure's Visualization folder: a first-level simple folder, whose parameters (Visualize, Exploded Scale)
+    the viewer shows in a bar along the top of the viewport while the node is selected."""
+    return hou.FolderParmTemplate("b3dcfg_visualization", "Visualization", visualization_templates(),
+                                  folder_type=hou.folderType.Simple, tags={"group_type": "simple"})
 
 
 def bounds_templates():
     btype = hou.MenuParmTemplate("boundingtype", "Bounding Type", ("0", "1", "2"), BOUNDING_TYPES, default_value=1,
+                                 tags={"script_callback": "kwargs['node'].hm().enterState(kwargs)",
+                                       "script_callback_language": "python"},
                                  help="What Use Bounds tests: this box, or the Static Bounds Geometry input's "
                                       "bounding box or volume.")
     items = [btype]
@@ -399,8 +435,14 @@ def ui(folders):
     multi = hou.FolderParmTemplate(MULTIPARM, "Number of Attributes", entry,
                                    folder_type=hou.folderType.TabbedMultiparmBlock, default_value=1)
     group = hou.ParmTemplateGroup()
-    group.append(b3d_hda.collapsible("b3dcfg_visualization", "Visualization", visualization_templates()))
+    group.append(visualization_folder())
     group.append(b3d_hda.collapsible("b3dcfg_bounds", "Bounds", bounds_templates()))
+    # The BBox handle's on / off (RBD Configure's hidden Show Bbox): the box shows while Bounding Type is Bounding Box.
+    onoff = hou.ToggleParmTemplate("bboxonoff", "Show Bbox", default_value=False,
+                                   default_expression='ch("boundingtype")==0',
+                                   default_expression_language=hou.scriptLanguage.Hscript)
+    onoff.hide(True)
+    group.append(onoff)
     group.append(b3d_hda.collapsible("b3dcfg_packing", "Packing", packing_templates()))
     group.append(multi)
     return group
@@ -518,8 +560,10 @@ def visualize_vex(defaults):
         "else if (mode >= 5 && mode <= 8) {",
         "    float v = value(attrib, pt, dflt);",
         '    float lo = detail(0, "__vmin"), hi = detail(0, "__vmax");',
-        "    float t = hi > lo ? (v - lo) / (hi - lo) : 0.5;",
-        "    c = hsvtorgb(0.66 * (1.0 - t), 1.0, 1.0);",
+        "    float t = hi > lo ? clamp((v - lo) / (hi - lo), 0.0, 1.0) : 0.5;",
+        f"    i@val = int(t * {HIST_BINS});",
+        "    // blue (lowest) through white to red, RBD Configure's ramp",
+        "    c = t < 0.5 ? lerp({0, 0, 1}, {1, 1, 1}, 2.0 * t) : lerp({1, 1, 1}, {1, 0, 0}, 2.0 * t - 1.0);",
         "}",
         f'else if (mode == 9) c = value("{PIN_ATTRIB}", pt, 0.0) > 0.0 ? lit : dim;',
         f'else if (mode == 10) c = inpointgroup(0, "{INSIDE_GROUP}", pt) ? lit : dim;',
@@ -528,23 +572,9 @@ def visualize_vex(defaults):
     return rng, colour
 
 
-BBOX_LINES_VEX = """\
-// The bounds box as lines, in yellow.
-int n = nprimitives(0);
-if (!hasprimattrib(0, "Cd")) addprimattrib(0, "Cd", {1, 1, 1});
-for (int i = 0; i < n; i++) {
-    int p[] = primpoints(0, i);
-    append(p, p[0]);
-    int pr = addprim(0, "polyline", p);
-    setprimattrib(0, "Cd", pr, {1, 1, 0});
-}
-for (int i = 0; i < n; i++) removeprim(0, i, 0);
-"""
-
-
 def visualize_network(sub, source, rows):
     """The viewer-only Visualize output (Output Index -1, as RBD Configure's): `source` coloured by the Visualize
-    menu, moved apart by Exploded Scale, with the Bounds box added while Show Bbox is on."""
+    menu, moved apart by Exploded Scale."""
     defaults = {"bounce": 0.0, "density": 1000.0, "friction": 0.5, "inertialtensorstiffness": 1.0}
     for pt, kind in rows:
         if pt.name() in defaults and kind == "f":
@@ -559,6 +589,8 @@ def visualize_network(sub, source, rows):
     coloured.parm("class").set("primitive")
     coloured.parm("snippet").set(colour_vex)
 
+    histogram_network(sub, coloured)
+
     last = coloured
     try:
         exploded = b3d_hda.create(sub, ["explodedview::2.0", "explodedview"], "explode_pieces")
@@ -570,17 +602,78 @@ def visualize_network(sub, source, rows):
         exploded.parm("scale").setExpression('ch("../scale")', hou.exprLanguage.Hscript)
         last = switch_on(sub, "use_explode", coloured, exploded, 'ch("../scale") > 0')
 
-    lines = sub.createNode("attribwrangle", "bbox_lines")
-    lines.setInput(0, sub.node("bounds_box"))
-    lines.parm("class").set("detail")
-    lines.parm("snippet").set(BBOX_LINES_VEX)
-    merged = sub.createNode("merge", "merge_bbox")
-    merged.setInput(0, last)
-    merged.setInput(1, lines)
-    shown = switch_on(sub, "use_bbox", last, merged, 'ch("../showbbox") && ch("../boundingtype") == 0')
     out = sub.createNode("output", "OUT_visualize")
-    out.setInput(0, shown)
+    out.setInput(0, last)
     out.parm("outputidx").set(-1)
+
+
+HISTOGRAM_VEX = f"""// One bar per value bin, as RBD Configure's: a cell is dark when its bin holds enough pieces for its height.
+@Cd = chramp("color", @P.x);
+@Alpha = 0.6;
+float vmax = detail(1, "__vmax");
+int cols = {HIST_COLS - 1};
+
+int x = @primnum % cols;
+int nums[];
+int values = 0;
+for (int z = 0; z < cols; z++)
+{{
+    int num = findattribvalcount(1, "prim", "val", z);
+    append(nums, num);
+    if (num) values += 1;
+}}
+// The lowest bin can hold nearly every piece: leave it out of the scale so the others stay readable.
+if (vmax > 0 && values > 2 && nums[0] == max(nums))
+    pop(nums, 0);
+nums = sort(nums);
+float divider = pop(nums);
+
+int prims[] = findattribval(1, "prim", "val", x);
+int numfound = len(prims);
+if (numfound)
+{{
+    float y = (@primnum / cols) * 0.01;
+    if ((float(numfound) / divider) > y)
+    {{
+        @Cd *= 0;
+        @Alpha = 0.9;
+    }}
+}}
+"""
+
+
+def histogram_network(sub, coloured):
+    """The nodes the viewer state draws (HISTOGRAM, DISPLAY), as RBD Configure's. Not connected to an output:
+    the state reads their geometry. DISPLAY carries the value range for the text."""
+    grid = sub.createNode("grid", "hist_grid")
+    grid.parm("orient").set("xy")
+    grid.parmTuple("size").set((1.0, 1.0))
+    grid.parmTuple("t").set((0.5, 0.0, 0.0))
+    grid.parm("rows").set(HIST_ROWS)
+    grid.parm("cols").set(HIST_COLS)
+    bars = sub.createNode("attribwrangle", "hist_color")
+    bars.setInput(0, grid)
+    bars.setInput(1, coloured)
+    bars.parm("class").set("primitive")
+    bars.parm("snippet").set(HISTOGRAM_VEX)
+    group = bars.parmTemplateGroup()
+    group.append(hou.RampParmTemplate("color", "Color", hou.rampParmType.Color, default_value=3,
+                                      default_basis=hou.rampBasis.Linear))
+    bars.setParmTemplateGroup(group)
+    bars.parm("color").set(hou.Ramp((hou.rampBasis.Linear,) * 3, (0.0, 0.5, 1.0),
+                                    ((0, 0, 1), (1, 1, 1), (1, 0, 0))))
+    # Screen placement: the state's screen_space draw scales it to the viewport.
+    place = sub.createNode("xform", "hist_xform")
+    place.setInput(0, bars)
+    place.parm("xOrd").set("tsr")
+    place.parmTuple("t").set((-3.65, -0.25, 0.0))
+    place.parmTuple("s").set((0.125, 0.05, 1.0))
+    for c, axis in zip(place.parmTuple("p"), "XYZ"):
+        c.setExpression(f"$CE{axis}", hou.exprLanguage.Hscript)
+    hist = sub.createNode("null", "HISTOGRAM")
+    hist.setInput(0, place)
+    display = sub.createNode("null", "DISPLAY")
+    display.setInput(0, coloured)
 
 
 def switch_on(sub, name, off, on, expr):
@@ -652,6 +745,27 @@ def switch_on_proxy(sub, name, without, with_proxy, proxy, extra=None):
     return sw
 
 
+def add_viewer_state(definition):
+    """The viewer state that draws the histogram and the value range (RBD Configure's state, trimmed): the
+    sections Houdini keeps for an embedded Python state."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(here, STATE_FILE), encoding="utf-8") as f:
+        module = f.read()
+    sections = {
+        "ViewerStateModule": module,
+        "DefaultState": STATE_NAME,
+        "ViewerStateName.orig": STATE_NAME,  # what the uninstall script falls back to
+        "ViewerStateInstall": "__import__('viewerstate.utils', fromlist=[None]).register_pystate_embedded(kwargs['type'])",
+        "ViewerStateUninstall": "__import__('viewerstate.utils', fromlist=[None]).unregister_pystate_embedded(kwargs['type'])",
+    }
+    for name, contents in sections.items():
+        definition.addSection(name, contents)
+    for name in ("ViewerStateModule", "ViewerStateInstall", "ViewerStateUninstall"):
+        definition.setExtraFileOption(f"{name}/IsPython", True)
+        definition.setExtraFileOption(f"{name}/IsViewerState", True)
+        definition.setExtraFileOption(f"{name}/IsScript", True)
+
+
 def build(out_path):
     hou.hipFile.clear(suppress_save_prompt=True)
     dopnet = hou.node("/obj").createNode("dopnet", "templates")
@@ -670,7 +784,7 @@ def build(out_path):
     # The Packing parameters first (spare, replaced by the asset's interface below), so the expressions
     # build_network sets on the Assembles and wrangles find them while the network is built.
     spare = sub.parmTemplateGroup()
-    spare.append(b3d_hda.collapsible("b3dcfg_visualization", "Visualization", visualization_templates()))
+    spare.append(visualization_folder())
     spare.append(b3d_hda.collapsible("b3dcfg_bounds", "Bounds", bounds_templates()))
     spare.append(b3d_hda.collapsible("b3dcfg_packing", "Packing", packing_templates()))
     sub.setParmTemplateGroup(spare)
@@ -691,11 +805,13 @@ def build(out_path):
     definition.setMaxNumOutputs(len(LABELS))
     definition.setIcon(ICON)
     b3d_hda.set_tab_submenu(definition, warn)
+    b3d_hda.add_python_module(definition, PYTHON_MODULE)
     definition.setComment("Sets Box3D body settings as point attributes on the pieces in a group, "
                           "like RBD Configure. Point attributes win over Box3D Data.")
+    add_viewer_state(definition)
     definition.updateFromNode(asset)
     definition.save(out_path, asset)
-    b3d_hda.edit_dialog_script(definition, INPUT_LABELS, LABELS, warn)  # labels last, saved without the node (see make_solver_sop.py)
+    b3d_hda.edit_dialog_script(definition, INPUT_LABELS, LABELS, warn, BBOX_HANDLE)  # labels last, saved without the node (see make_solver_sop.py)
     definition.save(out_path)
 
     check(out_path)

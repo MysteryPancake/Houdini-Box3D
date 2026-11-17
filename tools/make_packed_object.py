@@ -438,6 +438,7 @@ the simulation. Off: read once when the object is created.")
     definition.setParmTemplateGroup(group)
     definition.setIcon(ICON)
     b3d_hda.set_tab_submenu(definition, warn)
+    b3d_hda.add_python_module(definition)
     definition.setComment("Packed geometry as a Box3D object, like RBD Packed Object: settings that differ "
                           "from Box3D Data's defaults become point attributes; a point's own attribute wins.")
 

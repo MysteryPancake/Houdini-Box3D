@@ -352,6 +352,7 @@ def build(out_path):
     definition.setMaxNumOutputs(len(LABELS))
     definition.setIcon(ICON)
     b3d_hda.set_tab_submenu(definition, warn)
+    b3d_hda.add_python_module(definition)
     b3d_hda.set_message_nodes(asset, MESSAGE_NODES, warn)
     definition.setComment("Sets Box3D constraint settings as primitive attributes on the constraints in a "
                           "group, like RBD Constraint Properties.")

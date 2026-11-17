@@ -66,8 +66,9 @@ CONFIGURE_LAYOUT = [
                  "any_bounds"], {"color": GROUND})],
     [("Attributes", ["set_attributes", "add_pin_constraints", "strip_pin_marker", "strip_bounds_group"],
       {"color": SIMULATION})],
-    [("Visualize", ["vis_range", "vis_color", "explode_pieces", "use_explode", "bbox_lines", "merge_bbox",
-                    "use_bbox", "OUT_visualize"], {"color": GROUND})],
+    [("Visualize", ["vis_range", "vis_color", "explode_pieces", "use_explode",
+                    "OUT_visualize", "hist_grid", "hist_color", "hist_xform", "HISTOGRAM",
+                    "DISPLAY"], {"color": GROUND})],
     [("Outputs", ["geometry_result", "proxy_result", "OUT_geometry", "OUT_constraints", "OUT_proxy"],
       {"color": OUTPUT})],
 ]
