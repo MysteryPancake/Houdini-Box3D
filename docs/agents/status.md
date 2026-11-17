@@ -58,13 +58,19 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   pieces, the Output SOP with index -1 and the callbacks that switch to it.
 
 **Data hint for Box3D Data** (`initializeSIM`, test `no_subdata_warnings`)
-* Never built. The hint's parent type, `SIM_SopGeometry`, is the type Houdini reports for the Geometry; whether a hint
-  on that type is also found for other geometry types (a Static Object's, a cached copy) is not known.
+* Hints are for the exact types Houdini reports for the Geometry (`SIM_SopGeometry`, `SIM_GeometryCopy`). Not known:
+  whether a hint on one type is also found for a subclass, so a Static Object's or another cached Geometry may need its
+  own.
 
 **Box3D Constraint Properties** (`tools/make_constraint_properties_sop.py`, test `constraint_properties`)
 * Never built or run: the asset's wiring (SideFX's `rbdgroupconstraints` outputs and parameter names, the `error` node's
   severity menu), the wrangle's VEX and the label note are written from a dump of RBD Constraint Properties.
-* Not done: RBD's viewer state (handles to edit anchors), Guide Scale, Proxy attribute transfer, the Edit / Set Action.
+* The viewer state (`b3d_constraint_properties_state.py`: selector, rotation handle, hotkeys, HUD, guides) is written
+  from a dump of RBD Constraint Properties and never run in a viewport. Only its stash and network are checked
+  (`constraint_properties_edit`). Not known: whether the selector picks a line with a click and with a box, whether the
+  handle's Euler order matches the stored quaternion on every rotation, the guide colours and size.
+* Not done: Proxy attribute transfer; the wheel edits only the spherical joint's `motor_velocity` (the other motor
+  settings are multiplying floats), and Toggle Motor does not cover the Wheel joint's spin motor.
 * The "not set" skip (`isUnsetFloat`, `applyOverrides`) is not covered by a core test.
 
 **Bullet semantics not compared**

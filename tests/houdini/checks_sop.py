@@ -1309,7 +1309,7 @@ def test_constraint_properties():
              'if (i == 0) setprimgroup(0, "chosen", pr, 1); }')
     cp = create(geo, "box3d_constraint_properties", "props")
     cp.setInput(1, lines)
-    for n, v in (("constraintgroup", "chosen"), ("jointtype", 2), ("addrevolute_stiffness", 1),
+    for n, v in (("action", 0), ("constraintgroup", "chosen"), ("jointtype", 2), ("addrevolute_stiffness", 1),
                  ("revolute_stiffness", 7.0), ("addrevolute_enable_spring", 1), ("revolute_enable_spring", 1)):
         set_parm(cp, [n], v)
     g = cp.geometry(1)
@@ -1322,10 +1322,71 @@ def test_constraint_properties():
                    "(expected not set: below -3e38 and -1)")]
 
 
+def test_constraint_properties_edit():
+    """Box3D Constraint Properties' viewport edits (tools/b3d_constraint_properties_state.py): three lines, two in
+    a group, the stash rotating the anchors of the selected one (what the handle writes) lands as `orient` on that
+    line's two points only; Set mode writes every Revolute setting and the name, without any checkbox; the output has
+    no `__idx`; the state's sections and the toolbar parameters are in the asset."""
+    geo = new_geo("conprops_edit")
+    lines = create(geo, "attribwrangle", "lines")
+    set_parm(lines, ["class"], "detail")
+    set_parm(lines, ["snippet"],
+             'for (int i = 0; i < 3; i++) { int a = addpoint(0, set(i, 0, 0)), b = addpoint(0, set(i, 1, 0)); '
+             'int pr = addprim(0, "polyline", a, b); '
+             'if (!hasprimattrib(0, "constraint_name")) addprimattrib(0, "constraint_name", ""); '
+             'setprimattrib(0, "constraint_name", pr, "Revolute"); '
+             'if (i < 2) setprimgroup(0, "chosen", pr, 1); }')
+    cp = create(geo, "box3d_constraint_properties", "props")
+    cp.setInput(1, lines)
+    set_parm(cp, ["constraintgroup"], "chosen")
+    set_parm(cp, ["__sel"], "@__idx=1")
+    set_parm(cp, ["__idx"], 1)
+    module = cp.type().hdaViewerStateModule()
+    quat = module.quaternion_from_euler(0.0, 0.0, 90.0)
+    module.set_edits(cp, {i: (quat, quat) for i in module.selected_ids(cp)})
+    g = cp.geometry(1)
+    orients = [tuple(round(x, 3) for x in p.attribValue("orient")) for p in g.points()]         if g.findPointAttrib("orient") else []
+    turned = (0.0, 0.0, 0.707, 0.707)
+    ok = (module.selected_ids(cp) == [1] and orients[2:4] == [turned, turned]
+          and all(o == (0.0, 0.0, 0.0, 1.0) for o in orients[:2] + orients[4:])
+          and g.findPrimAttrib("__idx") is None)
+    detail = f"orient per point {orients} (expected only points 2 and 3 turned 90 degrees about Z)"
+    # Toggle Motor and the wheel's motor velocity, on the two lines in the group: edited ones only, the stash keeps
+    # the orient of a line whose motor is edited later.
+    set_parm(cp, ["__sel"], "@__idx=0 @__idx=1")
+    ids = module.selected_ids(cp)
+    module.set_edits(cp, {i: (quat, quat) for i in ids})
+    module.toggle_motor(cp, ids)
+    module.add_motor_velocity(cp, ids, 2, 10.0)
+    g = cp.geometry(1)
+    motor = [p.attribValue("enable_motor") for p in g.prims()]
+    velocity = [round(p.attribValue("motor_velocity")[2], 3) for p in g.prims()]
+    kept = [tuple(round(x, 3) for x in p.attribValue("orient")) for p in g.points()][:4]
+    ok = ok and motor == [1, 1, -1] and velocity[:2] == [10.0, 10.0] and kept == [turned] * 4
+    detail += f"; enable_motor {motor}, motor_velocity z {velocity}, orient kept {kept}"
+    module.clearEdits({"node": cp})
+    set_parm(cp, ["action"], 1)
+    set_parm(cp, ["jointtype"], 2)
+    set_parm(cp, ["revolute_stiffness"], 5.0)
+    set_parm(cp, ["constraintname"], "Weld")
+    g = cp.geometry(1)
+    stiff = [round(p.attribValue("stiffness"), 3) for p in g.prims()] if g.findPrimAttrib("stiffness") else []
+    names = [p.attribValue("constraint_name") for p in g.prims()]
+    ok = ok and stiff[:2] == [5.0, 5.0] and stiff[2] <= -3.0e38 and names == ["Weld", "Weld", "Revolute"]
+    detail += f"; Set mode stiffness {stiff}, names {names}"
+    definition = cp.type().definition()
+    sections = sorted(n for n in definition.sections() if n.startswith("ViewerState"))
+    toolbar = sorted(pt.name() for pt in cp.parmTemplateGroup().entriesWithoutFolders() if pt._exportLevel() == 3)
+    ok = ok and len(sections) == 4 and toolbar == ["clearedits", "editparms", "importedits"]
+    detail += f"; sections {sections}, toolbar {toolbar}"
+    return [Result("constraint_properties_edit", Result.PASS if ok else Result.FAIL, detail)]
+
+
 def test_no_subdata_warnings():
     """Box3D Data under an object's Geometry raises no data hint warnings ("Unexpected subdata found",
     "attached to an unexpected parent data"): a Box3D Packed Object cooked on two frames, and the Box3D Solver
-    SOP cooking a piece, have no warnings on the Geometry or the data node."""
+    SOP cooking a piece, and a Packed Object and an RBD Object stepped by the Box3D Solver DOP, have no warnings on
+    the Geometry or the data node."""
     pieces, names = packed_boxes("hint_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0)}])
     dop = hou.node("/obj").createNode("dopnet", "hint_dop")
     po = dop.createNode("box3d_packedobject", "po")
@@ -1336,6 +1397,22 @@ def test_no_subdata_warnings():
         hou.setFrame(frame)
         dop.cook(force=True)
         found += [f"{n.path()}: {w}" for n in [po] + list(po.allSubChildren()) for w in n.warnings()
+                  if "subdata" in w or "unexpected parent" in w]
+    # The Box3D Solver DOP writes the Geometry back as a SIM_GeometryCopy, an RBD Object's stays a SIM_SopGeometry.
+    box = create(new_geo("hint_box"), "box", "box")
+    for label, node_type, sop in (("packed", "box3d_packedobject", pieces), ("rbd", "rbdobject", box.path())):
+        sim_dop = hou.node("/obj").createNode("dopnet", f"hint_{label}_dop")
+        obj = sim_dop.createNode(node_type, "obj")
+        set_parm(obj, ["soppath"], sop)
+        data = sim_dop.createNode("box3d_data", "data")
+        data.setInput(0, obj)
+        sim_solver = sim_dop.createNode("box3d_solver", "solver")
+        sim_solver.setInput(0, data)
+        sim_solver.setDisplayFlag(True)
+        for frame in (1, 2, 3):
+            hou.setFrame(frame)
+            sim_dop.cook(force=True)
+        found += [f"{n.path()}: {w}" for n in [sim_dop] + list(sim_dop.allSubChildren()) for w in n.warnings()
                   if "subdata" in w or "unexpected parent" in w]
     geo = new_geo("hint_solver")
     src = create(geo, "object_merge", "pieces")
@@ -1445,6 +1522,7 @@ TESTS = {
     "configure": test_configure,
     "configure_group_patterns": test_configure_group_patterns,
     "constraint_properties": test_constraint_properties,
+    "constraint_properties_edit": test_constraint_properties_edit,
     "no_subdata_warnings": test_no_subdata_warnings,
     "configure_initial_state": test_configure_initial_state,
     "configure_pin": test_configure_pin,

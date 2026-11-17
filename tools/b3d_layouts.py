@@ -76,7 +76,11 @@ CONFIGURE_LAYOUT = [
 # Box3D Constraint Properties.
 CONSTRAINT_PROPERTIES_LAYOUT = [
     [("Inputs", ["#0", "#1", "#2", "IN_geometry", "IN_constraints", "IN_proxy"], {"color": INPUTS})],
-    [("Select", ["warn_if_no_constraints", "group_constraints", "pick_constraints"], {"color": PREPARE})],
-    [("Attributes", ["set_properties", "strip_group"], {"color": SIMULATION})],
+    [("Select", ["index_lines", "warn_if_no_constraints", "group_constraints", "pick_constraints"],
+      {"color": PREPARE})],
+    [("Attributes", ["set_properties", "stash", "apply_edits", "strip_group", "strip_index"],
+      {"color": SIMULATION})],
+    [("Viewer", ["edit_lines", "selected_lines", "CONSTRAINT", "get_xform", "HANDLE", "build_guides", "GUIDES",
+                 "glow_lines", "GLOW", "number_points", "widgets"], {"color": GROUND})],
     [("Outputs", ["OUT_geometry", "OUT_constraints", "OUT_proxy"], {"color": OUTPUT})],
 ]

@@ -277,7 +277,7 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
 `tools/make_constraint_properties_sop.py <out.hda>` builds `box3d_constraint_properties` (SOP), like RBD Constraint
 Properties: the settings of every joint type as primitive attributes on the Constraint Geometry's lines. Inputs and
 outputs are Geometry, Constraint Geometry (pink), Proxy Geometry; only the constraints are edited, the others pass
-through. No Bullet settings and no viewer state (handles, guides, Action Edit / Set).
+through. No Bullet settings, no Proxy attribute transfer.
 * Settings are copied from the `box3d_<type>conrel` DOP nodes (`collect`): the Weld node's Joint folder is the common
   folder, each node's own folder is that type's. `NODE_ONLY` lists the node parameters that are no attribute
   (Breakable, Set Rest Length, the Limit toggles, Attributes Replace Values). Names: `<type>_<attribute>` in a type's
@@ -290,7 +290,31 @@ through. No Bullet settings and no viewer state (handles, guides, Action Edit / 
   `constraint_name`, `next_constraint_name` (menus of the types' default Data Names) and `Cd`.
 * Float values multiply the node's value, or replace it with the node's Attributes Replace Values on; the node does not
   convert and says nothing about it (`docs/joints.md` does). Defaults and ranges are the nodes'.
-* The build probes the asset (`probe`); the test is `constraint_properties`.
+* Action (`action`, as RBD Constraint Properties: Edit, Set, default Set): Edit writes the ticked settings (above). Set
+  writes the settings of the joint type in Settings For (and the Joint folder's) that differ from the relationship
+  node's default (`wrangle_vex`'s `setmode`; `attribute_rows` carries each setting's type number and default), and
+  always the Constraint Name, with the checkboxes hidden. Settings left at their default stay "not set", so Set cannot
+  multiply or zero a value the node holds, and a value cannot be set back to its default with Set.
+* Anchor Rotation (`anchorrotate`, in the Joint folder, written in both modes when ticked): Euler degrees turned into
+  the `orient` point attribute of both anchors of each line in the group.
+* Viewport editing, RBD Constraint Properties' state adapted (`tools/b3d_constraint_properties_state.py`, installed by
+  `b3d_hda.add_viewer_state`, state name `STATE_NAME`): pick constraint lines (a geometry selector on the viewer-only
+  `widgets` output) and turn a rotation handle to rotate the frames of their two anchors; hotkeys U reset, A align the
+  frame's X axis to the line, Ctrl+A select all, Ctrl+C / Ctrl+V copy / paste, M Toggle Motor, P Edit Parms. RBD's handle
+  aims a hard constraint's angular motors; Box3D's motors act in the joint frame, so the handle already aims them. M
+  switches `enable_motor` (off or unset becomes on, on becomes off), and the mouse wheel edits the spherical joint's
+  `motor_velocity` (Z, Shift X, Alt Y, Ctrl ten times the step, `MOTOR_STEP` degrees per second). The motor speeds and
+  torques are floats, which multiply the relationship node's value (zero stays zero), so the viewport does not edit
+  them. The edits live in the hidden `stash` parameter (a Geometry data parameter, shared with the inner Stash SOP):
+  one point per edited line with `__idx` and the fields `orient_a` / `orient_b`, `enable_motor`, `motor_velocity`, each
+  with a "not edited" value the network skips (`FIELDS`). `index_lines` numbers the lines (`__idx`, removed again by `strip_index`),
+  `apply_edits` writes the stash on top of the settings. The hidden `__idx` / `__sel` hold the selection. Edit Parms
+  makes the handle edit Anchor Rotation, for every line in the group, instead. Clear Edits, Import Edits and Edit Parms
+  are in the viewport toolbar (`show_in_toolbar`). Guide Scale draws the anchor frames of the lines in the group
+  (`build_guides` -> `GUIDES`). The state reads `CONSTRAINT`, `HANDLE`, `GUIDES`, `GLOW` and `widgets` (the layout's
+  Viewer box); its helpers (`set_edits`, `selected_ids`, ...) are plain functions, so a check calls them without a
+  viewport.
+* The build probes the asset (`probe`); the tests are `constraint_properties` and `constraint_properties_edit`.
 
 ## Box3D Configure asset
 

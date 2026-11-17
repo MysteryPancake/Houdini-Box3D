@@ -40,6 +40,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import b3d_hda  # noqa: E402  (beside this script)
 from b3d_hda import without_parmops  # noqa: E402
+from b3d_settings import num  # noqa: E402
 from b3d_layouts import CONSTRAINT_PROPERTIES_LAYOUT  # noqa: E402
 
 TYPE_NAME = "box3d_constraint_properties"
@@ -59,7 +60,12 @@ JOINT_TYPES = [("weld", "Weld"), ("spherical", "Spherical"), ("revolute", "Revol
 NODE_ONLY = {"attributes_replace", "breakable", "set_rest_length", "limit_spring_force",
              "limit_max_length", "limit_torque"}
 
+STATE_NAME = "box3d_constraint_properties"  # no dot: the viewer state's hotkey context is built from it
+STATE_FILE = "b3d_constraint_properties_state.py"  # the viewer state's source, beside this script
+INDEX_ATTRIB = "__idx"  # each constraint line's number, for the viewport selection and the edits
+
 GROUP_ATTRIB = "__tmpconpropgrp"  # the group SideFX's RBD Group Constraints makes
+ROTATE, ROTATE_BOX = "anchorrotate", "addanchorrotate"  # the Anchor Rotation setting (the orient attribute)
 UNSET_FLOAT = "-3.4028235e38"  # kUnsetFloat (Box3DJoints.h)
 UNSET_INT = "-1"
 
@@ -134,8 +140,10 @@ def setting_templates(rows, prefix, names):
         box = hou.ToggleParmTemplate(f"add{pname}", value.label(), default_value=False, join_with_next=True,
                                      help="Write this setting onto the constraints.")
         box.hideLabel(True)
+        box.setConditional(hou.parmCondType.HideWhen, "{ action == 1 }")  # Set writes every setting of the type
         gates = condition(pt, prefix, names)
-        value.setConditional(hou.parmCondType.DisableWhen, (gates + " " if gates else "") + f"{{ add{pname} == 0 }}")
+        value.setConditional(hou.parmCondType.DisableWhen,
+                             (gates + " " if gates else "") + f"{{ add{pname} == 0 action == 0 }}")
         items += [box, value]
     return items
 
@@ -173,28 +181,43 @@ def ui(common, per_type):
                                   help="The colour, written as Cd.")
     color.setConditional(hou.parmCondType.DisableWhen, "{ enablecolor == 0 }")
 
-    def string_row(name, label, help_text):
-        """A checkbox and a string with the types' Data Names in its menu."""
+    def string_row(name, label, help_text, always_in_set=False):
+        """A checkbox and a string with the types' Data Names in its menu. In Set mode the name is always written
+        (`always_in_set`) and its checkbox hidden."""
         box = hou.ToggleParmTemplate(f"do{name}", label, default_value=False, join_with_next=True,
                                      help="Write this onto the constraints.")
         box.hideLabel(True)
         value = hou.StringParmTemplate(name, label, 1, default_value=(names_menu[0],), menu_items=names_menu,
                                        menu_labels=names_menu, menu_type=hou.menuType.StringReplace,
                                        help=help_text)
-        value.setConditional(hou.parmCondType.DisableWhen, f"{{ do{name} == 0 }}")
+        if always_in_set:
+            box.setConditional(hou.parmCondType.HideWhen, "{ action == 1 }")
+            value.setConditional(hou.parmCondType.DisableWhen, f"{{ do{name} == 0 action == 0 }}")
+        else:
+            value.setConditional(hou.parmCondType.DisableWhen, f"{{ do{name} == 0 }}")
         return [box, value]
 
     which = hou.MenuParmTemplate("jointtype", "Settings For", tuple(str(i) for i in range(len(JOINT_TYPES))),
                                  tuple(names_menu), default_value=0,
                                  help="Which joint type's settings to show. Every ticked setting is written.")
     props = (string_row("constraintname", "Constraint Name",
-                        "The relationship's Data Name the constraints use. Writes constraint_name.")
+                        "The relationship's Data Name the constraints use. Writes constraint_name.", True)
              + string_row("next_constraintname", "Next Constraint Name",
                           "What a broken constraint switches to. Writes next_constraint_name.")
              + [which])
 
     common_names = {pt.name() for pt, _ in common}
-    folders = [b3d_hda.collapsible("b3dcp_common", "Joint", setting_templates(common, "", common_names))]
+    # Anchor Rotation: the frame of both anchors, which the viewport handle also edits (Edit Parms).
+    rotate_box = hou.ToggleParmTemplate(ROTATE_BOX, "Anchor Rotation", default_value=False, join_with_next=True,
+                                        help="Write this setting onto the constraints.")
+    rotate_box.hideLabel(True)
+    rotate = hou.FloatParmTemplate(ROTATE, "Anchor Rotation", 3, default_value=(0.0, 0.0, 0.0),
+                                   help="Rotates the frames of both anchors, in degrees. Writes the orient point "
+                                        "attribute, which sets the axes of a joint. The viewport handle edits it "
+                                        "with Edit Parms on.")
+    rotate.setConditional(hou.parmCondType.DisableWhen, f"{{ {ROTATE_BOX} == 0 }}")
+    folders = [b3d_hda.collapsible("b3dcp_common", "Joint",
+                                   [rotate_box, rotate] + setting_templates(common, "", common_names))]
     for i, (name, label) in enumerate(JOINT_TYPES):
         rows = per_type.get(name, [])
         if not rows:
@@ -204,6 +227,37 @@ def ui(common, per_type):
         f.setConditional(hou.parmCondType.HideWhen, f"{{ jointtype != {i} }}")
         folders.append(f)
 
+    # The viewport bar (export level 3), as RBD Constraint Properties' three.
+    clear = hou.ButtonParmTemplate(
+        "clearedits", "Clear Edits", script_callback="kwargs['node'].hdaViewerStateModule().clearEdits(kwargs)",
+        script_callback_language=hou.scriptLanguage.Python,
+        help="Forgets every edit made in the viewport.")
+    importing = hou.ButtonParmTemplate(
+        "importedits", "Import Edits", script_callback="kwargs['node'].hdaViewerStateModule().importEdits(kwargs)",
+        script_callback_language=hou.scriptLanguage.Python,
+        help="Copies the selected constraints' current anchor frames into the edits.")
+    edit_parms = hou.ToggleParmTemplate(
+        "editparms", "Edit Parms", default_value=False,
+        help="The viewport handle edits Anchor Rotation, for every constraint in the group, instead of the selected "
+             "constraints' own frames.")
+    b3d_hda.show_in_toolbar(clear, importing, edit_parms)
+    viewer = hou.FolderParmTemplate("b3dcp_viewer", "Viewer State", [clear, importing, edit_parms],
+                                    folder_type=hou.folderType.Simple, tags={"group_type": "simple"})
+    guide = hou.FloatParmTemplate(
+        "guidescale", "Guide Scale", 1, default_value=(1.0,), min=0.0, max=5.0,
+        help="The size of the anchor frames drawn in the viewport while the node is selected. 0 hides them.",
+        tags={"autoscope": "0000000000000000"})
+    action = hou.MenuParmTemplate(
+        "action", "Action", ("0", "1"), ("Edit", "Set"), default_value=1,
+        help="Edit writes the ticked settings. Set writes the settings of the joint type in Settings For that "
+             "differ from the defaults.")
+    # Hidden: the viewport selection (the line number and its group pattern) and the edits.
+    hidden = [hou.IntParmTemplate("__idx", "Selected Constraint", 1, default_value=(-1,)),
+              hou.StringParmTemplate("__sel", "Selection", 1),
+              hou.DataParmTemplate("stash", "Edits", 1, data_parm_type=hou.dataParmType.Geometry)]
+    for pt in hidden:
+        pt.hide(True)
+
     group = hou.ParmTemplateGroup()
     group.append(cgroup)
     group.append(bypieces)
@@ -211,6 +265,11 @@ def ui(common, per_type):
                                      header_toggle="groupfromgeo"))
     group.append(enable_color)
     group.append(color)
+    group.append(guide)
+    group.append(action)
+    group.append(viewer)
+    for pt in hidden:
+        group.append(pt)
     group.append(b3d_hda.collapsible("b3dcp_properties", "Constraint Properties", props))
     for f in folders:
         group.append(f)
@@ -218,17 +277,27 @@ def ui(common, per_type):
 
 
 def attribute_rows(common, per_type):
-    """(attribute, kind, value parameter, checkbox parameter) of every setting."""
-    out = [(pt.name(), kind, pt.name(), f"add{pt.name()}") for pt, kind in common]
-    for name, _ in JOINT_TYPES:
-        out += [(pt.name(), kind, f"{name}_{pt.name()}", f"add{name}_{pt.name()}")
+    """(attribute, kind, value parameter, checkbox parameter, joint type number, default) of every setting; the
+    number is -1 for the Joint folder's (every type), the default the node's, as a VEX literal."""
+    def default(pt, kind):
+        values = pt.defaultValue()
+        if isinstance(values, bool):  # a toggle's default is no tuple
+            values = (int(values),)
+        if kind == "v":
+            return "{" + ", ".join(num(float(v)) for v in values) + "}"
+        return num(float(values[0])) if kind == "f" else str(int(values[0]))
+
+    out = [(pt.name(), kind, pt.name(), f"add{pt.name()}", -1, default(pt, kind)) for pt, kind in common]
+    for i, (name, _) in enumerate(JOINT_TYPES):
+        out += [(pt.name(), kind, f"{name}_{pt.name()}", f"add{name}_{pt.name()}", i, default(pt, kind))
                 for pt, kind in per_type.get(name, [])]
     return out
 
 
 def wrangle_vex(rows):
-    """The whole wrangle: one detail pass over the constraints in the group. Each ticked setting creates its
-    attribute first (the "not set" value, so the other lines keep the node's value), then sets the lines."""
+    """The whole wrangle: one detail pass over the constraints in the group. Each setting that applies (ticked in
+    Edit; every one of the type in Settings For in Set) creates its attribute first (the "not set" value, so the
+    other lines keep the node's value), then sets the lines."""
     unset = {"i": UNSET_INT, "f": UNSET_FLOAT, "v": "{" + UNSET_FLOAT + ", 0.0, 0.0}"}
     read = {"i": "chi", "f": "chf", "v": "chv"}
 
@@ -237,20 +306,169 @@ def wrangle_vex(rows):
                 f'foreach (int pr; prims) setprimattrib(0, "{attr}", pr, {value});')
 
     lines = [
-        "// Box3D Constraint Properties: each ticked setting is written onto the constraints in the group.",
+        "// Box3D Constraint Properties: each setting that applies is written onto the constraints in the group.",
         f'string group = chi("../groupfromgeo") ? "{GROUP_ATTRIB}" : chs("../constraintgroup");',
         "int prims[];",
-        "if (group == \"\") { for (int i = 0; i < nprimitives(0); i++) append(prims, i); }",
+        'if (group == "") { for (int i = 0; i < nprimitives(0); i++) append(prims, i); }',
         "else prims = expandprimgroup(0, group);",
+        'int setmode = chi("../action");',
+        'int jointtype = chi("../jointtype");',
         "",
         'if (chi("../enablecolor")) { ' + put("Cd", "{1.0, 1.0, 1.0}", 'chv("../constraintcolor")') + " }",
-        'if (chi("../doconstraintname")) { ' + put("constraint_name", '""', 'chs("../constraintname")') + " }",
+        'if (setmode || chi("../doconstraintname")) { ' + put("constraint_name", '""', 'chs("../constraintname")') + " }",
         'if (chi("../donext_constraintname")) { '
         + put("next_constraint_name", '""', 'chs("../next_constraintname")') + " }",
+        # The frame of both anchors, from Anchor Rotation (degrees).
+        f'if (chi("../{ROTATE_BOX}")) {{',
+        f'    vector4 q = eulertoquaternion(radians(chv("../{ROTATE}")), 0);',
+        '    if (!haspointattrib(0, "orient")) addpointattrib(0, "orient", {0.0, 0.0, 0.0, 1.0});',
+        '    foreach (int pr; prims) foreach (int pt; primpoints(0, pr)) setpointattrib(0, "orient", pt, q);',
+        "}",
     ]
-    for attr, kind, value, box in rows:
-        lines.append(f'if (chi("../{box}")) {{ ' + put(attr, unset[kind], f'{read[kind]}("../{value}")') + " }")
+    for attr, kind, value, box, joint, dflt in rows:
+        # Set writes the settings of the type that differ from the node's default; the rest stay "not set".
+        differs = f'{read[kind]}("../{value}") != {dflt}'
+        if joint < 0:
+            applies = f'(setmode && {differs}) || (!setmode && chi("../{box}"))'
+        else:
+            applies = f'(setmode && jointtype == {joint} && {differs}) || (!setmode && chi("../{box}"))'
+        lines.append(f"if ({applies}) {{ " + put(attr, unset[kind], f'{read[kind]}("../{value}")') + " }")
     return "\n".join(lines)
+
+
+APPLY_EDITS_VEX = """\
+// The viewport edits: each stash point holds a line's number and what was edited on it. An orient of all zeros, an
+// enable_motor below 0 and a motor_velocity below -1e30 are "not edited".
+if (npoints(1) == 0) return;
+for (int pr = 0; pr < nprimitives(0); pr++) {
+    int idx = prim(0, "%(idx)s", pr);  // typed: prim() alone is ambiguous for findattribval
+    int p = findattribval(1, "point", "%(idx)s", idx);
+    int pts[] = primpoints(0, pr);
+    if (p < 0 || len(pts) < 2) continue;
+    vector4 qa = point(1, "orient_a", p);
+    vector4 qb = point(1, "orient_b", p);
+    if (dot(qa, qa) > 0 && dot(qb, qb) > 0) {
+        if (!haspointattrib(0, "orient")) addpointattrib(0, "orient", {0.0, 0.0, 0.0, 1.0});
+        setpointattrib(0, "orient", pts[0], qa);
+        setpointattrib(0, "orient", pts[1], qb);
+    }
+    int motor = point(1, "enable_motor", p);
+    if (motor >= 0) {
+        if (!hasprimattrib(0, "enable_motor")) addprimattrib(0, "enable_motor", -1);
+        setprimattrib(0, "enable_motor", pr, motor);
+    }
+    vector velocity = point(1, "motor_velocity", p);
+    if (velocity.x > -1e30) {
+        if (!hasprimattrib(0, "motor_velocity")) addprimattrib(0, "motor_velocity", {%(unset)s, 0.0, 0.0});
+        setprimattrib(0, "motor_velocity", pr, velocity);
+    }
+}
+""" % {"idx": INDEX_ATTRIB, "unset": UNSET_FLOAT}
+
+# The first selected line's handle: at the middle of its two anchors, in the frame of the first (or Anchor Rotation).
+HANDLE_VEX = """\
+if (nprimitives(0) < 1) { 4@xform = ident(); return; }
+int pts[] = primpoints(0, 0);
+if (len(pts) < 2) { 4@xform = ident(); return; }
+vector4 q = {0.0, 0.0, 0.0, 1.0};
+if (chi("../editparms")) q = eulertoquaternion(radians(chv("../%(rot)s")), 0);
+else if (haspointattrib(0, "orient")) q = point(0, "orient", pts[0]);
+matrix3 r = qconvert(q);
+matrix m = (matrix)r;
+vector a = point(0, "P", pts[0]);
+vector b = point(0, "P", pts[1]);
+vector P = (a + b) * 0.5;
+setcomp(m, P.x, 3, 0);
+setcomp(m, P.y, 3, 1);
+setcomp(m, P.z, 3, 2);
+4@xform = m;
+""" % {"rot": ROTATE}
+
+# The frames of both anchors of every line in the group, as three coloured lines each.
+GUIDES_VEX = """\
+float scale = chf("../guidescale");
+int n = nprimitives(0);
+if (scale <= 0) { for (int i = n - 1; i >= 0; i--) removeprim(0, i, 1); return; }
+if (!hasprimattrib(0, "Cd")) addprimattrib(0, "Cd", {1.0, 1.0, 1.0});
+for (int pr = 0; pr < n; pr++) {
+    int pts[] = primpoints(0, pr);
+    if (len(pts) < 2) continue;
+    vector a = point(0, "P", pts[0]);
+    vector b = point(0, "P", pts[1]);
+    float size = scale * 0.25 * distance(a, b);
+    foreach (int pt; pts) {
+        vector P = point(0, "P", pt);
+        vector4 q = {0.0, 0.0, 0.0, 1.0};
+        if (haspointattrib(0, "orient")) q = point(0, "orient", pt);
+        for (int ax = 0; ax < 3; ax++) {
+            vector d = {0.0, 0.0, 0.0};
+            d[ax] = 1.0;
+            vector c = {0.0, 0.0, 0.0};
+            c[ax] = 1.0;
+            int line = addprim(0, "polyline", addpoint(0, P), addpoint(0, P + qrotate(q, d) * size));
+            setprimattrib(0, "Cd", line, c);
+        }
+    }
+}
+for (int i = n - 1; i >= 0; i--) removeprim(0, i, 1);
+"""
+
+# Only the lines that have an edit in the stash.
+GLOW_VEX = """\
+for (int pr = nprimitives(0) - 1; pr >= 0; pr--) {
+    int idx = prim(0, "%(idx)s", pr);
+    if (findattribval(1, "point", "%(idx)s", idx) < 0) removeprim(0, pr, 1);
+}
+""" % {"idx": INDEX_ATTRIB}
+
+
+def viewer_network(sub, edited, stash):
+    """The nodes the viewer state reads (b3d_constraint_properties_state.py): CONSTRAINT (the selected lines),
+    HANDLE (the handle's transform), GUIDES (the anchor frames), GLOW (the edited lines) and `widgets` (what the
+    selector picks from, a viewer-only output). None is wired to a real output."""
+    group = 'ifs(ch("../groupfromgeo"), "{}", chs("../constraintgroup"))'.format(GROUP_ATTRIB)
+    lines = sub.createNode("blast", "edit_lines")  # the lines in the Constraint Group: the ones the state edits
+    lines.setInput(0, edited)
+    lines.parm("group").setExpression(group, hou.exprLanguage.Hscript)
+    lines.parm("grouptype").set("prims")
+    lines.parm("negate").set(1)
+
+    picked = sub.createNode("blast", "selected_lines")  # the ones picked in the viewport
+    picked.setInput(0, lines)
+    picked.parm("group").setExpression(
+        'ifs(strlen(chs("../__sel")) > 0, chs("../__sel"), "@{}=-2")'.format(INDEX_ATTRIB), hou.exprLanguage.Hscript)
+    picked.parm("grouptype").set("prims")
+    picked.parm("negate").set(1)
+    sub.createNode("null", "CONSTRAINT").setInput(0, picked)
+
+    xform = sub.createNode("attribwrangle", "get_xform")
+    xform.setInput(0, picked)
+    xform.parm("class").set("detail")
+    xform.parm("snippet").set(HANDLE_VEX)
+    sub.createNode("null", "HANDLE").setInput(0, xform)
+
+    guides = sub.createNode("attribwrangle", "build_guides")
+    guides.setInput(0, lines)
+    guides.parm("class").set("detail")
+    guides.parm("snippet").set(GUIDES_VEX)
+    sub.createNode("null", "GUIDES").setInput(0, guides)
+
+    glow = sub.createNode("attribwrangle", "glow_lines")
+    glow.setInput(0, lines)
+    glow.setInput(1, stash)
+    glow.parm("class").set("detail")
+    glow.parm("snippet").set(GLOW_VEX)
+    sub.createNode("null", "GLOW").setInput(0, glow)
+
+    # The selector picks lines, and a pick of a line's point or edge finds its number on the points too.
+    promote = sub.createNode("attribpromote", "number_points")
+    promote.setInput(0, lines)
+    promote.parm("inname").set(INDEX_ATTRIB)
+    promote.parm("inclass").set("primitive")
+    promote.parm("outclass").set("point")
+    widgets = sub.createNode("output", "widgets")
+    widgets.setInput(0, promote)
+    widgets.parm("outputidx").set(-1)
 
 
 def build_network(sub, rows):
@@ -265,8 +483,12 @@ def build_network(sub, rows):
         nulls.append(n)
     geo_in, con_in, proxy_in = nulls
 
+    # Every line gets its number, for the viewport selection and the edits (removed again before the output).
+    index = sub.createNode("enumerate", "index_lines")
+    index.setInput(0, con_in)
+    index.parm("attribname").set(INDEX_ATTRIB)
     check = sub.createNode("error", "warn_if_no_constraints")
-    check.setInput(0, con_in)
+    check.setInput(0, index)
     check.parm("errormsg1").set("No Constraint Geometry")
     b3d_hda.set_token(check.parm("severity1"), "warn", warn)
     check.parm("enable1").setExpression("nprims(-1) < 1", hou.exprLanguage.Hscript)
@@ -303,13 +525,25 @@ def build_network(sub, rows):
     setter.setInput(0, picked)
     setter.parm("class").set("detail")
     setter.parm("snippet").set(wrangle_vex(rows))
+    # The viewport edits (the node's stash: one point per edited line) go on top of what the settings write.
+    stash = sub.createNode("stash", "stash")
+    stash.parm("stash").set(sub.parm("stash"))
+    edits = sub.createNode("attribwrangle", "apply_edits")
+    edits.setInput(0, setter)
+    edits.setInput(1, stash)
+    edits.parm("class").set("detail")
+    edits.parm("snippet").set(APPLY_EDITS_VEX)
     # A wrangle, not a Group Delete: that warns on every cook while the group does not exist (Filter by Pieces off).
     strip = sub.createNode("attribwrangle", "strip_group")
-    strip.setInput(0, setter)
+    strip.setInput(0, edits)
     strip.parm("class").set("detail")
     strip.parm("snippet").set(f'removeprimgroup(0, "{GROUP_ATTRIB}");')
+    strip_index = sub.createNode("attribdelete", "strip_index")
+    strip_index.setInput(0, strip)
+    strip_index.parm("primdel").set(INDEX_ATTRIB)
+    viewer_network(sub, edits, stash)
 
-    for idx, (name, src) in enumerate([("geometry", geo_in), ("constraints", strip), ("proxy", proxy_in)]):
+    for idx, (name, src) in enumerate([("geometry", geo_in), ("constraints", strip_index), ("proxy", proxy_in)]):
         out = sub.createNode("output", f"OUT_{name}")
         out.setInput(0, src)
         out.parm("outputidx").set(idx)
@@ -326,7 +560,7 @@ def build(out_path):
     dopnet = hou.node("/obj").createNode("dopnet", "templates")
     common, per_type = collect(dopnet)
     rows = attribute_rows(common, per_type)
-    print("make_constraint_properties_sop: settings: " + ", ".join(sorted({a for a, _, _, _ in rows})))
+    print("make_constraint_properties_sop: settings: " + ", ".join(sorted({r[0] for r in rows})))
 
     geo = hou.node("/obj").createNode("geo", "build")
     for child in geo.children():
@@ -353,6 +587,7 @@ def build(out_path):
     definition.setIcon(ICON)
     b3d_hda.set_tab_submenu(definition, warn)
     b3d_hda.add_python_module(definition)
+    b3d_hda.add_viewer_state(definition, STATE_NAME, STATE_FILE)
     b3d_hda.set_message_nodes(asset, MESSAGE_NODES, warn)
     definition.setComment("Sets Box3D constraint settings as primitive attributes on the constraints in a "
                           "group, like RBD Constraint Properties.")
@@ -383,7 +618,7 @@ def probe(out_path):
         'if (i == 0) setprimgroup(0, "chosen", pr, 1); }')
     cfg = geo.createNode(TYPE_NAME, "probe")
     cfg.setInput(1, lines)
-    wanted = (("constraintgroup", "chosen"), ("jointtype", 2), ("addrevolute_stiffness", 1),
+    wanted = (("action", 0), ("constraintgroup", "chosen"), ("jointtype", 2), ("addrevolute_stiffness", 1),
               ("revolute_stiffness", 7.0), ("addrevolute_enable_spring", 1), ("revolute_enable_spring", 1),
               ("doconstraintname", 1), ("constraintname", "Weld"))
     for n, v in wanted:
