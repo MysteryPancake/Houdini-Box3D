@@ -146,8 +146,8 @@ whoever edits a primitive, so an edit that does not is picked up on the next sca
 compares it with `BodyProps::operator==` (two NaNs are equal, so an unchanged NaN setting still skips), so there is no hand-kept field list and no hash collision. Equal fingerprint ->
 skip.
 
-* Recorded at the end of a scan and again after each of our own writes (`recordFingerprintAfterWrite`, once every write
-  lock is released, since releasing may bump ids). A debug log showing `full scan, changed: ...` every step means
+* Recorded at the end of a scan and again at the end of a step that wrote the object's geometry (`noteOwnWrite`, then
+  `recordFingerprintsAfterWrites` once per object after every write lock is released, since releasing may bump ids). A debug log showing `full scan, changed: ...` every step means
   something else touches the geometry after the solver.
 * `forceScan` keeps an object scanning after a write the scan must act on (`active = 1`, `dead = 1`, deleted points).
 * Records of objects not seen are erased, so a returning object scans. A fresh world starts without records.

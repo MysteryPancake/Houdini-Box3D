@@ -100,6 +100,16 @@ void hardenWrittenPages(const GU_Detail *gdp,
   }
 }
 
+// The point `pointId` (its `id`, else its point number) is still at `off`.
+static bool samePointAt(const GU_Detail *gdp, const GA_ROHandleI &id,
+                        GA_Offset off, int64_t pointId) {
+  if (off < 0 || off >= gdp->getNumPointOffsets() ||
+      gdp->getPointMap().isOffsetVacant(off))
+    return false;
+  return id.isValid() ? static_cast<int64_t>(id.get(off)) == pointId
+                      : static_cast<int64_t>(gdp->pointIndex(off)) == pointId;
+}
+
 // Each item's point offset in the geometry about to be written: the entry's
 // stored offset if it still names the point (in range, same id / number), else
 // looked up by id; GA_INVALID_OFFSET if not found.
@@ -114,13 +124,7 @@ void resolvePointOffsets(const GU_Detail *gdp, const PointAttrs &a,
     const Box3DBodyMirror &m = *w.entry;
     const GA_Offset stored = static_cast<GA_Offset>(m.pointOff);
 
-    bool ok = stored >= 0 && stored < gdp->getNumPointOffsets() &&
-              !gdp->getPointMap().isOffsetVacant(stored);
-    if (ok)
-      ok = a.id.isValid()
-               ? static_cast<int64_t>(a.id.get(stored)) == m.pointId
-               : static_cast<int64_t>(gdp->pointIndex(stored)) == m.pointId;
-    if (ok) {
+    if (samePointAt(gdp, a.id, stored, m.pointId)) {
       w.off = stored;
       continue;
     }
@@ -144,31 +148,38 @@ void resolvePointOffsets(const GU_Detail *gdp, const PointAttrs &a,
   }
 }
 
-// A writable SIM_GeometryCopy for the object's Geometry. Objects from RBD
-// Packed Object carry a plain SIM_Geometry: it is replaced once by a
-// SIM_GeometryCopy that adopts its geometry.
-SIM_GeometryCopy *getOrMakeWritableGeometry(SIM_Object &obj) {
-  return box3dWritableGeometry(obj, SIM_GEOMETRY_DATANAME);
+void noteOwnWrite(Box3DSharedState &st, const SIM_Object &obj) {
+  st.writtenObjects.push_back(obj.getObjectId());
 }
 
-// Re-record the fingerprint after our own write, so it does not look like an
-// external edit. Call with every write lock released (releasing one may bump
-// ids).
-void recordFingerprintAfterWrite(Box3DSharedState &st, const SIM_Object &obj) {
-  const auto f = st.objectSync.find(obj.getObjectId());
-  if (f == st.objectSync.end() || f->second.visited != st.syncStamp)
-    return;
-  const SIM_Geometry *geo =
-      SIM_DATA_GETCONST(obj, SIM_GEOMETRY_DATANAME, SIM_Geometry);
-  if (!geo)
-    return;
-  SIM_GeometryAutoReadLock rlock(geo);
-  const GU_Detail *gdp = rlock.getGdp();
-  if (!gdp)
-    return;
-  const PointAttrs a(gdp);
-  Box3DSyncFingerprint &fp = f->second.fp;
-  fp = makeFingerprint(gdp, a, fp.nodeType, fp.nodeProps, fp.addImpact);
+// Re-record the fingerprints of the objects our writes touched this step, once
+// each, so they do not look like external edits. Called with every write lock
+// released (releasing one may bump ids).
+void recordFingerprintsAfterWrites(Box3DSharedState &st,
+                                   SIM_ObjectArray &objects) {
+  std::vector<int> &ids = st.writtenObjects;
+  std::sort(ids.begin(), ids.end());
+  ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+  for (const int objectId : ids) {
+    const auto f = st.objectSync.find(objectId);
+    if (f == st.objectSync.end() || f->second.visited != st.syncStamp)
+      continue;
+    const SIM_Object *obj =
+        box3dObjectById(objects, objectId, st.objectsSorted);
+    const SIM_Geometry *geo =
+        obj ? SIM_DATA_GETCONST(*obj, SIM_GEOMETRY_DATANAME, SIM_Geometry)
+            : nullptr;
+    if (!geo)
+      continue;
+    SIM_GeometryAutoReadLock rlock(geo);
+    const GU_Detail *gdp = rlock.getGdp();
+    if (!gdp)
+      continue;
+    const PointAttrs a(gdp);
+    Box3DSyncFingerprint &fp = f->second.fp;
+    fp = makeFingerprint(gdp, a, fp.nodeType, fp.nodeProps, fp.addImpact);
+  }
+  ids.clear();
 }
 
 // Make the next sync scan the object, after a write the scan must act on
@@ -339,9 +350,7 @@ void recordImpacts(Box3DSharedState &st, SIM_ObjectArray &objects,
       // cp.normal points from the body it was read from into the other one.
       const b3dop::ContactPoint &cp = h.cp;
       const float sgn = h.fromOther ? 1.0f : -1.0f;
-      imp->addPointImpact(UT_Vector3(static_cast<float>(cp.pos[0]),
-                                     static_cast<float>(cp.pos[1]),
-                                     static_cast<float>(cp.pos[2])),
+      imp->addPointImpact(box3dVec3F(cp.pos),
                           UT_Vector3(sgn * cp.normal[0], sgn * cp.normal[1],
                                      sgn * cp.normal[2]),
                           cp.impulse, static_cast<int>(h.self->pointIndex),
@@ -373,7 +382,7 @@ void writePointAttrs(Box3DSharedState &st, SIM_ObjectArray &objects) {
         box3dObjectById(objects, items[begin].objectId, st.objectsSorted);
     if (!obj)
       return;
-    SIM_GeometryCopy *geo = getOrMakeWritableGeometry(*obj);
+    SIM_GeometryCopy *geo = box3dWritableGeometry(*obj, SIM_GEOMETRY_DATANAME);
     if (!geo)
       return; // writeResultsBack warned already
     unsigned want = 0;
@@ -383,8 +392,6 @@ void writePointAttrs(Box3DSharedState &st, SIM_ObjectArray &objects) {
     {
       SIM_GeometryAutoWriteLock lock(geo);
       GU_Detail *gdp = &lock.getGdp();
-      if (!gdp)
-        return;
       if (want & Box3DPointWrite::kMass)
         addPointAttribIfMissing(gdp, "mass", 1);
       if (want & Box3DPointWrite::kRest) {
@@ -416,11 +423,7 @@ void writePointAttrs(Box3DSharedState &st, SIM_ObjectArray &objects) {
           wrote |= Box3DPointWrite::kMass;
         }
         if ((w.flags & Box3DPointWrite::kRest) && restOk) {
-          UT_Matrix4F m;
-          for (int r = 0; r < 4; ++r)
-            for (int c = 0; c < 4; ++c)
-              m(r, c) = w.restxform[r * 4 + c];
-          restxform.set(w.off, m);
+          restxform.set(w.off, box3dMatrix4F(w.restxform));
           pivot.set(w.off, UT_Vector3F(w.pivot[0], w.pivot[1], w.pivot[2]));
           float q[4];
           box3dAbsoluteToRest(w.entry->restRot, w.entry->rot, q);
@@ -439,7 +442,7 @@ void writePointAttrs(Box3DSharedState &st, SIM_ObjectArray &objects) {
       }
     }
     if (wrote)
-      recordFingerprintAfterWrite(st, *obj);
+      noteOwnWrite(st, *obj);
   });
   items.clear();
 }
@@ -456,15 +459,13 @@ void ageObjects(Box3DSharedState &st, SIM_ObjectArray &objects, float dt) {
     const auto osIt = st.objectSync.find(obj->getObjectId());
     if (osIt != st.objectSync.end() && osIt->second.wholeObject)
       continue; // one body: its points are not particles
-    SIM_GeometryCopy *geo = getOrMakeWritableGeometry(*obj);
+    SIM_GeometryCopy *geo = box3dWritableGeometry(*obj, SIM_GEOMETRY_DATANAME);
     if (!geo)
       continue;
     bool markedDead = false;
     {
       SIM_GeometryAutoWriteLock lock(geo);
       GU_Detail *gdp = &lock.getGdp();
-      if (!gdp)
-        continue;
       addPointAttribIfMissing(gdp, "age", 1);
       const bool hasLife = gdp->findPointAttribute("life") != nullptr;
       if (hasLife)
@@ -527,7 +528,7 @@ void ageObjects(Box3DSharedState &st, SIM_ObjectArray &objects, float dt) {
       if (markedDead)
         dead.getAttribute()->bumpDataId();
     }
-    recordFingerprintAfterWrite(st, *obj);
+    noteOwnWrite(st, *obj);
     if (markedDead)
       forceScan(st, obj->getObjectId());
   }
@@ -544,29 +545,19 @@ void deleteDeadPoints(Box3DSharedState &st, SIM_ObjectArray &objects) {
         box3dObjectById(objects, items[begin].objectId, st.objectsSorted);
     if (!obj)
       return;
-    SIM_GeometryCopy *geo = getOrMakeWritableGeometry(*obj);
+    SIM_GeometryCopy *geo = box3dWritableGeometry(*obj, SIM_GEOMETRY_DATANAME);
     if (!geo)
       return;
     bool deleted = false;
     {
       SIM_GeometryAutoWriteLock lock(geo);
       GU_Detail *gdp = &lock.getGdp();
-      if (!gdp)
-        return;
       const GA_ROHandleI id(gdp, GA_ATTRIB_POINT, "id");
       // Check every point first: deleting changes point numbers.
       std::vector<GA_Offset> doomed;
       for (size_t k = begin; k < end; ++k) {
-        const GA_Offset off = items[k].off;
-        bool ok = off >= 0 && off < gdp->getNumPointOffsets() &&
-                  !gdp->getPointMap().isOffsetVacant(off);
-        if (ok)
-          ok = id.isValid()
-                   ? static_cast<int64_t>(id.get(off)) == items[k].pointId
-                   : static_cast<int64_t>(gdp->pointIndex(off)) ==
-                         items[k].pointId;
-        if (ok)
-          doomed.push_back(off);
+        if (samePointAt(gdp, id, items[k].off, items[k].pointId))
+          doomed.push_back(items[k].off);
       }
       for (const GA_Offset off : doomed) {
         const GA_Offset vtx = gdp->pointVertex(off);
@@ -583,7 +574,7 @@ void deleteDeadPoints(Box3DSharedState &st, SIM_ObjectArray &objects) {
         gdp->bumpAllDataIds();
     }
     if (deleted) {
-      recordFingerprintAfterWrite(st, *obj);
+      noteOwnWrite(st, *obj);
       forceScan(st, obj->getObjectId()); // point numbers changed
     }
   });
@@ -593,9 +584,9 @@ void deleteDeadPoints(Box3DSharedState &st, SIM_ObjectArray &objects) {
 namespace {
 
 // ---- writeResultsBack, step 0 (serial): the bodies that moved
-// ----------------- Box3D's move events (read into st.moves right after the
-// step): every awake body and its transform (a body falling asleep appears once
-// more). Each body's user data is its entry.
+// Box3D's move events (read into st.moves right after the step): every awake
+// body and its transform (a body falling asleep appears once more). Each body's
+// user data is its entry.
 struct MovedBodies {
   std::vector<int> wholeMoves; // move events of whole-object bodies
   int missing = 0;             // moved bodies without a handle
@@ -677,9 +668,9 @@ void readVelocities(Box3DSharedState &st) {
 }
 
 // ---- step 2 (parallel): write one body's attributes
-// ------------------------------ The attribute handles of one object's
-// geometry, and what it takes to write one item. write() touches only its own
-// point and its own item's entry, so items can be written concurrently.
+// The attribute handles of one object's geometry, and what it takes to write
+// one item. write() touches only its own point and its own item's entry, so
+// items can be written concurrently.
 class BodyWriter {
 public:
   // The items [begin, end) of st.writeItems belong to `gdp`; their points are
@@ -728,9 +719,7 @@ private:
                        const b3dop::BodyMove &mv) const {
     const GA_Offset off = w.off;
     if (myP.isValid())
-      myP.set(off, UT_Vector3(static_cast<float>(mv.pos[0]),
-                              static_cast<float>(mv.pos[1]),
-                              static_cast<float>(mv.pos[2])));
+      myP.set(off, box3dVec3F(mv.pos));
     if (myQ.isValid()) {
       // Packed with a rest: the rotation since rest (Bullet's orient); the
       // packed transform below carries the absolute one.
@@ -833,9 +822,8 @@ private:
 };
 
 // ---- step 3 (serial): packed primitive rotations
-// --------------------------------- Serial: the HDK does not document
-// setLocalTransform as thread-safe. Returns the bodies whose primitive is gone
-// (the topology changed without a new id).
+// Serial: the HDK does not document setLocalTransform as thread-safe. Returns
+// the bodies whose primitive is gone (the topology changed without a new id).
 int writePackedRotations(GU_Detail *gdp,
                          const std::vector<Box3DWriteItem> &items, size_t begin,
                          size_t end,
@@ -925,14 +913,13 @@ void SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData,
   readVelocities(*st);
 
   // Grouped by object, so each geometry is locked once.
-  std::vector<SIM_Object *> refresh; // objects written to
   forEachObjectRun(items, [&](size_t begin, size_t end) {
     SIM_Object *obj =
         box3dObjectById(objects, items[begin].objectId, st->objectsSorted);
     if (!obj)
       return;
 
-    SIM_GeometryCopy *geo = getOrMakeWritableGeometry(*obj);
+    SIM_GeometryCopy *geo = box3dWritableGeometry(*obj, SIM_GEOMETRY_DATANAME);
     if (!geo) {
       B3D_LOG_VERBOSE("  writeBack: object id=%d Geometry is not writable and "
                       "could not be converted",
@@ -944,17 +931,12 @@ void SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData,
       return;
     }
 
-    SIM_GeometryAutoWriteLock lock(geo);
-    GU_Detail *gdp = &lock.getGdp();
-    if (!gdp)
-      return;
-    refresh.push_back(obj);
-    missing += writeObjectResults(*st, gdp, begin, end);
+    {
+      SIM_GeometryAutoWriteLock lock(geo);
+      missing += writeObjectResults(*st, &lock.getGdp(), begin, end);
+    }
+    noteOwnWrite(*st, *obj);
   });
-
-  // Re-record the fingerprints now that every lock is released.
-  for (SIM_Object *obj : refresh)
-    recordFingerprintAfterWrite(*st, *obj);
 
   if (missing) {
     B3D_LOG_VERBOSE("  writeBack: %d moved bodies had no readable state or no "

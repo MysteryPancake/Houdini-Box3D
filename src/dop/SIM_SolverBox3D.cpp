@@ -466,10 +466,8 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
         if (collectHits)
           st->world.updateHitEvents(i > 0);
         st->world.brokenJoints(broken);
-        for (void *p : broken)
-          if (std::find(st->brokenThisFrame.begin(), st->brokenThisFrame.end(),
-                        p) == st->brokenThisFrame.end())
-            st->brokenThisFrame.push_back(p);
+        st->brokenThisFrame.insert(st->brokenThisFrame.end(), broken.begin(),
+                                   broken.end());
         // This step's contacts are impacts too (their impulses add up over
         // the frame).
         if (collectImpactHits)
@@ -484,6 +482,14 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
         else
           st->moves[ins.first->second] = mv;
       }
+    }
+    // Once each, in the order Box3D gave them.
+    {
+      std::unordered_set<void *> seen;
+      std::vector<void *> &b = st->brokenThisFrame;
+      b.erase(std::remove_if(b.begin(), b.end(),
+                             [&](void *p) { return !seen.insert(p).second; }),
+              b.end());
     }
     warnCount(objects, forceStats.nonFinite,
               "body(ies) got a non-finite force or torque from a Force DOP; it "
@@ -517,6 +523,8 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
     UT_PerfMonAutoSolveEvent perf(this, "Exporting Collision Shapes");
     exportCollisionShapes(*st, objects);
   }
+  // Every write lock is released: our own writes are not external edits.
+  recordFingerprintsAfterWrites(*st, objects);
 
   st->stampTime = now;
   st->stamped = true;
@@ -587,6 +595,7 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
   st->reapAtFrameEnd = getReapAtFrameEnd();
   st->pointWrites.clear();
   st->deletions.clear();
+  st->writtenObjects.clear();
   {
     UT_PerfMonAutoSolveEvent perf(this, "Updating Bodies");
     for (exint i = 0; i < objects.entries(); ++i) {

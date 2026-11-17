@@ -315,7 +315,7 @@ void applyToObjectBodies(Box3DSharedState &st, const SIM_Object &obj,
 // writable.
 bool clearPointForces(SIM_Object &obj,
                       const std::vector<PointForce> &pointForces) {
-  SIM_GeometryCopy *geo = getOrMakeWritableGeometry(obj);
+  SIM_GeometryCopy *geo = box3dWritableGeometry(obj, SIM_GEOMETRY_DATANAME);
   if (!geo)
     return false;
   SIM_GeometryAutoWriteLock lock(geo);
@@ -336,12 +336,12 @@ bool clearPointForces(SIM_Object &obj,
   return true;
 }
 
-// With the locks released (releasing may bump ids): the cleared ids, and the
-// fingerprints.
+// With the locks released (releasing may bump ids): the cleared ids. The
+// fingerprints are re-recorded at the end of the step (noteOwnWrite).
 void recordClearedForces(Box3DSharedState &st,
                          const std::vector<SIM_Object *> &cleared) {
   for (SIM_Object *obj : cleared) {
-    recordFingerprintAfterWrite(st, *obj);
+    noteOwnWrite(st, *obj);
     const SIM_Geometry *geo =
         SIM_DATA_GETCONST(*obj, SIM_GEOMETRY_DATANAME, SIM_Geometry);
     const auto osIt = st.objectSync.find(obj->getObjectId());

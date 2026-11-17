@@ -401,8 +401,8 @@ public:
   typeByHandle(BodyHandle h) const; // Dynamic for a null handle
 
   // ---- changes to existing bodies (handle API)
-  // -------------------------------- Take effect from the next step. Only
-  // Box3D's own rules wake a body (disabling sleep does).
+  // Take effect from the next step. Only Box3D's own rules wake a body
+  // (disabling sleep does).
   void setMaterialByHandle(BodyHandle h, float friction,
                            float restitution); // every shape; contacts follow
   // Rolling resistance (negative / non-finite -> 0) and conveyor velocity
@@ -506,14 +506,13 @@ public:
   bool hadHitEvent(BodyHandle a, BodyHandle b) const;
 
   // ---- joints
-  // ------------------------------------------------------------------ frameA /
-  // frameB are world-space frames now (anchor P + orient); the joint keeps each
-  // relative to its body. A null BodyHandle is the world (a shapeless static
-  // body made on first use). Settings are clamped to what Box3D accepts. 0 on
-  // failure (both ends the world, the same body twice, or an invalid body).
-  // With framesAreLocal the frames are already relative to their bodies (what
-  // jointLocalFrames returns), so a joint can be remade exactly, without going
-  // through world positions.
+  // frameA / frameB are world-space frames now (anchor P + orient); the joint
+  // keeps each relative to its body. A null BodyHandle is the world (a
+  // shapeless static body made on first use). Settings are clamped to what
+  // Box3D accepts. 0 on failure (both ends the world, the same body twice, or
+  // an invalid body). With framesAreLocal the frames are already relative to
+  // their bodies (what jointLocalFrames returns), so a joint can be remade
+  // exactly, without going through world positions.
   JointHandle createJoint(JointType type, BodyHandle a, BodyHandle b,
                           const JointFrame &frameA, const JointFrame &frameB,
                           const JointSettings &in, void *userData = nullptr,
@@ -544,8 +543,7 @@ public:
   static JointSettings defaultJointSettings(JointType type);
 
   // ---- collision filtering
-  // --------------------------------------------------- Set every shape of the
-  // body to `f` (Box3D re-filters the shape's contacts).
+  // Set every shape of the body to `f` (Box3D re-filters the shape's contacts).
   void setFilterByHandle(BodyHandle h, const CollisionFilter &f);
 
   // Push changed settings into the live world. workerCount is kept (it needs a

@@ -23,12 +23,11 @@ static_assert(
 namespace {
 
 // ---- the process-wide hull cache
-// -------------------------------------------------------------- Box3D copies a
-// hull into the world's own database when a shape is made, so entries here are
-// only needed until then: they can be shared by every world (a rebuilt world
-// finds what its predecessor built) and evicted at any time. Worlds hold the
-// entries they use in a step (Box3DWorld::Impl::held) so eviction never frees
-// one between findHull and createHullShape.
+// Box3D copies a hull into the world's own database when a shape is made, so
+// entries here are only needed until then: they can be shared by every world (a
+// rebuilt world finds what its predecessor built) and evicted at any time.
+// Worlds hold the entries they use in a step (Box3DWorld::Impl::held) so
+// eviction never frees one between findHull and createHullShape.
 class HullLibrary {
 public:
   static HullLibrary &instance() {

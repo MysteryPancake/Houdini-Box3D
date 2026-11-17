@@ -46,7 +46,7 @@ mass, force, torque)` for every force on the object, summed, and the sum goes in
 `applyExternalForces` also reads per-point `force` / `torque` (V3) attributes from each object's geometry into a short
 list of the non-zero ones (by offset; a body finds its point by binary search), adds them to the Force DOP result for the
 same body, applies the sum, then zeroes the ones it read (a write lock, followed by
-`recordFingerprintAfterWrite`, so the next sync does not see the clear as an external edit). Zeroing is needed because
+`noteOwnWrite`, so the next sync does not see the clear as an external edit). Zeroing is needed because
 nothing else clears `force` without a POP Solver. The POP Force node must run before this solver. The attributes' data
 ids right after the clear (or after a read found them all zero) are kept in `Box3DObjectSync::forceId / torqueId`; while
 they are unchanged nothing new was written and the read is skipped.

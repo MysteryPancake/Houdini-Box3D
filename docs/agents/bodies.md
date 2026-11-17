@@ -65,7 +65,7 @@ equal to what its body was built with.
 * **Time Scale**: Box3D steps by `stepDt = dt * timescale`.
 
 **Point writes after the step** (`Box3DPointWrite`: `kAutofitValid`, `kMass`, `kRest`): grouped per object
-(`forEachObjectRun`), offsets via `resolvePointOffsets`, then `recordFingerprintAfterWrite`.
+(`forEachObjectRun`), offsets via `resolvePointOffsets`, then `noteOwnWrite`.
 
 **Rest transform** (packed points, Bullet's convention): `restxform` (4x4, the packed transform at rest; all zero =
 unset), `pivot` (P at rest) and `orient` = the rotation since rest, so Transform Pieces needs no rest input. Bodies

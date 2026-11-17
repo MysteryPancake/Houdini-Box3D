@@ -236,16 +236,10 @@ b3dop::BodyProps readDynamicProps(const b3dop::BodySettings &node,
     const float v = h.get(off);
     return (v >= 0.0f && std::isfinite(v)) ? v : -1.0f;
   };
-  if (a.sleepThreshold.isValid()) {
-    const float t = threshold(a.sleepThreshold);
-    if (t >= 0.0f)
-      p.sleepThreshold = t;
-  }
-  if (a.ccdThreshold.isValid()) {
-    const float t = threshold(a.ccdThreshold);
-    if (t >= 0.0f)
-      p.ccdThreshold = t;
-  }
+  if (const float t = threshold(a.sleepThreshold); t >= 0.0f)
+    p.sleepThreshold = t;
+  if (const float t = threshold(a.ccdThreshold); t >= 0.0f)
+    p.ccdThreshold = t;
   if (a.fastObject.isValid())
     p.fastObject = a.fastObject.get(off) != 0;
   if (a.fastRotation.isValid())
@@ -728,10 +722,10 @@ bool rebuildPointShapes(ScanContext &ctx, const Box3DPointSlot &s,
   return true;
 }
 
-// Push the settings that differ. After a rebuild the new shapes already carry
-// material, mass and filter profile. Returns kPropsChanged / kMassChanged.
 enum : unsigned { kPropsChanged = 1, kMassChanged = 2 };
 
+// Push the settings that differ. After a rebuild the new shapes already carry
+// material, mass and filter profile. Returns kPropsChanged / kMassChanged.
 unsigned applyPropChanges(b3dop::Box3DWorld &world, Box3DBodyMirror &e,
                           const b3dop::BodyProps &p, bool shapesRebuilt) {
   const b3dop::BodyProps &o = e.props;
@@ -928,10 +922,9 @@ namespace {
 using SlotList = std::vector<Box3DPointSlot>;
 
 // ---- syncObject, step 1 (serial): collect the slots
-// -------------------------- One slot per point, in point order, with its
-// offset and point number. A slot forgets its cached entry when its offset
-// changed. Without `id` the body id is the point number, i.e. the position in
-// this walk.
+// One slot per point, in point order, with its offset and point number. A slot
+// forgets its cached entry when its offset changed. Without `id` the body id is
+// the point number, i.e. the position in this walk.
 void collectSlots(const GU_Detail *gdp, SlotList &snaps) {
   size_t n = 0;
   for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it, ++n) {
@@ -948,11 +941,10 @@ void collectSlots(const GU_Detail *gdp, SlotList &snaps) {
 }
 
 // ---- step 2 (parallel): read the points
-// --------------------------------------- One point as the scan sees it: body
-// id and key, state, packed primitive, and whether it needs shapes built (a new
-// body, or a rebuild: deforming, bullet_autofit_valid = 0, or a convex /
-// concave scale change, like Bullet). The mirror is only read here (the apply
-// pass changes it).
+// One point as the scan sees it: body id and key, state, packed primitive, and
+// whether it needs shapes built (a new body, or a rebuild: deforming,
+// bullet_autofit_valid = 0, or a convex / concave scale change, like Bullet).
+// The mirror is only read here (the apply pass changes it).
 void readSlot(const ScanContext &ctx, int objectId, Box3DPointSlot &s) {
   const PointAttrs &a = ctx.a;
   if (a.id.isValid())
@@ -1016,12 +1008,12 @@ void readSlots(const ScanContext &ctx, int objectId, SlotList &snaps) {
 }
 
 // ---- step 3 (parallel, chunked): plan the shapes of new and rebuilt bodies
-// ------ Building hulls is the slow part of a new world and of deforming
-// bodies. Box3DWorld's hull calls, ShapeSources and GeorepLookup are
-// thread-safe, so the plans are made here in parallel and the apply pass only
-// creates bodies. Chunked, so Escape is checked in between. Each planned
-// slot's packed primitive is read again here, into one array per scan, rather
-// than kept from step 2 (a heap copy per new body).
+// Building hulls is the slow part of a new world and of deforming bodies.
+// Box3DWorld's hull calls, ShapeSources and GeorepLookup are thread-safe, so
+// the plans are made here in parallel and the apply pass only creates bodies.
+// Chunked, so Escape is checked in between. Each planned slot's packed
+// primitive is read again here, into one array per scan, rather than kept from
+// step 2 (a heap copy per new body).
 
 // The slots that need a plan: new bodies (unless `dead`) and existing ones
 // being rebuilt.
@@ -1131,9 +1123,9 @@ private:
 };
 
 // ---- step 4 (serial, point order): apply to Box3D and the mirror
-// ---------------- An entry already carrying this step's stamp belongs to an
-// earlier point (duplicate id). Escape is checked between points (the hulls
-// were built by the planning step).
+// An entry already carrying this step's stamp belongs to an earlier point
+// (duplicate id). Escape is checked between points (the hulls were built by the
+// planning step).
 class ApplyPass {
 public:
   ApplyPass(ScanContext &ctx, Box3DObjectSync &os, SyncCounts &c,
@@ -1240,11 +1232,9 @@ private:
     if (!set) {
       // As the attribute will store it, so the read path splits the same
       // matrix.
-      for (int r = 0; r < 4; ++r)
-        for (int c = 0; c < 4; ++c) {
-          pending.restxform[r * 4 + c] = static_cast<float>(pk.m4[r * 4 + c]);
-          m(r, c) = pending.restxform[r * 4 + c];
-        }
+      for (int i = 0; i < 16; ++i)
+        pending.restxform[i] = static_cast<float>(pk.m4[i]);
+      m = box3dMatrix4F(pending.restxform);
       if (!restRotation(m, rest))
         return;
       for (int i = 0; i < 3; ++i)

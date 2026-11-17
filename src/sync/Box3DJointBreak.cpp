@@ -113,9 +113,7 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp,
           const b3dop::JointFrame *frames[2] = {&la, &lb};
           for (int k = 0; k < 2; ++k) {
             const b3dop::JointFrame &f = *frames[k];
-            localPH.set(pts[k], UT_Vector3(static_cast<float>(f.pos[0]),
-                                           static_cast<float>(f.pos[1]),
-                                           static_cast<float>(f.pos[2])));
+            localPH.set(pts[k], box3dVec3F(f.pos));
             localQH.set(pts[k],
                         UT_QuaternionF(f.rot[0], f.rot[1], f.rot[2], f.rot[3]));
           }
@@ -138,9 +136,7 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp,
     const b3dop::JointFrame *frames[2] = {&e->wroteA, &e->wroteB};
     for (int k = 0; k < 2; ++k) {
       const b3dop::JointFrame &f = *frames[k];
-      pH.set(pts[k], UT_Vector3(static_cast<float>(f.pos[0]),
-                                static_cast<float>(f.pos[1]),
-                                static_cast<float>(f.pos[2])));
+      pH.set(pts[k], box3dVec3F(f.pos));
       orientH.set(pts[k],
                   UT_QuaternionF(f.rot[0], f.rot[1], f.rot[2], f.rot[3]));
     }

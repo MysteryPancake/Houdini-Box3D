@@ -571,6 +571,8 @@ struct Box3DSharedState {
   // Filled by the sync (in object order), used after the step:
   std::vector<Box3DPointWrite> pointWrites;
   std::vector<Box3DDeletion> deletions;
+  // Objects whose Geometry this step's own writes touched (noteOwnWrite).
+  std::vector<int> writtenObjects;
   std::vector<int>
       impactObjects; // objects with Impacts data from last step (sorted)
 

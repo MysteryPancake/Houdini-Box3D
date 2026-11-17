@@ -446,9 +446,8 @@ bool prepareHeightField(Box3DAffectorBody &ab, const GU_Detail *gdp,
 }
 
 // ---- update: the same shape as last time
-// ------------------------------------------------ A moved (animated) object
-// only needs a new pose and / or mesh scale; a failed build (handle 0) stays
-// failed until the signature changes.
+// A moved (animated) object only needs a new pose and / or mesh scale; a failed
+// build (handle 0) stays failed until the signature changes.
 void updateAffector(Box3DSharedState &st, Box3DAffectorBody &ab,
                     const AffectorInput &in, Box3DAffectorCounts &counts) {
   if (!ab.handle) {

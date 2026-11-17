@@ -565,8 +565,11 @@ bool writeWholeObject(SIM_Object &obj, Box3DBodyMirror &e, const double pos[3],
 
 // ---- after the step (Box3DPostStep.cpp) and forces (Box3DForces.cpp) ----
 
-SIM_GeometryCopy *getOrMakeWritableGeometry(SIM_Object &obj);
-void recordFingerprintAfterWrite(Box3DSharedState &st, const SIM_Object &obj);
+// Our own write to the object's Geometry this step: its fingerprint is
+// re-recorded by recordFingerprintsAfterWrites, once every lock is released.
+void noteOwnWrite(Box3DSharedState &st, const SIM_Object &obj);
+void recordFingerprintsAfterWrites(Box3DSharedState &st,
+                                   SIM_ObjectArray &objects);
 void forceScan(Box3DSharedState &st, int objectId);
 // Some solved object has Add Impact Data on.
 bool wantsImpacts(const Box3DSharedState &st);

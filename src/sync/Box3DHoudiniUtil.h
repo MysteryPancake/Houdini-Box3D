@@ -16,6 +16,7 @@
 #include <SIM/SIM_OptionsUser.h>
 #include <SIM/SIM_Query.h>
 #include <UT/UT_Matrix3.h>
+#include <UT/UT_Matrix4.h>
 #include <UT/UT_Quaternion.h>
 #include <UT/UT_StringHolder.h>
 #include <UT/UT_Vector3.h>
@@ -132,6 +133,21 @@ inline void box3dToArray(const Matrix4 &m, double out[16]) {
   for (int r = 0; r < 4; ++r)
     for (int c = 0; c < 4; ++c)
       out[4 * r + c] = static_cast<double>(m(r, c));
+}
+
+// 16 floats, row by row, as a Houdini 4x4.
+inline UT_Matrix4F box3dMatrix4F(const float in[16]) {
+  UT_Matrix4F m;
+  for (int r = 0; r < 4; ++r)
+    for (int c = 0; c < 4; ++c)
+      m(r, c) = in[4 * r + c];
+  return m;
+}
+
+// A double position as a float UT_Vector3.
+inline UT_Vector3 box3dVec3F(const double v[3]) {
+  return UT_Vector3(static_cast<float>(v[0]), static_cast<float>(v[1]),
+                    static_cast<float>(v[2]));
 }
 
 // Euler angles in degrees (Houdini's XYZ rotate order) -> quaternion x, y, z,
