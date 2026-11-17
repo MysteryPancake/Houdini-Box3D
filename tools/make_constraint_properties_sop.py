@@ -114,8 +114,9 @@ def collect(dopnet):
 
 def condition(pt, prefix, names):
     """`pt`'s disable-when for the asset: each group `{ x == v }` keeps only if every name it reads is a
-    setting here (a node toggle such as Breakable is not), is renamed with `prefix` and also needs
-    `add<x>` ticked, so it only applies while that setting is being written."""
+    setting here (a node toggle such as Breakable is not) and is renamed with `prefix`. In Edit it also needs
+    `add<x>` ticked, so it only applies while that setting is being written; in Set the checkboxes are hidden
+    and the toggle's value alone counts."""
     cond = pt.conditionals().get(hou.parmCondType.DisableWhen, "")
     out = []
     for body in re.findall(r"\{([^}]*)\}", cond):
@@ -125,7 +126,8 @@ def condition(pt, prefix, names):
         for r in refs:
             body = re.sub(rf"\b{r}\b", prefix + r, body)
         extra = "".join(f" add{prefix}{r} == 1" for r in refs)
-        out.append("{" + body.rstrip() + extra + " }")
+        out.append("{" + body.rstrip() + extra + " action == 0 }")  # Edit: while that toggle is being written
+        out.append("{" + body.rstrip() + " action == 1 }")  # Set: its checkbox is hidden, the toggle's value counts
     return " ".join(out)
 
 

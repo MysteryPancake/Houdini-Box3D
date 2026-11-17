@@ -1377,7 +1377,13 @@ def test_constraint_properties_edit():
     definition = cp.type().definition()
     sections = sorted(n for n in definition.sections() if n.startswith("ViewerState"))
     toolbar = sorted(pt.name() for pt in cp.parmTemplateGroup().entriesWithoutFolders() if pt._exportLevel() == 3)
-    ok = ok and len(sections) == 4 and toolbar == ["clearedits", "editparms", "importedits"]
+    # A setting a toggle switches on greys out with the toggle off in both modes: Edit once the toggle is being
+    # written, Set (checkboxes hidden) by its value.
+    cond = cp.parm("weld_linear_stiffness").parmTemplate().conditionals().get(hou.parmCondType.DisableWhen, "")
+    greyed = ("{ weld_enable_linear_spring == 0 addweld_enable_linear_spring == 1 action == 0 }" in cond
+              and "{ weld_enable_linear_spring == 0 action == 1 }" in cond)
+    ok = ok and greyed and len(sections) == 4 and toolbar == ["clearedits", "editparms", "importedits"]
+    detail += f"; weld_linear_stiffness disable-when {cond!r}"
     detail += f"; sections {sections}, toolbar {toolbar}"
     return [Result("constraint_properties_edit", Result.PASS if ok else Result.FAIL, detail)]
 
