@@ -103,8 +103,6 @@ struct BodyExtent {
   }
 };
 
-constexpr float kPi = 3.14159265358979f;
-
 // The force of one Force DOP on the body, by the sampling the force asks for
 // (its Sample Mode): at the centre of mass (a point), over the body as a sphere
 // of the same volume as its bounding box (force per volume), or over the body
@@ -118,7 +116,7 @@ void sampleForce(const SIM_Force &sf, const SIM_Object &obj,
   const SIM_Force::SIM_ForceSample mode = sf.getOptimalForceSampling();
   if (mode == SIM_Force::SIM_FORCE_SAMPLESPHERE && extent.get()) {
     const float volume = extent.size[0] * extent.size[1] * extent.size[2];
-    const float radius = std::cbrt(0.75f * volume / kPi);
+    const float radius = std::cbrt(0.75f * volume / b3dop::kPi);
     if (radius > 0.0f) {
       sf.getForceOnSphere(obj, pos, radius, vel, angvel, mass, f, t);
       return;
@@ -132,7 +130,7 @@ void sampleForce(const SIM_Force &sf, const SIM_Object &obj,
       const float area = std::fabs(n.x()) * s[1] * s[2] +
                          std::fabs(n.y()) * s[0] * s[2] +
                          std::fabs(n.z()) * s[0] * s[1];
-      const float radius = std::sqrt(area / kPi);
+      const float radius = std::sqrt(area / b3dop::kPi);
       if (radius > 0.0f) {
         f = UT_Vector3(0.0f, 0.0f, 0.0f);
         t = UT_Vector3(0.0f, 0.0f, 0.0f);

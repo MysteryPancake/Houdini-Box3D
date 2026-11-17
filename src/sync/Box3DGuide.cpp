@@ -29,7 +29,6 @@ namespace box3dsolver {
 namespace {
 
 constexpr int kCircleSegments = 32;
-constexpr float kPi = 3.14159265358979f;
 constexpr float kAsleepShade = 0.55f; // sleeping dynamic bodies
 constexpr float kStaticShade = 0.35f; // static and kinematic bodies
 
@@ -51,7 +50,8 @@ Box3DSharedState *findState(const SIM_Object &obj) {
   return nullptr;
 }
 
-// Polylines with one colour each, written out at the end.
+// Polylines with one colour each, written out at the end. All points live in
+// one array; a line is a range of it.
 class Lines {
 public:
   void begin(const UT_Vector3 &color) { myColor = color; }
@@ -59,48 +59,56 @@ public:
   void add(const std::vector<UT_Vector3> &pts) {
     if (pts.size() < 2)
       return;
-    myLines.push_back(pts);
-    myColors.push_back(myColor);
+    myPoints.insert(myPoints.end(), pts.begin(), pts.end());
+    endLine();
   }
 
   // A full circle (closed: the first point repeated).
   void circle(const UT_Vector3 &c, const UT_Vector3 &u, const UT_Vector3 &v,
               float r) {
-    arc(c, u, v, r, 0.0f, 2.0f * kPi, kCircleSegments);
+    arc(c, u, v, r, 0.0f, 2.0f * b3dop::kPi, kCircleSegments);
   }
 
   void arc(const UT_Vector3 &c, const UT_Vector3 &u, const UT_Vector3 &v,
            float r, float a0, float a1, int segments) {
-    std::vector<UT_Vector3> pts;
-    pts.reserve(static_cast<size_t>(segments) + 1);
     for (int k = 0; k <= segments; ++k) {
       const float a =
           a0 + (a1 - a0) * static_cast<float>(k) / static_cast<float>(segments);
-      pts.push_back(c + r * (std::cos(a) * u + std::sin(a) * v));
+      myPoints.push_back(c + r * (std::cos(a) * u + std::sin(a) * v));
     }
-    add(pts);
+    endLine();
   }
 
   void write(GU_Detail &gdp) const {
     GA_RWHandleV3 cd(gdp.addFloatTuple(GA_ATTRIB_PRIMITIVE, "Cd", 3));
     if (cd.isValid())
       cd.getAttribute()->setTypeInfo(GA_TYPE_COLOR);
-    for (size_t i = 0; i < myLines.size(); ++i) {
-      const std::vector<UT_Vector3> &pts = myLines[i];
+    size_t begin = 0;
+    for (size_t i = 0; i < myEnds.size(); ++i) {
+      const size_t end = myEnds[i];
       GU_PrimPoly *poly = GU_PrimPoly::build(
-          &gdp, static_cast<GA_Size>(pts.size()), /*open=*/true);
-      if (!poly)
-        continue;
-      for (size_t k = 0; k < pts.size(); ++k)
-        gdp.setPos3(poly->getPointOffset(static_cast<GA_Size>(k)), pts[k]);
-      if (cd.isValid())
-        cd.set(poly->getMapOffset(), myColors[i]);
+          &gdp, static_cast<GA_Size>(end - begin), /*open=*/true);
+      if (poly) {
+        for (size_t k = begin; k < end; ++k)
+          gdp.setPos3(poly->getPointOffset(static_cast<GA_Size>(k - begin)),
+                      myPoints[k]);
+        if (cd.isValid())
+          cd.set(poly->getMapOffset(), myColors[i]);
+      }
+      begin = end;
     }
   }
 
 private:
+  // The points added since the last line become a line of the current colour.
+  void endLine() {
+    myEnds.push_back(myPoints.size());
+    myColors.push_back(myColor);
+  }
+
   UT_Vector3 myColor{1.0f, 1.0f, 1.0f};
-  std::vector<std::vector<UT_Vector3>> myLines;
+  std::vector<UT_Vector3> myPoints;
+  std::vector<size_t> myEnds; // one past each line's last point
   std::vector<UT_Vector3> myColors;
 };
 
@@ -157,8 +165,8 @@ void drawCapsule(Lines &out, const UT_Vector3 &c1, const UT_Vector3 &c2,
     out.add({c1 + r * side, c2 + r * side});
   // Each cap: two half circles over its end, in the planes of u and v.
   for (const UT_Vector3 &side : {u, v}) {
-    out.arc(c2, side, axis, r, 0.0f, kPi, kCircleSegments / 2);
-    out.arc(c1, side, -axis, r, 0.0f, kPi, kCircleSegments / 2);
+    out.arc(c2, side, axis, r, 0.0f, b3dop::kPi, kCircleSegments / 2);
+    out.arc(c1, side, -axis, r, 0.0f, b3dop::kPi, kCircleSegments / 2);
   }
 }
 

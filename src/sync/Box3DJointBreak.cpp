@@ -8,35 +8,25 @@
 #include "Box3DJointNetwork.h"
 #include "Box3DJointSync.h"
 #include "core/Box3DDebug.h"
-#include "dop/SIM_Box3DConRel.h"
 #include "dop/SIM_Box3DWorld.h"
 
 #include <GA/GA_Handle.h>
-#include <GA/GA_Iterator.h>
 #include <GA/GA_Primitive.h>
 #include <GU/GU_Detail.h>
-#include <GU/GU_DetailHandle.h>
-#include <GU/GU_PackedFragment.h>
-#include <GU/GU_PrimPacked.h>
-#include <SIM/SIM_ConstraintNetworkRelationship.h>
 #include <SIM/SIM_Geometry.h>
 #include <SIM/SIM_GeometryCopy.h>
 #include <SIM/SIM_Object.h>
 #include <SIM/SIM_ObjectArray.h>
-#include <SIM/SIM_Relationship.h>
-#include <SIM/SIM_RelationshipArray.h>
-#include <SIM/SIM_Utils.h>
-#include <UT/UT_Matrix4.h>
 #include <UT/UT_Quaternion.h>
-#include <UT/UT_String.h>
 #include <UT/UT_StringHolder.h>
 #include <UT/UT_Vector3.h>
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <deque>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 namespace {
@@ -80,7 +70,7 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp,
   GA_RWHandleQ localQH;
 
   for (Box3DJointEntry *e : entries) {
-    if (!primOk(e->prim))
+    if (e->quiet || !primOk(e->prim))
       continue;
     const GA_Primitive *prim = gdp->getPrimitive(e->prim);
     if (!prim || prim->getVertexCount() != 2)
@@ -174,10 +164,11 @@ void advanceGlue(Box3DSharedState &st, float dt) {
     hits[i] = st.glueNodes[i].hits;
   std::vector<b3dop::GlueBond> bonds;
   bonds.reserve(st.glueBonds.size());
-  for (const Box3DJointEntry *e : st.glueBonds) {
+  for (size_t i = 0; i < st.glueBonds.size(); ++i) {
+    const Box3DJointEntry *e = st.glueBonds[i];
     b3dop::GlueBond g;
-    g.a = st.glueNodeOf[e->bodyA];
-    g.b = st.glueNodeOf[e->bodyB];
+    g.a = st.glueBondNodes[i].first;
+    g.b = st.glueBondNodes[i].second;
     g.params = e->extra->glueParams;
     g.impact = e->extra->glueImpact;
     bonds.push_back(g);
@@ -210,6 +201,8 @@ int breakJoints(Box3DSharedState &st, EntriesByNetwork &brokeIn) {
   // Glue bonds over their strength (advanceGlue).
   events.insert(events.end(), st.glueBroken.begin(), st.glueBroken.end());
   st.glueBroken.clear();
+  if (!events.empty())
+    st.glueDirty = true; // the Glue graph loses a bond
   int broke = 0;
   for (void *p : events) {
     Box3DJointEntry *e = static_cast<Box3DJointEntry *>(p);
@@ -319,16 +312,17 @@ float angleSinceRest(const b3dop::Box3DWorld &world, const Box3DJointEntry &e,
 void writeFeedback(const b3dop::Box3DWorld &world, GU_Detail *gdp,
                    const PrimExists &primOk,
                    const std::vector<Box3DJointEntry *> &entries) {
-  std::unordered_map<std::string, GA_RWHandleF> scalars;
+  // The handles by name (a handful, all string literals): a linear search with
+  // no string built per lookup. A deque, so the references stay valid.
+  std::deque<std::pair<const char *, GA_RWHandleF>> scalars;
   auto scalar = [&](const char *name) -> GA_RWHandleF & {
-    auto it = scalars.find(name);
-    if (it == scalars.end()) {
-      if (!gdp->findPrimitiveAttribute(name))
-        gdp->addFloatTuple(GA_ATTRIB_PRIMITIVE, name, 1);
-      it = scalars.emplace(name, GA_RWHandleF(gdp, GA_ATTRIB_PRIMITIVE, name))
-               .first;
-    }
-    return it->second;
+    for (auto &s : scalars)
+      if (s.first == name || std::strcmp(s.first, name) == 0)
+        return s.second;
+    if (!gdp->findPrimitiveAttribute(name))
+      gdp->addFloatTuple(GA_ATTRIB_PRIMITIVE, name, 1);
+    scalars.emplace_back(name, GA_RWHandleF(gdp, GA_ATTRIB_PRIMITIVE, name));
+    return scalars.back().second;
   };
   auto length = [](const float *v) {
     return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
@@ -338,6 +332,8 @@ void writeFeedback(const b3dop::Box3DWorld &world, GU_Detail *gdp,
   GA_RWHandleF &torqueH = scalar("torque");
   GA_RWHandleF &angleH = scalar("angle");
   for (const Box3DJointEntry *e : entries) {
+    if (e->quiet)
+      continue;
     if (e->glue && e->extra && primOk(e->prim)) {
       GA_RWHandleF &impactH = scalar(kImpact);
       if (impactH.isValid())
@@ -366,6 +362,25 @@ void writeFeedback(const b3dop::Box3DWorld &world, GU_Detail *gdp,
       sc.second.getAttribute()->bumpDataId();
 }
 
+// A body that can still move: not the world, not static, and awake.
+bool bodyMoves(const b3dop::Box3DWorld &world, b3dop::BodyHandle h) {
+  return h && world.typeByHandle(h) != b3dop::BodySettings::Type::Static &&
+         world.isAwakeByHandle(h);
+}
+
+// Joints whose bodies are both at rest and were already written that way: their
+// frames and feedback cannot have changed, so this step does not write them.
+void markQuietJoints(const b3dop::Box3DWorld &world,
+                     const std::vector<Box3DJointEntry *> &entries) {
+  for (Box3DJointEntry *e : entries) {
+    const bool asleep =
+        e->handle && !bodyMoves(world, e->bodyA) && !bodyMoves(world, e->bodyB);
+    e->quiet = asleep && e->asleepWritten && e->wrote && !e->writeLocal &&
+               !e->switchFrames && e->madeRestLength < 0.0f && !e->glue;
+    e->asleepWritten = asleep;
+  }
+}
+
 // One network's results into its (locked, writable) geometry. True if a
 // constraint_name switched.
 bool writeNetworkResults(const b3dop::Box3DWorld &world, GU_Detail *gdp,
@@ -374,6 +389,7 @@ bool writeNetworkResults(const b3dop::Box3DWorld &world, GU_Detail *gdp,
   const PrimExists primOk{gdp};
   const bool switched =
       broken && writeBrokenJoints(world, gdp, primOk, *broken);
+  markQuietJoints(world, entries);
   writeLiveFrames(world, gdp, entries, primOk);
   writeFeedback(world, gdp, primOk, entries);
   return switched;

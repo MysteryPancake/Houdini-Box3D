@@ -673,8 +673,8 @@ uint64_t jointSignature(b3dop::JointType type, b3dop::BodyHandle a,
       mixHash(mixHash(b3dop::kHashSeed, static_cast<uint64_t>(type)), a), b);
   if (withFrames)
     for (const b3dop::JointFrame *f : {&fa, &fb}) {
-      for (int k = 0; k < 3; ++k)
-        h = b3dop::mixDouble(h, f->pos[k]);
+      for (const double p : f->pos)
+        h = b3dop::mixDouble(h, p);
       h = b3dop::hashBytes(h, f->rot, sizeof(f->rot));
     }
   return h ? h : 1;
@@ -783,21 +783,7 @@ struct NetworkReader {
   // Where the anchor was after the last step (current_P / current_orient, a
   // zero quaternion: none), if the solver wrote it.
   bool live(GA_Offset pt, b3dop::JointFrame &out) const {
-    if (!currentP.isValid() || !currentQ.isValid())
-      return false;
-    const UT_Vector3 p = currentP.get(pt);
-    const UT_QuaternionF q = currentQ.get(pt);
-    if ((q.x() == 0.0f && q.y() == 0.0f && q.z() == 0.0f && q.w() == 0.0f) ||
-        !std::isfinite(p.x()) || !std::isfinite(p.y()) || !std::isfinite(p.z()))
-      return false;
-    out.pos[0] = p.x();
-    out.pos[1] = p.y();
-    out.pos[2] = p.z();
-    out.rot[0] = q.x();
-    out.rot[1] = q.y();
-    out.rot[2] = q.z();
-    out.rot[3] = q.w();
-    return true;
+    return readFrame(currentP, currentQ, pt, out);
   }
 
   // The anchor's frame now: live if written, else as authored.
@@ -837,10 +823,19 @@ struct NetworkReader {
   // The anchor's saved local frame (local_P / local_orient), if it has one (a
   // zero quaternion: none).
   bool savedLocal(GA_Offset pt, b3dop::JointFrame &out) const {
-    if (!localP.isValid() || !localQ.isValid())
+    return readFrame(localP, localQ, pt, out);
+  }
+
+private:
+  // A frame stored as a position and a quaternion point attribute. False when
+  // either is missing, the quaternion is all zero (not written) or the position
+  // is not finite.
+  static bool readFrame(const GA_ROHandleV3 &posH, const GA_ROHandleQ &quatH,
+                        GA_Offset pt, b3dop::JointFrame &out) {
+    if (!posH.isValid() || !quatH.isValid())
       return false;
-    const UT_Vector3 p = localP.get(pt);
-    const UT_QuaternionF q = localQ.get(pt);
+    const UT_Vector3 p = posH.get(pt);
+    const UT_QuaternionF q = quatH.get(pt);
     if ((q.x() == 0.0f && q.y() == 0.0f && q.z() == 0.0f && q.w() == 0.0f) ||
         !std::isfinite(p.x()) || !std::isfinite(p.y()) || !std::isfinite(p.z()))
       return false;
@@ -1285,7 +1280,8 @@ private:
   const std::vector<SideFXReader> mySfReaders;
 };
 
-void processNetwork(Box3DSharedState &st, const NetworkRef &ref,
+// True if the network's joints were read again (false: left as they are).
+bool processNetwork(Box3DSharedState &st, const NetworkRef &ref,
                     const Anchors &anchors, bool massChanged,
                     Box3DJointCounts &counts) {
   Box3DJointNetwork &net = st.jointNetworks[ref.key];
@@ -1305,23 +1301,24 @@ void processNetwork(Box3DSharedState &st, const NetworkRef &ref,
 
   const SIM_Geometry *geo = networkGeometry(*ref.object, ref.source);
   if (!geo)
-    return;
+    return false;
   SIM_GeometryAutoReadLock lock(geo);
   const GU_Detail *gdp = lock.getGdp();
   if (!gdp)
-    return;
+    return false;
 
   // Unchanged geometry, bodies and constraint data: the joints stay as they are
   // (they keep liveStamp).
   const uint64_t fp = networkFingerprint(gdp);
   if (fp == net.fingerprint && net.bodyVersion == st.bodyVersion &&
       !kindsChanged && !massChanged)
-    return;
+    return false;
   net.fingerprint = fp;
   net.bodyVersion = st.bodyVersion;
   net.liveStamp = st.syncStamp;
 
   NetworkPass(st, ref, net, anchors, gdp, counts).run();
+  return true;
 }
 
 } // namespace
@@ -1377,13 +1374,13 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
   }
   counts.networks = static_cast<int>(refs.size());
 
-  // The Glue bonds of this step are listed by the removal loop below (it visits
-  // every live joint anyway); the bonds that broke last step are gone.
-  st.glueNodes.clear();
-  st.glueNodeOf.clear();
-  st.glueBonds.clear();
   st.glueBroken.clear();
 
+  // Whether any joint may have come or gone since the last sync: a network read
+  // again, or one that went away. Without that (and without a joint that broke
+  // last step: glueDirty) the removal loop and the Glue graph are left as they
+  // are.
+  bool changed = false;
   if (!refs.empty()) {
     // A Spring whose bodies' masses changed since it was made is reprocessed
     // (its Hz and damping ratio follow the masses): the networks to read again.
@@ -1400,48 +1397,59 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
       }
     const Anchors anchors(st, objects);
     for (const NetworkRef &ref : refs)
-      processNetwork(st, ref, anchors, massChanged.count(ref.key) != 0, counts);
+      changed |= processNetwork(st, ref, anchors,
+                                massChanged.count(ref.key) != 0, counts);
   }
+  for (const auto &kv : st.jointNetworks)
+    changed = changed || kv.second.visited != st.syncStamp;
 
   // ---- remove: joints whose primitive or network went away; list the Glue
   // bonds and count the Springs of the rest ----
-  auto nodeOf = [&st](b3dop::BodyHandle h) {
-    const auto ins =
-        st.glueNodeOf.try_emplace(h, static_cast<int>(st.glueNodes.size()));
-    if (ins.second) {
-      st.glueNodes.emplace_back();
-      st.glueNodes.back().body = h;
-    }
-    return ins.first->second;
-  };
-  size_t springs = 0;
-  for (auto it = st.joints.begin(); it != st.joints.end();) {
-    Box3DJointEntry &e = it->second;
-    const auto net = st.jointNetworks.find(e.network);
-    const bool live = net != st.jointNetworks.end() &&
-                      net->second.visited == st.syncStamp &&
-                      e.stamp == net->second.liveStamp;
-    if (live) {
-      if (e.massDependent && !e.broken)
-        ++springs;
-      // Glue to the world is not a bond (Bullet does not support it either).
-      if (e.glue && e.extra && !e.broken && e.bodyA && e.bodyB &&
-          st.world.isJointValid(e.handle)) {
-        const int a = nodeOf(e.bodyA), b = nodeOf(e.bodyB);
-        st.glueNodes[static_cast<size_t>(a)].partners.push_back(e.bodyB);
-        st.glueNodes[static_cast<size_t>(b)].partners.push_back(e.bodyA);
-        st.glueBonds.push_back(&e);
+  if (changed || st.glueDirty) {
+    st.glueDirty = false;
+    st.glueNodes.clear();
+    st.glueNodeOf.clear();
+    st.glueBonds.clear();
+    st.glueBondNodes.clear();
+    auto nodeOf = [&st](b3dop::BodyHandle h) {
+      const auto ins =
+          st.glueNodeOf.try_emplace(h, static_cast<int>(st.glueNodes.size()));
+      if (ins.second) {
+        st.glueNodes.emplace_back();
+        st.glueNodes.back().body = h;
       }
-      ++it;
-      continue;
+      return ins.first->second;
+    };
+    size_t springs = 0;
+    for (auto it = st.joints.begin(); it != st.joints.end();) {
+      Box3DJointEntry &e = it->second;
+      const auto net = st.jointNetworks.find(e.network);
+      const bool live = net != st.jointNetworks.end() &&
+                        net->second.visited == st.syncStamp &&
+                        e.stamp == net->second.liveStamp;
+      if (live) {
+        if (e.massDependent && !e.broken)
+          ++springs;
+        // Glue to the world is not a bond (Bullet does not support it either).
+        if (e.glue && e.extra && !e.broken && e.bodyA && e.bodyB &&
+            st.world.isJointValid(e.handle)) {
+          const int a = nodeOf(e.bodyA), b = nodeOf(e.bodyB);
+          st.glueNodes[static_cast<size_t>(a)].partners.push_back(e.bodyB);
+          st.glueNodes[static_cast<size_t>(b)].partners.push_back(e.bodyA);
+          st.glueBonds.push_back(&e);
+          st.glueBondNodes.emplace_back(a, b);
+        }
+        ++it;
+        continue;
+      }
+      if (st.world.isJointValid(e.handle)) {
+        st.world.destroyJoint(e.handle);
+        ++counts.removed;
+      }
+      it = st.joints.erase(it);
     }
-    if (st.world.isJointValid(e.handle)) {
-      st.world.destroyJoint(e.handle);
-      ++counts.removed;
-    }
-    it = st.joints.erase(it);
+    st.springEntries = springs;
   }
-  st.springEntries = springs;
   for (auto it = st.jointNetworks.begin(); it != st.jointNetworks.end();)
     it = (it->second.visited == st.syncStamp) ? std::next(it)
                                               : st.jointNetworks.erase(it);

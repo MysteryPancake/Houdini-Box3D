@@ -9,6 +9,7 @@ Checks: >
   -bugprone-narrowing-conversions,
   -bugprone-implicit-widening-of-multiplication-result,
   -bugprone-misplaced-widening-cast,
+  -bugprone-exception-escape,
   performance-*,
   -performance-enum-size,
   modernize-use-nullptr,

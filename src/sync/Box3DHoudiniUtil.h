@@ -6,6 +6,10 @@
 // in the HDK.
 #pragma once
 
+#include <GA/GA_Iterator.h>
+#include <GA/GA_Primitive.h>
+#include <GA/GA_PrimitiveTypes.h>
+#include <GA/GA_Range.h>
 #include <GU/GU_Detail.h>
 #include <SIM/SIM_DataUtils.h>
 #include <SIM/SIM_Geometry.h>
@@ -24,38 +28,44 @@
 
 #include "core/Box3DShapes.h"
 
-// Rotations as row-vector matrices with Houdini's quaternion convention.
-inline UT_DMatrix3 box3dRotationMatrix(const float q[4]) {
-  UT_DMatrix3 m;
-  UT_QuaternionD(q[0], q[1], q[2], q[3]).getRotationMatrix(m);
-  return m;
+#include <cstdint>
+#include <unordered_map>
+#include <vector>
+
+// Houdini's quaternion product composes in the order of the row-vector
+// matrices: M(a * b) = M(b) * M(a) (checked by
+// tests/houdini/quat_convention.py). So Bullet's packed convention, absolute =
+// rest * since as matrices, is the product `since * rest` here.
+inline UT_QuaternionD box3dQuatD(const float q[4]) {
+  return UT_QuaternionD(q[0], q[1], q[2], q[3]);
 }
 
-inline void box3dQuatOf(const UT_DMatrix3 &m, float out[4]) {
-  UT_QuaternionD q;
-  q.updateFromRotationMatrix(m);
+// `q` normalised, with w >= 0 (q and -q are the same rotation), as floats.
+inline void box3dStoreQuat(UT_QuaternionD q, float out[4]) {
   q.normalize();
-  out[0] = static_cast<float>(q.x());
-  out[1] = static_cast<float>(q.y());
-  out[2] = static_cast<float>(q.z());
-  out[3] = static_cast<float>(q.w());
+  const double sign = q.w() < 0.0 ? -1.0 : 1.0;
+  out[0] = static_cast<float>(sign * q.x());
+  out[1] = static_cast<float>(sign * q.y());
+  out[2] = static_cast<float>(sign * q.z());
+  out[3] = static_cast<float>(sign * q.w());
   b3dop::sanitizeQuat(out);
 }
 
-// Bullet's packed convention: absolute = rest * since (row vectors, rest
-// first), `since` being the point's `orient` and `rest` its restxform's
+// Bullet's packed convention: absolute = rest * since (row-vector matrices,
+// rest first), `since` being the point's `orient` and `rest` its restxform's
 // rotation.
 inline void box3dRestToAbsolute(const float rest[4], const float since[4],
                                 float out[4]) {
-  box3dQuatOf(box3dRotationMatrix(rest) * box3dRotationMatrix(since), out);
+  box3dStoreQuat(box3dQuatD(since) * box3dQuatD(rest), out);
 }
 
-// The inverse: since = rest^T * absolute.
+// The inverse: since = rest^T * absolute (as matrices), absolute * conj(rest)
+// as quaternions.
 inline void box3dAbsoluteToRest(const float rest[4], const float absolute[4],
                                 float out[4]) {
-  UT_DMatrix3 r = box3dRotationMatrix(rest);
-  r.transpose();
-  box3dQuatOf(r * box3dRotationMatrix(absolute), out);
+  box3dStoreQuat(box3dQuatD(absolute) *
+                     UT_QuaternionD(-rest[0], -rest[1], -rest[2], rest[3]),
+                 out);
 }
 
 // A writable SIM_GeometryCopy for the object's data `name`, or null. A plain
@@ -127,6 +137,48 @@ inline uint64_t geometryIdentity(const GU_Detail *gdp,
   return mixHash(h, static_cast<uint64_t>(gdp->getNumPrimitives()));
 }
 
+// The polygons of `prims` as triangles, each fanned from its first vertex
+// (open curves, packed and other primitives are skipped). Vertices are the
+// points in order of first use. `reverse` flips the winding. `sparse` for a
+// range that is a small part of `gdp` (a packed fragment): the point lookup is
+// a hash map instead of an array the size of the whole detail.
+inline void box3dTriangulate(const GU_Detail *gdp, const GA_Range &prims,
+                             bool sparse, bool reverse, std::vector<float> &xyz,
+                             std::vector<int32_t> &tris) {
+  std::vector<int32_t> dense;
+  std::unordered_map<GA_Offset, int32_t> hashed;
+  if (!sparse)
+    dense.assign(static_cast<size_t>(gdp->getNumPointOffsets()), -1);
+  auto vertexOf = [&](GA_Offset pt) -> int32_t {
+    int32_t &idx = sparse ? hashed.try_emplace(pt, -1).first->second
+                          : dense[static_cast<size_t>(pt)];
+    if (idx < 0) {
+      const UT_Vector3 p = gdp->getPos3(pt);
+      idx = static_cast<int32_t>(xyz.size() / 3);
+      xyz.push_back(p.x());
+      xyz.push_back(p.y());
+      xyz.push_back(p.z());
+    }
+    return idx;
+  };
+  for (GA_Iterator it(prims); !it.atEnd(); ++it) {
+    const GA_Primitive *prim = gdp->getPrimitive(*it);
+    if (!prim || prim->getTypeId() != GA_PRIMPOLY)
+      continue;
+    const GA_Size nv = prim->getVertexCount();
+    if (nv < 3)
+      continue;
+    const int32_t first = vertexOf(prim->getPointOffset(0));
+    for (GA_Size i = 1; i + 1 < nv; ++i) {
+      const int32_t b = vertexOf(prim->getPointOffset(i));
+      const int32_t c = vertexOf(prim->getPointOffset(i + 1));
+      tris.push_back(first);
+      tris.push_back(reverse ? c : b);
+      tris.push_back(reverse ? b : c);
+    }
+  }
+}
+
 // A Houdini 4x4 (row-vector layout) as 16 doubles, row by row.
 template <class Matrix4>
 inline void box3dToArray(const Matrix4 &m, double out[16]) {
@@ -174,9 +226,11 @@ inline const SIM_Options *box3dDataOptions(const SIM_Data &data) {
   return user ? &user->getOptions() : nullptr;
 }
 
-inline bool box3dDataOption(const SIM_Data &data, const char *name,
-                            fpreal64 &out) {
-  if (const SIM_Options *opts = box3dDataOptions(data))
+// The same with the options looked up once (box3dDataOptions), for reading many
+// options of one data.
+inline bool box3dDataOption(const SIM_Data &data, const SIM_Options *opts,
+                            const char *name, fpreal64 &out) {
+  if (opts)
     return opts->importOption(name, out);
   fpreal v = 0.0;
   if (!data.getQueryObject().getFieldFloat("Options", 0, name, v))
@@ -185,21 +239,19 @@ inline bool box3dDataOption(const SIM_Data &data, const char *name,
   return true;
 }
 
-inline bool box3dDataOption(const SIM_Data &data, const char *name,
-                            UT_Vector3D &out) {
-  const SIM_Options *opts = box3dDataOptions(data);
+inline bool box3dDataOption(const SIM_Data &, const SIM_Options *opts,
+                            const char *name, UT_Vector3D &out) {
   return opts && opts->importOption(name, out);
 }
 
-inline bool box3dDataOption(const SIM_Data &data, const char *name,
-                            UT_Matrix3 &out) {
-  const SIM_Options *opts = box3dDataOptions(data);
-  return opts && opts->importOption(name, out);
-}
-
-inline bool box3dDataOption(const SIM_Data &data, const char *name,
-                            UT_StringHolder &out) {
-  if (const SIM_Options *opts = box3dDataOptions(data))
+inline bool box3dDataOption(const SIM_Data &data, const SIM_Options *opts,
+                            const char *name, UT_StringHolder &out) {
+  if (opts)
     return opts->importOption(name, out);
   return data.getQueryObject().getFieldString("Options", 0, name, out);
+}
+
+template <class T>
+inline bool box3dDataOption(const SIM_Data &data, const char *name, T &out) {
+  return box3dDataOption(data, box3dDataOptions(data), name, out);
 }

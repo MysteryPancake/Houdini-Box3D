@@ -55,40 +55,11 @@ struct TriMesh {
 void buildMesh(const GU_Detail *gdp, bool houdiniWinding, TriMesh &out) {
   out.xyz.clear();
   out.tris.clear();
-  std::vector<int32_t> remap(static_cast<size_t>(gdp->getNumPointOffsets()),
-                             -1); // point offset -> vertex
-
-  auto vertexOf = [&](GA_Offset pt) -> int32_t {
-    int32_t &idx = remap[static_cast<size_t>(pt)];
-    if (idx < 0) {
-      const UT_Vector3 p = gdp->getPos3(pt);
-      idx = static_cast<int32_t>(out.xyz.size() / 3);
-      out.xyz.push_back(p.x());
-      out.xyz.push_back(p.y());
-      out.xyz.push_back(p.z());
-    }
-    return idx;
-  };
-
-  for (GA_Iterator it(gdp->getPrimitiveRange()); !it.atEnd(); ++it) {
-    const GA_Primitive *prim = gdp->getPrimitive(*it);
-    if (!prim || prim->getTypeId() != GA_PRIMPOLY)
-      continue;
-    const GA_Size nv = prim->getVertexCount();
-    if (nv < 3)
-      continue;
-    const int32_t first = vertexOf(prim->getPointOffset(0));
-    for (GA_Size i = 1; i + 1 < nv; ++i) {
-      const int32_t b = vertexOf(prim->getPointOffset(i));
-      const int32_t c = vertexOf(prim->getPointOffset(i + 1));
-      // Houdini polygons wind clockwise seen from their front (Flip Static Mesh
-      // Winding on the Box3D Data node reverses this); Box3D wants
-      // counter-clockwise front faces, and its meshes are one-sided.
-      out.tris.push_back(first);
-      out.tris.push_back(houdiniWinding ? c : b);
-      out.tris.push_back(houdiniWinding ? b : c);
-    }
-  }
+  // Houdini polygons wind clockwise seen from their front (Flip Static Mesh
+  // Winding on the Box3D Data node reverses this); Box3D wants
+  // counter-clockwise front faces, and its meshes are one-sided.
+  box3dTriangulate(gdp, gdp->getPrimitiveRange(), false, houdiniWinding,
+                   out.xyz, out.tris);
 }
 
 // ---- height fields
@@ -156,7 +127,8 @@ bool readHeightFrame(const GEO_PrimVolume *vol, HeightFrame &f) {
   i1[f.a1] = 1;
   i2[f.a2] = 1;
   UT_Vector3D p1, p2;
-  vol->indexToPos(exint(0), exint(0), exint(0), f.origin);
+  const exint zero = 0;
+  vol->indexToPos(zero, zero, zero, f.origin);
   vol->indexToPos(i1[0], i1[1], i1[2], p1);
   vol->indexToPos(i2[0], i2[1], i2[2], p2);
   f.e1 = p1 - f.origin;
@@ -510,10 +482,9 @@ void bakeTransform(const double m[16], TriMesh &mesh,
     for (int j = 0; j < 3; ++j)
       baked[3 * i + static_cast<size_t>(j)] = static_cast<float>(q[j]);
   }
-  const double det = m[0] * (m[5] * m[10] - m[6] * m[9]) -
-                     m[1] * (m[4] * m[10] - m[6] * m[8]) +
-                     m[2] * (m[4] * m[9] - m[5] * m[8]);
-  if (det < 0.0)
+  double m3[9];
+  b3dop::upper3x3(m, m3);
+  if (b3dop::matrixDeterminant(m3) < 0.0)
     for (size_t t = 0; t + 2 < mesh.tris.size(); t += 3)
       std::swap(mesh.tris[t + 1], mesh.tris[t + 2]);
 }
@@ -562,6 +533,17 @@ void buildAffector(Box3DSharedState &st, Box3DAffectorBody &ab, int objectId,
   ab.signature = in.sig;
   ab.poseKnown = true;
   const b3dop::BodySettings &body = in.body;
+  // Records the body just built and what it was given.
+  auto built = [&](b3dop::BodyHandle h, const double pos[3], const float rot[4],
+                   const float scale[3]) {
+    ab.handle = h;
+    ab.rolling = body.props.rollingResistance;
+    b3dop::copy3(ab.tangent, body.props.tangentVelocity);
+    b3dop::copy3(ab.pos, pos);
+    b3dop::copy4(ab.rot, rot);
+    b3dop::copy3(ab.scale, scale);
+    ++counts.added;
+  };
 
   if (in.plane) {
     const float normal[3] = {0.0f, 1.0f, 0.0f};
@@ -576,13 +558,7 @@ void buildAffector(Box3DSharedState &st, Box3DAffectorBody &ab, int objectId,
       ++counts.failed;
       return;
     }
-    ab.handle = h;
-    ab.rolling = body.props.rollingResistance;
-    b3dop::copy3(ab.tangent, body.props.tangentVelocity);
-    b3dop::copy3(ab.pos, in.pos);
-    b3dop::copy4(ab.rot, in.rot);
-    b3dop::copy3(ab.scale, in.scale);
-    ++counts.added;
+    built(h, in.pos, in.rot, in.scale);
     ++counts.planes;
     B3D_LOG("  affector id=%d: static plane built", objectId);
     return;
@@ -593,12 +569,7 @@ void buildAffector(Box3DSharedState &st, Box3DAffectorBody &ab, int objectId,
       ++counts.failed;
       return;
     }
-    ab.rolling = body.props.rollingResistance;
-    b3dop::copy3(ab.tangent, body.props.tangentVelocity);
-    b3dop::copy3(ab.pos, in.pos);
-    b3dop::copy4(ab.rot, in.rot);
-    b3dop::copy3(ab.scale, in.scale);
-    ++counts.added;
+    built(ab.handle, in.pos, in.rot, in.scale);
     ++counts.heightFields;
     B3D_LOG("  affector id=%d: static height field built, %d x %d", objectId,
             in.frame.n1, in.frame.n2);
@@ -637,13 +608,7 @@ void buildAffector(Box3DSharedState &st, Box3DAffectorBody &ab, int objectId,
     ++counts.failed;
     return;
   }
-  ab.handle = h;
-  ab.rolling = body.props.rollingResistance;
-  b3dop::copy3(ab.tangent, body.props.tangentVelocity);
-  b3dop::copy3(ab.pos, bodyPos);
-  b3dop::copy4(ab.rot, bodyRot);
-  b3dop::copy3(ab.scale, bodyScale);
-  ++counts.added;
+  built(h, bodyPos, bodyRot, bodyScale);
   if (in.volume)
     ++counts.heightFields;
   B3D_LOG("  affector id=%d: static mesh built, %d triangle(s)%s%s", objectId,

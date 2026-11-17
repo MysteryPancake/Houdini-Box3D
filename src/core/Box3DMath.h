@@ -46,6 +46,7 @@ template <class D, class S> inline void copy4(D *dst, const S *src) {
 // writes from other edits.
 // ---------------------------------------------------------------------------
 
+constexpr float kPi = 3.14159265358979f;
 constexpr float kDegToRad = 0.017453292519943295f;
 constexpr float kRadToDeg = 57.29577951308232f;
 

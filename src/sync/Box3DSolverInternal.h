@@ -3,11 +3,15 @@
 // What the Box3D Solver's parts share (not a public interface: only the
 // solver's own files include it). The parts, all in namespace box3dsolver:
 //   Box3DShapeBuild.cpp   collision source geometry, packed primitives,
-//   building shapes Box3DPointSync.cpp    one body per point: reading points,
-//   settings, syncObject() Box3DWholeObject.cpp  one body per DOP object (RBD
-//   Object etc.): sync and write-back Box3DPostStep.cpp     after the step:
-//   write-back, impacts, point writes, aging, deletion Box3DForces.cpp Force
-//   DOPs and point force / torque
+//                         building shapes
+//   Box3DPointSync.cpp    one body per point: reading points, settings,
+//                         syncObject()
+//   Box3DWholeObject.cpp  one body per DOP object (RBD Object etc.): sync and
+//                         write-back
+//   Box3DPostStep.cpp     after the step: write-back, impacts, point writes,
+//                         aging, deletion
+//   Box3DForces.cpp       Force DOPs and point force / torque
+//   Box3DGuide.cpp        the guide geometry and Export Collision Shapes
 // SIM_SolverBox3D.cpp holds the node and the solve loop.
 #pragma once
 
@@ -348,8 +352,8 @@ struct ShapeSources {
   }
 
   // The source's summary, if one was recorded for it (no geometry is read).
-  static bool summary(const GU_PrimPacked &prim, bool connected,
-                      SourceSummary &out);
+  static std::shared_ptr<const SourceSummary> summary(const GU_PrimPacked &prim,
+                                                      bool connected);
 
   // The primitive's pieces (by `name`, or connected sets), or null. Records the
   // summary.
@@ -408,7 +412,7 @@ struct GeorepLookup {
     bool ok = false;
     b3dop::ShapeType type = b3dop::ShapeType::Box;
   };
-  std::mutex mutex; // get() runs in the parallel shape pre-pass
+  std::shared_mutex mutex; // get() runs in the parallel shape pre-pass
   std::unordered_map<int64_t, Parsed> byHandle;
 
   void bind(const PointAttrs &a) {
@@ -425,16 +429,26 @@ struct GeorepLookup {
     const GA_StringIndexType handle = aif->getHandle(attr, off, 0);
     if (handle == GA_INVALID_STRING_INDEX)
       return false;
-    std::lock_guard<std::mutex> lock(mutex);
-    auto it = byHandle.find(static_cast<int64_t>(handle));
-    if (it == byHandle.end()) {
-      Parsed p;
-      p.ok = b3dop::parseShapeType(aif->getTableString(attr, handle), p.type);
-      it = byHandle.emplace(static_cast<int64_t>(handle), p).first;
+    const int64_t key = static_cast<int64_t>(handle);
+    {
+      // Nearly every call finds its handle: read under a shared lock.
+      std::shared_lock<std::shared_mutex> lock(mutex);
+      const auto it = byHandle.find(key);
+      if (it != byHandle.end()) {
+        if (it->second.ok)
+          out = it->second.type;
+        return it->second.ok;
+      }
     }
-    if (it->second.ok)
-      out = it->second.type;
-    return it->second.ok;
+    Parsed p;
+    p.ok = b3dop::parseShapeType(aif->getTableString(attr, handle), p.type);
+    {
+      std::unique_lock<std::shared_mutex> lock(mutex);
+      byHandle.emplace(key, p); // another thread may have added it: same value
+    }
+    if (p.ok)
+      out = p.type;
+    return p.ok;
   }
 };
 

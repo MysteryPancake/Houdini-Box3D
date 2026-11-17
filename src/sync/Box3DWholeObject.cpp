@@ -87,16 +87,18 @@ bool readWholePose(const SIM_Object &obj, double pivot[3], Box3DBodyPose &out,
 void readInertiaType(const SIM_Data *state, b3dop::RbdObjectSettings &r) {
   if (!state)
     return;
+  const SIM_Options *opts = box3dDataOptions(*state);
   fpreal64 v = 0.0;
-  if (box3dDataOption(*state, "computeinertialtensor", v)) {
+  if (box3dDataOption(*state, opts, "computeinertialtensor", v)) {
     r.hasComputeInertia = true;
     r.computeInertia = v != 0.0;
   }
   UT_StringHolder token;
-  if (box3dDataOption(*state, "computeinertialtensortype", v)) {
+  if (box3dDataOption(*state, opts, "computeinertialtensortype", v)) {
     r.hasInertiaType = true;
     r.boundsInertiaType = static_cast<int>(v) == b3dop::kRbdInertiaTypeBounds;
-  } else if (box3dDataOption(*state, "computeinertialtensortype", token) &&
+  } else if (box3dDataOption(*state, opts, "computeinertialtensortype",
+                             token) &&
              token.isstring()) {
     std::string t(token.c_str());
     std::transform(t.begin(), t.end(), t.begin(), [](unsigned char ch) {
@@ -128,6 +130,21 @@ void objectBoundsExtents(const GU_Detail *gdp, const double m[16],
     extents[c] = hi[c] >= lo[c] ? static_cast<float>(hi[c] - lo[c]) : 0.0f;
 }
 
+namespace {
+
+// One data with its options looked up once (each read would cast again).
+struct Source {
+  const SIM_Data *data;
+  const SIM_Options *opts;
+  explicit Source(const SIM_Data *d)
+      : data(d), opts(d ? box3dDataOptions(*d) : nullptr) {}
+  template <class T> bool get(const char *name, T &out) const {
+    return data && box3dDataOption(*data, opts, name, out);
+  }
+};
+
+} // namespace
+
 // The RBD Object's own settings (used without Box3D Data): mass and inertia
 // from its RBD State (Position), whether it is active from SolverParms,
 // friction and bounce from PhysicalParms, the shape from its geometry's
@@ -136,48 +153,48 @@ void objectBoundsExtents(const GU_Detail *gdp, const double m[16],
 b3dop::RbdObjectSettings readRbdObjectSettings(const SIM_Object &obj,
                                                const SIM_Geometry &geo) {
   b3dop::RbdObjectSettings r;
-  auto number = [](const SIM_Data *d, const char *name, bool &has, auto &out) {
+  auto number = [](const Source &d, const char *name, bool &has, auto &out) {
     fpreal64 v = 0.0;
-    if (d && box3dDataOption(*d, name, v) && std::isfinite(v)) {
+    if (d.get(name, v) && std::isfinite(v)) {
       has = true;
       out = static_cast<std::remove_reference_t<decltype(out)>>(v);
     }
   };
-  auto toggle = [](const SIM_Data *d, const char *name, bool &has, bool &out) {
+  auto toggle = [](const Source &d, const char *name, bool &has, bool &out) {
     fpreal64 v = 0.0;
-    if (d && box3dDataOption(*d, name, v)) {
+    if (d.get(name, v)) {
       has = true;
       out = v != 0.0;
     }
   };
-  auto vec = [](const SIM_Data *d, const char *name, float out[3]) {
+  auto vec = [](const Source &d, const char *name, float out[3]) {
     UT_Vector3D v;
-    if (d && box3dDataOption(*d, name, v) && std::isfinite(v.x()) &&
-        std::isfinite(v.y()) && std::isfinite(v.z()))
+    if (d.get(name, v) && std::isfinite(v.x()) && std::isfinite(v.y()) &&
+        std::isfinite(v.z()))
       for (int i = 0; i < 3; ++i)
         out[i] = static_cast<float>(v(i));
   };
 
-  const SIM_Data *state = obj.getConstNamedSubData(SIM_POSITION_DATANAME);
+  const SIM_Data *stateData = obj.getConstNamedSubData(SIM_POSITION_DATANAME);
+  const Source state(stateData);
   toggle(state, "computemass", r.hasComputeMass, r.computeMass);
   number(state, "density", r.hasDensity, r.density);
   number(state, "mass", r.hasMass, r.mass);
   number(state, "inertialtensorstiffness", r.hasInertia, r.inertiaStiffness);
-  readInertiaType(state, r);
+  readInertiaType(stateData, r);
 
   // Create Active Object
-  toggle(obj.getConstNamedSubData("SolverParms"), "ActiveValue", r.hasActive,
-         r.active);
+  toggle(Source(obj.getConstNamedSubData("SolverParms")), "ActiveValue",
+         r.hasActive, r.active);
 
-  const SIM_Data *phys = obj.getConstNamedSubData("PhysicalParms");
+  const Source phys(obj.getConstNamedSubData("PhysicalParms"));
   number(phys, "friction", r.hasFriction, r.friction);
   number(phys, "bounce", r.hasBounce, r.bounce);
 
-  const SIM_Data *bullet = geo.getConstNamedSubData("BulletData");
-  if (bullet) {
+  const Source bullet(geo.getConstNamedSubData("BulletData"));
+  if (bullet.data) {
     UT_StringHolder georep;
-    if (box3dDataOption(*bullet, "bullet_georep", georep) &&
-        georep.isstring()) {
+    if (bullet.get("bullet_georep", georep) && georep.isstring()) {
       r.hasGeorep = true;
       r.georep = std::string(georep.c_str());
     }
@@ -230,21 +247,7 @@ uint64_t wholeObjectShapeSig(const GU_Detail *gdp, const double m[16],
   h = mixHash(h, static_cast<uint64_t>(node.defaultShape));
   h = mixHash(h, node.hullPerConnectedSet ? 1u : 2u);
   if (setup.explicitShape) {
-    const b3dop::ShapeSpec &sp = setup.spec;
-    const float f[] = {static_cast<float>(static_cast<int>(sp.type)),
-                       sp.halfExtents[0],
-                       sp.halfExtents[1],
-                       sp.halfExtents[2],
-                       sp.radius,
-                       sp.halfLength,
-                       sp.center[0],
-                       sp.center[1],
-                       sp.center[2],
-                       sp.rot[0],
-                       sp.rot[1],
-                       sp.rot[2],
-                       sp.rot[3]};
-    h = mixHash(mixHash(h, 3u), b3dop::hashFloats(f, sizeof(f) / sizeof(f[0])));
+    h = mixHash(mixHash(h, 3u), b3dop::hashShapeSpec(setup.spec));
   }
   return h ? h : 1;
 }
@@ -501,9 +504,18 @@ void syncWholeObject(Box3DSharedState &st, const SIM_Object &obj,
   PointAttrs none(gdp); // build attributes left unbound: Box3D Data values only
   b3dop::BodyProps p =
       readDynamicProps(setup.node, none, static_cast<GA_Offset>(0));
+  // The bounding box only changes with the geometry or its transform.
+  uint64_t boundsKey = 0;
   if (setup.boundsInertia) {
     p.boundsInertia = true;
-    objectBoundsExtents(gdp, m, p.boundsExtents);
+    boundsKey = geometryIdentity(gdp);
+    for (const double d : m)
+      boundsKey = b3dop::mixDouble(boundsKey, d);
+    boundsKey = boundsKey ? boundsKey : 1;
+    if (entry && entry->boundsKey == boundsKey)
+      b3dop::copy3(p.boundsExtents, entry->boundsExtents);
+    else
+      objectBoundsExtents(gdp, m, p.boundsExtents);
   }
   const WholeObjectScan scan{st.world,
                              gdp,
@@ -524,6 +536,9 @@ void syncWholeObject(Box3DSharedState &st, const SIM_Object &obj,
   }
 
   entry->pivotKey = pivotKey;
+  entry->boundsKey = boundsKey;
+  if (boundsKey)
+    b3dop::copy3(entry->boundsExtents, p.boundsExtents);
   entry->pointOff = -1;
   entry->pointId = kWholeObjectId;
   entry->pointIndex = -1;

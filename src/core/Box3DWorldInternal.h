@@ -11,7 +11,7 @@
 
 #include <cmath>
 #include <memory>
-#include <mutex>
+#include <shared_mutex>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -39,17 +39,18 @@ struct Box3DWorld::Impl {
       hitPairs; // updateHitEvents(): (lower, higher) handle, sorted, unique
 
   // Shared hulls this world found or built since the last pruneHulls()
-  // (findHull may run on several threads, hence the lock).
-  std::mutex held_mutex;
+  // (findHull may run on several threads, hence the lock; most calls only
+  // read).
+  std::shared_mutex held_mutex;
   std::unordered_map<HullId, HullRef> held;
 
   HullRef heldHull(HullId id) {
-    std::lock_guard<std::mutex> lock(held_mutex);
+    std::shared_lock<std::shared_mutex> lock(held_mutex);
     auto it = held.find(id);
     return it == held.end() ? nullptr : it->second;
   }
   void hold(HullId id, const HullRef &ref) {
-    std::lock_guard<std::mutex> lock(held_mutex);
+    std::unique_lock<std::shared_mutex> lock(held_mutex);
     held.emplace(id, ref);
   }
 

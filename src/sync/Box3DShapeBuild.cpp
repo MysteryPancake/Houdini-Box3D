@@ -281,21 +281,20 @@ public:
     static SourceSummaryCache c;
     return c;
   }
-  bool find(uint64_t key, SourceSummary &out) {
-    std::lock_guard<std::mutex> lock(myMutex);
-    auto it = myMap.find(key);
-    if (it == myMap.end())
-      return false;
-    out = it->second;
-    return true;
+  // Null when none was recorded. The summary is shared, not copied, and looked
+  // up under a shared lock: every point of a fresh world asks.
+  std::shared_ptr<const SourceSummary> find(uint64_t key) {
+    std::shared_lock<std::shared_mutex> lock(myMutex);
+    const auto it = myMap.find(key);
+    return it == myMap.end() ? nullptr : it->second;
   }
   void insert(uint64_t key, const PieceGroup &g) {
-    SourceSummary sum;
-    sum.groupHash = g.hash;
+    auto sum = std::make_shared<SourceSummary>();
+    sum->groupHash = g.hash;
     for (const NamedPiece &np : g.pieces)
       if (!np.xyz.empty())
-        sum.pieceHashes.push_back(np.hash);
-    std::lock_guard<std::mutex> lock(myMutex);
+        sum->pieceHashes.push_back(np.hash);
+    std::unique_lock<std::shared_mutex> lock(myMutex);
     if (myMap.size() >= kMaxEntries)
       myMap.clear();
     myMap[key] = std::move(sum);
@@ -303,8 +302,8 @@ public:
 
 private:
   static constexpr size_t kMaxEntries = 65536;
-  std::mutex myMutex;
-  std::unordered_map<uint64_t, SourceSummary> myMap;
+  std::shared_mutex myMutex;
+  std::unordered_map<uint64_t, std::shared_ptr<const SourceSummary>> myMap;
 };
 
 // The identity SourceSummaryCache is keyed by.
@@ -317,13 +316,14 @@ uint64_t sourceIdentity(const GU_Detail *gdp, GA_Offset fragmentFirst,
 }
 
 // The source's summary, if one was recorded for it (no geometry is read).
-bool ShapeSources::summary(const GU_PrimPacked &prim, bool connected,
-                           SourceSummary &out) {
+std::shared_ptr<const SourceSummary>
+ShapeSources::summary(const GU_PrimPacked &prim, bool connected) {
   const GU_PackedFragment *frag = asFragment(prim);
   GU_DetailHandleAutoReadLock lock(sourceHandle(prim, frag));
   const GU_Detail *gdp = lock.getGdp();
-  return gdp && SourceSummaryCache::instance().find(
-                    sourceIdentity(gdp, fragmentFirst(frag), connected), out);
+  return gdp ? SourceSummaryCache::instance().find(
+                   sourceIdentity(gdp, fragmentFirst(frag), connected))
+             : nullptr;
 }
 
 // The primitive's pieces (by `name`, or connected sets), or null. Records the
@@ -376,39 +376,11 @@ const PieceGroup *ShapeSources::innerPieces(const GU_PrimPacked &prim,
   return entry->connected.pieces.empty() ? nullptr : &entry->connected;
 }
 
-// The polygons of `prims` as triangles, fanned from each polygon's first
-// vertex in Houdini's order (open curves, packed and other primitives are
-// skipped). Vertices are the points in order of first use.
-std::shared_ptr<const MeshPiece> collectTriangles(const GU_Detail *gdp,
-                                                  const GA_Range &prims) {
+// The polygons of `prims` as triangles in Houdini's order (box3dTriangulate).
+std::shared_ptr<const MeshPiece>
+collectTriangles(const GU_Detail *gdp, const GA_Range &prims, bool fragment) {
   auto mesh = std::make_shared<MeshPiece>();
-  std::vector<int32_t> remap(static_cast<size_t>(gdp->getNumPointOffsets()),
-                             -1); // point offset -> vertex
-  auto vertexOf = [&](GA_Offset pt) {
-    int32_t &idx = remap[static_cast<size_t>(pt)];
-    if (idx < 0) {
-      const UT_Vector3 p = gdp->getPos3(pt);
-      idx = static_cast<int32_t>(mesh->xyz.size() / 3);
-      mesh->xyz.push_back(p.x());
-      mesh->xyz.push_back(p.y());
-      mesh->xyz.push_back(p.z());
-    }
-    return idx;
-  };
-  for (GA_Iterator it(prims); !it.atEnd(); ++it) {
-    const GA_Primitive *prim = gdp->getPrimitive(*it);
-    if (!prim || prim->getTypeId() != GA_PRIMPOLY)
-      continue;
-    const GA_Size nv = prim->getVertexCount();
-    if (nv < 3)
-      continue;
-    const int32_t first = vertexOf(prim->getPointOffset(0));
-    for (GA_Size i = 1; i + 1 < nv; ++i) {
-      mesh->tris.push_back(first);
-      mesh->tris.push_back(vertexOf(prim->getPointOffset(i)));
-      mesh->tris.push_back(vertexOf(prim->getPointOffset(i + 1)));
-    }
-  }
+  box3dTriangulate(gdp, prims, fragment, false, mesh->xyz, mesh->tris);
   if (mesh->tris.empty())
     return nullptr;
   return mesh;
@@ -425,8 +397,9 @@ ShapeSources::innerTriangles(const GU_PrimPacked &prim) {
   TriEntry &entry = triangles.get(std::make_pair(gdp, fragmentFirst(frag)));
   std::call_once(entry.once, [&] {
     entry.handle = handle;
-    entry.mesh = collectTriangles(gdp, frag ? frag->getPrimitiveRange()
-                                            : gdp->getPrimitiveRange());
+    entry.mesh = collectTriangles(
+        gdp, frag ? frag->getPrimitiveRange() : gdp->getPrimitiveRange(),
+        frag != nullptr);
   });
   return entry.mesh;
 }
@@ -515,12 +488,34 @@ bool pieceFromPoints(b3dop::Box3DWorld &world, uint64_t key,
   return true;
 }
 
+// A Box3D sphere for a piece that is one Sphere primitive (sphereValid): its
+// centre and a point one radius from it, carried into body space by
+// toBody(sourcePoint, bodyPoint), which returns false on failure.
+template <class ToBody>
+bool spherePiece(const NamedPiece &np, const ToBody &toBody, Piece &out) {
+  const double c[3] = {np.sphereCentre[0], np.sphereCentre[1],
+                       np.sphereCentre[2]};
+  const double e[3] = {c[0] + np.sphereRadius, c[1], c[2]};
+  double oc[3], oe[3];
+  if (!toBody(c, oc) || !toBody(e, oe))
+    return false;
+  out.spec.type = b3dop::ShapeType::Sphere;
+  for (int k = 0; k < 3; ++k)
+    out.spec.center[k] = static_cast<float>(oc[k]);
+  out.spec.radius = b3dop::clampExtent(static_cast<float>(std::sqrt(
+      (oe[0] - oc[0]) * (oe[0] - oc[0]) + (oe[1] - oc[1]) * (oe[1] - oc[1]) +
+      (oe[2] - oc[2]) * (oe[2] - oc[2]))));
+  out.volume = b3dop::shapeVolume(out.spec);
+  return true;
+}
+
 // A point's shapes (docs/agents/bodies.md, "Pieces and packed geometry"):
 //  box / sphere / capsule: fitted to the packed geometry with autofit, else
-//  pscale * scale; with autofit off, plus the bullet_prim* / radius / length
-//  overrides
+//                          pscale * scale; with autofit off, plus the
+//                          bullet_prim* / radius / length overrides
 //  convex:  one hull of the packed geometry (hullPerConnected: one per
-//  connected set) concave: one hull per `name` piece
+//           connected set)
+//  concave: one hull per `name` piece
 // Convex / concave without packed geometry fall back to a box.
 BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
                         b3dop::ShapeType type, bool hullPerConnected,
@@ -577,9 +572,9 @@ BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
   // A source seen before (in any world): its summary gives the keys, and when
   // every hull is still cached the source geometry is not read at all.
   if (keyed) {
-    SourceSummary sum;
-    if (ShapeSources::summary(*pk.prim, connected, sum) &&
-        !sum.pieceHashes.empty()) {
+    const std::shared_ptr<const SourceSummary> sum =
+        ShapeSources::summary(*pk.prim, connected);
+    if (sum && !sum->pieceHashes.empty()) {
       std::vector<Piece> found;
       auto lookup = [&](uint64_t sourceHash, uint32_t kind) {
         Piece pc;
@@ -592,11 +587,13 @@ BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
       };
       bool all = true;
       if (mergeAll)
-        all = lookup(sum.groupHash, 1);
+        all = lookup(sum->groupHash, 1);
       else
-        for (const uint64_t h : sum.pieceHashes)
-          if (!(all = lookup(h, 2)))
+        for (const uint64_t h : sum->pieceHashes) {
+          all = lookup(h, 2);
+          if (!all)
             break;
+        }
       if (all) {
         for (const Piece &pc : found)
           add(pc);
@@ -636,34 +633,23 @@ BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
       const uint64_t key =
           keyed ? packedHullKey(sourceHash, pk.pivot, S, kind) : 0;
       Piece pc;
-      if (from.size() == 1 && from[0]->sphereValid) {
-        // One Sphere primitive: a real Box3D sphere, through the packed
-        // transform.
-        const double c[3] = {from[0]->sphereCentre[0], from[0]->sphereCentre[1],
-                             from[0]->sphereCentre[2]};
-        const float two[6] = {static_cast<float>(c[0]),
-                              static_cast<float>(c[1]),
-                              static_cast<float>(c[2]),
-                              static_cast<float>(c[0] + from[0]->sphereRadius),
-                              static_cast<float>(c[1]),
-                              static_cast<float>(c[2])};
-        float local[6] = {0, 0, 0, 0, 0, 0};
-        std::vector<float> outLocal;
-        packedPointsToBodyLocal(two, 2, pk.m4, pk.pivot, outLocal);
-        if (outLocal.size() >= 6) {
-          std::copy(outLocal.begin(), outLocal.begin() + 6, local);
-          pc.spec.type = ShapeType::Sphere;
-          pc.spec.center[0] = local[0];
-          pc.spec.center[1] = local[1];
-          pc.spec.center[2] = local[2];
-          pc.spec.radius = clampExtent(
-              std::sqrt((local[3] - local[0]) * (local[3] - local[0]) +
-                        (local[4] - local[1]) * (local[4] - local[1]) +
-                        (local[5] - local[2]) * (local[5] - local[2])));
-          pc.volume = shapeVolume(pc.spec);
-          add(pc);
-          return;
-        }
+      // Through the packed transform.
+      const auto sphereToBody = [&](const double in[3], double out[3]) {
+        const float f[3] = {static_cast<float>(in[0]),
+                            static_cast<float>(in[1]),
+                            static_cast<float>(in[2])};
+        std::vector<float> o;
+        packedPointsToBodyLocal(f, 1, pk.m4, pk.pivot, o);
+        if (o.size() < 3)
+          return false;
+        for (size_t k = 0; k < 3; ++k)
+          out[k] = static_cast<double>(o[k]);
+        return true;
+      };
+      if (from.size() == 1 && from[0]->sphereValid &&
+          spherePiece(*from[0], sphereToBody, pc)) {
+        add(pc);
+        return;
       }
       if (pieceFromPoints(
               world, key, b3dop::mixHash(sourceHash, kind),
@@ -740,23 +726,15 @@ BuiltShapes buildWholeObjectShapes(b3dop::Box3DWorld &world,
   std::vector<float> pts;
   auto addHull = [&](const std::vector<const NamedPiece *> &from) {
     Piece pc;
-    if (from.size() == 1 && from[0]->sphereValid) {
-      // One Sphere primitive: a real Box3D sphere.
-      const NamedPiece &np = *from[0];
-      const double c[3] = {np.sphereCentre[0], np.sphereCentre[1],
-                           np.sphereCentre[2]};
-      const double e[3] = {c[0] + np.sphereRadius, c[1], c[2]};
-      double oc[3], oe[3];
-      b3dop::xformPoint(m, c, oc);
-      b3dop::xformPoint(m, e, oe);
-      pc.spec.type = b3dop::ShapeType::Sphere;
-      for (int k = 0; k < 3; ++k)
-        pc.spec.center[k] = static_cast<float>(oc[k] - pivot[k]);
-      pc.spec.radius = b3dop::clampExtent(
-          static_cast<float>(std::sqrt((oe[0] - oc[0]) * (oe[0] - oc[0]) +
-                                       (oe[1] - oc[1]) * (oe[1] - oc[1]) +
-                                       (oe[2] - oc[2]) * (oe[2] - oc[2]))));
-      pc.volume = b3dop::shapeVolume(pc.spec);
+    const auto sphereToBody = [&](const double in[3], double out[3]) {
+      double o[3];
+      b3dop::xformPoint(m, in, o);
+      for (size_t k = 0; k < 3; ++k)
+        out[k] = o[k] - pivot[k];
+      return true;
+    };
+    if (from.size() == 1 && from[0]->sphereValid &&
+        spherePiece(*from[0], sphereToBody, pc)) {
       out.totalVolume += pc.volume;
       out.pieces.push_back(pc);
       return;

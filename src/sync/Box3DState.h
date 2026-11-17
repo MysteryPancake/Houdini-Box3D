@@ -77,10 +77,14 @@ struct Box3DBodyMirror : Box3DBodyPose {
   // What the pivot was computed from (0: it was not), so it is not recomputed
   // while the geometry is unchanged.
   uint64_t pivotKey = 0;
+  // The same for the bounding box sizes bounding-box inertia uses.
+  uint64_t boundsKey = 0;
+  float boundsExtents[3] = {0, 0, 0};
 
   // The body's point, refreshed by every sync, so the write-back needs no
   // lookup. Box3D's body user data points at this entry, so entries never move
-  // (unordered_map nodes) and are only erased with their body.
+  // (Box3DMirrorMap keeps them in a deque) and are only erased with their
+  // body.
   int64_t pointOff = -1; // GA_Offset of the point in the object's geometry
   int64_t pointId = 0;   // the `id` attribute, else the point number
   int objectId = 0;
@@ -382,7 +386,6 @@ struct Box3DAffectorBody {
   bool heightsKnown = false;
 };
 
-// One joint made from a primitive of a constraint network (Box3DJointSync.cpp).
 // The parts of a joint entry that few joints use (Box3DJointEntry::extra).
 struct Box3DJointExtra {
   // A point / vertex anchor (anchor_id) on a whole object or packed piece:
@@ -403,6 +406,7 @@ struct Box3DJointExtra {
   b3dop::JointFrame brokeLocalA, brokeLocalB;
 };
 
+// One joint made from a primitive of a constraint network (Box3DJointSync.cpp).
 struct Box3DJointEntry {
   b3dop::JointHandle handle =
       0; // 0: none (broken, or its anchors did not resolve)
@@ -425,6 +429,11 @@ struct Box3DJointEntry {
   // upstream edit of them remakes the joint.
   b3dop::JointFrame authA, authB;
   bool made = false;
+  // Both bodies asleep (or fixed) when the write-back last visited the joint,
+  // and then already written: its live frames and feedback are not written
+  // again until a body wakes. `quiet` is this step's decision.
+  bool asleepWritten = false;
+  bool quiet = false;
   // distance made with restlength < 0: written to `auto_restlength` once
   float madeRestLength = -1.0f;
   // made from P / orient: write local_P / local_orient after the step
@@ -510,7 +519,6 @@ struct Box3DJointNetwork {
   bool kindsKnown = false;
 };
 
-// Everything shared between timestep copies.
 // One contact recorded for the Impacts data. `fromOther`: cp was read from the
 // other body's side.
 struct Box3DImpactHit {
@@ -525,6 +533,7 @@ struct Box3DImpactGroup {
   std::vector<Box3DImpactHit> hits;
 };
 
+// Everything shared between timestep copies.
 struct Box3DSharedState {
   b3dop::Box3DWorld world;
   Box3DMirrorMap mirror; // key: makeBodyKey(object id, point id)
@@ -563,6 +572,12 @@ struct Box3DSharedState {
   std::vector<Box3DPackedWrite> packedWrites;
   std::vector<b3dop::BodyMove>
       moves; // this step's move events (read once after the step)
+  // Substeps: one step's events and broken joints, and each body's slot in
+  // `moves` while the frame's steps are merged. Kept so nothing is allocated
+  // per frame.
+  std::vector<b3dop::BodyMove> stepEvents;
+  std::vector<void *> stepBroken;
+  std::unordered_map<b3dop::BodyHandle, size_t> moveSlots;
   std::vector<b3dop::ContactPoint> contacts;
   // recordImpacts scratch: the first `impactGroupCount` entries are in use this
   // step. Entries (and their hit vectors) are kept so capacity is reused.
@@ -586,10 +601,15 @@ struct Box3DSharedState {
   // Glue (syncJoints, collectGlueHits, advanceGlue in Box3DJointSync.cpp): the
   // live bonds and their bodies this frame, and the bonds that went over their
   // strength (joint user data, broken by jointsAfterStep with the force ones).
+  // The graph is rebuilt only when a network was read again, a network went
+  // away or a joint broke (glueDirty); glueBondNodes holds each bond's two
+  // node indices, parallel to glueBonds.
   std::vector<Box3DGlueNode> glueNodes;
   std::unordered_map<b3dop::BodyHandle, int> glueNodeOf;
   std::vector<Box3DJointEntry *> glueBonds;
+  std::vector<std::pair<int, int>> glueBondNodes;
   std::vector<void *> glueBroken;
+  bool glueDirty = true;
   // Live SideFX Spring joints last step: syncJoints looks for changed masses
   // only while there are any.
   size_t springEntries = 0;
@@ -633,6 +653,7 @@ struct Box3DSharedState {
     return n + writeItems.capacity() * sizeof(Box3DWriteItem) +
            packedWrites.capacity() * sizeof(Box3DPackedWrite) +
            moves.capacity() * sizeof(b3dop::BodyMove) +
+           stepEvents.capacity() * sizeof(b3dop::BodyMove) +
            contacts.capacity() * sizeof(b3dop::ContactPoint) +
            impactGroups.capacity() * sizeof(Box3DImpactGroup) +
            pointWrites.capacity() * sizeof(Box3DPointWrite) +

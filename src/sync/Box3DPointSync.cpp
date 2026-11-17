@@ -265,37 +265,6 @@ b3dop::BodyProps readDynamicProps(const b3dop::BodySettings &node,
   return p;
 }
 
-// A string attribute read through its shared-string handles where it has them,
-// so per-point work can be memoised by handle (an int) rather than by string.
-struct StringAttr {
-  const GA_ROHandleS *handle = nullptr;
-  const GA_Attribute *attr = nullptr;
-  const GA_AIFSharedStringTuple *aif = nullptr;
-
-  void bind(const GA_ROHandleS &h) {
-    handle = &h;
-    attr = h.isValid() ? h.getAttribute() : nullptr;
-    aif = attr ? attr->getAIFSharedStringTuple() : nullptr;
-  }
-  bool valid() const { return attr != nullptr; }
-  bool memoisable() const { return !attr || aif; }
-
-  // The point's string handle; -1 for none (empty, or no attribute). Only with
-  // memoisable().
-  int64_t id(GA_Offset off) const {
-    if (!attr)
-      return -1;
-    const GA_StringIndexType h = aif->getHandle(attr, off, 0);
-    return h == GA_INVALID_STRING_INDEX ? -1 : static_cast<int64_t>(h);
-  }
-  std::string str(GA_Offset off) const {
-    if (!attr)
-      return std::string();
-    const char *v = handle->get(off);
-    return v ? std::string(v) : std::string();
-  }
-};
-
 // Box3D density: computemass -> density; else mass / volume (density if
 // unusable).
 float boxDensity(const b3dop::BodyProps &p, float volume) {
@@ -460,22 +429,7 @@ uint64_t shapeSignature(b3dop::ShapeType type, const BuiltShapes &s) {
     } else if (pc.isHull)
       h = b3dop::mixHash(b3dop::mixHash(h, 1), pc.hull);
     else {
-      const b3dop::ShapeSpec &sp = pc.spec;
-      const float f[] = {static_cast<float>(static_cast<int>(sp.type)),
-                         sp.halfExtents[0],
-                         sp.halfExtents[1],
-                         sp.halfExtents[2],
-                         sp.radius,
-                         sp.halfLength,
-                         sp.center[0],
-                         sp.center[1],
-                         sp.center[2],
-                         sp.rot[0],
-                         sp.rot[1],
-                         sp.rot[2],
-                         sp.rot[3]};
-      h = b3dop::mixHash(b3dop::mixHash(h, 2),
-                         b3dop::hashFloats(f, sizeof(f) / sizeof(f[0])));
+      h = b3dop::mixHash(b3dop::mixHash(h, 2), b3dop::hashShapeSpec(pc.spec));
     }
   }
   return h ? h : 1;
@@ -1071,8 +1025,7 @@ public:
   NameIndex(Box3DSharedState &st, Box3DObjectSync &os, const GU_Detail *gdp)
       : myNameH(gdp, GA_ATTRIB_POINT, "name") {
     os.namesKnown = st.wantNames;
-    myNames.bind(myNameH);
-    myKeep = st.wantNames && myNames.valid();
+    myKeep = st.wantNames && myNameH.isValid();
     os.nameSigNext = kSeed;
     os.namedPoints.clear();
     if (!myKeep) {
@@ -1088,7 +1041,7 @@ public:
     if (!myKeep)
       return;
     // The point's name without a copy; null for none.
-    const char *v = myNames.attr ? myNames.handle->get(off) : nullptr;
+    const char *v = myNameH.get(off);
     if (!v || !*v)
       return;
     uint64_t h = os.nameSigNext;
@@ -1106,8 +1059,11 @@ public:
       return;
     std::unordered_map<std::string, Box3DBodyMirror *> fresh;
     fresh.reserve(os.namedPoints.size());
-    for (const auto &p : os.namedPoints)
-      fresh.emplace(myNames.str(p.first), p.second); // first point wins
+    for (const auto &p : os.namedPoints) {
+      const char *name = myNameH.get(p.first);
+      fresh.emplace(name ? std::string(name) : std::string(),
+                    p.second); // first point wins
+    }
     if (fresh != os.byName)
       ++st.bodyVersion;
     os.byName.swap(fresh);
@@ -1118,7 +1074,6 @@ private:
   static constexpr uint64_t kSeed = 14695981039346656037ull;
   static constexpr uint64_t kPrime = 1099511628211ull;
   const GA_ROHandleS myNameH;
-  StringAttr myNames;
   bool myKeep = false;
 };
 

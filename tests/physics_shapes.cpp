@@ -872,7 +872,8 @@ void testMirroredPacked() {
   }
   std::memcpy(untouched, composed, sizeof composed);
   keepMirror(plain3, untouched);
-  CHECK(std::memcmp(untouched, composed, sizeof composed) == 0);
+  for (int i = 0; i < 9; ++i)
+    CHECK(untouched[i] == composed[i]);
   std::printf("mirrored packed checks done\n");
 }
 
@@ -891,7 +892,7 @@ void testEstimatedBytes() {
   CHECK(w.addBoxShape(1, groundHalf));
   const int count = 100;
   for (int i = 0; i < count; ++i) {
-    const double p[3] = {(i % 10) * 1.0, 0.5 + (i / 10) * 1.0, 0};
+    const double p[3] = {(i % 10) * 1.0, 0.5 + (i - i % 10) / 10.0, 0};
     CHECK(w.addBody(100 + i, b3dop::BodySettings(), p, qIdentity));
     CHECK(w.addBoxShape(100 + i, half));
   }

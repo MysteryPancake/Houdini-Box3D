@@ -37,7 +37,7 @@ sys.dont_write_bytecode = True
 import hou  # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tests", "houdini"))
-from b3dtest import SetupError, create, display  # noqa: E402  (the checks' scene helpers)
+from b3dtest import SetupError, create, display, set_parm  # noqa: E402  (the checks' scene helpers)
 from review import place_note_left  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -47,25 +47,6 @@ OUT_DIR = os.path.join(HERE, "scenes")
 # ---------------------------------------------------------------------------
 # Small helpers
 # ---------------------------------------------------------------------------
-
-
-def set_parm(node, names, value):
-    """Sets the first of `names` that exists (a tuple value sets a parameter tuple)."""
-    for n in [names] if isinstance(names, str) else names:
-        if isinstance(value, (tuple, list)):
-            pt = node.parmTuple(n)
-            if pt is not None and len(pt) == len(value):
-                pt.deleteAllKeyframes()
-                pt.set(value)
-                return
-        else:
-            p = node.parm(n)
-            if p is not None:
-                p.deleteAllKeyframes()
-                p.set(value)
-                return
-    available = ", ".join(sorted({pt.name() for pt in node.parmTuples()}))
-    raise SetupError(f"{node.path()}: no parameter {' / '.join(names)}. It has: {available}")
 
 
 def set_token(node, name, token):

@@ -1135,7 +1135,7 @@ bool Box3DWorld::fitShapeOriented(ShapeType type, const float *xyz, int count,
 }
 
 void Box3DWorld::pruneHulls() {
-  std::lock_guard<std::mutex> lock(myImpl->held_mutex);
+  std::unique_lock<std::shared_mutex> lock(myImpl->held_mutex);
   myImpl->held.clear();
 }
 
@@ -1157,7 +1157,7 @@ size_t Box3DWorld::estimatedBytes() const {
 }
 
 int Box3DWorld::hullCacheSize() const {
-  std::lock_guard<std::mutex> lock(myImpl->held_mutex);
+  std::shared_lock<std::shared_mutex> lock(myImpl->held_mutex);
   return static_cast<int>(myImpl->held.size());
 }
 

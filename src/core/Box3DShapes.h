@@ -177,7 +177,7 @@ inline void applyPrimOverrides(ShapeSpec &s, const PrimOverrides &o) {
 }
 
 inline float shapeVolume(const ShapeSpec &s) {
-  const float pi = 3.14159265358979f;
+  const float pi = kPi;
   const float r = s.radius;
   switch (s.type) {
   case ShapeType::Sphere:
@@ -315,6 +315,24 @@ inline uint64_t mixDouble(uint64_t h, double d) {
   uint64_t u;
   std::memcpy(&u, &d, sizeof u);
   return mixHash(h, u);
+}
+
+// Every field of a shape spec: equal specs hash alike.
+inline uint64_t hashShapeSpec(const ShapeSpec &sp) {
+  const float f[] = {static_cast<float>(static_cast<int>(sp.type)),
+                     sp.halfExtents[0],
+                     sp.halfExtents[1],
+                     sp.halfExtents[2],
+                     sp.radius,
+                     sp.halfLength,
+                     sp.center[0],
+                     sp.center[1],
+                     sp.center[2],
+                     sp.rot[0],
+                     sp.rot[1],
+                     sp.rot[2],
+                     sp.rot[3]};
+  return hashFloats(f, sizeof(f) / sizeof(f[0]));
 }
 
 // A packed hull's cache key: the source's point hash plus what differs per

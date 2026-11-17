@@ -39,6 +39,7 @@ int main(int argc, char **argv) {
   std::atomic<int> failed{0};
   std::atomic<int> wrong{0};
   std::vector<std::thread> pool;
+  pool.reserve(static_cast<size_t>(threads));
   for (int t = 0; t < threads; ++t)
     pool.emplace_back([&] {
       for (int r = 0; r < rounds; ++r) {

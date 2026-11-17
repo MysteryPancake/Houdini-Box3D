@@ -420,13 +420,14 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   st->brokenCollected = false;
   st->hitsCollected = false;
   st->impactsCollected = false;
-  if (n == 1) { // the usual case: one step, nothing to merge
+  const char *const kNonFiniteForce =
+      "body(ies) got a non-finite force or torque from a Force DOP; it was "
+      "ignored";
+  if (n == 1) { // one step, nothing to merge
     if (getUseForces()) {
       UT_PerfMonAutoSolveEvent perf(this, "Applying Forces");
       const ForceStats fs = applyExternalForces(*st, objects, getForcesWake());
-      warnCount(objects, fs.nonFinite,
-                "body(ies) got a non-finite force or torque from a Force DOP; "
-                "it was ignored");
+      warnCount(objects, fs.nonFinite, kNonFiniteForce);
     }
     UT_PerfMonAutoSolveEvent perf(this, "Stepping World");
     st->world.step(subDt);
@@ -439,9 +440,10 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
     // Hit events are cleared every step too; only the speed filter reads them.
     const bool collectHits = st->world.settings().impactMinSpeed > 0.0f;
     st->hitsCollected = collectHits;
-    std::unordered_map<b3dop::BodyHandle, size_t> slot;
-    std::vector<b3dop::BodyMove> events;
-    std::vector<void *> broken;
+    std::unordered_map<b3dop::BodyHandle, size_t> &slot = st->moveSlots;
+    std::vector<b3dop::BodyMove> &events = st->stepEvents;
+    std::vector<void *> &broken = st->stepBroken;
+    slot.clear();
     ForceStats forceStats;
     PointForceCarry carry;
     const bool collectImpactHits = wantsImpacts(*st);
@@ -491,9 +493,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
                              [&](void *p) { return !seen.insert(p).second; }),
               b.end());
     }
-    warnCount(objects, forceStats.nonFinite,
-              "body(ies) got a non-finite force or torque from a Force DOP; it "
-              "was ignored");
+    warnCount(objects, forceStats.nonFinite, kNonFiniteForce);
   }
   B3D_LOG_VERBOSE("  step: %d contact(s) recycled",
                   st->world.recycledContactCount());
