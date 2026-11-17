@@ -182,13 +182,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 
 Features to add in the fork. Once one exists, the wrapper maps it and the entry leaves this list.
 
-* **Spherical spring twist bug.** The angular spring loses its restoring torque when the body is twisted about its
-  longitudinal axis. A bollard tilted under gravity, then twisted 180°, cannot be pulled upright and settles tilted at
-  about 75-78° whatever it started at. Cause: `b3SolveSphericalJoint` (`spherical_joint.c`) takes one rotation vector
-  from `b3DeltaQuatToRotation(relQ, targetRotation)`, whose tilt part shrinks as cos(twist / 2). Fix: separate swing
-  and twist errors, each with its own spring. The motor joint's angular spring stalls the same way. The weld and
-  prismatic ones make the same call and are unchecked. A twist limit avoids it (the car park's bollards). A parallel
-  joint with a twist limit also orbited at about 72°: not understood.
+* **Parallel joint orbit.** A parallel joint with a twist limit orbited at about 72°: not understood.
 * **Clipping into a fast kinematic collider.** A box resting on a collider lifted 0.5 a frame sinks into it instead of
   riding on top (`solver_sop_solve_first_frame_bullet`, INFO).
 * **Wide and elliptical cones.** `b3SphericalJoint_SetConeLimit` asserts the angle is at most 90°, and the cone is round.

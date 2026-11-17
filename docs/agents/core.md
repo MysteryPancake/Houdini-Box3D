@@ -88,6 +88,15 @@ It collides with spheres, capsules and hulls. A hull gives at most four points, 
 speculative distance, keyed by vertex index. Fast bodies use `b3PlaneTimeOfImpact`, a conservative advancement bounded by
 the sweep's linear and angular speed. Covered by `tests/core_plane.cpp`.
 
+**Angular spring error (fork).** `b3AngularSpringError` (`extern/box3d/src/math_internal.h`) gives the spherical joint's
+spring, the motor joint's angular spring and the weld joint's soft angular constraint (`angularHertz > 0`) their rotation
+error, in frame A. Upstream used `b3DeltaQuatToRotation`, 2 * vec(target * inverse(current)): the tilt part shrinks as
+cos(twist / 2), so a body twisted about its axis lost its restoring torque (zero at 180°) and settled around 75-78°.
+The helper splits the error into swing (the shortest rotation taking the target's z-axis to the body's) and twist (the
+rest, about the target's z-axis), each with magnitude 2 * sin(angle / 2), so tilt recovery ignores twist. At exactly
+180° of tilt the swing axis is any perpendicular of the target's z-axis. The prismatic joint's rotation lock still uses
+`b3DeltaQuatToRotation`: a hard lock, not a spring. Covered by `TestAngularSpringTwist` in `extern/box3d/test/test_joint.c`.
+
 **`Box3DShapes.h`** (all unit-tested): `parseShapeType` (exact lowercase Houdini names; `compound`
 = `concave`; `plane` is `ShapeType::Plane` (static bodies only: `buildShapes` falls back to a box with a note, whole
 objects ignore it); `cylinder` is `ShapeType::Cylinder`, a `ShapeSpec` like a capsule (`radius`, `halfLength` = half the
