@@ -529,6 +529,7 @@ int main() {
 
       BodySettings bs;
       bs.type = BodySettings::Type::Dynamic;
+      bs.enableSleep = false; // a slow, well damped return must not fall asleep
       const BodyHandle b = w.createBody(bs, centre, bq);
       ShapeSpec cap;
       cap.type = ShapeType::Capsule;
