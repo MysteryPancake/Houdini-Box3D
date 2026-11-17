@@ -157,9 +157,14 @@ TOOLS_SHELF = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 def add_python_module(definition, extra=""):
-    """The asset's Python Module: isVellumNode() true, which makes the viewer connect a new node's inputs
-    automatically (as RBD's SOPs do), plus `extra` source."""
-    code = "def isVellumNode():\n    return True\n"
+    """The asset's Python Module: the network editor hooks and isVellumNode() true, which makes the viewer
+    connect a new node's inputs automatically (as RBD's SOPs do), plus `extra` source."""
+    code = ("if hou.isUIAvailable():\n"
+            "    from nodegraphvellumutils import setSelectPosContextData, isPassThroughConnection, "
+            "createEventHandler\n"
+            "\n"
+            "def isVellumNode():\n"
+            "    return True\n")
     if extra:
         code += "\n" + extra
     definition.addSection("PythonModule", code)
