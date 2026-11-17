@@ -153,6 +153,20 @@ from b3d_solver_network import (  # noqa: E402
 GLOBAL_SUBSTEPS = "globalsubsteps"
 DOP_SUBSTEPS = "substep"
 
+# Create Convex Hull per Set of Connected Primitives defaults on for the pieces and the collider, as RBD Bullet
+# Solver sets bullet_groupconnected on its objects: pieces sharing a `name` are packed together and must not merge
+# into one hull. The Pieces and Collision tabs' checkboxes (prefixed or not) are linked to the inner objects.
+HULL_PER_CONNECTED = "hullperconnected"
+
+
+def default_hull_per_connected(templates):
+    """`templates` with the Hull per Connected toggle (under its own or a prefixed name) defaulting on."""
+    out = list(templates)
+    for t in out:
+        if t.type() == hou.parmTemplateType.Toggle and t.name().endswith(HULL_PER_CONNECTED):
+            t.setDefaultValue(True)
+    return out
+
 
 
 
@@ -300,7 +314,7 @@ def build(out_path, packed_hda=None):
     collider_renames = {pt.name(): f"collision_{pt.name()}" for pt in value_templates(collider_tabs)}
     collider_folders = []
     for i, tab in enumerate(rename_templates(collider_tabs, collider_renames)):
-        templates = tab.parmTemplates()
+        templates = default_hull_per_connected(tab.parmTemplates())
         for t in templates:
             if t.name() == "collision_defaultshape" and t.type() == hou.parmTemplateType.Menu:
                 if SHAPE_CONVEX in t.menuItems():
@@ -435,7 +449,8 @@ def build(out_path, packed_hda=None):
         print(f"make_solver_sop: Pieces parameters renamed (the solver has the same names): {renames}")
     folders = []
     for i, tab in enumerate(rename_templates(data_tabs, renames)):
-        folders.append(hou.FolderParmTemplate(f"b3dsop_pieces{i}", tab.label(), tab.parmTemplates(),
+        folders.append(hou.FolderParmTemplate(f"b3dsop_pieces{i}", tab.label(),
+                                              default_hull_per_connected(tab.parmTemplates()),
                                               folder_type=hou.folderType.Simple))
     inverse = {new: old for old, new in renames.items()}
     for pt in value_templates(folders):

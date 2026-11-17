@@ -303,7 +303,7 @@ struct BodySettings {
   bool autoFit =
       true; // box / sphere / capsule fit the packed geometry's bounds
   bool hullPerConnectedSet =
-      false; // convex: one hull per set of connected primitives
+      false; // convex / concave: one hull per set of connected primitives
   // affector (Static Object) meshes: use the opposite triangle winding
   bool flipMeshWinding = false;
 };

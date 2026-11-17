@@ -104,7 +104,7 @@ is where the body's origin was at rest; joints map authored anchors with it ([jo
      `concave`, `plannedStatic` and `meshShapes`. Becoming static retypes before the rebuild; leaving static rebuilds as
      hulls first, and a body with a mesh is never retyped away from static. No polygons: hulls.
   3. Convex / concave hulls: `pieceFromPoints` with a `packedHullKey`, `findHull` first, points only on a miss, else a
-     fitted box with a note. Convex merges all pieces unless hull-per-connected; concave is one hull per piece.
+     fitted box with a note. Convex merges all pieces unless hull-per-connected; concave is one hull per piece, or per connected set with hull-per-connected.
   4. Box / sphere / capsule with autofit: `fitShapeOriented` (below).
   5. Nothing usable: `makeShapeSpec(pscale * scale)`, plus `applyPrimOverrides` only with autofit off (RBD Packed
      Object writes default `bullet_primS` / `bullet_radius` onto every point).

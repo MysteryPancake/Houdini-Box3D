@@ -515,7 +515,8 @@ bool spherePiece(const NamedPiece &np, const ToBody &toBody, Piece &out) {
 //                          bullet_prim* / radius / length overrides
 //  convex:  one hull of the packed geometry (hullPerConnected: one per
 //           connected set)
-//  concave: one hull per `name` piece
+//  concave: one hull per `name` piece (hullPerConnected: one per connected
+//           set)
 // Convex / concave without packed geometry fall back to a box.
 BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
                         b3dop::ShapeType type, bool hullPerConnected,
@@ -561,7 +562,9 @@ BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
   const bool wantGeometry =
       (type == ShapeType::Convex || type == ShapeType::Concave);
   const bool mergeAll = (type == ShapeType::Convex) && !hullPerConnected;
-  const bool connected = (type == ShapeType::Convex) && hullPerConnected;
+  const bool connected = (type == ShapeType::Convex ||
+                          type == ShapeType::Concave) &&
+                         hullPerConnected;
 
   // Packed convex / concave hulls are keyed by (source, pivot, scale), so
   // instances share them and the points are built only on a miss. A degenerate
@@ -697,7 +700,7 @@ BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
 // A whole object's shapes, body-local: the geometry through its own transform
 // `m` (object space; scale and shear are baked in), relative to `pivot`. Box /
 // sphere / capsule fit the whole geometry, convex is one hull (or one per
-// connected set), concave one hull per `name` piece.
+// connected set), concave one hull per `name` piece (or per connected set).
 BuiltShapes buildWholeObjectShapes(b3dop::Box3DWorld &world,
                                    const GU_Detail *gdp, const double m[16],
                                    const double pivot[3], b3dop::ShapeType type,
@@ -708,7 +711,9 @@ BuiltShapes buildWholeObjectShapes(b3dop::Box3DWorld &world,
     return out;
 
   PieceGroup g;
-  const bool connected = type == ShapeType::Convex && hullPerConnected;
+  const bool connected =
+      (type == ShapeType::Convex || type == ShapeType::Concave) &&
+      hullPerConnected;
   if (connected)
     collectConnectedPieces(gdp, gdp->getPrimitiveRange(), g);
   if (g.pieces.empty())

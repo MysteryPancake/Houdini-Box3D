@@ -8,7 +8,7 @@
 |---|---|
 | `box`, `sphere`, `capsule`, `cylinder` | Fitted to the packed geometry, or sized from `pscale` / `scale`. Capsules and cylinders run along Y |
 | `convexhull` | One convex hull around the packed geometry |
-| `concave`, `compound` | Static piece: the exact polygons, as a triangle mesh. Moving piece: one convex hull per `name` piece |
+| `concave`, `compound` | Static piece: the exact polygons, as a triangle mesh. Moving piece: one convex hull per `name` piece, or per set of connected primitives when Hull per Connected is on |
 | `plane` | Static piece: an infinite plane through its origin, facing its +Y. Moving piece: a box |
 | `none` | A static body with no collision |
 

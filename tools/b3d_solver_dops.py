@@ -37,6 +37,9 @@ def packed_object(dopnet, name, context_input, object_name):
     set_named(obj, "objname", object_name)
     set_named(obj, "soppath", f'`dopcontextgeo(".", {context_input})`')
     set_named(obj, "usetransform", 0)  # SOP space, like RBD Bullet Solver
+    # One hull per connected set, as RBD Bullet Solver sets bullet_groupconnected on its objects:
+    # pieces sharing a `name` are packed together and must not merge into one hull.
+    set_named(obj, "hullperconnected", 1)
     return obj
 
 
