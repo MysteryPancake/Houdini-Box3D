@@ -130,10 +130,7 @@ def visualization_templates():
     scale = hou.FloatParmTemplate("scale", "Exploded Scale", 1, default_value=(0.0,), min=0.0, max=2.0, tags=tags,
                                   help="Moves the pieces apart in the viewport to see inside. 0 is off.")
     scale.setConditional(hou.parmCondType.DisableWhen, "{ visualize == 0 }")
-    # Export level 3 ("export all" in the DialogScript): what makes the viewer show a parameter in the bar along the top
-    # of the viewport, as RBD Configure's two. hou has no public setter.
-    for pt in (visualize, scale):
-        pt._setExportLevel(3)
+    b3d_hda.show_in_toolbar(visualize, scale)  # the bar along the top of the viewport, as RBD Configure's two
     return [visualize, scale]
 
 
@@ -745,27 +742,6 @@ def switch_on_proxy(sub, name, without, with_proxy, proxy, extra=None):
     return sw
 
 
-def add_viewer_state(definition):
-    """The viewer state that draws the histogram and the value range (RBD Configure's state, trimmed): the
-    sections Houdini keeps for an embedded Python state."""
-    here = os.path.dirname(os.path.abspath(__file__))
-    with open(os.path.join(here, STATE_FILE), encoding="utf-8") as f:
-        module = f.read()
-    sections = {
-        "ViewerStateModule": module,
-        "DefaultState": STATE_NAME,
-        "ViewerStateName.orig": STATE_NAME,  # what the uninstall script falls back to
-        "ViewerStateInstall": "__import__('viewerstate.utils', fromlist=[None]).register_pystate_embedded(kwargs['type'])",
-        "ViewerStateUninstall": "__import__('viewerstate.utils', fromlist=[None]).unregister_pystate_embedded(kwargs['type'])",
-    }
-    for name, contents in sections.items():
-        definition.addSection(name, contents)
-    for name in ("ViewerStateModule", "ViewerStateInstall", "ViewerStateUninstall"):
-        definition.setExtraFileOption(f"{name}/IsPython", True)
-        definition.setExtraFileOption(f"{name}/IsViewerState", True)
-        definition.setExtraFileOption(f"{name}/IsScript", True)
-
-
 def build(out_path):
     hou.hipFile.clear(suppress_save_prompt=True)
     dopnet = hou.node("/obj").createNode("dopnet", "templates")
@@ -808,7 +784,7 @@ def build(out_path):
     b3d_hda.add_python_module(definition, PYTHON_MODULE)
     definition.setComment("Sets Box3D body settings as point attributes on the pieces in a group, "
                           "like RBD Configure. Point attributes win over Box3D Data.")
-    add_viewer_state(definition)
+    b3d_hda.add_viewer_state(definition, STATE_NAME, STATE_FILE)
     definition.updateFromNode(asset)
     definition.save(out_path, asset)
     b3d_hda.edit_dialog_script(definition, INPUT_LABELS, LABELS, warn, BBOX_HANDLE)  # labels last, saved without the node (see make_solver_sop.py)

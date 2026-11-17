@@ -1071,7 +1071,7 @@ def test_solver_sop_layout():
     Output (no Misc); Collision Geometry's header checkbox is Use External Collisions, which sits just before it
     (as RBD Bullet Solver's); the Pieces tab is Shape, Body, Material, CCD & Contacts, Initial State, Sleep (Start
     Asleep first); the Solver tab ends with Contacts, Sleeping (the solver's Allow Sleeping) and Aging;
-    Visualization has only the Ground folder; no Detach Faces; every collapsible folder open but Impact Data,
+    Visualization is Show Collision Geometry / Shapes, Shape Color, then the Ground and Inspector folders; no Detach Faces; every collapsible folder open but Impact Data,
     Sleeping, Aging and the Constraints tab's folders."""
     sop = solver_sop("sop_layout")
     entries = sop.parmTemplateGroup().entries()
@@ -1117,9 +1117,17 @@ def test_solver_sop_layout():
            (performance.parmTemplates()[0].isLabelHidden(), performance.parmTemplates()[0].joinsWithNext())
            if performance and performance.parmTemplates() else None, (True, True))
     vis_tab = by_path.get(("Visualization",))
-    expect("Visualization tab (the Ground folder last)",
+    expect("Visualization tab (the Ground and Inspector folders last)",
            [pt.name() for pt in vis_tab.parmTemplates()] if vis_tab else None,
-           ["showcollision", "exportshapes", "shapecolor", "b3dsop_show_ground"])
+           ["showcollision", "exportshapes", "shapecolor", "b3dsop_show_ground", "b3dsop_inspector"])
+    # The operator toolbar along the top of the viewport (export level 3) and the viewer state's sections.
+    toolbar = sorted(pt.name() for pt in sop.parmTemplateGroup().entriesWithoutFolders() if pt._exportLevel() == 3)
+    expect("parameters in the viewport toolbar", toolbar, ["exportshapes", "resimulate", "showcollision", "showground"])
+    definition = sop.type().definition()
+    expect("default state", definition.sections().get("DefaultState") and definition.sections()["DefaultState"].contents(),
+           "box3d_solver_sop")
+    expect("viewer state sections", sorted(n for n in definition.sections() if n.startswith("ViewerState")),
+           ["ViewerStateInstall", "ViewerStateModule", "ViewerStateName.orig", "ViewerStateUninstall"])
     expect("Detach Faces", sop.parm("collision_detachfaces"), None)
     shut = sorted("/".join(path) for path, pt in folders
                   if pt.folderType() == hou.folderType.Collapsible and pt.tags().get("group_default") != "1")

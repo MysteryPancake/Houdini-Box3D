@@ -4,6 +4,7 @@ make_solver_sop.py).
 Not a build script: imported by the builders (run with hython, so this folder is on sys.path).
 """
 
+import os
 import re
 
 import hou
@@ -164,6 +165,34 @@ def add_python_module(definition, extra=""):
     definition.addSection("PythonModule", code)
     definition.setExtraFileOption("PythonModule/IsPython", True)
     definition.setExtraFileOption("PythonModule/IsScript", True)
+
+
+def show_in_toolbar(*templates):
+    """Parameters shown in the operator toolbar across the top of the viewer while the node is active (Type
+    Properties' Show parm in > Main & Tool Dialogs + Toolbox, "export all" in the DialogScript). hou has no
+    public setter for the export level."""
+    for pt in templates:
+        pt._setExportLevel(3)
+
+
+def add_viewer_state(definition, state_name, source_file):
+    """An embedded Python viewer state: `source_file` (beside the scripts) as the ViewerStateModule, `state_name`
+    as the Node tab's default state, and the sections Houdini keeps for it."""
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), source_file), encoding="utf-8") as f:
+        module = f.read()
+    sections = {
+        "ViewerStateModule": module,
+        "DefaultState": state_name,
+        "ViewerStateName.orig": state_name,  # what the uninstall script falls back to
+        "ViewerStateInstall": "__import__('viewerstate.utils', fromlist=[None]).register_pystate_embedded(kwargs['type'])",
+        "ViewerStateUninstall": "__import__('viewerstate.utils', fromlist=[None]).unregister_pystate_embedded(kwargs['type'])",
+    }
+    for name, contents in sections.items():
+        definition.addSection(name, contents)
+    for name in ("ViewerStateModule", "ViewerStateInstall", "ViewerStateUninstall"):
+        definition.setExtraFileOption(f"{name}/IsPython", True)
+        definition.setExtraFileOption(f"{name}/IsViewerState", True)
+        definition.setExtraFileOption(f"{name}/IsScript", True)
 
 
 def set_tab_submenu(definition, warn):

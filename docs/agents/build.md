@@ -254,6 +254,14 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   every one open except Output's Impact Data and the Solver tab's Sleeping and Aging; Collision is one Collision Geometry folder with the collider's folders
   simple inside it (each disabled with Use External Collisions off), Pieces is Shape, Body, Material, CCD & Contacts
   and Sleep (the Packed Object's Start Asleep first, `moved_settings`), and Add Impact Data is on Output. Test `solver_sop_layout`.
+* Viewer state (`tools/b3d_solver_state.py`, `STATE_NAME` / `STATE_FILE`, installed by `b3d_hda.add_viewer_state`), RBD
+  Bullet Solver's trimmed: an Option Menu with Output for View Flags (Geometry / Constraint / Proxy, `setOutputForViewFlag`)
+  and an inspector, hotkeys 1 to 5 and the HUD lines for them. The inspector prints the attributes of the primitive under
+  the cursor (`inspectorattribs`, `inspectorfontsize`, `inspectorprecision` in the Visualization tab's Inspector folder)
+  from the viewed output's geometry. RBD's false-colour constraint info, histogram and guide capture are not copied. The
+  state name has no dot: its hotkey context is built from it. `b3d_hda.show_in_toolbar` puts Reset Simulation, Show
+  Collision Geometry, Show Collision Shapes and Show Ground in the viewport's toolbar (export level 3, as RBD's toggles),
+  and an `OnCreated` section sets Start Frame to `$FSTART` on a new node.
 * Message Nodes (Node tab of the Type Properties, the `MessageNodes` section: relative paths, space separated) are
   set by `b3d_hda.set_message_nodes` so a warning from inside shows on the asset: the Solver SOP's `dopnet/box3d_solver`
   and Box3D Constraint Properties' `warn_if_no_constraints` (`MESSAGE_NODES`). Box3D Configure has none: only its own

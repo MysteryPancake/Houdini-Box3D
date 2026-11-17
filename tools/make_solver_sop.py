@@ -127,6 +127,9 @@ from b3d_solver_common import (  # noqa: E402
 )
 from b3d_solver_constraints import constraint_items, finish_constraints  # noqa: E402
 from b3d_solver_help import HELP_CARD  # noqa: E402
+
+STATE_NAME = "box3d_solver_sop"  # no dot: the viewer state's hotkey context is built from it
+STATE_FILE = "b3d_solver_state.py"  # the viewer state's source, beside this script
 from b3d_solver_ground import (  # noqa: E402
     finish_ground,
     GROUND_DATA,
@@ -232,11 +235,13 @@ def build(out_path, packed_hda=None):
     links = []
     top = []
     if dopnet.parm("resimulate") is not None:
-        top.append(hou.ButtonParmTemplate(
+        reset = hou.ButtonParmTemplate(
             "resimulate", "Reset Simulation",
             script_callback="kwargs['node'].node('dopnet').parm('resimulate').pressButton()",
             script_callback_language=hou.scriptLanguage.Python,
-            help="Clears the cached simulation and simulates again from the start frame."))
+            help="Clears the cached simulation and simulates again from the start frame.")
+        b3d_hda.show_in_toolbar(reset)  # as RBD Bullet Solver's
+        top.append(reset)
     dop_templates = {}
     for name in DOPNET_PARMS:
         pt = dopnet.parmTemplateGroup().find(name)
@@ -502,6 +507,9 @@ def build(out_path, packed_hda=None):
     definition.setIcon(ICON)
     b3d_hda.set_tab_submenu(definition, warn)
     b3d_hda.add_python_module(definition)
+    b3d_hda.add_viewer_state(definition, STATE_NAME, STATE_FILE)
+    # A new node starts at the scene's first frame, as RBD Bullet Solver's.
+    definition.addSection("OnCreated", f"opparm $arg1 {START_FRAME} ( $FSTART )")
     definition.setComment("Simulates packed pieces with Box3D, like RBD Bullet Solver: geometry, "
                           "constraints, proxy and collision in; geometry, constraints, proxy and "
                           "simulation points out.")
@@ -616,7 +624,22 @@ def visualization_tab(shapes):
         SHOW_COLLISION, "Show Collision Geometry", default_value=True,
         help="Draws the external collision geometry in the viewport.")
     geo.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_COLLISIONS} == 0 }}")
-    return [geo, show, color, ground_visualization()]
+    b3d_hda.show_in_toolbar(geo, show)  # the bar along the top of the viewport, as RBD Bullet Solver's toggles
+    return [geo, show, color, ground_visualization(), inspector_folder()]
+
+
+def inspector_folder():
+    """The Inspector folder, as RBD Bullet Solver's: what the state's inspector (key 5) prints next to the cursor."""
+    attribs = hou.StringParmTemplate(
+        "inspectorattribs", "Attributes", 1, default_value=("* ^P ^pivot ^rest ^N ^scale ^orient ^xform ^path",),
+        help="The attributes the inspector shows for the piece under the cursor.")
+    size = hou.IntParmTemplate("inspectorfontsize", "Font Size", 1, default_value=(3,), min=1, max=10,
+                               help="The inspector's text size. The mouse wheel changes it.")
+    precision = hou.IntParmTemplate("inspectorprecision", "Float Precision", 1, default_value=(6,), min=0, max=10,
+                                    help="Decimals shown for numbers. Ctrl and the mouse wheel change it.")
+    folder = b3d_hda.collapsible("b3dsop_inspector", "Inspector", [attribs, size, precision])
+    folder.setTags({**folder.tags(), "sidefx::header_parm": "inspectorattribs"})
+    return folder
 
 
 def link(inner, inner_name, outer, outer_name):

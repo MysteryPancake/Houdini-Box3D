@@ -54,12 +54,8 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * The packing (`b3d_prepare.py`): Transfer Groups carrying primitive groups onto the pieces, the Assembles' path /
   fragment parameters from the asset, geometry-only and proxy-only inputs.
 * The group selection button, labels hidden on the checkboxes.
-* Bounds box handle (`BBOX_HANDLE`): the bindings and the hidden toggle are written from RBD's dump, never seen in a
-  viewport (a Python state may need to bind the handle itself).
-* Visualization (Visualize, Exploded Scale): never built or run, written from a dump of RBD Configure. The
-  Output SOP with index -1, the parameter callbacks that switch the viewport to it, and the VEX colours are all
-  unchecked. The viewer state (histogram and min / max text, `b3d_configure_state.py`) is also never run in a
-  viewport: only the histogram nodes were cooked on made-up data, matching RBD's histogram size.
+* The viewport bar and the state load in Houdini. Not checked: the Visualize colours, the histogram's contents on real
+  pieces, the Output SOP with index -1 and the callbacks that switch to it.
 
 **Data hint for Box3D Data** (`initializeSIM`, test `no_subdata_warnings`)
 * Never built. The hint's parent type, `SIM_SopGeometry`, is the type Houdini reports for the Geometry; whether a hint

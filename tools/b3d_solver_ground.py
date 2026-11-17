@@ -9,6 +9,7 @@ rolling resistance and conveyor velocity."""
 import hou
 
 import b3d_hda
+import b3d_hda
 from b3d_hda import collapsible
 from b3d_solver_common import (
     create,
@@ -89,6 +90,7 @@ def ground_visualization():
         SHADE_GROUND, "Show Ground as", ("0", "1"), menu_labels=("Wireframe", "Shaded"), default_value=0,
         help="How a ground plane is drawn. A height field is always shaded.")
     shade.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_GROUND} != 1 }}")
+    b3d_hda.show_in_toolbar(show)  # the bar along the top of the viewport
     folder = collapsible("b3dsop_show_ground", "Ground", [show, shade])
     folder.setTags({**folder.tags(), "sidefx::header_parm": SHADE_GROUND, "sidefx::header_toggle": SHOW_GROUND})
     return folder
