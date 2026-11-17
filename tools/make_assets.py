@@ -1,9 +1,10 @@
-"""Builds the three Box3D digital assets in one hython session.
+"""Builds the Box3D digital assets in one hython session.
 
     hython tools/make_assets.py <otls folder>
 
-Writes box3d_packedobject.hda, box3d_configure.hda and box3d_solver_sop.hda into the folder, in that
-order (the Solver SOP contains the Packed Object, so it comes last). One process, so Houdini starts
+Writes box3d_packedobject.hda, box3d_configure.hda, box3d_constraint_properties.hda and
+box3d_solver_sop.hda into the folder, in that order (the Solver SOP contains the Packed Object, so it
+comes last). One process, so Houdini starts
 and checks out its license once. The build runs this (CMakeLists.txt, BOX3DDOP_MAKE_HDA) whenever the
 plugin or any script in tools/ changes.
 
@@ -21,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 PACKED = "box3d_packedobject.hda"
 CONFIGURE = "box3d_configure.hda"
+CONSTRAINT_PROPERTIES = "box3d_constraint_properties.hda"
 SOLVER_SOP = "box3d_solver_sop.hda"
 
 
@@ -36,6 +38,7 @@ def main():
         print(__doc__)
         return 0
     import make_configure_sop
+    import make_constraint_properties_sop
     import make_packed_object
     import make_solver_sop
 
@@ -44,6 +47,8 @@ def main():
     packed = os.path.join(out, PACKED)
     run("Box3D Packed Object", make_packed_object.build, packed)
     run("Box3D Configure", make_configure_sop.build, os.path.join(out, CONFIGURE))
+    run("Box3D Constraint Properties", make_constraint_properties_sop.build,
+        os.path.join(out, CONSTRAINT_PROPERTIES))
     run("Box3D Solver SOP", make_solver_sop.build, os.path.join(out, SOLVER_SOP), packed)
     return 0
 

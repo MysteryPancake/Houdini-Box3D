@@ -17,6 +17,7 @@ body engine, C17, a git submodule in `extern/box3d`). It registers these `SIM_Da
 | Box3D Packed Object | (digital asset) | RBD Packed Object for Box3D: a SOP stage writes its settings as point attributes, built by `tools/make_packed_object.py` |
 | Box3D Solver (SOP) | (digital asset) | SOP wrapping a DOP network with the nodes above, built by `tools/make_solver_sop.py` |
 | Box3D Configure (SOP) | (digital asset) | Box3D Data's settings as point attributes, built by `tools/make_configure_sop.py` |
+| Box3D Constraint Properties (SOP) | (digital asset) | Joint settings as primitive attributes, built by `tools/make_constraint_properties_sop.py` |
 
 Design goals: Box3D's native performance (handle-based hot paths, no per-body hash lookups, threaded per-point passes
 where safe) and Houdini Bullet behaviour (same attribute names and rules, as documented on the RBD Packed Object page).
@@ -132,7 +133,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
 examples/            make_examples.py: builds demo scenes into examples/scenes (git-ignored)
 package/             Box3D.json.in: the Houdini package file the build configures
 tools/               make_assets.py (runs the three asset builders in one hython, as the build does),
-                     make_packed_object.py, make_configure_sop.py, make_solver_sop.py (the assets; the Solver SOP's inner builders are in b3d_solver_common.py, b3d_solver_network.py, b3d_solver_dops.py, b3d_solver_ground.py, b3d_solver_constraints.py and b3d_solver_help.py; b3d_layouts.py places both SOP assets' nodes),
+                     make_packed_object.py, make_configure_sop.py, make_constraint_properties_sop.py, make_solver_sop.py (the assets; the Solver SOP's inner builders are in b3d_solver_common.py, b3d_solver_network.py, b3d_solver_dops.py, b3d_solver_ground.py, b3d_solver_constraints.py and b3d_solver_help.py; b3d_layouts.py places both SOP assets' nodes),
                      b3d.py (finds Houdini; runs the checks, examples or ctest on any OS), b3d_hda.py (warn, create, set_operations and the parameter-template helpers the asset builders share), b3d_prepare.py (the input packing both SOP assets share), b3d_settings.py (Box3D Data's
                      settings as point attributes and the creation-frame rest, for Configure and the Packed Object),
                      check_docs.py,

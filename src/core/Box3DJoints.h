@@ -848,6 +848,13 @@ inline void setJointParam(JointSettings &s, const JointParam &p, JointType t,
 // it. Every type but Filter, which has no float settings.
 constexpr const char *kAttributesReplaceName = "attributes_replace";
 
+// A primitive attribute holding this (a float, or the first component of a
+// vector) or a negative int (a toggle) is "not set": the setting keeps the
+// node's value. Box3D Constraint Properties creates its attributes this way, so
+// the lines it does not edit are left alone.
+constexpr float kUnsetFloat = -3.4028235e38f;
+inline bool isUnsetFloat(float v) { return v <= 0.9f * kUnsetFloat; }
+
 // A float primitive attribute on setting `p` (a Float or Angle). Off: it
 // multiplies the node's value, the Constraint Network DOP's rule, so a node
 // value of 0 cannot be changed and -1 (unlimited) flips sign. `replace`: it is

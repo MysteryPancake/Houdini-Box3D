@@ -1286,6 +1286,62 @@ def test_configure_group_patterns():
                    "; ".join(rows) + f" (expected 0.25 on {names[0]} only)")]
 
 
+def test_constraint_properties():
+    """Box3D Constraint Properties (tools/make_constraint_properties_sop.py) writes ticked settings onto the
+    constraints in its group only: on two lines, one in a group, Revolute Stiffness 7 and Enable Spring land
+    on the first, the other keeps the "not set" values the solver skips."""
+    geo = new_geo("conprops")
+    lines = create(geo, "attribwrangle", "lines")
+    set_parm(lines, ["class"], "detail")
+    set_parm(lines, ["snippet"],
+             'for (int i = 0; i < 2; i++) { int a = addpoint(0, set(i, 0, 0)), b = addpoint(0, set(i, 1, 0)); '
+             'int pr = addprim(0, "polyline", a, b); '
+             'if (!hasprimattrib(0, "constraint_name")) addprimattrib(0, "constraint_name", ""); '
+             'setprimattrib(0, "constraint_name", pr, "Revolute"); '
+             'if (i == 0) setprimgroup(0, "chosen", pr, 1); }')
+    cp = create(geo, "box3d_constraint_properties", "props")
+    cp.setInput(1, lines)
+    for n, v in (("constraintgroup", "chosen"), ("jointtype", 2), ("addrevolute_stiffness", 1),
+                 ("revolute_stiffness", 7.0), ("addrevolute_enable_spring", 1), ("revolute_enable_spring", 1)):
+        set_parm(cp, [n], v)
+    g = cp.geometry(1)
+    prims = g.prims()
+    first = (round(prims[0].attribValue("stiffness"), 3), prims[0].attribValue("enable_spring"))
+    other = (prims[1].attribValue("stiffness"), prims[1].attribValue("enable_spring"))
+    ok = first == (7.0, 1) and other[0] <= -3.0e38 and other[1] < 0 and g.findPrimGroup("__tmpconpropgrp") is None
+    return [Result("constraint_properties", Result.PASS if ok else Result.FAIL,
+                   f"(stiffness, enable_spring) on the group's line {first} (expected (7, 1)), on the other {other} "
+                   "(expected not set: below -3e38 and -1)")]
+
+
+def test_no_subdata_warnings():
+    """Box3D Data under an object's Geometry raises no data hint warnings ("Unexpected subdata found",
+    "attached to an unexpected parent data"): a Box3D Packed Object cooked on two frames, and the Box3D Solver
+    SOP cooking a piece, have no warnings on the Geometry or the data node."""
+    pieces, names = packed_boxes("hint_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0)}])
+    dop = hou.node("/obj").createNode("dopnet", "hint_dop")
+    po = dop.createNode("box3d_packedobject", "po")
+    set_parm(po, ["soppath"], pieces)
+    po.setDisplayFlag(True)
+    found = []
+    for frame in (1, 2):
+        hou.setFrame(frame)
+        dop.cook(force=True)
+        found += [f"{n.path()}: {w}" for n in [po] + list(po.allSubChildren()) for w in n.warnings()
+                  if "subdata" in w or "unexpected parent" in w]
+    geo = new_geo("hint_solver")
+    src = create(geo, "object_merge", "pieces")
+    set_parm(src, ["objpath1"], pieces)
+    solver = create(geo, "box3d_solver", "box3d_solver")
+    solver.setInput(0, src)
+    hou.setFrame(2)
+    solver.cook(force=True)
+    found += [f"{n.path()}: {w}" for n in [solver] + list(solver.allSubChildren()) for w in n.warnings()
+              if "subdata" in w or "unexpected parent" in w]
+    return [Result("no_subdata_warnings", Result.PASS if not found else Result.FAIL,
+                   f"data hint warnings: {found or 'none'} (expected none)")]
+
+
 def test_configure_initial_state():
     """Box3D Configure's Initial State: Velocity (2, 0, 0) moves the group's piece 2 in 1 s through the Box3D
     Solver SOP (no gravity needed in x), and Angular Velocity (0, 90, 0) degrees per second is written
@@ -1380,6 +1436,8 @@ TESTS = {
     "solver_sop_constraints": test_solver_sop_constraints,
     "configure": test_configure,
     "configure_group_patterns": test_configure_group_patterns,
+    "constraint_properties": test_constraint_properties,
+    "no_subdata_warnings": test_no_subdata_warnings,
     "configure_initial_state": test_configure_initial_state,
     "configure_pin": test_configure_pin,
 }

@@ -163,6 +163,20 @@ def set_tab_submenu(definition, warn):
     definition.addSection("Tools.shelf", TOOLS_SHELF.format(ctx=ctx, utils=utils, submenu=TAB_SUBMENU))
 
 
+def set_message_nodes(asset, paths, warn):
+    """The asset's Message Nodes (Node tab of its Type Properties): the nodes inside, as paths relative to
+    `asset`, whose errors and warnings show on the asset itself. Without them a message from inside only
+    shows after diving in. A path with no node is a warning and left out."""
+    found = []
+    for path in paths:
+        if asset.node(path) is None:
+            warn(f"{asset.type().name()}: no node {path} for Message Nodes")
+        else:
+            found.append(path)
+    if found:
+        asset.type().definition().addSection("MessageNodes", " ".join(found))
+
+
 def pull(entries, pred):
     """(`entries` without the templates `pred` picks, recursing into folders; the templates picked)."""
     kept, picked = [], []

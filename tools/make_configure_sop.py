@@ -45,7 +45,7 @@ import b3d_hda  # noqa: E402  (beside this script)
 from b3d_layouts import CONFIGURE_LAYOUT  # noqa: E402
 import b3d_prepare  # noqa: E402
 import b3d_settings  # noqa: E402
-from b3d_settings import GEOREP_VALUES, literal  # noqa: E402
+from b3d_settings import GEOREP_VALUES, literal, num  # noqa: E402
 
 TYPE_NAME = "box3d_configure"
 LABEL = "Box3D Configure"
@@ -82,6 +82,32 @@ BOUNDING_TYPES = ("Bounding Box", "Bounding Geometry", "Bounding Volume")
 INSIDE_GROUP = "__static_grp"  # RBD Configure's: the pieces inside the bounds
 # Pin types: constraint_name of a pin line, the Data Names of the Box3D Solver SOP's relationships.
 PIN_TYPES = [("Weld", "Weld"), ("Soft", "Soft")]
+
+
+# RBD Configure's Visualize menu (its last item, Collision Padding, is replaced by In Bounds). The viewer-only
+# Visualize output shows the pieces coloured by the chosen value; the output is not a real one, so nothing
+# downstream sees the colours.
+VISUALIZE = ["None", "Active", "Animated", "Deforming", "Sleeping", "Bounce", "Density", "Friction",
+             "Rotational Stiffness", "Pinned", "In Bounds"]
+SCALAR_MODES = {5: "bounce", 6: "density", 7: "friction", 8: "inertialtensorstiffness"}  # coloured on a ramp
+# Shown while any visualization is on (-1: the Visualize output), else the first output.
+VIEW_CALLBACK = ("node = kwargs['node']\n"
+                 "on = node.evalParm('visualize') > 0 or node.evalParm('scale') > 0 or node.evalParm('showbbox')\n"
+                 "node.setOutputForViewFlag(-1 if on else 0)")
+
+
+def visualization_templates():
+    tags = {"script_callback": VIEW_CALLBACK, "script_callback_language": "python"}
+    visualize = hou.MenuParmTemplate("visualize", "Visualize", tuple(str(i) for i in range(len(VISUALIZE))),
+                                     tuple(VISUALIZE), default_value=0, tags=tags,
+                                     help="Colours the pieces in the viewport by this value. Bounce, Density, Friction "
+                                          "and Rotational Stiffness run from blue (lowest) to red. Changes nothing "
+                                          "downstream.")
+    scale = hou.FloatParmTemplate("scale", "Exploded Scale", 1, default_value=(0.0,), min=0.0, max=2.0, tags=tags,
+                                  help="Moves the pieces apart in the viewport to see inside. 0 is off.")
+    bbox = hou.ToggleParmTemplate("showbbox", "Show Bbox", default_value=False, tags=tags,
+                                  help="Draws the Bounds box in the viewport (Bounding Box only).")
+    return [visualize, scale, bbox]
 
 
 def bounds_templates():
@@ -373,6 +399,7 @@ def ui(folders):
     multi = hou.FolderParmTemplate(MULTIPARM, "Number of Attributes", entry,
                                    folder_type=hou.folderType.TabbedMultiparmBlock, default_value=1)
     group = hou.ParmTemplateGroup()
+    group.append(b3d_hda.collapsible("b3dcfg_visualization", "Visualization", visualization_templates()))
     group.append(b3d_hda.collapsible("b3dcfg_bounds", "Bounds", bounds_templates()))
     group.append(b3d_hda.collapsible("b3dcfg_packing", "Packing", packing_templates()))
     group.append(multi)
@@ -440,7 +467,129 @@ def build_network(sub, rows):
         if idx == 0:
             out.setDisplayFlag(True)
             out.setRenderFlag(True)
+    visualize_network(sub, setter, rows)
     b3d_hda.layout(sub, CONFIGURE_LAYOUT)
+
+
+def visualize_vex(defaults):
+    """The two wranglers of the Visualize output: the value range of a ramped setting (detail), then each piece's
+    colour (primitive, from its point's attribute or Box3D Data's default when the attribute is missing)."""
+    # The setting and its default for each ramped mode, as a VEX if chain.
+    pick = "\n".join(f'if (mode == {m}) {{ attrib = "{n}"; dflt = {num(defaults[n])}; }}'
+                     for m, n in SCALAR_MODES.items())
+    # point(): assigned to a typed variable, so an int attribute is read as a float.
+    value = ("float value(string name; int pt; float dflt) {\n"
+             "    float v = dflt;\n"
+             "    if (haspointattrib(0, name)) v = point(0, name, pt);\n"
+             "    return v;\n"
+             "}")
+    rng = "\n".join([
+        "// Range of the setting being visualized, for the colour ramp.",
+        value,
+        'int mode = chi("../visualize");',
+        'string attrib = "";',
+        "float dflt = 0.0;",
+        pick,
+        "float vmin = 0.0, vmax = 0.0;",
+        'if (attrib != "") {',
+        "    for (int i = 0; i < npoints(0); i++) {",
+        "        float v = value(attrib, i, dflt);",
+        "        if (i == 0 || v < vmin) vmin = v;",
+        "        if (i == 0 || v > vmax) vmax = v;",
+        "    }",
+        "}",
+        "f@__vmin = vmin;",
+        "f@__vmax = vmax;",
+    ])
+    colour = "\n".join([
+        "// Colours each piece by the chosen value. A missing attribute is Box3D Data's default.",
+        value,
+        'int mode = chi("../visualize");',
+        "if (mode == 0) return;",
+        "int pt = primpoint(0, @primnum, 0);",
+        "vector lit = {1, 0, 0}, dim = {0.3, 0.3, 0.3}, c = {1, 1, 1};",
+        'string attrib = "";',
+        "float dflt = 0.0;",
+        pick,
+        'if (mode == 1) c = value("active", pt, 1.0) > 0.0 ? set(0, 1, 0) : set(0, 0, 0);',
+        'else if (mode == 2) c = value("animated", pt, 0.0) > 0.0 ? lit : dim;',
+        'else if (mode == 3) c = value("deforming", pt, 0.0) > 0.0 ? lit : dim;',
+        'else if (mode == 4) c = value("awake", pt, 1.0) > 0.0 ? dim : lit;',
+        "else if (mode >= 5 && mode <= 8) {",
+        "    float v = value(attrib, pt, dflt);",
+        '    float lo = detail(0, "__vmin"), hi = detail(0, "__vmax");',
+        "    float t = hi > lo ? (v - lo) / (hi - lo) : 0.5;",
+        "    c = hsvtorgb(0.66 * (1.0 - t), 1.0, 1.0);",
+        "}",
+        f'else if (mode == 9) c = value("{PIN_ATTRIB}", pt, 0.0) > 0.0 ? lit : dim;',
+        f'else if (mode == 10) c = inpointgroup(0, "{INSIDE_GROUP}", pt) ? lit : dim;',
+        "v@Cd = c;",
+    ])
+    return rng, colour
+
+
+BBOX_LINES_VEX = """\
+// The bounds box as lines, in yellow.
+int n = nprimitives(0);
+if (!hasprimattrib(0, "Cd")) addprimattrib(0, "Cd", {1, 1, 1});
+for (int i = 0; i < n; i++) {
+    int p[] = primpoints(0, i);
+    append(p, p[0]);
+    int pr = addprim(0, "polyline", p);
+    setprimattrib(0, "Cd", pr, {1, 1, 0});
+}
+for (int i = 0; i < n; i++) removeprim(0, i, 0);
+"""
+
+
+def visualize_network(sub, source, rows):
+    """The viewer-only Visualize output (Output Index -1, as RBD Configure's): `source` coloured by the Visualize
+    menu, moved apart by Exploded Scale, with the Bounds box added while Show Bbox is on."""
+    defaults = {"bounce": 0.0, "density": 1000.0, "friction": 0.5, "inertialtensorstiffness": 1.0}
+    for pt, kind in rows:
+        if pt.name() in defaults and kind == "f":
+            defaults[pt.name()] = float(pt.defaultValue()[0])
+    range_vex, colour_vex = visualize_vex(defaults)
+    ranged = sub.createNode("attribwrangle", "vis_range")
+    ranged.setInput(0, source)
+    ranged.parm("class").set("detail")
+    ranged.parm("snippet").set(range_vex)
+    coloured = sub.createNode("attribwrangle", "vis_color")
+    coloured.setInput(0, ranged)
+    coloured.parm("class").set("primitive")
+    coloured.parm("snippet").set(colour_vex)
+
+    last = coloured
+    try:
+        exploded = b3d_hda.create(sub, ["explodedview::2.0", "explodedview"], "explode_pieces")
+    except RuntimeError as err:
+        warn(f"Exploded Scale will not work: {err}")
+    else:
+        exploded.setInput(0, coloured)
+        b3d_hda.set_token(exploded.parm("centroidmethod"), "bbox", warn)
+        exploded.parm("scale").setExpression('ch("../scale")', hou.exprLanguage.Hscript)
+        last = switch_on(sub, "use_explode", coloured, exploded, 'ch("../scale") > 0')
+
+    lines = sub.createNode("attribwrangle", "bbox_lines")
+    lines.setInput(0, sub.node("bounds_box"))
+    lines.parm("class").set("detail")
+    lines.parm("snippet").set(BBOX_LINES_VEX)
+    merged = sub.createNode("merge", "merge_bbox")
+    merged.setInput(0, last)
+    merged.setInput(1, lines)
+    shown = switch_on(sub, "use_bbox", last, merged, 'ch("../showbbox") && ch("../boundingtype") == 0')
+    out = sub.createNode("output", "OUT_visualize")
+    out.setInput(0, shown)
+    out.parm("outputidx").set(-1)
+
+
+def switch_on(sub, name, off, on, expr):
+    """A Switch passing `on` while the HScript expression `expr` is true, else `off`."""
+    sw = sub.createNode("switch", name)
+    sw.setInput(0, off)
+    sw.setInput(1, on)
+    sw.parm("input").setExpression(expr, hou.exprLanguage.Hscript)
+    return sw
 
 
 def inside_bounds(sub, target, bounds_in):
@@ -521,6 +670,7 @@ def build(out_path):
     # The Packing parameters first (spare, replaced by the asset's interface below), so the expressions
     # build_network sets on the Assembles and wrangles find them while the network is built.
     spare = sub.parmTemplateGroup()
+    spare.append(b3d_hda.collapsible("b3dcfg_visualization", "Visualization", visualization_templates()))
     spare.append(b3d_hda.collapsible("b3dcfg_bounds", "Bounds", bounds_templates()))
     spare.append(b3d_hda.collapsible("b3dcfg_packing", "Packing", packing_templates()))
     sub.setParmTemplateGroup(spare)

@@ -13,6 +13,7 @@
 #include <UT/UT_DSOVersion.h>
 
 #include <SIM/SIM_DataFactory.h>
+#include <SIM/SIM_DataHint.h>
 #include <SIM/SIM_DataUtils.h> // IMPLEMENT_DATAFACTORY
 // Declared extern "C" and exported by the HDK headers.
 void initializeSIM(void *) {
@@ -28,4 +29,10 @@ void initializeSIM(void *) {
   IMPLEMENT_DATAFACTORY(SIM_Box3DConRelWheel);
   IMPLEMENT_DATAFACTORY(SIM_Box3DConRelFilter);
   IMPLEMENT_DATAFACTORY(SIM_SolverBox3D);
+
+  // Box3D Data sits under an object's Geometry (kBox3DDataName), as Bullet Data
+  // does. Houdini checks every data against the children its parent is hinted to
+  // have, and warns "Unexpected subdata found" on the Geometry and "attached to
+  // an unexpected parent data" on the data node for any it has no hint for.
+  SIM_DataHint::addHint("SIM_SopGeometry", "SIM_Box3DData", "Box3DData", 1);
 }

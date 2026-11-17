@@ -109,6 +109,8 @@ once it has run the step always finishes (write-back etc. are quick), so a cache
 `StepProgress` is at global scope in `Box3DSolverInternal.h` (the solver header forward-declares it).
 
 Data names: `"Box3DWorld"`, `kBox3DDataName` (`"Geometry/Box3DData"`, under the object's Geometry like Bullet Data; SIM_Box3DData.h), `SIM_GEOMETRY_DATANAME`.
+Houdini warns on data it has no `SIM_DataHint` for under its parent ("Unexpected subdata found" on the Geometry,
+"attached to an unexpected parent data" on the data node): `initializeSIM` adds one for Box3DData under `SIM_SopGeometry`.
 
 ### syncObject (per object)
 

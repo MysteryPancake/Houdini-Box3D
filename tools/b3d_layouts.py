@@ -66,6 +66,16 @@ CONFIGURE_LAYOUT = [
                  "any_bounds"], {"color": GROUND})],
     [("Attributes", ["set_attributes", "add_pin_constraints", "strip_pin_marker", "strip_bounds_group"],
       {"color": SIMULATION})],
+    [("Visualize", ["vis_range", "vis_color", "explode_pieces", "use_explode", "bbox_lines", "merge_bbox",
+                    "use_bbox", "OUT_visualize"], {"color": GROUND})],
     [("Outputs", ["geometry_result", "proxy_result", "OUT_geometry", "OUT_constraints", "OUT_proxy"],
       {"color": OUTPUT})],
+]
+
+# Box3D Constraint Properties.
+CONSTRAINT_PROPERTIES_LAYOUT = [
+    [("Inputs", ["#0", "#1", "#2", "IN_geometry", "IN_constraints", "IN_proxy"], {"color": INPUTS})],
+    [("Select", ["warn_if_no_constraints", "group_constraints", "pick_constraints"], {"color": PREPARE})],
+    [("Attributes", ["set_properties", "strip_group"], {"color": SIMULATION})],
+    [("Outputs", ["OUT_geometry", "OUT_constraints", "OUT_proxy"], {"color": OUTPUT})],
 ]

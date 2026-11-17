@@ -272,8 +272,8 @@ add_custom_command(TARGET Box3DDOP POST_BUILD
     VERBATIM)
 
 # The digital assets, built with hython into houdiniX.Y/otls next to dso/ by tools/make_assets.py (one
-# hython session: Box3D Packed Object, Box3D Configure, then the Box3D Solver SOP, which contains the
-# Packed Object). All three copy parameters from the plugin just built, so they are remade whenever the
+# hython session: Box3D Packed Object, Box3D Configure, Box3D Constraint Properties, then the Box3D Solver
+# SOP, which contains the Packed Object). All copy parameters from the plugin just built, so they are remade whenever the
 # plugin is relinked or any script in tools/ changes. Problems print a warning and never fail the build.
 option(BOX3DDOP_MAKE_HDA "Build the Box3D digital assets (Packed Object, Configure, Solver SOP) with hython after the plugin" ON)
 if(BOX3DDOP_MAKE_HDA)
@@ -281,7 +281,8 @@ if(BOX3DDOP_MAKE_HDA)
         HINTS "${Houdini_DIR}/../../bin" "$ENV{HFS}/bin" NO_DEFAULT_PATH)
     if(BOX3DDOP_HYTHON)
         set(BOX3DDOP_OTLS_DIR "$<TARGET_FILE_DIR:Box3DDOP>/../otls")
-        set(BOX3DDOP_HDAS box3d_packedobject.hda box3d_configure.hda box3d_solver_sop.hda)
+        set(BOX3DDOP_HDAS box3d_packedobject.hda box3d_configure.hda box3d_constraint_properties.hda
+            box3d_solver_sop.hda)
         file(GLOB BOX3DDOP_TOOL_SCRIPTS CONFIGURE_DEPENDS
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/make_*.py" "${CMAKE_CURRENT_SOURCE_DIR}/tools/b3d_*.py")
         # OUTPUT cannot hold generator expressions (the otls folder depends on the Houdini install), so

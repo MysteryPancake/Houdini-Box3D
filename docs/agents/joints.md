@@ -116,7 +116,9 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   `anchor_type` agent is `agentAnchors`: no joint (nothing simulates an agent rig). `anchor_id` / `anchor_type` are
   in the network fingerprint. The `anchor_pid` / `anchor_vid` id matching is not read. Settings = the kind's + matching primitive attributes, the Constraint Network DOP's rule: float attributes
   multiply the node's value (angles too: the attribute is a factor, so no degree conversion), toggles (int), vectors
-  and Euler rotations (degrees) replace it. So a node value of 0 (most limits and targets) or a negative "never /
+  and Euler rotations (degrees) replace it. An attribute value of `kUnsetFloat` (a float, or a vector's x) or a
+  negative int is "not set" and skipped (`isUnsetFloat`, `applyOverrides`): Box3D Constraint Properties creates its
+  attributes that way so the lines it does not edit keep the node's value. So a node value of 0 (most limits and targets) or a negative "never /
   unlimited" cap cannot be changed per primitive, unless the node's Attributes Replace Values
   (`kAttributesReplaceName`, `Box3DJointKind::attributesReplace`, in `sameKinds`) is on: then floats are the value
   too, in Houdini units (`applyFloatAttribute`). Every type but Filter. SideFX data keeps the multiply rule. Signature = type, bodies, both

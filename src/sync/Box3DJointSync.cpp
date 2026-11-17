@@ -528,14 +528,21 @@ void applyOverrides(const std::vector<SettingReader> &readers,
     if (!p.usedBy(type))
       continue;
     if (p.kind == JointParam::Float || p.kind == JointParam::Angle) {
-      b3dop::applyFloatAttribute(s, p, type, r.f.get(prim), replaceFloats);
+      const float value = r.f.get(prim);
+      if (!b3dop::isUnsetFloat(value))
+        b3dop::applyFloatAttribute(s, p, type, value, replaceFloats);
       continue;
     }
     float v[3] = {0, 0, 0};
-    if (p.kind == JointParam::Toggle)
-      v[0] = static_cast<float>(r.i.get(prim));
-    else {
+    if (p.kind == JointParam::Toggle) {
+      const int value = static_cast<int>(r.i.get(prim));
+      if (value < 0)
+        continue; // not set
+      v[0] = static_cast<float>(value);
+    } else {
       const UT_Vector3 a = r.v.get(prim);
+      if (b3dop::isUnsetFloat(a.x()))
+        continue;
       v[0] = a.x();
       v[1] = a.y();
       v[2] = a.z();

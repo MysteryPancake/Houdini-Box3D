@@ -252,9 +252,35 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   every one open except Output's Impact Data and the Solver tab's Sleeping and Aging; Collision is one Collision Geometry folder with the collider's folders
   simple inside it (each disabled with Use External Collisions off), Pieces is Shape, Body, Material, CCD & Contacts
   and Sleep (the Packed Object's Start Asleep first, `moved_settings`), and Add Impact Data is on Output. Test `solver_sop_layout`.
+* Message Nodes (Node tab of the Type Properties, the `MessageNodes` section: relative paths, space separated) are
+  set by `b3d_hda.set_message_nodes` so a warning from inside shows on the asset: the Solver SOP's `dopnet/box3d_solver`
+  and Box3D Constraint Properties' `warn_if_no_constraints` (`MESSAGE_NODES`). Box3D Configure has none: only its own
+  packing and cleanup nodes warn ("no match for name", "'__packed' is not a valid group", ...), on every cook, and
+  listing them would show that noise. Only the node's own messages show, not its children's, so a subnet is no use.
+  A group delete warns when its group is missing; `removeprimgroup` in a wrangle does not.
 * Input / output labels are written into the DialogScript after the last `updateFromNode` (no hou setter). Wire
   colours come from the subnet's indirect input nodes (`INPUT_COLORS`: the constraints input pink, and its IN /
   OUT nodes).
+
+## Box3D Constraint Properties asset
+
+`tools/make_constraint_properties_sop.py <out.hda>` builds `box3d_constraint_properties` (SOP), like RBD Constraint
+Properties: the settings of every joint type as primitive attributes on the Constraint Geometry's lines. Inputs and
+outputs are Geometry, Constraint Geometry (pink), Proxy Geometry; only the constraints are edited, the others pass
+through. No Bullet settings and no viewer state (handles, guides, Action Edit / Set).
+* Settings are copied from the `box3d_<type>conrel` DOP nodes (`collect`): the Weld node's Joint folder is the common
+  folder, each node's own folder is that type's. `NODE_ONLY` lists the node parameters that are no attribute
+  (Breakable, Set Rest Length, the Limit toggles, Attributes Replace Values). Names: `<type>_<attribute>` in a type's
+  folder (the same attribute is shared by several types, with different defaults and ranges), `add...` its checkbox.
+  Settings For (`jointtype`) hides all but one type's folder.
+* One detail wrangle (`set_properties`, `wrangle_vex`) loops the constraints in the group (empty: all; Filter by
+  Pieces: SideFX's `rbdgroupconstraints` node with its group `__tmpconpropgrp`, output 1; removed by `strip_group`).
+  Each ticked setting creates its attribute with the "not set" value first (`kUnsetFloat` / -1), then sets the group's
+  lines: lines outside the group keep the relationship node's value (`applyOverrides` skips unset values). Also
+  `constraint_name`, `next_constraint_name` (menus of the types' default Data Names) and `Cd`.
+* Float values multiply the node's value, or replace it with the node's Attributes Replace Values on; the node does not
+  convert and says nothing about it (`docs/joints.md` does). Defaults and ranges are the nodes'.
+* The build probes the asset (`probe`); the test is `constraint_properties`.
 
 ## Box3D Configure asset
 
@@ -282,6 +308,14 @@ setting ticked (`rewrite_condition`). Every folder (Bounds, Packing, each Box3D 
   radians, `enabled`, `deforming`), Motion (`inertialtensorstiffness`, `fastrotation`, `lock_linear` / `lock_angular`),
   Collision Filtering, Hand-Set Shape (`bullet_prim*`, `bullet_radius`, `bullet_length`, disabled with Auto Fit on).
   Defaults are the solver's when the attribute is missing.
+* Visualization folder (`visualization_templates`), as RBD Configure's (read from a dump): Visualize (`VISUALIZE`),
+  Exploded Scale (`scale`) and Show Bbox (`showbbox`). A viewer-only **Visualize output** (`OUT_visualize`, Output
+  Index -1, not a real output) holds the target stream coloured by Visualize (`vis_range` finds the min / max of a ramped
+  setting, `vis_color` sets `Cd` per primitive from its point; a missing attribute is Box3D Data's default),
+  moved apart by an Exploded View node, with the Bounds box lines added (`bbox_lines`, Bounding Box only). RBD
+  shows it from a viewer state that sets the node's output-for-view flag to -1; here each of the three parameters'
+  callback (`VIEW_CALLBACK`) sets the flag to -1 while any is on, else 0. Nothing downstream sees the colours. RBD's
+  Histogram and Collision Padding are not copied (In Bounds takes the place of the last).
 * Bounds and Pin, as RBD Configure's (read from a dump of it): the Bounds folder (`boundingtype`, `bbox*`) and the
   fourth input (Static Bounds Geometry) put the pieces inside into the point group `INSIDE_GROUP` (`inside_bounds`;
   no bounds geometry: none). Use Bounds (`use<name>bounds#`, on Body Type and every toggle, `has_bounds`) gives the

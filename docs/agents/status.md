@@ -54,6 +54,19 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * The packing (`b3d_prepare.py`): Transfer Groups carrying primitive groups onto the pieces, the Assembles' path /
   fragment parameters from the asset, geometry-only and proxy-only inputs.
 * The group selection button, labels hidden on the checkboxes.
+* Visualization (Visualize, Exploded Scale, Show Bbox): never built or run, written from a dump of RBD Configure. The
+  Output SOP with index -1, the parameter callbacks that switch the viewport to it, and the VEX colours are all
+  unchecked. No viewer state, so no histogram.
+
+**Data hint for Box3D Data** (`initializeSIM`, test `no_subdata_warnings`)
+* Never built. The hint's parent type, `SIM_SopGeometry`, is the type Houdini reports for the Geometry; whether a hint
+  on that type is also found for other geometry types (a Static Object's, a cached copy) is not known.
+
+**Box3D Constraint Properties** (`tools/make_constraint_properties_sop.py`, test `constraint_properties`)
+* Never built or run: the asset's wiring (SideFX's `rbdgroupconstraints` outputs and parameter names, the `error` node's
+  severity menu), the wrangle's VEX and the label note are written from a dump of RBD Constraint Properties.
+* Not done: RBD's viewer state (handles to edit anchors), Guide Scale, Proxy attribute transfer, the Edit / Set Action.
+* The "not set" skip (`isUnsetFloat`, `applyOverrides`) is not covered by a core test.
 
 **Bullet semantics not compared**
 * The extra `restRotation` split per packed point in every full scan (the rest convention itself matches Bullet:

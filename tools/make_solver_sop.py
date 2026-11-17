@@ -151,6 +151,10 @@ from b3d_solver_network import (  # noqa: E402
 
 # Global Substeps: the DOP network's own Substeps (`substep`).
 GLOBAL_SUBSTEPS = "globalsubsteps"
+# Nodes inside whose errors and warnings show on the asset (b3d_hda.set_message_nodes): the solver, which says
+# when constraints name no joint type or no piece. Not the packing steps: their cleanup nodes warn about
+# attributes and groups that are not there, on every cook.
+MESSAGE_NODES = ["dopnet/box3d_solver"]
 DOP_SUBSTEPS = "substep"
 
 # Create Convex Hull per Set of Connected Primitives defaults on for the pieces and the collider, as RBD Bullet
@@ -506,6 +510,8 @@ def build(out_path, packed_hda=None):
     definition.addSection("Help", HELP_CARD)
     definition.addSection("DiveTarget", DIVE_TARGET)
     definition.addSection("EditableNodes", DIVE_TARGET)
+    # The solver's own messages (and those of the packing steps) show on the asset, not only inside it.
+    b3d_hda.set_message_nodes(asset, MESSAGE_NODES, warn)
 
     asset.allowEditingOfContents()
     for inner_path, inner_name, outer_name in links:
