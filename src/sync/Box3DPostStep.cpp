@@ -12,21 +12,25 @@
 
 namespace box3dsolver {
 
-// Adds the float (or, with `integer`, int) point attribute `name` with the
-// given type info unless it exists. True if added.
+// Adds the float point attribute `name` with the given type info unless it
+// exists. True if added.
 static bool addPointAttribIfMissing(GU_Detail *gdp, const char *name,
                                     int tupleSize,
-                                    GA_TypeInfo typeInfo = GA_TYPE_VOID,
-                                    bool integer = false) {
+                                    GA_TypeInfo typeInfo = GA_TYPE_VOID) {
   if (gdp->findPointAttribute(name))
     return false;
   // The add returns the new attribute, so no second lookup.
-  GA_Attribute *attr =
-      integer ? gdp->addIntTuple(GA_ATTRIB_POINT, name, tupleSize)
-              : gdp->addFloatTuple(GA_ATTRIB_POINT, name, tupleSize);
+  GA_Attribute *attr = gdp->addFloatTuple(GA_ATTRIB_POINT, name, tupleSize);
   if (attr && typeInfo != GA_TYPE_VOID)
     attr->setTypeInfo(typeInfo);
   return true;
+}
+
+// Adds the int point attribute `name` unless it exists.
+static void addIntPointAttribIfMissing(GU_Detail *gdp, const char *name,
+                                       int tupleSize) {
+  if (!gdp->findPointAttribute(name))
+    gdp->addIntTuple(GA_ATTRIB_POINT, name, tupleSize);
 }
 
 // A new quaternion attribute is 0,0,0,0: start every point at identity.
@@ -464,7 +468,7 @@ void ageObjects(Box3DSharedState &st, SIM_ObjectArray &objects, float dt) {
       addPointAttribIfMissing(gdp, "age", 1);
       const bool hasLife = gdp->findPointAttribute("life") != nullptr;
       if (hasLife)
-        addPointAttribIfMissing(gdp, "dead", 1, GA_TYPE_VOID, true);
+        addIntPointAttribIfMissing(gdp, "dead", 1);
       GA_RWHandleF age(gdp, GA_ATTRIB_POINT, "age");
       GA_ROHandleF life(gdp, GA_ATTRIB_POINT, "life");
       GA_RWHandleI dead(gdp, GA_ATTRIB_POINT, "dead");

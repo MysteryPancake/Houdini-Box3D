@@ -20,6 +20,14 @@ inline float nonNegOr(float v, float fallback = 0.0f) {
   return (std::isfinite(v) && v >= 0.0f) ? v : fallback;
 }
 
+// Negative clamped to 0, non-finite replaced by `fallback` (unlike nonNegOr,
+// which replaces a negative value too).
+inline float clampNonNegOr(float v, float fallback) {
+  if (!std::isfinite(v))
+    return fallback;
+  return v > 0.0f ? v : 0.0f;
+}
+
 // dst[0..2] = src[0..2] / dst[0..3] = src[0..3]. The element types may differ
 // (double -> float).
 template <class D, class S> inline void copy3(D *dst, const S *src) {

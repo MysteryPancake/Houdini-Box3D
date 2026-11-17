@@ -433,21 +433,14 @@ void testExternalForces() {
   const float mass = fw.massByHandle(b);
   CHECK(std::fabs(mass - 1.0f) < 1e-4f);
 
-  // the centre of mass of a centred cube is its origin
-  b3dop::BodyState comState;
-  CHECK(fw.bodyStateByHandle(b, comState));
-  const double *com = comState.com;
-  CHECK(std::fabs(com[0] - 1) < 1e-5 && std::fabs(com[1] - 2) < 1e-5 &&
-        std::fabs(com[2] - 3) < 1e-5);
-  CHECK(!fw.bodyStateByHandle(0, comState));
-
-  // bodyStateByHandle returns what the single getters do
+  // bodyStateByHandle returns what the single getters do; the centre of mass
+  // of a centred cube is its origin
   {
     BodyState bs;
     float l0[3], a0[3];
     CHECK(fw.bodyStateByHandle(b, bs) && fw.getVelocityByHandle(b, l0, a0));
     CHECK(bs.awake == fw.isAwakeByHandle(b) && bs.mass == fw.massByHandle(b));
-    CHECK(bs.com[0] == com[0] && bs.com[1] == com[1] && bs.com[2] == com[2]);
+    CHECK(near(bs.com[0], 1) && near(bs.com[1], 2) && near(bs.com[2], 3));
     CHECK(bs.lin[0] == l0[0] && bs.lin[1] == l0[1] && bs.lin[2] == l0[2] &&
           bs.ang[1] == a0[1]);
     BodyState untouched;

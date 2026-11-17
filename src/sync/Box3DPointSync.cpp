@@ -178,12 +178,6 @@ std::string describeFingerprintDifference(const Box3DSyncFingerprint &was,
 // Body settings, shape planning, and mid-simulation updates
 // ---------------------------------------------------------------------------
 
-// Box3D asserts on negatives: a negative value is clamped to 0, a non-finite
-// one becomes `fallback`.
-float clampNonNeg(float v, float fallback) {
-  return std::isfinite(v) ? std::max(v, 0.0f) : fallback;
-}
-
 // A point's changeable settings: Box3D Data's, with the point's attributes on
 // top. Building and comparing both read through here, so an untouched point
 // compares equal. (`awake` is not a setting: see startAwakeFor.)
@@ -196,12 +190,12 @@ b3dop::BodyProps readDynamicProps(const b3dop::BodySettings &node,
       p.mass = m;
   }
   if (a.friction.isValid())
-    p.friction = clampNonNeg(a.friction.get(off), p.friction);
+    p.friction = b3dop::clampNonNegOr(a.friction.get(off), p.friction);
   if (a.bounce.isValid())
-    p.restitution = clampNonNeg(a.bounce.get(off), p.restitution);
+    p.restitution = b3dop::clampNonNegOr(a.bounce.get(off), p.restitution);
   if (a.rollingResistance.isValid())
     p.rollingResistance =
-        clampNonNeg(a.rollingResistance.get(off), p.rollingResistance);
+        b3dop::clampNonNegOr(a.rollingResistance.get(off), p.rollingResistance);
   if (a.tangentVelocity.isValid()) {
     const UT_Vector3 t = a.tangentVelocity.get(off);
     if (b3dop::finite3(t.data()))
@@ -209,9 +203,11 @@ b3dop::BodyProps readDynamicProps(const b3dop::BodySettings &node,
         p.tangentVelocity[i] = static_cast<float>(t(i));
   }
   if (a.lineardamping.isValid())
-    p.linearDamping = clampNonNeg(a.lineardamping.get(off), p.linearDamping);
+    p.linearDamping =
+        b3dop::clampNonNegOr(a.lineardamping.get(off), p.linearDamping);
   if (a.angulardamping.isValid())
-    p.angularDamping = clampNonNeg(a.angulardamping.get(off), p.angularDamping);
+    p.angularDamping =
+        b3dop::clampNonNegOr(a.angulardamping.get(off), p.angularDamping);
   if (a.gravityscale.isValid()) {
     const float g = a.gravityscale.get(off);
     if (std::isfinite(g))
@@ -399,13 +395,14 @@ void noteOverriddenData(const GU_Detail *gdp, Box3DObjectSync &os,
       {"contactrecycling", n.contactRecycling != p.contactRecycling},
       {"bullet_georep", node.defaultShape != d.defaultShape},
       {"bullet_autofit", node.autoFit != d.autoFit}};
-  std::vector<const char *> names;
+  constexpr size_t kCount = sizeof overriding / sizeof overriding[0];
+  bool hit[kCount] = {};
   std::string found;
-  for (const auto &o : overriding)
-    if (o.second && gdp->findPointAttribute(o.first)) {
-      names.push_back(o.first);
+  for (size_t i = 0; i < kCount; ++i)
+    if (overriding[i].second && gdp->findPointAttribute(overriding[i].first)) {
+      hit[i] = true;
       found += found.empty() ? "" : " ";
-      found += o.first;
+      found += overriding[i].first;
     }
   if (found == os.overridesReported)
     return;
@@ -413,8 +410,9 @@ void noteOverriddenData(const GU_Detail *gdp, Box3DObjectSync &os,
   if (found.empty())
     return;
   ++c.overriddenObjects;
-  for (const char *name : names)
-    ++c.overriddenData[name];
+  for (size_t i = 0; i < kCount; ++i)
+    if (hit[i])
+      ++c.overriddenData[overriding[i].first];
 }
 
 // pscale / scale (a packed point's size is its transform; these only size its

@@ -288,6 +288,10 @@ void testConvexShapes() {
     ShapeSpec aabb;
     CHECK(fitShapeToPoints(ShapeType::Box, box.data(), 8, aabb));
     CHECK(shapeVolume(o) < 0.7f * shapeVolume(aabb));
+    const float firstHalf[3] = {o.halfExtents[0], o.halfExtents[1],
+                                o.halfExtents[2]};
+    const float firstCenter[3] = {o.center[0], o.center[1], o.center[2]};
+    const float firstRot[4] = {o.rot[0], o.rot[1], o.rot[2], o.rot[3]};
 
     // Sphere: centred on the turned box, through its corners (Bullet: 0.538).
     CHECK(Box3DWorld::fitShapeOriented(ShapeType::Sphere, box.data(), 8, o));
@@ -301,6 +305,21 @@ void testConvexShapes() {
     const float up[3] = {0, 1, 0};
     quatRotate(o.rot, up, ax);
     CHECK(std::fabs(ax[0] + sn) < 1e-4f && std::fabs(ax[1] - c) < 1e-4f);
+
+    // The fit cache: the same points fit again give the same box (a hit keyed
+    // by shape type too, so the sphere and capsule above did not replace it).
+    ShapeSpec again;
+    CHECK(Box3DWorld::fitShapeOriented(ShapeType::Box, box.data(), 8, again));
+    CHECK(again.type == ShapeType::Box);
+    for (int i = 0; i < 3; ++i)
+      CHECK(again.halfExtents[i] == firstHalf[i] &&
+            again.center[i] == firstCenter[i]);
+    for (int i = 0; i < 4; ++i)
+      CHECK(again.rot[i] == firstRot[i]);
+    // A non-finite point never finds a cached fit.
+    std::vector<float> bad = box;
+    bad[4] = std::nanf("");
+    CHECK(!Box3DWorld::fitShapeOriented(ShapeType::Box, bad.data(), 8, again));
   }
   // Geometry along the body axes keeps them exactly (no turn from float
   // noise).

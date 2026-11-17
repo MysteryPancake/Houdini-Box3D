@@ -129,10 +129,9 @@ private:
   uint64_t myTick = 0;
 };
 
-// ---- the process-wide fit cache
-// --------------------------------------------------------------- What
-// fitShapeOriented found for a point set (by content and shape type), so many
-// packed instances of one piece fit once. Cleared when it grows too big.
+// ---- the process-wide fit cache ---------------------------------------------
+// What fitShapeOriented found for a point set (by content and shape type), so
+// many packed instances of one piece fit once. Cleared when it grows too big.
 class FitLibrary {
 public:
   static FitLibrary &instance() {
@@ -1032,9 +1031,12 @@ bool Box3DWorld::hullCentroid(const float *xyz, int count, double out[3]) {
 
 namespace {
 
-// fitShapeOriented without the cache. `pts`: the points, all finite.
+// fitShapeOriented without the cache.
 bool fitOrientedUncached(ShapeType type, const float *xyz, int count,
-                         const std::vector<b3Vec3> &pts, ShapeSpec &out) {
+                         ShapeSpec &out) {
+  std::vector<b3Vec3> pts;
+  if (!loadPoints(xyz, count, pts))
+    return false;
   // Only the hull's directions are used, so a reduced budget is fine (the
   // extents are measured over every point).
   int budget = 0, tries = 0;
@@ -1118,15 +1120,16 @@ bool Box3DWorld::fitShapeOriented(ShapeType type, const float *xyz, int count,
                                   ShapeSpec &out) {
   if (!xyz || count < 4)
     return fitShapeToPoints(type, xyz, count, out);
-  std::vector<b3Vec3> pts;
-  if (!loadPoints(xyz, count, pts))
-    return false;
+  // Before hashing: a non-finite point must not find a cached fit.
+  for (int i = 0; i < count * 3; ++i)
+    if (!std::isfinite(xyz[i]))
+      return false;
   const uint64_t key = mixHash(hashPoints(xyz, count),
                                static_cast<uint64_t>(static_cast<int>(type)));
   FitLibrary &lib = FitLibrary::instance();
   if (lib.find(key, out))
     return true;
-  if (!fitOrientedUncached(type, xyz, count, pts, out))
+  if (!fitOrientedUncached(type, xyz, count, out))
     return false;
   lib.insert(key, out);
   return true;
