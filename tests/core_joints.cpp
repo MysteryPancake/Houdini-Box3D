@@ -502,8 +502,8 @@ int main() {
       return q;
     };
 
-    // Frame z is world up, in frame A, and along the capsule (body Y) in
-    // frame B: the same rotation, a quarter turn about x.
+    // Frame z is world up in frame A, and along the capsule (body Y) in frame
+    // B: a quarter turn about x.
     const Q frameQ = axisAngle(0, -1.5707963267948966);
     const float fq[4] = {
         static_cast<float>(frameQ.x), static_cast<float>(frameQ.y),
@@ -538,6 +538,13 @@ int main() {
       cap.halfLength = 0.7f; // 2 long with the end caps, pivot at its lower end
       CHECK(b != 0 && w.createShape(b, bs, cap));
 
+      // Frames are world-space: both at the pivot. Frame B's z-axis lies along
+      // the capsule, so its world rotation is the body's turned by frameQ.
+      const Q fb = mul(bodyQ, frameQ);
+      const float fbq[4] = {
+          static_cast<float>(fb.x), static_cast<float>(fb.y),
+          static_cast<float>(fb.z), static_cast<float>(fb.w)};
+
       JointSettings sph =
           Box3DWorld::defaultJointSettings(JointType::Spherical);
       sph.enableSpring = true;
@@ -545,7 +552,8 @@ int main() {
       sph.dampingRatio = 1.0f;
       CHECK(w.createJoint(JointType::Spherical, 0, b,
                           frame(pivot[0], pivot[1], pivot[2], fq),
-                          frame(0, -1, 0, fq), sph) != 0);
+                          frame(pivot[0], pivot[1], pivot[2], fbq),
+                          sph) != 0);
 
       steps(w, 60 * 8);
       double p[3];
