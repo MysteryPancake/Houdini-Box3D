@@ -6,7 +6,7 @@ import re
 import hou
 
 import b3d_hda
-from b3d_hda import collapsible, labels, NO_VALUE, value_templates
+from b3d_hda import collapsible, labels, value_templates
 
 
 TYPE_NAME = "box3d_solver"  # a SOP; the DOP of the same name lives in another node table
@@ -87,21 +87,18 @@ TRANSFER_ATTRIBUTES = "transferattributes"
 TRANSFER_TO = {"transform_geometry": ("transfertogeo", "Transfer to Geometry"),
                "transform_proxy": ("transfertoproxy", "Transfer to Proxy Geometry")}
 TRANSFER_ATTRIBUTES_DEFAULT = "age w"  # RBD Bullet Solver's default
+ATTRIBS_TO_COPY = "attribstocopy"  # Transform Pieces' Attributes to Copy list
 # Simulation points: Fetch Geometry of the pieces, not Create Points to Represent Objects (that makes
 # one point per piece only for SideFX's RBD Packed Object; for ours it makes one point per DOP
 # object). The pieces are in SOP space, so nothing is transformed.
-POINTS_TOGGLES = {"Pack Geometry Before Merging": False,
-                  "Add DOP Object Path Attribute": False,
-                  "Transform Geometry With Position Data": False,
-                  "Transform Geometry With Geometry Data": False,
-                  "Preserve World Space Positions": False}
+POINTS_TOGGLES = {"pack": False,  # Pack Geometry Before Merging
+                  "adddopobjectpath": False,
+                  "doposxform": False,  # Transform Geometry With Position Data
+                  "dogeoxform": False,  # Transform Geometry With Geometry Data
+                  "keepworldspacepos": False}  # Preserve World Space Positions
 # Point attributes the simulation points keep besides P and the asset's Transfer Attributes.
 POINTS_KEEP = "name orient pivot restxform v w id"
-CONSTRAINTS_TOGGLES = {"Pack Geometry Before Merging": False,
-                       "Add DOP Object Path Attribute": False,
-                       "Transform Geometry With Position Data": False,
-                       "Transform Geometry With Geometry Data": False,
-                       "Preserve World Space Positions": False}
+CONSTRAINTS_TOGGLES = dict(POINTS_TOGGLES)
 # The Output tab, always last, as RBD Bullet Solver's: Impact Data (the pieces' Add Impact Data as the
 # folder's header toggle, the solver's Impact Min Speed, Fetch Impacts; closed), then Transfer Attributes.
 IMPACT_TOGGLE = "addimpact"  # the pieces' Box3D Data toggle (on the Packed Object's Object tab)
@@ -150,26 +147,31 @@ RELATIONSHIPS = [
     (["conetwistconrel"], "conetwist"),
 ]
 
-# Parameters promoted from the inner SOP-level DOP network, by label (Start Frame above the tabs,
-# Cache Simulation in the Solver tab after the solver's own settings: its label hidden, joined to Cache
-# Memory (MB), which it enables, as RBD Bullet Solver's).
-DOPNET_PARMS = ["Start Frame", "Cache Simulation"]
-CACHE_MEMORY = "Cache Memory (MB)"
+# Parameters promoted from the inner SOP-level DOP network (Start Frame above the tabs, Cache Simulation
+# in the Solver tab after the solver's own settings: its label hidden, joined to Cache Memory (MB), which
+# it enables, as RBD Bullet Solver's).
+START_FRAME, CACHE_ENABLED = "startframe", "cacheenabled"
+DOPNET_PARMS = [START_FRAME, CACHE_ENABLED]
+CACHE_MEMORY = "cachemaxsize"
+# DOP Import's Import Style item Fetch Geometry from DOP Network.
+FETCH_GEOMETRY = "fetch"
+# Box3D Data's menu tokens are the item numbers (Box3DParms::menu): Body Type and Default Shape.
+BODY_STATIC, BODY_KINEMATIC = "0", "1"
+SHAPE_CONVEX = "2"
 
 # Solver folders that are not promoted (the guide's toggle and colour are on the Visualization tab).
 SKIP_SOLVER_FOLDERS = {"guide options"}
 
 warn = b3d_hda.warner("make_solver_sop")
 create = b3d_hda.create
-template_by_label = b3d_hda.template_by_label
 
 
-def row_by_label(node, label):
-    """Clones of the parameters on the row of the one labelled `label`, in order: it and the ones joined to
-    it (a checkbox and its value). Empty if there is none."""
+def row_of(node, name):
+    """Clones of the parameters on the row of parameter `name`, in order: it and the ones joined to it (a
+    checkbox and its value). Empty if there is none."""
     entries = [pt for pt in node.parmTemplateGroup().entriesWithoutFolders() if not pt.name().startswith("parmop")]
     for i, pt in enumerate(entries):
-        if pt.type() in NO_VALUE or pt.label().lower() != label.lower():
+        if pt.name() != name:
             continue
         lo, hi = i, i
         while lo > 0 and entries[lo - 1].joinsWithNext():
@@ -180,37 +182,23 @@ def row_by_label(node, label):
     return []
 
 
-def parm_by_label(node, label):
-    pt = template_by_label(node, label)
-    return node.parmTuple(pt.name()) if pt is not None else None
-
-
-def set_by_label(node, label, value):
-    pt = parm_by_label(node, label)
+def set_named(node, name, value):
+    """Sets `node`'s parameter (tuple) `name`; warns when it has none."""
+    pt = node.parmTuple(name)
     if pt is None:
-        warn(f"{node.path()} has no parameter labelled {label!r}; its parameters: {labels(node)}")
+        warn(f"{node.path()} has no parameter {name}; its parameters: {labels(node)}")
         return False
     pt.set(value if isinstance(value, (tuple, list)) else (value,))
     return True
 
 
-def set_menu_item(node, parm_label, item_label):
-    """Sets the menu labelled `parm_label` to the item whose label contains `item_label`."""
-    pt = parm_by_label(node, parm_label)
-    if pt is None:
-        warn(f"{node.path()} has no menu labelled {parm_label!r}; its parameters: {labels(node)}")
+def set_menu(node, name, token):
+    """Sets `node`'s menu `name` to the item `token`; warns when either is missing."""
+    p = node.parm(name)
+    if p is None:
+        warn(f"{node.path()} has no menu {name}; its parameters: {labels(node)}")
         return False
-    p = pt[0]
-    items, item_labels = list(p.menuItems()), list(p.menuLabels())
-    for i, lab in enumerate(item_labels):
-        if item_label.lower() in lab.lower():
-            try:
-                p.set(i)
-            except (TypeError, hou.OperationFailed):
-                p.set(items[i])
-            return True
-    warn(f"{p.path()}: no item like {item_label!r} in {item_labels}")
-    return False
+    return b3d_hda.set_token(p, token, warn)
 
 
 def solver_folders(entries):
@@ -330,49 +318,21 @@ def switch_on_context_geo(switch, index):
     p.setExpression(f'npoints(opinputpath("..", {index})) > 0', hou.exprLanguage.Hscript)
 
 
-def set_import_style(node, item):
-    """Import Style to the item whose label starts with `item` ("fetch geometry": Fetch Geometry
-    from DOP Network, not the Packed / Unpacked variants; "create points": Create Points to
-    Represent Objects)."""
-    p = node.parm("importstyle")
-    if p is None:
-        warn(f"{node.path()} has no Import Style; its parameters: {labels(node)}")
-        return
-    item_labels = list(p.menuLabels())
-    for i, lab in enumerate(item_labels):
-        if lab.lower().startswith(item):
-            p.set(i)
-            return
-    warn(f"{p.path()}: no {item!r} item in {item_labels}")
-
-
-def set_by_labels(node, candidates, value):
-    """The parameter labelled like the first of `candidates` that exists to `value`."""
-    for label in candidates:
-        if template_by_label(node, label) is not None:
-            return set_by_label(node, label, value)
-    warn(f"{node.path()} has none of the parameters {candidates}; its parameters: {labels(node)}")
-    return False
-
-
 def copy_attributes(xform, toggle_parm):
     """Transform Pieces' Attributes to Copy, as RBD Bullet Solver's: always on, the asset's Transfer
     Attributes while its `toggle_parm` is on, else just w. The toggle is the one named in the list's
-    disable condition (or a toggle with the same label)."""
-    group = xform.parmTemplateGroup()
-    found = [pt for pt in group.entriesWithoutFolders() if pt.label().lower() == "attributes to copy"]
-    attribs = next((pt for pt in found if pt.type() == hou.parmTemplateType.String), None)
+    disable condition."""
+    attribs = xform.parmTemplateGroup().find(ATTRIBS_TO_COPY)
     if attribs is None:
-        warn(f"{xform.path()} has no Attributes to Copy list; its parameters: {labels(xform)}")
+        warn(f"{xform.path()} has no {ATTRIBS_TO_COPY}; its parameters: {labels(xform)}")
         return
-    xform.parm(attribs.name()).set(f'`ifs(ch("../{toggle_parm}"), chs("../{TRANSFER_ATTRIBUTES}"), "w")`')
-    toggle = next((pt.name() for pt in found if pt.type() == hou.parmTemplateType.Toggle), None)
-    if toggle is None:
-        for cond in attribs.conditionals().values():
-            m = re.search(r"(\w+)\s*==\s*0", cond)
-            if m and xform.parm(m.group(1)) is not None:
-                toggle = m.group(1)
-                break
+    xform.parm(ATTRIBS_TO_COPY).set(f'`ifs(ch("../{toggle_parm}"), chs("../{TRANSFER_ATTRIBUTES}"), "w")`')
+    toggle = None
+    for cond in attribs.conditionals().values():
+        m = re.search(r"(\w+)\s*==\s*0", cond)
+        if m and xform.parm(m.group(1)) is not None:
+            toggle = m.group(1)
+            break
     if toggle is None:
         warn(f"{xform.path()}: no toggle for Attributes to Copy found; it copies always")
         return
@@ -380,6 +340,6 @@ def copy_attributes(xform, toggle_parm):
 
 
 def set_toggles(node, toggles):
-    """Each toggle labelled like a key of `toggles` to its value."""
-    for label, value in toggles.items():
-        set_by_label(node, label, int(value))
+    """Each toggle named by a key of `toggles` to its value."""
+    for name, value in toggles.items():
+        set_named(node, name, int(value))

@@ -31,10 +31,10 @@ from b3dtest import (
     packed_positions,
     packed_transform,
     point_attributes,
-    set_menu_by_label,
     set_parm,
     single_object_geo,
     step,
+    set_menu_token,
 )
 
 G = 9.80665
@@ -162,7 +162,7 @@ def test_packed_disk():
     geo = new_geo("disk_piece")
     f = create(geo, "file")
     set_parm(f, ["file"], path)
-    set_menu_by_label(f, ["loadtype"], "Packed Disk")
+    set_menu_token(f, ["loadtype"], "delayed")  # Packed Disk Primitive
     out = named_and_placed(geo, f, "disk")
     kinds = sorted({p.type().name() if hasattr(p.type(), "name") else str(p.type()) for p in out.geometry().prims()})
     _, track = drop_one("disk", out.path())
@@ -210,7 +210,7 @@ def test_odd_packed_contents():
         geo = new_geo("odd_" + label.split()[0])
         if label == "primitive sphere":
             src = create(geo, "sphere")
-            set_menu_by_label(src, ["type"], "Primitive")
+            set_menu_token(src, ["type"], "prim")
             set_parm(src, ["rad"], (0.5, 0.5, 0.5))
         else:
             box = create(geo, "box")
@@ -832,7 +832,7 @@ def test_data_under_geometry():
                                                      "attrs": {"v": (3.0, 0.0, 0.0)}}])
     dop = new_dopnet("data_geo")
     obj = box3d_data(dop, box3d_packed_object(dop, "pieces", path), "data", friction=0.0)
-    set_menu_by_label(obj, ["parmop_friction"], "Always")
+    set_menu_token(obj, ["parmop_friction"], "always")
     finish(dop, box3d_solver(dop, obj))
 
     def sample(sim, f):

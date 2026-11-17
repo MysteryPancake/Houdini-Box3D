@@ -88,32 +88,20 @@ def set_parm(node, names, value):
     )
 
 
-def set_menu_by_label(node, names, label_part):
-    """Sets a menu parameter to the first item whose label contains label_part (case-insensitive)."""
-    for n in names:
+def set_menu_token(node, names, token):
+    """Sets the first of the menus `names` that exists to its item `token`. Raises SetupError listing
+    the items if it has no such item."""
+    for n in [names] if isinstance(names, str) else names:
         p = node.parm(n)
         if p is None:
             continue
-        labels = list(p.menuLabels())
-        for i, label in enumerate(labels):
-            if label_part.lower() in label.lower():
-                p.deleteAllKeyframes()
-                items = p.menuItems()
-                try:
-                    p.set(i)
-                except (TypeError, hou.OperationFailed):
-                    p.set(items[i])
-                return n
-        raise SetupError(f"{node.path()}: menu '{n}' has no item like '{label_part}'; items: {labels}")
+        items = list(p.menuItems())
+        if token not in items:
+            raise SetupError(f"{node.path()}: menu '{n}' has no item '{token}'; items: {items}")
+        p.deleteAllKeyframes()
+        p.set(items.index(token) if p.parmTemplate().type() == hou.parmTemplateType.Menu else token)
+        return n
     set_parm(node, names, 0)  # raises with the parameter list
-
-
-def set_parm_by_label(node, label, value):
-    """Sets the parameter whose label contains `label` (lower case; internal names are not documented)."""
-    names = [p.name() for p in node.parms() if label in p.description().lower()]
-    if not names:
-        raise SetupError(f"{node.path()}: no parameter labelled like '{label}'")
-    set_parm(node, names, value)
 
 
 def set_expression(node, names, expr):

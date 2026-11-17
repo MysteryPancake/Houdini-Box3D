@@ -16,7 +16,6 @@ from b3dtest import (
     new_geo,
     packed_boxes,
     set_parm,
-    set_parm_by_label,
 )
 
 
@@ -948,7 +947,7 @@ def test_solver_sop_before_start_bullet():
         if kind == "box3d":
             set_parm(sop, ["startframe"], 6)
         else:
-            set_parm_by_label(sop, "start frame", 6)
+            set_parm(sop, ["startframe"], 6)
         track = play(sop, 12, lambda s, f: (named_positions(s.geometry(0)).get(names[0]), _counts(s))
                      if f in (3, 12) else None)
         got[kind] = track
@@ -989,7 +988,7 @@ def test_solver_sop_solve_first_frame_bullet():
         set_parm(sops["box3d"], ["collisiontype"], 1)
         set_parm(sops["bullet"], ["collision_initialstate"], 1)
         set_parm(sops["box3d"], ["solvefirstframe"], on)
-        set_parm_by_label(sops["bullet"], "creation frame", on)
+        set_parm(sops["bullet"], ["solvefirstframe"], on)
         ys = {kind: play(sop, 3, lambda s, f: named_positions(s.geometry(0))) for kind, sop in sops.items()}
         for label, name, status in (("free-falling box", names[1], None), ("box on the lifted collider", names[0], Result.INFO)):
             ok = all(name in ys[k][f] for k in ys for f in (1, 2, 3)) and                 all(close(ys["box3d"][f][name][1], ys["bullet"][f][name][1], 0.05) for f in (1, 2, 3))
@@ -1014,7 +1013,7 @@ def test_solver_sop_keep_broken_bullet():
     for keep in (0, 1):
         sops = _both_sops(f"sop_keep_broken_b{keep}", geometry=pieces, constraints=lines, collision=ground)
         set_parm(sops["box3d"], ["constraint_keepbroken"], keep)
-        set_parm_by_label(sops["bullet"], "export broken", keep)
+        set_parm(sops["bullet"], ["constraint_keepbroken"], keep)
 
         def sample(s, f):
             if f != 12:

@@ -18,10 +18,12 @@ from b3d_solver_common import (
     FORCES_OUTPUTS,
     OVERWRITE_FROM_SOP,
     PACKED_OBJECT,
-    parm_by_label,
+    SHAPE_CONVEX,
     RELATIONSHIPS,
-    set_by_label,
-    set_menu_item,
+    BODY_KINEMATIC,
+    BODY_STATIC,
+    set_menu,
+    set_named,
     STATIC_DATA,
     STATIC_NULL,
     switch_on_context_geo,
@@ -32,16 +34,10 @@ from b3d_solver_common import (
 
 def packed_object(dopnet, name, context_input, object_name):
     obj = create(dopnet, PACKED_OBJECT, name)
-    set_by_label(obj, "Object Name", object_name)
-    set_by_label(obj, "SOP Path", f'`dopcontextgeo(".", {context_input})`')
-    pt = parm_by_label(obj, "Use Object Transform")
-    if pt is not None:
-        pt.set((0,))  # SOP space, like RBD Bullet Solver
+    set_named(obj, "objname", object_name)
+    set_named(obj, "soppath", f'`dopcontextgeo(".", {context_input})`')
+    set_named(obj, "usetransform", 0)  # SOP space, like RBD Bullet Solver
     return obj
-
-
-def menu_index_expr(parm, cond, on_label, off_label):
-    return b3d_hda.menu_index_expr(parm, cond, on_label, off_label, warn)
 
 
 def animate_collision(collision):
@@ -49,11 +45,11 @@ def animate_collision(collision):
     Kinematic / Static, and its Overwrite Attributes from SOP (the Packed Object re-imports the
     SOP every step), so the solver sees the new poses. Both are the Packed Object's own parameters:
     the nested asset stays locked."""
-    pt = parm_by_label(collision, "Body Type")
-    if pt is None:
+    p = collision.parm("bodytype")
+    if p is None:
         warn(f"{collision.path()} has no Body Type; its parameters: {labels(collision)}")
     else:
-        menu_index_expr(pt[0], f'ch("../../{COLLISION_TYPE}") > 0', "Kinematic", "Static")
+        b3d_hda.menu_token_expr(p, f'ch("../../{COLLISION_TYPE}") > 0', BODY_KINEMATIC, BODY_STATIC, warn)
     overwrite = collision.parm(OVERWRITE_FROM_SOP)
     if overwrite is None:
         warn(f"{collision.path()} has no {OVERWRITE_FROM_SOP}: the collision is imported once and cannot animate")
@@ -68,7 +64,7 @@ def build_dops(dopnet):
     # Type Animated / Deforming: Kinematic (the solver moves each body to its new pose) and the SOP re-imported
     # every step; Static: Static, imported once.
     collision = packed_object(dopnet, "collision", DOP_COLLISION, "collision")
-    set_menu_item(collision, "Default Shape", "Convex Hull")
+    set_menu(collision, "defaultshape", SHAPE_CONVEX)
     animate_collision(collision)
 
     # Collide As Static Object: the Collision input, unpacked, as one Static Object (polygons become one mesh,
@@ -103,8 +99,8 @@ def build_dops(dopnet):
     network = create(dopnet, "constraintnetwork", "constraintnetwork")
     network.setInput(0, pieces)
     network.setInput(1, rel_merge)
-    set_menu_item(network, "Geometry Source", "Second Context")
-    set_by_label(network, "Attach Internal Constraints to Object", 1)
+    set_menu(network, "geosource", "second")  # Second Context Geometry
+    set_named(network, "attachinternalconstraints", 1)
     constrained = create(dopnet, "switch", "use_constraints")
     constrained.setInput(0, pieces)
     constrained.setInput(1, network)

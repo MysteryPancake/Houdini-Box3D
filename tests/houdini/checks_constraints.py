@@ -32,15 +32,14 @@ from b3dtest import (
     rbd_object,
     Result,
     set_expression,
-    set_menu_by_label,
     set_parm,
-    set_parm_by_label,
     SetupError,
     single_object_geo,
     solver_for,
     sop_solver,
     step,
     whole_object_points,
+    set_menu_token,
 )
 
 FACE = (0.5, 2, 0)  # the shared face of the fixed piece (0, 2, 0) and the hanging one (1, 2, 0)
@@ -480,7 +479,7 @@ def test_rbd_object_active():
     for label, active in (("active", 1), ("inactive", 0)):
         dop = new_dopnet(f"rbd_{label}")
         obj = rbd_object(dop, "box", box_sop(f"rbd_{label}_box", (0, 3, 0)))
-        set_parm_by_label(obj, "active object", active)
+        set_parm(obj, ["active"], active)  # Create Active Object
         finish(dop, box3d_solver(dop, obj))
         track = step(dop, 24, lambda sim, f: centroid(whole_object_points(sim, "box"))[1])
         heights[label] = track[24]
@@ -527,7 +526,7 @@ def _disc_sop(name):
         tube = create(geo, "tube")
         # The default Primitive Type is Primitive: one quadric primitive on one point, which has
         # no extent as far as the points go (mass 8e-6, a bounding box of 0)
-        set_menu_by_label(tube, ["type"], "polygon")
+        set_menu_token(tube, ["type"], "poly")
         set_parm(tube, ["rad"], (0.5, 0.5))
         set_parm(tube, ["height"], 0.2)
         set_parm(tube, ["cap"], 1)
@@ -561,8 +560,8 @@ def test_rbd_object_inertia_type():
     results = []
     turned = {}
     seen = {}
-    cases = (("volume", "volume", 1), ("bounds", "bounding", 1), ("bounds_but_off", "bounding", 0))
-    for label, menu_label, compute in cases:
+    cases = (("volume", "sdf", 1), ("bounds", "bbox", 1), ("bounds_but_off", "bbox", 0))  # Use Volume, Use Bounding Box
+    for label, token, compute in cases:
         dop = new_dopnet(f"rbd_inertia_{label}")
         obj = rbd_object(dop, "disc", _disc_sop(f"rbd_inertia_{label}_disc"), angvel=(0, 573, 0))
         holder = obj if obj.parm("computeinertialtensortype") is not None else None
@@ -572,11 +571,11 @@ def test_rbd_object_inertia_type():
             results.append(Result("rbd_object_inertia_type", Result.INFO,
                                   f"no node type has computeinertialtensortype; tried: {tried}"))
             return results
-        set_menu_by_label(holder, ["computeinertialtensortype"], menu_label)
+        set_menu_token(holder, ["computeinertialtensortype"], token)
         set_parm(holder, ["computeinertialtensor"], compute)
         # The object already has its RBD State: only Set Always changes it.
         for name in ("parmop_computeinertialtensortype", "parmop_computeinertialtensor"):
-            set_menu_by_label(holder, [name], "Always")
+            set_menu_token(holder, [name], "always")
         finish(dop, box3d_solver(dop, merge(dop, [ground_object(dop), holder])))
 
         def sample(sim, f):
@@ -612,7 +611,7 @@ def test_data_change_midsim():
     if target is None:
         ops = ", ".join(p.name() for p in data.parms() if p.name().startswith("parmop"))
         raise SetupError(f"no parmop_friction on Box3D Data; operation menus: {ops}")
-    set_menu_by_label(data, ["parmop_friction"], "Always")
+    set_menu_token(data, ["parmop_friction"], "always")
     ground_path, _ = packed_boxes("friction_ground", [dict(GROUND, attrs={"active": 0})])
     ground = packed_object(dop, "ground", ground_path, friction=1.0)
     finish(dop, box3d_solver(dop, merge(dop, [ground, data])))

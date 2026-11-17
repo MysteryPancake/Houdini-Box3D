@@ -23,11 +23,11 @@ from b3dtest import (
     packed_positions,
     Result,
     set_expression,
-    set_menu_by_label,
     set_parm,
     SetupError,
     sop_solver,
     step,
+    set_menu_token,
 )
 from checks_constraints import FACE, broken_count, hanging_pair
 from checks_common import box3d_messages
@@ -248,7 +248,7 @@ def test_joint_keyed_midsim():
                 ops = ", ".join(p.name() for p in joint.parms() if p.name().startswith("parmop"))
                 raise SetupError(f"no parmop_breakable on the weld node; operation menus: {ops}")
             set_expression(joint, ["breakable"], "$F >= 24")
-            set_menu_by_label(joint, ["parmop_breakable"], "Always")
+            set_menu_token(joint, ["parmop_breakable"], "always")
         return dop, names
 
     dop_k, names = build("on", True)

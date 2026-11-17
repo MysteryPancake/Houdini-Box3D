@@ -68,16 +68,13 @@ def set_parm(node, names, value):
     raise SetupError(f"{node.path()}: no parameter {' / '.join(names)}. It has: {available}")
 
 
-def set_menu(node, name, label_part):
-    """Sets a menu to the first item whose label contains label_part."""
+def set_token(node, name, token):
+    """Sets a menu to its item `token`."""
     p = node.parm(name)
-    if p is None:
-        raise SetupError(f"{node.path()}: no menu '{name}'")
-    for i, label in enumerate(p.menuLabels()):
-        if label_part.lower() in label.lower():
-            p.set(i)
-            return
-    raise SetupError(f"{node.path()}: menu '{name}' has no item like '{label_part}': {list(p.menuLabels())}")
+    items = list(p.menuItems()) if p is not None else []
+    if token not in items:
+        raise SetupError(f"{node.path()}: menu '{name}' has no item {token!r}: {items}")
+    p.set(items.index(token) if p.parmTemplate().type() == hou.parmTemplateType.Menu else token)
 
 
 def quat_about(axis, angle):
@@ -171,14 +168,14 @@ class Pieces:
 
     def shape_sphere(self, tag, radius, freq=3):
         sph = create(self.geo, "sphere", f"{tag}_shape")
-        set_menu(sph, "type", "Polygon")  # a primitive sphere is a single point: nothing to fit
+        set_token(sph, "type", "poly")  # Polygon. A primitive sphere is a single point: nothing to fit
         set_parm(sph, "rad", (radius, radius, radius))
         set_parm(sph, ["freq"], freq)
         return sph
 
     def shape_tube(self, tag, radius, height):
         tube = create(self.geo, "tube", f"{tag}_shape")
-        set_menu(tube, "type", "Polygon")
+        set_token(tube, "type", "poly")  # Polygon
         set_parm(tube, "rad", (radius, radius))
         set_parm(tube, "height", height)
         set_parm(tube, "cap", 1)
@@ -187,7 +184,7 @@ class Pieces:
 
     def shape_platonic(self, tag, kind, radius):
         pl = create(self.geo, "platonic", f"{tag}_shape")
-        set_menu(pl, "type", kind)
+        set_token(pl, "type", kind)
         set_parm(pl, ["rad", "radius"], radius)
         return pl
 
@@ -426,8 +423,8 @@ def scene_shapes():
     kinds = [("boxes", "box"), ("spheres", "sphere"), ("capsules", "capsule"),
              ("dodecahedra", "convexhull"), ("teapots", "convexhull")]
     shapes = [p.shape_box("boxes", (0.8, 0.8, 0.8)), p.shape_sphere("spheres", 0.45),
-              p.shape_tube("capsules", 0.25, 1.0), p.shape_platonic("dodecahedra", "Dodecahedron", 0.5),
-              p.shape_platonic("teapots", "Teapot", 0.45)]
+              p.shape_tube("capsules", 0.25, 1.0), p.shape_platonic("dodecahedra", "4", 0.5),
+              p.shape_platonic("teapots", "6", 0.45)]
     for k, ((tag, rep), shape) in enumerate(zip(kinds, shapes)):
         cd = rainbow(k / len(kinds))
         calls = []
@@ -826,26 +823,6 @@ def create_any(parent, type_names, name):
     raise SetupError(f"none of the node types {type_names} exist in {parent.path()}")
 
 
-def set_by_label(node, labels, value):
-    """Sets the first parameter whose label contains one of `labels` (case-insensitive): internal
-    names are not documented for every node. A tuple value sets a whole parameter tuple."""
-    tuples = node.parmTuples()
-    for want in labels:
-        for pt in tuples:
-            if want.lower() in pt.parmTemplate().label().lower():
-                if isinstance(value, (tuple, list)):
-                    if len(pt) == len(value):
-                        pt.deleteAllKeyframes()
-                        pt.set(value)
-                        return
-                elif len(pt) == 1:
-                    pt[0].deleteAllKeyframes()
-                    pt[0].set(value)
-                    return
-    have = ", ".join(sorted({pt.parmTemplate().label() for pt in tuples}))
-    raise SetupError(f"{node.path()}: no parameter labelled like {labels}. Its labels: {have}")
-
-
 def scene_forces():
     p = Pieces("forces_pieces")
     ground(p, 80.0)
@@ -872,14 +849,14 @@ for (int j = 0; j < {rows}; j++) for (int i = 0; i < {rows}; i++) {{
     half = (rows - 1) * pitch / 2
     fan = create_any(dop, ["fan", "fanforce"], "fan_force")
     fan.setInput(0, obj)
-    set_by_label(fan, ["Position", "Center"], (-half - 4.0, 0.5, 0.0))
-    set_by_label(fan, ["Direction"], (1.0, 0.35, 0.0))
+    set_parm(fan, "t", (-half - 4.0, 0.5, 0.0))  # Position
+    set_parm(fan, "direction", (1.0, 0.35, 0.0))
 
     # POP force: a POP Force adds turbulence to each piece's `force` point attribute. In a Multiple
     # Solver it runs first; the Box3D Solver then applies `force` for one step and clears it.
     popforce = create(dop, "popforce", "pop_turbulence")
-    set_by_label(popforce, ["Amplitude"], 25.0)
-    set_by_label(popforce, ["Swirl Size"], 2.0)
+    set_parm(popforce, "amp", 25.0)
+    set_parm(popforce, "swirlsize", 2.0)
     solver = create(dop, "box3d_solver", "box3d_solver")
     set_parm(solver, "forceswake", 1)  # resting boxes wake up when a force reaches them
     multi = create(dop, "multisolver", "pop_then_box3d")

@@ -53,20 +53,20 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import b3d_hda  # noqa: E402  (beside this script)
 import b3d_settings  # noqa: E402
-from b3d_hda import labels, pull, template_by_label, value_templates, without_parmops  # noqa: E402
+from b3d_hda import labels, pull, value_templates, without_parmops  # noqa: E402
 
 TYPE_NAME = "box3d_packedobject"
 LABEL = "Box3D Packed Object"
 ICON = "DOP_box3d_packedobject"  # config/Icons/DOP_box3d_packedobject.svg, installed by the build
 
-# Parameters promoted from the inner Empty Object and SOP Geometry, by label (internal names are not
-# documented for every node). Required ones fail the build of the asset; the rest are skipped with a
-# warning when this Houdini version labels them differently.
+# Parameters promoted from the inner Empty Object and SOP Geometry, under their own names. Required ones
+# fail the build of the asset; the rest are skipped with a warning when this Houdini version lacks them.
+OBJECT_NAME, SOP_PATH, USE_TRANSFORM = "objname", "soppath", "usetransform"
 OBJECT_PARMS = [
-    ("emptyobject", "Object Name", True),
-    ("emptyobject", "Solve on Creation Frame", False),
-    ("geometry", "SOP Path", True),
-    ("geometry", "Use Object Transform", False),
+    ("emptyobject", OBJECT_NAME, True),
+    ("emptyobject", "solvefirstframe", False),
+    ("geometry", SOP_PATH, True),
+    ("geometry", USE_TRANSFORM, False),
 ]
 
 OVERWRITE_FROM_SOP = "overwritefromsop"  # RBD Packed Object's Overwrite Attributes from SOP
@@ -308,12 +308,11 @@ def wire_overwrite(asset):
     """Every Parameter Operation of the inner SOP Geometry (and its Default Operation): Set Always
     while Overwrite Attributes from SOP or Deforming is on, else Set Initial."""
     geo = asset.node("geometry")
-    ops = [p for p in geo.parms()
-           if p.name().startswith("parmop") or p.parmTemplate().label().lower() == "default operation"]
+    ops = [p for p in geo.parms() if p.name().startswith("parmop") or p.name() == "defaultparmop"]
     if not ops:
         warn(f"{geo.path()} has no Parameter Operation menus: Overwrite Attributes from SOP does nothing")
     driven = [p.name() for p in ops
-              if b3d_hda.menu_index_expr(p, REIMPORT, "Always", "Initial", warn)]
+              if b3d_hda.menu_token_expr(p, REIMPORT, "always", "initial", warn)]
     print(f"make_packed_object: Overwrite Attributes from SOP / Deforming drive {geo.path()}: {', '.join(driven) or 'nothing'}")
 
 
@@ -359,22 +358,19 @@ def build(out_path):
     # The parameters: the Object tab, then each Box3D Data folder as a tab.
     inner = {"emptyobject": obj, "geometry": geo}
     promoted = []  # (inner node, template)
-    for node_name, label, required in OBJECT_PARMS:
-        pt = template_by_label(inner[node_name], label)
+    for node_name, name, required in OBJECT_PARMS:
+        pt = inner[node_name].parmTemplateGroup().find(name)
         if pt is None:
-            msg = (f"{inner[node_name].path()} has no parameter labelled {label!r}. Its parameters: "
-                   f"{labels(inner[node_name])}")
+            msg = f"{inner[node_name].path()} has no parameter {name}. Its parameters: {labels(inner[node_name])}"
             if required:
                 raise RuntimeError(msg)
             warn(msg + "; not promoted")
             continue
         pt = pt.clone()
-        if label == "Object Name" and pt.type() == hou.parmTemplateType.String:
+        if name == OBJECT_NAME and pt.type() == hou.parmTemplateType.String:
             pt.setDefaultValue(("$OS",))
         promoted.append((inner[node_name], pt))
-    by_label = {pt.label(): pt.name() for _, pt in promoted}
-    sop_path_parm = by_label["SOP Path"]
-    transform_parm = by_label.get("Use Object Transform")
+    transform_parm = USE_TRANSFORM if any(pt.name() == USE_TRANSFORM for _, pt in promoted) else None
 
     # Creation Frame: Empty Object has none; like RBD Packed Object, the object is created on the
     # step its Activation is true, here only on that simulation frame.
@@ -425,7 +421,7 @@ the simulation. Off: read once when the object is created.")
     # asset's: the stage reads them).
     build_stage(sub, rows)
     stamp_sop_geometry(geo)
-    promoted = [(node, pt) for node, pt in promoted if pt.name() not in (sop_path_parm, transform_parm)]
+    promoted = [(node, pt) for node, pt in promoted if pt.name() not in (SOP_PATH, transform_parm)]
     b3d_hda.tidy(sub)
 
     if os.path.exists(out_path):
@@ -446,7 +442,7 @@ the simulation. Off: read once when the object is created.")
                           "from Box3D Data's defaults become point attributes; a point's own attribute wins.")
 
     asset.allowEditingOfContents()
-    wire_stage(asset, sop_path_parm, transform_parm, by_label["Object Name"])
+    wire_stage(asset, SOP_PATH, transform_parm, OBJECT_NAME)
     wire_hires(asset, transform_parm)
     wire_overwrite(asset)
     for node, pt in promoted:
@@ -478,13 +474,13 @@ def check(out_path, dopnet):
     pack.setInput(0, box)
     pack.setDisplayFlag(True)
     probe = dopnet.createNode(TYPE_NAME, "probe")
-    for label, value in (("SOP Path", pack.path()), ("Friction", 0.25), ("Body Type", 1), ("Default Shape", 1),
-                         ("Add Impact Data", 1)):
-        pt = template_by_label(probe, label)
+    for name, value in ((SOP_PATH, pack.path()), ("friction", 0.25), ("bodytype", 1), ("defaultshape", 1),
+                        (IMPACT_TOGGLE, 1)):
+        pt = probe.parmTuple(name)
         if pt is None:
-            warn(f"probe: no parameter labelled {label!r}")
+            warn(f"probe: no parameter {name}")
             return
-        probe.parmTuple(pt.name()).set((value,))
+        pt.set((value,))
     out = probe.node(f"{STAGE}/OUT")
     g = out.geometry() if out is not None else None
     if g is None or not g.points():
@@ -529,17 +525,16 @@ def check(out_path, dopnet):
         seen = []
         for value in (0, 1):
             probe.parm(OVERWRITE_FROM_SOP).set(value)
-            seen.append(ops[0].menuLabels()[ops[0].eval()] if ops[0].parmTemplate().type() == hou.parmTemplateType.Menu
-                        else ops[0].evalAsString())
+            seen.append(ops[0].evalAsString())
         probe.parm(OVERWRITE_FROM_SOP).set(0)
-        if "initial" not in seen[0].lower() or "always" not in seen[1].lower():
+        if seen != ["initial", "always"]:
             warn(f"probe: Overwrite Attributes from SOP off / on gives {seen}, expected Set Initial / Set Always")
     # A point's own friction is kept.
     attr = sop.createNode("attribwrangle", "own_friction")
     attr.setInput(0, pack)
     attr.parm("snippet").set("f@friction = 0.75;")
     attr.setDisplayFlag(True)
-    probe.parmTuple(template_by_label(probe, "SOP Path").name()).set((attr.path(),))
+    probe.parmTuple(SOP_PATH).set((attr.path(),))
     g = out.geometry()
     own = g.points()[0].attribValue("friction") if g is not None and g.findPointAttrib("friction") else None
     if own is None or abs(own - 0.75) > 1e-6:
@@ -566,8 +561,7 @@ def check(out_path, dopnet):
         warn(f"probe: Angular Velocity 180 degrees per second wrote w {got['w']}, expected pi radians")
     if got["deforming"] != 1:
         warn(f"probe: Deforming wrote deforming {got['deforming']}, expected 1")
-    if ops and "always" not in (ops[0].menuLabels()[ops[0].eval()] if ops[0].parmTemplate().type() == hou.parmTemplateType.Menu
-                                else ops[0].evalAsString()).lower():
+    if ops and ops[0].evalAsString() != "always":
         warn("probe: Deforming does not re-import the SOP (Set Always)")
     sop.destroy()
 

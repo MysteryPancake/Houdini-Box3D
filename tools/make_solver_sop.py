@@ -75,6 +75,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import b3d_hda  # noqa: E402  (beside this script)
 from b3d_hda import labels, pull, value_templates, without_parmops  # noqa: E402
 from b3d_solver_common import (  # noqa: E402
+    CACHE_ENABLED,
     CACHE_MEMORY,
     COLLISION_TYPE,
     as_collapsible,
@@ -89,6 +90,7 @@ from b3d_solver_common import (  # noqa: E402
     DOP_PIECES,
     DOPNET_PARMS,
     drop_templates,
+    FETCH_GEOMETRY,
     FETCH_IMPACTS,
     group_tab,
     ICON,
@@ -100,11 +102,11 @@ from b3d_solver_common import (  # noqa: E402
     LABEL,
     OUTPUT_LABELS,
     PACKED_OBJECT,
-    parm_by_label,
-    row_by_label,
+    row_of,
     PIECES_DROPPED,
     rename_templates,
     GUIDE_GEO,
+    SHAPE_CONVEX,
     SHAPES_COLOR,
     SHAPES_TOGGLE,
     SHOW_COLLISION,
@@ -115,7 +117,7 @@ from b3d_solver_common import (  # noqa: E402
     TAB_GROUPS,
     SOLVER_FOLDERS,
     BOUNCE_PARMS,
-    template_by_label,
+    START_FRAME,
     TRANSFER_ATTRIBUTES,
     TRANSFER_ATTRIBUTES_DEFAULT,
     TRANSFER_TO,
@@ -141,7 +143,7 @@ from b3d_solver_network import (  # noqa: E402
     scale_joint_settings,
     scale_settings,
     SOLVE_FIRST,
-    SOLVE_FIRST_LABEL,
+    SOLVE_FIRST_PARM,
     WORLD_SCALE,
     WORLD_SCALE_TOGGLE,
 )
@@ -218,22 +220,21 @@ def build(out_path, packed_hda=None):
             script_callback_language=hou.scriptLanguage.Python,
             help="Clears the cached simulation and simulates again from the start frame."))
     dop_templates = {}
-    for label in DOPNET_PARMS:
-        pt = template_by_label(dopnet, label)
+    for name in DOPNET_PARMS:
+        pt = dopnet.parmTemplateGroup().find(name)
         if pt is None:
-            warn(f"{dopnet.path()} has no parameter labelled {label!r}; not promoted. "
-                 f"Its parameters: {labels(dopnet)}")
+            warn(f"{dopnet.path()} has no parameter {name}; not promoted. Its parameters: {labels(dopnet)}")
             continue
-        dop_templates[label] = pt.clone()
-        links.append((sub.relativePathTo(dopnet), pt.name(), pt.name()))
-    if "Start Frame" in dop_templates:
-        top.append(dop_templates["Start Frame"])
+        dop_templates[name] = pt.clone()
+        links.append((sub.relativePathTo(dopnet), name, name))
+    if START_FRAME in dop_templates:
+        top.append(dop_templates[START_FRAME])
     # Cache Simulation as RBD Bullet Solver's: a checkbox with its label hidden, joined to Cache Memory (MB), which
     # it enables (any checkbox the DOP network has on that row is left out). Both go in Advanced / Performance.
-    cache_toggle = dop_templates.get("Cache Simulation")
-    cache_memory = [pt for pt in row_by_label(dopnet, CACHE_MEMORY) if pt.type() != hou.parmTemplateType.Toggle]
+    cache_toggle = dop_templates.get(CACHE_ENABLED)
+    cache_memory = [pt for pt in row_of(dopnet, CACHE_MEMORY) if pt.type() != hou.parmTemplateType.Toggle]
     if not cache_memory:
-        warn(f"{dopnet.path()} has no parameter labelled {CACHE_MEMORY!r}; not promoted. "
+        warn(f"{dopnet.path()} has no parameter {CACHE_MEMORY}; not promoted. "
              f"Its parameters: {labels(dopnet)}")
     for pt in cache_memory:
         links.append((sub.relativePathTo(dopnet), pt.name(), pt.name()))
@@ -253,11 +254,10 @@ def build(out_path, packed_hda=None):
         help="Simulates pieces and colliders on the frame they appear. Off: they start moving one frame later.")
     for obj_name in ("pieces", "collision"):
         obj = dopnet.node(obj_name)
-        pt = template_by_label(obj, SOLVE_FIRST_LABEL) if obj is not None else None
-        if pt is None:
-            warn(f"{dopnet.path()}/{obj_name} has no {SOLVE_FIRST_LABEL!r}: {SOLVE_FIRST} does nothing there")
+        if obj is None or obj.parm(SOLVE_FIRST_PARM) is None:
+            warn(f"{dopnet.path()}/{obj_name} has no {SOLVE_FIRST_PARM}: {SOLVE_FIRST} does nothing there")
         else:
-            links.append((sub.relativePathTo(obj), pt.name(), SOLVE_FIRST))
+            links.append((sub.relativePathTo(obj), SOLVE_FIRST_PARM, SOLVE_FIRST))
     solver_first = [solve_first] + solver_first
     # World Scale, first on the Solver tab (RBD Bullet Solver's usescale / Bullet World Scale).
     use_scale = hou.ToggleParmTemplate(WORLD_SCALE_TOGGLE, "Use World Scale", default_value=False,
@@ -303,9 +303,8 @@ def build(out_path, packed_hda=None):
         templates = tab.parmTemplates()
         for t in templates:
             if t.name() == "collision_defaultshape" and t.type() == hou.parmTemplateType.Menu:
-                convex = [j for j, lab in enumerate(t.menuLabels()) if "convex" in lab.lower()]
-                if convex:
-                    t.setDefaultValue(convex[0])
+                if SHAPE_CONVEX in t.menuItems():
+                    t.setDefaultValue(list(t.menuItems()).index(SHAPE_CONVEX))
         label = COLLIDER_RELABEL.get(tab.label(), tab.label())
         collider_folders.append(hou.FolderParmTemplate(f"b3dsop_collider{i}", label, templates,
                                                        folder_type=hou.folderType.Simple))
@@ -637,8 +636,8 @@ def check(out_path):
         if inner is None or inner.parm(SHAPES_TOGGLE) is None or inner.parm(SHAPES_TOGGLE).eval() != 1:
             warn(f"dopnet/box3d_solver/{SHAPES_TOGGLE} does not follow the asset's")
         probe.parm(SHAPES_TOGGLE).set(0)
-    if not row_by_label(probe, CACHE_MEMORY):
-        warn(f"no {CACHE_MEMORY!r} parameter on the asset")
+    if probe.parm(CACHE_MEMORY) is None:
+        warn(f"no {CACHE_MEMORY} parameter on the asset")
     if probe.parm(SHOW_COLLISION) is None or probe.parm(SHOW_COLLISION).eval() != 1:
         warn(f"no {SHOW_COLLISION} parameter on the asset, or it is not on by default")
     for outer, inner_path, inner_name in (("friction", "dopnet/pieces", "friction"),
@@ -694,10 +693,10 @@ def check(out_path):
     tabs = [f.label() for f in probe.parmTemplateGroup().entries() if f.type() == hou.parmTemplateType.Folder]
     if not tabs or tabs[-1] != "Output":
         warn(f"the asset's tabs are {tabs}: Output is not last")
-    for path, style in (("import_points", "fetch geometry"), ("import_constraints", "fetch geometry")):
+    for path, style in (("import_points", FETCH_GEOMETRY), ("import_constraints", FETCH_GEOMETRY)):
         imp = probe.node(path)
         p = imp.parm("importstyle") if imp is not None else None
-        if p is None or not p.menuLabels()[p.eval()].lower().startswith(style):
+        if p is None or p.evalAsString() != style:
             warn(f"{path}'s Import Style is not {style!r}")
     pts = probe.node("sim_points")
     if pts is not None and pts.geometry() is not None and len(pts.geometry().prims()):
@@ -708,13 +707,13 @@ def check(out_path):
     for inner_path in ("dopnet/pieces", "dopnet/collision"):
         outer = SOLVE_FIRST
         p, obj = probe.parm(outer), probe.node(inner_path)
-        q = parm_by_label(obj, SOLVE_FIRST_LABEL) if obj is not None else None
+        q = obj.parmTuple(SOLVE_FIRST_PARM) if obj is not None else None
         if p is None or q is None:
             warn(f"cannot check {outer} -> {inner_path}")
             continue
         p.set(1)
         if q[0].eval() != 1:
-            warn(f"{inner_path}'s {SOLVE_FIRST_LABEL} does not follow the asset's {outer}")
+            warn(f"{inner_path}'s {SOLVE_FIRST_PARM} does not follow the asset's {outer}")
         p.set(0)
     for parm in (KEEP_BROKEN,):
         if probe.parm(parm) is None:
@@ -728,7 +727,7 @@ def check(out_path):
             warn(f"no {path} subnet with an output0 inside the asset")
     for path, index in (("dopnet/pieces", DOP_PIECES), ("dopnet/collision", DOP_COLLISION)):
         obj = probe.node(path)
-        pt = parm_by_label(obj, "SOP Path") if obj is not None else None
+        pt = obj.parmTuple("soppath") if obj is not None else None
         want = f'dopcontextgeo(".", {index})'
         if pt is None or want not in pt[0].unexpandedString():
             warn(f"{path}'s SOP Path is {pt[0].unexpandedString() if pt else '?'!r}, expected `{want}`")

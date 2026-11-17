@@ -96,7 +96,9 @@ All three assets list themselves under Box3D in the Tab menu (`b3d_hda.set_tab_s
 SideFX's, `doptoolutils` / `soptoolutils.genericTool`).
 
 Traps it handles:
-* Parameters are found by label, skipping the `parmop_*` menus that share their labels.
+* SideFX parameters and menu items are set by name and token (`set_named`, `set_menu`, `b3d_hda.set_token`), never by
+  label. Our own menus' tokens are the item numbers (`Box3DParms::menu`). Our folders are found by label: their switcher
+  names are numbered.
 * Empty Object has no creation frame: its Activation is `$SF == ch("../createframe")`, as RBD Packed Object's.
 * The inner Box3D Data's `parmop_*` are set to Set Initial: a new data node starts at Use Default, and only an edit (not
   a channel reference) switches it, so the linked object-level settings would otherwise keep their built-in values.
@@ -225,7 +227,7 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   Copy as RBD Bullet Solver's: the list while on, else `w` (`copy_attributes`, `TRANSFER_TO`), and Transform Pieces'
   own Point Velocities parameters promoted onto both (`POINT_VELOCITY_PARMS`); Outputs, Import Constraints / Proxy
   (`IMPORT_CONSTRAINTS` / `IMPORT_PROXY`: off, an empty output, the chain not cooked). Fetch Impacts makes (or reuses) an Object Merge of the asset's `IMPACTS` null beside the
-  asset, fed by a DOP Import Records of the pieces' `Impacts` data (its parameters set by label, `set_by_labels`).
+  asset, fed by a DOP Import Records of the pieces' `Impacts` data (its parameters set by name).
 * Parameters: Reset Simulation and Start Frame above the tabs, then the solver's tabs (folders found under its Data
   Options, a tab of simple folders kept whole; Guide Options skipped).
   Tab order: Solver, Pieces, Collision, Forces, any other solver tabs, Visualization (`visualization_tab`: Show
@@ -236,7 +238,7 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   and DOP tabs left empty (Collision, Aging, Output) are dropped. Solver: the solver's own settings, then Contacts,
   Sleeping and Aging. Advanced is Stability (warm starting, continuous, speed limit, inertia) and Performance (Cache
   Simulation with its label hidden, joined to Cache Memory (MB) and disabling it when off; then threads). Cache Memory is
-  the inner DOP network's value found by label (`row_by_label`, `CACHE_MEMORY`), placed by `group_tab`'s `groups`. Collision: one Collision Geometry folder whose header checkbox is Use External
+  the inner DOP network's value with the parameters on its row (`row_of`, `CACHE_MEMORY`), placed by `group_tab`'s `groups`. Collision: one Collision Geometry folder whose header checkbox is Use External
   Collisions (`usecollisions`, placed just before the folder, as RBD Bullet Solver's), holding Collision Type and the collision object's Shape, Material and CCD &
   Contacts folders (`COLLIDER_FOLDERS`, all named `collision_*`), the last cut to Contact Recycling as Contacts
   (`COLLIDER_DROPPED`: the rest does nothing for a Static / Kinematic body). Pieces: the pieces' Box3D Data folders

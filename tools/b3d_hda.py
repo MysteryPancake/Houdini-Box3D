@@ -45,17 +45,6 @@ def labels(node):
                              if not pt.name().startswith("parmop") and pt.type() not in NO_VALUE}))
 
 
-def template_by_label(node, label):
-    """The parameter labelled `label`. DOP data nodes give each parameter a Parameter Operation menu
-    (parmop_<name>) with the same label: those are skipped."""
-    for pt in node.parmTemplateGroup().entriesWithoutFolders():
-        if pt.name().startswith("parmop") or pt.type() in NO_VALUE:
-            continue
-        if pt.label().lower() == label.lower():
-            return pt
-    return None
-
-
 def edit_dialog_script(definition, input_labels, output_labels, warn):
     """Input / output labels, in the DialogScript (hou has no setter for them)."""
     section = definition.sections().get("DialogScript")
@@ -92,6 +81,22 @@ def create(parent, type_names, name):
     raise RuntimeError(f"none of the node types {type_names} exist in {parent.path()}: {last}")
 
 
+def set_token(p, token, warn):
+    """Sets the menu parameter `p` to its item `token`. False (with a warning) when it has no such item."""
+    try:
+        if p.parmTemplate().type() == hou.parmTemplateType.String:
+            p.set(token)
+            return True
+        items = list(p.menuItems())
+        if token in items:
+            p.set(items.index(token))
+            return True
+        warn(f"{p.path()}: no {token!r} item in {items}")
+    except hou.Error as e:
+        warn(f"{p.path()}: {e}")
+    return False
+
+
 def set_operation(node, name, token, warn):
     """Sets the Parameter Operation menu of `node`'s parameter `name` (parmop_<name>) to `token`, as
     set_operations does for all of them. False (with a warning) when it cannot."""
@@ -99,19 +104,7 @@ def set_operation(node, name, token, warn):
     if p is None:
         warn(f"{node.path()} has no parmop_{name}")
         return False
-    items = list(p.menuItems()) if p.parmTemplate().type() == hou.parmTemplateType.Menu else []
-    try:
-        if p.parmTemplate().type() == hou.parmTemplateType.String:
-            p.set(token)
-        elif token in items:
-            p.set(items.index(token))
-        else:
-            warn(f"{p.path()}: no {token!r} item in {items}")
-            return False
-    except hou.Error as e:
-        warn(f"{p.path()}: {e}")
-        return False
-    return True
+    return set_token(p, token, warn)
 
 
 def set_operations(node, token, warn):
@@ -120,42 +113,20 @@ def set_operations(node, token, warn):
 
     A new DOP data node starts at Use Default and a channel reference does not switch it to Set
     Initial, so without this the node keeps its built-in defaults whatever the referenced values."""
-    changed = 0
-    for p in node.parms():
-        if not p.name().startswith("parmop"):
-            continue
-        items = list(p.menuItems()) if p.parmTemplate().type() == hou.parmTemplateType.Menu else []
-        try:
-            if p.parmTemplate().type() == hou.parmTemplateType.String:
-                p.set(token)
-            elif token in items:
-                p.set(items.index(token))
-            else:
-                warn(f"{p.path()}: no {token!r} item in {items}")
-                continue
-            changed += 1
-        except hou.Error as e:
-            warn(f"{p.path()}: {e}")
-    return changed
+    return sum(1 for p in node.parms() if p.name().startswith("parmop") and set_token(p, token, warn))
 
 
-def menu_index_expr(parm, cond, on_label, off_label, warn):
-    """Drives the menu `parm` with an HScript expression: the item labelled like `on_label` while
-    `cond` is true, else the one like `off_label`. False if either item is missing."""
-    found = {}
-    for want in (on_label, off_label):
-        for i, lab in enumerate(parm.menuLabels()):
-            if want.lower() in lab.lower():
-                found[want] = i
-                break
-    if len(found) != 2:
-        warn(f"{parm.path()}: no items like {on_label!r} / {off_label!r} in {list(parm.menuLabels())}")
+def menu_token_expr(parm, cond, on_token, off_token, warn):
+    """Drives the menu `parm` with an HScript expression: the item `on_token` while `cond` is true, else
+    `off_token`. False if either item is missing."""
+    items = list(parm.menuItems())
+    if on_token not in items or off_token not in items:
+        warn(f"{parm.path()}: no items {on_token!r} / {off_token!r} in {items}")
         return False
     if parm.parmTemplate().type() == hou.parmTemplateType.String:
-        items = list(parm.menuItems())
-        expr = f'ifs({cond}, "{items[found[on_label]]}", "{items[found[off_label]]}")'
+        expr = f'ifs({cond}, "{on_token}", "{off_token}")'
     else:
-        expr = f"if({cond}, {found[on_label]}, {found[off_label]})"
+        expr = f"if({cond}, {items.index(on_token)}, {items.index(off_token)})"
     parm.setExpression(expr, hou.exprLanguage.Hscript)
     return True
 

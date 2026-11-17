@@ -5,6 +5,7 @@ import math
 from b3dtest import node_messages
 
 G = 9.80665
+# The Box3D Solver's Friction / Bounce Mixing rules, in menu order: a rule's token is its index (Box3DParms::menu).
 MIXING = ("Geometric Mean", "Minimum", "Maximum", "Average", "Multiply")
 
 

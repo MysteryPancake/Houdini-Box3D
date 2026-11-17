@@ -1,4 +1,4 @@
-"""Friction and bounce mixing: menu labels to rules."""
+"""Friction and bounce mixing: the solver's mixing rules against measured slides and bounces."""
 
 import math
 
@@ -13,7 +13,7 @@ from b3dtest import (
     packed_object,
     packed_positions,
     Result,
-    set_menu_by_label,
+    set_menu_token,
     set_parm,
     step,
 )
@@ -21,7 +21,7 @@ from checks_common import G, MIXING, mix
 
 
 # ---------------------------------------------------------------------------
-# Friction and bounce mixing (menu labels -> rules)
+# Friction and bounce mixing
 # ---------------------------------------------------------------------------
 
 
@@ -38,7 +38,7 @@ def slide_distance(name, mu_box, mu_ground, mixing=None, v0=3.0, solver_kind="bo
     else:
         solver = box3d_solver(dop, obj)
         if mixing:
-            set_menu_by_label(solver, ["frictionmixing"], mixing)
+            set_menu_token(solver, ["frictionmixing"], str(MIXING.index(mixing)))
     finish(dop, solver)
     track = step(dop, 72, lambda sim, f: packed_positions(sim, "pieces")[names[1]])
     return track[72][0], track[72][1]
@@ -74,7 +74,7 @@ def bounce_drop(name, e_box, e_ground, mixing=None, height=2.0, solver_kind="box
         solver = box3d_solver(dop, obj)
         set_parm(solver, ["bouncethreshold"], 0.1)
         if mixing:
-            set_menu_by_label(solver, ["restitutionmixing"], mixing)
+            set_menu_token(solver, ["restitutionmixing"], str(MIXING.index(mixing)))
     finish(dop, solver)
     track = step(dop, 72, lambda sim, f: packed_positions(sim, "pieces")[names[1]][1] - 0.5)
     frames = sorted(track)

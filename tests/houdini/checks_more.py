@@ -33,14 +33,13 @@ from b3dtest import (
     point_attributes,
     Result,
     set_expression,
-    set_menu_by_label,
     set_parm,
-    set_parm_by_label,
     SetupError,
     solver_for,
     sop_solver,
     sop_solver_contents,
     step,
+    set_menu_token,
 )
 from checks_constraints import broken_count, hanging_pair, sidefx_compare
 from checks_solver import max_difference, stack_scene
@@ -139,7 +138,7 @@ def test_point_order():
         tag = label.replace("+", "_")
         path, _ = packed_boxes("order_" + tag, pieces(with_id))
         if reverse:
-            path = append_sop(path, "sort", lambda n: set_menu_by_label(n, ["ptsort"], "Reverse"))
+            path = append_sop(path, "sort", lambda n: set_menu_token(n, ["ptsort"], "rev"))
         dop = new_dopnet("order_" + tag)
         finish(dop, box3d_solver(dop, packed_object(dop, "pieces", path, keep_velocity=True, bounce=0.0)))
         runs[label] = step(dop, 48, lambda sim, f: packed_positions(sim, "pieces"))[48]
@@ -190,7 +189,7 @@ def test_edited_source():
     dop = new_dopnet("edited")
     obj = packed_object(dop, "piece", xf.path())
     data = box3d_data(dop, obj, "data")
-    set_menu_by_label(data, ["defaultshape"], "Convex Hull")
+    set_menu_token(data, ["defaultshape"], "2")  # Convex Hull
     ground_path, _ = packed_boxes("edited_ground", [GROUND])
     finish(dop, box3d_solver(dop, merge(dop, [packed_object(dop, "ground", ground_path), data])))
     first = step(dop, 72, lambda sim, f: object_bbox(sim, "piece"))[72]
@@ -315,7 +314,7 @@ def test_dop_import():
     imp = create(geo, "dopimport")
     set_parm(imp, ["doppath"], dop.path())
     set_parm(imp, ["objpattern"], "pieces")
-    set_menu_by_label(imp, ["importstyle"], "Fetch")
+    set_menu_token(imp, ["importstyle"], "fetch")
     display(imp)
     sim_pos = step(dop, 24, lambda sim, f: packed_positions(sim, "pieces"))[24]
     imp.cook(force=True)
@@ -638,22 +637,19 @@ def _aging_pop_compare(tag, reap, frame_end):
     pobj = create(pdop, "popobject", "particles")
     psolver = create(pdop, "popsolver", "pop_solver")
     psolver.setInput(0, pobj)
-    set_parm_by_label(psolver, "reap particles", int(reap))
-    set_parm_by_label(psolver, "reap at frame end", int(frame_end))
+    set_parm(psolver, ["doreapparticles"], int(reap))
+    set_parm(psolver, ["reapatend"], int(frame_end))
     source = create(pdop, "popsource", "source")
-    set_menu_by_label(source, ["emittype"], "All Points")
+    set_menu_token(source, ["emittype"], "allpoint")
     try:
-        set_menu_by_label(source, ["usecontextgeo"], "Use Parameter")
+        set_menu_token(source, ["usecontextgeo"], "none")  # Use Parameter Values
     except SetupError:
         pass
     set_parm(source, ["soppath"], pts)
     set_parm(source, ["life"], 0.5)
     set_parm(source, ["lifevar"], 0.0)
     # Jitter Birth Time: None, so the particle is born at the frame (no random sub-frame age).
-    jitter = [p.name() for p in source.parms() if "jitter birth" in p.description().lower()]
-    if not jitter:
-        raise SetupError(f"{source.path()}: no Jitter Birth Time parameter")
-    set_menu_by_label(source, jitter, "None")
+    set_menu_token(source, ["jitterbirthtime"], "none")
     set_parm(source, ["constantactivate", "constantactivation"], 0)
     set_expression(source, ["impulseactiveate", "impulseactivate", "impulseactivation"], "$SF == 1")
     psolver.setInput(1, source)

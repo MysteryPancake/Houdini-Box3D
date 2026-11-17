@@ -23,8 +23,8 @@ from b3d_solver_common import (
     POINTS_TOGGLES,
     PROXY,
     RELATIONSHIPS,
-    set_by_label,
-    set_by_labels,
+    set_menu,
+    set_named,
     GUIDE_GEO,
     SHAPES_COLOR,
     SHAPES_DATA,
@@ -34,11 +34,11 @@ from b3d_solver_common import (
     SHOW_COLLISION,
     SHOW_GROUND,
     USE_GROUND,
-    set_import_style,
+    FETCH_GEOMETRY,
     set_toggles,
     STATIC_NULL,
     switch_on_spare_input,
-    template_by_label,
+    START_FRAME,
     TRANSFER_ATTRIBUTES,
     TRANSFER_TO,
     USE_COLLISIONS,
@@ -99,7 +99,7 @@ p@orient = quaternion(transpose(r[0]) * r[1]);
 # Solve on Creation Frame, as RBD Bullet Solver: solvefirstframe on the Solver tab drives both the
 # pieces' and the collider's Packed Object.
 SOLVE_FIRST = "solvefirstframe"
-SOLVE_FIRST_LABEL = "Solve on Creation Frame"  # the Box3D Packed Object's label (Empty Object's)
+SOLVE_FIRST_PARM = "solvefirstframe"  # the Box3D Packed Object's Solve on Creation Frame (Empty Object's)
 
 # Export Broken Constraints (RBD Bullet Solver's constraint_keepbroken): off, broken constraints are
 # removed from the constraints output.
@@ -121,7 +121,7 @@ RESET_ANCHORS_VEX = "@P = point(1, \"P\", @ptnum);"
 # Every primitive removed, its points kept: an Add SOP's Delete Geometry But Keep the Points (one
 # bulk delete; removeprim per primitive is far slower on many pieces). The wrangle is the fallback
 # when no such toggle is found.
-POINTS_ONLY_LABELS = ["Delete Geometry But Keep the Points", "Delete Geometry, Keep Points"]
+POINTS_ONLY_PARM = "keep"  # Add SOP's Delete Geometry But Keep the Points
 POINTS_ONLY_VEX = "removeprim(0, @primnum, 0);"
 
 # World Scale (RBD Bullet Solver's usescale / Bullet World Scale): the inputs are scaled by it for the
@@ -262,8 +262,7 @@ if (del) removeprim(0, @primnum, 1);
 def start_frame_expr(dopnet):
     """HScript for the asset's Start Frame from a node directly inside the asset (the promoted
     parameter has the DOP network's name), or None."""
-    start = template_by_label(dopnet, "Start Frame")
-    return f'ch("../{start.name()}")' if start is not None else None
+    return f'ch("../{START_FRAME}")' if dopnet.parm(START_FRAME) is not None else None
 
 
 def before_start(sub, dopnet, name, result, original):
@@ -290,10 +289,10 @@ def build_ground_guide(sub, dopnet, empty):
         node = create(sub, "dopimport", name)
         node.parm("doppath").set("../dopnet")
         node.parm("objpattern").set(GROUND_OBJECT)
-        set_import_style(node, "fetch geometry")
-        set_by_label(node, "Geometry Data Path", data_path)
-        set_by_label(node, "Do Not Trigger Simulation", 1)
-        set_by_label(node, "Preserve World Space Positions", 0)
+        set_menu(node, "importstyle", FETCH_GEOMETRY)
+        set_named(node, "geodatapath", data_path)
+        set_named(node, "donotsim", 1)
+        set_named(node, "keepworldspacepos", 0)
         return node
 
     plane = ground_import("import_ground_plane", "DisplayGeometry")
@@ -454,15 +453,14 @@ def scale_forces(dopnet):
 def collision_rest(sub, dopnet, collision):
     """The prepared collision with its rest from the start frame (COLLISION_REST_VEX). Returns the
     node feeding the DOP network's collision input."""
-    start = template_by_label(dopnet, "Start Frame")
     at_start = create(sub, "timeshift", "collision_at_start")
     at_start.setInput(0, collision)
     p = at_start.parm("frame")
-    if start is None or p is None:
+    if dopnet.parm(START_FRAME) is None or p is None:
         warn("no Start Frame on the DOP network or no Frame on the Time Shift: the collision's rest is "
              "its current transform")
     else:  # the asset's promoted Start Frame (same name as the DOP network's)
-        p.setExpression(f'ch("../{start.name()}")', hou.exprLanguage.Hscript)
+        p.setExpression(f'ch("../{START_FRAME}")', hou.exprLanguage.Hscript)
     rest = create(sub, "attribwrangle", "collision_rest")
     rest.setInput(0, collision)
     rest.setInput(1, at_start)
@@ -534,12 +532,11 @@ def build_network(sub):
     import_points = create(sub, "dopimport", "import_points")
     import_points.parm("doppath").set("../dopnet")
     import_points.parm("objpattern").set("pieces")
-    set_import_style(import_points, "fetch geometry")
+    set_menu(import_points, "importstyle", FETCH_GEOMETRY)
     set_toggles(import_points, POINTS_TOGGLES)
     points_only = create(sub, "add", "points_only")
     points_only.setInput(0, import_points)
-    if not any(template_by_label(points_only, label) for label in POINTS_ONLY_LABELS) or \
-            not set_by_labels(points_only, POINTS_ONLY_LABELS, 1):
+    if points_only.parm(POINTS_ONLY_PARM) is None or not set_named(points_only, POINTS_ONLY_PARM, 1):
         warn(f"{points_only.path()}: no Delete Geometry But Keep the Points toggle; removing primitives in VEX")
         points_only.destroy()
         points_only = create(sub, "attribwrangle", "points_only")
@@ -549,7 +546,7 @@ def build_network(sub):
     sim_points = create(sub, "attribdelete", "sim_points")
     sim_points.setInput(0, points_only)
     sim_points.parm("ptdel").set(f'{POINTS_KEEP} `chs("../{TRANSFER_ATTRIBUTES}")`')
-    if not set_by_labels(sim_points, ["Delete Non Selected", "Delete Non-Selected"], 1):
+    if not set_named(sim_points, "negate", 1):  # Delete Non Selected
         # Without the inverse toggle the list would delete exactly what must stay: keep everything.
         sim_points.parm("ptdel").set("")
 
@@ -583,8 +580,8 @@ def build_network(sub):
     import_con = create(sub, "dopimport", "import_constraints")
     import_con.parm("doppath").set("../dopnet")
     import_con.parm("objpattern").set("pieces")
-    set_import_style(import_con, "fetch geometry")
-    set_by_label(import_con, "Geometry Data Path", "ConstraintGeometry")
+    set_menu(import_con, "importstyle", FETCH_GEOMETRY)
+    set_named(import_con, "geodatapath", "ConstraintGeometry")
     set_toggles(import_con, CONSTRAINTS_TOGGLES)
     # The solver does not move the network's points: Transform Pieces carries each point with the piece
     # its `name` names, and points anchored to the world (no name) keep their place, as RBD Bullet Solver.
@@ -615,10 +612,10 @@ def build_network(sub):
     # Impacts: the pieces object's Impacts records as points (only when Add Impact Data is on and
     # something pulls IMPACTS, e.g. the Object Merge Fetch Impacts makes).
     import_impacts = create(sub, "dopimportrecords", "import_impacts")
-    set_by_labels(import_impacts, ["DOP Network"], "../dopnet")
-    set_by_labels(import_impacts, ["Object Mask", "Objects", "Object Pattern"], "pieces")
-    set_by_labels(import_impacts, ["Data", "Data Name", "Data Path", "Subdata Name"], "Impacts")
-    set_by_labels(import_impacts, ["Record Type", "Records", "Record"], "Impacts")
+    set_named(import_impacts, "doppath", "../dopnet")
+    set_named(import_impacts, "objpattern", "pieces")
+    set_named(import_impacts, "datapath", "Impacts")
+    set_named(import_impacts, "record", "Impacts")
     create(sub, "null", IMPACTS).setInput(
         0, scale_wrangle(sub, "unscale_impacts", import_impacts, UNSCALE_IMPACTS_VEX, inverse=True))
 
@@ -628,8 +625,8 @@ def build_network(sub):
     import_shapes = create(sub, "dopimport", "import_shapes")
     import_shapes.parm("doppath").set("../dopnet")
     import_shapes.parm("objpattern").set("pieces collision")
-    set_import_style(import_shapes, "fetch geometry")
-    set_by_label(import_shapes, "Geometry Data Path", SHAPES_DATA)
+    set_menu(import_shapes, "importstyle", FETCH_GEOMETRY)
+    set_named(import_shapes, "geodatapath", SHAPES_DATA)
     set_toggles(import_shapes, POINTS_TOGGLES)
     tint = create(sub, "attribwrangle", "tint_shapes")
     tint.setInput(0, import_shapes)
@@ -648,8 +645,8 @@ def build_network(sub):
     import_cgeo = create(sub, "dopimport", "import_collision_geo")
     import_cgeo.parm("doppath").set("../dopnet")
     import_cgeo.parm("objpattern").set("collision")
-    set_import_style(import_cgeo, "fetch geometry")
-    set_by_label(import_cgeo, "Do Not Trigger Simulation", 1)
+    set_menu(import_cgeo, "importstyle", FETCH_GEOMETRY)
+    set_named(import_cgeo, "donotsim", 1)
     dim = create(sub, "attribwrangle", "dim_collision_geo")
     dim.setInput(0, import_cgeo)
     dim.parm("class").set("primitive")
