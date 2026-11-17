@@ -409,9 +409,8 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   // its own collision detection and Constraint Iterations. st->stepDt stays the
   // whole frame's time: a kinematic target and a Glue's break force are per
   // frame.
-  const int n = st->stepDt > 0.0f
-                    ? std::max(static_cast<int>(getSubsteps()), 1)
-                    : 1;
+  const int n =
+      st->stepDt > 0.0f ? std::max(static_cast<int>(getSubsteps()), 1) : 1;
   const float subDt = st->stepDt / static_cast<float>(n);
 
   // From here the step runs to the end (the write-back is quick), so the cached
