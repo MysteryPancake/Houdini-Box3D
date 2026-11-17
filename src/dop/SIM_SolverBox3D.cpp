@@ -49,9 +49,8 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                   "Multiplies the time step: below 1 is slow motion, above 1 "
                   "fast motion.")
           // Outer loop: whole Box3D steps, each with its own collision
-          // detection. Slider 1 to 10; minimum 1, more can be typed (capped
-          // 64).
-          .integer("substeps", "Substeps", 2, R{1, 10},
+          // detection. Slider 1 to 100; minimum 1, more can be typed.
+          .integer("substeps", "Substeps", 2, R{1, 100},
                    "Box3D steps per time step. 1 steps once per frame (the "
                    "scene FPS), 2 twice, and so on. Each step detects "
                    "collisions again and runs its own Constraint Iterations, "
@@ -411,7 +410,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   // whole frame's time: a kinematic target and a Glue's break force are per
   // frame.
   const int n = st->stepDt > 0.0f
-                    ? std::clamp(static_cast<int>(getSubsteps()), 1, 64)
+                    ? std::max(static_cast<int>(getSubsteps()), 1)
                     : 1;
   const float subDt = st->stepDt / static_cast<float>(n);
 
