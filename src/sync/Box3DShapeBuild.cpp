@@ -562,9 +562,9 @@ BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
   const bool wantGeometry =
       (type == ShapeType::Convex || type == ShapeType::Concave);
   const bool mergeAll = (type == ShapeType::Convex) && !hullPerConnected;
-  const bool connected = (type == ShapeType::Convex ||
-                          type == ShapeType::Concave) &&
-                         hullPerConnected;
+  const bool connected =
+      (type == ShapeType::Convex || type == ShapeType::Concave) &&
+      hullPerConnected;
 
   // Packed convex / concave hulls are keyed by (source, pivot, scale), so
   // instances share them and the points are built only on a miss. A degenerate

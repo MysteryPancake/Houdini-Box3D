@@ -505,10 +505,9 @@ int main() {
     // Frame z is world up, in frame A, and along the capsule (body Y) in
     // frame B: the same rotation, a quarter turn about x.
     const Q frameQ = axisAngle(0, -1.5707963267948966);
-    const float fq[4] = {static_cast<float>(frameQ.x),
-                         static_cast<float>(frameQ.y),
-                         static_cast<float>(frameQ.z),
-                         static_cast<float>(frameQ.w)};
+    const float fq[4] = {
+        static_cast<float>(frameQ.x), static_cast<float>(frameQ.y),
+        static_cast<float>(frameQ.z), static_cast<float>(frameQ.w)};
     const double pivot[3] = {0, 5, 0};
 
     for (const double twistDeg : {0.0, 180.0}) {
