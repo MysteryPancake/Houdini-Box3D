@@ -23,11 +23,12 @@ static_assert(
 namespace {
 
 // ---- the process-wide hull cache
-// Box3D copies a hull into the world's own database when a shape is made, so
-// entries here are only needed until then: they can be shared by every world (a
-// rebuilt world finds what its predecessor built) and evicted at any time.
-// Worlds hold the entries they use in a step (Box3DWorld::Impl::held) so
-// eviction never frees one between findHull and createHullShape.
+// Box3D adds a hull to the world's own database when a shape is made (identical
+// hulls share one clone), so entries here are only needed until then: they can
+// be shared by every world (a rebuilt world finds what its predecessor built)
+// and evicted at any time. Worlds hold the entries they use in a step
+// (Box3DWorld::Impl::held) so eviction never frees one between findHull and
+// createHullShape.
 class HullLibrary {
 public:
   static HullLibrary &instance() {
@@ -616,8 +617,8 @@ bool Box3DWorld::createHullShape(BodyHandle h, const BodySettings &body,
   if (!hull)
     return false;
   const b3ShapeDef def = shapeDefFor(body, updateMass);
-  return !B3_IS_NULL(
-      b3CreateHullShape(b3LoadBodyId(h), &def, hull->hull)); // Box3D copies it
+  return !B3_IS_NULL(b3CreateHullShape(
+      b3LoadBodyId(h), &def, hull->hull)); // added to the world's database
 }
 
 int Box3DWorld::copyShapesByHandle(BodyHandle src, BodyHandle dst,
@@ -1208,8 +1209,8 @@ void Box3DWorld::pruneHulls() {
   myImpl->held.clear();
 }
 
-// The world's own figure (its arrays, contacts, joints and the hulls it cloned
-// into its database), plus the meshes and height fields we own: Box3D keeps
+// The world's own figure (its arrays, contacts, joints and the hulls in
+// its database), plus the meshes and height fields we own: Box3D keeps
 // pointers to those instead of copying them.
 size_t Box3DWorld::estimatedBytes() const {
   if (!isValid())

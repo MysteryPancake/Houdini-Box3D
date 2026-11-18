@@ -63,8 +63,9 @@ kind) remembers the budget that worked, so later hulls of the group start there.
 and the caller falls back to a box. Several hulls on one body make a dynamic compound; overlapping pieces count their
 overlap twice in the mass.
 
-The hull cache is **process-wide** (`HullLibrary` in Box3DWorld.cpp, mutex-protected): Box3D copies a hull into the
-world's own database (`b3AddHullToDatabase`) when a shape is made, so our entries are only needed until then and can be
+The hull cache is **process-wide** (`HullLibrary` in Box3DWorld.cpp, mutex-protected): Box3D adds a hull to the
+world's own database (`b3AddHullToDatabase`) when a shape is made: compared by content, so identical hulls share one
+reference-counted clone and only a new hull is cloned. Our entries are only needed until then and can be
 shared by every world. A rebuilt world (scrub, re-solve, thread change) therefore finds every hull its predecessor built.
 Entries are `shared_ptr`s; a world holds the ones it found or built (`Impl::held`) until `pruneHulls()`, which the solver
 calls at the end of each sync, so eviction never frees a hull between `findHull` and `createHullShape`. Past the byte

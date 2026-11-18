@@ -635,8 +635,9 @@ public:
   //   dynamic compound;
   //      overlapping pieces count their overlap twice in the mass.
   // Hulls live in one cache shared by every world in the process, so a rebuilt
-  // world finds the hulls its predecessor built. Box3D copies a hull into its
-  // world when a shape is made, so the cache is free to evict; a world holds
+  // world finds the hulls its predecessor built. Box3D adds a hull to its
+  // world's database when a shape is made (identical hulls share one clone), so
+  // the cache is free to evict; a world holds
   // the hulls it found or built (findHull, createHull*) until pruneHulls(), so
   // a returned HullId stays usable for createHullShape until then. findHull,
   // createHull and createHullWithKey may be called from several threads at

@@ -25,6 +25,8 @@ authoritative. Snapshotting the world into the DOP cache is too slow, so don't.
 and its 3x3, and what the body was built from (`props`, `volume`, `shapeSig`, `shapeless`, `autoScale`, `sizeKey`,
 `animated`, `driven`, `sleeping`). Box3D's body user data points at the entry, so entries live in an `unordered_map`
 (stable nodes) and are erased only with their body.
+The entry's fields are ordered hot first (pose, handle, type, stamp, point, packed data: what the write-back, forces and the
+quiet-point check read per body), then the settings it was built from; keep new per-step fields in the first part.
 
 Scratch reused every step: `slots` (per object: offset, key, cached entry, freshly read state and this scan's shape
 decisions per point; a cached entry is trusted while offset and key match; when entries are erased, only the slots of the

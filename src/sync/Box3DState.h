@@ -48,12 +48,71 @@ struct Box3DBodyMirror : Box3DBodyPose {
     static_cast<Box3DBodyPose &>(*this) = pose;
   }
 
+  // The fields are in the order the per-step passes touch them: the pose and
+  // the hot fields first (the write-back, forces, Impacts and the sync's quiet
+  // check read these for every moved body, in Box3D's order rather than the
+  // slab's), the settings the body was built from last. Keep new per-step
+  // fields in the first part.
+
+  // ---- hot: read or written every step ----
+
+  // The body's handle and the type the solver last set.
+  b3dop::BodyHandle handle = 0;
+  b3dop::BodySettings::Type type = b3dop::BodySettings::Type::Dynamic;
+  int objectId = 0;
+  uint64_t stamp = 0; // syncStamp of the last sync that saw it
+  // Where this frame's merged move event of the body is in
+  // Box3DSharedState::moves, valid when moveStamp is the frame's syncStamp
+  // (merging the events of a frame's steps).
+  uint64_t moveStamp = 0;
+  size_t moveSlot = 0;
+  // Its object's record (stable: objectSync is node-based).
+  Box3DObjectSync *sync = nullptr;
+
+  // The body's point, refreshed by every sync, so the write-back needs no
+  // lookup. Box3D's body user data points at this entry, so entries never move
+  // (Box3DMirrorMap keeps them in a deque) and are only erased with their
+  // body.
+  int64_t pointOff = -1;   // GA_Offset of the point in the object's geometry
+  int64_t pointId = 0;     // the `id` attribute, else the point number
+  int64_t pointIndex = -1; // point number at the last scan (Impacts data)
+  int64_t primOff = -1;    // GA_Offset of the point's packed primitive
+
+  bool awake =
+      true; // the value of `awake` as last read from or written to the point
+  bool packed = false;
+  bool hasRest = false;
+  bool wholeObject = false; // see below
+  // Glued into a compound body (Box3DCompoundSync.cpp): this entry's own body
+  // is disabled and the compound moves it. glueEdited: another node changed
+  // the point's pose, so the compound is dissolved before the next step.
+  bool inCompound = false;
+  bool glueEdited = false;
+  bool animated = false;  // inactive + `animated`: kinematic, follows its point
+  bool driven = false;    // given a target last step (velocity to clear)
+  bool shapeless = false; // `none`, or a rebuild left no shape: always static
+  bool meshShapes = false; // a mesh was built (static until rebuilt)
+
+  // Packed: the rotation of the point's `restxform` (read when the body was
+  // made, or the rotation it was made with when the solver sets restxform), so
+  // the write-back can write `orient` as the rotation since rest.
+  float restRot[4] = {0, 0, 0, 1};
+  // The point's packed primitive's 3x3 as the last sync read it (reused by the
+  // write-back), with the 3x3's per-row scale, which the write-back keeps.
+  double rowScale[3] = {1, 1, 1};
+  double m3[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+  // This step's velocity of the piece, from its compound (the write-back reads
+  // it in place of its own, parked body's).
+  float glueLin[3] = {0, 0, 0};
+  float glueAng[3] = {0, 0, 0};
+
+  // ---- cold: what the body was built from, read when a scan compares ----
+
   // The settings the body was built with or last given (attribute, else the
   // Box3D Data value), so a scan calls only the setters for what differs.
   b3dop::BodyProps props;
   float volume = 0.0f;    // total shape volume
   uint64_t shapeSig = 0;  // a rebuild giving the same signature is a no-op
-  bool shapeless = false; // `none`, or a rebuild left no shape: always static
   bool autoScale = false; // convex / concave: rebuilt when the scale changes
   double sizeKey[3] = {1, 1, 1}; // the scale the shapes were built at
   // `concave` shapes depend on the body type: a static body gets a triangle
@@ -62,28 +121,10 @@ struct Box3DBodyMirror : Box3DBodyPose {
   // shapes are rebuilt).
   bool concave = false;
   bool plannedStatic = false;
-  bool meshShapes = false;
-
-  bool animated = false; // inactive + `animated`: kinematic, follows its point
-  bool driven = false;   // given a target last step (velocity to clear)
-  bool awake =
-      true; // the value of `awake` as last read from or written to the point
-  int64_t pointIndex = -1; // point number at the last scan (Impacts data)
-
-  // Glued into a compound body (Box3DCompoundSync.cpp): this entry's own body
-  // is disabled and the compound moves it. glueEdited: another node changed
-  // the point's pose, so the compound is dissolved before the next step.
-  bool inCompound = false;
-  bool glueEdited = false;
-  // This step's velocity of the piece, from its compound (the write-back reads
-  // it in place of its own, parked body's).
-  float glueLin[3] = {0, 0, 0};
-  float glueAng[3] = {0, 0, 0};
 
   // A whole DOP object as one body (RBD Object etc., see syncWholeObject): no
   // point; its pose lives in the object's Position data, about `pivot` (object
-  // space).
-  bool wholeObject = false;
+  // space). (`wholeObject` is above.)
   double pivot[3] = {0, 0, 0};
   // What the pivot was computed from (0: it was not), so it is not recomputed
   // while the geometry is unchanged.
@@ -92,40 +133,8 @@ struct Box3DBodyMirror : Box3DBodyPose {
   uint64_t boundsKey = 0;
   float boundsExtents[3] = {0, 0, 0};
 
-  // The body's point, refreshed by every sync, so the write-back needs no
-  // lookup. Box3D's body user data points at this entry, so entries never move
-  // (Box3DMirrorMap keeps them in a deque) and are only erased with their
-  // body.
-  int64_t pointOff = -1; // GA_Offset of the point in the object's geometry
-  int64_t pointId = 0;   // the `id` attribute, else the point number
-  int objectId = 0;
-  uint64_t stamp = 0; // syncStamp of the last sync that saw it
-  // Where this frame's merged move event of the body is in
-  // Box3DSharedState::moves, valid when moveStamp is the frame's syncStamp
-  // (merging the events of a frame's steps).
-  uint64_t moveStamp = 0;
-  size_t moveSlot = 0;
-  Box3DObjectSync *sync =
-      nullptr; // its object's record (stable: objectSync is node-based)
-
-  // The point's packed primitive and its 3x3 as the last sync read it (reused
-  // by the write-back), with the 3x3's per-row scale, which the write-back
-  // keeps.
-  bool packed = false;
-  int64_t primOff = -1; // GA_Offset of the primitive
-  double m3[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
-  double rowScale[3] = {1, 1, 1};
-  // Packed: the rotation of the point's `restxform` (read when the body was
-  // made, or the rotation it was made with when the solver sets restxform), so
-  // the write-back can write `orient` as the rotation since rest.
   // restPos: the body's origin at rest (the packed pivot through restxform).
-  bool hasRest = false;
-  float restRot[4] = {0, 0, 0, 1};
   double restPos[3] = {0, 0, 0};
-
-  // The body's handle and the type the solver last set.
-  b3dop::BodyHandle handle = 0;
-  b3dop::BodySettings::Type type = b3dop::BodySettings::Type::Dynamic;
 
   bool dynamic() const {
     return type == b3dop::BodySettings::Type::Dynamic;
