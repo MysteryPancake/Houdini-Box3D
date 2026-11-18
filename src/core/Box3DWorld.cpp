@@ -2015,6 +2015,10 @@ int Box3DWorld::getMoveEvents(std::vector<BodyMove> &out) const {
   return ev.moveCount;
 }
 
+void *Box3DWorld::bodyUserDataByHandle(BodyHandle h) const {
+  return h ? b3Body_GetUserData(b3LoadBodyId(h)) : nullptr;
+}
+
 void Box3DWorld::setBodyUserData(BodyHandle h, void *userData) {
   if (h)
     b3Body_SetUserData(b3LoadBodyId(h), userData);

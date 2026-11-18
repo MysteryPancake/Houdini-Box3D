@@ -37,8 +37,11 @@ void recordCompoundMotion(Box3DSharedState &st, bool frameStart);
 // After bonds broke in the middle of a frame (breakGlueEarly): the compounds
 // that lost pieces shrink or dissolve at once. Each piece that left gets a move
 // event in `moves`.
+// `touched`: the glue nodes the broken bonds joined (their components are the
+// only ones that can have split).
 void splitBrokenCompounds(Box3DSharedState &st,
-                          std::vector<b3dop::BodyMove> &moves);
+                          std::vector<b3dop::BodyMove> &moves,
+                          const std::vector<int> &touched);
 
 // The glue's hits on a piece of a compound: the impulse on its shapes in the
 // last Box3D step. False if `body` is not a piece of a compound.

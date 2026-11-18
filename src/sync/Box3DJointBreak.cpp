@@ -249,6 +249,7 @@ void breakGlueEarly(Box3DSharedState &st, float elapsed,
   std::vector<int> over;
   b3dop::glueAdvance(bonds, std::move(hits), elapsed, over);
   bool any = false;
+  std::vector<int> touched; // the nodes the broken bonds joined
   for (const int i : over) {
     Box3DJointEntry *e = st.glueBonds[static_cast<size_t>(i)];
     if (!e->handle || !e->inCompound)
@@ -268,11 +269,13 @@ void breakGlueEarly(Box3DSharedState &st, float elapsed,
     const std::pair<int, int> ab = st.glueBondNodes[static_cast<size_t>(i)];
     drop(ab.first, ab.second);
     drop(ab.second, ab.first);
+    touched.push_back(ab.first);
+    touched.push_back(ab.second);
   }
   if (!any)
     return;
   st.glueDirty = true;
-  splitBrokenCompounds(st, moves);
+  splitBrokenCompounds(st, moves, touched);
 }
 
 void advanceGlue(Box3DSharedState &st, float dt) {
@@ -319,11 +322,19 @@ int breakJoints(Box3DSharedState &st, EntriesByNetwork &brokeIn) {
     if (!e || !e->handle)
       continue;
     destroyBrokenJoint(world, *e);
+    // A bond is taken out of the glue lists; any other joint changes what is
+    // tied to what, so they are made again.
+    if (e->glue && e->glueIndex >= 0)
+      st.glueRemoved.push_back(e);
+    else
+      st.glueFull = true;
     brokeIn[e->network].push_back(e);
     ++broke;
   }
   // The bonds that broke mid-frame are gone already.
   for (Box3DJointEntry *e : st.earlyBroken) {
+    if (e->glueIndex >= 0)
+      st.glueRemoved.push_back(e);
     brokeIn[e->network].push_back(e);
     ++broke;
   }

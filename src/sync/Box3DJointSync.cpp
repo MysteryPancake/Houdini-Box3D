@@ -1364,6 +1364,56 @@ bool processNetwork(Box3DSharedState &st, const NetworkRef &ref,
 
 } // namespace
 
+namespace {
+
+// Takes the bonds that broke out of the glue lists: swapped out of the bond
+// list, out of their nodes' partners and bonds, and out of the signature. The
+// nodes they joined are kept for regrouping, and a node left without bonds
+// stays (its hits are never used) until too many have, then the lists are
+// rebuilt.
+void removeGlueBonds(Box3DSharedState &st) {
+  for (Box3DJointEntry *e : st.glueRemoved) {
+    const int i = e->glueIndex;
+    if (i < 0 || static_cast<size_t>(i) >= st.glueBonds.size() ||
+        st.glueBonds[static_cast<size_t>(i)] != e)
+      continue;
+    const std::pair<int, int> ab = st.glueBondNodes[static_cast<size_t>(i)];
+    Box3DGlueNode *na = &st.glueNodes[static_cast<size_t>(ab.first)];
+    Box3DGlueNode *nb = &st.glueNodes[static_cast<size_t>(ab.second)];
+    st.glueSignature -= kGlueCountSalt + glueBondHash(na->body, nb->body);
+    auto dropFrom = [](Box3DGlueNode &n, b3dop::BodyHandle other,
+                       Box3DJointEntry *bond) {
+      const auto p = std::find(n.partners.begin(), n.partners.end(), other);
+      if (p != n.partners.end())
+        n.partners.erase(p);
+      const auto b = std::find(n.bonds.begin(), n.bonds.end(), bond);
+      if (b != n.bonds.end())
+        n.bonds.erase(b);
+      return n.bonds.empty();
+    };
+    if (dropFrom(*na, nb->body, e))
+      ++st.glueOrphans;
+    if (dropFrom(*nb, na->body, e))
+      ++st.glueOrphans;
+    st.glueTouched.push_back(ab.first);
+    st.glueTouched.push_back(ab.second);
+    const size_t last = st.glueBonds.size() - 1;
+    if (static_cast<size_t>(i) != last) {
+      st.glueBonds[static_cast<size_t>(i)] = st.glueBonds[last];
+      st.glueBondNodes[static_cast<size_t>(i)] = st.glueBondNodes[last];
+      st.glueBonds[static_cast<size_t>(i)]->glueIndex = i;
+    }
+    st.glueBonds.pop_back();
+    st.glueBondNodes.pop_back();
+    e->glueIndex = -1;
+  }
+  st.glueRemoved.clear();
+  if (st.glueOrphans * 4 > st.glueNodes.size())
+    st.glueFull = true;
+}
+
+} // namespace
+
 bool anyJointNetwork(SIM_ObjectArray &objects) {
   for (exint i = 0; i < objects.entries(); ++i) {
     const SIM_Object *obj = objects(i);
@@ -1456,8 +1506,17 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
 
   // ---- remove: joints whose primitive or network went away; list the Glue
   // bonds and count the Springs of the rest ----
-  if (changed || st.glueDirty) {
+  // Bonds that only broke are taken out of the lists in place.
+  if (!changed && !st.glueFull && st.glueDirty && !st.glueRemoved.empty()) {
     st.glueDirty = false;
+    st.networkEntriesDirty = true;
+    removeGlueBonds(st);
+  } else if (changed || st.glueDirty || st.glueFull) {
+    st.glueDirty = false;
+    st.glueFull = false;
+    st.glueRemoved.clear();
+    st.glueTouched.clear();
+    st.glueOrphans = 0;
     st.networkEntriesDirty = true; // joints may have come or gone
     st.groupsRecheck = true;       // a piece may have gained or lost a joint
     st.glueNodes.clear();
@@ -1480,6 +1539,7 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
       const bool live = net != st.jointNetworks.end() &&
                         net->second.visited == st.syncStamp &&
                         e.stamp == net->second.liveStamp;
+      e.glueIndex = -1;
       if (live) {
         if (e.massDependent && !e.broken)
           ++springs;
@@ -1489,6 +1549,9 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
           const int a = nodeOf(e.bodyA), b = nodeOf(e.bodyB);
           st.glueNodes[static_cast<size_t>(a)].partners.push_back(e.bodyB);
           st.glueNodes[static_cast<size_t>(b)].partners.push_back(e.bodyA);
+          e.glueIndex = static_cast<int>(st.glueBonds.size());
+          st.glueNodes[static_cast<size_t>(a)].bonds.push_back(&e);
+          st.glueNodes[static_cast<size_t>(b)].bonds.push_back(&e);
           st.glueBonds.push_back(&e);
           st.glueBondNodes.emplace_back(a, b);
         }
@@ -1502,6 +1565,7 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
       it = st.joints.erase(it);
     }
     st.springEntries = springs;
+    st.glueSignature = st.computeGlueSignature();
   }
   for (auto it = st.jointNetworks.begin(); it != st.jointNetworks.end();)
     it = (it->second.visited == st.syncStamp) ? std::next(it)

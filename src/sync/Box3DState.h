@@ -21,11 +21,13 @@
 #include <string>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
 #include "core/Box3DCompound.h"
 #include "core/Box3DGlue.h"
+#include "core/Box3DShapes.h"
 #include "core/Box3DSideFX.h"
 #include "core/Box3DWorld.h"
 #include "sync/Box3DAttribNames.h"
@@ -504,6 +506,8 @@ struct Box3DJointEntry {
   // load (core/Box3DGlue.h, docs/agents/joints.md); its bond and `impact` are
   // in `extra`.
   bool glue = false;
+  // Its place in Box3DSharedState::glueBonds, -1 when it is not a live bond.
+  int glueIndex = -1;
   // A Glue bond between two pieces of one compound (Box3DCompoundSync.cpp):
   // the weld carries nothing, so its force, torque, distance and angle are
   // written as zero once and only `impact` after that. feedbackZeroed /
@@ -533,6 +537,7 @@ struct Box3DGlueNode {
   b3dop::BodyHandle body = 0;
   float hits = 0.0f;
   std::vector<b3dop::BodyHandle> partners; // bodies it is glued to
+  std::vector<Box3DJointEntry *> bonds;    // the live bonds it is in
 };
 
 // The constraint data a `constraint_name` refers to (a Box3D constraint
@@ -629,6 +634,16 @@ struct Box3DCompound {
   uint64_t loadTick = 0;
 };
 
+// What one bond adds to the signature of the bond list (kGlueCountSalt for the
+// bond itself): the same whichever way round its two bodies are.
+constexpr uint64_t kGlueCountSalt = 0x9E3779B97F4A7C15ull;
+inline uint64_t glueBondHash(b3dop::BodyHandle bodyA, b3dop::BodyHandle bodyB) {
+  uint64_t a = static_cast<uint64_t>(bodyA), b = static_cast<uint64_t>(bodyB);
+  if (a > b)
+    std::swap(a, b);
+  return b3dop::mixHash(b3dop::mixHash(0x5bd1e995ull, a), b);
+}
+
 // Everything shared between timestep copies.
 struct Box3DSharedState {
   b3dop::Box3DWorld world;
@@ -711,6 +726,24 @@ struct Box3DSharedState {
   std::unordered_map<b3dop::BodyHandle, int> glueNodeOf;
   std::vector<Box3DJointEntry *> glueBonds;
   std::vector<std::pair<int, int>> glueBondNodes;
+  // The bonds that broke since the lists were made: syncJoints takes them out
+  // of the lists (and the signature) in place instead of rebuilding, and the
+  // nodes they joined (glueTouched) are the components syncCompounds works out
+  // again. glueFull: a change the lists cannot follow (a joint that is not a
+  // bond broke, many nodes lost all their bonds): rebuild them.
+  std::vector<Box3DJointEntry *> glueRemoved;
+  std::vector<int> glueTouched;
+  bool glueFull = false;
+  size_t glueOrphans = 0; // nodes that lost every bond, kept until a rebuild
+  // The hash of the bond list (computeGlueSignature), kept up to date.
+  uint64_t glueSignature = 0;
+  uint64_t computeGlueSignature() const {
+    uint64_t sum = static_cast<uint64_t>(glueBondNodes.size()) * kGlueCountSalt;
+    for (const auto &ab : glueBondNodes)
+      sum += glueBondHash(glueNodes[static_cast<size_t>(ab.first)].body,
+                          glueNodes[static_cast<size_t>(ab.second)].body);
+    return sum;
+  }
   std::vector<void *> glueBroken;
   // Bonds broken in the middle of the frame (breakGlueEarly): their joints are
   // gone, jointsAfterStep writes them like the others.
@@ -724,6 +757,10 @@ struct Box3DSharedState {
   // live compounds, each piece's own body -> its compound and index, and what
   // the groups were last worked out from (the graph and body versions), so an
   // unchanged scene skips the work.
+  // The bodies on a joint that is not a glue bond, as of the last full
+  // regrouping (tiedKnown): partial regrouping after bond breaks reuses it.
+  std::unordered_set<b3dop::BodyHandle> tiedBodies;
+  bool tiedKnown = false;
   bool glueCompounds = false;
   // Glued compounds: scales the load slowing the whole body puts on each
   // piece's bonds (0: off). See compoundGlueHits.

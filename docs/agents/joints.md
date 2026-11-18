@@ -219,7 +219,14 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
     old centre)`, so the contacts of the pieces that stay survive); the pieces that left may form new compounds. A
     group is dissolved whole when a piece is removed, rebuilt, changed (`shapeSig`, `props`) or edited by another node
     (`glueEdited`, set where the sync sees the edit), or when less than half of it stays together; its pieces are
-    enabled where the compound left them and the groups are worked out again. A piece's force
+    enabled where the compound left them and the groups are worked out again.
+    Bonds that break (`jointsAfterStep`, `breakGlueEarly`) are taken out of the glue lists in place (`removeGlueBonds`: `glueRemoved`
+    -> swapped out of `glueBonds`, the nodes' `partners` / `bonds` and `glueSignature`), so a frame with a few breaks costs a few
+    bonds, not the scene. Nodes left without bonds stay until a quarter of them have, then the lists are rebuilt
+    (`glueFull`, also set when a joint that is not a bond breaks). `syncCompounds` then works out again only the components the
+    broken bonds were in (`reachFrom` over the nodes' partners, from `glueTouched`), using `tiedBodies` and the body's user data
+    in place of the whole-scene tables; a rebuilt graph, a changed body set or a dissolved compound regroups everything.
+    `splitBrokenCompounds` does the same for its components. A piece's force
     and torque go to the compound about its centre of mass (`compoundPieceForce`); a Force DOP reads its state from
     the compound (`compoundPieceState`). A bond inside a compound (`Box3DJointEntry::inCompound`, set by `markCompoundBonds`) writes
     force, torque, distance and angle as zero once and `impact` when it changed. Live frames are written in parallel

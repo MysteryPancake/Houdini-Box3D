@@ -714,6 +714,8 @@ public:
   // ----------
   int getMoveEvents(
       std::vector<BodyMove> &out) const; // resizes `out`; returns the count
+  // What setBodyUserData stored (null for a body made without any).
+  void *bodyUserDataByHandle(BodyHandle h) const;
   void setBodyUserData(BodyHandle h,
                        void *userData); // returned in BodyMove / ContactPoint
 
