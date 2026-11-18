@@ -13,7 +13,7 @@ Solver (read every step; only the thread count rebuilds the world): `gravity`, `
 `WorldSettings` keeps `kDefaultWorkerCount`), `enablesleep`, `timescale`, `enableaging`, `reapdead`, `reapatframeend` (disabled while `reapdead` is off), and Box3D's tuning
 (Box3D's defaults except the contact stiffness and damping, tuned for bouncier, more rigid contacts): `contactstiffness`, `contactdamping`, `contactpushspeed`, `bouncethreshold`,
 `contactrecycledistance`, `maxlinearspeed`, `enablecontinuous`, `enablewarmstarting`, `isotropicinertia`,
-`restitutioniterations`, `restitutionpropagation`, `impactminspeed`. Force DOPs: `useforces`, `forceswake` (disabled while
+`restitutioniterations`, `restitutionpropagation`, `impactminspeed`, `gluecompound` (off: glued groups as one body, see joints.md). Force DOPs: `useforces`, `forceswake` (disabled while
 `useforces` is off). Box3D Data: `startasleep` and `sleepthreshold` are disabled while `enablesleep` is off,
 `mass` / `density` by `computemass`; joint nodes: see `enabledBy` in [joints.md](joints.md). Solver
 `frictionmixing` and `restitutionmixing` menus list the rules in the same order (geometric mean, minimum, maximum,

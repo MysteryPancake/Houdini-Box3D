@@ -88,6 +88,13 @@ Ground Collision:
 The settings of each constraint type: a closed folder per joint. A float primitive attribute on the constraint lines
 multiplies the value here, so set the typical value here and vary it per constraint with an attribute.
 
+Break Thresholds:
+    #id: enable_constraintbreaks
+    Breaks the constraints named in Constraint Names once their angle, distance, impact or torque passes a threshold,
+    or at a chosen frame, as RBD Bullet Solver does. Only SideFX Glue has an impact. There is no Force Threshold. Scale by Attribute multiplies the threshold by a primitive attribute
+    (`strength` makes it relative to each glue's own strength). Mode Switch to Next Constraint gives the constraint
+    its `next_constraint_name`. Off costs nothing.
+
 == Forces ==
 
 Wire POP forces into PRESOLVE (dive into the node, then FORCES). With World Scale, force and torque are scaled for you.

@@ -99,6 +99,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DJoints.h       Header-only: joint types, JointSettings, the joint parameter table
     Box3DSideFX.h/.cpp  SideFX's Glue / Hard / Spring / Bullet Soft / Cone Twist data -> Box3D joints (mapping, frame offsets)
     Box3DGlue.h         Header-only: SideFX Glue's impulse model (spread over bonds, half-life, break on strength)
+    Box3DCompound.h     Header-only: glue components (union-find), merging pieces into one body and splitting its velocity
     Box3DCpu.h/.cpp     Physical performance core count (the solver's Threads default)
     Box3DRbdObject.h    Header-only: an RBD Object's own mass / friction / bounce / Bullet Data shape -> whole-object settings
     Box3DWorld.h/.cpp   Pimpl wrapper over one b3World: bodies, shapes, hulls, settings; defines TaskRunner
@@ -124,6 +125,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DForces.cpp        Force DOPs and point force / torque
     Box3DGuide.cpp         The solver's guide geometry: every body's collision shapes
     Box3DJointSync.*    Constraint networks -> Box3D joints: read, resolve names, create / update / remove
+    Box3DCompoundSync.* Glued groups as one compound body (`gluecompound`): merge, dissolve, pieces' moves, forces, glue hits
     Box3DJointBreak.cpp After the step: Glue, breaking, feedback and live frames written onto the networks
     Box3DJointNetwork.h What those two share: attribute names, network geometry and fingerprint helpers
     Box3DAffectors.*    Affector objects (Static Object DOP etc.) -> static colliders
@@ -133,7 +135,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
 examples/            make_examples.py: builds demo scenes into examples/scenes (git-ignored)
 package/             Box3D.json.in: the Houdini package file the build configures
 tools/               make_assets.py (runs the three asset builders in one hython, as the build does),
-                     make_packed_object.py, make_configure_sop.py, make_constraint_properties_sop.py, make_solver_sop.py (the assets; the Solver SOP's inner builders are in b3d_solver_common.py, b3d_solver_network.py, b3d_solver_dops.py, b3d_solver_ground.py, b3d_solver_constraints.py and b3d_solver_help.py; b3d_solver_state.py, b3d_configure_state.py and b3d_constraint_properties_state.py are the SOPs' viewer states, read as text by the builders; b3d_layouts.py places both SOP assets' nodes),
+                     make_packed_object.py, make_configure_sop.py, make_constraint_properties_sop.py, make_solver_sop.py (the assets; the Solver SOP's inner builders are in b3d_solver_common.py, b3d_solver_network.py, b3d_solver_dops.py, b3d_solver_ground.py, b3d_solver_constraints.py, b3d_solver_breaks.py and b3d_solver_help.py; b3d_solver_state.py, b3d_configure_state.py and b3d_constraint_properties_state.py are the SOPs' viewer states, read as text by the builders; b3d_layouts.py places both SOP assets' nodes),
                      b3d.py (finds Houdini; runs the checks, examples or ctest on any OS), b3d_hda.py (warn, create, set_operations and the parameter-template helpers the asset builders share), b3d_prepare.py (the input packing both SOP assets share), b3d_settings.py (Box3D Data's
                      settings as point attributes and the creation-frame rest, for Configure and the Packed Object),
                      check_docs.py,
@@ -156,6 +158,7 @@ tests/
   core_joints.cpp     Every joint type, world anchors, live updates, breaking, feedback, the parameter table
   core_glue.cpp       Glue's impulse model: the Glue help's example, rounds, decay, breaking
   core_sidefx.cpp     SideFX constraint data: option table, mapping per type / constraint_type, frame offsets, behaviour
+  core_compound.cpp   A compound body as glued pieces: mass, a beam on posts against a weld chain, impulses per shape, hulls at an offset, merge maths
   core_rbdobject.cpp  RBD Object settings without Box3D Data: defaults, invalid values, Bullet Data shapes, density -> mass
   houdini/            Houdini checks: run_tests.py (runner), checks_*.py (tests by area), b3dtest.py (helpers),
                       review.py (tidies saved scenes), baseline.json; out/ holds each test's scene (git-ignored)

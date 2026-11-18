@@ -867,6 +867,10 @@ void updateExistingBody(ScanContext &ctx, Box3DSharedState &st,
     world.setTransformByHandle(entry.handle, cur.pos, cur.rot);
     world.setVelocityByHandle(entry.handle, cur.lin, cur.ang);
     entry.setPose(cur);
+    // A glued piece: its compound is dissolved before the step, the piece
+    // keeping this pose.
+    if (entry.inCompound)
+      entry.glueEdited = true;
     ++c.edited;
   }
 }

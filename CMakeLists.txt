@@ -160,6 +160,7 @@ b3dop_add_test(plane)
 b3dop_add_test(joints)
 b3dop_add_test(sidefx)
 b3dop_add_test(glue)
+b3dop_add_test(compound)
 b3dop_add_test(rbdobject)
 b3dop_add_test(threads)
 b3dop_add_test(taskrunner)
@@ -204,6 +205,8 @@ add_library(Box3DDOP SHARED
     src/sync/Box3DPostStep.cpp
     src/sync/Box3DForces.cpp
     src/sync/Box3DGuide.cpp
+    src/sync/Box3DCompoundSync.h
+    src/sync/Box3DCompoundSync.cpp
     src/sync/Box3DJointSync.h
     src/sync/Box3DJointSync.cpp
     src/sync/Box3DJointNetwork.h

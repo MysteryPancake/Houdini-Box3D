@@ -12,5 +12,6 @@
 - The Box3D Solver SOP's Ground Collision makes an infinite Ground Plane (Position, Rotation) or a Height Field ground (with Use Deforming Geometry). Friction, Bounce, Rolling Resistance and Conveyor Velocity are under Physical. Show Ground on the Visualization tab draws it.
 - An unpacked collider that turns or scales during the simulation needs Collision Type Deforming on the Box3D Solver SOP. Animated keeps its first shape, as with Bullet.
 - The Box3D Solver SOP's Constraints tab sets each constraint type's values. Initial State is on the Pieces tab.
+- Break Thresholds on the Box3D Solver SOP's Constraints tab break constraints past an `angle`, `distance`, `impact` or `torque`, as in RBD Bullet Solver. Only SideFX Glue has an `impact`, and there is no Force Threshold.
 - On the Box3D Solver SOP, Collide As Static Object makes the Collision input one static mesh, or a height field. It uses the Material settings, and Flip Mesh Winding if pieces fall through.
 - Escape cancels a step in progress.

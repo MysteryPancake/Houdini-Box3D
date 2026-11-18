@@ -1029,6 +1029,145 @@ def test_solver_sop_keep_broken_bullet():
     return results
 
 
+def _break_impact_held(kind, threshold, tag, strength=1e12, scale_by_strength=False, from_frame=None):
+    """Whether a SideFX Glue pair (Strength 1e12: it cannot break by itself) landing from 3 holds with an Impact
+    Threshold of `threshold` on the Break Thresholds of the Box3D Solver SOP ("box3d") or the RBD Bullet Solver SOP
+    ("bullet"): the constraint primitives left on frame 48. `strength`: the Glue's own (a line attribute);
+    `scale_by_strength`: Scale by Attribute, the attribute `strength`; `from_frame`: the From Frame."""
+    parms = {"constraint_impactthreshold1": threshold}
+    if from_frame is not None:
+        parms.update({"constraint_usefromframe1": 1, "constraint_fromframe1": from_frame})
+    if scale_by_strength:
+        parms.update({"constraint_scaleimpact1": 1, "constraint_impactattrib1": "strength"})
+    return _first_break(kind, tag, "Glue", ((0.5, 3, 0), (0.5, 3, 0)), hang={}, enable=("impact",), parms=parms,
+                        line_attrs={"strength": strength}, frames=48, centers=((0, 3, 0), (1, 3, 0)), fixed=False,
+                        ground=True) is None
+
+
+def test_solver_sop_break_impact_bullet():
+    """Break Thresholds, Impact Threshold (the Constraints tab), against the RBD Bullet Solver SOP: a glued pair
+    landing from 3 breaks with a threshold of 5000 and holds with 2e6 in both; the threshold at which it stops
+    breaking is found by bisection in each and must agree within a factor of 2. A threshold scaled by the
+    `strength` attribute (Scale by Attribute) breaks a pair of Strength 1e7 (too strong to break itself) with a
+    threshold of 0.001 and not with one of 0.1, in both. From Frame 100 holds the pair through frame 48, in both."""
+    runs = iter(range(1000))
+    tag = lambda: f"sop_break_{next(runs)}"  # noqa: E731
+    problems, found = [], {}
+    for kind in ("box3d", "bullet"):
+        if _break_impact_held(kind, 5000.0, tag()):
+            problems.append(f"{kind} held with a threshold of 5000")
+        if not _break_impact_held(kind, 2e6, tag()):
+            problems.append(f"{kind} broke with a threshold of 2e6")
+        lo, hi = 5000.0, 2e6  # lo breaks it, hi holds it
+        for _ in range(8):
+            mid = (lo * hi) ** 0.5
+            if _break_impact_held(kind, mid, tag()):
+                hi = mid
+            else:
+                lo = mid
+        found[kind] = hi
+    ratio = found["bullet"] / found["box3d"]
+    if not 0.5 <= ratio <= 2.0:
+        problems.append(f"the thresholds differ by {ratio:.2f}x")
+    for kind in ("box3d", "bullet"):  # From Frame 100: nothing breaks within the 48 frames played
+        if not _break_impact_held(kind, 5000.0, tag(), from_frame=100):
+            problems.append(f"{kind} broke before From Frame 100")
+    for kind in ("box3d", "bullet"):  # Scale by Attribute: threshold x strength (1e7, too strong to break by itself)
+        if _break_impact_held(kind, 0.001, tag(), strength=1e7, scale_by_strength=True):
+            problems.append(f"{kind} held with a threshold of 0.001 x strength 1e7")
+        if not _break_impact_held(kind, 0.1, tag(), strength=1e7, scale_by_strength=True):
+            problems.append(f"{kind} broke with a threshold of 0.1 x strength 1e7")
+    return [Result("solver_sop_break_impact_bullet", Result.FAIL if problems else Result.PASS,
+                   f"pair stops breaking at an Impact Threshold of {found['box3d']:.0f} (Box3D) and "
+                   f"{found['bullet']:.0f} (Bullet), Bullet / Box3D {ratio:.2f}" +
+                   (f"; PROBLEMS: {'; '.join(problems)}" if problems else ""))]
+
+
+def _first_break(kind, tag, cname, anchors, hang=None, enable=(), parms=None, names="Glue", line_attrs=None, frames=24,
+                 centers=((0, 4, 0), (0, 2, 0)), fixed=True, ground=False):
+    """The first frame on which a two-piece scene (a fixed box over a free one, 2 apart) has no constraint left on
+    the Break Thresholds of the Box3D Solver SOP ("box3d") or the RBD Bullet Solver SOP ("bullet"), None if it
+    holds for `frames`. `anchors`: the two line points; `hang`: the free box's point attributes; `enable`: the
+    thresholds to turn on (`parms` sets their values and the rest); every other one is off. `centers`: the boxes'
+    centres; `fixed`: the first box is fixed; `ground`: a ground plane under them."""
+    pieces, pnames = packed_boxes(f"{tag}_pieces", [{"size": (1, 1, 1), "center": centers[0], "attrs": {"active": 0 if fixed else 1}},
+                                                    {"size": (1, 1, 1), "center": centers[1],
+                                                     "attrs": dict(hang or {}, active=1)}])
+    collision = packed_boxes(f"{tag}_ground", [GROUND])[0] if ground else None
+    lines = constraint_lines(f"{tag}_network", [(pnames[0], anchors[0], pnames[1], anchors[1], cname, line_attrs or {})])
+    inputs = {"collision": collision} if ground else {}
+    sop = (solver_sop if kind == "box3d" else bullet_sop)(f"{tag}_{kind}", geometry=pieces, constraints=lines,
+                                                          **inputs)
+    set_parm(sop, ["enable_constraintbreaks"], 1)
+    set_parm(sop, ["constraint_names1"], names)
+    for key in ("angle", "distance", "impact", "torque"):
+        set_parm(sop, [f"constraint_use{key}1"], 1 if key in enable else 0)
+    for name, value in (parms or {}).items():
+        set_parm(sop, [name], value)
+    gone = []
+    play(sop, frames, lambda s, f: None if s.geometry(1).prims() else gone.append(f))
+    for node in [n for n in hou.node("/obj").children() if n.name().startswith(tag)]:
+        node.destroy()
+    return gone[0] if gone else None
+
+
+def test_solver_sop_break_atframe_bullet():
+    """Break Thresholds, At Frame, against the RBD Bullet Solver SOP: a Glue too strong to break (Strength 1e12) with no
+    threshold on goes at Frame 5 in both: the frame it is gone on differs by at most 1. Relative to Start Frame
+    with a Start Frame of 3 moves that to 8. Nothing breaks before."""
+    results, problems = [], []
+    got = {}
+    for kind in ("box3d", "bullet"):
+        for rel, at in ((0, 5), (1, 5)):
+            parms = {"constraint_useatframe1": 1, "constraint_atframe1": at, "constraint_relatframe1": rel}
+            if rel:
+                parms["startframe"] = 3
+            got[kind, rel] = _first_break(kind, f"sop_atframe_{kind}{rel}", "Glue", ((0, 3.5, 0), (0, 3.5, 0)),
+                                          parms=parms, line_attrs={"strength": 1e12})
+    for rel, want in ((0, 5), (1, 8)):
+        for kind in ("box3d", "bullet"):
+            f = got[kind, rel]
+            if f is None or not want <= f <= want + 1:
+                problems.append(f"{kind} (relative {rel}) went on frame {f}, expected {want}")
+    return [Result("solver_sop_break_atframe_bullet", Result.FAIL if problems else Result.PASS,
+                   f"gone on frame (Box3D / Bullet): At Frame 5 {got['box3d', 0]} / {got['bullet', 0]}, relative to "
+                   f"Start Frame 3 {got['box3d', 1]} / {got['bullet', 1]}" +
+                   (f"; PROBLEMS: {'; '.join(problems)}" if problems else ""))]
+
+
+def test_solver_sop_break_distance_bullet():
+    """Break Thresholds, Distance Threshold, against the RBD Bullet Solver SOP: a Hard constraint whose anchors start
+    2 apart breaks within 8 frames with a threshold of 0.2 and holds for 8 frames with one of 50, in both: the
+    threshold compares the anchors' distance, beyond the constraint's Rest Length."""
+    problems, rows = [], []
+    for kind in ("box3d", "bullet"):
+        for thr, want_break in ((0.2, True), (50.0, False)):
+            f = _first_break(kind, f"sop_distance_{kind}{int(thr * 10)}", "Hard", ((0, 3.5, 0), (0, 1.5, 0)),
+                             enable=("distance",), parms={"constraint_distancethreshold1": thr}, names="Hard", frames=8)
+            rows.append(f"{kind} {thr}: {f}")
+            if (f is not None) != want_break:
+                problems.append(f"{kind} with a threshold of {thr}: gone on {f}")
+    return [Result("solver_sop_break_distance_bullet", Result.FAIL if problems else Result.PASS,
+                   f"gone on frame: {', '.join(rows)}" + (f"; PROBLEMS: {'; '.join(problems)}" if problems else ""))]
+
+
+def test_solver_sop_break_angle_torque_bullet():
+    """INFO, Break Thresholds, Angle and Torque Threshold, against the RBD Bullet Solver SOP: a Soft constraint on a
+    box spinning at 6 rad/s about z, thresholds from small to large. The frame it goes on in each is listed. They
+    are not expected to agree: the two solvers' `angle` and `torque` readings differ (docs/notes.md)."""
+    rows = []
+    for key, values in (("angle", (0.01, 0.05, 0.2)), ("torque", (100.0, 2000.0, 20000.0))):
+        for value in values:
+            got = {}
+            for kind in ("box3d", "bullet"):
+                got[kind] = _first_break(kind, f"sop_{key}_{kind}{int(value * 100)}", "Soft",
+                                         ((0, 3.5, 0), (0, 3.5, 0)), hang={"w": (0, 0, 6)}, enable=(key,),
+                                         parms={f"constraint_{key}threshold1": value}, names="Soft", frames=16)
+            rows.append(f"{key} {value}: {got['box3d']} / {got['bullet']}")
+    return [Result("solver_sop_break_angle_torque_bullet", Result.INFO,
+                   "gone on frame (Box3D / Bullet): " + "; ".join(rows))]
+
+
 def test_solver_sop_global_substeps():
     """Global Substeps on the Solver tab, just above Box3D Substeps: a slider from 1 with no upper limit, default 1,
     and it sets the Substeps of the DOP network inside. Two global substeps give nearly the same height after
@@ -1134,10 +1273,18 @@ def test_solver_sop_layout():
     expect("closed folders", [p for p in shut if not p.startswith("Constraints/")],
            ["Output/Impact Data", "Solver/Aging", "Solver/Sleeping"])
     constraint_folders = [p for p in shut if p.startswith("Constraints/")]
-    all_constraint = [path for path, pt in folders if path[0] == "Constraints" and len(path) == 2]
+    all_constraint = [path for path, pt in folders if path[0] == "Constraints" and len(path) == 2
+                      and path[1] != "Break Thresholds"]
     expect("Constraints folders, all closed (one per constraint type)", len(constraint_folders),
            len(all_constraint))
     expect("Constraints tab has folders", len(all_constraint) > 0, True)
+    breaks = by_path.get(("Constraints", "Break Thresholds"))
+    expect("Break Thresholds: open, header toggle", (breaks.tags().get("group_default"),
+                                                    breaks.tags().get("sidefx::header_toggle")) if breaks else None,
+           ("1", "enable_constraintbreaks"))
+    expect("Constraints tab leads with Glue as One Body, the Break Thresholds toggle and folder",
+           [pt.name() for pt in by_path[("Constraints",)].parmTemplates()][:3] if ("Constraints",) in by_path else None,
+           ["gluecompound", "enable_constraintbreaks", "b3dsop_break_thresholds"])
     if problems:
         return [Result("solver_sop_layout", Result.FAIL, "; ".join(problems))]
     return [Result("solver_sop_layout", Result.PASS,
@@ -1500,6 +1647,10 @@ TESTS = {
     "solver_sop_before_start_bullet": test_solver_sop_before_start_bullet,
     "solver_sop_solve_first_frame_bullet": test_solver_sop_solve_first_frame_bullet,
     "solver_sop_keep_broken_bullet": test_solver_sop_keep_broken_bullet,
+    "solver_sop_break_impact_bullet": test_solver_sop_break_impact_bullet,
+    "solver_sop_break_atframe_bullet": test_solver_sop_break_atframe_bullet,
+    "solver_sop_break_distance_bullet": test_solver_sop_break_distance_bullet,
+    "solver_sop_break_angle_torque_bullet": test_solver_sop_break_angle_torque_bullet,
     "solver_sop_before_start": test_solver_sop_before_start,
     "solver_sop_solve_first_frame": test_solver_sop_solve_first_frame,
     "solver_sop_keep_broken": test_solver_sop_keep_broken,

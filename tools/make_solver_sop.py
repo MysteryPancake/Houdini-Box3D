@@ -75,6 +75,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import b3d_hda  # noqa: E402  (beside this script)
 from b3d_hda import labels, pull, value_templates, without_parmops  # noqa: E402
 from b3d_solver_common import (  # noqa: E402
+    GLOBAL_SUBSTEPS,
     CACHE_ENABLED,
     CACHE_MEMORY,
     COLLISION_TYPE,
@@ -125,6 +126,7 @@ from b3d_solver_common import (  # noqa: E402
     USE_COLLISIONS,
     warn,
 )
+from b3d_solver_breaks import BREAK_PARMS, break_items, GLUE_COMPOUND  # noqa: E402
 from b3d_solver_constraints import constraint_items, finish_constraints  # noqa: E402
 from b3d_solver_help import HELP_CARD  # noqa: E402
 
@@ -152,8 +154,6 @@ from b3d_solver_network import (  # noqa: E402
 )
 
 
-# Global Substeps: the DOP network's own Substeps (`substep`).
-GLOBAL_SUBSTEPS = "globalsubsteps"
 # Nodes inside whose errors and warnings show on the asset (b3d_hda.set_message_nodes): the solver, which says
 # when constraints name no joint type or no piece. Not the packing steps: their cleanup nodes warn about
 # attributes and groups that are not there, on every cook.
@@ -385,6 +385,7 @@ def build(out_path, packed_hda=None):
     constraint_folders, constraint_links = constraint_items(dopnet, sub)
     links += constraint_links
     taken.update(new for _, _, new in constraint_links)
+    taken.update(BREAK_PARMS)
     taken.update([TRANSFER_ATTRIBUTES, KEEP_BROKEN, IMPORT_CONSTRAINTS, IMPORT_PROXY]
                  + list(POINT_VELOCITY_PARMS) + [n for n, _ in TRANSFER_TO.values()])
 
@@ -415,6 +416,7 @@ def build(out_path, packed_hda=None):
     bounce = take(BOUNCE_PARMS)
     speed = take((IMPACT_SPEED,))
     shapes = take((SHAPES_TOGGLE,))
+    glue_compound = take((GLUE_COMPOUND,))  # Glue as One Body, with the other constraint settings
     tabs = [(label, drop_templates(contents, set())) for label, contents in tabs]  # folders left empty go
     solver_extra = solver_first + folder_items
     # Tab order: Solver, Pieces, Collision, Forces, any other solver tabs, Visualization, then Advanced and
@@ -433,8 +435,7 @@ def build(out_path, packed_hda=None):
     ordered = [("Solver", [use_scale, world_scale] + solver_items + solver_extra),
                ("Pieces", None),  # filled below
                ("Collision", collision_items)]
-    if constraint_folders:
-        ordered.append(("Constraints", constraint_folders))
+    ordered.append(("Constraints", glue_compound + break_items() + constraint_folders))
     last = [(label, by_label.pop(label)) for label in ("Advanced",) if label in by_label]
     if "Forces" in by_label:
         ordered.append(("Forces", by_label.pop("Forces")))

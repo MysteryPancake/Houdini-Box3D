@@ -4,6 +4,7 @@ import hou
 
 import b3d_hda
 from b3d_hda import labels
+from b3d_solver_breaks import build_breaks
 from b3d_solver_ground import build_ground_dops, setp
 from b3d_solver_common import (
     COLLISION_SOURCE,
@@ -139,6 +140,7 @@ def build_dops(dopnet):
     multi.setInput(1, forces, FORCES_OUTPUTS.index("PRESOLVE"))
     multi.setInput(2, solver)
     multi.setInput(3, forces, FORCES_OUTPUTS.index("POSTSOLVE"))
+    multi.setInput(4, build_breaks(dopnet))  # Break Thresholds, after everything else
     out = create(dopnet, "output", "output")
     out.setInput(0, multi)
     out.setDisplayFlag(True)

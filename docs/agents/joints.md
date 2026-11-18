@@ -97,7 +97,7 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   name found wins. Kinds are re-read every sync (a few subdata); any change reprocesses the network.
   The HDK's `SIM_ConstraintNetwork` iterators / accessors are not used: the geometry is read directly, which keeps
   the fingerprinting, live frames and local frames below.
-* A network is reprocessed only when its fingerprint (identity, topology, data ids of `P`, `name`, `orient`,
+* A network is reprocessed only when its fingerprint (identity without the detail's unique id, since the engine copies the geometry into a new detail every timestep; topology, data ids of `P`, `name`, `orient`,
   `constraint_name`, `auto_restlength`, every table attribute, the `broken` group), its kinds, or
   `Box3DSharedState::bodyVersion` (bumped when bodies or affectors are added / removed) changed. Otherwise its
   joints keep the network's `liveStamp`, like skipped objects' bodies.
@@ -128,7 +128,7 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
 * After the step (`jointsAfterStep`): broken joints are destroyed and flagged (never remade, even if the
   primitive changes), and written back through the relationship's `getGeometry()` (non-const: a `SIM_GeometryCopy`)
   or the object's ConstraintGeometry (made a `SIM_GeometryCopy` once, like the object geometry): the `broken`
-  primitive group, then `force` / `torque` (magnitudes), `distance` / `angle` (linear separation, the angle since
+  primitive group, then `force` / `torque` (magnitudes), `distance` / `angle` (the anchors' distance, the angle since
   rest above, in radians, the Constraint Network DOP's names and units) and the per-type `current_*` readings (degrees) every step. The fingerprint is re-recorded after the write so it is not seen as an edit. A network that
   re-imports its SOP every step (Overwrite with SOP) overwrites the group; `Box3DJointEntry::broken` still holds until
   a world rebuild. `Box3DJointNetwork::writable` is false when the last write found no geometry; such a network keeps
@@ -197,6 +197,25 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
     ~20%, the same decay: `glue_impact_trace`); a Bullet glue holds from about 5 to 6 times its peak impact, so
     the break test uses `kGlueStrengthScale` (measured from one scene: `glue_impact_scale`). A negative iteration count is the global one
     (the `propagate_iteration` detail attribute, not read): one round; the most iterations of any bond set the rounds.
+  * **Glue as One Body** (`gluecompound`, off by default; `Box3DCompoundSync.cpp`): after `syncJoints`, a group of bonded
+    pieces runs as one Box3D body that carries copies of the pieces' shapes (`copyShapesByHandle`, mass from the
+    shapes, velocity from `mergePieces`). Each piece keeps its own body, disabled: Box3D parks a disabled body's joints,
+    so the welds sleep and the per-point sync, mirror and joints stay as they are. A group merges only when every
+    piece is a plain dynamic body with the default inertia and the same body-level settings (`sameBodyLevel`) and no
+    other joint touches it. After the step `expandCompoundMoves` adds a move event per piece (compound pose * offset,
+    velocity `pieceVelocity` kept on the entry as `glueLin` / `glueAng`), so the write-back is the usual one, and
+    puts each parked body where its piece is. `collectGlueHits` reads a piece's hits from `contactImpulsesByShape` of
+    its compound, so the break model is unchanged. When a bond breaks, the compound keeps its body for the largest
+    group of pieces left (`shrink`: the pieces that leave are enabled where the compound has them, their shapes are
+    destroyed with `destroyShapeRangesByHandle`, and the body takes the velocity of the rest, `v + w x (new centre -
+    old centre)`, so the contacts of the pieces that stay survive); the pieces that left may form new compounds. A
+    group is dissolved whole when a piece is removed, rebuilt, changed (`shapeSig`, `props`) or edited by another node
+    (`glueEdited`, set where the sync sees the edit), or when less than half of it stays together; its pieces are
+    enabled where the compound left them and the groups are worked out again. A piece's force
+    and torque go to the compound about its centre of mass (`compoundPieceForce`); a Force DOP reads its state from
+    the compound (`compoundPieceState`). A bond inside a compound (`Box3DJointEntry::inCompound`, set by `markCompoundBonds`) writes
+    force, torque, distance and angle as zero once and `impact` when it changed. Live frames are written in parallel
+    (`writeLiveFrames`, above `kMinParallelFrames` bonds). Impacts data and the collision guide are not made for pieces.
   * Hard: all -> rigid weld with the anchors kept the rest length apart (as Bullet does; held where they are when there
     is no rest length); position -> rigid distance joint at the
     rest length, or spherical when it is ~0; rotation -> motor joint, angular spring only at 60 Hz / ratio 2 with

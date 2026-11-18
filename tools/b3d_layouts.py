@@ -54,7 +54,8 @@ DOP_LAYOUT = [
      ("Ground", ["ground_none", "groundplane", "ground_heightfield", "switch_ground", "ground_data"],
       {"color": GROUND}),
      ("Forces", ["FORCES", "scale_forces"], {"color": EXTRA})],
-    [("Solve", ["objects_and_ground", "box3d_solver", "multisolver", "output"], {"color": SIMULATION})],
+    [("Solve", ["objects_and_ground", "box3d_solver", "constraint_breaks", "enable_constraint_breaks", "multisolver",
+                 "output"], {"color": SIMULATION})],
 ]
 
 # Box3D Configure.

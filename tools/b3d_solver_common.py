@@ -153,6 +153,8 @@ RELATIONSHIPS = [
 START_FRAME, CACHE_ENABLED = "startframe", "cacheenabled"
 DOPNET_PARMS = [START_FRAME, CACHE_ENABLED]
 CACHE_MEMORY = "cachemaxsize"
+# Global Substeps: the DOP network's own Substeps (`substep`).
+GLOBAL_SUBSTEPS = "globalsubsteps"
 # DOP Import's Import Style item Fetch Geometry from DOP Network.
 FETCH_GEOMETRY = "fetch"
 # Box3D Data's menu tokens are the item numbers (Box3DParms::menu): Body Type and Default Shape.

@@ -75,6 +75,8 @@ public:
 
   GETSET_DATA_FUNCS_B("exportshapes",
                       ExportShapes); // every body's collision shapes as data
+  GETSET_DATA_FUNCS_B("gluecompound",
+                      GlueCompound); // glued groups run as one body
 
   // Guide (the node's Guides tab): every body's collision shapes.
   GET_GUIDE_FUNC_B(SIM_NAME_SHOWGUIDE, ShowGuide, false);

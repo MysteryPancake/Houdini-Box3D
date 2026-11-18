@@ -4,6 +4,7 @@
 // (or switch to their next constraint) and the live frames and feedback
 // attributes written onto the networks. Box3DJointSync.cpp reads the networks
 // and makes the joints.
+#include "Box3DCompoundSync.h"
 #include "Box3DHoudiniUtil.h"
 #include "Box3DJointNetwork.h"
 #include "Box3DJointSync.h"
@@ -17,6 +18,7 @@
 #include <SIM/SIM_GeometryCopy.h>
 #include <SIM/SIM_Object.h>
 #include <SIM/SIM_ObjectArray.h>
+#include <UT/UT_ParallelUtil.h>
 #include <UT/UT_Quaternion.h>
 #include <UT/UT_StringHolder.h>
 #include <UT/UT_Vector3.h>
@@ -25,6 +27,7 @@
 #include <cmath>
 #include <cstring>
 #include <deque>
+#include <initializer_list>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -69,6 +72,14 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp,
   GA_RWHandleV3 localPH;
   GA_RWHandleQ localQH;
 
+  // The rare per-joint work (rest length, local frames) is serial; the live
+  // frames, one write per bond every step, go in parallel afterwards.
+  struct Work {
+    Box3DJointEntry *e;
+    GA_Offset pts[2];
+  };
+  std::vector<Work> work;
+  work.reserve(entries.size());
   for (Box3DJointEntry *e : entries) {
     if (e->quiet || !primOk(e->prim))
       continue;
@@ -113,6 +124,14 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp,
       e->writeLocal = false;
     }
 
+    work.push_back({e, {pts[0], pts[1]}});
+  }
+
+  // Each item reads the world (read-only calls may run in parallel) and writes
+  // its own entry and its own two points, whose pages are hardened first.
+  auto writeOne = [&](size_t i) {
+    Box3DJointEntry *e = work[i].e;
+    const GA_Offset *pts = work[i].pts;
     b3dop::JointFrame fa, fb;
     if (world.jointWorldFrames(e->handle, fa, fb)) {
       // The anchors, not the frames (SideFX data may offset the frames from
@@ -121,7 +140,7 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp,
       e->wroteB = asStored(anchorFrameOf(fb, e->adjB));
       e->wrote = true;
     } else if (!e->switchFrames)
-      continue;              // broken, or never made
+      return;                // broken, or never made
     e->switchFrames = false; // (switched: wroteA / wroteB are set already)
     const b3dop::JointFrame *frames[2] = {&e->wroteA, &e->wroteB};
     for (int k = 0; k < 2; ++k) {
@@ -130,6 +149,19 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp,
       orientH.set(pts[k],
                   UT_QuaternionF(f.rot[0], f.rot[1], f.rot[2], f.rot[3]));
     }
+  };
+  constexpr size_t kMinParallelFrames = 4096;
+  if (work.size() >= kMinParallelFrames) {
+    pH.getAttribute()->hardenAllPages();
+    orientH.getAttribute()->hardenAllPages();
+    UTparallelFor(UT_BlockedRange<size_t>(0, work.size()),
+                  [&writeOne](const UT_BlockedRange<size_t> &r) {
+                    for (size_t i = r.begin(); i != r.end(); ++i)
+                      writeOne(i);
+                  });
+  } else {
+    for (size_t i = 0; i < work.size(); ++i)
+      writeOne(i);
   }
   pH.getAttribute()->bumpDataId();
   orientH.getAttribute()->bumpDataId();
@@ -145,7 +177,14 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp,
 
 void collectGlueHits(Box3DSharedState &st) {
   b3dop::Box3DWorld &world = st.world;
+  ++st.hitsTick;
   for (Box3DGlueNode &n : st.glueNodes) {
+    // A piece of a compound takes the hits on its shapes of the compound.
+    float pieceHits = 0.0f;
+    if (compoundGlueHits(st, n.body, pieceHits)) {
+      n.hits += pieceHits;
+      continue;
+    }
     // Hits land on moving bodies; a sleeping one has none this step.
     if (world.typeByHandle(n.body) != b3dop::BodySettings::Type::Dynamic ||
         !world.isAwakeByHandle(n.body))
@@ -331,21 +370,54 @@ void writeFeedback(const b3dop::Box3DWorld &world, GU_Detail *gdp,
   GA_RWHandleF &distH = scalar("distance");
   GA_RWHandleF &torqueH = scalar("torque");
   GA_RWHandleF &angleH = scalar("angle");
-  for (const Box3DJointEntry *e : entries) {
+  for (Box3DJointEntry *e : entries) {
     if (e->quiet)
       continue;
+    if (e->glue && e->inCompound) {
+      // A weld inside a compound carries nothing: zeros once, then `impact`
+      // when it changed.
+      if (e->extra && primOk(e->prim)) {
+        if (!e->feedbackZeroed) {
+          for (GA_RWHandleF *h : {&forceH, &distH, &torqueH, &angleH})
+            if (h->isValid())
+              h->set(e->prim, 0.0f);
+          e->feedbackZeroed = true;
+        }
+        if (e->extra->glueImpact != e->impactWritten) {
+          GA_RWHandleF &impactH = scalar(kImpact);
+          if (impactH.isValid())
+            impactH.set(e->prim, e->extra->glueImpact);
+          e->impactWritten = e->extra->glueImpact;
+        }
+      }
+      continue;
+    }
+    e->feedbackZeroed = false;
     if (e->glue && e->extra && primOk(e->prim)) {
       GA_RWHandleF &impactH = scalar(kImpact);
       if (impactH.isValid())
         impactH.set(e->prim, e->extra->glueImpact);
+      e->impactWritten = e->extra->glueImpact;
     }
     b3dop::JointFeedback fb;
     if (!primOk(e->prim) || !world.jointFeedback(e->handle, e->type, fb))
       continue;
     if (forceH.isValid())
       forceH.set(e->prim, length(fb.force));
-    if (distH.isValid())
-      distH.set(e->prim, fb.linearSeparation);
+    if (distH.isValid()) {
+      // As RBD Bullet Solver: how far apart the two anchors are now (the ones
+      // written to current_P), not how far the joint is from satisfied.
+      // (writeLiveFrames, just before, stored this step's anchors.)
+      float distance = fb.linearSeparation;
+      if (e->wrote) {
+        const double d[3] = {e->wroteA.pos[0] - e->wroteB.pos[0],
+                             e->wroteA.pos[1] - e->wroteB.pos[1],
+                             e->wroteA.pos[2] - e->wroteB.pos[2]};
+        distance = static_cast<float>(
+            std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]));
+      }
+      distH.set(e->prim, distance);
+    }
     if (torqueH.isValid())
       torqueH.set(e->prim, length(fb.torque));
     if (angleH.isValid())
@@ -375,8 +447,13 @@ void markQuietJoints(const b3dop::Box3DWorld &world,
   for (Box3DJointEntry *e : entries) {
     const bool asleep =
         e->handle && !bodyMoves(world, e->bodyA) && !bodyMoves(world, e->bodyB);
-    e->quiet = asleep && e->asleepWritten && e->wrote && !e->writeLocal &&
-               !e->switchFrames && e->madeRestLength < 0.0f && !e->glue;
+    // A bond inside a compound joins parked (never awake) bodies that move with
+    // their compound: never quiet.
+    e->quiet =
+        !e->inCompound && asleep && e->asleepWritten && e->wrote &&
+        !e->writeLocal && !e->switchFrames && e->madeRestLength < 0.0f &&
+        // a Glue's impact decays each step until it reaches zero
+        (!e->glue || (e->extra && e->extra->glueImpact == e->impactWritten));
     e->asleepWritten = asleep;
   }
 }
@@ -405,16 +482,16 @@ int jointsAfterStep(Box3DSharedState &st, SIM_ObjectArray &objects) {
 
   // ---- write-back: broken group / next_constraint_name, live frames, feedback
   // ----
-  EntriesByNetwork entriesOf;
-  bool entriesGathered = false;
+  EntriesByNetwork &entriesOf = st.networkEntries;
   for (auto &kv : st.jointNetworks) {
     Box3DJointNetwork &net = kv.second;
     const auto broken = brokeIn.find(kv.first);
     const bool anyBroken = broken != brokeIn.end();
     if (net.visited != st.syncStamp)
       continue;
-    if (!entriesGathered) {
-      entriesGathered = true;
+    if (st.networkEntriesDirty) {
+      st.networkEntriesDirty = false;
+      entriesOf.clear();
       for (auto &je : st.joints)
         entriesOf[je.second.network].push_back(&je.second);
     }

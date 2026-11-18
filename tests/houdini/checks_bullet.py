@@ -430,9 +430,8 @@ def test_bullet_anchor_id():
                 "unpacked point k": (pts[k] + a_centre) if k < 8 else (pts[k - 8] + b_centre),
             }
             fits = {}
-            # Bullet's `distance` is the gap between the anchors; Box3D's is the separation, the gap less the
-            # Hard constraint's Rest Length (1).
-            rest = {"bullet": 0.0, "box3d": 1.0}
+            # `distance` is the gap between the anchors in both.
+            rest = {"bullet": 0.0, "box3d": 0.0}
             for kind, gap in got.items():
                 fits[kind] = [name for name, pos in readings.items()
                               if gap is not None and abs((pos - a_anchor).length() - rest[kind] - gap) < 0.05]                     or ["none"]

@@ -4,6 +4,7 @@ Import output, dead pieces in a constraint network, an animated Static Object, o
 solver, Attach Internal Constraints, and SideFX Glue / Hard / Cone Twist / aging compared with
 Bullet and the POP Solver."""
 
+import itertools
 import os
 import tempfile
 
@@ -16,6 +17,7 @@ from b3dtest import (
     box3d_solver,
     bullet_solver,
     close,
+    constraint_lines,
     create,
     display,
     find_network_geometry,
@@ -595,6 +597,106 @@ def test_glue_impact_trace():
                    "; ".join(rows) + " (expected the peaks within a factor of 4)")]
 
 
+_GLUE_RUNS = itertools.count()
+
+
+def glue_row_scene(tag, kind, strength, n=2, height=3.0, drop=None, bounce=None):
+    """n glued boxes side by side. With drop=None they fall from `height` onto the ground (the landing is the hit).
+    Otherwise they rest on it and a box is dropped from `drop` above the first one. bounce: RBD Packed Object's."""
+    dop = new_dopnet(tag)
+    y = height if drop is None else 0.5
+    pieces = [{"size": (1, 1, 1), "center": (i, y, 0), "attrs": {"active": 1}} for i in range(n)]
+    if drop is not None:
+        pieces.append({"size": (1, 1, 1), "center": (0, 1.5 + drop, 0), "attrs": {"active": 1}})
+    pieces.append(dict(GROUND, attrs={"active": 0}))
+    path, names = packed_boxes(tag + "_pieces", pieces)
+    obj = packed_object(dop, "pieces", path, **({} if bounce is None else {"bounce": bounce}))
+    glue = create(dop, "glueconrel", "glue")
+    set_parm(glue, ["strength"], strength)
+    lines = [(names[i], (i + 0.5, y, 0), names[i + 1], (i + 0.5, y, 0), "Glue") for i in range(n - 1)]
+    net = create(dop, "constraintnetwork", "constraint_network")
+    net.setInput(0, obj)
+    set_parm(net, ["soppath", "constraintsoppath", "geosoppath"], constraint_lines(tag + "_network", lines))
+    net.setInput(1, glue)
+    finish(dop, solver_for(kind, dop, net))
+    return dop
+
+
+def glue_row_run(kind, strength, frames, **scene):
+    """(broken constraint lines on the last frame, the largest `impact` any bond had) for a glue_row_scene."""
+    tag = f"glue_match_{next(_GLUE_RUNS)}"
+    dop = glue_row_scene(tag, kind, strength, **scene)
+    peak = [0.0]
+
+    def sample(sim, f):
+        geo = find_network_geometry(sim)
+        if geo is not None and geo.findPrimAttrib("impact") is not None:
+            for prim in geo.prims():
+                peak[0] = max(peak[0], prim.attribValue("impact"))
+        return broken_count(sim) if f == frames else None
+
+    track = step(dop, frames, sample)
+    for node in [n for n in hou.node("/obj").children() if n.name().startswith(tag)]:
+        node.destroy()  # keeps the saved scene small
+    return track[frames], peak[0]
+
+
+def glue_row_threshold(kind, frames, lo=20.0, hi=1e9, rounds=8, **scene):
+    """The Strength at which a glue_row_scene stops breaking, by bisection in log space (None: `lo` holds
+    or `hi` still breaks)."""
+    def breaks(strength):
+        broke = glue_row_run(kind, strength, frames, **scene)[0]
+        return broke is not None and broke >= 1
+
+    if not breaks(lo) or breaks(hi):
+        return None
+    for _ in range(rounds):
+        mid = (lo * hi) ** 0.5
+        if breaks(mid):
+            lo = mid
+        else:
+            hi = mid
+    return hi
+
+
+GLUE_MATCH_SCENES = [
+    ("landing from 1", dict(n=2, height=1.0), 48),
+    ("landing from 3", dict(n=2, height=3.0), 48),
+    ("landing from 8", dict(n=2, height=8.0), 48),
+    ("landing from 3, bounce 0.9", dict(n=2, height=3.0, bounce=0.9), 96),
+    ("row of 4 landing from 3", dict(n=4, height=3.0), 48),
+    ("box dropped 1 on a pair", dict(n=2, drop=1.0), 72),
+    ("box dropped 4 on a pair", dict(n=2, drop=4.0), 72),
+    ("box dropped 4 on a row of 4", dict(n=4, drop=4.0), 72),
+]
+
+
+def test_glue_break_match():
+    """SideFX Glue in Box3D and Bullet over several kinds of hit: the largest `impact` a bond reaches (with
+    a Strength that never breaks it), and the Strength at which the bonds stop breaking. The impacts are
+    what must agree (within a factor of 2). The Strength per impact is for information: Bullet breaks
+    at about its impact when something hits a resting glued pair, and at several times its impact when
+    the glued pieces land themselves (more with speed and bounce); Box3D uses one factor
+    (kGlueStrengthScale)."""
+    rows, ok = [], True
+    for label, scene, frames in GLUE_MATCH_SCENES:
+        got = {}
+        for kind in ("bullet", "box3d"):
+            peak = glue_row_run(kind, 1e12, frames, **scene)[1]
+            got[kind] = (peak, glue_row_threshold(kind, frames, **scene))
+        (pb, tb), (px, tx) = got["bullet"], got["box3d"]
+        ratio = px / pb if pb else float("inf")
+        ok = ok and 0.5 <= ratio <= 2.0
+
+        def per_peak(peak, threshold):
+            return "none" if not threshold or not peak else f"{threshold:.0f} ({threshold / peak:.1f}x)"
+
+        rows.append(f"{label}: impact Bullet {pb:.0f}, Box3D {px:.0f}; holds from Bullet {per_peak(pb, tb)}, "
+                    f"Box3D {per_peak(px, tx)}")
+    return [Result("glue_break_match", Result.PASS if ok else Result.FAIL,
+                   "; ".join(rows) + " (expected the impacts within a factor of 2)")]
+
+
 def test_sidefx_hard_untyped():
     """SideFX Hard constraint with no constraint_type attribute (taken as 'all'), piece spinning at
     the start: distance and rotation after 2 s in Box3D and in Bullet. PASS if they agree."""
@@ -839,6 +941,7 @@ TESTS = {
     "glue_impact": test_glue_impact,
     "glue_impact_scale": test_glue_impact_scale,
     "glue_impact_trace": test_glue_impact_trace,
+    "glue_break_match": test_glue_break_match,
     "sidefx_hard_untyped": test_sidefx_hard_untyped,
     "aging_vs_pop": test_aging_vs_pop,
     "aging_vs_pop_keep": test_aging_vs_pop_keep,

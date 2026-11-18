@@ -69,6 +69,16 @@ struct Box3DBodyMirror : Box3DBodyPose {
       true; // the value of `awake` as last read from or written to the point
   int64_t pointIndex = -1; // point number at the last scan (Impacts data)
 
+  // Glued into a compound body (Box3DCompoundSync.cpp): this entry's own body
+  // is disabled and the compound moves it. glueEdited: another node changed
+  // the point's pose, so the compound is dissolved before the next step.
+  bool inCompound = false;
+  bool glueEdited = false;
+  // This step's velocity of the piece, from its compound (the write-back reads
+  // it in place of its own, parked body's).
+  float glueLin[3] = {0, 0, 0};
+  float glueAng[3] = {0, 0, 0};
+
   // A whole DOP object as one body (RBD Object etc., see syncWholeObject): no
   // point; its pose lives in the object's Position data, about `pivot` (object
   // space).
@@ -461,6 +471,13 @@ struct Box3DJointEntry {
   // load (core/Box3DGlue.h, docs/agents/joints.md); its bond and `impact` are
   // in `extra`.
   bool glue = false;
+  // A Glue bond between two pieces of one compound (Box3DCompoundSync.cpp):
+  // the weld carries nothing, so its force, torque, distance and angle are
+  // written as zero once and only `impact` after that. feedbackZeroed /
+  // impactWritten say what was written.
+  bool inCompound = false;
+  bool feedbackZeroed = false;
+  float impactWritten = -1.0f;
   // SideFX Spring: its Hz and damping ratio come from the bodies' masses
   // (Hooke's constant and absolute damping converted, b3dop::mapSideFX), so the
   // masses they were made from are kept (in `extra`) and the joint is remade
@@ -531,6 +548,33 @@ struct Box3DImpactHit {
 struct Box3DImpactGroup {
   int objectId = 0;
   std::vector<Box3DImpactHit> hits;
+};
+
+// One piece of a compound: its own body (disabled while merged) and where it
+// sits in the compound body's space. `entry` is refreshed by every
+// syncCompounds before use; key / body / props / shapeSig are what the piece
+// was merged with, so a change is seen.
+struct Box3DCompoundMember {
+  uint64_t key = 0; // makeBodyKey of the entry
+  b3dop::BodyHandle body = 0;
+  Box3DBodyMirror *entry = nullptr;
+  float lp[3] = {0, 0, 0};     // position in the compound body's space
+  float lq[4] = {0, 0, 0, 1};  // rotation in the compound body's space
+  float centre[3] = {0, 0, 0}; // the piece's centre of mass, in its own space
+  int shapeFirst = 0;          // its shapes are [shapeFirst, +shapeCount) in
+  int shapeCount = 0;          // the compound's, in creation order
+  b3dop::BodyProps props;      // as merged
+  uint64_t shapeSig = 0;       // as merged
+};
+
+// A glued group run as one Box3D body (core/Box3DCompound.h).
+struct Box3DCompound {
+  b3dop::BodyHandle body = 0;
+  std::vector<Box3DCompoundMember> members;
+  // The impulse on each of its shapes in the last Box3D step read for the glue
+  // (contactImpulsesByShape), and the collectGlueHits call it belongs to.
+  std::vector<float> shapeImpulse;
+  uint64_t hitsTick = 0;
 };
 
 // Everything shared between timestep copies.
@@ -610,6 +654,23 @@ struct Box3DSharedState {
   std::vector<std::pair<int, int>> glueBondNodes;
   std::vector<void *> glueBroken;
   bool glueDirty = true;
+  // The joint entries of each network (key: network key) for jointsAfterStep,
+  // rebuilt only after syncJoints changed the joints.
+  std::unordered_map<uint64_t, std::vector<Box3DJointEntry *>> networkEntries;
+  bool networkEntriesDirty = true;
+  // Glued groups as compound bodies (syncCompounds): the solver's switch, the
+  // live compounds, each piece's own body -> its compound and index, and what
+  // the groups were last worked out from (the graph and body versions), so an
+  // unchanged scene skips the work.
+  bool glueCompounds = false;
+  std::vector<std::unique_ptr<Box3DCompound>> compounds;
+  std::unordered_map<b3dop::BodyHandle, std::pair<Box3DCompound *, int>>
+      compoundOf;
+  uint64_t hitsTick = 0; // bumped by every collectGlueHits
+  uint64_t groupsSignature =
+      ~static_cast<uint64_t>(0); // of the Glue graph, as grouped
+  uint64_t groupsBodyVersion = ~static_cast<uint64_t>(0);
+  bool groupsRecheck = true;
   // Live SideFX Spring joints last step: syncJoints looks for changed masses
   // only while there are any.
   size_t springEntries = 0;

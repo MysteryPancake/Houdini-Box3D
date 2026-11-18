@@ -4,6 +4,8 @@
 // attributes, applied to the bodies right before the step.
 #include "Box3DSolverInternal.h"
 
+#include "Box3DCompoundSync.h"
+
 namespace box3dsolver {
 
 // Collects the SIM_Force data an object carries (Gravity Force, Wind Force, Fan
@@ -260,12 +262,18 @@ void applyToObjectBodies(Box3DSharedState &st, const SIM_Object &obj,
     // The body's state is read once, and only when a Force DOP needs it.
     ForceJob job;
     job.body = e;
+    // A piece of a compound (Box3DCompoundSync.h) is parked: its state is read
+    // from the compound.
+    const bool piece = e->inCompound;
     if (!forces.empty()) {
-      if (!world.bodyStateByHandle(e->handle, job.state))
+      const bool read = piece ? compoundPieceState(st, *e, job.state)
+                              : world.bodyStateByHandle(e->handle, job.state);
+      if (!read)
         continue;
       if (!wake && !job.state.awake)
         continue; // Box3D would ignore the force anyway
-    } else if (!wake && !world.isAwakeByHandle(e->handle))
+    } else if (!wake && !(piece ? compoundPieceAwake(st, *e)
+                                : world.isAwakeByHandle(e->handle)))
       continue;
     if (!pointForces.empty())
       addPointForce(pointForces, *e, job.force, job.torque);
@@ -290,12 +298,12 @@ void applyToObjectBodies(Box3DSharedState &st, const SIM_Object &obj,
   }
 
   for (const ForceJob &job : jobs) {
-    const float fv[3] = {static_cast<float>(job.force.x()),
-                         static_cast<float>(job.force.y()),
-                         static_cast<float>(job.force.z())};
-    const float tv[3] = {static_cast<float>(job.torque.x()),
-                         static_cast<float>(job.torque.y()),
-                         static_cast<float>(job.torque.z())};
+    float fv[3] = {static_cast<float>(job.force.x()),
+                   static_cast<float>(job.force.y()),
+                   static_cast<float>(job.force.z())};
+    float tv[3] = {static_cast<float>(job.torque.x()),
+                   static_cast<float>(job.torque.y()),
+                   static_cast<float>(job.torque.z())};
     if (!b3dop::finite3(fv) || !b3dop::finite3(tv)) {
       ++stats.nonFinite;
       continue;
@@ -303,7 +311,11 @@ void applyToObjectBodies(Box3DSharedState &st, const SIM_Object &obj,
     if (fv[0] == 0.0f && fv[1] == 0.0f && fv[2] == 0.0f && tv[0] == 0.0f &&
         tv[1] == 0.0f && tv[2] == 0.0f)
       continue;
-    world.applyForceByHandle(job.body->handle, fv, tv, wake);
+    // A piece of a compound pushes its compound, about the compound's centre.
+    b3dop::BodyHandle target = job.body->handle;
+    if (job.body->inCompound)
+      compoundPieceForce(st, *job.body, fv, tv, target);
+    world.applyForceByHandle(target, fv, tv, wake);
     ++stats.bodies;
   }
 }

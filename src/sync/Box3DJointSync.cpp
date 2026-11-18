@@ -201,10 +201,11 @@ uint64_t idOf(const GA_Attribute *a) {
 
 // Everything the joints are read from: the geometry's identity, topology, and
 // the data ids of every attribute and group the sync reads. Equal: nothing to
-// re-read.
+// re-read. Not the detail's unique id: the engine copies the geometry into a
+// new detail every timestep, and the copy has the same contents.
 uint64_t networkFingerprint(const GU_Detail *gdp) {
   using b3dop::mixHash;
-  uint64_t h = geometryIdentity(gdp);
+  uint64_t h = geometryIdentity(gdp, false);
   h = mixHash(h, idOf(gdp->findPointAttribute("name")));
   h = mixHash(h, idOf(gdp->findPointAttribute("orient")));
   h = mixHash(h, idOf(gdp->findPointAttribute(kCurrentP)));
@@ -1414,6 +1415,8 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
   // bonds and count the Springs of the rest ----
   if (changed || st.glueDirty) {
     st.glueDirty = false;
+    st.networkEntriesDirty = true; // joints may have come or gone
+    st.groupsRecheck = true;       // a piece may have gained or lost a joint
     st.glueNodes.clear();
     st.glueNodeOf.clear();
     st.glueBonds.clear();

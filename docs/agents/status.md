@@ -136,12 +136,16 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   points and vertices; the test's pieces are fragments). Untested: other ids (a fragment's points are taken in source order,
   its vertices in primitive order), a piece that has moved before its joint is made (`nowToRest`), and non-fragment packed
   pieces.
-* Glue's impulse model (`core/Box3DGlue.h`, `core_glue`, `glue_impact`, `glue_impact_trace`, `sidefx_glue`): `impact` matches
-  Bullet's (same decay, peak within ~20%); a Bullet bond breaks only at about 5 to 6 times that, which is unexplained, so
-  `kGlueStrengthScale` is measured (`glue_impact_scale`, one scene, two drop heights: the thresholds then agree within 14%). Unchecked: other scenes (resting
-  piles, several contacts, different masses), the half-life and propagation against Bullet, the global propagation
-  iteration count (the `propagate_iteration` detail attribute is not read), and the cost of reading every glued body's
-  contacts each step on a large network.
+* Glue's impulse model (`core/Box3DGlue.h`, `core_glue`, `glue_impact`, `glue_impact_trace`, `glue_break_match`, `sidefx_glue`):
+  `impact` matches Bullet's in every scene tried (`glue_break_match`: pairs and rows landing from 1 to 8, with bounce, and a
+  box dropped on a pair or row: peaks within 1.25x, the split along a row too; half-life and propagation rate / iterations
+  barely change either). The Strength at which a bond stops breaking does not match: Bullet breaks at about its `impact`
+  (1.0x) when something hits a resting glued pair or row, and at 3x to 10x when the glued pieces land themselves (more with
+  speed, bounce and the number of pieces, and with a piece's height more than its mass), where Box3D uses one factor,
+  `kGlueStrengthScale` (5.3, measured for a landing from 3). So a hit on a resting structure needs about 5x the Strength
+  in Box3D that it does in Bullet. Anchor position and rest length change neither. Not understood: what makes Bullet's
+  break value larger than its `impact`. Unchecked: the global propagation iteration count (the `propagate_iteration`
+  detail attribute is not read), and the cost of reading every glued body's contacts each step on a large network.
 * What the precompiled headers (`BOX3DDOP_PCH`) save: not measured.
 * Transform Pieces with packed transforms that carry scale or shear.
 * Constraints output through Transform Pieces: constraints between collision pieces (not in the simulation points, so
@@ -182,6 +186,29 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
     `unpacked_turning_collider`).
   * Set Always for the Box3D Data settings of the pieces and collider, the relationships and the ground (the solver's
     own settings are Set Always already).
+  * Break Thresholds (`b3d_solver_breaks.py`): Impact (`solver_sop_break_impact_bullet`: a glued pair stops breaking at 22.4k
+    in Box3D and 22.9k in the RBD Bullet Solver SOP) and At Frame (`solver_sop_break_atframe_bullet`: same frame as Bullet,
+    also relative to Start Frame) match. Distance is `distance` = the anchors' distance (as Bullet); its test
+    `solver_sop_break_distance_bullet` was not run against a rebuilt plugin. Angle and Torque thresholds run, but the
+    `angle` and `torque` readings differ from Bullet's (`solver_sop_break_angle_torque_bullet`, INFO: a Soft constraint on
+    a spinning box reads about 0.015 rad in Box3D against 0.2 to 0.4 in Bullet, and torque 6078 against 15004 on frame 2).
+    Which threshold breaks when is not established beyond that listing.
+    Untested: Mode Switch to Next Constraint,
+    Relative to Start Frame, Variance, World Scale other than 1, and the cost on a large network with it on (the SOP Solver
+    rewrites the constraint geometry each step, so the solver reads the whole network again). Not there: the Force
+    Threshold (Bullet's `force` of a Glue is the difference of its pieces' forces times their mean mass,
+    Box3D's is the joint's), Group, Update from Input, plastic flow, the VEX snippet.
+* Glue as one body (`gluecompound`, `Box3DCompoundSync.cpp`, how it works: joints.md). Written and compiled for the core
+  parts only (`core_compound` passes); the sync is untested in Houdini. Unchecked:
+  * That a group merges, moves, writes its pieces back and breaks as the weld joints do: compare the same scene with the
+    switch off (stiffness, break impact and `kGlueStrengthScale`, which was measured against weld joints).
+  * `setVelocityByHandle` is the centre of mass velocity (a single piece's centre is its origin, so only a compound
+    can tell), repeated `applyForceByHandle` calls add, and enabling a parked body does not leave a piece on a joint
+    to another parked body.
+  * Pieces falling asleep with a compound, and the pieces' `awake` after a dissolve.
+  * Not covered: Impacts and the collision guide for pieces, pieces with another joint or a custom inertia (they stay
+    on welds, as does their whole group), a group changed only by editing a piece's settings while it never merged
+    (it is worked out again when the Glue graph or the bodies change).
 
 ## Box3D fork (`extern/box3d`)
 

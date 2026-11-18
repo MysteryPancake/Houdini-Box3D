@@ -6,6 +6,7 @@
 #include "core/Box3DCpu.h"
 #include "core/Box3DDebug.h"
 #include "sync/Box3DAffectors.h"
+#include "sync/Box3DCompoundSync.h"
 #include "sync/Box3DJointSync.h"
 #include "sync/Box3DSolverInternal.h"
 
@@ -154,6 +155,9 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                    "{ autothreads == 1 }")
           .number("maxlinearspeed", "Max Linear Speed", 400.0, R{0, 1000},
                   "Speed limit for every body, in units per second.")
+          .toggle("gluecompound", "Glue as One Body", false,
+                  "Run each group of glued pieces as one rigid body: stiffer "
+                  "and faster for large chunks. Experimental.")
           .number("isotropicinertia", "Isotropic Inertia Tolerance", 0.2,
                   R{0, 1, true},
                   "Treats nearly spherical bodies as spheres for spin. Applies "
@@ -497,6 +501,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
                   st->world.recycledContactCount());
   {
     UT_PerfMonAutoSolveEvent perf(this, "Exporting Simulation Results");
+    expandCompoundMoves(*st); // the pieces of moved compounds
     writeResultsBack(*worldData, objects);
   }
   {
@@ -591,6 +596,7 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
   st->wantNames = anyJointNetwork(objects);
   st->reapDead = getReapDead();
   st->reapAtFrameEnd = getReapAtFrameEnd();
+  st->glueCompounds = getGlueCompound();
   st->pointWrites.clear();
   st->deletions.clear();
   st->writtenObjects.clear();
@@ -657,6 +663,7 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
   {
     UT_PerfMonAutoSolveEvent perf(this, "Updating Constraints");
     syncJoints(*st, objects, jointCounts);
+    syncCompounds(*st); // glued groups as one body (off by default)
   }
   {
     warnCount(objects, jointCounts.unknown,

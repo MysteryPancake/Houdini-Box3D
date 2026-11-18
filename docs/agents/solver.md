@@ -54,13 +54,14 @@ worldData = findOrCreateWorldData(objects)     first object carrying "Box3DWorld
 rebuild if invalid / thread count changed / stamp mismatch -> createFreshWorld
 lock st->mutex
 stepDt = dt * timescale; world.applyTuning(currentWorldSettings())   (stepDt stays the whole frame's time)
-syncFromGeometry   per object syncObject(); syncAffectorBodies (Static Objects); remove gone bodies; syncJoints;
+syncFromGeometry   per object syncObject(); syncAffectorBodies (Static Objects); remove gone bodies; syncJoints; syncCompounds;
                    pruneHulls; warnings
 world.step         n = Substeps (`substeps`, at least 1; 1 when stepDt is 0). Each of the n steps: applyExternalForces (Box3D clears
                    forces every step), b3World_Step(stepDt / n, subSteps = Constraint Iterations), then its move events are merged
                    into st.moves by body (Box3D clears them every step; the last event wins, so fell-asleep survives).
                    applyExternalForces (Use Force DOPs): SIM_Force data per object -> getForce at each dynamic body's
                    centre of mass, plus point force / torque -> applyForceByHandle
+expandCompoundMoves  Glue as One Body: a move event per piece of a moved compound (joints.md)
 writeResultsBack   awake dynamic bodies (move events): P / orient / v / w / packed transform / awake
 jointsAfterStep    broken joints, feedback and live frames onto the networks (joints.md)
 recordImpacts      Add Impact Data -> SIM_Impacts (only on steps with an impact)

@@ -160,6 +160,19 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   link and `guide_*` display settings have none and stay off), named `<node>_<setting>`, linked to the inner node
   and Set Initial (`finish_constraints`). `scale_joint_settings` wraps the existing channel reference
   instead of replacing it, so World Scale multiplies the promoted value.
+* Break Thresholds (`b3d_solver_breaks.py`, first on the Constraints tab after Glue as One Body, which the solver's Advanced tab
+  gives up): RBD Bullet Solver's `Constraint_Solver` for the Angle, Distance, Impact and Torque Thresholds and At Frame. A SOP Solver DOP (`constraint_breaks`, Data
+  Name `ConstraintGeometry`) with a wrangle (`BREAK_VEX`, over primitives) between its geometry import and its output deletes the
+  primitives whose `impact` passes a break entry's threshold, or switches them to `next_constraint_name`. The parameters are
+  Bullet's names (`enable_constraintbreaks`, the `breaks` multiparm, `constraint_names#`, `constraint_mode#`,
+  `constraint_usefromframe#`, `constraint_useatframe#`, and per key in `THRESHOLDS` `constraint_use<key>#`,
+  `constraint_<key>threshold#`, `constraint_scale<key>#`, `constraint_use<key>var#`) and rules (Distance and Impact
+  thresholds x World Scale, x the `strength` attribute with Scale by Attribute, scattered by Variance with `__primid` else
+  the primitive number; Distance compares against threshold + `restlength`; At Frame's window is 0.5 / Global Substeps). The wrangle reads them by path. The SOP Solver is the
+  Multiple Solver's last input, behind an Enable Solver DOP (`enable_constraint_breaks`): off, the constraint geometry is not
+  imported, because a rewrite changes its data ids and the solver then reads the whole network again each step. Test
+  `solver_sop_break_impact_bullet`, `solver_sop_break_atframe_bullet`, `solver_sop_break_distance_bullet` and the INFO
+  `solver_sop_break_angle_torque_bullet` (against the RBD Bullet Solver SOP). Not there: Force (see status.md), Group, Update from Input, plastic flow and the VEX snippet.
 * Help card: `HELP_CARD` (`b3d_solver_help.py`, Houdini wiki markup) as the definition's `Help` section.
 * The Constraint Network DOP uses Second Context Geometry and Attach Internal Constraints to Object (as RBD Bullet
   Solver), so the network is the pieces object's `ConstraintGeometry`. Only the pieces go through it, the collision

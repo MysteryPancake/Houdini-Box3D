@@ -662,6 +662,12 @@ void readVelocities(Box3DSharedState &st) {
       items.size(),
       [&](size_t i) {
         Box3DWriteItem &w = items[i];
+        if (w.entry->inCompound) { // a piece of a compound: its parked body
+                                   // has no velocity; the compound's was used
+          std::copy(w.entry->glueLin, w.entry->glueLin + 3, w.lin);
+          std::copy(w.entry->glueAng, w.entry->glueAng + 3, w.ang);
+          return;
+        }
         st.world.getVelocityByHandle(w.entry->handle, w.lin, w.ang);
       },
       minParallelWrite());

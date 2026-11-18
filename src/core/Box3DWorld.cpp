@@ -612,6 +612,67 @@ bool Box3DWorld::createHullShape(BodyHandle h, const BodySettings &body,
       b3CreateHullShape(b3LoadBodyId(h), &def, hull->hull)); // Box3D copies it
 }
 
+int Box3DWorld::copyShapesByHandle(BodyHandle src, BodyHandle dst,
+                                   const float center[3],
+                                   const float rotXYZW[4]) {
+  if (!src || !dst || src == dst || !center || !rotXYZW || !finite3(center) ||
+      !finite3(rotXYZW))
+    return -1;
+  const b3BodyId from = b3LoadBodyId(src), to = b3LoadBodyId(dst);
+  const int count = b3Body_GetShapeCount(from);
+  std::vector<b3ShapeId> shapes(static_cast<size_t>(count));
+  const int got = count > 0 ? b3Body_GetShapes(from, shapes.data(), count) : 0;
+  // Box3D lists shapes newest first: copy in creation order.
+  std::reverse(shapes.begin(), shapes.begin() + got);
+  for (int i = 0; i < got; ++i) {
+    const b3ShapeType type = b3Shape_GetType(shapes[static_cast<size_t>(i)]);
+    if (type != b3_hullShape && type != b3_sphereShape &&
+        type != b3_capsuleShape)
+      return -1; // meshes, planes...: nothing is copied
+  }
+  float rot[4] = {rotXYZW[0], rotXYZW[1], rotXYZW[2], rotXYZW[3]};
+  sanitizeQuat(rot); // Box3D asserts on a non-unit quaternion
+  b3Transform local;
+  local.p = makeVec3(center);
+  local.q = makeQuat(rot);
+  int added = 0;
+  for (int i = 0; i < got; ++i) {
+    const b3ShapeId s = shapes[static_cast<size_t>(i)];
+    b3ShapeDef def = b3DefaultShapeDef();
+    def.updateBodyMass = false; // the caller applies the mass once
+    def.density = b3Shape_GetDensity(s);
+    def.baseMaterial = b3Shape_GetSurfaceMaterial(s);
+    def.filter = b3Shape_GetFilter(s);
+    def.enableHitEvents = true;
+    b3ShapeId made = b3_nullShapeId;
+    switch (b3Shape_GetType(s)) {
+    case b3_hullShape:
+      made = b3CreateTransformedHullShape(to, &def, b3Shape_GetHull(s), local,
+                                          b3Vec3_one);
+      break;
+    case b3_sphereShape: {
+      b3Sphere sphere = b3Shape_GetSphere(s);
+      sphere.center = b3Add(local.p, b3RotateVector(local.q, sphere.center));
+      made = b3CreateSphereShape(to, &def, &sphere);
+      break;
+    }
+    default: {
+      b3Capsule capsule = b3Shape_GetCapsule(s);
+      capsule.center1 =
+          b3Add(local.p, b3RotateVector(local.q, capsule.center1));
+      capsule.center2 =
+          b3Add(local.p, b3RotateVector(local.q, capsule.center2));
+      made = b3CreateCapsuleShape(to, &def, &capsule);
+      break;
+    }
+    }
+    if (B3_IS_NULL(made))
+      return -1; // the caller drops the partly built body
+    ++added;
+  }
+  return added;
+}
+
 bool Box3DWorld::createMeshShape(BodyHandle h, const BodySettings &body,
                                  const float *xyz, int vertexCount,
                                  const int32_t *triangles, int triangleCount,
@@ -1380,6 +1441,30 @@ void Box3DWorld::destroyShapesByHandle(BodyHandle h) {
   myImpl->releaseBodyResources(h);
 }
 
+int Box3DWorld::destroyShapeRangesByHandle(
+    BodyHandle h, const std::vector<std::pair<int, int>> &ranges) {
+  if (!h)
+    return 0;
+  const b3BodyId id = b3LoadBodyId(h);
+  const int n = bodyShapes(id, tShapes); // newest first
+  std::vector<int> doomed; // creation indices, each once (ranges may overlap)
+  for (const auto &r : ranges)
+    for (int i = r.first; i < r.first + r.second; ++i)
+      if (i >= 0 && i < n)
+        doomed.push_back(i);
+  std::sort(doomed.begin(), doomed.end());
+  doomed.erase(std::unique(doomed.begin(), doomed.end()), doomed.end());
+  // Collect the ids before destroying any: tShapes is not touched by it, but
+  // the list is read newest first.
+  std::vector<b3ShapeId> ids;
+  ids.reserve(doomed.size());
+  for (const int i : doomed)
+    ids.push_back(tShapes[static_cast<size_t>(n - 1 - i)]);
+  for (const b3ShapeId s : ids)
+    b3DestroyShape(s, false); // the caller applies the mass afterwards
+  return static_cast<int>(ids.size());
+}
+
 void Box3DWorld::wakeByHandle(BodyHandle h) {
   if (!h)
     return;
@@ -1601,6 +1686,47 @@ float Box3DWorld::contactImpulseByHandle(BodyHandle h, const BodyHandle *skip,
     }
   }
   return total;
+}
+
+int Box3DWorld::contactImpulsesByShape(BodyHandle h,
+                                       std::vector<float> &out) const {
+  out.clear();
+  if (!h)
+    return 0;
+  const b3BodyId id = b3LoadBodyId(h);
+  const int count = b3Body_GetShapeCount(id);
+  if (count <= 0)
+    return 0;
+  // Box3D lists a body's shapes newest first: reverse that into creation order.
+  thread_local std::vector<b3ShapeId> shapes;
+  shapes.resize(static_cast<size_t>(count));
+  const int got = b3Body_GetShapes(id, shapes.data(), count);
+  out.assign(static_cast<size_t>(got), 0.0f);
+  thread_local std::vector<b3ContactData> data;
+  const int n = fetchContacts(id, data);
+  if (n <= 0)
+    return got; // no contacts: no need to index the shapes
+  thread_local std::unordered_map<uint64_t, int> indexOf;
+  indexOf.clear();
+  for (int i = 0; i < got; ++i)
+    indexOf[b3StoreShapeId(shapes[static_cast<size_t>(i)])] = got - 1 - i;
+  for (int i = 0; i < n; ++i) {
+    const b3ContactData &cd = data[static_cast<size_t>(i)];
+    const b3ShapeId mine =
+        sameBody(b3Shape_GetBody(cd.shapeIdA), id) ? cd.shapeIdA : cd.shapeIdB;
+    const auto it = indexOf.find(b3StoreShapeId(mine));
+    if (it == indexOf.end())
+      continue;
+    float total = 0.0f;
+    for (int m = 0; m < cd.manifoldCount; ++m) {
+      const b3Manifold &man = cd.manifolds[m];
+      for (int k = 0; k < man.pointCount; ++k)
+        if (man.points[k].totalNormalImpulse > 0.0f)
+          total += man.points[k].totalNormalImpulse;
+    }
+    out[static_cast<size_t>(it->second)] += total;
+  }
+  return got;
 }
 
 int Box3DWorld::getContactsByHandle(BodyHandle h,

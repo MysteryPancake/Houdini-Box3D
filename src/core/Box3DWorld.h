@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "Box3DJoints.h"
@@ -358,6 +359,20 @@ public:
                    const ShapeSpec &shape, bool updateMass = true);
   bool createHullShape(BodyHandle h, const BodySettings &body, HullId hull,
                        bool updateMass = true);
+  // Destroys the body's shapes at these positions in creation order, as
+  // [first, first + count) pairs (a compound's pieces), leaving the others in
+  // order. The mass is not updated (call applyMassFromShapes). Returns how
+  // many were destroyed.
+  int destroyShapeRangesByHandle(
+      BodyHandle h, const std::vector<std::pair<int, int>> &ranges);
+  // Copies every shape of `src` onto `dst` (same density, material and filter)
+  // moved by `center` / `rotXYZW` in dst's space, in creation order; the mass
+  // is not updated (call applyMassFromShapes). Hulls, spheres and capsules
+  // only. Returns how many were added, or -1 if there is a shape of another
+  // kind or a body or a shape could not be made (some may be added by then:
+  // destroyShapesByHandle(dst) clears them).
+  int copyShapesByHandle(BodyHandle src, BodyHandle dst, const float center[3],
+                         const float rotXYZW[4]);
   // A static triangle mesh (xyz: body-local vertices, triangles: 3 indices
   // each, CCW). Static bodies only; false for a non-static body, fewer than 3
   // vertices or 1 triangle, non-finite vertices or out-of-range indices.
@@ -497,6 +512,12 @@ public:
   // building them.
   float contactImpulseByHandle(BodyHandle h, const BodyHandle *skip,
                                size_t skipCount) const;
+
+  // The total normal impulse (N*s) of the last step's contacts on each shape of
+  // the body, in the order the shapes were created (a compound's pieces). `out`
+  // is resized to the shape count; returns it. A contact between two shapes of
+  // the same body cannot exist, so nothing is skipped.
+  int contactImpulsesByShape(BodyHandle h, std::vector<float> &out) const;
 
   // Hit events of the last step (pairs that approached faster than
   // impactMinSpeed).
