@@ -91,12 +91,18 @@ def build_dops(dopnet):
     # constraints output can DOP Import it. Only the pieces go through it: the collision object
     # would get its own copy and every joint would be made twice. Anchors naming collision pieces
     # still resolve (piece names are looked up in every object).
+    # Each one behind a Switch on its Enable toggle (use<name> on the asset): off, nothing is merged for it.
     rels = []
     for type_names, name in RELATIONSHIPS:
         try:
-            rels.append(create(dopnet, type_names, name))
+            rel = create(dopnet, type_names, name)
         except RuntimeError as e:
             warn(f"{e}; constraints of that type will not work in the Box3D Solver SOP")
+            continue
+        enable = create(dopnet, "switch", f"switch_use_{name}")
+        enable.setInput(1, rel)
+        enable.parm("input").setExpression(f'ch("../../use{name}")', hou.exprLanguage.Hscript)
+        rels.append(enable)
     rel_merge = create(dopnet, "merge", "relationships")
     for i, r in enumerate(rels):
         rel_merge.setInput(i, r)

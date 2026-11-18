@@ -1257,6 +1257,21 @@ def test_solver_sop_layout():
     expect("Override Attributes from SOP reaches the pieces' Packed Object",
            inner_pieces.parm("overwritefromsop").eval() if inner_pieces else None, 1)
     sop.parm("overwritefromsop").set(0)
+    # Each joint type's Enable, Data Name and Default Operation reach its inner node.
+    glue = sop.node("dopnet/glue")
+    glue_switch = sop.node("dopnet/switch_use_glue")
+    sop.parm("useglue").set(0)
+    switch_off = glue_switch.parm("input").eval() if glue_switch else None
+    sop.parm("useglue").set(1)
+    switch_on = glue_switch.parm("input").eval() if glue_switch else None
+    expect("Enable Glue off / on drives its Switch", (switch_off, switch_on), (0, 1))
+    sop.parm("glue_dataname").set("Bond")
+    expect("Glue Data Name reaches the node", glue.parm("dataname").eval() if glue else None, "Bond")
+    sop.parm("glue_dataname").set("Glue")
+    sop.parm("glue_defaultparmop").set(1)
+    expect("Glue Default Operation Set Always reaches its settings (Parameter Operation 1)",
+           glue.parm("parmop_strength").eval() if glue else None, 1)
+    sop.parm("glue_defaultparmop").set(0)
     inner_solver = sop.node("dopnet/box3d_solver")
     sop.parm("addgravity").set(0)
     off_y = inner_solver.parmTuple("gravity")[1].eval() if inner_solver else None

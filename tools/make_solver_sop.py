@@ -76,6 +76,7 @@ import b3d_hda  # noqa: E402  (beside this script)
 from b3d_hda import labels, pull, value_templates, without_parmops  # noqa: E402
 from b3d_solver_common import (  # noqa: E402
     GLOBAL_SUBSTEPS,
+    RELATIONSHIPS,
     CACHE_ENABLED,
     OVERWRITE_FROM_SOP,
     CACHE_MEMORY,
@@ -116,6 +117,7 @@ from b3d_solver_common import (  # noqa: E402
     FALSE_COLOR_MODE,
     FALSE_COLOR_ATTRIB,
     SHOW_IMPACTS,
+    GUIDE_RADIUS,
     COLLISION_COLOR,
     AGING_PARMS,
     ADD_GRAVITY,
@@ -375,6 +377,7 @@ def build(out_path, packed_hda=None):
     constraint_folders, constraint_links = constraint_items(dopnet, sub)
     links += constraint_links
     taken.update(new for _, _, new in constraint_links)
+    taken.update(f"use{name}" for _, name in RELATIONSHIPS)
     taken.update(BREAK_PARMS)
     taken.update([TRANSFER_ATTRIBUTES, KEEP_BROKEN]
                  + list(POINT_VELOCITY_PARMS) + [n for n, _ in TRANSFER_TO.values()])
@@ -664,7 +667,11 @@ def visualization_tab(shapes):
         help="The float primitive attribute to colour by.")
     custom.setConditional(hou.parmCondType.DisableWhen,
                           f"{{ {SHOW_CONSTRAINTS} == 0 }} {{ {FALSE_COLOR_MODE} != 6 }}")
-    constraint_folder = collapsible("b3dsop_vis_constraint_geometry", "Constraint Geometry", [mode, custom])
+    radius = hou.FloatParmTemplate(
+        GUIDE_RADIUS, "Guide Radius", 1, default_value=(0.05,), min=0.0, max=1.0, min_is_strict=True,
+        help="The constraint lines' thickness. Each constraint type's Guide Scale (Advanced > Constraints) multiplies it.")
+    radius.setConditional(hou.parmCondType.DisableWhen, f"{{ {SHOW_CONSTRAINTS} == 0 }}")
+    constraint_folder = collapsible("b3dsop_vis_constraint_geometry", "Constraint Geometry", [mode, custom, radius])
     impacts = hou.ToggleParmTemplate(
         SHOW_IMPACTS, "Show Impacts", default_value=False,
         help="Draws the impact points in the viewport. Needs Add Impact Data on the Output tab.")

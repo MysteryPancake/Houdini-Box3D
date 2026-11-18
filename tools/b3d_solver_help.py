@@ -131,7 +131,9 @@ Stability and Performance settings: warm starting, continuous collision, speed l
 
 Constraints:
     The settings of each constraint type: a closed folder per joint. A float primitive attribute on the constraint
-    lines multiplies the value here, so set the typical value here and vary it per constraint with an attribute.
+    lines multiplies the value here, so set the typical value here and vary it per constraint with an attribute. Each
+    folder also has Enable (off leaves the type out), Data Name (what `constraint_name` picks it by) and Default
+    Operation (Set Always applies the values every step, so animated ones act).
 
 == Output ==
 

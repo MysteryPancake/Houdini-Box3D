@@ -38,7 +38,7 @@ SOLVER_LAYOUT = [
      ("Guide", ["import_shapes", "tint_shapes", "unscale_shapes", "no_shapes", "switch_show_shapes",
                 "switchif_beforestart_shapes", "import_collision_shapes", "tint_collision_shapes",
                 "unscale_collision_shapes", "switch_show_collision_shapes", "switchif_beforestart_collision_shapes",
-                "false_color_constraints", "switch_show_constraints", "switchif_beforestart_constraint_guide", "color_impacts",
+                "constraint_guide_radius", "false_color_constraints", "constraint_guide_wire", "switch_show_constraints", "switchif_beforestart_constraint_guide", "color_impacts",
                 "switch_show_impacts", "switchif_beforestart_impact_guide", "import_collision_geo", "dim_collision_geo", "unscale_collision_geo",
                 "switch_show_collision_geo", "switchif_beforestart_collision_geo", "import_ground_plane",
                 "ground_plane_lines", "switch_ground_shaded", "unscale_ground_plane", "import_ground_field",
@@ -46,14 +46,16 @@ SOLVER_LAYOUT = [
                 "switchif_beforestart_ground", "merge_guide", "guide_wireframe", "GUIDE_GEO"], {"color": EXTRA})],
 ]
 
-# The DOP network inside it. The relationships are a grid: fourteen nodes with no wires between them.
+# The DOP network inside it. The relationships are a grid: fourteen nodes, each wired only to its Enable Switch.
+RELATIONSHIP_NAMES = ["weld", "spherical", "revolute", "prismatic", "distance", "motor", "parallel", "wheel",
+                      "filter", "glue", "hard", "spring", "soft", "conetwist"]
 DOP_LAYOUT = [
     [("Objects", ["pieces", "collision", "collision_static", "collision_static_data", "collision_source"],
       {"color": PREPARE}),
-     ("Relationships", ["weld", "spherical", "revolute", "prismatic", "distance", "motor", "parallel", "wheel",
-                        "filter", "glue", "hard", "spring", "soft", "conetwist"], {"grid": 5, "color": EXTRA})],
-    [("Constraints", ["relationships", "constraintnetwork", "use_constraints", "pieces_and_collision",
-                      "use_collision"], {"color": PREPARE}),
+     ("Relationships", RELATIONSHIP_NAMES, {"grid": 5, "color": EXTRA})],
+    [("Constraints", [f"switch_use_{n}" for n in RELATIONSHIP_NAMES]
+                     + ["relationships", "constraintnetwork", "use_constraints", "pieces_and_collision",
+                        "use_collision"], {"color": PREPARE}),
      ("Ground", ["ground_none", "groundplane", "ground_heightfield", "switch_ground", "ground_data"],
       {"color": GROUND}),
      ("Forces", ["FORCES", "scale_forces"], {"color": EXTRA})],

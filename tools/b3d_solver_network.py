@@ -37,6 +37,7 @@ from b3d_solver_common import (
     FALSE_COLOR_MODE,
     FALSE_COLOR_ATTRIB,
     SHOW_IMPACTS,
+    GUIDE_RADIUS,
     COLLISION_COLOR,
     SHOW_GROUND,
     USE_GROUND,
@@ -252,6 +253,20 @@ if (!hasprimattrib(0, "Cd")) addprimattrib(0, "Cd", {{1, 1, 1}});
 for (int i = 0; i < nprims(0); i++)
     setprimattrib(0, "Cd", i, lerp({{0, 0.4, 1}}, {{1, 0.1, 0}}, abs(prim(0, attr, i)) / top));
 '''
+
+# The constraint lines' radius in the guide: Guide Radius times the Guide Scale of the line's type (its
+# `constraint_name` against each type's Data Name), set on the line's points (PolyWire reads it there).
+def guide_radius_vex():
+    lines = ["int prims[] = pointprims(0, @ptnum);",
+             'string cname = len(prims) && hasprimattrib(0, "constraint_name") ? '
+             'tolower(prim(0, "constraint_name", prims[0])) : "";',
+             "float scale = 1;"]
+    for i, (_, name) in enumerate(RELATIONSHIPS):
+        lines.append(f'{"if" if i == 0 else "else if"} (cname == tolower(chs("../{name}_dataname"))) '
+                     f'scale = ch("../{name}_guidescale");')
+    lines.append(f'f@guide_radius = max(ch("../{GUIDE_RADIUS}") * scale, 0.0001);')
+    return "\n".join(lines) + "\n"
+
 
 # The impact points in the guide: red.
 IMPACT_GUIDE_VEX = """\
@@ -694,13 +709,22 @@ def build_network(sub):
 
     # The constraint lines (RBD Bullet Solver's Show Constraints) with False Color Mode, and the impact points (Show
     # Impacts), each cooked only while its toggle is on.
+    guide_radius = create(sub, "attribwrangle", "constraint_guide_radius")
+    guide_radius.setInput(0, con_unscaled)
+    guide_radius.parm("class").set("point")
+    guide_radius.parm("snippet").set(guide_radius_vex())
     false_color = create(sub, "attribwrangle", "false_color_constraints")
-    false_color.setInput(0, con_unscaled)
+    false_color.setInput(0, guide_radius)
     false_color.parm("class").set("detail")
     false_color.parm("snippet").set(FALSE_COLOR_VEX)
     show_con = create(sub, "switch", "switch_show_constraints")
     show_con.setInput(0, no_shapes)
-    show_con.setInput(1, false_color)
+    guide_wire = create(sub, "polywire", "constraint_guide_wire")  # thick lines, by each line's radius
+    guide_wire.setInput(0, false_color)
+    guide_wire.parm("radius").set(1)
+    guide_wire.parm("usescaleattrib").set(1)
+    guide_wire.parm("scaleattrib").set("guide_radius")
+    show_con.setInput(1, guide_wire)
     show_con.parm("input").setExpression(f'ch("../{SHOW_CONSTRAINTS}")', hou.exprLanguage.Hscript)
     con_guide_out = before_start(sub, dopnet, "switchif_beforestart_constraint_guide", show_con, no_shapes)
     impact_color = create(sub, "attribwrangle", "color_impacts")
