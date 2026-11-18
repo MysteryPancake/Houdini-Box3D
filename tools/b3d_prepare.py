@@ -70,6 +70,55 @@ if (name == "") name = chs("prefix") + itoa(@ptnum);
 s@name = name;
 """
 COLLISION_PREFIX = "static"  # Bullet's Output Prefix for assembled colliders
+
+# Bullet's `collisiongroup` / `collisionignore` as Box3D's `collision_category` / `collision_mask`.
+# Input 1 is the other geometry of the simulation (pieces <-> colliders), so both sides number the
+# same group names the same way. Bit 0 is "no group"; groups take bits 1 to 30 in sorted order (more
+# share bit 30), so the values fit a 32-bit int. A piece ignores a group when the pattern matches
+# its name (space separated, `^` takes names out again, as Houdini patterns). Box3D collides two
+# bodies only when each one's mask has the other's category, so either side ignoring is enough.
+# Points with neither attribute keep whatever they had (the solver's defaults when missing).
+COLLISION_NAMES_VEX = """\
+int bit(int k) { return (int)pow(2.0, (float)k); }
+int hasGroup = haspointattrib(0, "collisiongroup");
+int hasIgnore = haspointattrib(0, "collisionignore");
+if (!hasGroup && !hasIgnore) return;
+string names[];
+if (hasGroup) names = uniquevals(0, "point", "collisiongroup");
+if (haspointattrib(1, "collisiongroup")) {
+    string other[] = uniquevals(1, "point", "collisiongroup");
+    foreach (string n; other)
+        if (find(names, n) < 0) append(names, n);
+}
+string used[];
+foreach (string n; names)
+    if (n != "") append(used, n);
+used = sort(used);
+if (!haspointattrib(0, "collision_category")) addpointattrib(0, "collision_category", 1);
+if (!haspointattrib(0, "collision_mask")) addpointattrib(0, "collision_mask", -1);
+for (int pt = 0; pt < npoints(0); pt++) {
+    string group = hasGroup ? point(0, "collisiongroup", pt) : "";
+    string ignore = hasIgnore ? point(0, "collisionignore", pt) : "";
+    if (group == "" && ignore == "") continue;
+    int index = find(used, group);
+    int category = (group != "" && index >= 0) ? bit(min(index + 1, 30)) : 1;
+    string patterns[] = split(ignore);
+    int ignored = 0;
+    for (int i = 0; i < len(used); i++) {
+        int hit = 0;
+        foreach (string p; patterns) {
+            if (startswith(p, "^")) {
+                if (match(p[1:], used[i])) hit = 0;
+            } else if (match(p, used[i])) {
+                hit = 1;
+            }
+        }
+        if (hit) ignored |= bit(min(i + 1, 30));
+    }
+    setpointattrib(0, "collision_category", pt, category);
+    setpointattrib(0, "collision_mask", pt, ~ignored);
+}
+"""
 # Bullet's Path Attribute on its Assembles.
 PACK_PATH = "op:`opfullpath('.')`/pack"
 
@@ -91,6 +140,18 @@ def _set(node, warn, parms=None, exprs=None):
             warn(f"{node.path()} has no parameter {k!r}")
             continue
         p.setExpression(v, hou.exprLanguage.Hscript)
+
+
+def collision_names(parent, name, src, other):
+    """A wrangle `name` in `parent` that maps `src`'s collisiongroup / collisionignore onto
+    collision_category / collision_mask (COLLISION_NAMES_VEX); `other` is the simulation's other
+    geometry. Returns it."""
+    n = parent.createNode("attribwrangle", name)
+    n.setInput(0, src)
+    n.setInput(1, other)
+    n.parm("class").set("detail")
+    n.parm("snippet").set(COLLISION_NAMES_VEX)
+    return n
 
 
 def prepare_input(parent, src, name, pack, warn, prefix=DEFAULT_PREFIX, prefix_expr=None,

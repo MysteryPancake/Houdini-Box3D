@@ -24,6 +24,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/Box3DCompound.h"
 #include "core/Box3DGlue.h"
 #include "core/Box3DSideFX.h"
 #include "core/Box3DWorld.h"
@@ -575,6 +576,10 @@ struct Box3DCompound {
   // (contactImpulsesByShape), and the collectGlueHits call it belongs to.
   std::vector<float> shapeImpulse;
   uint64_t hitsTick = 0;
+  // Its motion before the last Box3D step (recordCompoundMotion), if awake.
+  b3dop::MergedBody pre;
+  bool preOk = false;
+  bool hadHit = false; // its last step had contact impulse (collectGlueHits)
 };
 
 // Everything shared between timestep copies.
@@ -653,6 +658,9 @@ struct Box3DSharedState {
   std::vector<Box3DJointEntry *> glueBonds;
   std::vector<std::pair<int, int>> glueBondNodes;
   std::vector<void *> glueBroken;
+  // Bonds broken in the middle of the frame (breakGlueEarly): their joints are
+  // gone, jointsAfterStep writes them like the others.
+  std::vector<Box3DJointEntry *> earlyBroken;
   bool glueDirty = true;
   // The joint entries of each network (key: network key) for jointsAfterStep,
   // rebuilt only after syncJoints changed the joints.

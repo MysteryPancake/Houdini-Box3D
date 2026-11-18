@@ -25,6 +25,9 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * The Threads default (`performanceCoreCount`) on macOS (`hw.perflevel0`) and ARM Linux (`cpu_capacity`).
 
 **Houdini behaviour**
+* Collision group names (`COLLISION_NAMES_VEX`): the VEX gives the right bits in hython. Test `solver_sop_collision_group_names`
+  has not been run (it needs the rebuilt asset). Whether the collision input's pieces honour category / mask, and Bullet's
+  either-side-ignores rule, are unchecked.
 * A packed piece that turns mirrored mid-simulation: the shape rebuild is keyed on the row lengths, not the sign
   (`mirrored_piece` covers a piece that starts mirrored).
 * Escape mid-step: the step is discarded and re-cooked, earlier frames stay cached, the re-cook rebuilds once.
@@ -145,7 +148,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   `kGlueStrengthScale` (5.3, measured for a landing from 3). So a hit on a resting structure needs about 5x the Strength
   in Box3D that it does in Bullet. Anchor position and rest length change neither. Not understood: what makes Bullet's
   break value larger than its `impact`. Unchecked: the global propagation iteration count (the `propagate_iteration`
-  detail attribute is not read), and the cost of reading every glued body's contacts each step on a large network.
+  detail attribute; test `glue_global_iterations` has not been run), and the cost of reading every glued body's contacts each step on a large network.
 * What the precompiled headers (`BOX3DDOP_PCH`) save: not measured.
 * Transform Pieces with packed transforms that carry scale or shear.
 * Constraints output through Transform Pieces: constraints between collision pieces (not in the simulation points, so

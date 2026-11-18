@@ -31,6 +31,9 @@ inline constexpr const char *kCurrentOrient = "current_orient";
 // Glue's feedback: the impulse its hits have accumulated
 // (docs/agents/joints.md).
 inline constexpr const char *kImpact = "impact";
+// Detail attribute of a Constraint Network: Glue rounds for a bond with a
+// negative count.
+inline constexpr const char *kPropagateIteration = "propagate_iteration";
 
 // Where a network was found: a relationship of `object` (by name), or, with an
 // empty name, the object's ConstraintGeometry.

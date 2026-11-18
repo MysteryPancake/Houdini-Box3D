@@ -432,9 +432,11 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
       warnCount(objects, fs.nonFinite, kNonFiniteForce);
     }
     UT_PerfMonAutoSolveEvent perf(this, "Stepping World");
+    recordCompoundMotion(*st, true);
     st->world.step(subDt);
     collectGlueHits(*st);
     st->world.getMoveEvents(st->moves); // read once: write-back and impacts
+    breakGlueEarly(*st, subDt, st->moves);
   } else {
     st->moves.clear();
     st->brokenThisFrame.clear();
@@ -462,9 +464,11 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
       }
       {
         UT_PerfMonAutoSolveEvent perf(this, "Stepping World");
+        recordCompoundMotion(*st, i == 0);
         st->world.step(subDt);
         collectGlueHits(*st);
         st->world.getMoveEvents(events);
+        breakGlueEarly(*st, subDt * static_cast<float>(i + 1), events);
         // Joint events are cleared by the next step too: keep every joint that
         // went over its threshold (once each).
         if (collectHits)

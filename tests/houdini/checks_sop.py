@@ -519,6 +519,37 @@ def test_solver_sop_collision_names():
                    f"collider point names {names_now} (expected one name starting with 'static')")]
 
 
+def test_solver_sop_collision_group_names():
+    """Bullet's collisiongroup / collisionignore on the pieces become collision bits in the Solver SOP: a box dropped
+    onto another rests on it (y = 1.5) unless the lower one ignores the upper one's group, or the upper one ignores
+    the lower one's (either side is enough), and then it falls through to the ground (y = 0.5). A pattern that
+    matches no group, and a `^` that takes the group out again, change nothing."""
+    cases = [
+        # (tag, lower (group, ignore), upper (group, ignore), expected y of the upper box)
+        ("plain", ("debris", ""), ("debris", ""), 1.5),
+        ("lower_ignores_group", ("debris", "debris"), ("debris", ""), 0.5),
+        ("upper_ignores_other_group", ("a", ""), ("b", "a"), 0.5),
+        ("lower_ignores_upper_group", ("a", "b"), ("b", ""), 0.5),
+        ("other_group_ignored", ("a", "zzz"), ("b", ""), 1.5),
+        ("pattern", ("a", "d*"), ("debris", ""), 0.5),
+        ("pattern_taken_out", ("a", "d* ^debris"), ("debris", ""), 1.5),
+    ]
+    ground, _ = packed_boxes("sop_cgn_ground", [GROUND])
+    results = []
+    for tag, (g0, i0), (g1, i1), want in cases:
+        pieces, names = packed_boxes(f"sop_cgn_pieces_{tag}", [
+            {"size": (1, 1, 1), "center": (0, 0.5, 0), "attrs": {"collisiongroup": g0, "collisionignore": i0}},
+            {"size": (1, 1, 1), "center": (0, 2, 0), "attrs": {"collisiongroup": g1, "collisionignore": i1}}])
+        sop = solver_sop(f"sop_cgn_{tag}", geometry=pieces, collision=ground)
+        pos = play(sop, 48, lambda s, f: named_positions(s.geometry(0)) if f == 48 else None)[48]
+        y = pos[names[1]][1] if names[1] in pos else None
+        ok = y is not None and close(y, want, 0.05)
+        results.append(Result("solver_sop_collision_group_names", Result.PASS if ok else Result.FAIL,
+                              f"{tag}: lower {g0!r} ignoring {i0!r}, upper {g1!r} ignoring {i1!r}: upper box at "
+                              f"y={y} after 2 s (expected {want})"))
+    return results
+
+
 def collider_points(sop):
     """The collision object's points in the Solver SOP's simulation as [{attribute: value}], or None."""
     dop = sop.node("dopnet")
@@ -1210,7 +1241,7 @@ def test_solver_sop_layout():
     Output (no Misc); Collision Geometry's header checkbox is Use External Collisions, which sits just before it
     (as RBD Bullet Solver's); the Pieces tab is Shape, Body, Material, CCD & Contacts, Initial State, Sleep (Start
     Asleep first); the Solver tab ends with Contacts, Sleeping (the solver's Allow Sleeping) and Aging;
-    Visualization is Show Collision Geometry / Shapes, Shape Color, then the Ground and Inspector folders; no Detach Faces; every collapsible folder open but Impact Data,
+    Visualization is the Visualize Geometries folder (Geometry, Ground, Collision Geometry) then the Inspector folder; no Detach Faces; every collapsible folder open but Impact Data,
     Sleeping, Aging and the Constraints tab's folders."""
     sop = solver_sop("sop_layout")
     entries = sop.parmTemplateGroup().entries()
@@ -1256,9 +1287,16 @@ def test_solver_sop_layout():
            (performance.parmTemplates()[0].isLabelHidden(), performance.parmTemplates()[0].joinsWithNext())
            if performance and performance.parmTemplates() else None, (True, True))
     vis_tab = by_path.get(("Visualization",))
-    expect("Visualization tab (the Ground and Inspector folders last)",
-           [pt.name() for pt in vis_tab.parmTemplates()] if vis_tab else None,
-           ["showcollision", "exportshapes", "shapecolor", "b3dsop_show_ground", "b3dsop_inspector"])
+    expect("Visualization tab", [pt.name() for pt in vis_tab.parmTemplates()] if vis_tab else None,
+           ["b3dsop_visualize_geometries", "b3dsop_inspector"])
+    visualize = by_path.get(("Visualization", "Visualize Geometries"))
+    expect("Visualize Geometries folders", [pt.label() for pt in visualize.parmTemplates()] if visualize else None,
+           ["Geometry", "Ground", "Collision Geometry"])
+    for label, names in (("Geometry", ["exportshapes", "shapecolor"]), ("Ground", ["showground", "shadeground"]),
+                         ("Collision Geometry", ["showcollision"])):
+        sub_folder = by_path.get(("Visualization", "Visualize Geometries", label))
+        expect(f"Visualize Geometries / {label}", [pt.name() for pt in sub_folder.parmTemplates()] if sub_folder
+               else None, names)
     # The operator toolbar along the top of the viewport (export level 3) and the viewer state's sections.
     toolbar = sorted(pt.name() for pt in sop.parmTemplateGroup().entriesWithoutFolders() if pt._exportLevel() == 3)
     expect("parameters in the viewport toolbar", toolbar, ["exportshapes", "resimulate", "showcollision", "showground"])
@@ -1667,6 +1705,7 @@ TESTS = {
     "solver_sop_constraint_settings": test_solver_sop_constraint_settings,
     "solver_sop_ground_guide": test_solver_sop_ground_guide,
     "solver_sop_collision_prim_names": test_solver_sop_collision_prim_names,
+    "solver_sop_collision_group_names": test_solver_sop_collision_group_names,
     "solver_sop_collision_rest": test_solver_sop_collision_rest,
     "solver_sop_world_anchor": test_solver_sop_world_anchor,
     "unpacked_turning_collider": test_unpacked_turning_collider,

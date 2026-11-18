@@ -196,7 +196,8 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
     holds at any Strength (`sidefx_glue`); a landing is (`glue_impact`). `impact` matches Bullet's own (peak within
     ~20%, the same decay: `glue_impact_trace`); a Bullet glue holds from about 5 to 6 times its peak impact, so
     the break test uses `kGlueStrengthScale` (measured from one scene: `glue_impact_scale`). A negative iteration count is the global one
-    (the `propagate_iteration` detail attribute, not read): one round; the most iterations of any bond set the rounds.
+    (the `propagate_iteration` detail attribute of the network, read by `NetworkReader::glueIterations`; one round without it);
+    the most iterations of any bond set the rounds.
   * **Glue as One Body** (`gluecompound`, on by default; `Box3DCompoundSync.cpp`): after `syncJoints`, a group of bonded
     pieces runs as one Box3D body that carries copies of the pieces' shapes (`copyShapesByHandle`, mass from the
     shapes, velocity from `mergePieces`). Each piece keeps its own body, disabled: Box3D parks a disabled body's joints,
@@ -205,7 +206,11 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
     other joint touches it. After the step `expandCompoundMoves` adds a move event per piece (compound pose * offset,
     velocity `pieceVelocity` kept on the entry as `glueLin` / `glueAng`), so the write-back is the usual one, and
     puts each parked body where its piece is. `collectGlueHits` reads a piece's hits from `contactImpulsesByShape` of
-    its compound, so the break model is unchanged. When a bond breaks, the compound keeps its body for the largest
+    its compound, so the break model is unchanged. One rigid body takes a whole hit, so after every Box3D step `breakGlueEarly` runs the break test on the hits so far
+    (`glueAdvance` on copies) for bonds inside compounds, destroys the ones over (`earlyBroken`, written by `jointsAfterStep`;
+    `advanceGlue` skips them) and `splitBrokenCompounds` splits their compounds at once. The pieces that leave take the
+    compound's motion from before the hit (`recordCompoundMotion`, `Box3DCompound::pre`, kept while its last step had hits,
+    taken again each frame), so a corner landing crumbles; the pieces that stay keep the motion after it. The compound keeps its body for the largest
     group of pieces left (`shrink`: the pieces that leave are enabled where the compound has them, their shapes are
     destroyed with `destroyShapeRangesByHandle`, and the body takes the velocity of the rest, `v + w x (new centre -
     old centre)`, so the contacts of the pieces that stay survive); the pieces that left may form new compounds. A

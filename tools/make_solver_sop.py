@@ -607,8 +607,9 @@ def output_tab(impact, speed, velocity):
 
 
 def visualization_tab(shapes):
-    """The Visualization tab's contents: Show Collision Geometry, the solver's Export Collision Shapes as
-    Show Collision Shapes, and Shape Color, all at the tab's top level."""
+    """The Visualization tab's contents, laid out as RBD Bullet Solver's: a Visualize Geometries folder holding
+    Geometry (the solver's Export Collision Shapes as Show Collision Shapes, and Shape Color), Ground and Collision
+    Geometry (Show Collision Geometry), then the Inspector folder."""
     if not shapes:
         warn(f"no {SHAPES_TOGGLE} on the solver: Show Collision Shapes is not on the Visualization tab")
         return []
@@ -626,7 +627,11 @@ def visualization_tab(shapes):
         help="Draws the external collision geometry in the viewport.")
     geo.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_COLLISIONS} == 0 }}")
     b3d_hda.show_in_toolbar(geo, show)  # the bar along the top of the viewport, as RBD Bullet Solver's toggles
-    return [geo, show, color, ground_visualization(), inspector_folder()]
+    visualize = collapsible("b3dsop_visualize_geometries", "Visualize Geometries", [
+        collapsible("b3dsop_vis_geometry", "Geometry", [show, color]),
+        ground_visualization(),
+        collapsible("b3dsop_vis_collision_geometry", "Collision Geometry", [geo])])
+    return [visualize, inspector_folder()]
 
 
 def inspector_folder():

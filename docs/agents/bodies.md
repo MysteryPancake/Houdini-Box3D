@@ -33,7 +33,11 @@ equal to what its body was built with.
 * **Motion locks** (`lock_linear`, `lock_angular`, nonzero = locked world axis) -> `motionLocks`; Box3D zeroes locked
   velocity components every iteration.
 * **Collision filtering** (`collision_category`, `collision_mask` read as `GA_ROHandleID` so `-1` means every bit;
-  `collision_group`) -> the shapes' filter. Affector bodies use the defaults.
+  `collision_group`) -> the shapes' filter. Affector bodies use the defaults. Bullet's `collisiongroup` /
+  `collisionignore` names become these bits in the Box3D Solver SOP (`COLLISION_NAMES_VEX` in `b3d_prepare.py`, a
+  detail wrangle on the pieces and on the colliders, each reading the other's group names so both number them alike):
+  bit 0 is no group, groups take bits 1 to 30 in sorted order, a piece's mask lacks the groups its pattern matches.
+  Ignoring one piece by name (rather than a group) and ignoring the ground are not representable.
 * **Animated** (`animated` with `active = 0`): kinematic; a pose edit becomes `setTargetTransformByHandle(cur, stepDt)`
   and a step without one zeroes the velocity. Not written back.
 * **Fast object** (`fastobject`): Box3D's `isBullet`, renamed (Houdini's `isbullet` means something else).

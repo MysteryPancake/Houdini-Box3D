@@ -497,7 +497,13 @@ def build_network(sub):
     sim_input.setInput(0, nulls[GEO])
     sim_input.setInput(1, nulls[PROXY])
     switch_on_spare_input(sim_input, nulls[PROXY])
-    sim_pieces = prepare_input(sub, sim_source, "prepare_pieces", pack=True)
+    sim_prepared = prepare_input(sub, sim_source, "prepare_pieces", pack=True)
+    # Collision: packed and named, rest from the start frame.
+    collision_prepared = prepare_input(sub, scaled[COLLISION], "prepare_collision", pack=True, collision=True)
+    # Bullet's collisiongroup / collisionignore names as collision bits, numbered over both.
+    sim_pieces = b3d_prepare.collision_names(sub, "collision_names_pieces", sim_prepared, collision_prepared)
+    collision_pieces = b3d_prepare.collision_names(sub, "collision_names_collision", collision_prepared,
+                                                   sim_prepared)
     sim_scaled = scale_wrangle(sub, "scale_attributes", sim_pieces, SCALE_ATTRIBS_VEX, inverse=False)
 
     # Ground Collision: the Height Field chain (the DOP network reads its end).
@@ -508,8 +514,6 @@ def build_network(sub):
     dopnet.setInput(DOP_PIECES, sim_scaled)
     dopnet.setInput(DOP_CONSTRAINTS, scale_wrangle(sub, "scale_constraint_attribs", scaled[CONSTRAINTS],
                                                    SCALE_CONSTRAINTS_VEX, inverse=False, run_over="primitive"))
-    # Collision: packed and named, rest from the start frame.
-    collision_pieces = prepare_input(sub, scaled[COLLISION], "prepare_collision", pack=True, collision=True)
     deforming = create(sub, "attribwrangle", "collision_deforming")
     deforming.setInput(0, collision_rest(sub, dopnet, collision_pieces))
     deforming.parm("class").set("point")

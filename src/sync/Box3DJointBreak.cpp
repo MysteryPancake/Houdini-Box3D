@@ -175,6 +175,21 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp,
 
 } // namespace
 
+namespace {
+
+// Joint local frames are read first (a next constraint may start from them),
+// then the joint is destroyed and the entry marked broken.
+void destroyBrokenJoint(b3dop::Box3DWorld &world, Box3DJointEntry &e) {
+  Box3DJointExtra &x = e.ensureExtra();
+  e.brokeLocalKnown =
+      world.jointLocalFrames(e.handle, x.brokeLocalA, x.brokeLocalB);
+  world.destroyJoint(e.handle);
+  e.handle = 0;
+  e.broken = true;
+}
+
+} // namespace
+
 void collectGlueHits(Box3DSharedState &st) {
   b3dop::Box3DWorld &world = st.world;
   ++st.hitsTick;
@@ -195,6 +210,63 @@ void collectGlueHits(Box3DSharedState &st) {
   }
 }
 
+void breakGlueEarly(Box3DSharedState &st, float elapsed,
+                    std::vector<b3dop::BodyMove> &moves) {
+  if (st.compounds.empty() || st.glueBonds.empty())
+    return;
+  std::vector<float> hits(st.glueNodes.size());
+  bool anyHit = false;
+  for (size_t i = 0; i < hits.size(); ++i) {
+    hits[i] = st.glueNodes[i].hits;
+    anyHit = anyHit || hits[i] > 0.0f;
+  }
+  // No hit yet: the impacts can only have decayed since the last test.
+  if (!anyHit)
+    return;
+  std::vector<b3dop::GlueBond> bonds;
+  bonds.reserve(st.glueBonds.size());
+  for (size_t i = 0; i < st.glueBonds.size(); ++i) {
+    const Box3DJointEntry *e = st.glueBonds[i];
+    b3dop::GlueBond g;
+    g.a = st.glueBondNodes[i].first;
+    g.b = st.glueBondNodes[i].second;
+    g.params = e->extra->glueParams;
+    g.impact = e->extra->glueImpact;
+    if (e->broken)
+      g.a = g.b = -1;
+    bonds.push_back(g);
+  }
+  // The same test advanceGlue makes at the end of the frame, on the hits so far
+  // and on copies: nothing is kept, the end of the frame still adds them all.
+  std::vector<int> over;
+  b3dop::glueAdvance(bonds, std::move(hits), elapsed, over);
+  bool any = false;
+  for (const int i : over) {
+    Box3DJointEntry *e = st.glueBonds[static_cast<size_t>(i)];
+    if (!e->handle || !e->inCompound)
+      continue;
+    destroyBrokenJoint(st.world, *e);
+    st.earlyBroken.push_back(e);
+    any = true;
+    // The two bodies may collide with each other now: not glued neighbours.
+    const auto drop = [&](int node, int other) {
+      std::vector<b3dop::BodyHandle> &p =
+          st.glueNodes[static_cast<size_t>(node)].partners;
+      const auto it = std::find(p.begin(), p.end(),
+                                st.glueNodes[static_cast<size_t>(other)].body);
+      if (it != p.end())
+        p.erase(it);
+    };
+    const std::pair<int, int> ab = st.glueBondNodes[static_cast<size_t>(i)];
+    drop(ab.first, ab.second);
+    drop(ab.second, ab.first);
+  }
+  if (!any)
+    return;
+  st.glueDirty = true;
+  splitBrokenCompounds(st, moves);
+}
+
 void advanceGlue(Box3DSharedState &st, float dt) {
   if (st.glueBonds.empty())
     return;
@@ -210,6 +282,8 @@ void advanceGlue(Box3DSharedState &st, float dt) {
     g.b = st.glueBondNodes[i].second;
     g.params = e->extra->glueParams;
     g.impact = e->extra->glueImpact;
+    if (e->broken) // broke mid-frame (breakGlueEarly): carries nothing now
+      g.a = g.b = -1;
     bonds.push_back(g);
   }
   std::vector<int> broken;
@@ -247,15 +321,16 @@ int breakJoints(Box3DSharedState &st, EntriesByNetwork &brokeIn) {
     Box3DJointEntry *e = static_cast<Box3DJointEntry *>(p);
     if (!e || !e->handle)
       continue;
-    Box3DJointExtra &x = e->ensureExtra();
-    e->brokeLocalKnown =
-        world.jointLocalFrames(e->handle, x.brokeLocalA, x.brokeLocalB);
-    world.destroyJoint(e->handle);
-    e->handle = 0;
-    e->broken = true;
+    destroyBrokenJoint(world, *e);
     brokeIn[e->network].push_back(e);
     ++broke;
   }
+  // The bonds that broke mid-frame are gone already.
+  for (Box3DJointEntry *e : st.earlyBroken) {
+    brokeIn[e->network].push_back(e);
+    ++broke;
+  }
+  st.earlyBroken.clear();
   return broke;
 }
 

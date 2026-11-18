@@ -508,6 +508,41 @@ def test_glue_impact():
                    "; ".join(rows) + " (expected Box3D: broken at 1, none at 1e7)")]
 
 
+def test_glue_compound_break():
+    """A row of 4 glued boxes (run as one body) dropped onto the ground with a Strength of 1: every bond
+    breaks on the landing, and with a Strength of 1e7 none does."""
+    weak = glue_row_run("box3d", 1.0, 48, n=4, height=3.0)[0]
+    strong = glue_row_run("box3d", 1e7, 48, n=4, height=3.0)[0]
+    ok = weak is not None and weak >= 3 and strong == 0
+    return [Result("glue_compound_break", Result.PASS if ok else Result.FAIL,
+                   f"broken at Strength 1: {weak}, at 1e7: {strong} (expected 3 and 0)")]
+
+
+def test_glue_global_iterations():
+    """A Glue's Propagation Iterations below 0 is the network's propagate_iteration detail attribute: a box dropped on
+    the end of a row of 6 glued boxes (resting on the ground) breaks a different number of bonds with -1 and
+    propagate_iteration 6 than with 1 round at some Strength (spreading the impulse further both reaches more bonds and
+    dilutes it); -1 with the attribute 6 matches an explicit 6 at every Strength; -1 with no attribute is one round."""
+    scene = dict(n=6, drop=4.0)
+    rows = []
+    differs = False
+    same = True
+    one_round = True
+    for strength in (3e2, 1e3, 3e3, 1e4, 3e4, 1e5):
+        one = glue_row_run("box3d", strength, 72, iterations=1, **scene)[0]
+        global_six = glue_row_run("box3d", strength, 72, iterations=-1, global_iterations=6, **scene)[0]
+        six = glue_row_run("box3d", strength, 72, iterations=6, **scene)[0]
+        none = glue_row_run("box3d", strength, 72, iterations=-1, **scene)[0]
+        differs = differs or global_six != one
+        same = same and global_six == six
+        one_round = one_round and none == one
+        rows.append(f"Strength {strength:g}: 1 round {one}, -1 with attribute 6: {global_six}, 6: {six}, -1 alone: {none}")
+    ok = differs and same and one_round
+    return [Result("glue_global_iterations", Result.PASS if ok else Result.FAIL,
+                   "; ".join(rows) + f" (expected a different count at some Strength: {differs}, -1 with 6 = 6: {same}, "
+                   f"-1 alone = 1 round: {one_round})")]
+
+
 def glue_threshold(kind, height, lo=500.0, hi=1e7, rounds=7):
     """The Strength at which a glued pair dropped from `height` stops breaking on landing, found by
     bisection in log space between `lo` (must break) and `hi` (must hold). None if `lo` already
@@ -600,9 +635,11 @@ def test_glue_impact_trace():
 _GLUE_RUNS = itertools.count()
 
 
-def glue_row_scene(tag, kind, strength, n=2, height=3.0, drop=None, bounce=None):
+def glue_row_scene(tag, kind, strength, n=2, height=3.0, drop=None, bounce=None, iterations=None,
+                   global_iterations=None):
     """n glued boxes side by side. With drop=None they fall from `height` onto the ground (the landing is the hit).
-    Otherwise they rest on it and a box is dropped from `drop` above the first one. bounce: RBD Packed Object's."""
+    Otherwise they rest on it and a box is dropped from `drop` above the first one. bounce: RBD Packed Object's.
+    iterations: the Glue's Propagation Iterations. global_iterations: the network's propagate_iteration detail attribute."""
     dop = new_dopnet(tag)
     y = height if drop is None else 0.5
     pieces = [{"size": (1, 1, 1), "center": (i, y, 0), "attrs": {"active": 1}} for i in range(n)]
@@ -613,10 +650,20 @@ def glue_row_scene(tag, kind, strength, n=2, height=3.0, drop=None, bounce=None)
     obj = packed_object(dop, "pieces", path, **({} if bounce is None else {"bounce": bounce}))
     glue = create(dop, "glueconrel", "glue")
     set_parm(glue, ["strength"], strength)
+    if iterations is not None:
+        set_parm(glue, ["propagationiterations"], iterations)
     lines = [(names[i], (i + 0.5, y, 0), names[i + 1], (i + 0.5, y, 0), "Glue") for i in range(n - 1)]
     net = create(dop, "constraintnetwork", "constraint_network")
     net.setInput(0, obj)
-    set_parm(net, ["soppath", "constraintsoppath", "geosoppath"], constraint_lines(tag + "_network", lines))
+    network = constraint_lines(tag + "_network", lines)
+    if global_iterations is not None:
+        wr = hou.node(network).parent().createNode("attribwrangle", "global_iterations")
+        wr.setInput(0, hou.node(network))
+        set_parm(wr, ["class"], 0)
+        set_parm(wr, ["snippet"], f"i@propagate_iteration = {int(global_iterations)};")
+        display(wr)
+        network = wr.path()
+    set_parm(net, ["soppath", "constraintsoppath", "geosoppath"], network)
     net.setInput(1, glue)
     finish(dop, solver_for(kind, dop, net))
     return dop
@@ -939,7 +986,9 @@ TESTS = {
     "internal_constraints": test_internal_constraints,
     "sidefx_glue": test_sidefx_glue,
     "glue_impact": test_glue_impact,
+    "glue_compound_break": test_glue_compound_break,
     "glue_impact_scale": test_glue_impact_scale,
+    "glue_global_iterations": test_glue_global_iterations,
     "glue_impact_trace": test_glue_impact_trace,
     "glue_break_match": test_glue_break_match,
     "sidefx_hard_untyped": test_sidefx_hard_untyped,

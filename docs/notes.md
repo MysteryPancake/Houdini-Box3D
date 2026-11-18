@@ -2,6 +2,7 @@
 
 [Back to the README](../README.md)
 
+- Bullet's `collisiongroup` and `collisionignore` work on the Box3D Solver SOP, for up to 30 groups. Ignoring a single piece by name is not supported.
 - Bullet's collision padding and solver settings (ERP, CFM, iterations) are ignored. Use Substeps and the contact settings instead. Substeps 1 at 24 fps gives soft contacts.
 - `bullet_want_deactivate`, `bullet_sleeping`, `bullet_ignore` and `min_activation_impulse` are not read. Use `enablesleep`, `awake` and `enabled` instead.
 - Points sharing a `name` are separate bodies, as with Bullet.

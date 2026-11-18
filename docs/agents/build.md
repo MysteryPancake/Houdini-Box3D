@@ -245,8 +245,10 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   asset, fed by a DOP Import Records of the pieces' `Impacts` data (its parameters set by name).
 * Parameters: Reset Simulation and Start Frame above the tabs, then the solver's tabs (folders found under its Data
   Options, a tab of simple folders kept whole; Guide Options skipped).
-  Tab order: Solver, Pieces, Collision, Forces, any other solver tabs, Visualization (`visualization_tab`: Show
-  Collision Geometry, Show Collision Shapes and Shape Color, no folders), then Advanced and Output always last; the
+  Tab order: Solver, Pieces, Collision, Forces, any other solver tabs, Visualization (`visualization_tab`: a Visualize
+  Geometries folder with Geometry (Show Collision Shapes, Shape Color), Ground and Collision Geometry (Show Collision
+  Geometry), then Inspector, as RBD Bullet Solver's; its Display Visualization Geometry master toggle and the
+  constraint, guide and impact folders have no counterpart), then Advanced and Output always last; the
   solver's parameters are regrouped by name (`SOLVER_FOLDERS`, `BOUNCE_PARMS`, `IMPACT_SPEED`, `SHAPES_TOGGLE`, pulled
   with `pull`), whichever DOP tab holds them: Contacts, Sleeping and Aging become folders at the end of the
   Solver tab (Sleeping and Aging closed), bounce / friction settings go loose into Forces (`TAB_GROUPS` folders them),

@@ -29,6 +29,17 @@ void syncCompounds(Box3DSharedState &st);
 // glueAng), and the parked bodies are put where the pieces are.
 void expandCompoundMoves(Box3DSharedState &st);
 
+// Before every Box3D step: each compound's motion, which the pieces that leave
+// it take (they were not slowed by the hit that broke it). It is kept while the
+// compound's last step had hits, and taken again at the start of a frame.
+void recordCompoundMotion(Box3DSharedState &st, bool frameStart);
+
+// After bonds broke in the middle of a frame (breakGlueEarly): the compounds
+// that lost pieces shrink or dissolve at once. Each piece that left gets a move
+// event in `moves`.
+void splitBrokenCompounds(Box3DSharedState &st,
+                          std::vector<b3dop::BodyMove> &moves);
+
 // The glue's hits on a piece of a compound: the impulse on its shapes in the
 // last Box3D step. False if `body` is not a piece of a compound.
 bool compoundGlueHits(Box3DSharedState &st, b3dop::BodyHandle body,

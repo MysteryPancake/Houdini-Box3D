@@ -110,15 +110,38 @@ uint64_t keyOf(const Box3DBodyMirror &e) {
   return b3dop::makeBodyKey(e.objectId, e.pointId);
 }
 
+// A move event for a piece that left its compound mid-frame: where it was put.
+void addLeftMove(std::vector<b3dop::BodyMove> *moves, Box3DBodyMirror &e,
+                 BodyHandle body, const Pose &pp, bool asleep) {
+  if (!moves)
+    return;
+  b3dop::BodyMove mv;
+  mv.userData = &e;
+  mv.handle = body;
+  for (int k = 0; k < 3; ++k)
+    mv.pos[k] = pp.p[k];
+  for (int k = 0; k < 4; ++k)
+    mv.rot[k] = pp.q[k];
+  mv.fellAsleep = asleep;
+  moves->push_back(mv);
+}
+
 // Enables the pieces where the compound left them (a piece another node
 // edited keeps the pose the edit gave it) and destroys the compound body.
 // Pieces whose entry is gone (`entry` null) were destroyed with their points.
-void dissolve(Box3DSharedState &st, Box3DCompound &c) {
+// `leave` (optional): the motion the pieces take instead of the compound's now
+// (its motion before the step that broke it), `moves` (optional): gets a move
+// event for each piece, for a split in the middle of a frame.
+void dissolve(Box3DSharedState &st, Box3DCompound &c,
+              const b3dop::MergedBody *leave = nullptr,
+              std::vector<b3dop::BodyMove> *moves = nullptr) {
   b3dop::Box3DWorld &w = st.world;
   Pose cp;
   b3dop::MergedBody mb;
   bool awake = false;
   const bool have = bodyPose(w, c.body, cp) && bodyMotion(w, c.body, mb, awake);
+  if (leave && have && awake)
+    mb = *leave;
   for (Box3DCompoundMember &m : c.members) {
     st.compoundOf.erase(m.body);
     if (!m.entry)
@@ -143,6 +166,7 @@ void dissolve(Box3DSharedState &st, Box3DCompound &c) {
       } else {
         w.sleepByHandle(m.body);
       }
+      addLeftMove(moves, e, m.body, pp, !awake);
     }
     e.inCompound = false;
     e.glueEdited = false;
@@ -193,8 +217,11 @@ void dissolveAll(Box3DSharedState &st) {
 // where the compound has them, their shapes destroyed, and the body keeps the
 // momentum of the pieces that stay, which still move as one rigid body. False,
 // with nothing changed, if the compound's body cannot be read.
+// `leave` and `moves` as for dissolve: the pieces that leave take `leave`'s
+// motion, the ones that stay keep the compound's now.
 bool shrink(Box3DSharedState &st, Box3DCompound &c, const std::vector<int> &cid,
-            int mainId) {
+            int mainId, const b3dop::MergedBody *leave = nullptr,
+            std::vector<b3dop::BodyMove> *moves = nullptr) {
   b3dop::Box3DWorld &w = st.world;
   Pose cp;
   b3dop::MergedBody was;
@@ -222,11 +249,12 @@ bool shrink(Box3DSharedState &st, Box3DCompound &c, const std::vector<int> &cid,
       float lin[3], ang[3];
       double com[3];
       centreOf(pp, m, com);
-      b3dop::pieceVelocity(was, com, lin, ang);
+      b3dop::pieceVelocity(leave ? *leave : was, com, lin, ang);
       w.setVelocityByHandle(m.body, lin, ang);
     } else {
       w.sleepByHandle(m.body);
     }
+    addLeftMove(moves, e, m.body, pp, !awake);
     e.inCompound = false;
     e.glueEdited = false;
   }
@@ -494,6 +522,76 @@ void syncCompounds(Box3DSharedState &st) {
     markCompoundBonds(st);
 }
 
+void recordCompoundMotion(Box3DSharedState &st, bool frameStart) {
+  for (auto &c : st.compounds) {
+    // Kept while the last step had hits: the motion from before the impact.
+    if (!frameStart && c->preOk && c->hadHit)
+      continue;
+    bool awake = false;
+    c->preOk = st.world.isAwakeByHandle(c->body) &&
+               bodyMotion(st.world, c->body, c->pre, awake) && awake;
+    c->hadHit = false;
+  }
+}
+
+void splitBrokenCompounds(Box3DSharedState &st,
+                          std::vector<b3dop::BodyMove> &moves) {
+  if (st.compounds.empty())
+    return;
+  // The bonds still holding (an early break marked its bond `broken`).
+  std::vector<b3dop::GlueBond> bonds;
+  bonds.reserve(st.glueBondNodes.size());
+  for (size_t i = 0; i < st.glueBondNodes.size(); ++i) {
+    if (st.glueBonds[i]->broken)
+      continue;
+    b3dop::GlueBond g;
+    g.a = st.glueBondNodes[i].first;
+    g.b = st.glueBondNodes[i].second;
+    bonds.push_back(g);
+  }
+  const b3dop::GlueComponents comp =
+      b3dop::glueComponents(st.glueNodes.size(), bonds);
+
+  bool membership = false;
+  for (size_t i = 0; i < st.compounds.size();) {
+    Box3DCompound &c = *st.compounds[i];
+    std::vector<int> cid(c.members.size(), -1);
+    std::unordered_map<int, size_t> count;
+    bool usable = true;
+    for (size_t k = 0; k < c.members.size(); ++k) {
+      const auto n = st.glueNodeOf.find(c.members[k].body);
+      if (n == st.glueNodeOf.end() || !c.members[k].entry) {
+        usable = false;
+        break;
+      }
+      cid[k] = comp.of[static_cast<size_t>(n->second)];
+      ++count[cid[k]];
+    }
+    if (usable && count.size() == 1) { // still one group
+      ++i;
+      continue;
+    }
+    int stay = -1;
+    size_t best = 0;
+    for (const auto &kv : count)
+      if (kv.second > best || (kv.second == best && kv.first < stay)) {
+        stay = kv.first;
+        best = kv.second;
+      }
+    const b3dop::MergedBody *leave = c.preOk ? &c.pre : nullptr;
+    membership = true;
+    if (usable && best >= 2 && best * 2 >= c.members.size() &&
+        shrink(st, c, cid, stay, leave, &moves)) {
+      ++i;
+    } else {
+      dissolve(st, c, leave, &moves);
+      st.compounds.erase(st.compounds.begin() + static_cast<long>(i));
+    }
+  }
+  if (membership)
+    markCompoundBonds(st);
+}
+
 void expandCompoundMoves(Box3DSharedState &st) {
   if (st.compounds.empty())
     return;
@@ -554,6 +652,8 @@ bool compoundGlueHits(Box3DSharedState &st, BodyHandle body, float &hits) {
   if (c.hitsTick != st.hitsTick) {
     st.world.contactImpulsesByShape(c.body, c.shapeImpulse);
     c.hitsTick = st.hitsTick;
+    c.hadHit = std::any_of(c.shapeImpulse.begin(), c.shapeImpulse.end(),
+                           [](float v) { return v > 0.0f; });
   }
   for (int i = m.shapeFirst; i < m.shapeFirst + m.shapeCount &&
                              static_cast<size_t>(i) < c.shapeImpulse.size();

@@ -215,6 +215,7 @@ uint64_t networkFingerprint(const GU_Detail *gdp) {
   h = mixHash(h, idOf(gdp->findPrimitiveAttribute(kConstraintName)));
   h = mixHash(h, idOf(gdp->findPrimitiveAttribute(kAutoRestLength)));
   h = mixHash(h, idOf(gdp->findPrimitiveAttribute(kConstraintType)));
+  h = mixHash(h, idOf(gdp->findGlobalAttribute(kPropagateIteration)));
   for (const b3dop::JointParam &p : b3dop::jointParams())
     h = mixHash(h, idOf(gdp->findPrimitiveAttribute(p.name)));
   for (const b3dop::SideFXParam &p : b3dop::sideFXParams())
@@ -722,6 +723,9 @@ struct NetworkReader {
   const GA_ROHandleI anchorIdH, anchorTypeI;
   const GA_ROHandleS anchorTypeS;
   const GA_ROHandleF impact; // Glue's accumulated impact (feedback)
+  // The network's global Glue propagation iterations (detail attribute)
+  const GA_ROHandleI globalIterations;
+  const GA_ROHandleF globalIterationsF;
 
   explicit NetworkReader(const GU_Detail *g)
       : gdp(g), conName(g, GA_ATTRIB_PRIMITIVE, kConstraintName),
@@ -737,7 +741,22 @@ struct NetworkReader {
         anchorIdH(g, GA_ATTRIB_POINT, kAnchorId),
         anchorTypeI(g, GA_ATTRIB_POINT, kAnchorType),
         anchorTypeS(g, GA_ATTRIB_POINT, kAnchorType),
-        impact(g, GA_ATTRIB_PRIMITIVE, kImpact) {}
+        impact(g, GA_ATTRIB_PRIMITIVE, kImpact),
+        globalIterations(g, GA_ATTRIB_GLOBAL, kPropagateIteration),
+        globalIterationsF(g, GA_ATTRIB_GLOBAL, kPropagateIteration) {}
+
+  // Glue rounds of propagation: the bond's own count, or for a negative one
+  // the detail attribute's (one round when there is none).
+  int glueIterations(int bondCount) const {
+    if (bondCount >= 0)
+      return std::max(bondCount, 1);
+    int n = 1;
+    if (globalIterations.isValid())
+      n = globalIterations.get(GA_Offset(0));
+    else if (globalIterationsF.isValid())
+      n = static_cast<int>(globalIterationsF.get(GA_Offset(0)));
+    return std::max(n, 1);
+  }
 
   // The anchor's anchor_id: -1 (also: no attribute) is the object's own
   // offset, which P / orient already give.
@@ -1035,9 +1054,7 @@ private:
         j.glueParams.strength = sf.strength;
         j.glueParams.halfLife = sf.impulseHalfLife;
         j.glueParams.rate = sf.propagateRate;
-        // A negative count is the network's global one (the detail attribute
-        // propagate_iteration, not read: one round).
-        j.glueParams.iterations = std::max(sf.propagationIterations, 1);
+        j.glueParams.iterations = myRd.glueIterations(sf.propagationIterations);
       }
     } else {
       j.type = kind.type;
