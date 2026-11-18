@@ -155,9 +155,9 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                    "{ autothreads == 1 }")
           .number("maxlinearspeed", "Max Linear Speed", 400.0, R{0, 1000},
                   "Speed limit for every body, in units per second.")
-          .toggle("gluecompound", "Glue as One Body", false,
+          .toggle("gluecompound", "Glue as One Body", true,
                   "Run each group of glued pieces as one rigid body: stiffer "
-                  "and faster for large chunks. Experimental.")
+                  "and faster for large chunks.")
           .number("isotropicinertia", "Isotropic Inertia Tolerance", 0.2,
                   R{0, 1, true},
                   "Treats nearly spherical bodies as spheres for spin. Applies "

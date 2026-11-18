@@ -19,7 +19,7 @@ from b3d_hda import collapsible
 from b3d_solver_common import (create, GLOBAL_SUBSTEPS, set_named, START_FRAME, WORLD_SCALE, WORLD_SCALE_TOGGLE,
                                warn)
 
-GLUE_COMPOUND = "gluecompound"  # the solver's Glue as One Body, shown on the same tab
+GLUE_COMPOUND = "gluecompound"  # the solver's Glue as One Body, shown on the Advanced tab
 BREAKS = "breaks"  # the number of break entries (a multiparm block)
 BREAKS_TOGGLE = "enable_constraintbreaks"
 BREAK_SOLVER = "constraint_breaks"  # the SOP Solver DOP
@@ -153,34 +153,36 @@ def break_items():
     mode = hou.MenuParmTemplate(
         "constraint_mode#", "Mode", ("0", "1"), menu_labels=("Delete Constraints", "Switch to Next Constraint"),
         default_value=0, help="Delete the constraint, or give it its next_constraint_name (deleted if it has none).")
-    use_from = toggle("constraint_usefromframe#", "From Frame", join=True,
-                      help="Only break constraints from this frame on.")
-    from_frame = when(hou.FloatParmTemplate("constraint_fromframe#", "From Frame", 1, default_value=(0.0,)),
-                      "constraint_usefromframe# == 0")
-    from_frame.hideLabel(True)
-    from_frame.setJoinWithNext(True)
-    rel_from = when(toggle("constraint_relfromframe#", "Relative to Start Frame"), "constraint_usefromframe# == 0")
-
-    use_at = toggle("constraint_useatframe#", "At Frame", join=True, help="Break the constraints at this frame.")
+    # As RBD Bullet Solver lays them out: a checkbox with no label joined to its float, which keeps its label.
+    use_at = toggle("constraint_useatframe#", "At Frame", join=True, hidden=True,
+                    help="Break the constraints at this frame.")
     at_frame = when(hou.FloatParmTemplate("constraint_atframe#", "At Frame", 1, default_value=(0.0,)),
                     "constraint_useatframe# == 0")
-    at_frame.hideLabel(True)
     at_frame.setJoinWithNext(True)
     rel_at = when(toggle("constraint_relatframe#", "Relative to Start Frame"), "constraint_useatframe# == 0")
 
-    items = [names, mode, use_from, from_frame, rel_from, use_at, at_frame, rel_at]
+    use_from = toggle("constraint_usefromframe#", "From Frame", join=True, hidden=True,
+                      help="Only break constraints from this frame on.")
+    from_frame = when(hou.FloatParmTemplate("constraint_fromframe#", "From Frame", 1, default_value=(0.0,)),
+                      "constraint_usefromframe# == 0")
+    from_frame.setJoinWithNext(True)
+    rel_from = when(toggle("constraint_relfromframe#", "Relative to Start Frame"), "constraint_usefromframe# == 0")
+
+    items = [names, mode, use_at, at_frame, rel_at, use_from, from_frame, rel_from]
     for key, label, default, on_by_default, _scaled, help_text in THRESHOLDS:
         off = f"constraint_use{key}# == 0"
-        use = toggle(f"constraint_use{key}#", f"{label} Threshold", default=on_by_default, join=True)
+        use = toggle(f"constraint_use{key}#", f"{label} Threshold", default=on_by_default, join=True, hidden=True)
         threshold = when(hou.FloatParmTemplate(f"constraint_{key}threshold#", f"{label} Threshold", 1,
                                                default_value=(default,), min=0.0, help=help_text), off)
-        threshold.hideLabel(True)
+        threshold.setJoinWithNext(True)
         scaling = when(hou.MenuParmTemplate(
             f"constraint_scale{key}#", "Scaling", ("0", "1"), menu_labels=("No Scaling", "Scale by Attribute"),
             default_value=0, help="Multiply the threshold by a primitive attribute (strength, for a threshold "
                                   "relative to each glue's own strength)."), off)
-        use_var = when(toggle(f"constraint_use{key}var#", "Var", join=True, help="Scatter the threshold per constraint."),
-                       off)
+        scaling.hideLabel(True)
+        scaling.setJoinWithNext(True)
+        use_var = when(toggle(f"constraint_use{key}var#", "Var", hidden=True,
+                              help="Scatter the threshold per constraint."), off)
         variance = when(hou.FloatParmTemplate(f"constraint_{key}var#", f"{label} Variance", 1, default_value=(0.1,),
                                               min=0.0, max=1.0),
                         off, f"constraint_use{key}var# == 0", kind=hou.parmCondType.HideWhen)

@@ -416,7 +416,7 @@ def build(out_path, packed_hda=None):
     bounce = take(BOUNCE_PARMS)
     speed = take((IMPACT_SPEED,))
     shapes = take((SHAPES_TOGGLE,))
-    glue_compound = take((GLUE_COMPOUND,))  # Glue as One Body, with the other constraint settings
+    glue_compound = take((GLUE_COMPOUND,))  # Glue as One Body, in Advanced
     tabs = [(label, drop_templates(contents, set())) for label, contents in tabs]  # folders left empty go
     solver_extra = solver_first + folder_items
     # Tab order: Solver, Pieces, Collision, Forces, any other solver tabs, Visualization, then Advanced and
@@ -424,7 +424,7 @@ def build(out_path, packed_hda=None):
     by_label = {label: contents for label, contents in tabs if contents}
     by_label["Forces"] = by_label.get("Forces", []) + bounce
     # Cache Simulation and Cache Memory (MB) lead the Advanced tab's Performance folder.
-    by_label["Advanced"] = cache_items + by_label.get("Advanced", [])
+    by_label["Advanced"] = cache_items + glue_compound + by_label.get("Advanced", [])
     advanced_groups = [(glabel, names + [pt.name() for pt in cache_items] if glabel == "Performance" else names)
                        for glabel, names in TAB_GROUPS["Advanced"]]
     solver_items = by_label.pop("Solver", [])
@@ -435,7 +435,7 @@ def build(out_path, packed_hda=None):
     ordered = [("Solver", [use_scale, world_scale] + solver_items + solver_extra),
                ("Pieces", None),  # filled below
                ("Collision", collision_items)]
-    ordered.append(("Constraints", glue_compound + break_items() + constraint_folders))
+    ordered.append(("Constraints", break_items() + constraint_folders))
     last = [(label, by_label.pop(label)) for label in ("Advanced",) if label in by_label]
     if "Forces" in by_label:
         ordered.append(("Forces", by_label.pop("Forces")))

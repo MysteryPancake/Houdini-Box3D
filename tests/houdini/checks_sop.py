@@ -1282,9 +1282,9 @@ def test_solver_sop_layout():
     expect("Break Thresholds: open, header toggle", (breaks.tags().get("group_default"),
                                                     breaks.tags().get("sidefx::header_toggle")) if breaks else None,
            ("1", "enable_constraintbreaks"))
-    expect("Constraints tab leads with Glue as One Body, the Break Thresholds toggle and folder",
-           [pt.name() for pt in by_path[("Constraints",)].parmTemplates()][:3] if ("Constraints",) in by_path else None,
-           ["gluecompound", "enable_constraintbreaks", "b3dsop_break_thresholds"])
+    expect("Constraints tab leads with the Break Thresholds toggle and folder",
+           [pt.name() for pt in by_path[("Constraints",)].parmTemplates()][:2] if ("Constraints",) in by_path else None,
+           ["enable_constraintbreaks", "b3dsop_break_thresholds"])
     if problems:
         return [Result("solver_sop_layout", Result.FAIL, "; ".join(problems))]
     return [Result("solver_sop_layout", Result.PASS,

@@ -197,7 +197,7 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
     ~20%, the same decay: `glue_impact_trace`); a Bullet glue holds from about 5 to 6 times its peak impact, so
     the break test uses `kGlueStrengthScale` (measured from one scene: `glue_impact_scale`). A negative iteration count is the global one
     (the `propagate_iteration` detail attribute, not read): one round; the most iterations of any bond set the rounds.
-  * **Glue as One Body** (`gluecompound`, off by default; `Box3DCompoundSync.cpp`): after `syncJoints`, a group of bonded
+  * **Glue as One Body** (`gluecompound`, on by default; `Box3DCompoundSync.cpp`): after `syncJoints`, a group of bonded
     pieces runs as one Box3D body that carries copies of the pieces' shapes (`copyShapesByHandle`, mass from the
     shapes, velocity from `mergePieces`). Each piece keeps its own body, disabled: Box3D parks a disabled body's joints,
     so the welds sleep and the per-point sync, mirror and joints stay as they are. A group merges only when every

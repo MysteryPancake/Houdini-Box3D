@@ -41,7 +41,7 @@ TAB_GROUPS = {
                ("Bounce / Friction", ["restitutionpropagation", "bouncethreshold", "restitutioniterations",
                                       "frictionmixing", "restitutionmixing"])],
     "Advanced": [("Stability", ["enablewarmstarting", "enablecontinuous", "maxlinearspeed",
-                                "isotropicinertia"]),
+                                "isotropicinertia", "gluecompound"]),
                  # Cache Simulation / Cache Memory (MB) join this folder first (make_solver_sop.py).
                  ("Performance", ["autothreads", "threads"])],
 }
