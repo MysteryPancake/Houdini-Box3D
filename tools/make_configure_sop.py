@@ -185,12 +185,16 @@ def packing_templates():
     return [
         hou.StringParmTemplate("nameprefix", "Name Prefix", 1, default_value=(b3d_prepare.DEFAULT_PREFIX,),
                                help="Prefix of the names given to pieces that have none."),
-        hou.StringParmTemplate("transfer_attributes", "Transfer Simulation Attributes", 1,
-                               default_value=("v w",),
-                               help="Attributes copied onto the pieces packed from the simulated geometry."),
-        hou.StringParmTemplate("transfer_renderattributes", "Transfer Render Geo Attributes", 1,
-                               default_value=("shop_materialpath path",),
-                               help="Attributes copied onto the pieces packed from the Geometry input."),
+        b3d_hda.attrib_menu(
+            hou.StringParmTemplate("transfer_attributes", "Transfer Simulation Attributes", 1,
+                                   default_value=("v w",),
+                                   help="Attributes copied onto the pieces packed from the simulated geometry."),
+            0, "point", extra="age v w"),
+        b3d_hda.attrib_menu(
+            hou.StringParmTemplate("transfer_renderattributes", "Transfer Render Geo Attributes", 1,
+                                   default_value=("shop_materialpath path",),
+                                   help="Attributes copied onto the pieces packed from the Geometry input."),
+            0, "point prim"),
         hou.ToggleParmTemplate("createpath", "Create Path Attribute", default_value=False,
                                help="Gives each packed piece a path attribute."),
         path,
@@ -226,11 +230,15 @@ def extra_folders():
                max_is_strict=True, help="1 stops rotation about that world axis (X, Y, Z)."), "v"),
         ]),
         ("Collision Filtering", [
-            (S("collisiongroup", "Collision Group", 1, default_value=("",),
-               help="The group the pieces are in, as RBD Configure's. The Box3D Solver SOP turns the names into "
-                    "Category and Mask."), "s"),
-            (S("collisionignore", "Collision Ignore", 1, default_value=("",),
-               help="Name patterns of the groups the pieces pass through, separated by spaces. Needs the Box3D Solver SOP."),
+            (b3d_hda.menu_script(
+                S("collisiongroup", "Collision Group", 1, default_value=("",),
+                  help="The group the pieces are in, as RBD Configure's. The Box3D Solver SOP turns the names into "
+                       "Category and Mask."),
+                "buildCollisionGroupMenu(kwargs, 0)", toggle=False), "s"),
+            (b3d_hda.menu_script(
+                S("collisionignore", "Collision Ignore", 1, default_value=("",),
+                  help="Name patterns of the groups the pieces pass through, separated by spaces. Needs the Box3D Solver SOP."),
+                "buildCollisionGroupMenu(kwargs, 0, True)"),
              "s"),
             (I("collision_category", "Category", 1, default_value=(-1,),
                help="Bits saying what the pieces are. -1 is every bit."), "i"),
@@ -392,6 +400,7 @@ def ui(folders):
                                    "soputils.selectGroupParm(kwargs)",
                   "script_action_icon": "BUTTONS_reselect"}),
     ]
+    b3d_hda.group_menu(entry[1], 0, "point prim")
     entry[1].setConditional(hou.parmCondType.DisableWhen, "{ enable# == 0 }")
     for i, (label, rows) in enumerate(folders):
         items = []

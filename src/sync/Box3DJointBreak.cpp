@@ -11,6 +11,10 @@
 #include "core/Box3DDebug.h"
 #include "dop/SIM_Box3DWorld.h"
 
+#include <GA/GA_AIFStringTuple.h>
+#include <GA/GA_AIFTuple.h>
+#include <GA/GA_AttributeDict.h>
+#include <GA/GA_Defaults.h>
 #include <GA/GA_Handle.h>
 #include <GA/GA_Primitive.h>
 #include <GU/GU_Detail.h>
@@ -369,8 +373,93 @@ void switchToNextConstraint(const b3dop::Box3DWorld &world,
   }
 }
 
+// The attributes of a switching constraint's next settings: every primitive
+// attribute `next_<setting>` (but next_constraint_name) holds the value the
+// primitive's `<setting>` takes when it switches, "not set" (kUnsetFloat for
+// numbers, a negative integer for toggles, an empty string) meaning none.
+struct NextSettings {
+  std::vector<GA_Attribute *> attribs;
+
+  explicit NextSettings(GU_Detail *gdp) {
+    constexpr const char *kPrefix = "next_";
+    const GA_AttributeDict &dict =
+        gdp->getAttributes().getDict(GA_ATTRIB_PRIMITIVE);
+    for (GA_AttributeDict::iterator it = dict.begin(GA_SCOPE_PUBLIC);
+         !it.atEnd(); ++it) {
+      GA_Attribute *a = it.attrib();
+      const char *name = a->getName().c_str();
+      if (std::strncmp(name, kPrefix, 5) == 0 &&
+          std::strcmp(name, kNextConstraintName) != 0)
+        attribs.push_back(a);
+    }
+  }
+};
+
+// Moves the primitive's next settings onto its own: each `next_<x>` that is set
+// becomes `<x>` (made, with every other primitive "not set", if the geometry
+// has none) and is cleared, so it applies once. `next_constraint_type` is
+// `constraint_type`. True if any moved.
+bool applyNextSettings(GU_Detail *gdp, const NextSettings &next,
+                       GA_Offset prim) {
+  bool moved = false;
+  for (GA_Attribute *from : next.attribs) {
+    const std::string base = std::string(from->getName().c_str() + 5);
+    if (from->getAIFStringTuple()) {
+      GA_ROHandleS value(from);
+      const UT_StringHolder text =
+          value.isValid() ? value.get(prim) : UT_StringHolder();
+      if (!text.isstring() || text.length() == 0)
+        continue;
+      if (!gdp->findPrimitiveAttribute(base.c_str()))
+        gdp->addStringTuple(GA_ATTRIB_PRIMITIVE, base.c_str(), 1);
+      GA_RWHandleS to(gdp, GA_ATTRIB_PRIMITIVE, base.c_str());
+      if (!to.isValid())
+        continue;
+      to.set(prim, text);
+      GA_RWHandleS(from).set(prim, UT_StringHolder());
+      to.getAttribute()->bumpDataId();
+      from->bumpDataId();
+      moved = true;
+      continue;
+    }
+    const GA_AIFTuple *tuple = from->getAIFTuple();
+    if (!tuple)
+      continue;
+    const int n = std::min(tuple->getTupleSize(from), 4);
+    const bool isFloat = tuple->getStorage(from) == GA_STORE_REAL32 ||
+                         tuple->getStorage(from) == GA_STORE_REAL64;
+    fpreal64 v[4] = {0, 0, 0, 0};
+    tuple->get(from, prim, v, n);
+    // "Not set": a number at kUnsetFloat, a toggle or integer below 0.
+    if (isFloat ? b3dop::isUnsetFloat(static_cast<float>(v[0])) : v[0] < 0)
+      continue;
+    GA_Attribute *to = gdp->findPrimitiveAttribute(base.c_str());
+    if (!to) {
+      fpreal64 unset[4] = {
+          isFloat ? static_cast<fpreal64>(b3dop::kUnsetFloat) : -1.0, 0, 0, 0};
+      const GA_Defaults defaults(unset, n);
+      to = isFloat ? gdp->addFloatTuple(GA_ATTRIB_PRIMITIVE, base.c_str(), n,
+                                        defaults)
+                   : gdp->addIntTuple(GA_ATTRIB_PRIMITIVE, base.c_str(), n,
+                                      defaults);
+    }
+    const GA_AIFTuple *target = to ? to->getAIFTuple() : nullptr;
+    if (!target)
+      continue;
+    target->set(to, prim, v, n);
+    fpreal64 clear[4] = {
+        isFloat ? static_cast<fpreal64>(b3dop::kUnsetFloat) : -1.0, 0, 0, 0};
+    tuple->set(from, prim, clear, n);
+    to->bumpDataId();
+    from->bumpDataId();
+    moved = true;
+  }
+  return moved;
+}
+
 // The joints that broke: a primitive with a next_constraint_name switches to
-// it, the rest go into the `broken` group. True if any switched.
+// it, with its next settings (applyNextSettings); the rest go into the `broken`
+// group. True if any switched.
 bool writeBrokenJoints(const b3dop::Box3DWorld &world, GU_Detail *gdp,
                        const PrimExists &primOk,
                        const std::vector<Box3DJointEntry *> &broken) {
@@ -378,6 +467,7 @@ bool writeBrokenJoints(const b3dop::Box3DWorld &world, GU_Detail *gdp,
   GA_RWHandleS nextH(gdp, GA_ATTRIB_PRIMITIVE, kNextConstraintName);
   GA_PrimitiveGroup *grp = nullptr;
   bool switched = false;
+  const NextSettings next(gdp);
   for (Box3DJointEntry *e : broken) {
     if (!primOk(e->prim))
       continue;
@@ -387,6 +477,7 @@ bool writeBrokenJoints(const b3dop::Box3DWorld &world, GU_Detail *gdp,
     if (nextName.isstring()) {
       conNameH.set(e->prim, nextName);
       nextH.set(e->prim, UT_StringHolder());
+      applyNextSettings(gdp, next, e->prim);
       switchToNextConstraint(world, *e);
       switched = true;
       continue;

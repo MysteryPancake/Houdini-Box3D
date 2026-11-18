@@ -158,6 +158,35 @@ def test_next_constraint():
                    f"line attributes on frame 36: {attrs}")]
 
 
+def test_next_settings():
+    """A breaking weld that switches to a spherical joint also takes its next settings: next_enable_cone_limit 1 and
+    next_cone_angle 0.25 become enable_cone_limit and cone_angle on the line and are cleared (not set again), so the
+    ball joint is made with them."""
+    dop, names = hanging_pair(
+        "next_settings", "weld",
+        line_attrs={"next_constraint_name": "spherical", "next_enable_cone_limit": 1, "next_cone_angle": 0.25},
+        conrels=[("box3d_weldconrel", {"breakable": 1, "force_threshold": 1e-3}), ("box3d_sphericalconrel", {})])
+
+    def sample(sim, f):
+        geo = find_network_geometry(sim)
+        prim = geo.prims()[0] if geo is not None and geo.prims() else None
+        attrs = {}
+        if prim is not None:
+            for a in ("constraint_name", "enable_cone_limit", "cone_angle", "next_enable_cone_limit",
+                      "next_cone_angle"):
+                if geo.findPrimAttrib(a) is not None:
+                    attrs[a] = prim.attribValue(a)
+        return attrs
+
+    attrs = step(dop, 36, sample)[36]
+    ok = (attrs.get("constraint_name") == "spherical" and attrs.get("enable_cone_limit") == 1
+          and close(attrs.get("cone_angle", -1.0), 0.25, 1e-4) and attrs.get("next_enable_cone_limit", 0) < 0
+          and attrs.get("next_cone_angle", 0.0) <= -3.0e38)
+    return [Result("next_settings", Result.PASS if ok else Result.FAIL,
+                   f"line attributes on frame 36: {attrs} (expected spherical, enable_cone_limit 1, cone_angle 0.25 and "
+                   f"the next ones cleared)")]
+
+
 def test_feedback():
     """The solver writes force, torque, distance and angle onto a holding weld's line."""
     dop, names = hanging_pair("feedback", "weld", conrels=[("box3d_weldconrel", {})],
@@ -701,6 +730,7 @@ TESTS = {
     "sidefx_spring_mass": test_sidefx_spring_mass,
     "attribute_multiplies": test_attribute_multiplies,
     "next_constraint": test_next_constraint,
+    "next_settings": test_next_settings,
     "feedback": test_feedback,
     "sidefx_hard": test_sidefx_hard,
     "sidefx_hard_all": test_sidefx_hard_all,

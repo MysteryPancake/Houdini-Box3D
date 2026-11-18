@@ -234,6 +234,8 @@ b3dop::BodyProps readDynamicProps(const b3dop::BodySettings &node,
 
   if (a.computeMass.isValid())
     p.computeMass = a.computeMass.get(off) != 0;
+  if (a.computeCom.isValid())
+    p.computeCom = a.computeCom.get(off) != 0;
   if (a.density.isValid()) {
     const float d = a.density.get(off);
     if (d > 0.0f && std::isfinite(d))
@@ -307,12 +309,13 @@ b3dop::BodySettings::Type wantedType(const b3dop::BodySettings &node,
                   : b3dop::BodySettings::Type::Static;
 }
 
-// The body's mass after shapes are added / replaced or its type changes. As in
-// Houdini RBD the point (pivot) is the centre of mass, so the shapes' centroid
-// is moved there; inertia is scaled by inertialtensorstiffness (a custom
-// or bounding box inertia replaces it first). Static / kinematic bodies only
-// get shape densities. setShapeDensity = false for shapes just created with
-// boxDensity(p, volume).
+// The body's mass after shapes are added / replaced or its type changes. With
+// computecom the centre of mass stays where the shapes put it (the point, the
+// body origin, orbits it); without, as in Houdini RBD's pivot, the shapes'
+// centroid is moved to the point. Inertia is scaled by inertialtensorstiffness
+// (a custom or bounding box inertia replaces it first). Static / kinematic
+// bodies only get shape densities. setShapeDensity = false for shapes just
+// created with boxDensity(p, volume).
 void applyBodyMass(b3dop::Box3DWorld &world, b3dop::BodyHandle h,
                    const b3dop::BodyProps &p, float volume,
                    bool setShapeDensity) {
@@ -324,8 +327,8 @@ void applyBodyMass(b3dop::Box3DWorld &world, b3dop::BodyHandle h,
            b3dop::boundsInverseInertia(p.boundsExtents,
                                        effectiveMass(p, volume), boxInverse))
     inverse = boxInverse;
-  world.applyMassByHandle(h, boxDensity(p, volume), true, p.inertiaScale,
-                          setShapeDensity, inverse);
+  world.applyMassByHandle(h, boxDensity(p, volume), !p.computeCom,
+                          p.inertiaScale, setShapeDensity, inverse);
 }
 
 // `awake` for a new body: the point's value, else the Box3D Data default.
@@ -357,6 +360,7 @@ void noteOverriddenData(const GU_Detail *gdp, Box3DObjectSync &os,
       {"mass", differs(n.mass, p.mass)},
       {"density", differs(n.density, p.density)},
       {"computemass", n.computeMass != p.computeMass},
+      {"computecom", n.computeCom != p.computeCom},
       {"friction", differs(n.friction, p.friction)},
       {"bounce", differs(n.restitution, p.restitution)},
       {"rollingresistance", differs(n.rollingResistance, p.rollingResistance)},
@@ -716,10 +720,10 @@ unsigned applyPropChanges(b3dop::Box3DWorld &world, Box3DBodyMirror &e,
       changed |= kPropsChanged;
     }
   };
-  const bool massChanged = p.mass != o.mass || p.computeMass != o.computeMass ||
-                           p.density != o.density ||
-                           p.inertiaScale != o.inertiaScale ||
-                           !p.sameInertia(o);
+  const bool massChanged =
+      p.mass != o.mass || p.computeMass != o.computeMass ||
+      p.computeCom != o.computeCom || p.density != o.density ||
+      p.inertiaScale != o.inertiaScale || !p.sameInertia(o);
   if (!shapesRebuilt) {
     apply(p.friction != o.friction || p.restitution != o.restitution,
           [&] { world.setMaterialByHandle(h, p.friction, p.restitution); });

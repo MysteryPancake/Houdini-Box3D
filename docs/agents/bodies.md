@@ -24,8 +24,10 @@ equal to what its body was built with.
 
 ## Per-attribute features
 
-* **Centre of mass** = the point (a packed point's pivot): `applyBodyMass` -> `applyMassByHandle(comAtOrigin = true)`
-  after creation, rebuild, retype to dynamic and mass changes. No `computecom`.
+* **Centre of mass** (`computecom`, default on as Bullet's): `applyBodyMass` -> `applyMassByHandle(comAtOrigin = !computecom)`
+  after creation, rebuild, retype to dynamic and mass changes. On, Box3D keeps the shapes' own centre of mass and the point
+  (the body origin, a packed point's pivot) orbits it; velocity is the centre's. Off, the centre is moved to the point.
+  Whole objects always move it (`wholeObjectPose` handles RBD State's own `computecom`).
 * **Mass** (`computemass`, `density`, `inertialtensorstiffness`): `boxDensity` = density with computemass, else
   mass / volume. With computemass the mass is written to `mass` on creation, rebuild or change.
 * **CCD threshold** (`ccdthreshold`) -> `b3BodyDef::safetyFactor` (Box3D's name; negatives keep the default).
@@ -39,7 +41,11 @@ equal to what its body was built with.
   bit 0 is no group, groups take bits 1 to 30 in sorted order, a piece's mask lacks the groups its pattern matches.
   Ignoring one piece by name (rather than a group) and ignoring the ground are not representable.
 * **Animated** (`animated` with `active = 0`): kinematic; a pose edit becomes `setTargetTransformByHandle(cur, stepDt)`
-  and a step without one zeroes the velocity. Not written back.
+  and a step without one zeroes the velocity. Not written back. An object with `SourceObject` data follows its source SOP
+  (`followSourceSops`, Box3DSourceSync.cpp, as RBD Bullet Solver): before the sync, each such piece (or every piece of a
+  Kinematic Box3D Data) whose pose in that SOP at the step's end changed since it was last read (`Box3DSharedState::sourcePoses`;
+  the first read compares with a step earlier) gets P and `orient` (since rest) written as an edit, matched by `name`. The SOP
+  object's transform applies when the data's `usetransform` is on. A static SOP leaves other edits (a SOP Solver) alone.
 * **Fast object** (`fastobject`): Box3D's `isBullet`, renamed (Houdini's `isbullet` means something else).
 * **Sleep and enable** (`enablesleep`, `awake`, `enabled`, Box3D's own model):
   * `enablesleep` and `enabled` are live settings; toggling `enabled` is `b3Body_Enable` / `Disable` (expensive). A

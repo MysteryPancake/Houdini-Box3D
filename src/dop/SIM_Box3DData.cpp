@@ -83,6 +83,11 @@ const SIM_DopDescription *SIM_Box3DData::getDescription() {
                   "water). A density attribute wins; RBD Packed Object always "
                   "writes one.",
                   "{ computemass == 0 }")
+          .toggle("computecom", "Compute Center of Mass",
+                  kDefaults.props.computeCom,
+                  "Balance and spin each body about the centre of mass of its "
+                  "shape. Off: about the point. A computecom point attribute "
+                  "wins.")
           .number("inertialtensorstiffness", "Rotational Stiffness", 1.0,
                   R{0.01, 10},
                   "How hard bodies are to spin: above 1 resists spinning, "
@@ -92,14 +97,14 @@ const SIM_DopDescription *SIM_Box3DData::getDescription() {
                   "Multiplies the solver's Gravity: 0 floats, negative falls "
                   "upward. Overridden by the gravityscale attribute.")
           .folder("Material")
-          .number("friction", "Friction", kDefaults.props.friction, R{0, 1},
-                  "How much surfaces resist sliding; 0 is ice-slick. A "
-                  "friction attribute wins; RBD Packed Object always writes "
-                  "one: set it there.")
           .number(
               "bounce", "Bounce", kDefaults.props.restitution, R{0, 1},
               "Speed kept after a collision: 0 doesn't bounce, 1 full speed. A "
               "bounce attribute wins; RBD Packed Object always writes one.")
+          .number("friction", "Friction", kDefaults.props.friction, R{0, 1},
+                  "How much surfaces resist sliding; 0 is ice-slick. A "
+                  "friction attribute wins; RBD Packed Object always writes "
+                  "one: set it there.")
           .number("rollingresistance", "Rolling Resistance", 0.0, R{0, 1},
                   "How much round bodies resist rolling; 0 rolls freely. "
                   "Overridden by the rollingresistance attribute.")
@@ -189,6 +194,7 @@ b3dop::BodySettings SIM_Box3DData::toBodySettings() const {
   b3dop::BodyProps &p = s.props;
   p.mass = static_cast<float>(getMass());
   p.computeMass = getComputeMass();
+  p.computeCom = getComputeCom();
   p.density = static_cast<float>(getDensity());
   p.friction = static_cast<float>(getFriction());
   p.restitution = static_cast<float>(getBounce());

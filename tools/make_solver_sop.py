@@ -46,13 +46,14 @@ Inside:
     import_shapes (DOP Import of the objects' Box3DShapes data, written by the solver's Export Collision
       Shapes) -> tint_shapes (Shape Color) -> switch_show_shapes -> GUIDE_GEO
 
-Its parameters: Reset Simulation and Start Frame above the tabs; then the tabs Setup (here Solver: the
-solver's own settings loose, Solve on Creation Frame, Cache Simulation joined to Cache Memory (MB),
+Its parameters: Reset Simulation and Start Frame above the tabs; then the tabs Setup (here Solver: a General
+folder with World Scale and Time Scale, a Simulation folder with the solver's own settings, Solve on Creation Frame
+and Cache Simulation joined to Cache Memory (MB),
 then its contact settings in a Contacts folder, and the closed Sleeping (Allow Sleeping)
 folder), Properties (here Pieces: Box3D Packed Object's Box3D Data folders for the simulated pieces: Shape, Body,
 Material, CCD & Contacts, Sleep, with Override Attributes from SOP), Collision (a Collision
-Geometry folder whose header toggle is Use External Collisions, holding Collision Type and the
-collider's Shape, Material and Contacts settings, collision_* names), Forces (Add Gravity and Gravity first, loose;
+Geometry folder whose header toggle is Enable Collision Geometry, holding Collision Type and the
+collider's Shape, Material and Contacts settings, collision_* names), Forces (a Gravity folder with Add Gravity as its header checkbox;
 Force DOPs and Bounce / Friction folders), Constraints (Break Thresholds and Export Broken Constraints), Visualization (Show Collision Shape and Shape Color; the collider's Show Geometry,
 Show Collision Shape and Color), Advanced (Stability, Performance and Collision folders, and Constraints with a folder per joint type), and Output, always last (Impact Data with
 Fetch Impacts, Attributes with Aging, Transfer Attributes and Transfer to Geometry / Proxy Geometry). Every folder is open
@@ -79,6 +80,8 @@ from b3d_solver_common import (  # noqa: E402
     RELATIONSHIPS,
     CACHE_ENABLED,
     OVERWRITE_FROM_SOP,
+    OVERWRITE_ATTRIBS,
+    OVERWRITE_DEFAULT,
     CACHE_MEMORY,
     COLLISION_TYPE,
     as_collapsible,
@@ -117,6 +120,7 @@ from b3d_solver_common import (  # noqa: E402
     FALSE_COLOR_MODE,
     FALSE_COLOR_ATTRIB,
     SHOW_IMPACTS,
+    VISUALIZE,
     GUIDE_RADIUS,
     COLLISION_COLOR,
     AGING_PARMS,
@@ -150,7 +154,6 @@ from b3d_solver_ground import (  # noqa: E402
 from b3d_solver_network import (  # noqa: E402
     build_network,
     KEEP_BROKEN,
-    POINT_VELOCITY_PARMS,
     scale_joint_settings,
     scale_settings,
     SOLVE_FIRST,
@@ -187,8 +190,7 @@ def default_hull_per_connected(templates):
 def data_folders(packed):
     """A Box3D Packed Object's Box3D Data folders. Found by content (folders holding parameters its
     inner Box3D Data has), not by name: Houdini merges adjacent tabs into one folder set and renames
-    all but the first (b3dpo_object_1 ...), and Object and Initial State come before them (they hold
-    Add Impact Data and Start Asleep, which `moved_settings` returns)."""
+    all but the first (b3dpo_object_1 ...), and Object and Initial State come before them."""
     inner = packed.node("box3d_data") if packed is not None else None
     names = {pt.name() for pt in inner.parmTuples()} if inner is not None else set()
     found = [e for e in packed.parmTemplateGroup().entries()
@@ -200,8 +202,8 @@ def data_folders(packed):
 
 
 def moved_settings(packed):
-    """The Box3D Data settings the Packed Object shows outside its data folders (Add Impact Data on the Object
-    tab, Start Asleep on Initial State), as {name: template}."""
+    """Add Impact Data (the Packed Object's Shape tab) and Start Asleep (its Sleep tab), which the Solver SOP places
+    elsewhere, as {name: template}."""
     group = packed.parmTemplateGroup()
     found = {name: group.find(name) for name in (IMPACT_TOGGLE, START_ASLEEP)}
     for name, pt in found.items():
@@ -271,13 +273,15 @@ def build(out_path, packed_hda=None):
             pt.setConditional(hou.parmCondType.DisableWhen, f"{own} {off}".strip())
     cache_items = ([cache_toggle] if cache_toggle is not None else []) + cache_memory
     # Solve on Creation Frame (as on RBD Bullet Solver's first tab), linked to the pieces' Packed Object, and the
-    # collider's own on Advanced under Collision (collision_solvefirstframe, as Bullet's).
+    # collider's own on Advanced under Collision (collision_solvefirstframe, as Bullet's). The collider's follows
+    # the first tab's one (a channel reference) until it is set on its own.
     solve_first = hou.ToggleParmTemplate(
         SOLVE_FIRST, "Solve on Creation Frame", default_value=False,
         help="Simulates the pieces on the frame they appear. Off: they start moving one frame later.")
     collision_solve_first = hou.ToggleParmTemplate(
         COLLISION_SOLVE_FIRST, "Solve on Creation Frame", default_value=False,
-        help="Simulates the colliders on the frame they appear. Off: they start moving one frame later.")
+        default_expression=f'ch("{SOLVE_FIRST}")', default_expression_language=hou.scriptLanguage.Hscript,
+        help="Simulates the colliders on the frame they appear. Follows the Solver tab's setting until changed.")
     for obj_name, outer in (("pieces", SOLVE_FIRST), ("collision", COLLISION_SOLVE_FIRST)):
         obj = dopnet.node(obj_name)
         if obj is None or obj.parm(SOLVE_FIRST_PARM) is None:
@@ -347,7 +351,7 @@ def build(out_path, packed_hda=None):
         help="Packed Pieces: each piece is a body, as the Geometry input. Static Object: the whole input is one "
              "static mesh, or a height field if it has one. Only for colliders that never move.")
     use_collisions = hou.ToggleParmTemplate(
-        USE_COLLISIONS, "Use External Collisions", default_value=True,
+        USE_COLLISIONS, "Enable Collision Geometry", default_value=True,
         help="Collides the pieces with the Collision input. Off: the Collision input is ignored.")
     animated = hou.MenuParmTemplate(
         COLLISION_TYPE, "Collision Type", ("static", "animated", "deforming"),
@@ -357,7 +361,7 @@ def build(out_path, packed_hda=None):
              "Deforming.")
     animated.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_COLLISIONS} == 0 }}")
     source.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_COLLISIONS} == 0 }}")
-    # One open Collision Geometry folder with Use External Collisions as its header checkbox, laid out as
+    # One open Collision Geometry folder with Enable Collision Geometry as its header checkbox, laid out as
     # RBD Bullet Solver's: the toggle just before the folder (drawn in its header), the collider's
     # folders simple inside it, each disabled with the toggle off.
     off = f"{{ {USE_COLLISIONS} == 0 }}"
@@ -380,7 +384,7 @@ def build(out_path, packed_hda=None):
     taken.update(f"use{name}" for _, name in RELATIONSHIPS)
     taken.update(BREAK_PARMS)
     taken.update([TRANSFER_ATTRIBUTES, KEEP_BROKEN]
-                 + list(POINT_VELOCITY_PARMS) + [n for n, _ in TRANSFER_TO.values()])
+                 + [n for n, _ in TRANSFER_TO.values()])
 
     group = hou.ParmTemplateGroup()
     for pt in top:
@@ -412,7 +416,6 @@ def build(out_path, packed_hda=None):
     tabs = [(label, drop_templates(contents, set())) for label, contents in tabs]  # folders left empty go
     # The Advanced tab is regrouped by name: its DOP folders come apart.
     tabs = [(label, flatten_folders(contents) if label == "Advanced" else contents) for label, contents in tabs]
-    solver_extra = solver_first + folder_items
     # Tab order, as RBD Bullet Solver's: Solver, Pieces, Collision, Forces, Constraints, any other solver tabs,
     # Visualization, then Advanced and Output always last.
     by_label = {label: contents for label, contents in tabs if contents}
@@ -425,7 +428,13 @@ def build(out_path, packed_hda=None):
     if at < len(solver_items):
         solver_items[at].setLabel("Box3D Substeps")  # the DOP's Substeps, told apart from Global Substeps
     solver_items.insert(at, global_substeps)
-    ordered = [("Solver", [use_scale, world_scale] + solver_items + solver_extra),
+    # The Solver tab: General (World Scale, Time Scale), Simulation (the other settings), then Contacts and Sleeping.
+    solver_items, time_scale = pull(solver_items, lambda pt: pt.name() == "timescale")
+    if not time_scale:
+        warn("no timescale on the solver: not in the General folder")
+    general = collapsible("b3dsop_general", "General", [use_scale, world_scale] + time_scale)
+    simulation = collapsible("b3dsop_simulation", "Simulation", solver_items + solver_first)
+    ordered = [("Solver", [general, simulation] + folder_items),
                ("Pieces", None),  # filled below
                ("Collision", collision_items)]
     keep_broken = hou.ToggleParmTemplate(
@@ -440,9 +449,11 @@ def build(out_path, packed_hda=None):
             warn("no gravity on the solver's Forces tab: no Add Gravity toggle")
         else:
             forces_items[at].setConditional(hou.parmCondType.DisableWhen, f"{{ {ADD_GRAVITY} == 0 }}")
-            forces_items.insert(at, hou.ToggleParmTemplate(
+            # A Gravity folder with Add Gravity as its header checkbox (the toggle just before the folder).
+            gravity = collapsible("b3dsop_gravity", "Gravity", [forces_items[at]], header_toggle=ADD_GRAVITY)
+            forces_items[at:at + 1] = [hou.ToggleParmTemplate(
                 ADD_GRAVITY, "Add Gravity", default_value=True,
-                help="Off turns Gravity off. Force DOPs still act."))
+                help="Off turns Gravity off. Force DOPs still act."), gravity]
         ordered.append(("Forces", forces_items))
     ordered.append(("Constraints", break_items() + [keep_broken]))
     ordered += list(by_label.items()) + [("Visualization", None)] + last + [("Output", None)]  # filled below
@@ -452,6 +463,9 @@ def build(out_path, packed_hda=None):
     # Start Asleep (the Packed Object's Initial State) leads the Sleep folder; Add Impact Data (its Object tab)
     # joins as a folder of its own, taken out for the Output tab just below.
     moved = moved_settings(pieces)
+    # Add Impact Data (the Shape tab) and Start Asleep (the Sleep tab) come out of the Packed Object's folders: Start
+    # Asleep leads the Sleep folder below, Add Impact Data goes to the Output tab.
+    data_tabs, _ = pull(data_tabs, lambda pt: pt.name() in (IMPACT_TOGGLE, START_ASLEEP))
     sleep = next((t for t in data_tabs if t.label() == "Sleep"), None)
     if START_ASLEEP in moved and sleep is not None:
         sleep.setParmTemplates([moved[START_ASLEEP]] + list(sleep.parmTemplates()))
@@ -484,12 +498,18 @@ def build(out_path, packed_hda=None):
     else:
         override = hou.ToggleParmTemplate(
             OVERWRITE_FROM_SOP, "Override Attributes from SOP", default_value=False,
-            help="Reads the pieces again every step, so attributes that change over time (such as active) reach "
-                 "the simulation. Off: read once when a piece appears. Costs time every step.")
-        pieces_items.append(collapsible("b3dsop_override", "Override Attributes", [override]))
+            help="Copies the listed attributes from the pieces every step, so ones that change over time (such as "
+                 "active) reach the simulation. Off: read once when a piece appears. Costs time every step.")
+        override_attribs = hou.StringParmTemplate(
+            OVERWRITE_ATTRIBS, "Attributes", 1, default_value=(OVERWRITE_DEFAULT,),
+            disable_when=f"{{ {OVERWRITE_FROM_SOP} == 0 }}",
+            help="The point attributes copied each step, matched by name. Wildcards work.")
+        b3d_hda.attrib_menu(override_attribs, 0, "point")
+        pieces_items.append(collapsible("b3dsop_override", "Override Attributes", [override, override_attribs],
+                                        header_toggle=OVERWRITE_FROM_SOP))
         links.append((sub.relativePathTo(pieces), OVERWRITE_FROM_SOP, OVERWRITE_FROM_SOP))
-    velocity = velocity_templates(sub.node("transform_geometry"))
-    output_items = output_tab(impact, speed, velocity, aging)
+        links.append((sub.relativePathTo(pieces), OVERWRITE_ATTRIBS, OVERWRITE_ATTRIBS))
+    output_items = output_tab(impact, speed, aging)
     vis_items = visualization_tab(shapes)
     for i, (label, contents) in enumerate(ordered):
         contents = {"Pieces": pieces_items, "Output": output_items, "Visualization": vis_items,
@@ -543,7 +563,7 @@ def build(out_path, packed_hda=None):
     if export is None:
         warn(f"dopnet/box3d_solver has no {SHAPES_TOGGLE}: the collider's collision shapes are not drawn")
     else:
-        export.setExpression(f'ch("../../{SHAPES_TOGGLE}") || ch("../../{SHOW_COLLISION_SHAPES}")',
+        export.setExpression(f'ch("../../{VISUALIZE}") && (ch("../../{SHAPES_TOGGLE}") || ch("../../{SHOW_COLLISION_SHAPES}"))',
                              hou.exprLanguage.Hscript)
     finish_ground(asset)
     finish_constraints(asset, constraint_links)
@@ -571,23 +591,9 @@ def set_guide_geometry(definition):
     definition.setExtraInfo(" ".join(kept + [f"guide={GUIDE_GEO}"]))
 
 
-def velocity_templates(xform):
-    """Transform Pieces' own Point Velocities parameters (POINT_VELOCITY_PARMS), copied from `xform`."""
-    found = []
-    group = xform.parmTemplateGroup() if xform is not None else None
-    for name in POINT_VELOCITY_PARMS:
-        pt = group.find(name) if group is not None else None
-        if pt is None:
-            warn(f"no {name} on the inner Transform Pieces: not on the Output tab")
-        else:
-            found.append(pt.clone())
-    return found
-
-
-def output_tab(impact, speed, velocity, aging):
+def output_tab(impact, speed, aging):
     """The Output tab's contents: Impact Data (a closed collapsible folder, `impact` its header toggle,
-    then `speed` and Fetch Impacts), Attributes (`aging`: Enable Aging and its Reap options), Attribute Transfer (with `velocity`, Transform Pieces' Point
-    Velocities)."""
+    then `speed` and Fetch Impacts), Attributes (`aging`: Enable Aging and its Reap options), Attribute Transfer."""
     items = []
     if not impact:
         warn(f"no {IMPACT_TOGGLE} on the pieces: Impact Data is not on the Output tab")
@@ -614,10 +620,11 @@ def output_tab(impact, speed, velocity, aging):
     transfer = hou.StringParmTemplate(
         TRANSFER_ATTRIBUTES, "Transfer Attributes", 1, default_value=(TRANSFER_ATTRIBUTES_DEFAULT,),
         help="Point attributes copied from the simulation onto Simulation Points, and onto the pieces as ticked below.")
+    b3d_hda.attrib_menu(transfer, 0, "point", extra="age v w")
     to = [hou.ToggleParmTemplate(name, label, default_value=True,
                                  help=f"Copies Transfer Attributes onto the {label[12:]} output. Off: only w.")
           for name, label in TRANSFER_TO.values()]
-    items.append(collapsible("b3dsop_transfer", "Attribute Transfer", [transfer] + to + list(velocity)))
+    items.append(collapsible("b3dsop_transfer", "Attribute Transfer", [transfer] + to))
     return items
 
 
@@ -665,24 +672,36 @@ def visualization_tab(shapes):
     custom = hou.StringParmTemplate(
         FALSE_COLOR_ATTRIB, "Attribute", 1, default_value=("",),
         help="The float primitive attribute to colour by.")
-    custom.setConditional(hou.parmCondType.DisableWhen,
-                          f"{{ {SHOW_CONSTRAINTS} == 0 }} {{ {FALSE_COLOR_MODE} != 6 }}")
+    b3d_hda.attrib_menu(custom, 1, "prim", toggle=False, numeric=True, skip="angle distance force impact torque")
+    custom.setConditional(hou.parmCondType.DisableWhen, f"{{ {SHOW_CONSTRAINTS} == 0 }}")
+    custom.setConditional(hou.parmCondType.HideWhen, f"{{ {FALSE_COLOR_MODE} != 6 }}")
     radius = hou.FloatParmTemplate(
         GUIDE_RADIUS, "Guide Radius", 1, default_value=(0.05,), min=0.0, max=1.0, min_is_strict=True,
         help="The constraint lines' thickness. Each constraint type's Guide Scale (Advanced > Constraints) multiplies it.")
     radius.setConditional(hou.parmCondType.DisableWhen, f"{{ {SHOW_CONSTRAINTS} == 0 }}")
-    constraint_folder = collapsible("b3dsop_vis_constraint_geometry", "Constraint Geometry", [mode, custom, radius])
+    constraint_folder = collapsible("b3dsop_vis_constraint_geometry", "Constraint Geometry", [mode, custom, radius],
+                                     header_toggle=SHOW_CONSTRAINTS)
     impacts = hou.ToggleParmTemplate(
         SHOW_IMPACTS, "Show Impacts", default_value=False,
         help="Draws the impact points in the viewport. Needs Add Impact Data on the Output tab.")
     impacts.setConditional(hou.parmCondType.DisableWhen, "{ addimpact == 0 }")
     impact_folder = collapsible("b3dsop_vis_impact_data", "Impact Data", [impacts])
-    visualize = collapsible("b3dsop_visualize_geometries", "Visualize Geometries", [
-        collapsible("b3dsop_vis_geometry", "Geometry", [show, color]),
-        ground_visualization(),
-        collapsible("b3dsop_vis_collision_geometry", "Collision Geometry", [geo, cshapes, ccolor]),
-        show_constraints, constraint_folder, impact_folder])
-    return [visualize, inspector_folder()]
+    # Visualize Geometries has Visualize Geometries as its header checkbox (the toggle just before the folder). Its
+    # folders grey out while it is off, added to each folder's own Disable When.
+    inner = [collapsible("b3dsop_vis_geometry", "Geometry", [show, color]),
+             ground_visualization(),
+             collapsible("b3dsop_vis_collision_geometry", "Collision Geometry", [geo, cshapes, ccolor]),
+             constraint_folder, impact_folder]
+    for folder in inner:
+        own = folder.conditionals().get(hou.parmCondType.DisableWhen, "")
+        folder.setConditional(hou.parmCondType.DisableWhen, f"{own} {{ {VISUALIZE} == 0 }}".strip())
+    master = hou.ToggleParmTemplate(
+        VISUALIZE, "Visualize Geometries", default_value=True,
+        help="Off hides every guide in the viewport. Each one's own checkbox is kept.")
+    # Show Constraints, the Constraint Geometry folder's header checkbox, sits just before that folder.
+    inner.insert(inner.index(constraint_folder), show_constraints)
+    visualize = collapsible("b3dsop_visualize_geometries", "Visualize Geometries", inner, header_toggle=VISUALIZE)
+    return [master, visualize, inspector_folder()]
 
 
 def inspector_folder():
@@ -690,6 +709,7 @@ def inspector_folder():
     attribs = hou.StringParmTemplate(
         "inspectorattribs", "Attributes", 1, default_value=("* ^P ^pivot ^rest ^N ^scale ^orient ^xform ^path",),
         help="The attributes the inspector shows for the piece under the cursor.")
+    b3d_hda.attrib_menu(attribs, classes="point prim", source="output")
     size = hou.IntParmTemplate("inspectorfontsize", "Font Size", 1, default_value=(3,), min=1, max=10,
                                help="The inspector's text size. The mouse wheel changes it.")
     precision = hou.IntParmTemplate("inspectorprecision", "Float Precision", 1, default_value=(6,), min=0, max=10,

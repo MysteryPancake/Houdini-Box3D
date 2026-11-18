@@ -23,6 +23,8 @@ public:
   GETSET_DATA_FUNCS_F("mass", Mass);
   GETSET_DATA_FUNCS_B("computemass",
                       ComputeMass); // mass = density * shape volume
+  GETSET_DATA_FUNCS_B("computecom",
+                      ComputeCom); // centre of mass from the shapes
   GETSET_DATA_FUNCS_F("density", Density);
   GETSET_DATA_FUNCS_F("inertialtensorstiffness", InertiaStiffness);
   GETSET_DATA_FUNCS_F("friction", Friction);

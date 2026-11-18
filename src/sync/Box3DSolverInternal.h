@@ -652,4 +652,15 @@ void buildCollisionGuide(const SIM_Object &obj, GU_Detail &out,
 inline constexpr const char *kShapesDataName = "Box3DShapes";
 void exportCollisionShapes(Box3DSharedState &st, SIM_ObjectArray &objects);
 
+// ---- animated bodies follow their source SOP (Box3DSourceSync.cpp) ----
+
+// Before the sync: each kinematic piece (a point with `animated`, or every
+// point of a Kinematic Box3D Data) of an object with SourceObject data gets the
+// P and `orient` its piece has in that SOP at the end of the step (`now`,
+// simulation time), written as an edit would be, when that pose differs from
+// the one last read (the first read compares with the SOP a step `dt` earlier).
+// Pieces are matched by `name`.
+void followSourceSops(Box3DSharedState &st, SIM_ObjectArray &objects,
+                      double now, double dt);
+
 } // namespace box3dsolver

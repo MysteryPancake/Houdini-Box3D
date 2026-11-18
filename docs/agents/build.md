@@ -51,6 +51,14 @@ How the project is built, tested and packaged. Index and rules: [CLAUDE.md](../.
   for Windows, Linux and macOS, then hython on `tests/houdini/run_tests.py` or `examples/make_examples.py`, or
   `ctest`). Its search duplicates `find_houdini.bat` and `build.sh`: change all three together.
 
+Group and attribute fields have the little menu beside them (RBD's do): `b3d_hda.group_menu` / `attrib_menu` / `menu_script` set a
+Python menu script on the template that calls `kwargs["node"].hm().buildGroupMenu` (`buildAttribMenu`, `buildConstraintNameMenu`,
+`buildCollisionGroupMenu`) in `MENU_SOURCE`, which `add_python_module` puts in every asset's PythonModule. They list the groups or
+attributes of an input's geometry (or of the SOP a parameter names, or the node's own output) and toggle each pick in a list.
+Fields with it: the Packed Object's and the Solver SOP's Overwrite Attributes, Transfer Attributes, False Color Attribute,
+Inspector Attributes, Break Thresholds' Constraint Names and Scale by Attribute, each type's Data Name; Configure's Group, Transfer
+Attributes, Collision Group and Collision Ignore (both list the input's `collisiongroup` values and the other enabled entries' Collision Groups; Ignore leaves out its own entry's); Constraint Properties' Constraint Group, Group 1 and Group 2.
+
 Every SOP asset gets a `PythonModule` (`b3d_hda.add_python_module`) that starts with RBD's network editor hooks (`nodegraphvellumutils`, imported when the UI is available) and defines `isVellumNode()` returning true, which the viewer reads to connect a new node's inputs automatically, as RBD's SOPs do.
 
 Node layout: small networks (the packing subnets, the Packed Object's stage) use `b3d_hda.tidy` (rows by longest path from the inputs, hidden stops for wires that skip rows, barycenter ordering plus adjacent swaps to cut crossings, columns centred under the inputs with room for each name, unwired nodes in a column on the right). The Box3D Solver SOP, its DOP network and Box3D Configure use `b3d_hda.layout` with the tables in `tools/b3d_layouts.py`: rows of labelled network boxes, flow down the page, each box laid out by `tidy` (or a grid). A node the table does not name goes in an "Other" box and the build prints it, so a new node needs a line there. The FORCES subnet keeps its own layout (`layout_forces`).
@@ -62,9 +70,21 @@ Packed Object (read from `houdini_network_dump.py` dumps of RBD Bullet Solver an
 Geometry (data name `Geometry`) -> Box3D Data -> `visualize_hires` -> Collider Label, the output (no input); SOP Geometry reads a SOP stage inside the asset (`STAGE`,
 RBD Packed Object's `create_or_overwrite_attributes`): Object Merge of the asset's SOP Path (Use Object Transform drives
 its Transform, Into This Object: the DOP network's space; SOP Geometry's own stays off, as 22.0's has no OBJ Path to
-point at an object) -> `setup_defaults` -> `create_name` -> `set_rest` and `setup_velocities` on the creation frame
+point at an object) -> `setup_defaults` -> `create_name` -> `set_rest`, `initial_transform` and `setup_velocities` on the creation frame
 only -> `setup_deforming` -> `OUT`. The stage's
 references to the asset's parameters are set once the asset exists (`wire_stage`).
+* `save_source_geo` (Link to Source Object) and `applydata1` (on the creation frame) attach the SOP Path as the object's
+  `SourceObject` data (`objpath`, and `usetransform` from `source_transform`, a Modify Data), as RBD Packed Object does. The solver
+  follows animated bodies through it ([bodies.md](bodies.md)).
+* Overwrite Attributes from SOP, as RBD Packed Object's `copy_attribs`: after the creation frame the stage outputs the object's own
+  simulated geometry (`SIM_GEO`, an Object Merge of `../../..:<$OBJID stamp>`) with the `overwriteattributes` list copied from the
+  SOP by point name (`copy_attribs`, Attribute Copy, points); SOP Geometry runs Set Always while it, Deforming or `reimportsop` is
+  on (`REIMPORT`). Deforming, or `reimportsop` (set by the Solver SOP for a Deforming collider), outputs the whole SOP instead
+  (`switch_reimport`): changing shapes need the full re-import. Poses do not: an Animated collider follows through `SourceObject`.
+* `initial_transform` (primitive wrangle, `INITIAL_XFORM_VEX`) writes `__initialxform` per piece: Position and Rotation about the
+  pivot (the point's `pivot`, else P while Inherit Pivot is on, else Pivot), applied by `apply_initial_xform` (Transform by
+  Attribute) after `set_rest`, so the rest stays at the SOP's pose, as RBD Packed Object's `set_rest_and_initial_xform`. The solver
+  does not read a `pivot` attribute: it only decides where the initial rotation is about.
 * `setup_defaults` (detail wrangle, `b3d_settings.packed_defaults_vex`): each per-body setting whose value differs from
   Box3D Data's default becomes a point attribute holding it, unless the points already have it (RBD Packed Object's
   Attribute Creates with Write Values off), so a point attribute wins and untouched settings write nothing. Names map as
@@ -80,9 +100,9 @@ references to the asset's parameters are set once the asset exists (`wire_stage`
   Configure's Initial State) are kept unless the user turns it off.
 * `setup_deforming` (`DEFORMING_VEX`): the Deforming toggle writes `deforming` 1 on every import and, with Overwrite
   Attributes from SOP, sets the SOP Geometry to Set Always (`REIMPORT`), as RBD's Create Deforming Objects.
-* Parameters: an Object tab (Object Name `$OS`, Creation Frame, Solve on Creation Frame, SOP Path, Use Object
-  Transform, Overwrite Attributes from SOP, Deforming, Add Impact Data, Display Geometry), Initial State (with Start
-  Asleep), then each Box3D Data folder as a tab (`pull` moves the two out), read by the stage. Only the object-level settings
+* Parameters: an Object tab (Object Name `$OS`, Creation Frame (default: the network's Start Frame), Creation Frame Specifies Simulation Frame, Solve on Creation Frame, SOP Path, Use Object
+  Transform, Overwrite Attributes from SOP (toggle and attribute list, default `OVERWRITE_DEFAULT`), a hidden Read SOP Every Step (`REIMPORT_SOP`), Deforming, Display Geometry), Initial State (Position, Rotation, Inherit Pivot from Point Position, Pivot, Velocity, Angular Velocity, Inherit Velocity), then each Box3D Data folder as a tab (`pull` moves Add Impact Data from CCD & Contacts
+  to Shape, as RBD Packed Object has it with its shape settings; Start Asleep stays in Sleep), read by the stage. Only the object-level settings
   (`b3d_settings.SKIP`: Hull per Connected, Add Impact Data) are channel references into the inner Box3D
   Data, whose other values stay at the defaults, so a missing attribute means the default. Settings change
   mid-simulation through the attributes, not the asset's parameters.
@@ -101,7 +121,7 @@ Traps it handles:
 * SideFX parameters and menu items are set by name and token (`set_named`, `set_menu`, `b3d_hda.set_token`), never by
   label. Our own menus' tokens are the item numbers (`Box3DParms::menu`). Our folders are found by label: their switcher
   names are numbered.
-* Empty Object has no creation frame: its Activation is `$SF == ch("../createframe")`, as RBD Packed Object's.
+* Empty Object has no creation frame: its Activation is `if(ch("../usesimframe"), $SF, $FF) == ch("../createframe")` (Creation Frame Specifies Simulation Frame, off by default, as RBD Packed Object's).
 * The inner Box3D Data's `parmop_*` are set to Set Initial: a new data node starts at Use Default, and only an edit (not
   a channel reference) switches it, so the linked object-level settings would otherwise keep their built-in values.
 * Box3D Data's own DOP settings outside its folders (Activation, Group, Data Name) are not promoted: promoted copies
@@ -119,7 +139,7 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   Pieces and collision are Box3D Packed Objects, Use Object Transform off (SOP space). Unconnected inputs are switched
   out by point count, so an empty input counts as unconnected everywhere alike: SOP Switches with the input's `IN_*`
   null as spare input and `npoints(-1) > 0`, DOP Switches with `npoints(opinputpath("..", i)) > 0` (the DOP
-  network's inputs; collision also needs Use External Collisions), as RBD Bullet Solver does.
+  network's inputs; collision also needs Enable Collision Geometry), as RBD Bullet Solver does.
 * Ground Collision (`b3d_solver_ground.py`, Collision tab, a collapsible folder with Ground Type as its header, as RBD Bullet
   Solver's): `useground` None / Ground Plane / Height Field drives a DOP Switch (`switch_ground`) over a Null, a Ground
   Plane (Position `ground_pos` x World Scale, Rotation `ground_rot`) and a Static Object (SOP Path the `GROUND_HEIGHTFIELD`
@@ -227,7 +247,8 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   group's primitives first, as RBD Bullet Solver's `switchif_keepbroken`.
 * Solve on Creation Frame, as RBD Bullet Solver: `solvefirstframe` on the Solver tab (before Cache Simulation) is
   linked to the pieces' Packed Object, and `collision_solvefirstframe` (Advanced > Collision, as RBD Bullet Solver's) to the
-  collider's. The build checks both links.
+  collider's. The collider's has a default expression `ch("solvefirstframe")`, so it follows the first until set on its own.
+  The build checks both links.
 * Collision shapes (the asset's Guide Geometry, node `GUIDE_GEO`, set as `guide=GUIDE_GEO` in the definition's extra info): DOP Import (`import_shapes`, the pieces object, Geometry Data Path `SHAPES_DATA`, `POINTS_TOGGLES`)
   -> `tint_shapes` (`SHAPES_TINT_VEX`, Shape Color) -> `unscale_shapes` -> `switch_show_shapes` (the solver's `exportshapes`, promoted
   to Output > Visualization as Show Collision Shapes; empty input when off, so nothing cooks) -> `switchif_beforestart_shapes` -> `merge_guide`.
@@ -241,13 +262,14 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   while its expression is true.
 * Output tab, as RBD Bullet Solver's: Impact Data, a closed collapsible folder whose header toggle is the pieces' Add
   Impact Data (`sidefx::header_toggle`), with the solver's Impact Min Speed and Fetch Impacts; Transfer Attributes, with Transfer to Geometry / Proxy Geometry choosing each Transform Pieces' Attributes to
-  Copy as RBD Bullet Solver's: the list while on, else `w` (`copy_attributes`, `TRANSFER_TO`), and Transform Pieces'
-  own Point Velocities parameters promoted onto both (`POINT_VELOCITY_PARMS`). Fetch Impacts makes (or reuses) an Object Merge of the asset's `IMPACTS` null beside the
+  Copy as RBD Bullet Solver's: the list while on, else `w` (`copy_attributes`, `TRANSFER_TO`); Transform Pieces'
+  Point Velocities stay at their defaults. Fetch Impacts makes (or reuses) an Object Merge of the asset's `IMPACTS` null beside the
   asset, fed by a DOP Import Records of the pieces' `Impacts` data (its parameters set by name).
 * Parameters: Reset Simulation and Start Frame above the tabs, then the solver's tabs (folders found under its Data
   Options, a tab of simple folders kept whole; Guide Options skipped).
   Tab order, as RBD Bullet Solver's: Solver, Pieces, Collision, Forces, Constraints, any other solver tabs, Visualization (`visualization_tab`: a Visualize
-  Geometries folder with Geometry (Show Collision Shape, Shape Color), Ground and Collision Geometry (Show Geometry, Show Collision
+  Geometries folder (header checkbox `VISUALIZE`, on: it gates every guide's Switch and greys out the folders, added to their
+  own Disable When) with Geometry (Show Collision Shape, Shape Color), Ground and Collision Geometry (Show Geometry, Show Collision
   Shape, Color), Show Constraints (`SHOW_CONSTRAINTS`, off), Constraint Geometry (False Color Mode `FALSE_COLOR_MODE`,
   Attribute), Impact Data (Show Impacts, off), then Inspector, as RBD Bullet Solver's; its Display Visualization
   Geometry master toggle, Show Active / Sleeping colouring and the constraint guide folders have no counterpart), then Advanced and Output always last; the
@@ -255,8 +277,8 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   with `pull`), whichever DOP tab holds them: the DOP's tabs and folders follow this layout (Contacts, Sleeping
   and Aging folders on the Solver tab, Force DOPs, Bounce / Friction and Glue on Forces, Stability and Performance on Advanced),
   so only Contacts and Sleeping are rebuilt (Sleeping closed), Aging is pulled (`AGING_PARMS`) into Output's Attributes folder, Forces keeps the DOP's folders as they are, Advanced is flattened
-  and regrouped by `TAB_GROUPS`, and DOP tabs left empty (Visualization, Output) are dropped. Solver: the solver's own settings,
-  Solve on Creation Frame, Cache Simulation (its label hidden, joined to Cache Memory (MB), which it disables when off), then Contacts
+  and regrouped by `TAB_GROUPS`, and DOP tabs left empty (Visualization, Output) are dropped. Solver: a General folder (World Scale, Time Scale), a Simulation folder
+  (the solver's own settings, Solve on Creation Frame, Cache Simulation with its label hidden, joined to Cache Memory (MB), which it disables when off), then Contacts
   and Sleeping. Cache Memory is the inner DOP network's value with the parameters on its row (`row_of`,
   `CACHE_MEMORY`). Advanced is Stability (warm starting, continuous, speed limit, inertia), Performance (threads), Collision (the collider's Solve on Creation Frame) and Constraints (a closed folder per joint type). Collision: one Collision Geometry folder whose header checkbox is Use External
   Collisions (`usecollisions`, placed just before the folder, as RBD Bullet Solver's), holding Collision Type and the collision object's Shape, Material and CCD &
@@ -272,8 +294,8 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   `solver_sop_animated_setting`). The pieces' and collider's Box3D Data, the relationships and the ground stay Set Initial. Inside each tab the settings sit in collapsible folders, as RBD Bullet
   Solver's (`TAB_GROUPS`, `group_tab`) and with its tags (`group_type`, `group_default`, `sidefx::header_toggle`),
   every one open except Output's Impact Data, the Solver tab's Sleeping and the joint folders; Collision is one Collision Geometry folder with the collider's folders
-  simple inside it (each disabled with Use External Collisions off), Pieces is Shape, Body, Material, CCD & Contacts
-  and Sleep (the Packed Object's Start Asleep first, `moved_settings`), and Add Impact Data is on Output. Test `solver_sop_layout`.
+  simple inside it (each disabled with Enable Collision Geometry off), Pieces is Shape, Body, Material, CCD & Contacts
+  and Sleep (the Packed Object's Start Asleep, taken out of its Sleep tab and put first, `moved_settings`), and Add Impact Data (taken out of its Shape tab) is on Output. Test `solver_sop_layout`.
 * Viewer state (`tools/b3d_solver_state.py`, `STATE_NAME` / `STATE_FILE`, installed by `b3d_hda.add_viewer_state`), RBD
   Bullet Solver's trimmed: an Option Menu with Output for View Flags (Geometry / Constraint / Proxy, `setOutputForViewFlag`)
   and an inspector, hotkeys 1 to 5 and the HUD lines for them. The inspector prints the attributes of the primitive under
@@ -302,7 +324,7 @@ through. No Bullet settings, no Proxy attribute transfer.
   folder, each node's own folder is that type's. `NODE_ONLY` lists the node parameters that are no attribute
   (Breakable, Set Rest Length, the Limit toggles, Attributes Replace Values). Names: `<type>_<attribute>` in a type's
   folder (the same attribute is shared by several types, with different defaults and ranges), `add...` its checkbox.
-  Settings For (`jointtype`) hides all but one type's folder.
+  Constraint Type (`constrainttype`) hides all but one type's folder.
 * One detail wrangle (`set_properties`, `wrangle_vex`) loops the constraints in the group (empty: all; Filter by
   Pieces: SideFX's `rbdgroupconstraints` node with its group `__tmpconpropgrp`, output 1; removed by `strip_group`).
   Each ticked setting creates its attribute with the "not set" value first (`kUnsetFloat` / -1), then sets the group's
@@ -311,7 +333,7 @@ through. No Bullet settings, no Proxy attribute transfer.
 * Float values multiply the node's value, or replace it with the node's Attributes Replace Values on; the node does not
   convert and says nothing about it (`docs/joints.md` does). Defaults and ranges are the nodes'.
 * Action (`action`, as RBD Constraint Properties: Edit, Set, default Set): Edit writes the ticked settings (above). Set
-  writes the settings of the joint type in Settings For (and the Joint folder's) that differ from the relationship
+  writes the settings of the joint type in Constraint Type (and the Joint folder's) that differ from the relationship
   node's default (`wrangle_vex`'s `setmode`; `attribute_rows` carries each setting's type number and default), and
   always the Constraint Name, with the checkboxes hidden. Settings left at their default stay "not set", so Set cannot
   multiply or zero a value the node holds, and a value cannot be set back to its default with Set.
@@ -325,12 +347,29 @@ through. No Bullet settings, no Proxy attribute transfer.
   switches `enable_motor` (off or unset becomes on, on becomes off), and the mouse wheel edits the spherical joint's
   `motor_velocity` (Z, Shift X, Alt Y, Ctrl ten times the step, `MOTOR_STEP` degrees per second). The motor speeds and
   torques are floats, which multiply the relationship node's value (zero stays zero), so the viewport does not edit
-  them. The edits live in the hidden `stash` parameter (a Geometry data parameter, shared with the inner Stash SOP):
+  them. The edits live in the `stash` parameter (Geometry Stash) (a Geometry data parameter, shared with the inner Stash SOP):
   one point per edited line with `__idx` and the fields `orient_a` / `orient_b`, `enable_motor`, `motor_velocity`, each
   with a "not edited" value the network skips (`FIELDS`). `index_lines` numbers the lines (`__idx`, removed again by `strip_index`),
-  `apply_edits` writes the stash on top of the settings. The hidden `__idx` / `__sel` hold the selection. Edit Parms
+  `apply_edits` writes the stash on top of the settings.
+  The **Next Constraint** folder holds Switch
+  Constraint Type When Broken (`usenextconstraint`, the master: no `next_*` attribute is written while it is off), Next Constraint Name,
+  Next Constraint Type (`next_constrainttype`, which type's folder shows) and the next
+  settings, a folder per type with the same checkboxes (`next_<type>_<setting>`, written as `next_<setting>`, no scaling). In Set the next name
+  is always written while the master is on, and the next settings that differ from the node's defaults. The solver turns them into the
+  settings when the constraint switches ([joints.md](joints.md)).
+  Scaling, as RBD Constraint Properties': every single-number setting (`kind` f) has `<name>scaling` (No Scaling, Scale by Attribute, Scale
+  by Value, Scale by Both) and `<name>attribute` (default the setting's own name; hidden for No Scaling and Scale by Value, with
+  `buildScaleAttribMenu`). `set_properties` takes the Geometry (input 1) and Proxy (input 2) too and writes `scaled(...)` (`SCALE_VEX`):
+  Scale by Value multiplies by the line's existing attribute of the setting's name (a "not set" one is ignored), Scale by Attribute by the
+  named primitive attribute of the line, else the point attribute of the Geometry (else Proxy) pieces its two points' `name`s stand for,
+  averaged over the ends. The Geometry Attribute Transfer folder (`clusterattrib`, default `parentpiece`; `transfermode`: Closest 0, Min 1,
+  Max 3, Average 2, as Bullet's tokens) picks the pieces: those whose Cluster Attribute equals the name, else the one named so; Closest is
+  the nearest by point position (packed pieces are one point), the others combine them. A piece that is not found leaves the value alone. Set
+  also writes a scaled setting whatever its value. Each of these settings also has `<name>randomize` (a joined checkbox) and `<name>variance`
+  (default 0.8): after the scaling the value is times `fit01(rand(constraint number, seed), max(0, 1 - variance), 1 + variance)` when it is
+  not negative, the seed from the setting's name so the settings differ (RBD Constraint Properties has it for Glue's Strength only). `__idx` / `__sel` (Index, Selection, not saved with the scene) hold the selection. All three are visible in a HandleParms folder, as RBD Constraint Properties'. Edit Parms
   makes the handle edit Anchor Rotation, for every line in the group, instead. Clear Edits, Import Edits and Edit Parms
-  are in the viewport toolbar (`show_in_toolbar`). Guide Scale draws the anchor frames of the lines in the group
+  are in the viewport toolbar (`show_in_toolbar`). Guide Scale (default 0: hidden, range 0 to 1, as RBD Constraint Properties') draws the anchor frames of the lines in the group
   (`build_guides` -> `GUIDES`). The state reads `CONSTRAINT`, `HANDLE`, `GUIDES`, `GLOW` and `widgets` (the layout's
   Viewer box); its helpers (`set_edits`, `selected_ids`, ...) are plain functions, so a check calls them without a
   viewport.

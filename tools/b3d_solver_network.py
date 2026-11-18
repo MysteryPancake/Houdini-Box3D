@@ -40,6 +40,7 @@ from b3d_solver_common import (
     GUIDE_RADIUS,
     COLLISION_COLOR,
     SHOW_GROUND,
+    VISUALIZE,
     USE_GROUND,
     FETCH_GEOMETRY,
     set_toggles,
@@ -104,7 +105,7 @@ p@orient = quaternion(transpose(r[0]) * r[1]);
 """
 
 # Solve on Creation Frame, as RBD Bullet Solver: solvefirstframe on the Solver tab drives the pieces' Packed Object,
-# collision_solvefirstframe (Advanced > Collision) the collider's.
+# collision_solvefirstframe (Advanced > Collision, following the first by default) the collider's.
 SOLVE_FIRST = "solvefirstframe"
 COLLISION_SOLVE_FIRST = "collision_solvefirstframe"
 SOLVE_FIRST_PARM = "solvefirstframe"  # the Box3D Packed Object's Solve on Creation Frame (Empty Object's)
@@ -112,8 +113,6 @@ SOLVE_FIRST_PARM = "solvefirstframe"  # the Box3D Packed Object's Solve on Creat
 # Export Broken Constraints (RBD Bullet Solver's constraint_keepbroken): off, broken constraints are
 # removed from the constraints output.
 KEEP_BROKEN = "constraint_keepbroken"
-# Output tab: Transform Pieces' own Point Velocities parameters, promoted under their names onto both transforms.
-POINT_VELOCITY_PARMS = ("pointvels", "integrateovertime")
 
 # Collision Type Deforming: the colliders' `deforming`, so the solver rebuilds their shapes every step.
 COLLISION_DEFORMING_VEX = f'''\
@@ -247,10 +246,10 @@ string names[] = {{"", "angle", "distance", "force", "impact", "torque"}};
 string attr = mode == 6 ? chs("../{FALSE_COLOR_ATTRIB}") : (mode < len(names) ? names[mode] : "");
 if (attr == "" || !hasprimattrib(0, attr)) return;
 float top = 0;
-for (int i = 0; i < nprims(0); i++) top = max(top, abs(prim(0, attr, i)));
+for (int i = 0; i < nprimitives(0); i++) top = max(top, abs(prim(0, attr, i)));
 if (top <= 0) return;
 if (!hasprimattrib(0, "Cd")) addprimattrib(0, "Cd", {{1, 1, 1}});
-for (int i = 0; i < nprims(0); i++)
+for (int i = 0; i < nprimitives(0); i++)
     setprimattrib(0, "Cd", i, lerp({{0, 0.4, 1}}, {{1, 0.1, 0}}, abs(prim(0, attr, i)) / top));
 '''
 
@@ -372,7 +371,7 @@ def build_ground_guide(sub, dopnet, empty):
     choose.setInput(0, empty)
     choose.setInput(1, plane_out)
     choose.setInput(2, field_out)
-    choose.parm("input").setExpression(f'ch("../{USE_GROUND}") * ch("../{SHOW_GROUND}")', hou.exprLanguage.Hscript)
+    choose.parm("input").setExpression(f'ch("../{USE_GROUND}") * ch("../{SHOW_GROUND}") * ch("../{VISUALIZE}")', hou.exprLanguage.Hscript)
     return before_start(sub, dopnet, "switchif_beforestart_ground", choose, empty)
 
 
@@ -614,11 +613,6 @@ def build_network(sub):
         xform.setInput(0, removed)
         xform.setInput(1, sim_points)
         copy_attributes(xform, TRANSFER_TO[name][0])
-        for parm in POINT_VELOCITY_PARMS:
-            if xform.parm(parm) is None:
-                warn(f"{xform.path()} has no {parm}: Point Velocities does nothing there")
-            else:
-                xform.parm(parm).setExpression(f'ch("../{parm}")', hou.exprLanguage.Hscript)
         pieces_out.append(scale_xform(sub, f"unscale_{name[len('transform_'):]}", xform, inverse=True))
     geo_out, proxy_out = pieces_out
 
@@ -685,11 +679,11 @@ def build_network(sub):
     show_shapes = create(sub, "switch", "switch_show_shapes")
     show_shapes.setInput(0, no_shapes)
     show_shapes.setInput(1, unscaled_shapes)
-    show_shapes.parm("input").setExpression(f'ch("../{SHAPES_TOGGLE}")', hou.exprLanguage.Hscript)
+    show_shapes.parm("input").setExpression(f'ch("../{VISUALIZE}") && ch("../{SHAPES_TOGGLE}")', hou.exprLanguage.Hscript)
     shapes_out = before_start(sub, dopnet, "switchif_beforestart_shapes", show_shapes, no_shapes)
 
     # The collider's shapes, apart (RBD Bullet Solver's Collision Geometry > Show Collision Shape and Color): the same
-    # import for the collision object, tinted by the collision Color, behind Use External Collisions.
+    # import for the collision object, tinted by the collision Color, behind Enable Collision Geometry.
     import_cshapes = create(sub, "dopimport", "import_collision_shapes")
     import_cshapes.parm("doppath").set("../dopnet")
     import_cshapes.parm("objpattern").set("collision")
@@ -703,7 +697,7 @@ def build_network(sub):
     show_cshapes = create(sub, "switch", "switch_show_collision_shapes")
     show_cshapes.setInput(0, no_shapes)
     show_cshapes.setInput(1, scale_xform(sub, "unscale_collision_shapes", ctint, inverse=True))
-    show_cshapes.parm("input").setExpression(f'ch("../{USE_COLLISIONS}") && ch("../{SHOW_COLLISION_SHAPES}")',
+    show_cshapes.parm("input").setExpression(f'ch("../{VISUALIZE}") && ch("../{USE_COLLISIONS}") && ch("../{SHOW_COLLISION_SHAPES}")',
                                              hou.exprLanguage.Hscript)
     cshapes_out = before_start(sub, dopnet, "switchif_beforestart_collision_shapes", show_cshapes, no_shapes)
 
@@ -725,7 +719,7 @@ def build_network(sub):
     guide_wire.parm("usescaleattrib").set(1)
     guide_wire.parm("scaleattrib").set("guide_radius")
     show_con.setInput(1, guide_wire)
-    show_con.parm("input").setExpression(f'ch("../{SHOW_CONSTRAINTS}")', hou.exprLanguage.Hscript)
+    show_con.parm("input").setExpression(f'ch("../{VISUALIZE}") && ch("../{SHOW_CONSTRAINTS}")', hou.exprLanguage.Hscript)
     con_guide_out = before_start(sub, dopnet, "switchif_beforestart_constraint_guide", show_con, no_shapes)
     impact_color = create(sub, "attribwrangle", "color_impacts")
     impact_color.setInput(0, impacts_unscaled)
@@ -734,11 +728,11 @@ def build_network(sub):
     show_impacts = create(sub, "switch", "switch_show_impacts")
     show_impacts.setInput(0, no_shapes)
     show_impacts.setInput(1, impact_color)
-    show_impacts.parm("input").setExpression(f'ch("../{SHOW_IMPACTS}")', hou.exprLanguage.Hscript)
+    show_impacts.parm("input").setExpression(f'ch("../{VISUALIZE}") && ch("../{SHOW_IMPACTS}")', hou.exprLanguage.Hscript)
     impacts_guide_out = before_start(sub, dopnet, "switchif_beforestart_impact_guide", show_impacts, no_shapes)
 
     # The external collision geometry, as RBD Bullet Solver's guide shows it (dopimport_collision, dimmed
-    # by half, behind Use External Collisions and Show Collision Geometry; on by default).
+    # by half, behind Enable Collision Geometry and Show Collision Geometry; on by default).
     import_cgeo = create(sub, "dopimport", "import_collision_geo")
     import_cgeo.parm("doppath").set("../dopnet")
     import_cgeo.parm("objpattern").set("collision")
@@ -751,7 +745,7 @@ def build_network(sub):
     show_cgeo = create(sub, "switch", "switch_show_collision_geo")
     show_cgeo.setInput(0, no_shapes)
     show_cgeo.setInput(1, scale_xform(sub, "unscale_collision_geo", dim, inverse=True))
-    show_cgeo.parm("input").setExpression(f'ch("../{USE_COLLISIONS}") && ch("../{SHOW_COLLISION}")',
+    show_cgeo.parm("input").setExpression(f'ch("../{VISUALIZE}") && ch("../{USE_COLLISIONS}") && ch("../{SHOW_COLLISION}")',
                                           hou.exprLanguage.Hscript)
     cgeo_out = before_start(sub, dopnet, "switchif_beforestart_collision_geo", show_cgeo, no_shapes)
 

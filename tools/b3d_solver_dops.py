@@ -45,20 +45,23 @@ def packed_object(dopnet, name, context_input, object_name):
 
 
 def animate_collision(collision):
-    """Collision Type on the asset (Animated or Deforming) drives the collision object: Body Type
-    Kinematic / Static, and its Overwrite Attributes from SOP (the Packed Object re-imports the
-    SOP every step), so the solver sees the new poses. Both are the Packed Object's own parameters:
+    """Collision Type on the asset drives the collision object: Animated or Deforming make it Kinematic (the solver
+    moves each body to its new pose), Static leaves it Static. Animated bodies follow the source SOP in the solver
+    (the Packed Object's SourceObject data, followSourceSops); Deforming reads the whole SOP every step (Overwrite
+    Attributes from SOP and Read SOP Every Step), as the shapes change. All are the Packed Object's own parameters:
     the nested asset stays locked."""
     p = collision.parm("bodytype")
     if p is None:
         warn(f"{collision.path()} has no Body Type; its parameters: {labels(collision)}")
     else:
         b3d_hda.menu_token_expr(p, f'ch("../../{COLLISION_TYPE}") > 0', BODY_KINEMATIC, BODY_STATIC, warn)
-    overwrite = collision.parm(OVERWRITE_FROM_SOP)
-    if overwrite is None:
-        warn(f"{collision.path()} has no {OVERWRITE_FROM_SOP}: the collision is imported once and cannot animate")
-    else:
-        overwrite.setExpression(f'ch("../../{COLLISION_TYPE}") > 0', hou.exprLanguage.Hscript)
+    deforming = f'ch("../../{COLLISION_TYPE}") == 2'
+    for name in (OVERWRITE_FROM_SOP, "reimportsop"):
+        parm = collision.parm(name)
+        if parm is None:
+            warn(f"{collision.path()} has no {name}: a deforming collision cannot follow its SOP")
+        else:
+            parm.setExpression(deforming, hou.exprLanguage.Hscript)
 
 
 def build_dops(dopnet):
@@ -93,6 +96,8 @@ def build_dops(dopnet):
     # still resolve (piece names are looked up in every object).
     # Each one behind a Switch on its Enable toggle (use<name> on the asset): off, nothing is merged for it.
     rels = []
+    # A Switch's inputs close up when input 0 is empty, so the "off" input is a Null: input 1 is the relationship.
+    no_relationship = create(dopnet, "null", "no_relationship")
     for type_names, name in RELATIONSHIPS:
         try:
             rel = create(dopnet, type_names, name)
@@ -100,6 +105,7 @@ def build_dops(dopnet):
             warn(f"{e}; constraints of that type will not work in the Box3D Solver SOP")
             continue
         enable = create(dopnet, "switch", f"switch_use_{name}")
+        enable.setInput(0, no_relationship)
         enable.setInput(1, rel)
         enable.parm("input").setExpression(f'ch("../../use{name}")', hou.exprLanguage.Hscript)
         rels.append(enable)
@@ -125,7 +131,7 @@ def build_dops(dopnet):
     p = objects.parm("input")
     if p is None:
         warn(f"{objects.path()} has no Select Input parameter")
-    else:  # Use External Collisions on, and the collision input has points (as RBD Bullet Solver), or, as a
+    else:  # Enable Collision Geometry on, and the collision input has points (as RBD Bullet Solver), or, as a
         # Static Object, primitives (a height field has no points)
         p.setExpression(
             f'ch("../../{USE_COLLISIONS}") && if(ch("../../{COLLISION_SOURCE}"), '

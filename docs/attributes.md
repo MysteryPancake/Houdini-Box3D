@@ -18,6 +18,7 @@ All are optional except `P`. A missing one uses the Box3D Data value. Every step
 | `dead` | int | Nonzero = remove the body. With Reap Dead Points on, the point is deleted too |
 | `age` / `life` | float | With Enable Aging: `dead` once `age` passes `life` |
 | `mass`, `computemass`, `density` | float / int | Mass, or `computemass` = 1 for `density` × volume |
+| `computecom` | int | 1 spins a piece about its shape's centre of mass, 0 about its point |
 | `inertialtensorstiffness` | float | Scales how hard the body is to spin |
 | `friction`, `bounce` | float | Grip and bounciness |
 | `rollingresistance` | float | Resistance to rolling, 0 to 1 |

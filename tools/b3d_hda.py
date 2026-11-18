@@ -156,15 +156,143 @@ TOOLS_SHELF = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
+# The menus behind the little arrow beside a group or attribute field (the Python Module of every asset, called by
+# the fields' menu scripts as kwargs["node"].hm().buildGroupMenu(...)). They list what the connected geometry has:
+# its groups (points, primitives, vertices, edges) or attributes (any class, optionally only numbers), plus `extra`
+# names. A field that takes several names toggles each one in or out of the list.
+MENU_SOURCE = """
+def _menu_geometry(node, index):
+    inputs = node.inputs()
+    if index >= len(inputs) or inputs[index] is None:
+        return None
+    connectors = node.inputConnectors()
+    out = connectors[index][0].outputIndex() if index < len(connectors) and connectors[index] else 0
+    try:
+        return inputs[index].geometry(out)
+    except hou.Error:
+        return None
+
+
+def _menu_items(names):
+    return [x for name in sorted(set(names)) for x in (name, name)]
+
+
+def buildGroupMenu(kwargs, index=0, kinds="point prim"):
+    geo = _menu_geometry(kwargs["node"], index)
+    if geo is None:
+        return []
+    getters = {"point": geo.pointGroups, "prim": geo.primGroups, "vertex": geo.vertexGroups, "edge": geo.edgeGroups}
+    names = []
+    for kind in kinds.split():
+        names += [g.name() for g in getters[kind]()]
+    return _menu_items(names)
+
+
+def buildAttribMenu(kwargs, index=0, classes="point", numeric=False, extra="", skip="", source=""):
+    node = kwargs["node"]
+    if source.startswith("parm:"):
+        sop = hou.node(node.evalParm(source[5:]))
+        geo = sop.geometry() if sop else None
+    elif source == "output":
+        geo = node.geometry()
+    else:
+        geo = _menu_geometry(node, index)
+    names = extra.split()
+    if geo is not None:
+        getters = {"point": geo.pointAttribs, "prim": geo.primAttribs, "vertex": geo.vertexAttribs,
+                   "global": geo.globalAttribs}
+        for kind in classes.split():
+            for attrib in getters[kind]():
+                if numeric and (attrib.size() != 1 or attrib.dataType() not in (hou.attribData.Float,
+                                                                                 hou.attribData.Int)):
+                    continue
+                names.append(attrib.name())
+    hidden = skip.split()
+    return _menu_items([n for n in names if not n.startswith("__") and n not in hidden])
+
+
+def buildScaleAttribMenu(kwargs):
+    node = kwargs["node"]
+    names = []
+    for index, cls in ((1, "prim"), (0, "point"), (2, "point")):
+        geo = _menu_geometry(node, index)
+        if geo is None:
+            continue
+        attribs = geo.primAttribs() if cls == "prim" else geo.pointAttribs()
+        names += [a.name() for a in attribs if a.size() == 1 and a.dataType() in (hou.attribData.Float,
+                                                                                  hou.attribData.Int)]
+    return _menu_items([n for n in names if not n.startswith("__")])
+
+
+def buildConstraintNameMenu(kwargs, index=1):
+    node = kwargs["node"]
+    names = [p.eval() for p in node.parms() if p.name().endswith("_dataname")]
+    geo = _menu_geometry(node, index)
+    if geo is not None and geo.findPrimAttrib("constraint_name") is not None:
+        names += [v for v in geo.primStringAttribValues("constraint_name") if v]
+    return _menu_items(names)
+
+
+def buildCollisionGroupMenu(kwargs, index=0, excludeOwn=False):
+    node = kwargs["node"]
+    geo = _menu_geometry(node, index)
+    names = set()
+    if geo is not None and geo.findPointAttrib("collisiongroup") is not None:
+        names.update(v for v in geo.pointStringAttribValues("collisiongroup") if v)
+    number = str(kwargs.get("script_multiparm_index", ""))
+    own = ""
+    for parm in node.parms():
+        name = parm.name()
+        if not name.startswith("collisiongroup") or not name[14:].isdigit():
+            continue
+        toggle = node.parm("add" + name)
+        enable = node.parm("enable" + name[14:])
+        if (toggle is not None and not toggle.eval()) or (enable is not None and not enable.eval()):
+            continue
+        value = parm.eval()
+        if name[14:] == number:
+            own = value
+        if value:
+            names.add(value)
+    if excludeOwn:
+        names.discard(own)
+    return _menu_items(names)
+"""
+
+
+def menu_script(template, call, toggle=True):
+    """Gives a string parameter the menu beside its field: `call` is a function of MENU_SOURCE with its arguments
+    (called with kwargs first). `toggle`: each pick is added to / removed from the list, else it replaces it."""
+    template.setItemGeneratorScript(f"return kwargs['node'].hm().{call}")
+    template.setItemGeneratorScriptLanguage(hou.scriptLanguage.Python)
+    template.setMenuType(hou.menuType.StringToggle if toggle else hou.menuType.StringReplace)
+    return template
+
+
+def group_menu(template, index=0, kinds="point prim"):
+    """`template` lists the groups (`kinds`: point, prim, vertex, edge) of input `index`."""
+    return menu_script(template, f"buildGroupMenu(kwargs, {index}, {kinds!r})")
+
+
+def attrib_menu(template, index=0, classes="point", toggle=True, **options):
+    """`template` lists the attributes (`classes`: point, prim, vertex, global) of input `index`. options:
+    numeric (single numbers only), extra (more names), skip (names left out), source ("output": the node's own
+    output; "parm:<name>": the SOP that parameter names)."""
+    args = "".join(f", {k}={v!r}" for k, v in options.items())
+    return menu_script(template, f"buildAttribMenu(kwargs, {index}, {classes!r}{args})", toggle)
+
+
 def add_python_module(definition, extra=""):
     """The asset's Python Module: the network editor hooks and isVellumNode() true, which makes the viewer
-    connect a new node's inputs automatically (as RBD's SOPs do), plus `extra` source."""
+    connect a new node's inputs automatically (as RBD's SOPs do), the group and attribute menus (MENU_SOURCE),
+    plus `extra` source."""
     code = ("if hou.isUIAvailable():\n"
             "    from nodegraphvellumutils import setSelectPosContextData, isPassThroughConnection, "
             "createEventHandler\n"
             "\n"
             "def isVellumNode():\n"
             "    return True\n")
+    code += MENU_SOURCE
     if extra:
         code += "\n" + extra
     definition.addSection("PythonModule", code)

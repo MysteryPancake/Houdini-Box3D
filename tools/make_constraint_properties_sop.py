@@ -13,7 +13,8 @@ lines in the Constraint Group (or in the Filter by Pieces groups). A line that i
 the relationship node's value: the attributes are created with the "not set" value the solver skips
 (kUnsetFloat in Box3DJoints.h: -3.4028235e38 for floats and the first component of vectors, -1 for
 toggles). Also writable: the line's constraint_name (the relationship's Data Name) and
-next_constraint_name (what a broken joint switches to), and a display colour.
+next_constraint_name (what a broken joint switches to, with the settings it then has as next_<setting>: the Next
+Constraint folder), and a display colour.
 
     Inputs / outputs: Geometry, Constraint Geometry (pink), Proxy Geometry, as the Box3D Solver SOP's
     first three. Only the Constraint Geometry is edited; the others pass through (they are what Filter
@@ -21,7 +22,12 @@ next_constraint_name (what a broken joint switches to), and a display colour.
     Filter by Pieces on) -> set_properties (one detail wrangle) -> strip_group.
 
 Folders: Joint (the settings every type has), then one folder per joint type, showing the one picked
-in Settings For. A setting is named <type>_<attribute> in a type's folder and writes <attribute>.
+in Constraint Type. A setting is named <type>_<attribute> in a type's folder and writes <attribute>.
+
+Each single-number setting also has a Scaling menu and an Attribute, as RBD Constraint Properties': the value is
+multiplied by the constraint's own attribute of the setting's name (Scale by Value) and / or by an attribute taken from
+the constraint or from the pieces at its two ends (Scale by Attribute: SCALE_VEX). The Geometry Attribute Transfer folder
+says how a constraint's piece is found (Cluster Attribute Name) and combined (Transfer Mode).
 
 Never @ bindings in the wrangle: a binding creates its attribute on every primitive at compile time.
 
@@ -32,6 +38,7 @@ import os
 import re
 import sys
 import traceback
+import zlib
 
 import hou
 
@@ -66,6 +73,8 @@ INDEX_ATTRIB = "__idx"  # each constraint line's number, for the viewport select
 
 GROUP_ATTRIB = "__tmpconpropgrp"  # the group SideFX's RBD Group Constraints makes
 ROTATE, ROTATE_BOX = "anchorrotate", "addanchorrotate"  # the Anchor Rotation setting (the orient attribute)
+SCALING = ("No Scaling", "Scale by Attribute", "Scale by Value", "Scale by Both")  # RBD Constraint Properties' menu
+TRANSFER_MODES = (("0", "Closest"), ("1", "Min"), ("3", "Max"), ("2", "Average"))  # its tokens
 UNSET_FLOAT = "-3.4028235e38"  # kUnsetFloat (Box3DJoints.h)
 UNSET_INT = "-1"
 
@@ -112,6 +121,75 @@ def collect(dopnet):
     return common, per_type
 
 
+# The wrangle's functions for a setting scaled by an attribute, as RBD Constraint Properties does it: "Scale by Value"
+# multiplies by the constraint's own attribute of the setting's name, "Scale by Attribute" by the named attribute, taken
+# from the constraint (a primitive attribute) or else from the pieces at its two ends (point attributes of the Geometry,
+# else the Proxy Geometry), averaged over the ends. A piece an end stands for is the one named like it, or, when the
+# Geometry has the Cluster Attribute, every piece with that attribute equal to the name, combined by Transfer Mode.
+SCALE_VEX = """\
+#define NONE -1e38
+// The value of `attr` on the piece(s) anchor `name` stands for in geometry `input`: NONE if there is no such piece.
+// mode: 0 the piece nearest `P`, 1 Min, 2 Average, 3 Max.
+float anchorvalue(int input; string attr; string cluster; string name; vector P; int mode)
+{
+    string key = "name";
+    if (cluster != "" && haspointattrib(input, cluster) && findattribvalcount(input, "point", cluster, name) > 0)
+        key = cluster;
+    if (!haspointattrib(input, key)) return NONE;
+    int n = findattribvalcount(input, "point", key, name);
+    float result = NONE;
+    float total = 0;
+    float nearest = 1e30;
+    for (int i = 0; i < n; i++) {
+        int pt = findattribval(input, "point", key, name, i);
+        float v = point(input, attr, pt);
+        total += v;
+        if (mode == 0) {
+            vector at = point(input, "P", pt);
+            float d = distance2(P, at);
+            if (d < nearest) { nearest = d; result = v; }
+        } else if (i == 0) result = v;
+        else if (mode == 1) result = min(result, v);
+        else if (mode == 3) result = max(result, v);
+    }
+    if (n > 0 && mode == 2) result = total / n;
+    return result;
+}
+
+// `value` of setting `setting` on constraint `pr`, scaled (0 No Scaling, 1 by Attribute `attr`, 2 by Value, 3 Both),
+// then randomized: times a number from 1 - variance to 1 + variance, from the constraint's number and `seed`.
+float scaled(float base; int scaling; string setting; string attr; int pr; string cluster; int transfer;
+             int randomize; float variance; float seed)
+{
+    float value = base;  // a parameter that is written would have to be given a variable
+    if (scaling >= 2 && hasprimattrib(0, setting)) {
+        float own = prim(0, setting, pr);
+        if (own > -1e37) value *= own;
+    }
+    if (scaling == 1 || scaling == 3) {
+        if (hasprimattrib(0, attr)) value *= prim(0, attr, pr);
+        else {
+            int input = haspointattrib(1, attr) ? 1 : haspointattrib(2, attr) ? 2 : -1;
+            if (input > 0) {
+                float total = 0;
+                int count = 0;
+                foreach (int pt; primpoints(0, pr)) {
+                    string anchor = point(0, "name", pt);
+                    vector at = point(0, "P", pt);
+                    float v = anchorvalue(input, attr, cluster, anchor, at, transfer);
+                    if (v > -1e37) { total += v; count++; }
+                }
+                if (count > 0) value *= total / count;
+            }
+        }
+    }
+    if (randomize && value >= 0)
+        value *= fit01(rand(pr, seed), max(0, 1 - variance), 1 + variance);
+    return value;
+}
+"""
+
+
 def condition(pt, prefix, names):
     """`pt`'s disable-when for the asset: each group `{ x == v }` keeps only if every name it reads is a
     setting here (a node toggle such as Breakable is not) and is renamed with `prefix`. In Edit it also needs
@@ -131,8 +209,9 @@ def condition(pt, prefix, names):
     return " ".join(out)
 
 
-def setting_templates(rows, prefix, names):
-    """The checkbox and value of each setting: add<prefix><name> and <prefix><name>."""
+def setting_templates(rows, prefix, names, scalable=True, gate=""):
+    """The checkbox and value of each setting: add<prefix><name> and <prefix><name>. `scalable`: the number settings
+    get their Scaling, Attribute, Randomize and Variance. `gate`: one more disable-when, for the next settings."""
     items = []
     for pt, kind in rows:
         pname = prefix + pt.name()
@@ -143,10 +222,37 @@ def setting_templates(rows, prefix, names):
                                      help="Write this setting onto the constraints.")
         box.hideLabel(True)
         box.setConditional(hou.parmCondType.HideWhen, "{ action == 1 }")  # Set writes every setting of the type
+        if gate:
+            box.setConditional(hou.parmCondType.DisableWhen, gate)
         gates = condition(pt, prefix, names)
-        value.setConditional(hou.parmCondType.DisableWhen,
-                             (gates + " " if gates else "") + f"{{ add{pname} == 0 action == 0 }}")
+        grey = (gates + " " if gates else "") + f"{{ add{pname} == 0 action == 0 }}" + (" " + gate if gate else "")
+        value.setConditional(hou.parmCondType.DisableWhen, grey)
         items += [box, value]
+        if kind == "f" and scalable:
+            scaling = hou.MenuParmTemplate(
+                f"{pname}scaling", f"{value.label()} Scaling", tuple(str(i) for i in range(len(SCALING))), SCALING,
+                default_value=0,
+                help="Multiply the setting by the constraint's own attribute of the same name (Scale by Value), by "
+                     "an attribute (Scale by Attribute), or both. An attribute on the pieces at the two ends is "
+                     "averaged (Geometry Attribute Transfer).")
+            attrib = hou.StringParmTemplate(
+                f"{pname}attribute", f"{value.label()} Attribute", 1, default_value=(pt.name(),),
+                help="The attribute that scales the setting: a primitive attribute of the constraints, or a point "
+                     "attribute of the pieces.")
+            b3d_hda.menu_script(attrib, "buildScaleAttribMenu(kwargs)", toggle=False)
+            scaling.setConditional(hou.parmCondType.DisableWhen, grey)
+            attrib.setConditional(hou.parmCondType.DisableWhen, grey)
+            attrib.setConditional(hou.parmCondType.HideWhen, f"{{ {pname}scaling == 0 }} {{ {pname}scaling == 2 }}")
+            rand_box = hou.ToggleParmTemplate(
+                f"{pname}randomize", f"Randomize {value.label()}", default_value=False, join_with_next=True,
+                help="Vary the setting from constraint to constraint, by up to the Variance either way.")
+            rand_box.hideLabel(True)
+            variance = hou.FloatParmTemplate(
+                f"{pname}variance", f"{value.label()} Variance", 1, default_value=(0.8,), min=0.0, max=1.0,
+                help="How far a randomized setting goes from its value: 0.8 gives 0.2 to 1.8 times it.")
+            rand_box.setConditional(hou.parmCondType.DisableWhen, grey)
+            variance.setConditional(hou.parmCondType.DisableWhen, grey + f" {{ {pname}randomize == 0 }}")
+            items += [scaling, attrib, rand_box, variance]
     return items
 
 
@@ -164,14 +270,20 @@ def ui(common, per_type):
         "constraintgroup", "Constraint Group", 1,
         help="The constraints to edit: a primitive group or a pattern. Empty edits every constraint.",
         tags=dict(group_tag(1), autoscope="0000000000000000"))
+    b3d_hda.group_menu(cgroup, 1, "prim")
     bypieces = hou.ToggleParmTemplate(
         "groupfromgeo", "Filter by Pieces", default_value=False,
         help="Edit the constraints between the pieces in Group 1 and Group 2 instead of a Constraint Group.")
     pieces = [
-        hou.MenuParmTemplate("usegroups", "Groups", ("0", "1"), ("All to Group", "Group to Group"),
-                             default_value=0, help="Group 1 to every piece, or Group 1 to Group 2."),
-        hou.StringParmTemplate("group1", "Group 1", 1, help="The pieces on one end.", tags=group_tag(0)),
-        hou.StringParmTemplate("group2", "Group 2", 1, help="The pieces on the other end.", tags=group_tag(0)),
+        # An integer with menu items, as RBD Constraint Properties' (not a Menu parameter).
+        hou.IntParmTemplate("usegroups", "Groups", 1, default_value=(0,), menu_items=("0", "1"),
+                            menu_labels=("All to Group", "Group to Group"),
+                            help="Group 1 to every piece, or Group 1 to Group 2.",
+                            tags={"autoscope": "0000000000000000"}),
+        b3d_hda.group_menu(hou.StringParmTemplate("group1", "Group 1", 1, help="The pieces on one end.",
+                                                  tags=group_tag(0))),
+        b3d_hda.group_menu(hou.StringParmTemplate("group2", "Group 2", 1, help="The pieces on the other end.",
+                                                  tags=group_tag(0))),
     ]
     pieces[0].setConditional(hou.parmCondType.DisableWhen, "{ groupfromgeo == 0 }")
     pieces[1].setConditional(hou.parmCondType.DisableWhen, "{ groupfromgeo == 0 }")
@@ -183,29 +295,34 @@ def ui(common, per_type):
                                   help="The colour, written as Cd.")
     color.setConditional(hou.parmCondType.DisableWhen, "{ enablecolor == 0 }")
 
-    def string_row(name, label, help_text, always_in_set=False):
-        """A checkbox and a string with the types' Data Names in its menu. In Set mode the name is always written
-        (`always_in_set`) and its checkbox hidden."""
+    def string_row(name, label, help_text, always_in_set=False, items=None, labels=None, gate=""):
+        """A checkbox and a string with the types' Data Names (or `items`) in its menu. In Set mode the value is
+        always written (`always_in_set`) and its checkbox hidden. `gate`: one more disable-when."""
+        items = names_menu if items is None else items
+        labels = items if labels is None else labels
         box = hou.ToggleParmTemplate(f"do{name}", label, default_value=False, join_with_next=True,
                                      help="Write this onto the constraints.")
         box.hideLabel(True)
-        value = hou.StringParmTemplate(name, label, 1, default_value=(names_menu[0],), menu_items=names_menu,
-                                       menu_labels=names_menu, menu_type=hou.menuType.StringReplace,
+        value = hou.StringParmTemplate(name, label, 1, default_value=(items[0],), menu_items=items,
+                                       menu_labels=labels, menu_type=hou.menuType.StringReplace,
                                        help=help_text)
+        extra = " " + gate if gate else ""
         if always_in_set:
             box.setConditional(hou.parmCondType.HideWhen, "{ action == 1 }")
-            value.setConditional(hou.parmCondType.DisableWhen, f"{{ do{name} == 0 action == 0 }}")
+            value.setConditional(hou.parmCondType.DisableWhen, f"{{ do{name} == 0 action == 0 }}" + extra)
         else:
-            value.setConditional(hou.parmCondType.DisableWhen, f"{{ do{name} == 0 }}")
+            value.setConditional(hou.parmCondType.DisableWhen, f"{{ do{name} == 0 }}" + extra)
+        if gate:
+            box.setConditional(hou.parmCondType.DisableWhen, gate)
         return [box, value]
 
-    which = hou.MenuParmTemplate("jointtype", "Settings For", tuple(str(i) for i in range(len(JOINT_TYPES))),
+    off = "{ usenextconstraint == 0 }"  # the Next Constraint folder is off until Switch Constraint Type When Broken
+
+    which = hou.MenuParmTemplate("constrainttype", "Constraint Type", tuple(str(i) for i in range(len(JOINT_TYPES))),
                                  tuple(names_menu), default_value=0,
                                  help="Which joint type's settings to show. Every ticked setting is written.")
     props = (string_row("constraintname", "Constraint Name",
                         "The relationship's Data Name the constraints use. Writes constraint_name.", True)
-             + string_row("next_constraintname", "Next Constraint Name",
-                          "What a broken constraint switches to. Writes next_constraint_name.")
              + [which])
 
     common_names = {pt.name() for pt, _ in common}
@@ -226,8 +343,37 @@ def ui(common, per_type):
             continue
         own = {pt.name() for pt, _ in rows}
         f = b3d_hda.collapsible(f"b3dcp_{name}", label, setting_templates(rows, f"{name}_", own))
-        f.setConditional(hou.parmCondType.HideWhen, f"{{ jointtype != {i} }}")
+        f.setConditional(hou.parmCondType.HideWhen, f"{{ constrainttype != {i} }}")
         folders.append(f)
+
+    # Switch Constraint Type When Broken: what a broken constraint becomes (its next_constraint_name) and the settings it
+    # then has (next_<setting>), for the type in Next Constraint Type. The solver applies them when the constraint
+    # switches.
+    use_next = hou.ToggleParmTemplate(
+        "usenextconstraint", "Switch Constraint Type When Broken", default_value=False,
+        help="A constraint that breaks becomes the Next Constraint instead, with the next settings below.")
+    next_type = hou.MenuParmTemplate(
+        "next_constrainttype", "Next Constraint Type", tuple(str(i) for i in range(len(JOINT_TYPES))),
+        tuple(names_menu), default_value=0,
+        help="Which joint type's next settings to show. Every ticked next setting is written.")
+    next_type.setConditional(hou.parmCondType.DisableWhen, off)
+    next_items = ([use_next]
+                  + string_row("next_constraintname", "Next Constraint Name",
+                               "What a broken constraint switches to. Writes next_constraint_name.", True, gate=off)
+                  + [next_type])
+    next_folders = [b3d_hda.collapsible("b3dcp_next_common", "Joint",
+                                        setting_templates(common, "next_", common_names, scalable=False, gate=off))]
+    for i, (name, label) in enumerate(JOINT_TYPES):
+        rows = per_type.get(name, [])
+        if not rows:
+            continue
+        own = {pt.name() for pt, _ in rows}
+        f = b3d_hda.collapsible(f"b3dcp_next_{name}", label,
+                                setting_templates(rows, f"next_{name}_", own, scalable=False, gate=off),
+                                open_folder=False)
+        f.setConditional(hou.parmCondType.HideWhen, f"{{ next_constrainttype != {i} }}")
+        next_folders.append(f)
+    next_folder = b3d_hda.collapsible("b3dcp_next", "Next Constraint", next_items + next_folders, open_folder=False)
 
     # The viewport bar (export level 3), as RBD Constraint Properties' three.
     clear = hou.ButtonParmTemplate(
@@ -246,19 +392,21 @@ def ui(common, per_type):
     viewer = hou.FolderParmTemplate("b3dcp_viewer", "Viewer State", [clear, importing, edit_parms],
                                     folder_type=hou.folderType.Simple, tags={"group_type": "simple"})
     guide = hou.FloatParmTemplate(
-        "guidescale", "Guide Scale", 1, default_value=(1.0,), min=0.0, max=5.0,
+        "guidescale", "Guide Scale", 1, default_value=(0.0,), min=0.0, max=1.0, min_is_strict=True,
         help="The size of the anchor frames drawn in the viewport while the node is selected. 0 hides them.",
         tags={"autoscope": "0000000000000000"})
     action = hou.MenuParmTemplate(
         "action", "Action", ("0", "1"), ("Edit", "Set"), default_value=1,
-        help="Edit writes the ticked settings. Set writes the settings of the joint type in Settings For that "
+        help="Edit writes the ticked settings. Set writes the settings of the joint type in Constraint Type that "
              "differ from the defaults.")
-    # Hidden: the viewport selection (the line number and its group pattern) and the edits.
-    hidden = [hou.IntParmTemplate("__idx", "Selected Constraint", 1, default_value=(-1,)),
-              hou.StringParmTemplate("__sel", "Selection", 1),
-              hou.DataParmTemplate("stash", "Edits", 1, data_parm_type=hou.dataParmType.Geometry)]
-    for pt in hidden:
-        pt.hide(True)
+    # The viewport selection (the line number and its group pattern) and the edits, in a folder as RBD Constraint
+    # Properties' HandleParms. The selection is not saved with the scene.
+    handle = hou.FolderParmTemplate(
+        "b3dcp_handleparms", "HandleParms",
+        [hou.IntParmTemplate("__idx", "Index", 1, default_value=(-1,), tags={"sidefx::save_value": "0"}),
+         hou.StringParmTemplate("__sel", "Selection", 1, tags={"sidefx::save_value": "0"}),
+         hou.DataParmTemplate("stash", "Geometry Stash", 1, data_parm_type=hou.dataParmType.Geometry)],
+        folder_type=hou.folderType.Simple, tags={"group_type": "simple"})
 
     group = hou.ParmTemplateGroup()
     group.append(cgroup)
@@ -270,17 +418,30 @@ def ui(common, per_type):
     group.append(guide)
     group.append(action)
     group.append(viewer)
-    for pt in hidden:
-        group.append(pt)
+    group.append(handle)
     group.append(b3d_hda.collapsible("b3dcp_properties", "Constraint Properties", props))
     for f in folders:
         group.append(f)
+    group.append(next_folder)
+    cluster = hou.StringParmTemplate(
+        "clusterattrib", "Cluster Attribute Name", 1, default_value=("parentpiece",),
+        help="The attribute of the Geometry pieces that names the constraint piece each one belongs to, when the "
+             "constraints were made on larger pieces. Pieces without it are matched by their name.")
+    b3d_hda.attrib_menu(cluster, 0, "point prim", toggle=False)
+    mode = hou.MenuParmTemplate(
+        "transfermode", "Transfer Mode", tuple(t for t, _ in TRANSFER_MODES), tuple(l for _, l in TRANSFER_MODES),
+        default_value=0,
+        help="Which of a constraint's pieces gives its scaling attribute when it stands for several (Cluster "
+             "Attribute Name): the one closest to it, or the smallest, largest or average value.")
+    group.append(b3d_hda.collapsible("b3dcp_transfer", "Geometry Attribute Transfer", [cluster, mode],
+                                     open_folder=False))
     return group
 
 
 def attribute_rows(common, per_type):
-    """(attribute, kind, value parameter, checkbox parameter, joint type number, default) of every setting; the
-    number is -1 for the Joint folder's (every type), the default the node's, as a VEX literal."""
+    """(attribute, kind, value parameter, checkbox parameter, joint type number, default, next) of every setting,
+    then of every next setting (attribute next_<setting>, parameters next_...); the number is -1 for the Joint
+    folder's (every type), the default the node's, as a VEX literal."""
     def default(pt, kind):
         values = pt.defaultValue()
         if isinstance(values, bool):  # a toggle's default is no tuple
@@ -289,16 +450,21 @@ def attribute_rows(common, per_type):
             return "{" + ", ".join(num(float(v)) for v in values) + "}"
         return num(float(values[0])) if kind == "f" else str(int(values[0]))
 
-    out = [(pt.name(), kind, pt.name(), f"add{pt.name()}", -1, default(pt, kind)) for pt, kind in common]
+    out = [(pt.name(), kind, pt.name(), f"add{pt.name()}", -1, default(pt, kind), False) for pt, kind in common]
     for i, (name, _) in enumerate(JOINT_TYPES):
-        out += [(pt.name(), kind, f"{name}_{pt.name()}", f"add{name}_{pt.name()}", i, default(pt, kind))
+        out += [(pt.name(), kind, f"{name}_{pt.name()}", f"add{name}_{pt.name()}", i, default(pt, kind), False)
                 for pt, kind in per_type.get(name, [])]
+    out += [(f"next_{pt.name()}", kind, f"next_{pt.name()}", f"addnext_{pt.name()}", -1, default(pt, kind), True)
+            for pt, kind in common]
+    for i, (name, _) in enumerate(JOINT_TYPES):
+        out += [(f"next_{pt.name()}", kind, f"next_{name}_{pt.name()}", f"addnext_{name}_{pt.name()}", i,
+                 default(pt, kind), True) for pt, kind in per_type.get(name, [])]
     return out
 
 
 def wrangle_vex(rows):
     """The whole wrangle: one detail pass over the constraints in the group. Each setting that applies (ticked in
-    Edit; every one of the type in Settings For in Set) creates its attribute first (the "not set" value, so the
+    Edit; every one of the type in Constraint Type in Set) creates its attribute first (the "not set" value, so the
     other lines keep the node's value), then sets the lines."""
     unset = {"i": UNSET_INT, "f": UNSET_FLOAT, "v": "{" + UNSET_FLOAT + ", 0.0, 0.0}"}
     read = {"i": "chi", "f": "chf", "v": "chv"}
@@ -308,17 +474,22 @@ def wrangle_vex(rows):
                 f'foreach (int pr; prims) setprimattrib(0, "{attr}", pr, {value});')
 
     lines = [
+        SCALE_VEX,
         "// Box3D Constraint Properties: each setting that applies is written onto the constraints in the group.",
         f'string group = chi("../groupfromgeo") ? "{GROUP_ATTRIB}" : chs("../constraintgroup");',
         "int prims[];",
         'if (group == "") { for (int i = 0; i < nprimitives(0); i++) append(prims, i); }',
         "else prims = expandprimgroup(0, group);",
         'int setmode = chi("../action");',
-        'int jointtype = chi("../jointtype");',
+        'int constrainttype = chi("../constrainttype");',
+        'int usenext = chi("../usenextconstraint");',
+        'int nexttype = chi("../next_constrainttype");',
+        'string clusterattr = chs("../clusterattrib");',
+        'int transfermode = chi("../transfermode");',
         "",
         'if (chi("../enablecolor")) { ' + put("Cd", "{1.0, 1.0, 1.0}", 'chv("../constraintcolor")') + " }",
         'if (setmode || chi("../doconstraintname")) { ' + put("constraint_name", '""', 'chs("../constraintname")') + " }",
-        'if (chi("../donext_constraintname")) { '
+        'if (usenext && (setmode || chi("../donext_constraintname"))) { '
         + put("next_constraint_name", '""', 'chs("../next_constraintname")') + " }",
         # The frame of both anchors, from Anchor Rotation (degrees).
         f'if (chi("../{ROTATE_BOX}")) {{',
@@ -327,14 +498,24 @@ def wrangle_vex(rows):
         '    foreach (int pr; prims) foreach (int pt; primpoints(0, pr)) setpointattrib(0, "orient", pt, q);',
         "}",
     ]
-    for attr, kind, value, box, joint, dflt in rows:
+    for attr, kind, value, box, joint, dflt, following in rows:
         # Set writes the settings of the type that differ from the node's default; the rest stay "not set".
         differs = f'{read[kind]}("../{value}") != {dflt}'
+        expression = f'{read[kind]}("../{value}")'
+        if kind == "f" and not following:  # Set also writes a setting that is scaled, whatever its value
+            differs = f'({differs} || chi("../{value}scaling") != 0 || chi("../{value}randomize") != 0)'
+            seed = zlib.crc32(value.encode()) % 10007  # each setting its own random numbers
+            expression = (f'scaled(chf("../{value}"), chi("../{value}scaling"), "{attr}", chs("../{value}attribute"), '
+                          f'pr, clusterattr, transfermode, chi("../{value}randomize"), chf("../{value}variance"), '
+                          f"{seed}.0)")
+        which = "nexttype" if following else "constrainttype"
         if joint < 0:
             applies = f'(setmode && {differs}) || (!setmode && chi("../{box}"))'
         else:
-            applies = f'(setmode && jointtype == {joint} && {differs}) || (!setmode && chi("../{box}"))'
-        lines.append(f"if ({applies}) {{ " + put(attr, unset[kind], f'{read[kind]}("../{value}")') + " }")
+            applies = f'(setmode && {which} == {joint} && {differs}) || (!setmode && chi("../{box}"))'
+        if following:  # a next setting is only written while the constraint switches when broken
+            applies = f"usenext && ({applies})"
+        lines.append(f"if ({applies}) {{ " + put(attr, unset[kind], expression) + " }")
     return "\n".join(lines)
 
 
@@ -525,6 +706,8 @@ def build_network(sub, rows):
 
     setter = sub.createNode("attribwrangle", "set_properties")
     setter.setInput(0, picked)
+    setter.setInput(1, geo_in)  # the pieces a scaling attribute can come from
+    setter.setInput(2, proxy_in)
     setter.parm("class").set("detail")
     setter.parm("snippet").set(wrangle_vex(rows))
     # The viewport edits (the node's stash: one point per edited line) go on top of what the settings write.
@@ -562,7 +745,7 @@ def build(out_path):
     dopnet = hou.node("/obj").createNode("dopnet", "templates")
     common, per_type = collect(dopnet)
     rows = attribute_rows(common, per_type)
-    print("make_constraint_properties_sop: settings: " + ", ".join(sorted({r[0] for r in rows})))
+    print("make_constraint_properties_sop: settings: " + ", ".join(sorted({r[0] for r in rows if not r[6]})))
 
     geo = hou.node("/obj").createNode("geo", "build")
     for child in geo.children():
@@ -620,7 +803,7 @@ def probe(out_path):
         'if (i == 0) setprimgroup(0, "chosen", pr, 1); }')
     cfg = geo.createNode(TYPE_NAME, "probe")
     cfg.setInput(1, lines)
-    wanted = (("action", 0), ("constraintgroup", "chosen"), ("jointtype", 2), ("addrevolute_stiffness", 1),
+    wanted = (("action", 0), ("constraintgroup", "chosen"), ("constrainttype", 2), ("addrevolute_stiffness", 1),
               ("revolute_stiffness", 7.0), ("addrevolute_enable_spring", 1), ("revolute_enable_spring", 1),
               ("doconstraintname", 1), ("constraintname", "Weld"))
     for n, v in wanted:

@@ -13,7 +13,7 @@ geometry when the object is created:
     Empty Object -> SOP Geometry (create_attributes/OUT) -> Box3D Data -> visualize_hires
                     ^ Rendering Parameters Volatile          -> Collider Label (output)
     create_attributes: Object Merge of the SOP Path -> setup_defaults -> create_name
-                       -> [creation frame] set_rest -> setup_velocities -> setup_deforming -> OUT
+                       -> [creation frame] set_rest -> initial_transform -> apply_initial_xform -> setup_velocities -> setup_deforming -> OUT
 
 setup_velocities writes Velocity / Angular Velocity as v / w on the creation frame, unless Inherit
 Velocity keeps the points' own (on by default, so Box3D Configure's Initial State reaches the
@@ -70,11 +70,18 @@ OBJECT_PARMS = [
 ]
 
 OVERWRITE_FROM_SOP = "overwritefromsop"  # RBD Packed Object's Overwrite Attributes from SOP
+OVERWRITE_ATTRIBS = "overwriteattributes"  # the attributes it copies from the SOP each step (RBD Packed Object's)
+OVERWRITE_DEFAULT = "active animated deforming"
 DEFORMING = "deforming"  # the pieces' shapes follow the SOP (RBD's Create Deforming Objects)
+# Hidden, set by the Solver SOP for an animated collider: the whole SOP is read again every step, as with Deforming
+# but without writing the deforming attribute.
+REIMPORT_SOP = "reimportsop"
 # The re-import condition of the inner SOP Geometry: Overwrite Attributes from SOP, or Deforming.
-REIMPORT = f'ch("../{OVERWRITE_FROM_SOP}") || ch("../{DEFORMING}")'
+REIMPORT = f'ch("../{OVERWRITE_FROM_SOP}") || ch("../{DEFORMING}") || ch("../{REIMPORT_SOP}")'
 
 # Initial State, as RBD Packed Object's (same names).
+POS, ROT = "t", "r"
+INHERIT_PIVOT, PIVOT = "inheritpivot", "p"
 VEL, ANGVEL, INHERIT_VEL = "vel", "angvel", "inheritvelocity"
 
 # setup_velocities, on the creation frame: Velocity and Angular Velocity (degrees per second, written
@@ -92,6 +99,16 @@ if (!chi("../../%s")) {
     }
 }""" % (INHERIT_VEL, VEL, ANGVEL)
 
+# initial_transform, on the creation frame after set_rest: Position and Rotation as a transform about the piece's
+# pivot, for the Transform by Attribute after it (as RBD Packed Object's set_rest_and_initial_xform). The pivot is the
+# point's own, else its position while Inherit Pivot is on, else Pivot.
+INITIAL_XFORM_VEX = """int pts[] = primpoints(0, @primnum);
+if (len(pts) != 1) return;
+vector pivot = haspointattrib(0, "pivot") ? point(0, "pivot", pts[0])
+             : (chi("../../%s") ? point(0, "P", pts[0]) : chv("../../%s"));
+4@__initialxform = maketransform(XFORM_SRT, XFORM_XYZ, chv("../../%s"), chv("../../%s"), {1, 1, 1}, pivot);
+""" % (INHERIT_PIVOT, PIVOT, POS, ROT)
+
 # setup_deforming, on every import: the deforming attribute, so the solver rebuilds the shapes.
 DEFORMING_VEX = """if (chi("../../%s")) {
     if (!haspointattrib(0, "deforming")) addpointattrib(0, "deforming", 0);
@@ -102,19 +119,27 @@ DEFORMING_VEX = """if (chi("../../%s")) {
 STAGE = "create_attributes"  # the SOP stage (a DOP SOP network), as RBD Packed Object's
 HIRES = "visualize_hires"  # the SOP Guide drawing the render geometry, as RBD Packed Object's
 
-# Box3D Data settings the asset shows outside their folders: Add Impact Data on the Object tab, Start Asleep on
-# Initial State.
-IMPACT_TOGGLE, START_ASLEEP = "addimpact", "startasleep"
+# Box3D Data's Add Impact Data, which the asset shows on the Shape tab, as RBD Packed Object does with its shape
+# settings (Box3D Data has it under CCD & Contacts).
+IMPACT_TOGGLE = "addimpact"
 
 # Display Geometry / Render SOP Path, as RBD Packed Object's (same names, so its expressions carry over).
 DISPLAY, DISPLAY_GEO, RENDER_PATH = "display", "displaygeo", "rendergeopath"
 
 
-def initial_state_templates(extra=()):
-    """The Initial State tab, as RBD Packed Object's (Position and Rotation are the SOP's own here),
-    then `extra` (Box3D Data's Start Asleep)."""
+def initial_state_templates():
+    """The Initial State tab, as RBD Packed Object's: Position and Rotation (the whole object, moved before it is
+    created), Pivot, Velocity and Angular Velocity."""
     inherit = f"{{ {INHERIT_VEL} == 1 }}"
-    return [*extra,
+    return [
+        hou.FloatParmTemplate(POS, "Position", 3, default_value=(0, 0, 0),
+                              help="Moves every piece by this much when the object is created."),
+        hou.FloatParmTemplate(ROT, "Rotation", 3, default_value=(0, 0, 0),
+                              help="Turns every piece about its pivot, in degrees, when the object is created."),
+        hou.ToggleParmTemplate(INHERIT_PIVOT, "Inherit Pivot from Point Position", default_value=True,
+                               help="Rotation turns each piece about its own position. Off: about Pivot."),
+        hou.FloatParmTemplate(PIVOT, "Pivot", 3, default_value=(0, 0, 0), disable_when=f"{{ {INHERIT_PIVOT} == 1 }}",
+                              help="The point Rotation turns the pieces about, when not inherited."),
         hou.FloatParmTemplate(VEL, "Velocity", 3, default_value=(0, 0, 0), disable_when=inherit,
                               help="The pieces' starting velocity, in units per second."),
         hou.FloatParmTemplate(ANGVEL, "Angular Velocity", 3, default_value=(0, 0, 0), disable_when=inherit,
@@ -245,16 +270,37 @@ def build_stage(sub, rows):
     rest = net.createNode("attribwrangle", "set_rest")
     rest.setInput(0, name)
     rest.parm("snippet").set(b3d_settings.REST_VEX)
+    # Initial State's Position and Rotation, per piece about its pivot, after the rest is recorded.
+    place = net.createNode("attribwrangle", "initial_transform")
+    place.setInput(0, rest)
+    place.parm("class").set("primitive")
+    place.parm("snippet").set(INITIAL_XFORM_VEX)
+    apply = net.createNode("xformbyattrib", "apply_initial_xform")
+    apply.setInput(0, place)
+    apply.parm("xformattrib").set("__initialxform")
     velocities = net.createNode("attribwrangle", "setup_velocities")
-    velocities.setInput(0, rest)
+    velocities.setInput(0, apply)
     velocities.parm("class").set("detail")
     velocities.parm("snippet").set(VELOCITY_VEX)
     stamps = net.createNode("null", "STAMPS")
-    for parm, key in (("frame", "SF"), ("objcf", "OBJCF")):
+    for parm, key in (("frame", "SF"), ("objcf", "OBJCF"), ("objid", "OBJID")):
         stamps.addSpareParmTuple(hou.FloatParmTemplate(parm, key, 1))
         stamps.parm(parm).setExpression(f'stamp("..", "{key}", -1)', hou.exprLanguage.Hscript)
+    # After the creation frame: the object's own simulated geometry (SIM_GEO) with the listed attributes copied from
+    # the SOP by point name (Overwrite Attributes from SOP, as RBD Packed Object's copy_attribs), unless the whole SOP
+    # is read again (Deforming, or an animated collider).
+    sim = net.createNode("object_merge", "SIM_GEO")
+    copy = net.createNode("attribcopy", "copy_attribs")
+    copy.setInput(0, sim)
+    copy.setInput(1, name)
+    copy.parm("matchbyattribute").set(1)
+    copy.parm("attributetomatch").set("name")
+    copy.parm("class").set(3)  # points
+    later = net.createNode("switch", "switch_reimport")
+    later.setInput(0, copy)
+    later.setInput(1, name)
     first = net.createNode("switch", "switch_first_frame")
-    first.setInput(0, name)
+    first.setInput(0, later)
     first.setInput(1, velocities)
     first.parm("input").setExpression('ch("../STAMPS/frame") == ch("../STAMPS/objcf")',
                                       hou.exprLanguage.Hscript)
@@ -280,6 +326,15 @@ def wire_stage(asset, sop_path_parm, transform_parm, objname_parm):
         merge.parm("xformtype").setExpression(f'ch("../../{transform_parm}")', hou.exprLanguage.Hscript)
     elif transform_parm:
         warn(f"{merge.path()} has no Transform (xformtype): Use Object Transform does nothing")
+    if transform_parm:
+        asset.node("source_transform").parm("valvaluef0").setExpression(f'ch("../{transform_parm}")',
+                                                                         hou.exprLanguage.Hscript)
+    asset.node("save_source_geo").parm("objpath").setExpression(f'chsop("../{sop_path_parm}")', hou.exprLanguage.Hscript)
+    sim = asset.node(f"{STAGE}/SIM_GEO")
+    sim.parm("objpath1").set('../../..:`ch("../STAMPS/objid")`')
+    asset.node(f"{STAGE}/copy_attribs").parm("attribname").set(f'`chs("../../{OVERWRITE_ATTRIBS}")`')
+    asset.node(f"{STAGE}/switch_reimport").parm("input").setExpression(
+        f'ch("../../{DEFORMING}") || ch("../../{REIMPORT_SOP}")', hou.exprLanguage.Hscript)
     asset.node(f"{STAGE}/create_name").parm("objname").setExpression(f'chs("../../{objname_parm}")',
                                                                        hou.exprLanguage.Hscript)
 
@@ -298,8 +353,8 @@ def stamp_sop_geometry(geo):
     if geo.parm("numstamps") is None:
         warn(f"{geo.path()} has no Number of Stamps: the rest is reset on every import")
         return
-    geo.parm("numstamps").set(2)
-    for i, key in enumerate(("SF", "OBJCF"), start=1):
+    geo.parm("numstamps").set(3)
+    for i, key in enumerate(("SF", "OBJCF", "OBJID"), start=1):
         geo.parm(f"stampname{i}").set(key)
         geo.parm(f"stampvalue{i}").setExpression(f"${key}", hou.exprLanguage.Hscript)
 
@@ -351,8 +406,21 @@ def build(out_path):
     obj = sub.createNode("emptyobject", "emptyobject")
     geo = b3d_hda.create(sub, ["sopgeo", "sopgeometry"], "geometry")
     geo.setInput(0, obj)
+    # The SOP's path as the object's SourceObject data, on the creation frame, as RBD Packed Object's save_source_geo.
+    source_link = sub.createNode("linktosourceobject", "save_source_geo")
+    # ... with whether Use Object Transform is on, for the solver's read of the SOP's object transform.
+    source_flag = sub.createNode("modifydata", "source_transform")
+    source_flag.setInput(0, source_link)
+    set_parm(source_flag, "dataname", "SourceObject")
+    set_parm(source_flag, "nummods", 1)
+    set_parm(source_flag, "valname0", "usetransform")
+    set_parm(source_flag, "valtype0", "float")
+    attach = sub.createNode("applydata", "applydata1")
+    attach.setInput(0, geo)
+    attach.setInput(1, source_flag)
+    attach.parm("activation").setExpression("$SF == $OBJCF", hou.exprLanguage.Hscript)
     data = sub.createNode("box3d_data", "box3d_data")
-    data.setInput(0, geo)
+    data.setInput(0, attach)
     add_display(sub, geo, data)
 
     # The parameters: the Object tab, then each Box3D Data folder as a tab.
@@ -374,18 +442,34 @@ def build(out_path):
 
     # Creation Frame: Empty Object has none; like RBD Packed Object, the object is created on the
     # step its Activation is true, here only on that simulation frame.
-    create_frame = hou.IntParmTemplate(
-        "createframe", "Creation Frame", 1, default_value=(1,),
-        help="The simulation frame ($SF) on which the object is created.")
-    obj.parm("activation").setExpression('$SF == ch("../createframe")')
+    # Defaults to the DOP network's Start Frame, as RBD Packed Object's.
+    create_frame = hou.FloatParmTemplate(
+        "createframe", "Creation Frame", 1, default_value=(1.0,),
+        default_expression=('ch(opcreator(".")+"/startframe")',),
+        default_expression_language=(hou.scriptLanguage.Hscript,),
+        help="The frame on which the object is created.")
+    sim_frame = hou.ToggleParmTemplate(
+        "usesimframe", "Creation Frame Specifies Simulation Frame", default_value=False,
+        help="On: Creation Frame counts simulation frames ($SF, from the Start Frame). Off: it is the scene frame.")
+    obj.parm("activation").setExpression('if(ch("../usesimframe"), $SF, $FF) == ch("../createframe")',
+                                         hou.exprLanguage.Hscript)
 
     # Overwrite Attributes from SOP, as RBD Packed Object's: SOP Geometry imports the SOP once on the
     # creation frame (Set Initial) or every step (Set Always), so an animated or deforming SOP reaches
     # the simulation. Wired to the inner SOP Geometry's operations below (wire_overwrite).
     overwrite = hou.ToggleParmTemplate(
-        OVERWRITE_FROM_SOP, "Overwrite Attributes from SOP", default_value=False,
-        help="Reads the SOP again every step, so animated or deforming geometry and changed attributes reach \
-the simulation. Off: read once when the object is created.")
+        OVERWRITE_FROM_SOP, "Overwrite Attributes from SOP", default_value=False, join_with_next=True,
+        help="Copies the listed attributes from the SOP onto the pieces every step, so changes to them reach the "
+             "simulation. Off: read once when the object is created.")
+    overwrite.hideLabel(True)
+    overwrite_attribs = hou.StringParmTemplate(
+        OVERWRITE_ATTRIBS, "Overwrite Attributes from SOP", 1, default_value=(OVERWRITE_DEFAULT,),
+        disable_when=f"{{ {OVERWRITE_FROM_SOP} == 0 }}",
+        help="The point attributes copied from the SOP each step, matched by name. Wildcards work.")
+    b3d_hda.attrib_menu(overwrite_attribs, classes="point", source=f"parm:{SOP_PATH}")
+    reimport = hou.ToggleParmTemplate(REIMPORT_SOP, "Read SOP Every Step", default_value=False,
+                                      help="Reads the whole SOP again every step (animated colliders).")
+    reimport.hide(True)
     deforming = hou.ToggleParmTemplate(
         DEFORMING, "Deforming", default_value=False,
         help="The pieces' shapes follow the SOP: it is read again every step and the shapes are rebuilt.")
@@ -398,20 +482,24 @@ the simulation. Off: read once when the object is created.")
         if entry.type() == hou.parmTemplateType.Folder:
             tabs.append(hou.FolderParmTemplate(f"b3dpo_tab{i}", entry.label(), entry.parmTemplates(),
                                                folder_type=hou.folderType.Tabs))
-    # Box3D Data's Add Impact Data goes to the Object tab and Start Asleep to Initial State (still linked /
-    # written by name, wherever they sit).
+    # Box3D Data's Add Impact Data moves from CCD & Contacts to the Shape tab, as RBD Packed Object has it with its
+    # shape settings (still linked / written by name, wherever it sits). Start Asleep stays in the Sleep tab.
     object_level = [pt for pt in value_templates(tabs) if pt.name() in b3d_settings.SKIP]
-    tab_folders, moved = pull(tabs, lambda pt: pt.name() in (IMPACT_TOGGLE, START_ASLEEP))
+    tab_folders, moved = pull(tabs, lambda pt: pt.name() == IMPACT_TOGGLE)
     tabs = [t for t in tab_folders if t.parmTemplates()]
-    moved = {pt.name(): pt for pt in moved}
+    shape_tab = next((t for t in tabs if t.label() == "Shape"), None)
+    if moved and shape_tab is not None:
+        shape_tab.setParmTemplates(list(shape_tab.parmTemplates()) + moved)
+    elif moved:
+        warn("no Shape tab: Add Impact Data is not on the asset")
     names = [pt for _, pt in promoted]
-    names.insert(1, create_frame)
-    names += [overwrite, deforming] + ([moved[IMPACT_TOGGLE]] if IMPACT_TOGGLE in moved else [])
+    names[1:1] = [create_frame, sim_frame]
+    names += [overwrite, overwrite_attribs, reimport, deforming]
     names += display_templates()
     group = hou.ParmTemplateGroup()
     group.append(hou.FolderParmTemplate("b3dpo_object", "Object", names, folder_type=hou.folderType.Tabs))
     group.append(hou.FolderParmTemplate("initial_state", "Initial State",
-                                        initial_state_templates([moved[START_ASLEEP]] if START_ASLEEP in moved else []),
+                                        initial_state_templates(),
                                         folder_type=hou.folderType.Tabs))
     for tab in tabs:
         group.append(tab)

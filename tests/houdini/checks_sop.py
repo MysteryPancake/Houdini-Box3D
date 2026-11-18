@@ -54,7 +54,7 @@ def test_solver_sop_collision():
     """A packed box dropped onto a ground box on the Collision input rests on it (y = 0.5) after 2 s;
     the proxy output equals the geometry output and carries w (Transfer to Geometry), and the
     simulation points output has one point per piece, on the geometry's piece.
-    With Use External Collisions off the box falls through the ground."""
+    With Enable Collision Geometry off the box falls through the ground."""
     pieces, names = packed_boxes("sop_drop_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0)}])
     ground, _ = packed_boxes("sop_drop_ground", [GROUND])
     sop = solver_sop("sop_drop", geometry=pieces, collision=ground)
@@ -78,19 +78,19 @@ def test_solver_sop_collision():
                       f"simulation points: {len(sim_pos)} point(s), {sim_prims} primitive(s), on the piece: {pts_ok} "
                       f"(expected 1 point, 0 primitives, True)")]
 
-    # Use External Collisions off: the Collision input is ignored and the box falls through.
+    # Enable Collision Geometry off: the Collision input is ignored and the box falls through.
     off = solver_sop("sop_drop_off", geometry=pieces, collision=ground)
     set_parm(off, ["usecollisions"], 0)
     pos = play(off, 48, lambda s, f: named_positions(s.geometry(0)).get(names[0]) if f == 48 else None)[48]
     y_off = pos[1] if pos else None
     results.append(Result("solver_sop_collision", Result.PASS if y_off is not None and y_off < -1.0 else Result.FAIL,
-                          f"Use External Collisions off: box at y={y_off} after 2 s (expected below -1: fell through)"))
+                          f"Enable Collision Geometry off: box at y={y_off} after 2 s (expected below -1: fell through)"))
     return results
 
 
 def test_solver_sop_collision_static():
     """Collide As Static Object on the Collision input: an unpacked grid and a flat HeightField SOP each hold a
-    box at y = 0.5 (with Use External Collisions on only), a packed collider stays packed pieces by default,
+    box at y = 0.5 (with Enable Collision Geometry on only), a packed collider stays packed pieces by default,
     the Material settings reach the Static Object's Box3D Data."""
     pieces, names = packed_boxes("sop_static_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0)}])
 
@@ -121,7 +121,7 @@ def test_solver_sop_collision_static():
     set_parm(off, ["usecollisions"], 0)
     y = settle(off)
     results.append(Result("solver_sop_collision_static", Result.PASS if y is not None and y < -1.0 else Result.FAIL,
-                          f"Static Object with Use External Collisions off: box at y={y} (expected below -1: fell)"))
+                          f"Static Object with Enable Collision Geometry off: box at y={y} (expected below -1: fell)"))
 
     # Packed colliders stay the default: a packed ground box still holds the box.
     ground, _ = packed_boxes("sop_static_packed_ground", [GROUND])
@@ -1143,6 +1143,67 @@ def test_solver_sop_break_atframe_bullet():
                    (f"; PROBLEMS: {'; '.join(problems)}" if problems else ""))]
 
 
+def _break_to_next(tag, cname, names, line_attrs, anchors, frames):
+    """A fixed box over a free one joined by a `cname` line with `line_attrs` (a next constraint among them) on the Box3D
+    Solver SOP, Break Thresholds At Frame 5 in Switch to Next Constraint mode: (the line's attributes, the free box's
+    position) on the last of `frames`."""
+    pieces, pnames = packed_boxes(f"{tag}_pieces", [{"size": (1, 1, 1), "center": (0, 4, 0), "attrs": {"active": 0}},
+                                                    {"size": (1, 1, 1), "center": (0, 2, 0), "attrs": {"active": 1}}])
+    lines = constraint_lines(f"{tag}_network", [(pnames[0], anchors[0], pnames[1], anchors[1], cname, line_attrs)])
+    sop = solver_sop(f"{tag}_sop", geometry=pieces, constraints=lines)
+    set_parm(sop, ["enable_constraintbreaks"], 1)
+    set_parm(sop, ["constraint_names1"], names)
+    for key in ("angle", "distance", "impact", "torque"):
+        set_parm(sop, [f"constraint_use{key}1"], 0)
+    for name, value in {"constraint_useatframe1": 1, "constraint_atframe1": 5, "constraint_mode1": 1}.items():
+        set_parm(sop, [name], value)
+
+    def sample(s, f):
+        if f != frames:
+            return None
+        con = s.geometry(1)
+        prim = con.prims()[0] if con.prims() else None
+        attrs = {a.name(): prim.attribValue(a.name()) for a in con.primAttribs()} if prim is not None else {}
+        return attrs, named_positions(s.geometry(0)).get(pnames[1])
+
+    return play(sop, frames, sample)[frames]
+
+
+def test_solver_sop_break_next_settings():
+    """The Solver SOP's break wrangle (Break Thresholds, At Frame 5, Switch to Next Constraint) gives a switching
+    constraint its next settings: a Weld with next_constraint_name Spherical, next_enable_cone_limit 1 and
+    next_cone_angle 0.25 is a Spherical line with enable_cone_limit 1 and cone_angle 0.25 once it has switched, and
+    the next attributes are "not set" again."""
+    attrs, _ = _break_to_next("sop_next_settings", "Weld", "Weld",
+                              {"next_constraint_name": "Spherical", "next_enable_cone_limit": 1,
+                               "next_cone_angle": 0.25}, ((0, 3.5, 0), (0, 3.5, 0)), 8)
+    ok = (attrs.get("constraint_name") == "Spherical" and attrs.get("enable_cone_limit") == 1
+          and close(attrs.get("cone_angle", -1.0), 0.25, 1e-4) and attrs.get("next_enable_cone_limit", 0) < 0
+          and attrs.get("next_cone_angle", 0.0) <= -3.0e38 and not attrs.get("next_constraint_name"))
+    return [Result("solver_sop_break_next_settings", Result.PASS if ok else Result.FAIL,
+                   f"line attributes on frame 8: { {k: attrs.get(k) for k in ('constraint_name', 'enable_cone_limit', 'cone_angle', 'next_enable_cone_limit', 'next_cone_angle', 'next_constraint_name')} } "
+                   f"(expected Spherical, 1, 0.25 and the next ones cleared)")]
+
+
+def test_solver_sop_next_constraint_type():
+    """next_constraint_type reaches a SideFX-typed line. A SideFX Hard line holding a box by an anchor 1 beside its centre
+    (constraint_type all: rigid) breaks at frame 5 and switches to Hard again. With next_constraint_type position it
+    is made as a position-only joint, so the box swings about the anchor and ends further along x (1.7 against 1.0);
+    without it (constraint_type empty again: all) it stays rigid. The line has constraint_type position afterwards."""
+    anchors = ((1, 3.5, 0), (1, 3.5, 0))
+    base = {"constraint_type": "all", "next_constraint_name": "Hard"}
+    swung_attrs, swung = _break_to_next("sop_next_type_a", "Hard", "Hard", dict(base, next_constraint_type="position"),
+                                        anchors, 16)
+    held_attrs, held = _break_to_next("sop_next_type_b", "Hard", "Hard", base, anchors, 16)
+    ok = (swung is not None and held is not None and swung[0] - held[0] > 0.3
+          and swung_attrs.get("constraint_type") == "position" and not swung_attrs.get("next_constraint_type"))
+    return [Result("solver_sop_next_constraint_type", Result.PASS if ok else Result.FAIL,
+                   f"box centre x on frame 16 with next_constraint_type position {swung[0] if swung else None} "
+                   f"(expected more than 0.3 above the held one: swung), without {held[0] if held else None} (held); "
+                   f"constraint_type after the switch {swung_attrs.get('constraint_type')!r}, "
+                   f"next_constraint_type {swung_attrs.get('next_constraint_type')!r}")]
+
+
 def test_solver_sop_break_distance_bullet():
     """Break Thresholds, Distance Threshold, against the RBD Bullet Solver SOP: a Hard constraint whose anchors start
     2 apart breaks within 8 frames with a threshold of 0.2 and holds for 8 frames with one of 50, in both: the
@@ -1215,7 +1276,7 @@ def _folders(entries, path=()):
 
 def test_solver_sop_layout():
     """The Solver SOP's tabs and folders, in RBD Bullet Solver's order: Setup, Properties, Collision, Forces,
-    Constraints, Visualization, Advanced, Output (no Misc); Collision Geometry's header checkbox is Use External Collisions, which sits just before it
+    Constraints, Visualization, Advanced, Output (no Misc); Collision Geometry's header checkbox is Enable Collision Geometry, which sits just before it
     (as RBD Bullet Solver's); the Pieces tab is Shape, Body, Material, CCD & Contacts, Sleep (Start
     Asleep first), Override Attributes (Override Attributes from SOP); the Solver tab holds Cache Simulation
     (label hidden, joined to Cache Memory) right after Solve on Creation Frame and ends with Contacts and Sleeping
@@ -1251,7 +1312,7 @@ def test_solver_sop_layout():
            ["Shape", "Body", "Material", "CCD & Contacts", "Sleep", "Override Attributes"])
     override = by_path.get(("Properties", "Override Attributes"))
     expect("Override Attributes from SOP", [pt.name() for pt in override.parmTemplates()] if override else None,
-           ["overwritefromsop"])
+           ["overwritefromsop", "overwriteattributes"])
     sop.parm("overwritefromsop").set(1)
     inner_pieces = sop.node("dopnet/pieces")
     expect("Override Attributes from SOP reaches the pieces' Packed Object",
@@ -1302,19 +1363,25 @@ def test_solver_sop_layout():
     forces_tab = by_path.get(("Forces",))
     expect("Forces tab folders", [pt.label() for pt in forces_tab.parmTemplates() if pt.type() ==
                                   hou.parmTemplateType.Folder] if forces_tab else None,
-           ["Force DOPs", "Bounce / Friction", "Glue"])
+           ["Gravity", "Force DOPs", "Bounce / Friction", "Glue"])
     glue = by_path.get(("Forces", "Glue"))
     expect("Forces / Glue", [pt.name() for pt in glue.parmTemplates()] if glue else None,
            ["gluecompound", "gluecompoundload"])
-    solver_names = [pt.name() for pt in solver_tab.parmTemplates()] if solver_tab else []
-    cache = next((pt for pt in solver_tab.parmTemplates() if pt.name() == "cacheenabled"), None) if solver_tab else None
-    expect("Cache Simulation (label hidden, joined) on the Solver tab, after Solve on Creation Frame",
+    expect("Solver tab folders", [pt.label() for pt in solver_tab.parmTemplates()] if solver_tab else None,
+           ["General", "Simulation", "Contacts", "Sleeping"])
+    general = by_path.get(("Setup", "General"))
+    expect("Solver / General", [pt.name() for pt in general.parmTemplates()] if general else None,
+           ["usescale", "scale", "timescale"])
+    simulation = by_path.get(("Setup", "Simulation"))
+    solver_names = [pt.name() for pt in simulation.parmTemplates()] if simulation else []
+    cache = next((pt for pt in simulation.parmTemplates() if pt.name() == "cacheenabled"), None) if simulation else None
+    expect("Cache Simulation (label hidden, joined) in Solver / Simulation, after Solve on Creation Frame",
            (cache.isLabelHidden(), cache.joinsWithNext(),
             solver_names.index("cacheenabled") == solver_names.index("solvefirstframe") + 1) if cache else None,
            (True, True, True))
     vis_tab = by_path.get(("Visualization",))
     expect("Visualization tab", [pt.name() for pt in vis_tab.parmTemplates()] if vis_tab else None,
-           ["b3dsop_visualize_geometries", "b3dsop_inspector"])
+           ["visualizegeometries", "b3dsop_visualize_geometries", "b3dsop_inspector"])
     visualize = by_path.get(("Visualization", "Visualize Geometries"))
     expect("Visualize Geometries folders", [pt.label() for pt in visualize.parmTemplates()] if visualize else None,
            ["Geometry", "Ground", "Collision Geometry", "Show Constraints", "Constraint Geometry", "Impact Data"])
@@ -1356,7 +1423,7 @@ def test_solver_sop_layout():
         return [Result("solver_sop_layout", Result.FAIL, "; ".join(problems))]
     return [Result("solver_sop_layout", Result.PASS,
                    f"tabs {tabs}; {len(folders)} folders, Impact Data and Sleeping closed; Allow Sleeping first in Solver / "
-                   "Sleeping; Use External Collisions the Collision Geometry header")]
+                   "Sleeping; Enable Collision Geometry the Collision Geometry header")]
 
 
 def test_solver_sop_proxy():
@@ -1410,6 +1477,139 @@ def test_solver_sop_constraints():
     return [Result("solver_sop_constraints", Result.PASS if ok else Result.FAIL,
                    f"welded box y={pos[1] if pos else None} after 1 s (expected 3.0); constraints output: "
                    f"{nprims} primitive(s), force attribute {'present' if has_force else 'missing'}")]
+
+
+def test_solver_sop_constraint_guide_radius():
+    """Guide Radius and Guide Scale (the constraint lines in the viewport): a Weld line shown with Show
+    Constraints has a radius of Guide Radius times its type's Guide Scale (0.05 by default; 0.15 with the Weld's
+    Guide Scale 3; 0.1 with Guide Radius 0.1), on the line's points before the wire is made, and the wire in the
+    asset's Guide Geometry is 0.2 thicker with Guide Scale 3 (the radius grows 0.1, twice that across)."""
+    pieces, names = packed_boxes("sop_guide_radius_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0)}])
+    lines = constraint_lines("sop_guide_radius_network", [("", (3, 3, 0), names[0], (0, 3, 0), "Weld")])
+    results = []
+    thickness = {}
+    for label, parms, want in (("defaults", {}, 0.05),
+                               ("Weld Guide Scale 3", {"weld_guidescale": 3.0}, 0.15),
+                               ("Guide Radius 0.1", {"showconstraintguidesradius": 0.1}, 0.1)):
+        sop = solver_sop("sop_guide_radius_" + label.split()[0].lower(), geometry=pieces, constraints=lines)
+        set_parm(sop, ["showconstraints"], 1)
+        for name, value in parms.items():
+            set_parm(sop, [name], value)
+
+        def sample(s, f):
+            if f != 3:
+                return None
+            node = s.node("constraint_guide_radius")
+            geo = node.geometry() if node else None
+            attr = geo.findPointAttrib("guide_radius") if geo else None
+            radius = geo.points()[0].attribValue("guide_radius") if attr and geo.points() else None
+            box = s.node("GUIDE_GEO").geometry().boundingBox()
+            return radius, box.sizevec()[1]
+
+        radius, height = play(sop, 3, sample)[3]
+        thickness[label] = height
+        ok = radius is not None and close(radius, want, 1e-4) and height > 0
+        results.append(Result("solver_sop_constraint_guide_radius", Result.PASS if ok else Result.FAIL,
+                              f"{label}: guide_radius on the line's points {radius} (expected {want}); wire thickness "
+                              f"{height:.4f}"))
+    # The wire's height is its diameter plus a little the polywire adds, so the changes are compared.
+    grew = thickness["Weld Guide Scale 3"] - thickness["defaults"]
+    results.append(Result("solver_sop_constraint_guide_radius", Result.PASS if close(grew, 0.2, 0.02) else Result.FAIL,
+                          f"wire thickness grew {grew:.3f} with Weld Guide Scale 3 (expected 0.2: the radius grows "
+                          f"from 0.05 to 0.15, twice that across)"))
+    return results
+
+
+def test_constraint_properties_scaling():
+    """A setting scaled by an attribute, as RBD Constraint Properties does (Geometry Attribute Transfer). A Revolute
+    line between anchors A and B, Stiffness 10 ticked. The pieces are A1, A2, A3 (parentpiece A, weight 1, 3, 8, the
+    anchor nearest A2) and B (weight 5). Scale by Attribute `weight` multiplies by the average of the two ends'
+    pieces: A is its three pieces by Transfer Mode (Closest 3, Min 1, Average 4, Max 8) and B is 5, so 40, 30, 45 and 65.
+    Scale by Value multiplies by the line's own stiffness attribute (2): 20; both: 10 * 2 * 4 = 80. Randomize with
+    Variance 0 leaves 10 as it is, and with 0.5 gives a value from 5 to 15."""
+    geo = new_geo("cp_scaling")
+    pieces = create(geo, "attribwrangle", "pieces")
+    set_parm(pieces, ["class"], 0)
+    set_parm(pieces, ["snippet"], 'addpointattrib(0, "name", ""); addpointattrib(0, "parentpiece", ""); '
+             'addpointattrib(0, "weight", 0.0); '
+             'string names[] = {"A1", "A2", "A3", "B"}; string parents[] = {"A", "A", "A", ""}; '
+             'float weights[] = {1.0, 3.0, 8.0, 5.0}; float xs[] = {-1.0, 1.0, 3.0, 10.0}; '
+             'for (int i = 0; i < 4; i++) { int pt = addpoint(0, set(xs[i], 0, 0)); '
+             'setpointattrib(0, "name", pt, names[i]); setpointattrib(0, "parentpiece", pt, parents[i]); '
+             'setpointattrib(0, "weight", pt, weights[i]); }')
+    lines = create(geo, "attribwrangle", "lines")
+    set_parm(lines, ["class"], 0)
+    set_parm(lines, ["snippet"], 'addpointattrib(0, "name", ""); addprimattrib(0, "constraint_name", ""); '
+             'addprimattrib(0, "stiffness", 0.0); int a = addpoint(0, set(0.9, 0, 0)); int b = addpoint(0, set(10, 0, 0)); '
+             'setpointattrib(0, "name", a, "A"); setpointattrib(0, "name", b, "B"); '
+             'int pr = addprim(0, "polyline", a, b); setprimattrib(0, "constraint_name", pr, "Revolute"); '
+             'setprimattrib(0, "stiffness", pr, 2.0);')
+    cp = create(geo, "box3d_constraint_properties", "props")
+    cp.setInput(0, pieces)
+    cp.setInput(1, lines)
+    for name, value in (("action", 0), ("addrevolute_stiffness", 1), ("revolute_stiffness", 10.0),
+                        ("revolute_stiffnessattribute", "weight")):
+        set_parm(cp, [name], value)
+
+    def stiffness(scaling, mode):
+        set_parm(cp, ["revolute_stiffnessscaling"], scaling)
+        set_parm(cp, ["transfermode"], mode)
+        g = cp.geometry(1)
+        return round(g.prims()[0].attribValue("stiffness"), 3) if g and g.findPrimAttrib("stiffness") else None
+
+    got = {"none": stiffness(0, 0), "closest": stiffness(1, 0), "min": stiffness(1, 1), "average": stiffness(1, 2),
+           "max": stiffness(1, 3), "value": stiffness(2, 0), "both": stiffness(3, 0)}
+    want = {"none": 10.0, "closest": 40.0, "min": 30.0, "average": 45.0, "max": 65.0, "value": 20.0, "both": 80.0}
+    ok = got == want
+    results = [Result("constraint_properties_scaling", Result.PASS if ok else Result.FAIL,
+                       f"stiffness by scaling / Transfer Mode {got} (expected {want})")]
+    # Randomize: Variance 0 changes nothing, Variance 0.5 gives 5 to 15 (and not exactly 10).
+    set_parm(cp, ["revolute_stiffnessscaling"], 0)
+    set_parm(cp, ["revolute_stiffnessrandomize"], 1)
+    spread = {}
+    for variance in (0.0, 0.5):
+        set_parm(cp, ["revolute_stiffnessvariance"], variance)
+        spread[variance] = round(cp.geometry(1).prims()[0].attribValue("stiffness"), 3)
+    good = spread[0.0] == 10.0 and 5.0 <= spread[0.5] <= 15.0 and spread[0.5] != 10.0
+    results.append(Result("constraint_properties_scaling", Result.PASS if good else Result.FAIL,
+                          f"stiffness 10 randomized with Variance 0 / 0.5: {spread} (expected 10, and 5 to 15 but not 10)"))
+    return results
+
+
+def test_constraint_properties_next():
+    """Switch Constraint Type When Broken and the next settings. A Revolute line: with the switch off, Next Constraint
+    Name and a next Revolute Stiffness (99) write nothing; with it on, Edit writes next_constraint_name Weld and
+    next_stiffness 99, and Set writes the next name and the next settings that differ from the defaults."""
+    geo = new_geo("cp_next")
+    lines = create(geo, "attribwrangle", "lines")
+    set_parm(lines, ["class"], 0)
+    set_parm(lines, ["snippet"], 'addpointattrib(0, "name", ""); addprimattrib(0, "constraint_name", ""); '
+             'int a = addpoint(0, set(0, 0, 0)); int b = addpoint(0, set(1, 0, 0)); '
+             'int pr = addprim(0, "polyline", a, b); setprimattrib(0, "constraint_name", pr, "Revolute");')
+    cp = create(geo, "box3d_constraint_properties", "props")
+    cp.setInput(1, lines)
+    for name, value in (("action", 0), ("donext_constraintname", 1), ("next_constraintname", "Weld"),
+                        ("addnext_revolute_stiffness", 1), ("next_revolute_stiffness", 99.0),
+                        ("next_constrainttype", 2)):
+        set_parm(cp, [name], value)
+
+    def attrs():
+        g = cp.geometry(1)
+        prim = g.prims()[0]
+        return {a: prim.attribValue(a) for a in ("next_constraint_name", "next_stiffness")
+                if g.findPrimAttrib(a) is not None}
+
+    off = attrs()
+    set_parm(cp, ["usenextconstraint"], 1)
+    on = attrs()
+    set_parm(cp, ["action"], 1)
+    in_set = attrs()
+    want_on = {"next_constraint_name": "Weld", "next_stiffness": 99.0}
+    ok = ("next_constraint_name" not in off and "next_stiffness" not in off and on == want_on
+          and in_set.get("next_constraint_name") == "Weld" and in_set.get("next_stiffness") == 99.0)
+    return [Result("constraint_properties_next", Result.PASS if ok else Result.FAIL,
+                   f"line attributes with the switch off {off}, on in Edit {on}, on in Set {in_set} (expected "
+                   f"nothing, then {want_on}, then the next name and stiffness 99)")]
 
 
 def test_configure_packs():
@@ -1523,7 +1723,7 @@ def test_constraint_properties():
              'if (i == 0) setprimgroup(0, "chosen", pr, 1); }')
     cp = create(geo, "box3d_constraint_properties", "props")
     cp.setInput(1, lines)
-    for n, v in (("action", 0), ("constraintgroup", "chosen"), ("jointtype", 2), ("addrevolute_stiffness", 1),
+    for n, v in (("action", 0), ("constraintgroup", "chosen"), ("constrainttype", 2), ("addrevolute_stiffness", 1),
                  ("revolute_stiffness", 7.0), ("addrevolute_enable_spring", 1), ("revolute_enable_spring", 1)):
         set_parm(cp, [n], v)
     g = cp.geometry(1)
@@ -1580,7 +1780,7 @@ def test_constraint_properties_edit():
     detail += f"; enable_motor {motor}, motor_velocity z {velocity}, orient kept {kept}"
     module.clearEdits({"node": cp})
     set_parm(cp, ["action"], 1)
-    set_parm(cp, ["jointtype"], 2)
+    set_parm(cp, ["constrainttype"], 2)
     set_parm(cp, ["revolute_stiffness"], 5.0)
     set_parm(cp, ["constraintname"], "Weld")
     g = cp.geometry(1)
@@ -1732,6 +1932,11 @@ TESTS = {
     "solver_sop_animated_setting": test_solver_sop_animated_setting,
     "solver_sop_constraint_settings": test_solver_sop_constraint_settings,
     "solver_sop_ground_guide": test_solver_sop_ground_guide,
+    "solver_sop_constraint_guide_radius": test_solver_sop_constraint_guide_radius,
+    "solver_sop_break_next_settings": test_solver_sop_break_next_settings,
+    "solver_sop_next_constraint_type": test_solver_sop_next_constraint_type,
+    "constraint_properties_scaling": test_constraint_properties_scaling,
+    "constraint_properties_next": test_constraint_properties_next,
     "solver_sop_collision_prim_names": test_solver_sop_collision_prim_names,
     "solver_sop_collision_group_names": test_solver_sop_collision_group_names,
     "solver_sop_collision_rest": test_solver_sop_collision_rest,

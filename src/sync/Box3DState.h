@@ -645,9 +645,19 @@ inline uint64_t glueBondHash(b3dop::BodyHandle bodyA, b3dop::BodyHandle bodyB) {
 }
 
 // Everything shared between timestep copies.
+// A piece's pose in its source SOP, as last seen (Box3DSourceSync.cpp).
+struct Box3DSourcePose {
+  double pos[3] = {0, 0, 0};
+  float rot[4] = {0, 0, 0, 1};
+};
+
 struct Box3DSharedState {
   b3dop::Box3DWorld world;
   Box3DMirrorMap mirror; // key: makeBodyKey(object id, point id)
+  // Per object, by piece name: the pose its source SOP had when last read. A
+  // piece is moved only when this changes, so other edits (a SOP Solver) stand.
+  std::unordered_map<int, std::unordered_map<std::string, Box3DSourcePose>>
+      sourcePoses;
 
   // Bumped once per sync; stampedCount current entries (equal to mirror.size():
   // nothing to remove).

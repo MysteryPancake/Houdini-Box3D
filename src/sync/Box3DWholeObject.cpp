@@ -504,6 +504,8 @@ void syncWholeObject(Box3DSharedState &st, const SIM_Object &obj,
   PointAttrs none(gdp); // build attributes left unbound: Box3D Data values only
   b3dop::BodyProps p =
       readDynamicProps(setup.node, none, static_cast<GA_Offset>(0));
+  // The pivot is the centre of mass (wholeObjectPose handles RBD State's own).
+  p.computeCom = false;
   // The bounding box only changes with the geometry or its transform.
   uint64_t boundsKey = 0;
   if (setup.boundsInertia) {

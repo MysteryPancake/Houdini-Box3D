@@ -400,6 +400,8 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
 
   std::lock_guard<std::mutex> lock(st->mutex);
 
+  followSourceSops(*st, objects, now, dt);
+
   // The physics advances by dt * Time Scale.
   const double timeScale = std::max(0.0, static_cast<double>(getTimeScale()));
   st->stepDt = static_cast<float>(dt * timeScale);

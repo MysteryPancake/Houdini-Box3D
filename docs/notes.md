@@ -16,5 +16,5 @@
 - The Box3D Solver SOP's Advanced tab sets each constraint type's values, under Constraints.
 - Break Thresholds on the Box3D Solver SOP's Constraints tab break constraints past an `angle`, `distance`, `impact` or `torque`, as in RBD Bullet Solver. Only SideFX Glue has an `impact`, and there is no Force Threshold.
 - On the Box3D Solver SOP, Collide As Static Object makes the Collision input one static mesh, or a height field. It uses the Material settings.
-- On the Box3D Solver SOP, Override Attributes from SOP (Properties tab) reads the pieces again every step, so attributes that change over time reach the simulation. It costs time, so it is off by default.
+- On the Box3D Solver SOP, Override Attributes from SOP (Properties tab) copies the listed attributes (active, animated and deforming by default) from the pieces every step, so changes to them reach the simulation. It costs time, so it is off by default.
 - Escape cancels a step in progress.

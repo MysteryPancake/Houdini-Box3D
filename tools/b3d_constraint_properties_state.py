@@ -24,7 +24,7 @@ UNSET_FLOAT = -3.4028235e38  # kUnsetFloat (Box3DJoints.h): "not edited" in the 
 FIELDS = {"orient_a": (0.0, 0.0, 0.0, 0.0), "orient_b": (0.0, 0.0, 0.0, 0.0), "enable_motor": -1,
           "motor_velocity": (UNSET_FLOAT, 0.0, 0.0)}
 MOTOR_STEP = 10.0  # degrees per second for one wheel click
-# The Settings For Spherical folder's parameters, which Edit Parms drives instead of the stash.
+# The Constraint Type Spherical folder's parameters, which Edit Parms drives instead of the stash.
 MOTOR_PARM = "spherical_enable_motor"
 VELOCITY_PARM = "spherical_motor_velocity"
 

@@ -17,8 +17,11 @@ PACKED_OBJECT = "box3d_packedobject"
 # Colours of the subnet inputs, IN_* nulls and OUT_* nodes by index: constraints pink.
 INPUT_COLORS = {1: (1.0, 0.6, 0.8)}
 COLLISION_TYPE = "collisiontype"  # menu: 0 Static, 1 Animated, 2 Deforming (RBD Bullet Solver's Collision Type)
-OVERWRITE_FROM_SOP = "overwritefromsop"  # the Box3D Packed Object's toggle: re-import the SOP every step
+OVERWRITE_FROM_SOP = "overwritefromsop"  # the Box3D Packed Object's toggle: copy attributes from the SOP every step
+OVERWRITE_ATTRIBS = "overwriteattributes"  # ... and its list of them
+OVERWRITE_DEFAULT = "active animated deforming"  # the list's default
 USE_COLLISIONS = "usecollisions"
+VISUALIZE = "visualizegeometries"  # Visualization: the header toggle of Visualize Geometries, every guide's master switch (on)
 SHOW_GROUND = "showground"  # Visualization: the ground in the guide (on)
 SHADE_GROUND = "shadeground"  # Visualization: a ground plane drawn as 0 wireframe, 1 shaded
 GROUND_OBJECT = "groundplane"  # the DOP object name of the ground, plane or height field
@@ -36,7 +39,7 @@ PIECES_DROPPED = {"enablesleep"}
 # Collapsible folders inside the tabs, as RBD Bullet Solver's, every one open but Impact Data.
 # (tab, [(folder label, members by parameter name or label)]); a parameter in none stays loose.
 TAB_GROUPS = {
-    # Solver has no folders (World Scale, Time Scale, Substeps ... loose), and Gravity is loose, first in Forces.
+    # Solver has no folders (World Scale, Time Scale, Substeps ... loose), and Gravity is a folder in Forces with Add Gravity as its header checkbox.
     "Advanced": [("Stability", ["enablewarmstarting", "enablecontinuous", "maxlinearspeed",
                                 "isotropicinertia"]),
                  # Cache Simulation / Cache Memory (MB) join this folder first (make_solver_sop.py).

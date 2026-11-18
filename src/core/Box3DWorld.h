@@ -215,6 +215,9 @@ struct BodyProps {
       1.0f;
   bool computeMass =
       false; // `computemass`; solver only: mass = density * volume instead
+  // `computecom`; solver only: the centre of mass is where the shapes put it
+  // (the body origin, the point, orbits it), not moved to the origin
+  bool computeCom = false;
   // `inertialtensorstiffness`; solver only: scales the inertia of the mass
   float inertiaScale = 1.0f;
   // A custom inertia tensor: the INVERSE inertia about the body origin, in
@@ -282,9 +285,9 @@ struct BodyProps {
   bool operator==(const BodyProps &o) const {
     auto same = [](float a, float b) { return a == b || (a != a && b != b); };
     return same(mass, o.mass) && same(density, o.density) &&
-           computeMass == o.computeMass && same(inertiaScale, o.inertiaScale) &&
-           sameInertia(o) && same(friction, o.friction) &&
-           same(restitution, o.restitution) &&
+           computeMass == o.computeMass && computeCom == o.computeCom &&
+           same(inertiaScale, o.inertiaScale) && sameInertia(o) &&
+           same(friction, o.friction) && same(restitution, o.restitution) &&
            same(rollingResistance, o.rollingResistance) &&
            same(tangentVelocity[0], o.tangentVelocity[0]) &&
            same(tangentVelocity[1], o.tangentVelocity[1]) &&
@@ -333,6 +336,7 @@ struct BodySettings {
 inline BodySettings nodeBodyDefaults() {
   BodySettings s;
   s.props.computeMass = true;
+  s.props.computeCom = true;
   s.props.density = 1000.0f;
   s.props.friction = 1.0f;
   s.props.restitution = 0.5f;

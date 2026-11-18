@@ -671,6 +671,7 @@ def test_box3d_packed_object():
     if label is None:
         results.append(Result("box3d_packed_object", Result.INFO, "no Creation Frame parameter on the asset"))
         return results
+    label.deleteAllKeyframes()  # its default is the network's Start Frame, as an expression
     label.set((10,))
     finish(dop, box3d_solver(dop, obj))
     seen = step(dop, 12, lambda sim, f: sim.findObject("pieces") is not None)
@@ -709,8 +710,9 @@ def test_packed_object_initial_state():
 
 def test_packed_object_deforming():
     """The Box3D Packed Object's Deforming toggle writes deforming 1 on the points (off: none) and reads
-    the SOP every step, as Overwrite Attributes from SOP does: a Kinematic piece whose SOP object rises
-    0.1 per frame follows it (y 3 + 1.2 on frame 13) with Deforming on, and stays at 3 with it off."""
+    the SOP every step, as Overwrite Attributes from SOP does. A Kinematic piece whose SOP object rises
+    0.1 per frame follows it (y 3 + 1.2 on frame 13) with Deforming on, and also with it off: the solver
+    reads the source SOP itself, as RBD Bullet Solver does."""
     results = []
     path, _ = packed_boxes("po_def_probe", [{"size": (1, 1, 1), "center": (0, 3, 0)}])
     flags = {}
@@ -728,8 +730,8 @@ def test_packed_object_deforming():
         obj = box3d_packed_object(dop, "pieces", path, usetransform=1, bodytype=1, deforming=on)
         finish(dop, box3d_solver(dop, obj, gravity=(0, 0, 0)))
         y = step(dop, 13, lambda sim, f: packed_positions(sim, "pieces")[names[0]][1] if f == 13 else None)[13]
-        good = close(y, 4.2, 0.05) if on else close(y, 3.0, 0.05)
-        rows.append(f"Deforming {'on' if on else 'off'}: y {y:.3f} on frame 13 (expected {4.2 if on else 3.0})")
+        good = close(y, 4.2, 0.05)
+        rows.append(f"Deforming {'on' if on else 'off'}: y {y:.3f} on frame 13 (expected 4.2)")
         ok = ok and good
     results.append(Result("packed_object_deforming", Result.PASS if ok else Result.FAIL, "; ".join(rows)))
     return results

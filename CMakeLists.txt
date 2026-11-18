@@ -205,6 +205,7 @@ add_library(Box3DDOP SHARED
     src/sync/Box3DPostStep.cpp
     src/sync/Box3DForces.cpp
     src/sync/Box3DGuide.cpp
+    src/sync/Box3DSourceSync.cpp
     src/sync/Box3DCompoundSync.h
     src/sync/Box3DCompoundSync.cpp
     src/sync/Box3DJointSync.h

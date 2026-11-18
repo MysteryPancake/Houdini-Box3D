@@ -82,7 +82,7 @@ the same name overrides each one.
 
 == Collision ==
 
-Use External Collisions:
+Enable Collision Geometry:
     The checkbox of the Collision Geometry folder. Off: the Collision input is ignored.
 
 Collide As:
@@ -105,7 +105,7 @@ Break Thresholds:
     Breaks the constraints named in Constraint Names once their angle, distance, impact or torque passes a threshold,
     or at a chosen frame, as RBD Bullet Solver does. Only SideFX Glue has an impact. There is no Force Threshold.
     Scale by Attribute multiplies the threshold by a primitive attribute (`strength` makes it relative to each glue's
-    own strength). Mode Switch to Next Constraint gives the constraint its `next_constraint_name`. Off costs nothing.
+    own strength). Mode Switch to Next Constraint gives the constraint its `next_constraint_name` and any `next_<setting>` values it has. Off costs nothing.
 
 Export Broken Constraints:
     #id: constraint_keepbroken
@@ -113,27 +113,28 @@ Export Broken Constraints:
 
 == Forces ==
 
-Add Gravity (off multiplies Gravity by 0), Gravity and Use Force DOPs are here, with the Bounce, Friction and Glue folders.
+The Gravity folder (its checkbox off multiplies Gravity by 0) and Use Force DOPs are here, with the Bounce, Friction and Glue folders.
 
 Wire POP forces into PRESOLVE (dive into the node, then FORCES). With World Scale, force and torque are scaled for you.
 
 == Visualization ==
 
 Show Constraints draws the constraint lines, and False Color Mode colours them blue to red by angle, distance, force,
-impact, torque or an attribute you name. Under Impact Data, Show Impacts draws the impact points (needs Add Impact Data).
+impact, torque or an attribute you name. Guide Radius sets how thick the lines are, and each constraint type's Guide Scale
+(Advanced, Constraints) multiplies it. Under Impact Data, Show Impacts draws the impact points (needs Add Impact Data).
 Show Collision Shape draws the pieces' collision shapes, which costs time every step. Under Collision Geometry,
 Show Geometry draws the Collision input, and Show Collision Shape and Color draw its collision shapes. Show Ground draws
 the Ground Collision.
 
 == Advanced ==
 
-Stability and Performance settings: warm starting, continuous collision, speed limits and threads. Collision has Solve on Creation Frame for the colliders.
-
+Stability and Performance settings: warm starting, continuous collision, speed limits and threads. Collision has Solve on Creation Frame for the colliders, which follows the Solver tab's until changed.
 Constraints:
     The settings of each constraint type: a closed folder per joint. A float primitive attribute on the constraint
     lines multiplies the value here, so set the typical value here and vary it per constraint with an attribute. Each
-    folder also has Enable (off leaves the type out), Data Name (what `constraint_name` picks it by) and Default
-    Operation (Set Always applies the values every step, so animated ones act).
+    folder also has Enable (off leaves the type out), Data Name (what `constraint_name` picks it by), Default
+    Operation (Set Always applies the values every step, so animated ones act) and Guide Scale (the thickness of its
+    lines in the viewport, times Guide Radius).
 
 == Output ==
 

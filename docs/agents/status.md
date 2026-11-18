@@ -10,6 +10,31 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 ## Unverified
 
 **Not yet run in Houdini**
+
+* Switch Constraint Type When Broken with its next settings (`applyNextSettings`, `takenext`, the Next Constraint folder; tests `next_settings`,
+  `constraint_properties_next`, `solver_sop_break_next_settings`, `solver_sop_next_constraint_type`) pass, including `next_constraint_type`
+  on a SideFX Hard line.
+* Constraint Properties scaling and Geometry Attribute Transfer (`SCALE_VEX`, tests `constraint_properties_scaling`) pass (Houdini
+  22.0.502). Not checked against RBD Constraint Properties: Closest uses piece point positions (Bullet uses the nearest surface point),
+  a piece that is missing leaves the value unscaled (Bullet skips the setting), integers, toggles and vectors have no scaling, and there
+  is no Next Constraint scaling. Randomize and Variance are on every number setting here (Bullet: Glue Strength only), seeded per setting.
+* The group / attribute menus beside the fields (`MENU_SOURCE` in `b3d_hda.py`): not built or run. Check each menu fills from the
+  connected geometry (the SOP Path for the Packed Object's list, the node's output for Inspector Attributes), a multi-name field
+  toggles picks in and out, and the menus work on the Solver SOP's nested nodes.
+
+* Animated bodies following their source SOP (`followSourceSops`): the animated-collider, kinematic and Packed Object tests pass
+  (Houdini 22.0.502). Not checked: a source `orient` / `pscale` attribute on the animated piece (only its packed transform
+  is read), a Solver SOP whose collision path is a context geometry rather than a SOP node, many animated pieces (one cook and one
+  name pass per step), and a DOP Start Frame other than 1.
+
+* Overwrite Attributes from SOP as an Attribute Copy list (`copy_attribs`, `SIM_GEO` in the Packed Object stage): not built or
+  run. Check the list reaches the solver (`active` changed over time), the object merge of its own geometry cooks without a
+  dependency loop, and an animated collider (`reimportsop`) still moves.
+
+* `computecom` on points (default on, as Bullet): not built or run. Bullet, measured with an L-shaped packed piece
+  spun at 3 rad/s with no gravity, moves the point on an arc with it on and leaves it fixed with it off. Check Box3D
+  gives the same, that `v` (the centre's velocity here) is right, and that joints, Glue and forces behave. Also unchecked: the
+  Packed Object's Initial State Position / Rotation / Inherit Pivot / Pivot and Creation Frame Specifies Simulation Frame against Bullet.
 * Box3D Packed Object's Display Geometry (`visualize_hires`) and Collider Label (`add_display`): checked against a
   stand-in `hou` only. The build's `check` probes both.
 * Box3D Configure's Bounds / Use Bounds and World Scale on FORCES: no test, only the builders' `check`s (Use Bounds, the

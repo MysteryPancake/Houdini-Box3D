@@ -15,9 +15,11 @@ the solver read the whole network again)."""
 
 import hou
 
+import b3d_hda
 from b3d_hda import collapsible
-from b3d_solver_common import (create, GLOBAL_SUBSTEPS, set_named, START_FRAME, WORLD_SCALE, WORLD_SCALE_TOGGLE,
-                               warn)
+from b3d_solver_common import (create, GLOBAL_SUBSTEPS, RELATIONSHIPS, set_named, START_FRAME, WORLD_SCALE,
+                               WORLD_SCALE_TOGGLE, warn)
+from b3d_solver_constraints import node_settings
 
 BREAKS = "breaks"  # the number of break entries (a multiparm block)
 BREAKS_TOGGLE = "enable_constraintbreaks"
@@ -47,6 +49,43 @@ BREAK_PARMS = [BREAKS_TOGGLE, BREAKS] + [
 
 # The wrangle (Run Over Primitives) in the SOP Solver. REL is the path from the wrangle to the asset.
 BREAK_VEX = '''// Breaks the constraints the Break Thresholds name, as RBD Bullet Solver's break_constraints (Force excepted).
+#define UNSETF -3.4028235e38
+// A constraint that switches takes its next settings: each next_<setting> that is set becomes <setting> and is cleared
+// (a number at UNSETF, a toggle below 0 and an empty string are "not set").
+void takenext(int primnum)
+{
+    string floats[] = {NEXT_FLOATS};
+    string ints[] = {NEXT_INTS};
+    string vectors[] = {NEXT_VECTORS};
+    foreach (string a; floats) {
+        string n = "next_" + a;
+        if (!hasprimattrib(0, n)) continue;
+        float v = prim(0, n, primnum);
+        if (v <= -1e37) continue;
+        if (!hasprimattrib(0, a)) addprimattrib(0, a, UNSETF);
+        setprimattrib(0, a, primnum, v);
+        setprimattrib(0, n, primnum, UNSETF);
+    }
+    foreach (string a; ints) {
+        string n = "next_" + a;
+        if (!hasprimattrib(0, n)) continue;
+        int v = prim(0, n, primnum);
+        if (v < 0) continue;
+        if (!hasprimattrib(0, a)) addprimattrib(0, a, -1);
+        setprimattrib(0, a, primnum, v);
+        setprimattrib(0, n, primnum, -1);
+    }
+    foreach (string a; vectors) {
+        string n = "next_" + a;
+        if (!hasprimattrib(0, n)) continue;
+        vector v = prim(0, n, primnum);
+        if (v.x <= -1e37) continue;
+        if (!hasprimattrib(0, a)) addprimattrib(0, a, set(UNSETF, 0.0, 0.0));
+        setprimattrib(0, a, primnum, v);
+        setprimattrib(0, n, primnum, set(UNSETF, 0.0, 0.0));
+    }
+}
+
 void switchnext(int primnum)
 {
     if (hasprimattrib(0, "next_constraint_name"))
@@ -59,8 +98,11 @@ void switchnext(int primnum)
         }
         string nt = hasprimattrib(0, "next_constraint_type") ? prim(0, "next_constraint_type", primnum) : "";
         setprimattrib(0, "constraint_name", primnum, nc);
+        if (nt != "" && !hasprimattrib(0, "constraint_type"))
+            addprimattrib(0, "constraint_type", "");
         if (hasprimattrib(0, "constraint_type"))
             setprimattrib(0, "constraint_type", primnum, nt);
+        takenext(primnum);
         setprimattrib(0, "next_constraint_name", primnum, "");
         if (hasprimattrib(0, "next_constraint_type"))
             setprimattrib(0, "next_constraint_type", primnum, "");
@@ -149,6 +191,7 @@ def break_items():
     names = hou.StringParmTemplate(
         "constraint_names#", "Constraint Names", 1, default_value=("Glue",),
         help="The constraint types to break, by Data Name, separated by spaces. Glue is the only type with an impact.")
+    b3d_hda.menu_script(names, "buildConstraintNameMenu(kwargs, 1)")
     mode = hou.MenuParmTemplate(
         "constraint_mode#", "Mode", ("0", "1"), menu_labels=("Delete Constraints", "Switch to Next Constraint"),
         default_value=0, help="Delete the constraint, or give it its next_constraint_name (deleted if it has none).")
@@ -185,8 +228,10 @@ def break_items():
         variance = when(hou.FloatParmTemplate(f"constraint_{key}var#", f"{label} Variance", 1, default_value=(0.1,),
                                               min=0.0, max=1.0),
                         off, f"constraint_use{key}var# == 0", kind=hou.parmCondType.HideWhen)
-        attrib = when(hou.StringParmTemplate(f"constraint_{key}attrib#", f"{label} Attribute", 1,
-                                             default_value=("strength",)),
+        attrib = when(b3d_hda.attrib_menu(
+                          hou.StringParmTemplate(f"constraint_{key}attrib#", f"{label} Attribute", 1,
+                                                 default_value=("strength",)),
+                          1, "prim", toggle=False, numeric=True),
                       off, f"constraint_scale{key}# == 0", kind=hou.parmCondType.HideWhen)
         items += [use, threshold, scaling, use_var, variance, attrib]
 
@@ -198,6 +243,22 @@ def break_items():
                                     help="Break constraints that pass a threshold, as RBD Bullet Solver's "
                                          "Break Thresholds. Off costs nothing.")
     return [header, folder]
+
+
+def next_setting_names(dopnet):
+    """The primitive attributes of every constraint setting (the relationship nodes'), by kind: (floats, ints,
+    vectors), for a switching constraint's next_<setting> attributes."""
+    floats, ints, vectors = {}, {}, {}
+    for _, name in RELATIONSHIPS:
+        node = dopnet.node(name)
+        if node is None:
+            continue
+        for pt in node_settings(node):
+            if pt.type() == hou.parmTemplateType.Float:
+                (vectors if pt.numComponents() == 3 else floats)[pt.name()] = True
+            elif pt.type() in (hou.parmTemplateType.Toggle, hou.parmTemplateType.Int):
+                ints[pt.name()] = True
+    return sorted(floats), sorted(ints), sorted(vectors)
 
 
 def build_breaks(dopnet):
@@ -214,7 +275,14 @@ def build_breaks(dopnet):
     wrangle.setInput(0, outputs[0].inputs()[0])
     outputs[0].setInput(0, wrangle)
     set_named(wrangle, "class", 1)  # primitives
-    vex = BREAK_VEX.replace("REL", wrangle.relativePathTo(dopnet.parent()))
+    floats, ints, vectors = next_setting_names(dopnet)
+
+    def names(values):
+        return ", ".join(f'"{n}"' for n in values) or '""'
+
+    vex = BREAK_VEX.replace("NEXT_FLOATS", names(floats)).replace("NEXT_INTS", names(ints))
+    vex = vex.replace("NEXT_VECTORS", names(vectors))
+    vex = vex.replace("REL", wrangle.relativePathTo(dopnet.parent()))
     vex = vex.replace("WORLD_SCALE_TOGGLE", WORLD_SCALE_TOGGLE).replace("WORLD_SCALE", WORLD_SCALE)
     # The checks, in THRESHOLDS' order: scaled ones multiply by World Scale, Distance adds the Rest Length.
     passes = "\n            || ".join(

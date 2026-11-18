@@ -137,7 +137,11 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   it and the attribute cleared (so it switches once), its local frames (read before it was destroyed) put through the
   bodies' poses give the anchors' `current_P` / `current_orient` (`switchFrames`: written by `writeLiveFrames` as if the joint were
   live), and the fingerprint is zeroed so the next sync reprocesses the network and makes the new joint from the saved
-  local frames, exactly where the old one was. `next_constraint_type` is ignored, like `constraint_type`.
+  local frames, exactly where the old one was. It also takes its next settings (`applyNextSettings`): every primitive attribute
+  `next_<setting>` that is set (a number above kUnsetFloat, a toggle or integer of 0 or more, a non-empty string) becomes `<setting>`
+  (made with every other primitive "not set" if the geometry has none) and is cleared; `next_constraint_type` becomes
+  `constraint_type` (written by hand: Constraint Properties does not edit SideFX constraints). The Solver SOP's break wrangle does the same from a list of the settings (`takenext`, `next_setting_names`).
+  `constraint_type` itself is read for SideFX data only.
 * **Live frames** (written networks): after every step `writeLiveFrames` sets each live joint's
   anchor points' `current_P` / `current_orient` to where its frames are now (`Box3DWorld::jointWorldFrames`: body
   pose times local frame; a world end does not move). `P` / `orient` are never written: the Constraint Network DOP

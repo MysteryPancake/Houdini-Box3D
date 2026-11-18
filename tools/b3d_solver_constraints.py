@@ -11,6 +11,7 @@ import re
 
 import hou
 
+import b3d_hda
 from b3d_hda import collapsible, value_templates, without_parmops
 from b3d_solver_common import RELATIONSHIPS, rename_templates, warn
 
@@ -69,9 +70,10 @@ def head_templates(node, name):
         help="Off leaves this constraint type out of the simulation.")]
     links = []
     if data_name is not None:
-        items.append(hou.StringParmTemplate(
+        items.append(b3d_hda.menu_script(hou.StringParmTemplate(
             f"{name}_dataname", "Data Name", 1, default_value=(data_name.eval(),),
-            help="The name `constraint_name` uses to pick this type."))
+            help="The name `constraint_name` uses to pick this type."), "buildConstraintNameMenu(kwargs, 1)",
+            toggle=False))
         links.append(("dataname", f"{name}_dataname"))
     else:
         warn(f"{node.path()} has no dataname: no Data Name on its folder")
@@ -103,8 +105,13 @@ def constraint_items(dopnet, sub):
             continue
         renames = {pt.name(): f"{name}_{pt.name()}" for pt in found}
         head, head_links = head_templates(node, name)
-        folders.append(collapsible(f"b3dsop_con_{name}", folder_label(node),
-                                   head + rename_templates(found, renames), open_folder=False))
+        # Enable is the folder's header checkbox; the rest greys out while it is off.
+        contents = head + rename_templates(found, renames)
+        for pt in contents[1:]:  # added to a setting's own Disable When, not replacing it
+            own = pt.conditionals().get(hou.parmCondType.DisableWhen, "")
+            pt.setConditional(hou.parmCondType.DisableWhen, f"{own} {{ {enable_name(name)} == 0 }}".strip())
+        folders.append(collapsible(f"b3dsop_con_{name}", folder_label(node), contents, open_folder=False,
+                                   header_toggle=enable_name(name)))
         links += [(sub.relativePathTo(node), old, new) for old, new in renames.items()]
         links += [(sub.relativePathTo(node), old, new) for old, new in head_links]
     return folders, links
