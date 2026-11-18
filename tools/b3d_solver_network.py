@@ -32,6 +32,12 @@ from b3d_solver_common import (
     GROUND_OBJECT,
     SHADE_GROUND,
     SHOW_COLLISION,
+    SHOW_COLLISION_SHAPES,
+    SHOW_CONSTRAINTS,
+    FALSE_COLOR_MODE,
+    FALSE_COLOR_ATTRIB,
+    SHOW_IMPACTS,
+    COLLISION_COLOR,
     SHOW_GROUND,
     USE_GROUND,
     FETCH_GEOMETRY,
@@ -96,18 +102,16 @@ v@pivot = point(1, "P", rp);
 p@orient = quaternion(transpose(r[0]) * r[1]);
 """
 
-# Solve on Creation Frame, as RBD Bullet Solver: solvefirstframe on the Solver tab drives both the
-# pieces' and the collider's Packed Object.
+# Solve on Creation Frame, as RBD Bullet Solver: solvefirstframe on the Solver tab drives the pieces' Packed Object,
+# collision_solvefirstframe (Advanced > Collision) the collider's.
 SOLVE_FIRST = "solvefirstframe"
+COLLISION_SOLVE_FIRST = "collision_solvefirstframe"
 SOLVE_FIRST_PARM = "solvefirstframe"  # the Box3D Packed Object's Solve on Creation Frame (Empty Object's)
 
 # Export Broken Constraints (RBD Bullet Solver's constraint_keepbroken): off, broken constraints are
 # removed from the constraints output.
 KEEP_BROKEN = "constraint_keepbroken"
-# Output tab: Import Constraints / Proxy (off: that output is empty and its chain is not cooked), and
-# Transform Pieces' own Point Velocities parameters, promoted under their names onto both transforms.
-IMPORT_CONSTRAINTS = "importconstraints"
-IMPORT_PROXY = "importproxy"
+# Output tab: Transform Pieces' own Point Velocities parameters, promoted under their names onto both transforms.
 POINT_VELOCITY_PARMS = ("pointvels", "integrateovertime")
 
 # Collision Type Deforming: the colliders' `deforming`, so the solver rebuilds their shapes every step.
@@ -135,7 +139,7 @@ SCALED_SETTINGS = [("dopnet/box3d_solver", n, 1) for n in
                    ("gravity", "maxlinearspeed", "contactpushspeed", "bouncethreshold",
                     "contactrecycledistance", "impactminspeed")] + \
     [("dopnet/pieces", "density", -3)] + \
-    [("dopnet/pieces", n, 1) for n in ("sleepthreshold", "tangentvelocity", "vel")] + \
+    [("dopnet/pieces", n, 1) for n in ("sleepthreshold", "tangentvelocity")] + \
     [("dopnet/collision", "tangentvelocity", 1), ("dopnet/collision_static_data", "tangentvelocity", 1),
      ("dopnet/ground_data", "tangentvelocity", 1)]
 # (The collider's density and sleep threshold are not promoted: it is never dynamic.)
@@ -232,6 +236,30 @@ foreach (string n; {"position", "v", "impulse"})
 # Collision shapes: the Box3DShapes polylines (white, dimmed by body state) tinted by Shape Color.
 SHAPES_TINT_VEX = f'''\
 v@Cd *= set(ch("../{SHAPES_COLOR}r"), ch("../{SHAPES_COLOR}g"), ch("../{SHAPES_COLOR}b"));
+'''
+
+# False colour on the constraint lines in the guide, as RBD Bullet Solver's False Color Mode: the chosen attribute
+# (a float on the primitives) scaled by its largest value, blue to red.
+FALSE_COLOR_VEX = f'''\
+int mode = chi("../{FALSE_COLOR_MODE}");
+string names[] = {{"", "angle", "distance", "force", "impact", "torque"}};
+string attr = mode == 6 ? chs("../{FALSE_COLOR_ATTRIB}") : (mode < len(names) ? names[mode] : "");
+if (attr == "" || !hasprimattrib(0, attr)) return;
+float top = 0;
+for (int i = 0; i < nprims(0); i++) top = max(top, abs(prim(0, attr, i)));
+if (top <= 0) return;
+if (!hasprimattrib(0, "Cd")) addprimattrib(0, "Cd", {{1, 1, 1}});
+for (int i = 0; i < nprims(0); i++)
+    setprimattrib(0, "Cd", i, lerp({{0, 0.4, 1}}, {{1, 0.1, 0}}, abs(prim(0, attr, i)) / top));
+'''
+
+# The impact points in the guide: red.
+IMPACT_GUIDE_VEX = """\
+v@Cd = {1, 0.2, 0};
+"""
+
+# The collider's shapes: the same polylines tinted by the collision Color instead.
+COLLISION_SHAPES_TINT_VEX = f'''v@Cd *= set(ch("../{COLLISION_COLOR}r"), ch("../{COLLISION_COLOR}g"), ch("../{COLLISION_COLOR}b"));
 '''
 
 # The collision object's own geometry in the guide, dimmed (Bullet's `@Cd *= 0.5`; grey when it has no Cd).
@@ -610,7 +638,8 @@ def build_network(sub):
                                 inverse=True, run_over="primitive")
     con_out = create(sub, "switch", "constraints_result")
     con_out.setInput(0, nulls[CONSTRAINTS])
-    con_out.setInput(1, scale_xform(sub, "unscale_constraints", con_attribs, inverse=True))
+    con_unscaled = scale_xform(sub, "unscale_constraints", con_attribs, inverse=True)
+    con_out.setInput(1, con_unscaled)
     switch_on_spare_input(con_out, nulls[CONSTRAINTS])
 
     # Impacts: the pieces object's Impacts records as points (only when Add Impact Data is on and
@@ -620,15 +649,15 @@ def build_network(sub):
     set_named(import_impacts, "objpattern", "pieces")
     set_named(import_impacts, "datapath", "Impacts")
     set_named(import_impacts, "record", "Impacts")
-    create(sub, "null", IMPACTS).setInput(
-        0, scale_wrangle(sub, "unscale_impacts", import_impacts, UNSCALE_IMPACTS_VEX, inverse=True))
+    impacts_unscaled = scale_wrangle(sub, "unscale_impacts", import_impacts, UNSCALE_IMPACTS_VEX, inverse=True)
+    create(sub, "null", IMPACTS).setInput(0, impacts_unscaled)
 
     # Collision shapes (the Guide Geometry, not an output): the shapes the solver exports as each object's Box3DShapes data
     # while Show Collision Shapes is on, world space like the simulation, so unscaled. Imported only
     # while the toggle is on (the Switch does not cook the other input). Nothing before the Start Frame.
     import_shapes = create(sub, "dopimport", "import_shapes")
     import_shapes.parm("doppath").set("../dopnet")
-    import_shapes.parm("objpattern").set("pieces collision")
+    import_shapes.parm("objpattern").set("pieces")
     set_menu(import_shapes, "importstyle", FETCH_GEOMETRY)
     set_named(import_shapes, "geodatapath", SHAPES_DATA)
     set_toggles(import_shapes, POINTS_TOGGLES)
@@ -637,12 +666,52 @@ def build_network(sub):
     tint.parm("class").set("primitive")
     tint.parm("snippet").set(SHAPES_TINT_VEX)
     unscaled_shapes = scale_xform(sub, "unscale_shapes", tint, inverse=True)
-    no_shapes = create(sub, "null", "no_shapes")  # nothing wired: empty geometry (also the Import toggles' off)
+    no_shapes = create(sub, "null", "no_shapes")  # nothing wired: empty geometry
     show_shapes = create(sub, "switch", "switch_show_shapes")
     show_shapes.setInput(0, no_shapes)
     show_shapes.setInput(1, unscaled_shapes)
     show_shapes.parm("input").setExpression(f'ch("../{SHAPES_TOGGLE}")', hou.exprLanguage.Hscript)
     shapes_out = before_start(sub, dopnet, "switchif_beforestart_shapes", show_shapes, no_shapes)
+
+    # The collider's shapes, apart (RBD Bullet Solver's Collision Geometry > Show Collision Shape and Color): the same
+    # import for the collision object, tinted by the collision Color, behind Use External Collisions.
+    import_cshapes = create(sub, "dopimport", "import_collision_shapes")
+    import_cshapes.parm("doppath").set("../dopnet")
+    import_cshapes.parm("objpattern").set("collision")
+    set_menu(import_cshapes, "importstyle", FETCH_GEOMETRY)
+    set_named(import_cshapes, "geodatapath", SHAPES_DATA)
+    set_toggles(import_cshapes, POINTS_TOGGLES)
+    ctint = create(sub, "attribwrangle", "tint_collision_shapes")
+    ctint.setInput(0, import_cshapes)
+    ctint.parm("class").set("primitive")
+    ctint.parm("snippet").set(COLLISION_SHAPES_TINT_VEX)
+    show_cshapes = create(sub, "switch", "switch_show_collision_shapes")
+    show_cshapes.setInput(0, no_shapes)
+    show_cshapes.setInput(1, scale_xform(sub, "unscale_collision_shapes", ctint, inverse=True))
+    show_cshapes.parm("input").setExpression(f'ch("../{USE_COLLISIONS}") && ch("../{SHOW_COLLISION_SHAPES}")',
+                                             hou.exprLanguage.Hscript)
+    cshapes_out = before_start(sub, dopnet, "switchif_beforestart_collision_shapes", show_cshapes, no_shapes)
+
+    # The constraint lines (RBD Bullet Solver's Show Constraints) with False Color Mode, and the impact points (Show
+    # Impacts), each cooked only while its toggle is on.
+    false_color = create(sub, "attribwrangle", "false_color_constraints")
+    false_color.setInput(0, con_unscaled)
+    false_color.parm("class").set("detail")
+    false_color.parm("snippet").set(FALSE_COLOR_VEX)
+    show_con = create(sub, "switch", "switch_show_constraints")
+    show_con.setInput(0, no_shapes)
+    show_con.setInput(1, false_color)
+    show_con.parm("input").setExpression(f'ch("../{SHOW_CONSTRAINTS}")', hou.exprLanguage.Hscript)
+    con_guide_out = before_start(sub, dopnet, "switchif_beforestart_constraint_guide", show_con, no_shapes)
+    impact_color = create(sub, "attribwrangle", "color_impacts")
+    impact_color.setInput(0, impacts_unscaled)
+    impact_color.parm("class").set("point")
+    impact_color.parm("snippet").set(IMPACT_GUIDE_VEX)
+    show_impacts = create(sub, "switch", "switch_show_impacts")
+    show_impacts.setInput(0, no_shapes)
+    show_impacts.setInput(1, impact_color)
+    show_impacts.parm("input").setExpression(f'ch("../{SHOW_IMPACTS}")', hou.exprLanguage.Hscript)
+    impacts_guide_out = before_start(sub, dopnet, "switchif_beforestart_impact_guide", show_impacts, no_shapes)
 
     # The external collision geometry, as RBD Bullet Solver's guide shows it (dopimport_collision, dimmed
     # by half, behind Use External Collisions and Show Collision Geometry; on by default).
@@ -667,6 +736,9 @@ def build_network(sub):
     guide.setInput(0, cgeo_out)
     guide.setInput(1, shapes_out)
     guide.setInput(2, build_ground_guide(sub, dopnet, no_shapes))
+    guide.setInput(3, cshapes_out)
+    guide.setInput(4, con_guide_out)
+    guide.setInput(5, impacts_guide_out)
     wire = create(sub, ["attribcreate::2.0", "attribcreate"], "guide_wireframe")
     wire.setInput(0, guide)
     wire.parm("name1").set("gl_wireframe")
@@ -680,16 +752,6 @@ def build_network(sub):
     geo_out = before_start(sub, dopnet, "switchif_beforestart", geo_out, nulls[GEO])
     con_out = before_start(sub, dopnet, "switchif_beforestart_constraints", con_out, nulls[CONSTRAINTS])
     proxy_out = before_start(sub, dopnet, "switchif_beforestart_proxy", proxy_out, sim_input)
-    # Import Constraints / Proxy off: an empty output (a Switch does not cook the input it leaves out).
-    for name, parm in (("constraints", IMPORT_CONSTRAINTS), ("proxy", IMPORT_PROXY)):
-        sw = create(sub, "switch", f"switch_import_{name}")
-        sw.setInput(0, no_shapes)
-        sw.setInput(1, con_out if name == "constraints" else proxy_out)
-        sw.parm("input").setExpression(f'ch("../{parm}")', hou.exprLanguage.Hscript)
-        if name == "constraints":
-            con_out = sw
-        else:
-            proxy_out = sw
     points_out = scale_wrangle(sub, "unscale_points", sim_points, UNSCALE_POINTS_VEX, inverse=True)
     for idx, src in enumerate([geo_out, con_out, proxy_out, points_out]):
         out = create(sub, "output", f"OUT_{['geometry', 'constraints', 'proxy', 'points'][idx]}")

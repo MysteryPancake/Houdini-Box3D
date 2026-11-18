@@ -18,7 +18,7 @@ MAPPING = {
     "bodytype": "active/animated",
     "startasleep": "awake",
 }
-SKIP = {"hullperconnected", "flipwinding", "addimpact"}
+SKIP = {"hullperconnected", "addimpact"}
 
 # Default Shape's menu order (SIM_Box3DData.cpp) as bullet_georep values.
 GEOREP_VALUES = ["box", "sphere", "convexhull", "concave", "capsule", "none", "plane", "cylinder"]

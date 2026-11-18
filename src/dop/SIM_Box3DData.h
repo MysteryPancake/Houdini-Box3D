@@ -24,6 +24,7 @@ public:
   GETSET_DATA_FUNCS_B("computemass",
                       ComputeMass); // mass = density * shape volume
   GETSET_DATA_FUNCS_F("density", Density);
+  GETSET_DATA_FUNCS_F("inertialtensorstiffness", InertiaStiffness);
   GETSET_DATA_FUNCS_F("friction", Friction);
   GETSET_DATA_FUNCS_F("bounce", Bounce); // Box3D restitution
   GETSET_DATA_FUNCS_F("rollingresistance", RollingResistance); // 0 .. 1
@@ -50,8 +51,13 @@ public:
                       DefaultShape);
   GETSET_DATA_FUNCS_B("hullperconnected", HullPerConnected);
   GETSET_DATA_FUNCS_B("autofit", AutoFit); // point attribute: bullet_autofit
-  GETSET_DATA_FUNCS_B("flipwinding",
-                      FlipWinding); // affector (Static Object) meshes only
+  // The hand-set shape, with Auto Fit off: the bullet_prim* / radius / length
+  // point attributes. primR is Euler degrees.
+  GETSET_DATA_FUNCS_V3("bullet_primS", PrimSize);
+  GETSET_DATA_FUNCS_F("bullet_radius", PrimRadius);
+  GETSET_DATA_FUNCS_F("bullet_length", PrimLength);
+  GETSET_DATA_FUNCS_V3("bullet_primT", PrimOffset);
+  GETSET_DATA_FUNCS_V3("bullet_primR", PrimRotation);
 
   b3dop::BodySettings toBodySettings() const;
 

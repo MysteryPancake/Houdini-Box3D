@@ -52,14 +52,13 @@ struct TriMesh {
   std::vector<int32_t> tris;
 };
 
-void buildMesh(const GU_Detail *gdp, bool houdiniWinding, TriMesh &out) {
+void buildMesh(const GU_Detail *gdp, TriMesh &out) {
   out.xyz.clear();
   out.tris.clear();
-  // Houdini polygons wind clockwise seen from their front (Flip Static Mesh
-  // Winding on the Box3D Data node reverses this); Box3D wants
+  // Houdini polygons wind clockwise seen from their front; Box3D wants
   // counter-clockwise front faces, and its meshes are one-sided.
-  box3dTriangulate(gdp, gdp->getPrimitiveRange(), false, houdiniWinding,
-                   out.xyz, out.tris);
+  box3dTriangulate(gdp, gdp->getPrimitiveRange(), false, true, out.xyz,
+                   out.tris);
 }
 
 // ---- height fields
@@ -324,9 +323,8 @@ b3dop::BodySettings affectorBodySettings(const SIM_Object &obj) {
 // the vertices.
 uint64_t affectorSignature(const GU_Detail *gdp, const AffectorInput &in) {
   uint64_t sig = geometryIdentity(gdp, /*withUniqueId=*/false);
-  const float mat[3] = {in.body.props.friction, in.body.props.restitution,
-                        in.body.flipMeshWinding ? 1.0f : 0.0f};
-  sig = b3dop::mixHash(sig, b3dop::hashFloats(mat, 3));
+  const float mat[2] = {in.body.props.friction, in.body.props.restitution};
+  sig = b3dop::mixHash(sig, b3dop::hashFloats(mat, 2));
   sig = b3dop::mixHash(sig, in.rigid ? 1 : 2);
   if (!in.rigid)
     for (double d : in.m)
@@ -721,7 +719,7 @@ void syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects,
     mesh.xyz.clear();
     mesh.tris.clear();
     if (!in.volume)
-      buildMesh(gdp, !in.body.flipMeshWinding, mesh);
+      buildMesh(gdp, mesh);
     else if (!in.heightField)
       buildHeightMesh(in.volume, in.frame, heights, mesh);
     buildAffector(st, ab, obj->getObjectId(), in, mesh, baked, heights, counts);

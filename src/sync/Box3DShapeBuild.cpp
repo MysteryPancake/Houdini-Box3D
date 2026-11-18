@@ -433,8 +433,8 @@ float meshVolume(const MeshPiece &m) {
 
 // A static `concave` point's mesh: its packed polygons, body-local, with
 // Box3D's winding. Null without polygons.
-std::shared_ptr<const MeshPiece>
-staticMeshPiece(ShapeSources &src, const PackedInfo &pk, bool houdiniWinding) {
+std::shared_ptr<const MeshPiece> staticMeshPiece(ShapeSources &src,
+                                                 const PackedInfo &pk) {
   const std::shared_ptr<const MeshPiece> raw = src.innerTriangles(*pk.prim);
   if (!raw)
     return nullptr;
@@ -449,7 +449,7 @@ staticMeshPiece(ShapeSources &src, const PackedInfo &pk, bool houdiniWinding) {
   double m3[9];
   b3dop::upper3x3(pk.m4, m3);
   const bool mirrored = b3dop::matrixDeterminant(m3) < 0.0;
-  if (houdiniWinding != mirrored)
+  if (!mirrored)
     for (size_t t = 0; t + 2 < mesh->tris.size(); t += 3)
       std::swap(mesh->tris[t + 1], mesh->tris[t + 2]);
   return mesh;
@@ -527,8 +527,7 @@ BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
                         b3dop::ShapeType type, bool hullPerConnected,
                         float pscale, const float scale[3],
                         const PackedInfo &pk, bool autofit,
-                        const b3dop::PrimOverrides &ov, bool staticMesh,
-                        bool houdiniWinding) {
+                        const b3dop::PrimOverrides &ov, bool staticMesh) {
   using namespace b3dop;
   BuiltShapes out;
   auto add = [&](const Piece &pc) {
@@ -553,8 +552,7 @@ BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
   // Static concave: the exact polygons as one Box3D triangle mesh (meshes only
   // collide as static). No polygons in it: hulls as for a moving body.
   if (staticMesh && type == ShapeType::Concave && pk.prim) {
-    if (std::shared_ptr<const MeshPiece> mesh =
-            staticMeshPiece(src, pk, houdiniWinding)) {
+    if (std::shared_ptr<const MeshPiece> mesh = staticMeshPiece(src, pk)) {
       Piece pc;
       pc.volume = meshVolume(*mesh);
       pc.mesh = std::move(mesh);

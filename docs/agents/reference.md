@@ -22,8 +22,9 @@ need a setting on the other (sleep, Fast Object, impacts, contact recycling) say
 disable across nodes.
 
 Box3D Data (per object): `defaultshape` (menu order: box, sphere, convex hull, concave, capsule, none, plane, cylinder; the stored value
-is the menu index; default convex hull), `autofit`, `hullperconnected`, `flipwinding`, `bodytype` (static, kinematic,
-dynamic), `computemass`, `mass`, `density`, `gravityscale`, `friction`, `bounce`, `rollingresistance`,
+is the menu index; default convex hull), `autofit`, `hullperconnected`, `bullet_primS` / `bullet_radius` / `bullet_length` /
+`bullet_primT` / `bullet_primR` (the hand-set shape), `bodytype` (static, kinematic,
+dynamic), `computemass`, `mass`, `density`, `inertialtensorstiffness`, `gravityscale`, `friction`, `bounce`, `rollingresistance`,
 `tangentvelocity` (Conveyor Velocity), `lineardamping`, `angulardamping`, `ccdthreshold`, `fastobject`,
 `contactrecycling`, `enablesleep`, `startasleep`, `sleepthreshold`, `addimpact`. Names match the point attributes that override them; material values
 have a hard minimum of 0 (Box3D asserts on negatives). `toBodySettings()` maps them to `b3dop::BodySettings`.

@@ -735,6 +735,35 @@ def test_packed_object_deforming():
     return results
 
 
+def test_packed_object_hand_set_shape():
+    """Box3D Data's hand-set shape (Box Size, Radius, Length, Offset, Rotation) and Rotational Stiffness, through
+    the Box3D Packed Object: each changed setting becomes the point attribute of the same name (the others
+    none), and a unit box piece with Default Shape Box, Auto Fit off and Box Size 0.5 0.25 0.5 comes to rest
+    at y = 0.25 on the ground."""
+    results = []
+    probe_dop = new_dopnet("probe_hand_set")
+    path, _ = packed_boxes("probe_hand_set_box", [{"size": (1, 1, 1), "center": (0, 1, 0)}])
+    probe = box3d_packed_object(probe_dop, "pieces", path, inertialtensorstiffness=3.0,
+                                bullet_primS=(0.5, 0.25, 0.5))
+    attrs = stage_points(probe)
+    size = attrs.get("bullet_primS") if attrs else None
+    ok = (attrs is not None and close(attrs.get("inertialtensorstiffness", -1), 3.0, 1e-6)
+          and size is not None and all(close(a, b, 1e-6) for a, b in zip(size, (0.5, 0.25, 0.5)))
+          and "bullet_radius" not in attrs and "bullet_primT" not in attrs)
+    results.append(Result("packed_object_hand_set_shape", Result.PASS if ok else Result.FAIL,
+                          f"stage output: inertialtensorstiffness {attrs.get('inertialtensorstiffness') if attrs else None}"
+                          f" (expected 3), bullet_primS {size} (expected 0.5 0.25 0.5), unchanged settings not written"))
+
+    path, names = packed_boxes("hand_set_drop", [{"size": (1, 1, 1), "center": (0, 3, 0)}])
+    dop = new_dopnet("hand_set_drop")
+    obj = box3d_packed_object(dop, "pieces", path, defaultshape=0, autofit=0, bullet_primS=(0.5, 0.25, 0.5))
+    finish(dop, box3d_solver(dop, merge(dop, [ground_object(dop, "hand_set_ground"), obj])))
+    y = step(dop, 72, lambda sim, f: packed_positions(sim, "pieces"))[72][names[0]][1]
+    results.append(Result("packed_object_hand_set_shape", Result.PASS if close(y, 0.25, 0.03) else Result.FAIL,
+                          f"Box Size 0.5 0.25 0.5, Auto Fit off: the piece rests at y={y:.3f} (expected 0.25)"))
+    return results
+
+
 def test_tab_submenu():
     """The three assets are listed under Box3D in the Tab menu: each has a Tools.shelf section naming that
     submenu."""
@@ -1097,6 +1126,7 @@ TESTS = {
     "packed_object_attributes": test_packed_object_attributes,
     "packed_object_initial_state": test_packed_object_initial_state,
     "packed_object_deforming": test_packed_object_deforming,
+    "packed_object_hand_set_shape": test_packed_object_hand_set_shape,
     "tab_submenu": test_tab_submenu,
     "packed_object_use_transform": test_packed_object_use_transform,
     "data_under_geometry": test_data_under_geometry,

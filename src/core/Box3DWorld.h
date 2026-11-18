@@ -318,8 +318,9 @@ struct BodySettings {
       true; // box / sphere / capsule fit the packed geometry's bounds
   bool hullPerConnectedSet =
       false; // convex / concave: one hull per set of connected primitives
-  // affector (Static Object) meshes: use the opposite triangle winding
-  bool flipMeshWinding = false;
+  // The hand-set shape (`bullet_primS` ...), used with Auto Fit off. A value at
+  // its default is not set: pscale and scale then size the shape.
+  PrimOverrides prim;
 };
 
 // The Box3D Data node's defaults, which objects without one get too (the

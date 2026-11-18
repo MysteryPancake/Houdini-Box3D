@@ -73,7 +73,7 @@ def build_dops(dopnet):
 
     # Collide As Static Object: the Collision input, unpacked, as one Static Object (polygons become one mesh,
     # a height field a height field), static. Only Deforming rebuilds it every step. A Box3D Data after it takes
-    # the collider's Material settings and the mesh winding.
+    # the collider's Material settings.
     static = create(dopnet, "staticobject", "collision_static")
     setp(static, "object_name", "collision")
     setp(static, "soppath", f"../../{STATIC_NULL}")

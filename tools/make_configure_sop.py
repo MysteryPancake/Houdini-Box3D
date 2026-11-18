@@ -173,6 +173,11 @@ def pin_templates():
     return [add, pin, ptype, bounds]
 
 
+def simple_folder(name, label, contents):
+    """A simple folder, as RBD Configure's Bounds and Attributes."""
+    return hou.FolderParmTemplate(name, label, contents, folder_type=hou.folderType.Simple)
+
+
 def packing_templates():
     path = hou.StringParmTemplate("path", "Path Attribute", 1, default_value=("op:`opfullpath('.')`",),
                                   help="The path attribute value of each packed piece.")
@@ -199,12 +204,8 @@ def extra_folders():
     own: (folder label, [(template, kind)]) like b3d_settings.settings. Each template is named after
     its attribute, and its default is the solver's when the attribute is missing."""
     F, I, T = hou.FloatParmTemplate, hou.IntParmTemplate, hou.ToggleParmTemplate
+    S = hou.StringParmTemplate
     zero3 = (0.0, 0.0, 0.0)
-    def shape(pt):
-        # A hand-set shape only applies with Auto Fit off.
-        pt.setConditional(hou.parmCondType.DisableWhen, "{ autofit == 1 }")
-        return pt
-
     return [
         ("Initial State", [
             (F("v", "Velocity", 3, default_value=zero3, min=-10.0, max=10.0,
@@ -217,8 +218,6 @@ def extra_folders():
                help="Rebuild the collision shape every step, for pieces whose geometry changes."), "i"),
         ]),
         ("Motion", [
-            (F("inertialtensorstiffness", "Rotational Stiffness", 1, default_value=(1.0,), min=0.0, max=10.0,
-               min_is_strict=True, help="Scales how hard the pieces are to spin."), "f"),
             (T("fastrotation", "Fast Rotation", default_value=False,
                help="No spin speed limit. For round pieces such as wheels."), "i"),
             (I("lock_linear", "Lock Position", 3, default_value=(0, 0, 0), min=0, max=1, min_is_strict=True,
@@ -227,24 +226,18 @@ def extra_folders():
                max_is_strict=True, help="1 stops rotation about that world axis (X, Y, Z)."), "v"),
         ]),
         ("Collision Filtering", [
+            (S("collisiongroup", "Collision Group", 1, default_value=("",),
+               help="The group the pieces are in, as RBD Configure's. The Box3D Solver SOP turns the names into "
+                    "Category and Mask."), "s"),
+            (S("collisionignore", "Collision Ignore", 1, default_value=("",),
+               help="Name patterns of the groups the pieces pass through, separated by spaces. Needs the Box3D Solver SOP."),
+             "s"),
             (I("collision_category", "Category", 1, default_value=(-1,),
                help="Bits saying what the pieces are. -1 is every bit."), "i"),
             (I("collision_mask", "Mask", 1, default_value=(-1,),
                help="Bits of the categories the pieces collide with. -1 is every bit."), "i"),
             (I("collision_group", "Group", 1, default_value=(0,), min=-10, max=10,
                help="Pieces in the same group always collide if it's positive, never if it's negative."), "i"),
-        ]),
-        ("Hand-Set Shape", [
-            (shape(F("bullet_primS", "Box Size", 3, default_value=(1.0, 1.0, 1.0), min=0.0, max=10.0,
-                     min_is_strict=True, help="Half the box's size on each axis. Needs Auto Fit off.")), "v"),
-            (shape(F("bullet_radius", "Radius", 1, default_value=(0.5,), min=0.0, max=5.0, min_is_strict=True,
-                     help="Sphere or capsule radius. Needs Auto Fit off.")), "f"),
-            (shape(F("bullet_length", "Length", 1, default_value=(1.0,), min=0.0, max=5.0, min_is_strict=True,
-                     help="Capsule length along Y, caps not included. Needs Auto Fit off.")), "f"),
-            (shape(F("bullet_primT", "Offset", 3, default_value=zero3, min=-1.0, max=1.0,
-                     help="Moves the shape from the piece's centre. Needs Auto Fit off.")), "v"),
-            (shape(F("bullet_primR", "Rotation", 3, default_value=zero3, min=-180.0, max=180.0,
-                     help="Turns the shape, as XYZ angles in degrees. Needs Auto Fit off.")), "v"),
         ]),
     ]
 
@@ -326,6 +319,8 @@ def setting_vex(pt, kind):
         body = put("w", "{0.0, 0.0, 0.0}", f'radians({ch("chv")})')
     elif kind == "f":
         body = put(n, literal(pt, kind), ch("chf"))
+    elif kind == "s":
+        body = put(n, '""', ch("chs"))
     else:
         body = put(n, literal(pt, kind), bounded(ch("chi"), "!" + ch("chi")))
     return f'    if (chi("../{t}" + num)) {{ {body} }}'
@@ -407,7 +402,7 @@ def ui(folders):
             lab, help_text = SPECIAL_LABELS.get(n, (None, None))
             if lab:
                 value.setLabel(lab)
-            attr = n if kind in ("f", "i", "v", "w") else kind
+            attr = n if kind in ("f", "i", "v", "w", "s") else kind
             value.setHelp(help_text or f"{first_sentence(pt.help())} Writes the {attr} point attribute.")
             # The checkbox has a real label, hidden (an empty label shows the name instead).
             box = hou.ToggleParmTemplate(f"{toggle_name(n)}#", value.label(), default_value=False,
@@ -433,15 +428,15 @@ def ui(folders):
                                    folder_type=hou.folderType.TabbedMultiparmBlock, default_value=1)
     group = hou.ParmTemplateGroup()
     group.append(visualization_folder())
-    group.append(b3d_hda.collapsible("b3dcfg_bounds", "Bounds", bounds_templates()))
+    group.append(simple_folder("b3dcfg_bounds", "Bounds", bounds_templates()))
     # The BBox handle's on / off (RBD Configure's hidden Show Bbox): the box shows while Bounding Type is Bounding Box.
     onoff = hou.ToggleParmTemplate("bboxonoff", "Show Bbox", default_value=False,
                                    default_expression='ch("boundingtype")==0',
                                    default_expression_language=hou.scriptLanguage.Hscript)
     onoff.hide(True)
     group.append(onoff)
-    group.append(b3d_hda.collapsible("b3dcfg_packing", "Packing", packing_templates()))
-    group.append(multi)
+    # RBD Configure's Attributes folder: the packing settings, then the entries.
+    group.append(simple_folder("b3dcfg_attributes", "Attributes", packing_templates() + [multi]))
     return group
 
 
@@ -761,8 +756,8 @@ def build(out_path):
     # build_network sets on the Assembles and wrangles find them while the network is built.
     spare = sub.parmTemplateGroup()
     spare.append(visualization_folder())
-    spare.append(b3d_hda.collapsible("b3dcfg_bounds", "Bounds", bounds_templates()))
-    spare.append(b3d_hda.collapsible("b3dcfg_packing", "Packing", packing_templates()))
+    spare.append(simple_folder("b3dcfg_bounds", "Bounds", bounds_templates()))
+    spare.append(simple_folder("b3dcfg_attributes", "Attributes", packing_templates()))
     sub.setParmTemplateGroup(spare)
     build_network(sub, rows)
 

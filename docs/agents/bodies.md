@@ -104,7 +104,7 @@ is where the body's origin was at rest; joints map authored anchors with it ([jo
   1. Packed point: its geometry as `PieceGroup`s via `ShapeSources` (cached per source detail, and per
      `(source, first primitive)` for fragments, for one `syncObject`).
   2. Concave on a body that will be static (`Box3DPointSlot::staticBody`): one triangle mesh of the packed polygons
-     (`staticMeshPiece`, `innerTriangles`), winding flipped from Houdini's unless `flipMeshWinding`. The mirror keeps
+     (`staticMeshPiece`, `innerTriangles`), winding flipped from Houdini's. The mirror keeps
      `concave`, `plannedStatic` and `meshShapes`. Becoming static retypes before the rebuild; leaving static rebuilds as
      hulls first, and a body with a mesh is never retyped away from static. No polygons: hulls.
   3. Convex / concave hulls: `pieceFromPoints` with a `packedHullKey`, `findHull` first, points only on a miss, else a
@@ -130,6 +130,8 @@ fit once.
 
 **Explicit primitives** (autofit off, `box` / `sphere` / `capsule`): `bullet_primS` = box half extents,
 `bullet_radius`, `bullet_length` = capsule straight part, `bullet_primT` = offset, `bullet_primR` = XYZ Euler degrees.
+Box3D Data has them as parameters of the same names (`BodySettings::prim`, read by `readPrimOverrides` under the point
+attributes): a value left at its default is not set, so pscale and scale still size the shape.
 A rotated box is an 8-corner hull. The rotation order and length meaning live only in `applyPrimOverrides`.
 
 **Pieces and packed geometry.** Pieces are grouped by primitive `name` (unnamed share one); `finishPieces` sorts,

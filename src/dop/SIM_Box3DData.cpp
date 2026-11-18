@@ -2,8 +2,14 @@
 #include "SIM_Box3DData.h"
 
 #include "SIM_Box3DParms.h"
+#include "sync/Box3DHoudiniUtil.h"
 
 #include <SIM/SIM_DopDescription.h>
+#include <UT/UT_Quaternion.h>
+#include <UT/UT_Vector3.h>
+#include <UT/UT_XformOrder.h>
+
+#include <cmath>
 
 SIM_Box3DData::SIM_Box3DData(const SIM_DataFactory *factory)
     : BaseClass(factory), SIM_OptionsUser(this) {}
@@ -38,11 +44,27 @@ const SIM_DopDescription *SIM_Box3DData::getDescription() {
                   "Create Convex Hull per Set of Connected Primitives", false,
                   "Build one convex hull per set of connected primitives, "
                   "instead of one hull around the whole piece.")
-          // Only read when this node sits on an affector object (a Static
-          // Object DOP) that collides with the solver.
-          .toggle("flipwinding", "Flip Static Mesh Winding", false,
-                  "Static meshes are one-sided. Turn on if bodies fall through "
-                  "from the side that should be solid.")
+          // The hand-set shape: left at its default, pscale / scale size it.
+          .vector("bullet_primS", "Box Size", {1, 1, 1},
+                  "Half the box's size on each axis. Needs Auto Fit off. "
+                  "Overridden by the bullet_primS attribute.",
+                  PRM_XYZ_J, "{ autofit == 1 }")
+          .number("bullet_radius", "Radius", 0.5, R{0, 5},
+                  "Sphere or capsule radius. Needs Auto Fit off. Overridden by "
+                  "the bullet_radius attribute.",
+                  "{ autofit == 1 }")
+          .number("bullet_length", "Length", 1.0, R{0, 5},
+                  "Capsule length along Y, caps not included. Needs Auto Fit "
+                  "off. Overridden by the bullet_length attribute.",
+                  "{ autofit == 1 }")
+          .vector("bullet_primT", "Offset", {0, 0, 0},
+                  "Moves the shape from the body's centre. Needs Auto Fit off. "
+                  "Overridden by the bullet_primT attribute.",
+                  PRM_XYZ_J, "{ autofit == 1 }")
+          .vector("bullet_primR", "Rotation", {0, 0, 0},
+                  "Turns the shape, as XYZ angles in degrees. Needs Auto Fit "
+                  "off. Overridden by the bullet_primR attribute.",
+                  PRM_XYZ_J, "{ autofit == 1 }")
           .folder("Body")
           .menu("bodytype", "Body Type", 2, {"Static", "Kinematic", "Dynamic"},
                 "Static never moves, Kinematic follows its animation, Dynamic "
@@ -61,6 +83,11 @@ const SIM_DopDescription *SIM_Box3DData::getDescription() {
                   "water). A density attribute wins; RBD Packed Object always "
                   "writes one.",
                   "{ computemass == 0 }")
+          .number("inertialtensorstiffness", "Rotational Stiffness", 1.0,
+                  R{0.01, 10},
+                  "How hard bodies are to spin: above 1 resists spinning, "
+                  "below 1 spins easily. Overridden by the "
+                  "inertialtensorstiffness attribute.")
           .number("gravityscale", "Gravity Scale", 1.0,
                   "Multiplies the solver's Gravity: 0 floats, negative falls "
                   "upward. Overridden by the gravityscale attribute.")
@@ -182,6 +209,34 @@ b3dop::BodySettings SIM_Box3DData::toBodySettings() const {
   p.ccdThreshold = static_cast<float>(getCcdThreshold());
   s.hullPerConnectedSet = getHullPerConnected();
   s.autoFit = getAutoFit();
-  s.flipMeshWinding = getFlipWinding();
+
+  const float stiffness = static_cast<float>(getInertiaStiffness());
+  if (stiffness > 0.0f && std::isfinite(stiffness))
+    p.inertiaScale = stiffness;
+
+  // The hand-set shape: each value that is not its default.
+  const b3dop::PrimOverrides unset;
+  b3dop::PrimOverrides &o = s.prim;
+  const UT_Vector3 size = getPrimSize();
+  for (int i = 0; i < 3; ++i)
+    o.size[i] = static_cast<float>(size(i));
+  o.hasSize = o.size[0] != unset.size[0] || o.size[1] != unset.size[1] ||
+              o.size[2] != unset.size[2];
+  const UT_Vector3 offset = getPrimOffset();
+  for (int i = 0; i < 3; ++i)
+    o.pos[i] = static_cast<float>(offset(i));
+  o.hasPos = o.pos[0] != unset.pos[0] || o.pos[1] != unset.pos[1] ||
+             o.pos[2] != unset.pos[2];
+  const UT_Vector3 rotation = getPrimRotation();
+  const float degrees[3] = {static_cast<float>(rotation(0)),
+                            static_cast<float>(rotation(1)),
+                            static_cast<float>(rotation(2))};
+  o.hasRot = degrees[0] != 0.0f || degrees[1] != 0.0f || degrees[2] != 0.0f;
+  if (o.hasRot)
+    box3dEulerToQuat(degrees, o.rot);
+  o.radius = static_cast<float>(getPrimRadius());
+  o.hasRadius = o.radius != unset.radius;
+  o.length = static_cast<float>(getPrimLength());
+  o.hasLength = o.length != unset.length;
   return s;
 }

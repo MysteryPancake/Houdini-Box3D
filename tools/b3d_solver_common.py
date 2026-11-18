@@ -46,8 +46,9 @@ TAB_GROUPS = {
 # The solver's settings the SOP regroups by name, wherever the DOP has them: (folder label, names, open) on the
 # Solver tab after Cache Simulation.
 SOLVER_FOLDERS = [("Contacts", ("contactstiffness", "contactdamping", "contactpushspeed", "contactrecycledistance"), True),
-                  ("Sleeping", ("enablesleep",), False),
-                  ("Aging", ("enableaging", "reapdead", "reapatframeend"), False)]
+                  ("Sleeping", ("enablesleep",), False)]
+# Aging goes to the Output tab's Attributes folder, as RBD Bullet Solver's Age Attribute.
+AGING_PARMS = ("enableaging", "reapdead", "reapatframeend")
 
 # The DOP subnet for forces, the asset's dive target, and its outputs in the order the Multiple
 # Solver runs them around the Box3D Solver.
@@ -71,6 +72,13 @@ SHAPES_TOGGLE = "exportshapes"
 SHAPES_COLOR = "shapecolor"
 SHAPES_DATA = "Box3DShapes"
 SHOW_COLLISION = "showcollision"  # Visualization: the external collision geometry in the guide (on)
+SHOW_COLLISION_SHAPES = "showcollisionshapes"  # Visualization: the collider's collision shapes (off)
+SHOW_CONSTRAINTS = "showconstraints"  # Visualization: the constraint lines in the guide (off)
+FALSE_COLOR_MODE = "vis_mode"  # their false colour: 0 None, 1 Angle, 2 Distance, 3 Force, 4 Impact, 5 Torque, 6 Custom
+FALSE_COLOR_ATTRIB = "customattrib"  # the attribute False Color Mode Custom colours by
+SHOW_IMPACTS = "showimpacts"  # Visualization: the impact points in the guide (off)
+ADD_GRAVITY = "addgravity"  # Forces: Gravity times 0 when off, RBD Bullet Solver's toggle
+COLLISION_COLOR = "collisioncolor"  # Visualization: their colour, RBD Bullet Solver's blue
 GUIDE_GEO = "GUIDE_GEO"  # the node the asset's Guide Geometry property names (as RBD Bullet Solver)
 
 # The DOP Imports, set like RBD Bullet Solver's. Simulation points: Create Points to Represent
@@ -98,9 +106,6 @@ CONSTRAINTS_TOGGLES = dict(POINTS_TOGGLES)
 # folder's header toggle, the solver's Impact Min Speed, Fetch Impacts; closed), then Transfer Attributes.
 IMPACT_TOGGLE = "addimpact"  # the pieces' Box3D Data toggle (on the Packed Object's Object tab)
 START_ASLEEP = "startasleep"  # the pieces' Box3D Data toggle (on the Packed Object's Initial State tab)
-# The Packed Object's Initial State parameters shown on the Pieces tab, in this order: Inherit Velocity from Point
-# Velocity, Velocity (scaled by World Scale), Angular Velocity (degrees per second, not scaled).
-INITIAL_STATE = ("inheritvelocity", "vel", "angvel")
 IMPACT_SPEED = "impactminspeed"  # the solver's, moved from Advanced
 IMPACTS = "IMPACTS"  # the null holding the imported impact records, what Fetch Impacts merges
 # Fetch Impacts: an Object Merge of IMPACTS beside the asset (reused if there), selected.
@@ -116,7 +121,6 @@ DOP_PIECES, DOP_CONSTRAINTS, DOP_COLLISION = range(3)
 # DOP network's fourth input so the Switches can count its primitives (a height field has no points).
 DOP_STATIC = 3
 COLLISION_SOURCE = "collisionsource"  # menu: 0 Packed Pieces, 1 Static Object
-COLLISION_FLIP = "collision_flipwinding"  # Static Object mesh winding (Box3D Data's Flip Static Mesh Winding)
 STATIC_NULL = "COLLISION_STATIC"  # the SOP the collision Static Object reads
 STATIC_DATA = "collision_static_data"  # the Box3D Data DOP after the collision Static Object
 # Collider settings that stay on when the collider is a Static Object (Shape and Contacts are for packed pieces).

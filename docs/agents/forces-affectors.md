@@ -71,10 +71,10 @@ static bodies: a height field if the geometry has one, else a triangle mesh of i
   height-field data, so `Impl::bodyGeometry` owns them until the body, its shapes or the world go.
 
 **Meshes.** Polygons fan-triangulated; Houdini front faces are clockwise and Box3D's one-sided meshes want
-counter-clockwise, so triangles are flipped unless Box3D Data's `flipwinding`. A rotation + positive per-axis scale
+counter-clockwise, so triangles are flipped. A rotation + positive per-axis scale
 (`decomposeScaledRigid`, Box3DAffectorMath.h) goes to the body pose and the mesh scale (`setMeshScaleByHandle`), so an
 animated transform never rebuilds the mesh; shear or a mirror is baked into the vertices. Signature: P and
-primitive-list data ids, counts, friction / bounce / flip, and the matrix when baked.
+primitive-list data ids, counts, friction / bounce, and the matrix when baked.
 
 **Height fields** (`findHeightVolume`, `prepareHeightField`, `buildHeightFieldBody`). The float `GEO_PrimVolume`
 named `height` that is one voxel thick (with no `name` attribute, the first such volume); other primitives are ignored.

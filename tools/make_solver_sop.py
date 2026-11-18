@@ -46,18 +46,18 @@ Inside:
     import_shapes (DOP Import of the objects' Box3DShapes data, written by the solver's Export Collision
       Shapes) -> tint_shapes (Shape Color) -> switch_show_shapes -> GUIDE_GEO
 
-Its parameters: Reset Simulation and Start Frame above the tabs; then the tabs Solver (the
-solver's own settings loose, then its contact settings in a Contacts folder, and the
-closed Sleeping (Allow Sleeping) and Aging folders), Pieces
-(Box3D Packed Object's Box3D Data folders for the simulated pieces: Shape, Body, Material, CCD & Contacts,
-Sleep), Collision (a Collision
+Its parameters: Reset Simulation and Start Frame above the tabs; then the tabs Setup (here Solver: the
+solver's own settings loose, Solve on Creation Frame, Cache Simulation joined to Cache Memory (MB),
+then its contact settings in a Contacts folder, and the closed Sleeping (Allow Sleeping)
+folder), Properties (here Pieces: Box3D Packed Object's Box3D Data folders for the simulated pieces: Shape, Body,
+Material, CCD & Contacts, Sleep, with Override Attributes from SOP), Collision (a Collision
 Geometry folder whose header toggle is Use External Collisions, holding Collision Type and the
-collider's Shape, Material and Contacts settings, collision_* names), Forces (Gravity first, loose; Force DOPs and Bounce / Friction folders),
-Visualization (Show Collision Geometry, Show Collision Shapes, Shape Color), Advanced (Stability and Performance folders;
-Performance starts with the Cache Simulation checkbox joined to Cache Memory (MB)), and Output, always last
-(Impact Data with Fetch Impacts, Transfer Attributes and Transfer to Geometry / Proxy Geometry,
-Constraints). Every folder is open except Impact Data, Sleeping and Aging. Each inner parameter is a channel reference to
-the outer one.
+collider's Shape, Material and Contacts settings, collision_* names), Forces (Add Gravity and Gravity first, loose;
+Force DOPs and Bounce / Friction folders), Constraints (Break Thresholds and Export Broken Constraints), Visualization (Show Collision Shape and Shape Color; the collider's Show Geometry,
+Show Collision Shape and Color), Advanced (Stability, Performance and Collision folders, and Constraints with a folder per joint type), and Output, always last (Impact Data with
+Fetch Impacts, Attributes with Aging, Transfer Attributes and Transfer to Geometry / Proxy Geometry). Every folder is open
+except Impact Data and Sleeping and the joint folders. Each inner parameter is a channel reference to the outer
+one.
 A Box3D Data parameter whose name the solver already uses gets a "piece_" prefix.
 
 Never fails the build: problems are printed as warnings and the script exits 0.
@@ -77,6 +77,7 @@ from b3d_hda import labels, pull, value_templates, without_parmops  # noqa: E402
 from b3d_solver_common import (  # noqa: E402
     GLOBAL_SUBSTEPS,
     CACHE_ENABLED,
+    OVERWRITE_FROM_SOP,
     CACHE_MEMORY,
     COLLISION_TYPE,
     as_collapsible,
@@ -84,7 +85,6 @@ from b3d_solver_common import (  # noqa: E402
     COLLIDER_DROPPED,
     COLLIDER_FOLDERS,
     COLLIDER_RELABEL,
-    COLLISION_FLIP,
     COLLISION_SOURCE,
     DIVE_TARGET,
     DOP_COLLISION,
@@ -96,7 +96,6 @@ from b3d_solver_common import (  # noqa: E402
     FETCH_IMPACTS,
     group_tab,
     ICON,
-    INITIAL_STATE,
     IMPACT_SPEED,
     IMPACT_TOGGLE,
     IMPACTS,
@@ -112,11 +111,18 @@ from b3d_solver_common import (  # noqa: E402
     SHAPES_COLOR,
     SHAPES_TOGGLE,
     SHOW_COLLISION,
+    SHOW_COLLISION_SHAPES,
+    SHOW_CONSTRAINTS,
+    FALSE_COLOR_MODE,
+    FALSE_COLOR_ATTRIB,
+    SHOW_IMPACTS,
+    COLLISION_COLOR,
+    AGING_PARMS,
+    ADD_GRAVITY,
     START_ASLEEP,
     STATIC_COLLIDER_FOLDERS,
     STATIC_DATA,
     solver_folders,
-    TAB_GROUPS,
     SOLVER_FOLDERS,
     START_FRAME,
     TRANSFER_ATTRIBUTES,
@@ -141,14 +147,13 @@ from b3d_solver_ground import (  # noqa: E402
 )
 from b3d_solver_network import (  # noqa: E402
     build_network,
-    IMPORT_CONSTRAINTS,
-    IMPORT_PROXY,
     KEEP_BROKEN,
     POINT_VELOCITY_PARMS,
     scale_joint_settings,
     scale_settings,
     SOLVE_FIRST,
     SOLVE_FIRST_PARM,
+    COLLISION_SOLVE_FIRST,
     WORLD_SCALE,
     WORLD_SCALE_TOGGLE,
 )
@@ -203,15 +208,8 @@ def moved_settings(packed):
     return {name: pt.clone() for name, pt in found.items() if pt is not None}
 
 
-def initial_state_folder(packed):
-    """An open Initial State folder with the Packed Object's INITIAL_STATE parameters (cloned: same names and
-    conditions). None, with a warning, when one is missing."""
-    group = packed.parmTemplateGroup()
-    found = [group.find(name) for name in INITIAL_STATE]
-    if any(pt is None for pt in found):
-        warn(f"{packed.path()} lacks some of {INITIAL_STATE}: no Initial State folder on the Pieces tab")
-        return None
-    return collapsible("b3dsop_initial_state", "Initial State", [pt.clone() for pt in found])
+# The Solver and Pieces tabs are labelled as RBD Bullet Solver's Setup and Properties.
+TAB_LABELS = {"Solver": "Setup", "Pieces": "Properties"}
 
 
 def build(out_path, packed_hda=None):
@@ -228,8 +226,8 @@ def build(out_path, packed_hda=None):
     dopnet, solver, pieces = build_network(sub)
 
     # Parameters: Reset Simulation and Start Frame above the tabs; then the tabs Solver (ending with
-    # the contact settings), Collision (the collision toggles and the
-    # collider's settings), Forces, Pieces (Box3D Data folders, sleeping, aging), Advanced, Output.
+    # the contact settings), Pieces (Box3D Data folders), Collision (the collision toggles and the
+    # collider's settings), Forces, Constraints, Visualization, Advanced, Output.
     # (inner node's path relative to the subnet, inner tuple name, outer tuple name): paths, since
     # the subnet node is replaced by the asset instance below.
     links = []
@@ -253,7 +251,8 @@ def build(out_path, packed_hda=None):
     if START_FRAME in dop_templates:
         top.append(dop_templates[START_FRAME])
     # Cache Simulation as RBD Bullet Solver's: a checkbox with its label hidden, joined to Cache Memory (MB), which
-    # it enables (any checkbox the DOP network has on that row is left out). Both go in Advanced / Performance.
+    # it enables (any checkbox the DOP network has on that row is left out). Both go on the Solver tab, after
+    # Solve on Creation Frame.
     cache_toggle = dop_templates.get(CACHE_ENABLED)
     cache_memory = [pt for pt in row_of(dopnet, CACHE_MEMORY) if pt.type() != hou.parmTemplateType.Toggle]
     if not cache_memory:
@@ -269,19 +268,21 @@ def build(out_path, packed_hda=None):
             own = pt.conditionals().get(hou.parmCondType.DisableWhen, "")
             pt.setConditional(hou.parmCondType.DisableWhen, f"{own} {off}".strip())
     cache_items = ([cache_toggle] if cache_toggle is not None else []) + cache_memory
-    solver_first = []
-    # Solve on Creation Frame (as on RBD Bullet Solver's first tab), linked to the pieces' and the collider's
-    # Packed Object.
+    # Solve on Creation Frame (as on RBD Bullet Solver's first tab), linked to the pieces' Packed Object, and the
+    # collider's own on Advanced under Collision (collision_solvefirstframe, as Bullet's).
     solve_first = hou.ToggleParmTemplate(
         SOLVE_FIRST, "Solve on Creation Frame", default_value=False,
-        help="Simulates pieces and colliders on the frame they appear. Off: they start moving one frame later.")
-    for obj_name in ("pieces", "collision"):
+        help="Simulates the pieces on the frame they appear. Off: they start moving one frame later.")
+    collision_solve_first = hou.ToggleParmTemplate(
+        COLLISION_SOLVE_FIRST, "Solve on Creation Frame", default_value=False,
+        help="Simulates the colliders on the frame they appear. Off: they start moving one frame later.")
+    for obj_name, outer in (("pieces", SOLVE_FIRST), ("collision", COLLISION_SOLVE_FIRST)):
         obj = dopnet.node(obj_name)
         if obj is None or obj.parm(SOLVE_FIRST_PARM) is None:
-            warn(f"{dopnet.path()}/{obj_name} has no {SOLVE_FIRST_PARM}: {SOLVE_FIRST} does nothing there")
+            warn(f"{dopnet.path()}/{obj_name} has no {SOLVE_FIRST_PARM}: {outer} does nothing there")
         else:
-            links.append((sub.relativePathTo(obj), SOLVE_FIRST_PARM, SOLVE_FIRST))
-    solver_first = [solve_first] + solver_first
+            links.append((sub.relativePathTo(obj), SOLVE_FIRST_PARM, outer))
+    solver_first = [solve_first] + cache_items
     # World Scale, first on the Solver tab (RBD Bullet Solver's usescale / Bullet World Scale).
     use_scale = hou.ToggleParmTemplate(WORLD_SCALE_TOGGLE, "Use World Scale", default_value=False,
                                        join_with_next=True,
@@ -317,9 +318,7 @@ def build(out_path, packed_hda=None):
     collider_tabs = [t for t in data_folders(collision) if t.label() in COLLIDER_FOLDERS]
     if len(collider_tabs) != len(COLLIDER_FOLDERS):
         warn(f"collider folders found: {[t.label() for t in collider_tabs]}, expected {COLLIDER_FOLDERS}")
-    # Flip Static Mesh Winding is the collider's Shape setting already; it is dropped here and comes back as
-    # COLLISION_FLIP above the folders, so a Static Object (whose Shape folder is off) has it too.
-    collider_tabs = drop_templates(collider_tabs, COLLIDER_DROPPED | {"flipwinding"})
+    collider_tabs = drop_templates(collider_tabs, COLLIDER_DROPPED)
     collider_renames = {pt.name(): f"collision_{pt.name()}" for pt in value_templates(collider_tabs)}
     collider_folders = []
     for i, tab in enumerate(rename_templates(collider_tabs, collider_renames)):
@@ -345,14 +344,6 @@ def build(out_path, packed_hda=None):
         menu_labels=("Packed Pieces", "Static Object"), default_value=0,
         help="Packed Pieces: each piece is a body, as the Geometry input. Static Object: the whole input is one "
              "static mesh, or a height field if it has one. Only for colliders that never move.")
-    flip = hou.ToggleParmTemplate(
-        COLLISION_FLIP, "Flip Mesh Winding", default_value=False,
-        help="Static meshes are one-sided. Turn on if pieces fall through from the side that should be solid.")
-    # Both colliders: a static concave piece is a mesh too.
-    for node in (collision, static_data):
-        if node is not None:
-            links.append((sub.relativePathTo(node), "flipwinding", COLLISION_FLIP))
-    taken.add(COLLISION_FLIP)
     use_collisions = hou.ToggleParmTemplate(
         USE_COLLISIONS, "Use External Collisions", default_value=True,
         help="Collides the pieces with the Collision input. Off: the Collision input is ignored.")
@@ -364,7 +355,6 @@ def build(out_path, packed_hda=None):
              "Deforming.")
     animated.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_COLLISIONS} == 0 }}")
     source.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_COLLISIONS} == 0 }}")
-    flip.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_COLLISIONS} == 0 }}")
     # One open Collision Geometry folder with Use External Collisions as its header checkbox, laid out as
     # RBD Bullet Solver's: the toggle just before the folder (drawn in its header), the collider's
     # folders simple inside it, each disabled with the toggle off.
@@ -379,14 +369,14 @@ def build(out_path, packed_hda=None):
     links += [(sub.relativePathTo(dopnet.node(GROUND_DATA)), inner, outer) for _, inner, outer in ground_links]
     collision_items = [use_collisions,
                        collapsible("b3dsop_collision_geometry", "Collision Geometry",
-                                   [source, animated, flip] + collider_folders, header_toggle=USE_COLLISIONS),
+                                   [source, animated] + collider_folders, header_toggle=USE_COLLISIONS),
                        ground_folder]
     # The Constraints tab: every relationship's own settings (b3d_solver_constraints.py).
     constraint_folders, constraint_links = constraint_items(dopnet, sub)
     links += constraint_links
     taken.update(new for _, _, new in constraint_links)
     taken.update(BREAK_PARMS)
-    taken.update([TRANSFER_ATTRIBUTES, KEEP_BROKEN, IMPORT_CONSTRAINTS, IMPORT_PROXY]
+    taken.update([TRANSFER_ATTRIBUTES, KEEP_BROKEN]
                  + list(POINT_VELOCITY_PARMS) + [n for n, _ in TRANSFER_TO.values()])
 
     group = hou.ParmTemplateGroup()
@@ -413,19 +403,20 @@ def build(out_path, packed_hda=None):
             warn(f"none of the {label} settings {names} found on the solver: no {label} folder on the Solver tab")
         else:
             folder_items.append(collapsible(f"b3dsop_{label.lower()}", label, got, open_folder=is_open))
+    aging = take(AGING_PARMS)
     speed = take((IMPACT_SPEED,))
     shapes = take((SHAPES_TOGGLE,))
     tabs = [(label, drop_templates(contents, set())) for label, contents in tabs]  # folders left empty go
-    # The Advanced tab is regrouped by name (Cache Simulation joins Performance): its DOP folders come apart.
+    # The Advanced tab is regrouped by name: its DOP folders come apart.
     tabs = [(label, flatten_folders(contents) if label == "Advanced" else contents) for label, contents in tabs]
     solver_extra = solver_first + folder_items
-    # Tab order: Solver, Pieces, Collision, Forces, any other solver tabs, Visualization, then Advanced and
-    # Output always last.
+    # Tab order, as RBD Bullet Solver's: Solver, Pieces, Collision, Forces, Constraints, any other solver tabs,
+    # Visualization, then Advanced and Output always last.
     by_label = {label: contents for label, contents in tabs if contents}
-    # Cache Simulation and Cache Memory (MB) lead the Advanced tab's Performance folder.
-    by_label["Advanced"] = cache_items + by_label.get("Advanced", [])
-    advanced_groups = [(glabel, names + [pt.name() for pt in cache_items] if glabel == "Performance" else names)
-                       for glabel, names in TAB_GROUPS["Advanced"]]
+    # The joint types' settings are on Advanced under Constraints, as RBD Bullet Solver's.
+    by_label["Advanced"] = by_label.get("Advanced", []) + [
+        collapsible("b3dsop_advanced_collision", "Collision", [collision_solve_first]),
+        collapsible("b3dsop_advanced_constraints", "Constraints", constraint_folders)]
     solver_items = by_label.pop("Solver", [])
     at = next((i for i, pt in enumerate(solver_items) if pt.name() == "substeps"), len(solver_items))
     if at < len(solver_items):
@@ -434,10 +425,23 @@ def build(out_path, packed_hda=None):
     ordered = [("Solver", [use_scale, world_scale] + solver_items + solver_extra),
                ("Pieces", None),  # filled below
                ("Collision", collision_items)]
-    ordered.append(("Constraints", break_items() + constraint_folders))
+    keep_broken = hou.ToggleParmTemplate(
+        KEEP_BROKEN, "Export Broken Constraints", default_value=False,
+        help="Keeps broken constraints in the Constraint Geometry output. Off: they are removed.")
     last = [(label, by_label.pop(label)) for label in ("Advanced",) if label in by_label]
     if "Forces" in by_label:
-        ordered.append(("Forces", by_label.pop("Forces")))
+        forces_items = by_label.pop("Forces")
+        # Add Gravity, as RBD Bullet Solver's: off multiplies Gravity by 0 (add_gravity_switch, after the links).
+        at = next((i for i, pt in enumerate(forces_items) if pt.name() == "gravity"), None)
+        if at is None:
+            warn("no gravity on the solver's Forces tab: no Add Gravity toggle")
+        else:
+            forces_items[at].setConditional(hou.parmCondType.DisableWhen, f"{{ {ADD_GRAVITY} == 0 }}")
+            forces_items.insert(at, hou.ToggleParmTemplate(
+                ADD_GRAVITY, "Add Gravity", default_value=True,
+                help="Off turns Gravity off. Force DOPs still act."))
+        ordered.append(("Forces", forces_items))
+    ordered.append(("Constraints", break_items() + [keep_broken]))
     ordered += list(by_label.items()) + [("Visualization", None)] + last + [("Output", None)]  # filled below
     print("make_solver_sop: solver tabs: " + ", ".join(t.label() for t in solver_tabs))
 
@@ -470,21 +474,27 @@ def build(out_path, packed_hda=None):
     # The Pieces tab: the Box3D Data folders (Shape, Body, Material, CCD & Contacts, Sleep), each an open
     # collapsible folder (the folder Add Impact Data came out of may be left empty: dropped).
     pieces_items = [as_collapsible(f) for f in folders if f.parmTemplates()]
-    # Initial State (the Packed Object's Velocity, Angular Velocity and Inherit Velocity) before Sleep.
-    initial = initial_state_folder(pieces)
-    if initial is not None:
-        at = next((i for i, f in enumerate(pieces_items) if f.label() == "Sleep"), len(pieces_items))
-        pieces_items.insert(at, initial)
-        links += [(sub.relativePathTo(pieces), name, name) for name in INITIAL_STATE]
+    # Override Attributes from SOP, as RBD Bullet Solver's Pieces tab has it: the Packed Object's toggle that reads
+    # the SOP again every step (linked by name, off by default as the Packed Object's).
+    if pieces.parm(OVERWRITE_FROM_SOP) is None:
+        warn(f"{pieces.path()} has no {OVERWRITE_FROM_SOP}: no Override Attributes from SOP on the Pieces tab")
+    else:
+        override = hou.ToggleParmTemplate(
+            OVERWRITE_FROM_SOP, "Override Attributes from SOP", default_value=False,
+            help="Reads the pieces again every step, so attributes that change over time (such as active) reach "
+                 "the simulation. Off: read once when a piece appears. Costs time every step.")
+        pieces_items.append(collapsible("b3dsop_override", "Override Attributes", [override]))
+        links.append((sub.relativePathTo(pieces), OVERWRITE_FROM_SOP, OVERWRITE_FROM_SOP))
     velocity = velocity_templates(sub.node("transform_geometry"))
-    output_items = output_tab(impact, speed, velocity)
+    output_items = output_tab(impact, speed, velocity, aging)
     vis_items = visualization_tab(shapes)
     for i, (label, contents) in enumerate(ordered):
         contents = {"Pieces": pieces_items, "Output": output_items, "Visualization": vis_items,
                     "Collision": contents, "Constraints": contents}.get(
-            label, group_tab(label, contents, advanced_groups if label == "Advanced" else None)
+            label, group_tab(label, contents)
             if contents is not None else contents)
-        group.append(hou.FolderParmTemplate(f"b3dsop_tab{i}", label, contents, folder_type=hou.folderType.Tabs))
+        group.append(hou.FolderParmTemplate(f"b3dsop_tab{i}", TAB_LABELS.get(label, label), contents,
+                                            folder_type=hou.folderType.Tabs))
 
     if os.path.exists(out_path):
         try:
@@ -525,10 +535,18 @@ def build(out_path, packed_hda=None):
     asset.allowEditingOfContents()
     for inner_path, inner_name, outer_name in links:
         link(asset.node(inner_path), inner_name, asset, outer_name)
+    # The solver exports the shapes while either Show Collision Shape is on (the pieces' or the collider's).
+    export = asset.node("dopnet/box3d_solver").parm(SHAPES_TOGGLE)
+    if export is None:
+        warn(f"dopnet/box3d_solver has no {SHAPES_TOGGLE}: the collider's collision shapes are not drawn")
+    else:
+        export.setExpression(f'ch("../../{SHAPES_TOGGLE}") || ch("../../{SHOW_COLLISION_SHAPES}")',
+                             hou.exprLanguage.Hscript)
     finish_ground(asset)
     finish_constraints(asset, constraint_links)
     scale_settings(asset)
     scale_joint_settings(asset)
+    add_gravity_switch(asset)
     # Set Always, not Set Initial: the solver's settings are read every step, so an animated one (Gravity keyed
     # or driven by an expression) changes the simulation while it plays.
     b3d_hda.set_operations(asset.node("dopnet/box3d_solver"), "always", warn)
@@ -563,10 +581,10 @@ def velocity_templates(xform):
     return found
 
 
-def output_tab(impact, speed, velocity):
+def output_tab(impact, speed, velocity, aging):
     """The Output tab's contents: Impact Data (a closed collapsible folder, `impact` its header toggle,
-    then `speed` and Fetch Impacts), Attribute Transfer (with `velocity`, Transform Pieces' Point
-    Velocities), Outputs (Import Constraints / Proxy), Constraints."""
+    then `speed` and Fetch Impacts), Attributes (`aging`: Enable Aging and its Reap options), Attribute Transfer (with `velocity`, Transform Pieces' Point
+    Velocities)."""
     items = []
     if not impact:
         warn(f"no {IMPACT_TOGGLE} on the pieces: Impact Data is not on the Output tab")
@@ -586,6 +604,10 @@ def output_tab(impact, speed, velocity):
         contents.append(fetch)
         items.append(collapsible("b3dsop_impacts", "Impact Data", contents, open_folder=False,
                                  header_toggle=toggle.name()))
+    if aging:
+        items.append(collapsible("b3dsop_attributes", "Attributes", aging))
+    else:
+        warn("no aging settings on the solver: no Attributes folder on the Output tab")
     transfer = hou.StringParmTemplate(
         TRANSFER_ATTRIBUTES, "Transfer Attributes", 1, default_value=(TRANSFER_ATTRIBUTES_DEFAULT,),
         help="Point attributes copied from the simulation onto Simulation Points, and onto the pieces as ticked below.")
@@ -593,43 +615,66 @@ def output_tab(impact, speed, velocity):
                                  help=f"Copies Transfer Attributes onto the {label[12:]} output. Off: only w.")
           for name, label in TRANSFER_TO.values()]
     items.append(collapsible("b3dsop_transfer", "Attribute Transfer", [transfer] + to + list(velocity)))
-    imports = [hou.ToggleParmTemplate(IMPORT_CONSTRAINTS, "Import Constraints", default_value=True,
-                                      help="Outputs the simulated constraints. Off: an empty output, which is faster."),
-               hou.ToggleParmTemplate(IMPORT_PROXY, "Import Proxy", default_value=True,
-                                      help="Outputs the simulated proxy. Off: an empty output, which is faster.")]
-    items.append(collapsible("b3dsop_outputs", "Outputs", imports))
-    keep = hou.ToggleParmTemplate(KEEP_BROKEN, "Export Broken Constraints", default_value=False,
-                                  help="Keeps broken constraints in the Constraint Geometry output. Off: they are removed.")
-    keep.setConditional(hou.parmCondType.DisableWhen, f"{{ {IMPORT_CONSTRAINTS} == 0 }}")
-    items.append(collapsible("b3dsop_constraints", "Constraints", [keep]))
     return items
 
 
 def visualization_tab(shapes):
     """The Visualization tab's contents, laid out as RBD Bullet Solver's: a Visualize Geometries folder holding
-    Geometry (the solver's Export Collision Shapes as Show Collision Shapes, and Shape Color), Ground and Collision
-    Geometry (Show Collision Geometry), then the Inspector folder."""
+    Geometry (the solver's Export Collision Shapes as Show Collision Shape, and Shape Color), Ground and Collision
+    Geometry (Show Geometry, Show Collision Shape and Color for the collider), then the Inspector folder."""
     if not shapes:
-        warn(f"no {SHAPES_TOGGLE} on the solver: Show Collision Shapes is not on the Visualization tab")
+        warn(f"no {SHAPES_TOGGLE} on the solver: Show Collision Shape is not on the Visualization tab")
         return []
     show = shapes[0].clone()
-    show.setLabel("Show Collision Shapes")
-    show.setHelp("Draws every body's collision shapes in the viewport. Costs time every step.")
+    show.setLabel("Show Collision Shape")
+    show.setHelp("Draws the pieces' collision shapes in the viewport. Costs time every step.")
     color = hou.FloatParmTemplate(
         SHAPES_COLOR, "Shape Color", 3, default_value=(0.2, 0.8, 1.0), min=0.0, max=1.0,
         naming_scheme=hou.parmNamingScheme.RGBA, look=hou.parmLook.ColorSquare,
-        help="Colour of the collision shapes.")
+        help="Colour of the pieces' collision shapes.")
     color.setConditional(hou.parmCondType.DisableWhen, f"{{ {show.name()} == 0 }}")
     # The external collision geometry, as RBD Bullet Solver's Collision Geometry > Show Geometry (on).
     geo = hou.ToggleParmTemplate(
-        SHOW_COLLISION, "Show Collision Geometry", default_value=True,
+        SHOW_COLLISION, "Show Geometry", default_value=True,
         help="Draws the external collision geometry in the viewport.")
     geo.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_COLLISIONS} == 0 }}")
+    # The collider's own shapes and their colour, as RBD Bullet Solver's Show Collision Shape and Color there.
+    cshapes = hou.ToggleParmTemplate(
+        SHOW_COLLISION_SHAPES, "Show Collision Shape", default_value=False,
+        help="Draws the external collision geometry's collision shapes in the viewport. Costs time every step.")
+    cshapes.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_COLLISIONS} == 0 }}")
+    ccolor = hou.FloatParmTemplate(
+        COLLISION_COLOR, "Color", 3, default_value=(0.0, 0.0, 1.0), min=0.0, max=1.0,
+        naming_scheme=hou.parmNamingScheme.RGBA, look=hou.parmLook.ColorSquare,
+        help="Colour of the external collision geometry's collision shapes.")
+    ccolor.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_COLLISIONS} == 0 }} {{ {SHOW_COLLISION_SHAPES} == 0 }}")
     b3d_hda.show_in_toolbar(geo, show)  # the bar along the top of the viewport, as RBD Bullet Solver's toggles
+    # The constraint lines with False Color Mode, and the impact points, as RBD Bullet Solver's Show Constraints,
+    # Constraint Geometry and Impact Data > Show Impacts (guides are drawn only while their toggle is on).
+    show_constraints = hou.ToggleParmTemplate(
+        SHOW_CONSTRAINTS, "Show Constraints", default_value=False,
+        help="Draws the constraint lines in the viewport. Costs time every step with many constraints.")
+    mode = hou.MenuParmTemplate(
+        FALSE_COLOR_MODE, "False Color Mode", tuple(str(i) for i in range(7)),
+        menu_labels=("None", "Angle", "Distance", "Force", "Impact", "Torque", "Custom Attribute"), default_value=0,
+        help="Colours the constraint lines from blue to red by this value, scaled by the largest one.")
+    mode.setConditional(hou.parmCondType.DisableWhen, f"{{ {SHOW_CONSTRAINTS} == 0 }}")
+    custom = hou.StringParmTemplate(
+        FALSE_COLOR_ATTRIB, "Attribute", 1, default_value=("",),
+        help="The float primitive attribute to colour by.")
+    custom.setConditional(hou.parmCondType.DisableWhen,
+                          f"{{ {SHOW_CONSTRAINTS} == 0 }} {{ {FALSE_COLOR_MODE} != 6 }}")
+    constraint_folder = collapsible("b3dsop_vis_constraint_geometry", "Constraint Geometry", [mode, custom])
+    impacts = hou.ToggleParmTemplate(
+        SHOW_IMPACTS, "Show Impacts", default_value=False,
+        help="Draws the impact points in the viewport. Needs Add Impact Data on the Output tab.")
+    impacts.setConditional(hou.parmCondType.DisableWhen, "{ addimpact == 0 }")
+    impact_folder = collapsible("b3dsop_vis_impact_data", "Impact Data", [impacts])
     visualize = collapsible("b3dsop_visualize_geometries", "Visualize Geometries", [
         collapsible("b3dsop_vis_geometry", "Geometry", [show, color]),
         ground_visualization(),
-        collapsible("b3dsop_vis_collision_geometry", "Collision Geometry", [geo])])
+        collapsible("b3dsop_vis_collision_geometry", "Collision Geometry", [geo, cshapes, ccolor]),
+        show_constraints, constraint_folder, impact_folder])
     return [visualize, inspector_folder()]
 
 
@@ -645,6 +690,25 @@ def inspector_folder():
     folder = b3d_hda.collapsible("b3dsop_inspector", "Inspector", [attribs, size, precision])
     folder.setTags({**folder.tags(), "sidefx::header_parm": "inspectorattribs"})
     return folder
+
+
+def add_gravity_switch(asset):
+    """The inner solver's Gravity times Add Gravity (0 or 1), after World Scale's own factor."""
+    inner = asset.node("dopnet/box3d_solver")
+    tup = inner.parmTuple("gravity") if inner is not None else None
+    if tup is None or asset.parm(ADD_GRAVITY) is None:
+        warn(f"no gravity on dopnet/box3d_solver or no {ADD_GRAVITY} on the asset: Add Gravity does nothing")
+        return
+    rel = inner.relativePathTo(asset)
+    for p in tup:
+        try:
+            expr = p.expression()
+        except hou.OperationFailed:
+            expr = None
+        if not expr:
+            warn(f"{p.path()} is not a channel reference: Add Gravity does not reach it")
+            continue
+        p.setExpression(f'({expr}) * ch("{rel}/{ADD_GRAVITY}")', hou.exprLanguage.Hscript)
 
 
 def link(inner, inner_name, outer, outer_name):
@@ -686,6 +750,13 @@ def check(out_path):
         if inner is None or inner.parm(SHAPES_TOGGLE) is None or inner.parm(SHAPES_TOGGLE).eval() != 1:
             warn(f"dopnet/box3d_solver/{SHAPES_TOGGLE} does not follow the asset's")
         probe.parm(SHAPES_TOGGLE).set(0)
+        if probe.parm(SHOW_COLLISION_SHAPES) is None:
+            warn(f"no {SHOW_COLLISION_SHAPES} parameter on the asset")
+        else:
+            probe.parm(SHOW_COLLISION_SHAPES).set(1)
+            if inner is None or inner.parm(SHAPES_TOGGLE).eval() != 1:
+                warn(f"dopnet/box3d_solver/{SHAPES_TOGGLE} does not follow {SHOW_COLLISION_SHAPES}")
+            probe.parm(SHOW_COLLISION_SHAPES).set(0)
     if probe.parm(CACHE_MEMORY) is None:
         warn(f"no {CACHE_MEMORY} parameter on the asset")
     if probe.parm(SHOW_COLLISION) is None or probe.parm(SHOW_COLLISION).eval() != 1:
@@ -754,8 +825,7 @@ def check(out_path):
     keep = probe.node("sim_points")
     if keep is None or TRANSFER_ATTRIBUTES_DEFAULT not in keep.parm("ptdel").eval():
         warn(f"sim_points does not keep the asset's {TRANSFER_ATTRIBUTES}")
-    for inner_path in ("dopnet/pieces", "dopnet/collision"):
-        outer = SOLVE_FIRST
+    for inner_path, outer in (("dopnet/pieces", SOLVE_FIRST), ("dopnet/collision", COLLISION_SOLVE_FIRST)):
         p, obj = probe.parm(outer), probe.node(inner_path)
         q = obj.parmTuple(SOLVE_FIRST_PARM) if obj is not None else None
         if p is None or q is None:

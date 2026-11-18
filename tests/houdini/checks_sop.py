@@ -91,7 +91,7 @@ def test_solver_sop_collision():
 def test_solver_sop_collision_static():
     """Collide As Static Object on the Collision input: an unpacked grid and a flat HeightField SOP each hold a
     box at y = 0.5 (with Use External Collisions on only), a packed collider stays packed pieces by default,
-    the Material settings reach the Static Object's Box3D Data and Flip Mesh Winding does too."""
+    the Material settings reach the Static Object's Box3D Data."""
     pieces, names = packed_boxes("sop_static_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0)}])
 
     def settle(sop, frames=72):
@@ -130,38 +130,15 @@ def test_solver_sop_collision_static():
     results.append(Result("solver_sop_collision_static", Result.PASS if close(y or 0, 0.5, 0.03) else Result.FAIL,
                           f"Packed Pieces (the default): box at y={y} (expected 0.5)"))
 
-    # Material and winding reach the Static Object's Box3D Data.
+    # Material reaches the Static Object's Box3D Data.
     mat = solver_sop("sop_static_material", geometry=pieces, collision=grid.path())
     for name, value in {"collision_friction": 0.3, "collision_bounce": 0.7}.items():
         set_parm(mat, [name], value)
-    set_parm(mat, ["collision_flipwinding"], 1)
     data = mat.node("dopnet/collision_static_data")
-    got = (data.parm("friction").eval(), data.parm("bounce").eval(), data.parm("flipwinding").eval())
-    ok = close(got[0], 0.3, 1e-6) and close(got[1], 0.7, 1e-6) and got[2] == 1
+    got = (data.parm("friction").eval(), data.parm("bounce").eval())
+    ok = close(got[0], 0.3, 1e-6) and close(got[1], 0.7, 1e-6)
     results.append(Result("solver_sop_collision_static", Result.PASS if ok else Result.FAIL,
-                          f"Static Object's Box3D Data friction, bounce, flipwinding: {got} (expected 0.3, 0.7, 1)"))
-    return results
-
-
-def test_solver_sop_initial_state():
-    """Initial State on the Pieces tab: with Inherit Velocity from Point Velocity off, Velocity (3, 0, 0) moves a
-    box 3 units in a second without gravity, also with World Scale 2 (the output is back at real size)."""
-    pieces, names = packed_boxes("sop_initial_pieces", [{"size": (1, 1, 1), "center": (0, 5, 0)}])
-    results = []
-    for scale in (1, 2):
-        sop = solver_sop(f"sop_initial_{scale}", geometry=pieces)
-        set_parm(sop, ["gravity"], (0, 0, 0))
-        set_parm(sop, ["inheritvelocity"], 0)
-        set_parm(sop, ["vel"], (3, 0, 0))
-        if scale != 1:
-            set_parm(sop, ["usescale"], 1)
-            set_parm(sop, ["scale"], scale)
-        fps = hou.fps()
-        frames = int(round(fps)) + 1  # a second of motion
-        pos = play(sop, frames, lambda s, f: named_positions(s.geometry(0)).get(names[0]) if f == frames else None)[frames]
-        x = pos[0] if pos else None
-        results.append(Result("solver_sop_initial_state", Result.PASS if x is not None and close(x, 3.0, 0.3) else Result.FAIL,
-                              f"Velocity 3 along x, World Scale {scale}: box at x={x} after 1 s (expected 3)"))
+                          f"Static Object's Box3D Data friction, bounce: {got} (expected 0.3, 0.7)"))
     return results
 
 
@@ -180,7 +157,7 @@ def test_solver_sop_animated_setting():
 
 
 def test_solver_sop_constraint_settings():
-    """The Constraints tab: a Weld's Torque Threshold on the node reaches the inner Weld node, and World Scale 2
+    """The joint settings (Advanced, Constraints): a Weld's Torque Threshold on the node reaches the inner Weld node, and World Scale 2
     makes it four times as large there (a torque is the square of the scale). The asset has its help card."""
     sop = solver_sop("sop_constraints_tab")
     inner = sop.node("dopnet/weld")
@@ -1237,12 +1214,15 @@ def _folders(entries, path=()):
 
 
 def test_solver_sop_layout():
-    """The Solver SOP's tabs and folders: Solver, Pieces, Collision, Constraints, Forces, Visualization, Advanced,
-    Output (no Misc); Collision Geometry's header checkbox is Use External Collisions, which sits just before it
-    (as RBD Bullet Solver's); the Pieces tab is Shape, Body, Material, CCD & Contacts, Initial State, Sleep (Start
-    Asleep first); the Solver tab ends with Contacts, Sleeping (the solver's Allow Sleeping) and Aging;
+    """The Solver SOP's tabs and folders, in RBD Bullet Solver's order: Setup, Properties, Collision, Forces,
+    Constraints, Visualization, Advanced, Output (no Misc); Collision Geometry's header checkbox is Use External Collisions, which sits just before it
+    (as RBD Bullet Solver's); the Pieces tab is Shape, Body, Material, CCD & Contacts, Sleep (Start
+    Asleep first), Override Attributes (Override Attributes from SOP); the Solver tab holds Cache Simulation
+    (label hidden, joined to Cache Memory) right after Solve on Creation Frame and ends with Contacts and Sleeping
+    (the solver's Allow Sleeping); Advanced ends with a Constraints folder holding a closed folder per joint type;
+    the Output tab has Impact Data, Attributes (Aging) and Attribute Transfer;
     Visualization is the Visualize Geometries folder (Geometry, Ground, Collision Geometry) then the Inspector folder; no Detach Faces; every collapsible folder open but Impact Data,
-    Sleeping, Aging and the Constraints tab's folders."""
+    Sleeping and the joint folders."""
     sop = solver_sop("sop_layout")
     entries = sop.parmTemplateGroup().entries()
     problems = []
@@ -1253,7 +1233,7 @@ def test_solver_sop_layout():
 
     tabs = [pt.label() for pt in entries if pt.type() == hou.parmTemplateType.Folder]
     expect("tabs", tabs,
-           ["Solver", "Pieces", "Collision", "Constraints", "Forces", "Visualization", "Advanced", "Output"])
+           ["Setup", "Properties", "Collision", "Forces", "Constraints", "Visualization", "Advanced", "Output"])
     folders = _folders(entries)
     by_path = {path: pt for path, pt in folders}
     coll = by_path.get(("Collision", "Collision Geometry"))
@@ -1266,22 +1246,44 @@ def test_solver_sop_layout():
            show_geo.eval() if show_geo else None, 1)
     expect("Show Collision Shapes default", sop.parm("exportshapes").eval() if sop.parm("exportshapes") else None, 0)
     expect("Collision Geometry group_type", coll.tags().get("group_type") if coll else None, "collapsible")
-    pieces_tab = by_path.get(("Pieces",))
+    pieces_tab = by_path.get(("Properties",))
     expect("Pieces tab folders", [pt.label() for pt in pieces_tab.parmTemplates()] if pieces_tab else None,
-           ["Shape", "Body", "Material", "CCD & Contacts", "Initial State", "Sleep"])
-    solver_tab = by_path.get(("Solver",))
-    expect("Solver tab ends with", [pt.label() for pt in solver_tab.parmTemplates()][-3:] if solver_tab else None,
-           ["Contacts", "Sleeping", "Aging"])
-    sleeping = by_path.get(("Solver", "Sleeping"))
+           ["Shape", "Body", "Material", "CCD & Contacts", "Sleep", "Override Attributes"])
+    override = by_path.get(("Properties", "Override Attributes"))
+    expect("Override Attributes from SOP", [pt.name() for pt in override.parmTemplates()] if override else None,
+           ["overwritefromsop"])
+    sop.parm("overwritefromsop").set(1)
+    inner_pieces = sop.node("dopnet/pieces")
+    expect("Override Attributes from SOP reaches the pieces' Packed Object",
+           inner_pieces.parm("overwritefromsop").eval() if inner_pieces else None, 1)
+    sop.parm("overwritefromsop").set(0)
+    inner_solver = sop.node("dopnet/box3d_solver")
+    sop.parm("addgravity").set(0)
+    off_y = inner_solver.parmTuple("gravity")[1].eval() if inner_solver else None
+    sop.parm("addgravity").set(1)
+    on_y = inner_solver.parmTuple("gravity")[1].eval() if inner_solver else None
+    expect("Add Gravity off / on: the inner solver's gravity y (0, then -9.80665)", (off_y, on_y), (0.0, -9.80665))
+    solver_tab = by_path.get(("Setup",))
+    expect("Solver tab ends with", [pt.label() for pt in solver_tab.parmTemplates()][-2:] if solver_tab else None,
+           ["Contacts", "Sleeping"])
+    attributes = by_path.get(("Output", "Attributes"))
+    expect("Output / Attributes", [pt.name() for pt in attributes.parmTemplates()] if attributes else None,
+           ["enableaging", "reapdead", "reapatframeend"])
+    expect("Output tab folders", [pt.label() for pt in by_path[("Output",)].parmTemplates()]
+           if ("Output",) in by_path else None, ["Impact Data", "Attributes", "Attribute Transfer"])
+    sleeping = by_path.get(("Setup", "Sleeping"))
     first = sleeping.parmTemplates()[0].name() if sleeping and sleeping.parmTemplates() else None
     expect("first in Solver / Sleeping", first, "enablesleep")
-    piece_sleep = by_path.get(("Pieces", "Sleep"))
+    piece_sleep = by_path.get(("Properties", "Sleep"))
     expect("first in Pieces / Sleep", piece_sleep.parmTemplates()[0].name() if piece_sleep else None,
            "startasleep")
     expect("Add Impact Data on Output", sop.parm("addimpact") is not None, True)
     advanced = by_path.get(("Advanced",))
     expect("Advanced tab folders", [pt.label() for pt in advanced.parmTemplates()] if advanced else None,
-           ["Stability", "Performance"])
+           ["Stability", "Performance", "Collision", "Constraints"])
+    advanced_collision = by_path.get(("Advanced", "Collision"))
+    expect("Advanced / Collision", [pt.name() for pt in advanced_collision.parmTemplates()] if advanced_collision
+           else None, ["collision_solvefirstframe"])
     forces_tab = by_path.get(("Forces",))
     expect("Forces tab folders", [pt.label() for pt in forces_tab.parmTemplates() if pt.type() ==
                                   hou.parmTemplateType.Folder] if forces_tab else None,
@@ -1289,18 +1291,20 @@ def test_solver_sop_layout():
     glue = by_path.get(("Forces", "Glue"))
     expect("Forces / Glue", [pt.name() for pt in glue.parmTemplates()] if glue else None,
            ["gluecompound", "gluecompoundload"])
-    performance = by_path.get(("Advanced", "Performance"))
-    expect("Performance has Cache Simulation (label hidden, joined) first",
-           (performance.parmTemplates()[0].isLabelHidden(), performance.parmTemplates()[0].joinsWithNext())
-           if performance and performance.parmTemplates() else None, (True, True))
+    solver_names = [pt.name() for pt in solver_tab.parmTemplates()] if solver_tab else []
+    cache = next((pt for pt in solver_tab.parmTemplates() if pt.name() == "cacheenabled"), None) if solver_tab else None
+    expect("Cache Simulation (label hidden, joined) on the Solver tab, after Solve on Creation Frame",
+           (cache.isLabelHidden(), cache.joinsWithNext(),
+            solver_names.index("cacheenabled") == solver_names.index("solvefirstframe") + 1) if cache else None,
+           (True, True, True))
     vis_tab = by_path.get(("Visualization",))
     expect("Visualization tab", [pt.name() for pt in vis_tab.parmTemplates()] if vis_tab else None,
            ["b3dsop_visualize_geometries", "b3dsop_inspector"])
     visualize = by_path.get(("Visualization", "Visualize Geometries"))
     expect("Visualize Geometries folders", [pt.label() for pt in visualize.parmTemplates()] if visualize else None,
-           ["Geometry", "Ground", "Collision Geometry"])
+           ["Geometry", "Ground", "Collision Geometry", "Show Constraints", "Constraint Geometry", "Impact Data"])
     for label, names in (("Geometry", ["exportshapes", "shapecolor"]), ("Ground", ["showground", "shadeground"]),
-                         ("Collision Geometry", ["showcollision"])):
+                         ("Collision Geometry", ["showcollision", "showcollisionshapes", "collisioncolor"])):
         sub_folder = by_path.get(("Visualization", "Visualize Geometries", label))
         expect(f"Visualize Geometries / {label}", [pt.name() for pt in sub_folder.parmTemplates()] if sub_folder
                else None, names)
@@ -1315,14 +1319,17 @@ def test_solver_sop_layout():
     expect("Detach Faces", sop.parm("collision_detachfaces"), None)
     shut = sorted("/".join(path) for path, pt in folders
                   if pt.folderType() == hou.folderType.Collapsible and pt.tags().get("group_default") != "1")
-    expect("closed folders", [p for p in shut if not p.startswith("Constraints/")],
-           ["Output/Impact Data", "Solver/Aging", "Solver/Sleeping"])
-    constraint_folders = [p for p in shut if p.startswith("Constraints/")]
-    all_constraint = [path for path, pt in folders if path[0] == "Constraints" and len(path) == 2
-                      and path[1] != "Break Thresholds"]
-    expect("Constraints folders, all closed (one per constraint type)", len(constraint_folders),
+    joint_prefix = "Advanced/Constraints/"
+    expect("closed folders", [p for p in shut if not p.startswith(joint_prefix)],
+           ["Output/Impact Data", "Setup/Sleeping"])
+    constraint_folders = [p for p in shut if p.startswith(joint_prefix)]
+    all_constraint = [path for path, pt in folders if path[:2] == ("Advanced", "Constraints") and len(path) == 3]
+    expect("Advanced / Constraints folders, all closed (one per constraint type)", len(constraint_folders),
            len(all_constraint))
-    expect("Constraints tab has folders", len(all_constraint) > 0, True)
+    expect("Advanced / Constraints has folders", len(all_constraint) > 0, True)
+    expect("Constraints tab folders", [pt.label() for pt in by_path[("Constraints",)].parmTemplates()
+                                       if pt.type() == hou.parmTemplateType.Folder] if ("Constraints",) in by_path
+           else None, ["Break Thresholds"])
     breaks = by_path.get(("Constraints", "Break Thresholds"))
     expect("Break Thresholds: open, header toggle", (breaks.tags().get("group_default"),
                                                     breaks.tags().get("sidefx::header_toggle")) if breaks else None,
@@ -1333,7 +1340,7 @@ def test_solver_sop_layout():
     if problems:
         return [Result("solver_sop_layout", Result.FAIL, "; ".join(problems))]
     return [Result("solver_sop_layout", Result.PASS,
-                   f"tabs {tabs}; {len(folders)} folders, Impact Data, Sleeping and Aging closed; Allow Sleeping first in Solver / "
+                   f"tabs {tabs}; {len(folders)} folders, Impact Data and Sleeping closed; Allow Sleeping first in Solver / "
                    "Sleeping; Use External Collisions the Collision Geometry header")]
 
 
@@ -1707,7 +1714,6 @@ TESTS = {
     "solver_sop_world_scale": test_solver_sop_world_scale,
     "solver_sop_ground": test_solver_sop_ground,
     "solver_sop_collision_static": test_solver_sop_collision_static,
-    "solver_sop_initial_state": test_solver_sop_initial_state,
     "solver_sop_animated_setting": test_solver_sop_animated_setting,
     "solver_sop_constraint_settings": test_solver_sop_constraint_settings,
     "solver_sop_ground_guide": test_solver_sop_ground_guide,

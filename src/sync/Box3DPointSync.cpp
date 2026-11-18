@@ -370,8 +370,14 @@ void noteOverriddenData(const GU_Detail *gdp, Box3DObjectSync &os,
       {"ccdthreshold", differs(n.ccdThreshold, p.ccdThreshold)},
       {"fastobject", n.fastObject != p.fastObject},
       {"contactrecycling", n.contactRecycling != p.contactRecycling},
+      {"inertialtensorstiffness", differs(n.inertiaScale, p.inertiaScale)},
       {"bullet_georep", node.defaultShape != d.defaultShape},
-      {"bullet_autofit", node.autoFit != d.autoFit}};
+      {"bullet_autofit", node.autoFit != d.autoFit},
+      {"bullet_primS", node.prim.hasSize},
+      {"bullet_radius", node.prim.hasRadius},
+      {"bullet_length", node.prim.hasLength},
+      {"bullet_primT", node.prim.hasPos},
+      {"bullet_primR", node.prim.hasRot}};
   constexpr size_t kCount = sizeof overriding / sizeof overriding[0];
   bool hit[kCount] = {};
   std::string found;
@@ -450,9 +456,10 @@ uint64_t shapeSignature(b3dop::ShapeType type, const BuiltShapes &s) {
 }
 
 // The explicit primitive attributes (used when there is no packed geometry to
-// fit).
-b3dop::PrimOverrides readPrimOverrides(const PointAttrs &a, GA_Offset off) {
-  b3dop::PrimOverrides ov;
+// fit), over Box3D Data's hand-set shape.
+b3dop::PrimOverrides readPrimOverrides(const PointAttrs &a, GA_Offset off,
+                                       const b3dop::PrimOverrides &node) {
+  b3dop::PrimOverrides ov = node;
   if (a.primS.isValid()) {
     const UT_Vector3 v = a.primS.get(off);
     ov.hasSize = true;
@@ -516,10 +523,9 @@ ShapePlan planShapes(ScanContext &ctx, GA_Offset off, int64_t bodyId,
   const bool autofit =
       a.autofit.isValid() ? (a.autofit.get(off) != 0) : ctx.node.autoFit;
   plan.plannedStatic = staticBody;
-  plan.shapes = buildShapes(ctx.world, ctx.sources, plan.type,
-                            ctx.node.hullPerConnectedSet, ps, sc, pk, autofit,
-                            readPrimOverrides(a, off), staticBody,
-                            !ctx.node.flipMeshWinding);
+  plan.shapes = buildShapes(
+      ctx.world, ctx.sources, plan.type, ctx.node.hullPerConnectedSet, ps, sc,
+      pk, autofit, readPrimOverrides(a, off, ctx.node.prim), staticBody);
   if (plan.shapes.note)
     B3D_LOG("  body id=%lld: %s", static_cast<long long>(bodyId),
             plan.shapes.note);

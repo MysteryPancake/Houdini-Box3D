@@ -83,7 +83,7 @@ references to the asset's parameters are set once the asset exists (`wire_stage`
 * Parameters: an Object tab (Object Name `$OS`, Creation Frame, Solve on Creation Frame, SOP Path, Use Object
   Transform, Overwrite Attributes from SOP, Deforming, Add Impact Data, Display Geometry), Initial State (with Start
   Asleep), then each Box3D Data folder as a tab (`pull` moves the two out), read by the stage. Only the object-level settings
-  (`b3d_settings.SKIP`: Hull per Connected, Flip Winding, Add Impact Data) are channel references into the inner Box3D
+  (`b3d_settings.SKIP`: Hull per Connected, Add Impact Data) are channel references into the inner Box3D
   Data, whose other values stay at the defaults, so a missing attribute means the default. Settings change
   mid-simulation through the attributes, not the asset's parameters.
 * Display Geometry (`add_display`, RBD Packed Object's nodes and names): Rendering Parameters Volatile on SOP Geometry's
@@ -147,20 +147,15 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   packed primitives) on the World Scale'd Collision input, also the DOP network's fourth input (`DOP_STATIC`): the
   `use_collision` Switch counts that input's primitives (a height field has no points) instead of the packed
   collision's points. Use Deforming Geometry follows Collision Type Deforming only; Animated does not move a Static
-  Object. The collider's Material settings (`GROUND_MATERIAL`) link to both Box3D Data nodes, Flip Mesh Winding
-  (`collision_flipwinding`, above the folders, linked to `flipwinding` of both colliders: it is dropped from the Shape
-  folder, which would otherwise promote the same name); Shape and Contacts are disabled for a Static Object. Static Object keeps
+  Object. The collider's Material settings (`GROUND_MATERIAL`) link to both Box3D Data nodes; Shape and Contacts are disabled for a Static Object. Static Object keeps
   its default Collision Detection (a height field and a mesh both arrive as affectors,
   [forces-affectors.md](forces-affectors.md)). Test `solver_sop_collision_static`.
-* Initial State (`INITIAL_STATE`: Inherit Velocity from Point Velocity, Velocity, Angular Velocity) is the Packed Object's
-  own, cloned into an Initial State folder on the Pieces tab before Sleep and linked to `pieces`. Velocity is in
-  `SCALED_SETTINGS` (the Packed Object writes `v` after World Scale scaled the input); the angular one is not.
-* Constraints tab (`b3d_solver_constraints.py`): every relationship in `RELATIONSHIPS` gets a closed folder with its settings
+* Advanced > Constraints (`b3d_solver_constraints.py`, as RBD Bullet Solver's joint settings): every relationship in `RELATIONSHIPS` gets a closed folder with its settings
   (those in the node's parameter folders, else all but `DATA_PARMS`, that have a `parmop_*` menu: SideFX's colour, radius,
   link and `guide_*` display settings have none and stay off), named `<node>_<setting>`, linked to the inner node
   and Set Initial (`finish_constraints`). `scale_joint_settings` wraps the existing channel reference
   instead of replacing it, so World Scale multiplies the promoted value.
-* Break Thresholds (`b3d_solver_breaks.py`, first on the Constraints tab): RBD Bullet Solver's `Constraint_Solver` for the Angle, Distance, Impact and Torque Thresholds and At Frame. A SOP Solver DOP (`constraint_breaks`, Data
+* Break Thresholds (`b3d_solver_breaks.py`, first on the Constraints tab, then Export Broken Constraints): RBD Bullet Solver's `Constraint_Solver` for the Angle, Distance, Impact and Torque Thresholds and At Frame. A SOP Solver DOP (`constraint_breaks`, Data
   Name `ConstraintGeometry`) with a wrangle (`BREAK_VEX`, over primitives) between its geometry import and its output deletes the
   primitives whose `impact` passes a break entry's threshold, or switches them to `next_constraint_name`. The parameters are
   Bullet's names (`enable_constraintbreaks`, the `breaks` multiparm, `constraint_names#`, `constraint_mode#`,
@@ -208,6 +203,7 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   (on a one-vertex primitive's point it would use the packed transform instead). Before it, `remove_deleted_*`
   (`REMOVE_DELETED_VEX`, Bullet's `remove_deleted`) drops pieces the solver deleted: no simulation point of their
   name, and for Geometry, one in what was simulated.
+* The Solver and Pieces tabs are labelled Setup and Properties (`TAB_LABELS`), as RBD Bullet Solver's; the docs and code keep the old names.
 * World Scale (`WORLD_SCALE_TOGGLE` / `WORLD_SCALE`, first on the Solver tab; Bullet's usescale / Bullet World Scale):
   Transform SOPs scale every input (`world_scale_*`; the before-start outputs pass the unscaled inputs);
   `scale_attributes` (`SCALE_ATTRIBS_VEX`) then divides `density` by the cube and `w` back, and scales the hand-set
@@ -224,49 +220,55 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
 * Constraints output: DOP Import of the pieces object, Geometry Data Path `ConstraintGeometry`, nothing transformed,
   packed or tagged (`CONSTRAINTS_TOGGLES`), so it carries `broken`, `force` and the rest. The solver does not move its
   points, so a Transform Pieces onto the simulation points carries them with their pieces; world-anchored points
-  (`name` empty or `-1`) keep theirs. Export Broken Constraints (`KEEP_BROKEN`, Output tab, off) removes the `broken`
+  (`name` empty or `-1`) keep theirs. Export Broken Constraints (`KEEP_BROKEN`, Constraints tab after Break Thresholds, off) removes the `broken`
   group's primitives first, as RBD Bullet Solver's `switchif_keepbroken`.
 * Solve on Creation Frame, as RBD Bullet Solver: `solvefirstframe` on the Solver tab (before Cache Simulation) is
-  linked to both the pieces' and the collider's Packed Object (one toggle, as RBD Bullet Solver's). The build checks
-  both links.
-* Collision shapes (the asset's Guide Geometry, node `GUIDE_GEO`, set as `guide=GUIDE_GEO` in the definition's extra info): DOP Import (`import_shapes`, pieces and collision objects, Geometry Data Path `SHAPES_DATA`, `POINTS_TOGGLES`)
+  linked to the pieces' Packed Object, and `collision_solvefirstframe` (Advanced > Collision, as RBD Bullet Solver's) to the
+  collider's. The build checks both links.
+* Collision shapes (the asset's Guide Geometry, node `GUIDE_GEO`, set as `guide=GUIDE_GEO` in the definition's extra info): DOP Import (`import_shapes`, the pieces object, Geometry Data Path `SHAPES_DATA`, `POINTS_TOGGLES`)
   -> `tint_shapes` (`SHAPES_TINT_VEX`, Shape Color) -> `unscale_shapes` -> `switch_show_shapes` (the solver's `exportshapes`, promoted
   to Output > Visualization as Show Collision Shapes; empty input when off, so nothing cooks) -> `switchif_beforestart_shapes` -> `merge_guide`.
-  The external collision geometry joins it as in RBD Bullet Solver's guide: DOP Import of the `collision` object (`import_collision_geo`) -> `dim_collision_geo` (`COLLISION_GUIDE_VEX`) -> `unscale_collision_geo` -> `switch_show_collision_geo` (`usecollisions` && Show Collision Geometry, `SHOW_COLLISION`, on) -> `switchif_beforestart_collision_geo`. `merge_guide` -> `guide_wireframe` (`gl_wireframe`) -> `GUIDE_GEO`.
+  The constraint lines (`false_color_constraints`, `FALSE_COLOR_VEX`: the chosen float attribute over its largest value, blue to red) and the
+  impact points (`color_impacts`, the `IMPACTS` records) are two more guide inputs behind `SHOW_CONSTRAINTS` / `SHOW_IMPACTS` switches.
+  The collider's shapes are a second import (`import_collision_shapes`, `tint_collision_shapes` with `COLLISION_COLOR`, `SHOW_COLLISION_SHAPES`
+  behind `usecollisions`), also merged; the inner solver's `exportshapes` is an expression on either toggle.
+  The external collision geometry joins it as in RBD Bullet Solver's guide: DOP Import of the `collision` object (`import_collision_geo`) -> `dim_collision_geo` (`COLLISION_GUIDE_VEX`) -> `unscale_collision_geo` -> `switch_show_collision_geo` (`usecollisions` && Show Geometry, `SHOW_COLLISION`, on) -> `switchif_beforestart_collision_geo`. `merge_guide` -> `guide_wireframe` (`gl_wireframe`) -> `GUIDE_GEO`.
 * Before the Start Frame the Geometry, Constraints and Proxy outputs are the inputs (`before_start`, RBD Bullet
   Solver's `switchif_beforestart`; the proxy output shows the simulated source). A Switch-If takes its second input
   while its expression is true.
 * Output tab, as RBD Bullet Solver's: Impact Data, a closed collapsible folder whose header toggle is the pieces' Add
   Impact Data (`sidefx::header_toggle`), with the solver's Impact Min Speed and Fetch Impacts; Transfer Attributes, with Transfer to Geometry / Proxy Geometry choosing each Transform Pieces' Attributes to
   Copy as RBD Bullet Solver's: the list while on, else `w` (`copy_attributes`, `TRANSFER_TO`), and Transform Pieces'
-  own Point Velocities parameters promoted onto both (`POINT_VELOCITY_PARMS`); Outputs, Import Constraints / Proxy
-  (`IMPORT_CONSTRAINTS` / `IMPORT_PROXY`: off, an empty output, the chain not cooked). Fetch Impacts makes (or reuses) an Object Merge of the asset's `IMPACTS` null beside the
+  own Point Velocities parameters promoted onto both (`POINT_VELOCITY_PARMS`). Fetch Impacts makes (or reuses) an Object Merge of the asset's `IMPACTS` null beside the
   asset, fed by a DOP Import Records of the pieces' `Impacts` data (its parameters set by name).
 * Parameters: Reset Simulation and Start Frame above the tabs, then the solver's tabs (folders found under its Data
   Options, a tab of simple folders kept whole; Guide Options skipped).
-  Tab order: Solver, Pieces, Collision, Forces, any other solver tabs, Visualization (`visualization_tab`: a Visualize
-  Geometries folder with Geometry (Show Collision Shapes, Shape Color), Ground and Collision Geometry (Show Collision
-  Geometry), then Inspector, as RBD Bullet Solver's; its Display Visualization Geometry master toggle and the
-  constraint, guide and impact folders have no counterpart), then Advanced and Output always last; the
+  Tab order, as RBD Bullet Solver's: Solver, Pieces, Collision, Forces, Constraints, any other solver tabs, Visualization (`visualization_tab`: a Visualize
+  Geometries folder with Geometry (Show Collision Shape, Shape Color), Ground and Collision Geometry (Show Geometry, Show Collision
+  Shape, Color), Show Constraints (`SHOW_CONSTRAINTS`, off), Constraint Geometry (False Color Mode `FALSE_COLOR_MODE`,
+  Attribute), Impact Data (Show Impacts, off), then Inspector, as RBD Bullet Solver's; its Display Visualization
+  Geometry master toggle, Show Active / Sleeping colouring and the constraint guide folders have no counterpart), then Advanced and Output always last; the
   solver's parameters are regrouped by name (`SOLVER_FOLDERS`, `BOUNCE_PARMS`, `IMPACT_SPEED`, `SHAPES_TOGGLE`, pulled
   with `pull`), whichever DOP tab holds them: the DOP's tabs and folders follow this layout (Contacts, Sleeping
   and Aging folders on the Solver tab, Force DOPs, Bounce / Friction and Glue on Forces, Stability and Performance on Advanced),
-  so only Contacts, Sleeping and Aging are rebuilt (Sleeping and Aging closed), Forces keeps the DOP's folders as they are, Advanced is flattened
-  and regrouped by `TAB_GROUPS` (Cache Simulation joins Performance), and DOP tabs left empty (Visualization, Output) are dropped. Solver: the solver's own settings, then Contacts,
-  Sleeping and Aging. Advanced is Stability (warm starting, continuous, speed limit, inertia) and Performance (Cache
-  Simulation with its label hidden, joined to Cache Memory (MB) and disabling it when off; then threads). Cache Memory is
-  the inner DOP network's value with the parameters on its row (`row_of`, `CACHE_MEMORY`), placed by `group_tab`'s `groups`. Collision: one Collision Geometry folder whose header checkbox is Use External
+  so only Contacts and Sleeping are rebuilt (Sleeping closed), Aging is pulled (`AGING_PARMS`) into Output's Attributes folder, Forces keeps the DOP's folders as they are, Advanced is flattened
+  and regrouped by `TAB_GROUPS`, and DOP tabs left empty (Visualization, Output) are dropped. Solver: the solver's own settings,
+  Solve on Creation Frame, Cache Simulation (its label hidden, joined to Cache Memory (MB), which it disables when off), then Contacts
+  and Sleeping. Cache Memory is the inner DOP network's value with the parameters on its row (`row_of`,
+  `CACHE_MEMORY`). Advanced is Stability (warm starting, continuous, speed limit, inertia), Performance (threads), Collision (the collider's Solve on Creation Frame) and Constraints (a closed folder per joint type). Collision: one Collision Geometry folder whose header checkbox is Use External
   Collisions (`usecollisions`, placed just before the folder, as RBD Bullet Solver's), holding Collision Type and the collision object's Shape, Material and CCD &
   Contacts folders (`COLLIDER_FOLDERS`, all named `collision_*`), the last cut to Contact Recycling as Contacts
   (`COLLIDER_DROPPED`: the rest does nothing for a Static / Kinematic body). Pieces: the pieces' Box3D Data folders
   (Shape, Body, Material, CCD & Contacts, Sleep) without their Allow Sleeping (`PIECES_DROPPED`; `drop_templates`),
+  then an Override Attributes folder holding Override Attributes from SOP (`overwritefromsop`, off, linked to the pieces' Packed
+  Object, which then reads the SOP every step; the collision's is driven by Collision Type),
   the solver's Allow Sleeping is in the Solver tab's Sleeping folder instead (one switch for every body); names the solver also uses would
   get `piece_`. Conditions are rewritten with the names (the pieces' Start Asleep and Sleep Threshold grey out
   with the solver's Allow Sleeping). Inner solver `parmop_*` set to
   Set Always (the solver reads its settings every step, so an animated one acts mid-simulation; test
   `solver_sop_animated_setting`). The pieces' and collider's Box3D Data, the relationships and the ground stay Set Initial. Inside each tab the settings sit in collapsible folders, as RBD Bullet
   Solver's (`TAB_GROUPS`, `group_tab`) and with its tags (`group_type`, `group_default`, `sidefx::header_toggle`),
-  every one open except Output's Impact Data and the Solver tab's Sleeping and Aging; Collision is one Collision Geometry folder with the collider's folders
+  every one open except Output's Impact Data, the Solver tab's Sleeping and the joint folders; Collision is one Collision Geometry folder with the collider's folders
   simple inside it (each disabled with Use External Collisions off), Pieces is Shape, Body, Material, CCD & Contacts
   and Sleep (the Packed Object's Start Asleep first, `moved_settings`), and Add Impact Data is on Output. Test `solver_sop_layout`.
 * Viewer state (`tools/b3d_solver_state.py`, `STATE_NAME` / `STATE_FILE`, installed by `b3d_hda.add_viewer_state`), RBD
@@ -275,7 +277,7 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   the cursor (`inspectorattribs`, `inspectorfontsize`, `inspectorprecision` in the Visualization tab's Inspector folder)
   from the viewed output's geometry. RBD's false-colour constraint info, histogram and guide capture are not copied. The
   state name has no dot: its hotkey context is built from it. `b3d_hda.show_in_toolbar` puts Reset Simulation, Show
-  Collision Geometry, Show Collision Shapes and Show Ground in the viewport's toolbar (export level 3, as RBD's toggles),
+  Geometry, Show Collision Shape and Show Ground in the viewport's toolbar (export level 3, as RBD's toggles),
   and an `OnCreated` section sets Start Frame to `$FSTART` on a new node.
 * Message Nodes (Node tab of the Type Properties, the `MessageNodes` section: relative paths, space separated) are
   set by `b3d_hda.set_message_nodes` so a warning from inside shows on the asset: the Solver SOP's `dopnet/box3d_solver`
@@ -336,11 +338,11 @@ through. No Bullet settings, no Proxy attribute transfer.
 `tools/make_configure_sop.py <out.hda>` builds `box3d_configure` (SOP): Box3D Data's settings, copied from the node
 (labels, defaults, ranges, conditions), written as point attributes. Laid out as RBD Configure: a tabbed multiparm
 (`MULTIPARM`, Number of Attributes) of entries, each with Enable (`enable#`), Group (`group#`) and Box3D Data's folders
-(`b3dcfg_folder<i>_#`), every setting `<name>#` with an `add<name>#` checkbox (`toggle_name`, label hidden); the Packing
-folder sits above the entries. Names map one to one except `MAPPING`: Default Shape -> `bullet_georep` (`GEOREP_VALUES`, menu order), Auto Fit
+(`b3dcfg_folder<i>_#`), every setting `<name>#` with an `add<name>#` checkbox (`toggle_name`, label hidden); the packing
+settings sit above the entries in the Attributes folder with them. Names map one to one except `MAPPING`: Default Shape -> `bullet_georep` (`GEOREP_VALUES`, menu order), Auto Fit
 -> `bullet_autofit`, Body Type -> `active` / `animated`, Start Asleep -> `awake` (inverted); `SKIP` holds the
-object-level ones (Hull per Connected, Flip Winding, Add Impact Data). Disable conditions also need the referenced
-setting ticked (`rewrite_condition`). Every folder (Bounds, Packing, each Box3D Data folder and Constraints in an entry) is an open collapsible folder (`b3d_hda.collapsible`).
+object-level ones (Hull per Connected, Add Impact Data). Disable conditions also need the referenced
+setting ticked (`rewrite_condition`). Bounds and Attributes are simple folders (`simple_folder`, as RBD Configure's); each Box3D Data folder and Constraints in an entry is an open collapsible folder (`b3d_hda.collapsible`).
 * Geometry and Proxy are packed first, as RBD Configure does, by the chain the Box3D Solver SOP runs
   (`tools/b3d_prepare.py`, `prepare_input` in pack mode without the rest attributes): packed primitives kept, the rest
   assembled into packed pieces named on their points. RBD Configure's packing parameters drive the Assembles (Name
@@ -354,8 +356,9 @@ setting ticked (`rewrite_condition`). Every folder (Bounds, Packing, each Box3D 
   `inpointgroup` / `inprimgroup`, as RBD Configure, so patterns (`piece*`, `@name=piece0`) work; empty is every piece. The Group button
   picks primitives in the viewport (RBD Configure's `selectGroupParm` call).
 * Settings Box3D Data has no parameter for (`extra_folders`): Initial State (`v`, `w` in degrees per second written as
-  radians, `enabled`, `deforming`), Motion (`inertialtensorstiffness`, `fastrotation`, `lock_linear` / `lock_angular`),
-  Collision Filtering, Hand-Set Shape (`bullet_prim*`, `bullet_radius`, `bullet_length`, disabled with Auto Fit on).
+  radians, `enabled`, `deforming`), Motion (`fastrotation`, `lock_linear` / `lock_angular`), Collision Filtering (`collision_category` / `collision_mask` / `collision_group`, and the string
+  `collisiongroup` / `collisionignore`, kind `s`, which the Solver SOP's `COLLISION_NAMES_VEX` turns into the integers).
+  The hand-set shape and Rotational Stiffness are Box3D Data's own (its Shape and Body folders).
   Defaults are the solver's when the attribute is missing.
 * Visualization folder (`visualization_folder`, `visualization_templates`), as RBD Configure's (read from a dump): a
   first-level simple folder, which makes the viewer show its parameters in a bar along the top of the viewport (its two parameters also carry

@@ -330,8 +330,8 @@ def static_grid(name, reverse):
 
 
 def test_winding():
-    """Item 32: a box dropped on a default (upward-facing) grid Static Object lands on it, without
-    Flip Static Mesh Winding. Also reports the reversed grid and a Ground Plane DOP (item 31)."""
+    """Item 32: a box dropped on a default (upward-facing) grid Static Object lands on it. Also reports
+    the reversed grid and a Ground Plane DOP (item 31)."""
     up, _ = drop_on_static("default", static_grid("winding_grid", reverse=False))
     down, _ = drop_on_static("reversed", static_grid("winding_grid_reversed", reverse=True))
     plane, plane_msgs = drop_on_static("groundplane", lambda dop: create(dop, "groundplane", "collider"))
@@ -344,8 +344,7 @@ def test_winding():
     if up > 0.3:
         results.append(Result("winding", Result.PASS, msg))
     elif down > 0.3:
-        results.append(Result("winding", Result.FAIL, msg + ". Our winding is the opposite of Houdini's: "
-                                                            "Flip Static Mesh Winding should be the default"))
+        results.append(Result("winding", Result.FAIL, msg + ". Our winding is the opposite of Houdini's"))
     else:
         results.append(Result("winding", Result.FAIL, msg + ". Neither side collides: Static Objects are not "
                                                             "reaching the solver at all"))

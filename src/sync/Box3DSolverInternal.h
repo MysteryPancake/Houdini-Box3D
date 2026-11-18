@@ -388,14 +388,14 @@ struct BuiltShapes {
 };
 
 // staticMesh: the body will be static, so `concave` becomes a triangle mesh of
-// the packed polygons (houdiniWinding: Houdini's clockwise front faces, i.e.
-// Box3D Data's Flip Static Mesh Winding off). No polygons: hulls as usual.
+// the packed polygons (Houdini's clockwise front faces). No polygons: hulls as
+// usual.
 BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
                         b3dop::ShapeType type, bool hullPerConnected,
                         float pscale, const float scale[3],
                         const PackedInfo &pk, bool autofit,
-                        const b3dop::PrimOverrides &ov, bool staticMesh = false,
-                        bool houdiniWinding = true);
+                        const b3dop::PrimOverrides &ov,
+                        bool staticMesh = false);
 BuiltShapes buildWholeObjectShapes(b3dop::Box3DWorld &world,
                                    const GU_Detail *gdp, const double m[16],
                                    const double pivot[3], b3dop::ShapeType type,
