@@ -263,7 +263,8 @@ def buildCollisionGroupMenu(kwargs, index=0, excludeOwn=False):
 def menu_script(template, call, toggle=True):
     """Gives a string parameter the menu beside its field: `call` is a function of MENU_SOURCE with its arguments
     (called with kwargs first). `toggle`: each pick is added to / removed from the list, else it replaces it."""
-    template.setItemGeneratorScript(f"return kwargs['node'].hm().{call}")
+    # One line, so Houdini evaluates it as an expression: a `return` on a single line is a syntax error there.
+    template.setItemGeneratorScript(f"kwargs['node'].hm().{call}")
     template.setItemGeneratorScriptLanguage(hou.scriptLanguage.Python)
     template.setMenuType(hou.menuType.StringToggle if toggle else hou.menuType.StringReplace)
     return template
