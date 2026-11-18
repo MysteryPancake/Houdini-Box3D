@@ -187,6 +187,46 @@ inline void quatFromAxes(const float x[3], const float y[3], const float z[3],
   sanitizeQuat(q);
 }
 
+// out = a * b (b applied first, then a). `out` may be a or b.
+inline void quatMul(const float a[4], const float b[4], float out[4]) {
+  const float x = a[3] * b[0] + b[3] * a[0] + a[1] * b[2] - a[2] * b[1];
+  const float y = a[3] * b[1] + b[3] * a[1] + a[2] * b[0] - a[0] * b[2];
+  const float z = a[3] * b[2] + b[3] * a[2] + a[0] * b[1] - a[1] * b[0];
+  const float w = a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2];
+  out[0] = x;
+  out[1] = y;
+  out[2] = z;
+  out[3] = w;
+}
+
+// The conjugate: the inverse of a unit quaternion.
+inline void quatConj(const float q[4], float out[4]) {
+  out[0] = -q[0];
+  out[1] = -q[1];
+  out[2] = -q[2];
+  out[3] = q[3];
+}
+
+// Rotate v by the unit quaternion q. T is float or double: the maths runs in T.
+template <class T>
+inline void quatRotate(const float q[4], const T v[3], T out[3]) {
+  const T qx = q[0], qy = q[1], qz = q[2], qw = q[3];
+  // t = 2 * cross(q.xyz, v);  v' = v + w * t + cross(q.xyz, t)
+  const T two = static_cast<T>(2);
+  const T tx = two * (qy * v[2] - qz * v[1]);
+  const T ty = two * (qz * v[0] - qx * v[2]);
+  const T tz = two * (qx * v[1] - qy * v[0]);
+  out[0] = v[0] + qw * tx + (qy * tz - qz * ty);
+  out[1] = v[1] + qw * ty + (qz * tx - qx * tz);
+  out[2] = v[2] + qw * tz + (qx * ty - qy * tx);
+}
+
+// A body's position and rotation.
+struct BodyPose {
+  double p[3] = {0, 0, 0};
+  float q[4] = {0, 0, 0, 1};
+};
+
 // P is stored as float: double -> float -> double. False if not finite.
 inline bool storedPosition(const double in[3], double out[3]) {
   for (int i = 0; i < 3; ++i)

@@ -82,7 +82,7 @@ built by `buildCollisionGuide` from the live world (`bodyShapeOutlines`: hulls, 
 the pose the displayed frame's geometry shows, so cached frames draw where the pieces were. Open polylines with `Cd`,
 dimmed for sleeping and static / kinematic bodies. The mutex is only tried: a guide asked for mid-step is skipped.
 
-**Export Collision Shapes** (`exportshapes`, Advanced tab; `exportCollisionShapes` in `Box3DGuide.cpp`). The same
+**Export Collision Shapes** (`exportshapes`, Visualization tab; `exportCollisionShapes` in `Box3DGuide.cpp`). The same
 lines (`drawObjectShapes`, shared with the guide) as world-space open polylines in a `SIM_GeometryCopy` named
 `kShapesDataName` (`Box3DShapes`) on every object with bodies, rewritten each step after the point writes (the solver
 holds the mutex; poses are the written-back ones). `Cd` is white times the dimming; the SOP tints it. The Box3D Solver
@@ -125,7 +125,7 @@ Houdini warns on data it has no `SIM_DataHint` for under its parent ("Unexpected
 4. Otherwise binds the remaining attributes and builds the `ScanContext` (world, geometry, attributes, node settings,
    shape sources, georep lookup) that the per-point helpers take.
 5. **Pass 1** (`collectSlots`: serial offsets; `readSlots`: parallel above `kMinParallelReadPlain` points, `kMinParallelReadPacked` with primitives): per point body id (`id`, else the point number = its
-   position in the walk), key, `getPackedInfo` (with the 3x3's row scale, kept for the write-back), `readPointState`,
+   position in the walk), key, `getPackedInfo` (with the 3x3's row scale, kept for the write-back), `readPointState` (a packed point's `restxform` rotation is split once and kept on its slot, `Box3DRestCache`, until the attribute's data id changes),
    `active`, the mirror entry (read only), and whether it needs shapes built: new body, or a rebuild (`deforming`,
    `bullet_autofit_valid == 0`, convex / concave scale change).
    **Pass 1b** (`planSlots`; parallel, chunks of `kPlanChunk` with an Escape check between): `planShapes` for those points, into a per-scan
@@ -166,7 +166,7 @@ body's attributes, `writePackedRotations` for step 5).
    transform (a body falling asleep appears once more). Only live dynamic entries become items, which point at their
    move event rather than copying it; `awake` changes are noted. Velocities are fetched in a threaded pass
    (Box3D allows read-only calls from several threads). Items are grouped per object.
-1. `getOrMakeWritableGeometry`: a plain `SIM_Geometry` (RBD Packed Object) is replaced once by a `SIM_GeometryCopy`
+1. `box3dWritableGeometry`: a plain `SIM_Geometry` (RBD Packed Object) is replaced once by a `SIM_GeometryCopy`
    (`SIM_DATA_RETURN_EXISTING | SIM_DATA_ADOPT_EXISTING_ON_DELETE`).
 2. `ensureResultAttribs` creates `v`, `w`, `orient` (a new `orient` is set to identity).
 3. `resolvePointOffsets`: the stored offset if it still names the point (in range, same id / number), else by id.
@@ -176,7 +176,7 @@ body's attributes, `writePackedRotations` for step 5).
    `sanitizeQuat` of the written rotation). It must agree with `readPointState` within `poseDiffers`' tolerances (1e-5;
    q and -q equal), or our write looks like an external edit; a packed transform's float round trip stays well inside
    them. `BOX3DDOP_VERIFY_READBACK=1` re-reads and logs `READBACK MISMATCH` when `poseDiffers` would see a difference.
-5. Serial pass: `setLocalTransform` + `transformDirty`, then one `getPrimitiveList().bumpDataId()` (the HDK leaves
+5. Parallel pass (distinct primitives): `setLocalTransform` + `transformDirty`, then one `getPrimitiveList().bumpDataId()` (the HDK leaves
    marking intrinsics dirty to the caller). A point no longer on a packed primitive is counted as unmatched.
 
 Only dynamic bodies are written; of several points sharing an `id`, only the first.

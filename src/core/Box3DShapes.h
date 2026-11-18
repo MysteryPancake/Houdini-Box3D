@@ -142,18 +142,6 @@ struct PrimOverrides {
   }
 };
 
-// Rotate v by the unit quaternion q.
-inline void quatRotate(const float q[4], const float v[3], float out[3]) {
-  const float qx = q[0], qy = q[1], qz = q[2], qw = q[3];
-  // t = 2 * cross(q.xyz, v);  v' = v + w * t + cross(q.xyz, t)
-  const float tx = 2.0f * (qy * v[2] - qz * v[1]);
-  const float ty = 2.0f * (qz * v[0] - qx * v[2]);
-  const float tz = 2.0f * (qx * v[1] - qy * v[0]);
-  out[0] = v[0] + qw * tx + (qy * tz - qz * ty);
-  out[1] = v[1] + qw * ty + (qz * tx - qx * tz);
-  out[2] = v[2] + qw * tz + (qx * ty - qy * tx);
-}
-
 // Non-finite values are ignored; sizes are clamped like makeShapeSpec.
 inline void applyPrimOverrides(ShapeSpec &s, const PrimOverrides &o) {
   if (o.hasSize && s.type == ShapeType::Box && finite3(o.size))

@@ -20,8 +20,8 @@ namespace box3dsolver {
 // is read as zero (Box3D asserts on it, and a NaN velocity would spread to the
 // body's position); *badVelocity says so.
 bool readPointState(const GU_Detail *gdp, const PointAttrs &a, GA_Offset off,
-                    const PackedInfo &pk, Box3DBodyPose &out,
-                    bool *badVelocity) {
+                    const PackedInfo &pk, Box3DBodyPose &out, bool *badVelocity,
+                    Box3DRestCache *cache) {
   if (badVelocity)
     *badVelocity = false;
   const UT_Vector3 p = gdp->getPos3(off);
@@ -34,8 +34,22 @@ bool readPointState(const GU_Detail *gdp, const PointAttrs &a, GA_Offset off,
   out.rot[0] = out.rot[1] = out.rot[2] = 0.0f;
   out.rot[3] = 1.0f;
   float rest[4];
-  if (pk.prim && a.orient.isValid() && a.restxform.isValid() &&
-      restRotation(a.restxform.get(off), rest)) {
+  bool hasRest = false;
+  if (pk.prim && a.orient.isValid() && a.restxform.isValid()) {
+    if (cache && cache->known) {
+      hasRest = cache->ok;
+      b3dop::copy4(rest, cache->rot);
+    } else {
+      hasRest = restRotation(a.restxform.get(off), rest);
+      if (cache) {
+        cache->known = true;
+        cache->ok = hasRest;
+        if (hasRest)
+          b3dop::copy4(cache->rot, rest);
+      }
+    }
+  }
+  if (hasRest) {
     const UT_QuaternionF q = a.orient.get(off);
     float since[4] = {q.x(), q.y(), q.z(), q.w()};
     b3dop::sanitizeQuat(since);
@@ -889,8 +903,10 @@ void collectSlots(const GU_Detail *gdp, SlotList &snaps) {
     if (n == snaps.size())
       snaps.emplace_back();
     Box3DPointSlot &s = snaps[n];
-    if (s.off != *it)
+    if (s.off != *it) {
       s.entry = nullptr;
+      s.rest.known = false;
+    }
     s.off = *it;
     s.bid = static_cast<int64_t>(n);
     s.index = static_cast<int64_t>(n);
@@ -913,7 +929,9 @@ void readSlot(const ScanContext &ctx, int objectId, Box3DPointSlot &s) {
   s.key = key;
   const PackedInfo pk =
       ctx.anyPrims ? getPackedInfo(ctx.gdp, s.off) : PackedInfo();
-  s.ok = readPointState(ctx.gdp, a, s.off, pk, s.cur, &s.badVelocity);
+  if (!ctx.restReuse)
+    s.rest.known = false; // restxform changed: split again
+  s.ok = readPointState(ctx.gdp, a, s.off, pk, s.cur, &s.badVelocity, &s.rest);
   s.active = !a.active.isValid() || a.active.get(s.off) != 0;
   s.animated = !s.active && a.animated.isValid() && a.animated.get(s.off) != 0;
   s.staticBody = wantedType(ctx.node, s.active, s.animated, false) ==
@@ -1363,6 +1381,10 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
 
   a.bindBuildAttrs(gdp);
   ScanContext ctx(st, gdp, a, node);
+  const GA_DataId restId = a.restxform.isValid()
+                               ? a.restxform.getAttribute()->getDataId()
+                               : Box3DSyncFingerprint::kNoId;
+  ctx.restReuse = restId == os.restCacheId;
 
   // Settings are compared only when a prop marker changed (or deforming bodies
   // need a rebuild anyway); otherwise the scan syncs pose, velocity and type.
@@ -1404,6 +1426,7 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
   if (!apply.run(snaps, progress))
     return;
   names.finish(st, os);
+  os.restCacheId = restId; // every slot read split (or reused) at this id
 
   // Problems (retried and reported every step), deforming and driven bodies
   // keep it scanning.

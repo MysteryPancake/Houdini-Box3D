@@ -6,6 +6,7 @@
 //   * mergePieces: the one body that carries the pieces' momentum: its centre
 //     of mass, mass, inertia, and the linear and angular velocity that keep the
 //     pieces' total linear and angular momentum.
+//   * pieceLoad: the impulse a piece takes when the body's motion changes.
 //   * pieceVelocity: a piece's velocity on a rigid body, v + w x r. Used to
 //     write the pieces back after a step, and to start the bodies a compound
 //     splits into.
@@ -14,6 +15,7 @@
 #pragma once
 
 #include "core/Box3DGlue.h"
+#include "core/Box3DMath.h"
 
 #include <algorithm>
 #include <cmath>
@@ -90,17 +92,6 @@ struct MergedBody {
 
 namespace compound_detail {
 
-// q (x, y, z, w) rotating v.
-inline void rotate(const float q[4], const double v[3], double out[3]) {
-  const double x = q[0], y = q[1], z = q[2], w = q[3];
-  const double tx = 2.0 * (y * v[2] - z * v[1]);
-  const double ty = 2.0 * (z * v[0] - x * v[2]);
-  const double tz = 2.0 * (x * v[1] - y * v[0]);
-  out[0] = v[0] + w * tx + (y * tz - z * ty);
-  out[1] = v[1] + w * ty + (z * tx - x * tz);
-  out[2] = v[2] + w * tz + (x * ty - y * tx);
-}
-
 inline void cross(const double a[3], const double b[3], double out[3]) {
   out[0] = a[1] * b[2] - a[2] * b[1];
   out[1] = a[2] * b[0] - a[0] * b[2];
@@ -169,7 +160,7 @@ inline MergedBody mergePieces(const std::vector<RigidPiece> &pieces) {
     for (int k = 0; k < 3; ++k) {
       const double e[3] = {k == 0 ? 1.0 : 0.0, k == 1 ? 1.0 : 0.0,
                            k == 2 ? 1.0 : 0.0};
-      rotate(q.rot, e, axes[k]);
+      quatRotate(q.rot, e, axes[k]);
     }
     double iw[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
     for (int k = 0; k < 3; ++k)
@@ -203,28 +194,6 @@ inline MergedBody mergePieces(const std::vector<RigidPiece> &pieces) {
   return out;
 }
 
-// Quaternions (x, y, z, w): out = a * b (b first, then a), the inverse, and a
-// vector turned by one.
-inline void quatMul(const float a[4], const float b[4], float out[4]) {
-  const float x = a[3] * b[0] + b[3] * a[0] + a[1] * b[2] - a[2] * b[1];
-  const float y = a[3] * b[1] + b[3] * a[1] + a[2] * b[0] - a[0] * b[2];
-  const float z = a[3] * b[2] + b[3] * a[2] + a[0] * b[1] - a[1] * b[0];
-  const float w = a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2];
-  out[0] = x;
-  out[1] = y;
-  out[2] = z;
-  out[3] = w;
-}
-inline void quatConj(const float q[4], float out[4]) {
-  out[0] = -q[0];
-  out[1] = -q[1];
-  out[2] = -q[2];
-  out[3] = q[3];
-}
-inline void quatRotate(const float q[4], const double v[3], double out[3]) {
-  compound_detail::rotate(q, v, out);
-}
-
 // The velocity of a point at `pos` that rides on `body`: v + w x (pos - com).
 inline void pieceVelocity(const MergedBody &body, const double pos[3],
                           float lin[3], float ang[3]) {
@@ -238,6 +207,23 @@ inline void pieceVelocity(const MergedBody &body, const double pos[3],
     lin[i] = static_cast<float>(static_cast<double>(body.lin[i]) + wxr[i]);
     ang[i] = body.ang[i];
   }
+}
+
+// The impulse a piece of `mass` at `pos` takes from the rest of a rigid body
+// whose motion went from `before` to `after`: mass * |change of the piece's
+// velocity|. A body slowed at one point turns, so the pieces far from it change
+// velocity most. A body at steady motion (weight held up by a contact) changes
+// none, so nothing is taken.
+inline float pieceLoad(const MergedBody &before, const MergedBody &after,
+                       const double pos[3], float mass) {
+  float lin0[3], ang0[3], lin1[3], ang1[3];
+  pieceVelocity(before, pos, lin0, ang0);
+  pieceVelocity(after, pos, lin1, ang1);
+  const double d[3] = {static_cast<double>(lin1[0]) - lin0[0],
+                       static_cast<double>(lin1[1]) - lin0[1],
+                       static_cast<double>(lin1[2]) - lin0[2]};
+  return mass *
+         static_cast<float>(std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]));
 }
 
 } // namespace b3dop

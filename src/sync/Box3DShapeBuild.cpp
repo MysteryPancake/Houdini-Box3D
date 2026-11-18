@@ -295,13 +295,18 @@ public:
       if (!np.xyz.empty())
         sum->pieceHashes.push_back(np.hash);
     std::unique_lock<std::shared_mutex> lock(myMutex);
-    if (myMap.size() >= kMaxEntries)
-      myMap.clear();
+    if (myMap.size() >= kMaxEntries) {
+      // Half goes (in the map's order), so a scene past the cap keeps most of
+      // what it just used instead of losing all of it.
+      for (auto it = myMap.begin();
+           it != myMap.end() && myMap.size() > kMaxEntries / 2;)
+        it = myMap.erase(it);
+    }
     myMap[key] = std::move(sum);
   }
 
 private:
-  static constexpr size_t kMaxEntries = 65536;
+  static constexpr size_t kMaxEntries = 262144;
   std::shared_mutex myMutex;
   std::unordered_map<uint64_t, std::shared_ptr<const SourceSummary>> myMap;
 };

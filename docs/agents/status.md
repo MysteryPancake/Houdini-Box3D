@@ -12,11 +12,8 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 **Not yet run in Houdini**
 * Box3D Packed Object's Display Geometry (`visualize_hires`) and Collider Label (`add_display`): checked against a
   stand-in `hou` only. The build's `check` probes both.
-* Box3D Configure's extra settings and Bounds / Use Bounds, and the Solver SOP's Output tab (Point Velocities,
-  Import Constraints / Proxy, Bullet's `w` rule) and World Scale on joints and FORCES: built against stand-ins and
-  lint only. The builders' `check`s probe Use Bounds and the joint scaling.
-* An object with unpacked primitives and nothing packed returns before making bodies (`syncObject`): its bodies are
-  removed and its names released (`NameIndex::finish`). Test `unpacked_geometry`.
+* Box3D Configure's Bounds / Use Bounds and World Scale on FORCES: no test, only the builders' `check`s (Use Bounds, the
+  joint scaling).
 
 **Build**
 * Linux plugin build (only the core builds in CI): `build.sh`, gcc warnings in `src/dop` / `src/sync`, the dso and
@@ -25,9 +22,11 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * The Threads default (`performanceCoreCount`) on macOS (`hw.perflevel0`) and ARM Linux (`cpu_capacity`).
 
 **Houdini behaviour**
-* Collision group names (`COLLISION_NAMES_VEX`): the VEX gives the right bits in hython. Test `solver_sop_collision_group_names`
-  has not been run (it needs the rebuilt asset). Whether the collision input's pieces honour category / mask, and Bullet's
-  either-side-ignores rule, are unchecked.
+* Glue Inertial Load (`gluecompoundload`, `pieceLoad`): the maths is checked in `core_compound` and `glue_compound_load` shows
+  the load reaching the bonds of a column landing on its end. Not checked: that a cube dropped on a corner collapses, nor how its
+  break values compare with Bullet's impacts.
+* Collision group names (`COLLISION_NAMES_VEX`, test `solver_sop_collision_group_names`): unchecked are whether the collision
+  input's pieces honour category / mask, and whether Bullet also lets either side's ignore pattern be enough.
 * A packed piece that turns mirrored mid-simulation: the shape rebuild is keyed on the row lengths, not the sign
   (`mirrored_piece` covers a piece that starts mirrored).
 * Escape mid-step: the step is discarded and re-cooked, earlier frames stay cached, the re-cook rebuilds once.
@@ -40,9 +39,8 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   report `threadsafe()` true is unchecked (a force that does not just stays serial). Circle / Sphere sampling works on a Drag
   Force DOP (the test prints its ratios to Point: 4.6 and 9.2 for a 2 m box); how a force scales over a size is the Force
   DOP's own.
-* The ground guide (`build_ground_guide`, test `solver_sop_ground_guide`): the builder runs in memory without errors and
-  the nodes are wired, but it is not built or run in Houdini: what the display geometry of a Ground Plane and the Static
-  Object's `Geometry` import as, and whether `gl_wireframe` -1 on the merged guide still shows a Shaded plane shaded.
+* The ground guide (`build_ground_guide`, test `solver_sop_ground_guide` checks the geometry): not seen in a viewport, so
+  whether `gl_wireframe` -1 on the merged guide still shows a Shaded plane shaded.
 * Box3D Data's Default Shape menu (Plane and Cylinder at the end) and the Packed Object / Configure menus built from
   it: built, not opened in Houdini. `bullet_cylinder` and the cylinder cases of `bullet_shape_attributes` pass against Bullet.
 * `bullet_georep` `plane` on a packed piece (`ShapeType::Plane`, `buildShapes`): written without building or running. Its
@@ -66,8 +64,6 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   own.
 
 **Box3D Constraint Properties** (`tools/make_constraint_properties_sop.py`, test `constraint_properties`)
-* Never built or run: the asset's wiring (SideFX's `rbdgroupconstraints` outputs and parameter names, the `error` node's
-  severity menu), the wrangle's VEX and the label note are written from a dump of RBD Constraint Properties.
 * The viewer state (`b3d_constraint_properties_state.py`: selector, rotation handle, hotkeys, HUD, guides) is written
   from a dump of RBD Constraint Properties and never run in a viewport. Only its stash and network are checked
   (`constraint_properties_edit`). Not known: whether the selector picks a line with a click and with a box, whether the
@@ -124,9 +120,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   (ours simulates them). Loose points beside a packed piece: Bullet ignores them without a message, ours simulates them.
 
 **Whole objects**
-* RBD Point Object (`other_rbd_objects`, `point_object_bullet`): needs its Geometry Path menu (`usegeo`) set to Override, else it makes no objects. With that, Bullet and Box3D match: 4 whole objects, both fall to y -2.424 (checked).
 * An RBD Object without Box3D Data colliding as its convex hull; `bullet_primT` / `bullet_primS` meaning there.
-* RBD Object's Create Active Object (`SolverParms/ActiveValue`, test `rbd_object_active`), written without Houdini: the option names.
 * RBD State's Compute Inertial Tensor off is assumed to mean the computed inertia (`rbd_object_inertia_type`).
 
 **Box3D Solver SOP** (`tools/make_solver_sop.py`, `tests/houdini/checks_sop.py`)
@@ -147,8 +141,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   speed, bounce and the number of pieces, and with a piece's height more than its mass), where Box3D uses one factor,
   `kGlueStrengthScale` (5.3, measured for a landing from 3). So a hit on a resting structure needs about 5x the Strength
   in Box3D that it does in Bullet. Anchor position and rest length change neither. Not understood: what makes Bullet's
-  break value larger than its `impact`. Unchecked: the global propagation iteration count (the `propagate_iteration`
-  detail attribute; test `glue_global_iterations` has not been run), and the cost of reading every glued body's contacts each step on a large network.
+  break value larger than its `impact`. Unchecked: the cost of reading every glued body's contacts each step on a large network.
 * What the precompiled headers (`BOX3DDOP_PCH`) save: not measured.
 * Transform Pieces with packed transforms that carry scale or shear.
 * Constraints output through Transform Pieces: constraints between collision pieces (not in the simulation points, so
@@ -191,8 +184,8 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
     own settings are Set Always already).
   * Break Thresholds (`b3d_solver_breaks.py`): Impact (`solver_sop_break_impact_bullet`: a glued pair stops breaking at 22.4k
     in Box3D and 22.9k in the RBD Bullet Solver SOP) and At Frame (`solver_sop_break_atframe_bullet`: same frame as Bullet,
-    also relative to Start Frame) match. Distance is `distance` = the anchors' distance (as Bullet); its test
-    `solver_sop_break_distance_bullet` was not run against a rebuilt plugin. Angle and Torque thresholds run, but the
+    also relative to Start Frame) match. Distance is `distance` = the anchors' distance (as Bullet, test
+    `solver_sop_break_distance_bullet`). Angle and Torque thresholds run, but the
     `angle` and `torque` readings differ from Bullet's (`solver_sop_break_angle_torque_bullet`, INFO: a Soft constraint on
     a spinning box reads about 0.015 rad in Box3D against 0.2 to 0.4 in Bullet, and torque 6078 against 15004 on frame 2).
     Which threshold breaks when is not established beyond that listing.
@@ -201,8 +194,8 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
     rewrites the constraint geometry each step, so the solver reads the whole network again). Not there: the Force
     Threshold (Bullet's `force` of a Glue is the difference of its pieces' forces times their mean mass,
     Box3D's is the joint's), Group, Update from Input, plastic flow, the VEX snippet.
-* Glue as one body (`gluecompound`, `Box3DCompoundSync.cpp`, how it works: joints.md). Written and compiled for the core
-  parts only (`core_compound` passes); the sync is untested in Houdini. Unchecked:
+* Glue as one body (`gluecompound`, `Box3DCompoundSync.cpp`, how it works: joints.md; on by default, so the glue tests run
+  it, and `glue_compound_break` and `glue_compound_load` check its breaking). Unchecked:
   * That a group merges, moves, writes its pieces back and breaks as the weld joints do: compare the same scene with the
     switch off (stiffness, break impact and `kGlueStrengthScale`, which was measured against weld joints).
   * `setVelocityByHandle` is the centre of mass velocity (a single piece's centre is its origin, so only a compound

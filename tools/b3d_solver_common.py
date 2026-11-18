@@ -37,22 +37,17 @@ PIECES_DROPPED = {"enablesleep"}
 # (tab, [(folder label, members by parameter name or label)]); a parameter in none stays loose.
 TAB_GROUPS = {
     # Solver has no folders (World Scale, Time Scale, Substeps ... loose), and Gravity is loose, first in Forces.
-    "Forces": [("Force DOPs", ["useforces", "forceswake"]),
-               ("Bounce / Friction", ["restitutionpropagation", "bouncethreshold", "restitutioniterations",
-                                      "frictionmixing", "restitutionmixing"])],
     "Advanced": [("Stability", ["enablewarmstarting", "enablecontinuous", "maxlinearspeed",
-                                "isotropicinertia", "gluecompound"]),
+                                "isotropicinertia"]),
                  # Cache Simulation / Cache Memory (MB) join this folder first (make_solver_sop.py).
                  ("Performance", ["autothreads", "threads"])],
 }
 # The Pieces tab is the pieces' Box3D Data folders (Shape, Body, Material, CCD & Contacts, Sleep).
 # The solver's settings the SOP regroups by name, wherever the DOP has them: (folder label, names, open) on the
-# Solver tab after Cache Simulation, and the bounce / friction ones loose in Forces (TAB_GROUPS folders them).
+# Solver tab after Cache Simulation.
 SOLVER_FOLDERS = [("Contacts", ("contactstiffness", "contactdamping", "contactpushspeed", "contactrecycledistance"), True),
                   ("Sleeping", ("enablesleep",), False),
                   ("Aging", ("enableaging", "reapdead", "reapatframeend"), False)]
-BOUNCE_PARMS = ("restitutionpropagation", "bouncethreshold", "restitutioniterations", "frictionmixing",
-                "restitutionmixing")
 
 # The DOP subnet for forces, the asset's dive target, and its outputs in the order the Multiple
 # Solver runs them around the Box3D Solver.
@@ -256,6 +251,17 @@ def group_tab(label, contents, groups=None):
         if pts:
             out.append(collapsible(f"b3dsop_{label.lower()}_group{i}", glabel, pts))
     return out + folders
+
+
+def flatten_folders(entries):
+    """`entries` with every folder replaced by its contents, in order."""
+    out = []
+    for pt in entries:
+        if pt.type() == hou.parmTemplateType.Folder:
+            out += flatten_folders(pt.parmTemplates())
+        else:
+            out.append(pt)
+    return out
 
 
 def drop_templates(entries, names):

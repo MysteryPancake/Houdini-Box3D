@@ -13,7 +13,7 @@ Solver (read every step; only the thread count rebuilds the world): `gravity`, `
 `WorldSettings` keeps `kDefaultWorkerCount`), `enablesleep`, `timescale`, `enableaging`, `reapdead`, `reapatframeend` (disabled while `reapdead` is off), and Box3D's tuning
 (Box3D's defaults except the contact stiffness and damping, tuned for bouncier, more rigid contacts): `contactstiffness`, `contactdamping`, `contactpushspeed`, `bouncethreshold`,
 `contactrecycledistance`, `maxlinearspeed`, `enablecontinuous`, `enablewarmstarting`, `isotropicinertia`,
-`restitutioniterations`, `restitutionpropagation`, `impactminspeed`, `gluecompound` (on: glued groups as one body, see joints.md). Force DOPs: `useforces`, `forceswake` (disabled while
+`restitutioniterations`, `restitutionpropagation`, `impactminspeed`, `gluecompound` (on: glued groups as one body, see joints.md), `gluecompoundload` (0: off, scales the inertial load on a compound's bonds). Force DOPs: `useforces`, `forceswake` (disabled while
 `useforces` is off). Box3D Data: `startasleep` and `sleepthreshold` are disabled while `enablesleep` is off,
 `mass` / `density` by `computemass`; joint nodes: see `enabledBy` in [joints.md](joints.md). Solver
 `frictionmixing` and `restitutionmixing` menus list the rules in the same order (geometric mean, minimum, maximum,
@@ -77,10 +77,8 @@ optional disable condition). It keeps the names, defaults, ranges, menus and con
 `tab()` groups share one `PRM_SWITCHER` (`PRM_Default(count, label)` per tab, switcher `b3dtabs`); `folder()` groups
 are simple folders, each a one-folder switcher with `PRM_SpareData::groupTypeSimple` named `<prefix><index>`. A builder
 uses one kind, except `subfolder()`: a simple folder inside a tab (`<prefix>sub<index>`), counted as one parameter of
-the tab. The solver uses tabs by subject: Solver (time scale, Substeps, Constraint Iterations, Allow Sleeping; the SOP labels Substeps "Box3D Substeps" and adds Global Substeps above it, driving the DOP network's own Substeps), Collision (simple
-folders Contacts: contact tuning, recycling; Bounce / Friction: bounce settings, friction / bounce mixing),
-Forces (gravity, Use Force DOPs, Forces Wake Bodies), Aging (Enable Aging, Reap Dead Points, Reap At Frame End),
-Output (Export Collision Shapes, Impact Min Speed), Advanced (Warm Starting,
-Continuous Collision, threads, speed limit, ...); its guide parameters are a plain list on Houdini's own Guide Options tab (so the
+the tab. The solver uses tabs by subject, laid out like the Box3D Solver SOP's (same tab order and folder names): Solver (time scale, Substeps, Constraint Iterations; simple folders Contacts, Sleeping, Aging),
+Forces (gravity; folders Force DOPs, Bounce / Friction, Glue), Visualization (folder Geometry: Export Collision Shapes),
+Advanced (folders Stability and Performance) and Output (folder Impact Data); its guide parameters are a plain list on Houdini's own Guide Options tab (so the
 solver's tabs sit inside Data Options). Box3D Data and the joint nodes use simple folders: Box3D Data's are Shape, Body, Material, CCD & Contacts (CCD Threshold, Fast Object, Contact Recycling, Add
 Impact Data) and Sleep (Allow Sleeping, Start Asleep, Sleep Threshold). A function-local static, because Houdini keeps pointers into it. Menu tokens are "0", "1", ... in item order (read as ints).

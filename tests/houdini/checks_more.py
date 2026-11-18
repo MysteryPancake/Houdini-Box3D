@@ -543,6 +543,27 @@ def test_glue_global_iterations():
                    f"-1 alone = 1 round: {one_round})")]
 
 
+def test_glue_compound_load():
+    """Glue Inertial Load: a column of 6 glued boxes (run as one body) landing on its end breaks its bottom bond on
+    a hard hit, but with the load on, the bonds up the column break too, as the whole body is slowed: at some
+    Strength more bonds break with Glue Inertial Load 1 than with 0, and a load of 0 matches the default."""
+    scene = dict(n=6, height=3.0, column=True)
+    rows = []
+    more = False
+    same = True
+    for strength in (1e2, 1e3, 3e3, 1e4, 3e4, 1e5):
+        default = glue_row_run("box3d", strength, 48, **scene)[0]
+        off = glue_row_run("box3d", strength, 48, load=0.0, **scene)[0]
+        on = glue_row_run("box3d", strength, 48, load=1.0, **scene)[0]
+        more = more or (on or 0) > (off or 0)
+        same = same and default == off
+        rows.append(f"Strength {strength:g}: default {default}, load 0: {off}, load 1: {on}")
+    ok = more and same
+    return [Result("glue_compound_load", Result.PASS if ok else Result.FAIL,
+                   "; ".join(rows) + f" (expected more broken with load 1 at some Strength: {more}, "
+                   f"load 0 = default: {same})")]
+
+
 def glue_threshold(kind, height, lo=500.0, hi=1e7, rounds=7):
     """The Strength at which a glued pair dropped from `height` stops breaking on landing, found by
     bisection in log space between `lo` (must break) and `hi` (must hold). None if `lo` already
@@ -636,13 +657,15 @@ _GLUE_RUNS = itertools.count()
 
 
 def glue_row_scene(tag, kind, strength, n=2, height=3.0, drop=None, bounce=None, iterations=None,
-                   global_iterations=None):
+                   global_iterations=None, column=False, load=None):
     """n glued boxes side by side. With drop=None they fall from `height` onto the ground (the landing is the hit).
     Otherwise they rest on it and a box is dropped from `drop` above the first one. bounce: RBD Packed Object's.
-    iterations: the Glue's Propagation Iterations. global_iterations: the network's propagate_iteration detail attribute."""
+    iterations: the Glue's Propagation Iterations. global_iterations: the network's propagate_iteration detail attribute.
+    column: the boxes stand one on another instead (the first lowest). load: the solver's Glue Inertial Load."""
     dop = new_dopnet(tag)
     y = height if drop is None else 0.5
-    pieces = [{"size": (1, 1, 1), "center": (i, y, 0), "attrs": {"active": 1}} for i in range(n)]
+    at = (lambda i: (0, y + i, 0)) if column else (lambda i: (i, y, 0))
+    pieces = [{"size": (1, 1, 1), "center": at(i), "attrs": {"active": 1}} for i in range(n)]
     if drop is not None:
         pieces.append({"size": (1, 1, 1), "center": (0, 1.5 + drop, 0), "attrs": {"active": 1}})
     pieces.append(dict(GROUND, attrs={"active": 0}))
@@ -652,7 +675,8 @@ def glue_row_scene(tag, kind, strength, n=2, height=3.0, drop=None, bounce=None,
     set_parm(glue, ["strength"], strength)
     if iterations is not None:
         set_parm(glue, ["propagationiterations"], iterations)
-    lines = [(names[i], (i + 0.5, y, 0), names[i + 1], (i + 0.5, y, 0), "Glue") for i in range(n - 1)]
+    mid = (lambda i: (0, y + i + 0.5, 0)) if column else (lambda i: (i + 0.5, y, 0))
+    lines = [(names[i], mid(i), names[i + 1], mid(i), "Glue") for i in range(n - 1)]
     net = create(dop, "constraintnetwork", "constraint_network")
     net.setInput(0, obj)
     network = constraint_lines(tag + "_network", lines)
@@ -665,7 +689,10 @@ def glue_row_scene(tag, kind, strength, n=2, height=3.0, drop=None, bounce=None,
         network = wr.path()
     set_parm(net, ["soppath", "constraintsoppath", "geosoppath"], network)
     net.setInput(1, glue)
-    finish(dop, solver_for(kind, dop, net))
+    solver = solver_for(kind, dop, net)
+    if load is not None:
+        set_parm(solver, ["gluecompoundload"], load)
+    finish(dop, solver)
     return dop
 
 
@@ -987,6 +1014,7 @@ TESTS = {
     "sidefx_glue": test_sidefx_glue,
     "glue_impact": test_glue_impact,
     "glue_compound_break": test_glue_compound_break,
+    "glue_compound_load": test_glue_compound_load,
     "glue_impact_scale": test_glue_impact_scale,
     "glue_global_iterations": test_glue_global_iterations,
     "glue_impact_trace": test_glue_impact_trace,

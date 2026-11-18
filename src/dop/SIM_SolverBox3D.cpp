@@ -65,10 +65,6 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                    "positions. More is stiffer and more stable for stacks "
                    "and chains, but slower. Raise Substeps instead for "
                    "collisions missed between frames.")
-          .toggle("enablesleep", "Allow Sleeping", true,
-                  "Let resting bodies stop simulating until touched. Off keeps "
-                  "every body awake, whatever Box3D Data says.")
-          .tab("Collision")
           .subfolder("Contacts")
           // Stiffer and less damped than Box3D's own defaults (30 Hz, 10):
           // a more rigid look. Box3D caps the stiffness at 1/8 of the pass
@@ -89,6 +85,33 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                   "Reuse contacts for pairs that barely moved: faster but "
                   "slightly less exact. 0 turns it off. "
                   "Box3D Data's Contact Recycling turns it off per object.")
+          .subfolder("Sleeping")
+          .toggle("enablesleep", "Allow Sleeping", true,
+                  "Let resting bodies stop simulating until touched. Off keeps "
+                  "every body awake, whatever Box3D Data says.")
+          .subfolder("Aging")
+          .toggle("enableaging", "Enable Aging", false,
+                  "Add the frame time step (not Time Scale-adjusted) to each "
+                  "point's age, and mark points dead once age exceeds life.")
+          .toggle("reapdead", "Reap Dead Points", false,
+                  "Delete points whose dead attribute is 1. Off keeps them "
+                  "where they died, no longer simulated.")
+          .toggle("reapatframeend", "Reap At Frame End", true,
+                  "Delete points that die during a step at its end, so dead "
+                  "points are never seen. Off keeps them for one frame.",
+                  "{ reapdead == 0 }")
+          .tab("Forces")
+          .vector("gravity", "Gravity", {0.0, -9.80665, 0.0},
+                  "Acceleration of every dynamic body, in units per second "
+                  "squared. Scale per body with Gravity Scale on Box3D Data.")
+          .subfolder("Force DOPs")
+          .toggle("useforces", "Use Force DOPs", true,
+                  "Apply Force DOPs connected to the objects (Wind, Fan, "
+                  "etc.). Set Gravity to 0 when using a Gravity Force.")
+          .toggle("forceswake", "Forces Wake Bodies", false,
+                  "Let forces wake sleeping bodies, e.g. wind that should blow "
+                  "resting pieces away.",
+                  "{ useforces == 0 }")
           .subfolder("Bounce / Friction")
           .toggle("restitutionpropagation", "Bounce Propagation", false,
                   "Pass bounce on through stacks of touching pieces.")
@@ -108,43 +131,39 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
           .menu("restitutionmixing", "Bounce Mixing", 1,
                 {"Geometric Mean", "Minimum", "Maximum", "Average", "Multiply"},
                 "How the bounce of two touching bodies is combined.")
-          .tab("Forces")
-          .vector("gravity", "Gravity", {0.0, -9.80665, 0.0},
-                  "Acceleration of every dynamic body, in units per second "
-                  "squared. Scale per body with Gravity Scale on Box3D Data.")
-          .toggle("useforces", "Use Force DOPs", true,
-                  "Apply Force DOPs connected to the objects (Wind, Fan, "
-                  "etc.). Set Gravity to 0 when using a Gravity Force.")
-          .toggle("forceswake", "Forces Wake Bodies", false,
-                  "Let forces wake sleeping bodies, e.g. wind that should blow "
-                  "resting pieces away.",
-                  "{ useforces == 0 }")
-          .tab("Aging")
-          .toggle("enableaging", "Enable Aging", false,
-                  "Add the frame time step (not Time Scale-adjusted) to each "
-                  "point's age, and mark points dead once age exceeds life.")
-          .toggle("reapdead", "Reap Dead Points", false,
-                  "Delete points whose dead attribute is 1. Off keeps them "
-                  "where they died, no longer simulated.")
-          .toggle("reapatframeend", "Reap At Frame End", true,
-                  "Delete points that die during a step at its end, so dead "
-                  "points are never seen. Off keeps them for one frame.",
-                  "{ reapdead == 0 }")
-          .tab("Output")
+          .subfolder("Glue")
+          .toggle("gluecompound", "Glue as One Body", true,
+                  "Run each group of glued pieces as one rigid body: stiffer "
+                  "and faster for large chunks.")
+          .number("gluecompoundload", "Glue Inertial Load", 0.0, R{0, 10},
+                  "Also breaks glued bonds away from a hit, by the load that "
+                  "slowing the whole body puts on them. 0 is off, 1 is "
+                  "physical.",
+                  "{ gluecompound == 0 }")
+          // Show Collision Shapes and Shape Color are guide parameters (the
+          // node's Guide Options tab), kept out of the tabs.
+          .tab("Visualization")
+          .subfolder("Geometry")
           .toggle("exportshapes", "Export Collision Shapes", false,
                   "Write every body's collision shapes as data on its object "
                   "(for the Box3D Solver SOP's Show Collision Shapes). Costs "
-                  "time every step.")
-          .number("impactminspeed", "Impact Min Speed", 0.0, R{0, 10},
-                  "Impact data (Box3D Data's Add Impact Data) only includes "
-                  "collisions faster than this. 0 includes every contact.")
+                  "time every step. Show Collision Shapes and Shape Color are "
+                  "on the Guide Options tab.")
           .tab("Advanced")
+          .subfolder("Stability")
           .toggle("enablewarmstarting", "Warm Starting", true,
                   "Reuse last step's contact forces. Leave on; off makes "
                   "stacks less stable.")
           .toggle("enablecontinuous", "Continuous Collision", true,
                   "Stop fast bodies passing through static ones (and through "
                   "moving ones, for Box3D Data's Fast Object).")
+          .number("maxlinearspeed", "Max Linear Speed", 400.0, R{0, 1000},
+                  "Speed limit for every body, in units per second.")
+          .number("isotropicinertia", "Isotropic Inertia Tolerance", 0.2,
+                  R{0, 1, true},
+                  "Treats nearly spherical bodies as spheres for spin. Applies "
+                  "to new bodies and mass changes.")
+          .subfolder("Performance")
           .toggle("autothreads", "Use All Threads", false,
                   autoThreadsHelp.c_str())
           .integer("threads", "Threads", b3dop::defaultWorkerCount(),
@@ -153,15 +172,11 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                    "physical performance cores; small scenes can run faster "
                    "with fewer.",
                    "{ autothreads == 1 }")
-          .number("maxlinearspeed", "Max Linear Speed", 400.0, R{0, 1000},
-                  "Speed limit for every body, in units per second.")
-          .toggle("gluecompound", "Glue as One Body", true,
-                  "Run each group of glued pieces as one rigid body: stiffer "
-                  "and faster for large chunks.")
-          .number("isotropicinertia", "Isotropic Inertia Tolerance", 0.2,
-                  R{0, 1, true},
-                  "Treats nearly spherical bodies as spheres for spin. Applies "
-                  "to new bodies and mass changes.")
+          .tab("Output")
+          .subfolder("Impact Data")
+          .number("impactminspeed", "Impact Min Speed", 0.0, R{0, 10},
+                  "Impact data (Box3D Data's Add Impact Data) only includes "
+                  "collisions faster than this. 0 includes every contact.")
           .templates();
 
   static SIM_DopDescription theDopDescription(
@@ -483,7 +498,20 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
       }
       // Box3D clears its move events every step, so merge them: the last
       // event of a body is its final pose (and its fell-asleep flag).
+      // A body with an entry keeps its slot on the entry; the others (a
+      // compound's body) go through the map.
       for (const b3dop::BodyMove &mv : events) {
+        Box3DBodyMirror *e = static_cast<Box3DBodyMirror *>(mv.userData);
+        if (e) {
+          if (e->moveStamp == st->syncStamp) {
+            st->moves[e->moveSlot] = mv;
+          } else {
+            e->moveStamp = st->syncStamp;
+            e->moveSlot = st->moves.size();
+            st->moves.push_back(mv);
+          }
+          continue;
+        }
         const auto ins = slot.try_emplace(mv.handle, st->moves.size());
         if (ins.second)
           st->moves.push_back(mv);
@@ -601,6 +629,8 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
   st->reapDead = getReapDead();
   st->reapAtFrameEnd = getReapAtFrameEnd();
   st->glueCompounds = getGlueCompound();
+  st->glueCompoundLoad =
+      std::max(0.0f, static_cast<float>(getGlueCompoundLoad()));
   st->pointWrites.clear();
   st->deletions.clear();
   st->writtenObjects.clear();

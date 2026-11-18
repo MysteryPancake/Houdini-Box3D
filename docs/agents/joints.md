@@ -206,7 +206,10 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
     other joint touches it. After the step `expandCompoundMoves` adds a move event per piece (compound pose * offset,
     velocity `pieceVelocity` kept on the entry as `glueLin` / `glueAng`), so the write-back is the usual one, and
     puts each parked body where its piece is. `collectGlueHits` reads a piece's hits from `contactImpulsesByShape` of
-    its compound, so the break model is unchanged. One rigid body takes a whole hit, so after every Box3D step `breakGlueEarly` runs the break test on the hits so far
+    its compound. With `gluecompoundload` above 0 a piece's hits are at least `gluecompoundload * pieceLoad`
+    (`core/Box3DCompound.h`): mass times the change of the piece's velocity over the step, from the compound's motion
+    before it (`stepPre`, taken by `recordCompoundMotion`) and after, so a body stopped at one point loads the pieces
+    away from it too (rotation), and a steady load such as weight loads nothing. The break test is the same. One rigid body takes a whole hit, so after every Box3D step `breakGlueEarly` runs the break test on the hits so far
     (`glueAdvance` on copies) for bonds inside compounds, destroys the ones over (`earlyBroken`, written by `jointsAfterStep`;
     `advanceGlue` skips them) and `splitBrokenCompounds` splits their compounds at once. The pieces that leave take the
     compound's motion from before the hit (`recordCompoundMotion`, `Box3DCompound::pre`, kept while its last step had hits,

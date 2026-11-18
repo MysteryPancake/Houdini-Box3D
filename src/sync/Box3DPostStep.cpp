@@ -827,36 +827,42 @@ private:
 #endif
 };
 
-// ---- step 3 (serial): packed primitive rotations
-// Serial: the HDK does not document setLocalTransform as thread-safe. Returns
+// ---- step 3 (parallel): packed primitive rotations
+// Parallel: setLocalTransform is thread-safe on distinct primitives. Returns
 // the bodies whose primitive is gone (the topology changed without a new id).
 int writePackedRotations(GU_Detail *gdp,
                          const std::vector<Box3DWriteItem> &items, size_t begin,
                          size_t end,
                          const std::vector<Box3DPackedWrite> &packedWrites) {
-  int missing = 0;
-  bool wrotePacked = false;
-  for (size_t k = begin; k < end; ++k) {
-    const Box3DWriteItem &w = items[k];
-    if (w.packedIdx < 0 || !packedWrites[static_cast<size_t>(w.packedIdx)].has)
-      continue;
-    const Box3DPackedWrite &pw = packedWrites[static_cast<size_t>(w.packedIdx)];
-    GA_Primitive *raw =
-        (pw.primOff >= 0 && pw.primOff < gdp->getNumPrimitiveOffsets())
-            ? gdp->getPrimitive(pw.primOff)
-            : nullptr;
-    if (!raw || !GU_PrimPacked::isPackedPrimitive(*raw)) {
-      ++missing;
-      continue;
-    }
-    setLocal3(*static_cast<GU_PrimPacked *>(raw), pw.newM3);
-    wrotePacked = true;
-  }
+  std::atomic<int> missing{0};
+  std::atomic<bool> wrotePacked{false};
+  // Each body has its own primitive, so the writes are to distinct primitives.
+  parallelForEach(
+      end - begin,
+      [&](size_t j) {
+        const Box3DWriteItem &w = items[begin + j];
+        if (w.packedIdx < 0 ||
+            !packedWrites[static_cast<size_t>(w.packedIdx)].has)
+          return;
+        const Box3DPackedWrite &pw =
+            packedWrites[static_cast<size_t>(w.packedIdx)];
+        GA_Primitive *raw =
+            (pw.primOff >= 0 && pw.primOff < gdp->getNumPrimitiveOffsets())
+                ? gdp->getPrimitive(pw.primOff)
+                : nullptr;
+        if (!raw || !GU_PrimPacked::isPackedPrimitive(*raw)) {
+          missing.fetch_add(1, std::memory_order_relaxed);
+          return;
+        }
+        setLocal3(*static_cast<GU_PrimPacked *>(raw), pw.newM3);
+        wrotePacked.store(true, std::memory_order_relaxed);
+      },
+      minParallelWrite());
   // setLocalTransform does not mark the primitive list dirty; the HDK leaves
   // that to us.
-  if (wrotePacked)
+  if (wrotePacked.load())
     gdp->getPrimitiveList().bumpDataId();
-  return missing;
+  return missing.load();
 }
 
 // One object's results, st.writeItems[begin, end), into its (locked, writable)

@@ -339,6 +339,34 @@ int main() {
     }
   }
 
+  // ---- the load a piece takes from the rest of a rigid body ----
+  {
+    // A body whose motion does not change loads nothing, however it moves.
+    MergedBody steady;
+    steady.ok = true;
+    steady.mass = 4.0f;
+    steady.lin[1] = -3.0f;
+    steady.ang[2] = 1.0f;
+    const double at[3] = {1.0, 0.0, 0.0};
+    CHECK(near(pieceLoad(steady, steady, at, 2.0f), 0.0, 1e-6));
+
+    // Stopped dead without turning: every piece takes mass * speed.
+    MergedBody falling = steady;
+    falling.ang[2] = 0.0f;
+    MergedBody stopped = falling;
+    stopped.lin[1] = 0.0f;
+    const double near_[3] = {0.0, 0.0, 0.0}, far_[3] = {3.0, 0.0, 0.0};
+    CHECK(near(pieceLoad(falling, stopped, near_, 2.0f), 6.0, 1e-4));
+    CHECK(near(pieceLoad(falling, stopped, far_, 2.0f), 6.0, 1e-4));
+
+    // Stopped at one end, so it also turns (w = 2 about z): the piece 3 away
+    // from the centre takes more than the one at the centre, by m * w * r.
+    MergedBody pivoted = stopped;
+    pivoted.ang[2] = 2.0f;
+    CHECK(near(pieceLoad(falling, pivoted, near_, 2.0f), 6.0, 1e-4));
+    CHECK(pieceLoad(falling, pivoted, far_, 2.0f) > 6.0f);
+  }
+
   // ---- components of the glue graph ----
   {
     auto bond = [](int a, int b) {

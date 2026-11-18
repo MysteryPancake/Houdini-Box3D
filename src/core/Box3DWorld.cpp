@@ -130,7 +130,8 @@ private:
 
 // ---- the process-wide fit cache ---------------------------------------------
 // What fitShapeOriented found for a point set (by content and shape type), so
-// many packed instances of one piece fit once. Cleared when it grows too big.
+// many packed instances of one piece fit once. Half is dropped when it grows
+// too big.
 class FitLibrary {
 public:
   static FitLibrary &instance() {
@@ -147,13 +148,18 @@ public:
   }
   void insert(uint64_t key, const ShapeSpec &spec) {
     std::lock_guard<std::mutex> lock(myMutex);
-    if (myEntries.size() >= kMaxFitEntries)
-      myEntries.clear();
+    if (myEntries.size() >= kMaxFitEntries) {
+      // Half goes (in the map's order), so a scene past the cap keeps most of
+      // what it just used instead of losing all of it.
+      for (auto it = myEntries.begin();
+           it != myEntries.end() && myEntries.size() > kMaxFitEntries / 2;)
+        it = myEntries.erase(it);
+    }
     myEntries.emplace(key, spec);
   }
 
 private:
-  static constexpr size_t kMaxFitEntries = 65536;
+  static constexpr size_t kMaxFitEntries = 262144;
   std::mutex myMutex;
   std::unordered_map<uint64_t, ShapeSpec> myEntries;
 };

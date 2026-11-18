@@ -1,5 +1,6 @@
 // Box3DSideFX.cpp
 #include "Box3DSideFX.h"
+#include "Box3DMath.h"
 #include "Box3DWorld.h"
 
 #include <box3d/math_functions.h>
@@ -161,21 +162,6 @@ void twistFrame(const float twistIn[3], const float upIn[3], float q[4]) {
 
 // Quaternions here are x, y, z, w arrays; Box3D's b3Quat is (v = xyz, s = w).
 b3Quat toB3(const float q[4]) { return b3Quat{{q[0], q[1], q[2]}, q[3]}; }
-
-void fromB3(const b3Quat &q, float out[4]) {
-  out[0] = q.v.x;
-  out[1] = q.v.y;
-  out[2] = q.v.z;
-  out[3] = q.s;
-}
-
-void quatMul(const float a[4], const float b[4], float out[4]) {
-  fromB3(b3MulQuat(toB3(a), toB3(b)), out);
-}
-
-void quatConj(const float q[4], float out[4]) {
-  fromB3(b3Conjugate(toB3(q)), out);
-}
 
 void rotateVec(const float q[4], const float v[3], float out[3]) {
   const b3Vec3 r = b3RotateVector(toB3(q), b3Vec3{v[0], v[1], v[2]});

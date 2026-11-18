@@ -249,9 +249,10 @@ void evaluateResolvers(const std::vector<ResolverPtr> &resolvers,
 // and the results go into Box3D (serial).
 void applyToObjectBodies(Box3DSharedState &st, const SIM_Object &obj,
                          const Box3DObjectSync &os,
-                         const std::vector<const SIM_Force *> &forces,
+                         PointForceCarry::ObjectForces &of,
                          const std::vector<PointForce> &pointForces, bool wake,
                          ForceStats &stats) {
+  const std::vector<const SIM_Force *> &forces = of.forces;
   b3dop::Box3DWorld &world = st.world;
 
   std::vector<ForceJob> jobs;
@@ -282,14 +283,16 @@ void applyToObjectBodies(Box3DSharedState &st, const SIM_Object &obj,
 
   // The Force DOPs.
   if (!forces.empty()) {
-    std::vector<ResolverPtr> parallel;
-    std::vector<const SIM_Force *> serial;
-    if (jobs.size() >= minParallelForces())
-      splitForces(obj, forces, parallel, serial);
-    else
-      serial = forces;
-    if (!parallel.empty())
-      evaluateResolvers(parallel, jobs);
+    // The split is made once per frame (the resolvers copy the forces' state
+    // when made, which does not change between steps).
+    const bool many = jobs.size() >= minParallelForces();
+    if (many && !of.split) {
+      splitForces(obj, forces, of.parallel, of.serial);
+      of.split = true;
+    }
+    const std::vector<const SIM_Force *> &serial = many ? of.serial : forces;
+    if (many && !of.parallel.empty())
+      evaluateResolvers(of.parallel, jobs);
     if (!serial.empty())
       for (ForceJob &job : jobs) {
         BodyExtent extent{world, job.body->handle};
@@ -376,7 +379,7 @@ void recordClearedForces(Box3DSharedState &st,
 ForceStats applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects,
                                bool wake, PointForceCarry *carry) {
   ForceStats stats;
-  std::vector<const SIM_Force *> forces;
+  PointForceCarry::ObjectForces single; // without a carry: made for each call
   std::vector<PointForce> pointForces;
   std::vector<SIM_Object *> cleared;
   const bool replay = carry && carry->replay;
@@ -389,7 +392,13 @@ ForceStats applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects,
       continue;
     Box3DObjectSync &os = osIt->second;
 
-    collectForceDops(*obj, forces);
+    // The frame's first step finds the object's forces; later steps reuse them.
+    PointForceCarry::ObjectForces &of =
+        carry ? carry->forcesOf[obj->getObjectId()] : single;
+    if (!replay) {
+      of = PointForceCarry::ObjectForces();
+      collectForceDops(*obj, of.forces);
+    }
     if (replay) {
       // The attributes were cleared by the frame's first step: apply what it
       // read.
@@ -402,10 +411,10 @@ ForceStats applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects,
       if (carry && !pointForces.empty())
         carry->byObject[obj->getObjectId()] = pointForces;
     }
-    if (forces.empty() && pointForces.empty())
+    if (of.forces.empty() && pointForces.empty())
       continue;
 
-    applyToObjectBodies(st, *obj, os, forces, pointForces, wake, stats);
+    applyToObjectBodies(st, *obj, os, of, pointForces, wake, stats);
     if (!replay && !pointForces.empty() && clearPointForces(*obj, pointForces))
       cleared.push_back(obj);
   }

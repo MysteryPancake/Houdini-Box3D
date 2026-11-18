@@ -210,6 +210,26 @@ void collectGlueHits(Box3DSharedState &st) {
   }
 }
 
+std::vector<b3dop::GlueBond> glueBondList(const Box3DSharedState &st,
+                                          bool withParams, bool blankBroken) {
+  std::vector<b3dop::GlueBond> bonds;
+  bonds.reserve(st.glueBonds.size());
+  for (size_t i = 0; i < st.glueBonds.size(); ++i) {
+    const Box3DJointEntry *e = st.glueBonds[i];
+    b3dop::GlueBond g;
+    g.a = st.glueBondNodes[i].first;
+    g.b = st.glueBondNodes[i].second;
+    if (withParams) {
+      g.params = e->extra->glueParams;
+      g.impact = e->extra->glueImpact;
+    }
+    if (blankBroken && e->broken)
+      g.a = g.b = -1;
+    bonds.push_back(g);
+  }
+  return bonds;
+}
+
 void breakGlueEarly(Box3DSharedState &st, float elapsed,
                     std::vector<b3dop::BodyMove> &moves) {
   if (st.compounds.empty() || st.glueBonds.empty())
@@ -223,19 +243,7 @@ void breakGlueEarly(Box3DSharedState &st, float elapsed,
   // No hit yet: the impacts can only have decayed since the last test.
   if (!anyHit)
     return;
-  std::vector<b3dop::GlueBond> bonds;
-  bonds.reserve(st.glueBonds.size());
-  for (size_t i = 0; i < st.glueBonds.size(); ++i) {
-    const Box3DJointEntry *e = st.glueBonds[i];
-    b3dop::GlueBond g;
-    g.a = st.glueBondNodes[i].first;
-    g.b = st.glueBondNodes[i].second;
-    g.params = e->extra->glueParams;
-    g.impact = e->extra->glueImpact;
-    if (e->broken)
-      g.a = g.b = -1;
-    bonds.push_back(g);
-  }
+  std::vector<b3dop::GlueBond> bonds = glueBondList(st, true, true);
   // The same test advanceGlue makes at the end of the frame, on the hits so far
   // and on copies: nothing is kept, the end of the frame still adds them all.
   std::vector<int> over;
@@ -273,19 +281,8 @@ void advanceGlue(Box3DSharedState &st, float dt) {
   std::vector<float> hits(st.glueNodes.size());
   for (size_t i = 0; i < hits.size(); ++i)
     hits[i] = st.glueNodes[i].hits;
-  std::vector<b3dop::GlueBond> bonds;
-  bonds.reserve(st.glueBonds.size());
-  for (size_t i = 0; i < st.glueBonds.size(); ++i) {
-    const Box3DJointEntry *e = st.glueBonds[i];
-    b3dop::GlueBond g;
-    g.a = st.glueBondNodes[i].first;
-    g.b = st.glueBondNodes[i].second;
-    g.params = e->extra->glueParams;
-    g.impact = e->extra->glueImpact;
-    if (e->broken) // broke mid-frame (breakGlueEarly): carries nothing now
-      g.a = g.b = -1;
-    bonds.push_back(g);
-  }
+  // A bond that broke mid-frame (breakGlueEarly) carries nothing now.
+  std::vector<b3dop::GlueBond> bonds = glueBondList(st, true, true);
   std::vector<int> broken;
   b3dop::glueAdvance(bonds, std::move(hits), dt, broken);
   for (size_t i = 0; i < bonds.size(); ++i)

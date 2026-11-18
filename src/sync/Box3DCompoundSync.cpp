@@ -4,6 +4,7 @@
 // core/Box3DCompound.h; this file keeps the groups in step with the bodies.
 #include "Box3DCompoundSync.h"
 
+#include "Box3DJointSync.h"
 #include "Box3DState.h"
 #include "core/Box3DCompound.h"
 #include "core/Box3DMath.h"
@@ -19,10 +20,7 @@ namespace {
 
 using b3dop::BodyHandle;
 
-struct Pose {
-  double p[3] = {0, 0, 0};
-  float q[4] = {0, 0, 0, 1};
-};
+using Pose = b3dop::BodyPose;
 
 bool bodyPose(const b3dop::Box3DWorld &w, BodyHandle h, Pose &out) {
   return w.getTransformByHandle(h, out.p, out.q);
@@ -110,28 +108,71 @@ uint64_t keyOf(const Box3DBodyMirror &e) {
   return b3dop::makeBodyKey(e.objectId, e.pointId);
 }
 
-// A move event for a piece that left its compound mid-frame: where it was put.
-void addLeftMove(std::vector<b3dop::BodyMove> *moves, Box3DBodyMirror &e,
-                 BodyHandle body, const Pose &pp, bool asleep) {
-  if (!moves)
-    return;
+// A move event for a piece of `entry` put at `pp`.
+b3dop::BodyMove moveAt(Box3DBodyMirror &entry, BodyHandle body, const Pose &pp,
+                       bool asleep) {
   b3dop::BodyMove mv;
-  mv.userData = &e;
+  mv.userData = &entry;
   mv.handle = body;
-  for (int k = 0; k < 3; ++k)
-    mv.pos[k] = pp.p[k];
-  for (int k = 0; k < 4; ++k)
-    mv.rot[k] = pp.q[k];
+  b3dop::copy3(mv.pos, pp.p);
+  b3dop::copy4(mv.rot, pp.q);
   mv.fellAsleep = asleep;
-  moves->push_back(mv);
+  return mv;
 }
 
-// Enables the pieces where the compound left them (a piece another node
-// edited keeps the pose the edit gave it) and destroys the compound body.
-// Pieces whose entry is gone (`entry` null) were destroyed with their points.
-// `leave` (optional): the motion the pieces take instead of the compound's now
-// (its motion before the step that broke it), `moves` (optional): gets a move
-// event for each piece, for a split in the middle of a frame.
+// Takes a piece out of its compound: enabled (a piece the user disabled stays
+// disabled) and, if the compound's pose `cp` is known, put where the compound
+// has it, moving as `motion` says (asleep if the compound is not `awake`) and
+// given a move event in `moves` (optional, for a split in the middle of a
+// frame). A piece another node edited keeps the pose the edit gave it, and the
+// velocity of its point.
+void releasePiece(b3dop::Box3DWorld &w, const Box3DCompoundMember &m,
+                  const Pose *cp, bool awake, const b3dop::MergedBody &motion,
+                  std::vector<b3dop::BodyMove> *moves) {
+  Box3DBodyMirror &e = *m.entry;
+  if (e.props.enabled)
+    w.setEnabledByHandle(m.body, true);
+  if (e.glueEdited) {
+    w.setVelocityByHandle(m.body, e.lin, e.ang);
+  } else if (cp) {
+    const Pose pp = placed(*cp, m);
+    w.setTransformByHandle(m.body, pp.p, pp.q);
+    if (awake) {
+      float lin[3], ang[3];
+      double com[3];
+      centreOf(pp, m, com);
+      b3dop::pieceVelocity(motion, com, lin, ang);
+      w.setVelocityByHandle(m.body, lin, ang);
+    } else {
+      w.sleepByHandle(m.body);
+    }
+    if (moves)
+      moves->push_back(moveAt(e, m.body, pp, !awake));
+  }
+  e.inCompound = false;
+  e.glueEdited = false;
+}
+
+// The component with the most pieces (the lowest number on a tie), -1 if there
+// are none; `best` is its piece count.
+int largestComponent(const std::unordered_map<int, size_t> &count,
+                     size_t &best) {
+  int stay = -1;
+  best = 0;
+  for (const auto &kv : count)
+    if (kv.second > best || (kv.second == best && kv.first < stay)) {
+      stay = kv.first;
+      best = kv.second;
+    }
+  return stay;
+}
+
+// Enables the pieces where the compound left them and destroys the compound
+// body. Pieces whose entry is gone (`entry` null) were destroyed with their
+// points. `leave` (optional): the motion the pieces take instead of the
+// compound's now (its motion before the step that broke it), `moves`
+// (optional): gets a move event for each piece, for a split in the middle of a
+// frame.
 void dissolve(Box3DSharedState &st, Box3DCompound &c,
               const b3dop::MergedBody *leave = nullptr,
               std::vector<b3dop::BodyMove> *moves = nullptr) {
@@ -144,32 +185,8 @@ void dissolve(Box3DSharedState &st, Box3DCompound &c,
     mb = *leave;
   for (Box3DCompoundMember &m : c.members) {
     st.compoundOf.erase(m.body);
-    if (!m.entry)
-      continue;
-    Box3DBodyMirror &e = *m.entry;
-    // A piece the user disabled stays disabled.
-    if (e.props.enabled)
-      w.setEnabledByHandle(m.body, true);
-    if (e.glueEdited) {
-      // The edit set the pose on the parked body already; its velocity too, to
-      // what the point held.
-      w.setVelocityByHandle(m.body, e.lin, e.ang);
-    } else if (have) {
-      const Pose pp = placed(cp, m);
-      w.setTransformByHandle(m.body, pp.p, pp.q);
-      if (awake) {
-        float lin[3], ang[3];
-        double com[3];
-        centreOf(pp, m, com);
-        b3dop::pieceVelocity(mb, com, lin, ang);
-        w.setVelocityByHandle(m.body, lin, ang);
-      } else {
-        w.sleepByHandle(m.body);
-      }
-      addLeftMove(moves, e, m.body, pp, !awake);
-    }
-    e.inCompound = false;
-    e.glueEdited = false;
+    if (m.entry)
+      releasePiece(w, m, have ? &cp : nullptr, awake, mb, moves);
   }
   w.destroyBody(c.body);
 }
@@ -240,23 +257,7 @@ bool shrink(Box3DSharedState &st, Box3DCompound &c, const std::vector<int> &cid,
     }
     doomed.emplace_back(m.shapeFirst, m.shapeCount);
     st.compoundOf.erase(m.body);
-    Box3DBodyMirror &e = *m.entry;
-    if (e.props.enabled)
-      w.setEnabledByHandle(m.body, true);
-    const Pose pp = placed(cp, m);
-    w.setTransformByHandle(m.body, pp.p, pp.q);
-    if (awake) {
-      float lin[3], ang[3];
-      double com[3];
-      centreOf(pp, m, com);
-      b3dop::pieceVelocity(leave ? *leave : was, com, lin, ang);
-      w.setVelocityByHandle(m.body, lin, ang);
-    } else {
-      w.sleepByHandle(m.body);
-    }
-    addLeftMove(moves, e, m.body, pp, !awake);
-    e.inCompound = false;
-    e.glueEdited = false;
+    releasePiece(w, m, &cp, awake, leave ? *leave : was, moves);
   }
   w.destroyShapeRangesByHandle(c.body, doomed);
 
@@ -332,6 +333,7 @@ bool merge(Box3DSharedState &st, const std::vector<Box3DBodyMirror *> &group) {
       break;
     }
     std::copy(centre, centre + 3, m.centre);
+    m.mass = mass;
     m.shapeFirst = first;
     m.shapeCount = n;
     first += n;
@@ -415,16 +417,8 @@ void syncCompounds(Box3DSharedState &st) {
   st.groupsBodyVersion = st.bodyVersion;
   st.groupsRecheck = false;
 
-  std::vector<b3dop::GlueBond> bonds;
-  bonds.reserve(st.glueBondNodes.size());
-  for (const auto &ab : st.glueBondNodes) {
-    b3dop::GlueBond g;
-    g.a = ab.first;
-    g.b = ab.second;
-    bonds.push_back(g);
-  }
-  const b3dop::GlueComponents comp =
-      b3dop::glueComponents(st.glueNodes.size(), bonds);
+  const b3dop::GlueComponents comp = b3dop::glueComponents(
+      st.glueNodes.size(), glueBondList(st, false, false));
 
   std::unordered_map<BodyHandle, Box3DBodyMirror *> byHandle;
   for (auto &kv : st.objectSync)
@@ -483,13 +477,8 @@ void syncCompounds(Box3DSharedState &st) {
       cid[k] = comp.of[static_cast<size_t>(n->second)];
       ++count[cid[k]];
     }
-    int stay = -1;
     size_t best = 0;
-    for (const auto &kv : count)
-      if (kv.second > best || (kv.second == best && kv.first < stay)) {
-        stay = kv.first;
-        best = kv.second;
-      }
+    const int stay = largestComponent(count, best);
     const bool usable = stay >= 0 && ok[static_cast<size_t>(stay)] &&
                         groups[static_cast<size_t>(stay)].size() == best &&
                         best >= 2 && best * 2 >= c.members.size();
@@ -523,14 +512,25 @@ void syncCompounds(Box3DSharedState &st) {
 }
 
 void recordCompoundMotion(Box3DSharedState &st, bool frameStart) {
+  const bool wantLoad = st.glueCompoundLoad > 0.0f;
   for (auto &c : st.compounds) {
     // Kept while the last step had hits: the motion from before the impact.
-    if (!frameStart && c->preOk && c->hadHit)
+    const bool keep = !frameStart && c->preOk && c->hadHit;
+    if (keep && !wantLoad)
       continue;
+    b3dop::MergedBody mb;
     bool awake = false;
-    c->preOk = st.world.isAwakeByHandle(c->body) &&
-               bodyMotion(st.world, c->body, c->pre, awake) && awake;
-    c->hadHit = false;
+    const bool ok = st.world.isAwakeByHandle(c->body) &&
+                    bodyMotion(st.world, c->body, mb, awake) && awake;
+    if (wantLoad) {
+      c->stepPre = mb;
+      c->stepPreOk = ok;
+    }
+    if (!keep) {
+      c->pre = mb;
+      c->preOk = ok;
+      c->hadHit = false;
+    }
   }
 }
 
@@ -539,18 +539,8 @@ void splitBrokenCompounds(Box3DSharedState &st,
   if (st.compounds.empty())
     return;
   // The bonds still holding (an early break marked its bond `broken`).
-  std::vector<b3dop::GlueBond> bonds;
-  bonds.reserve(st.glueBondNodes.size());
-  for (size_t i = 0; i < st.glueBondNodes.size(); ++i) {
-    if (st.glueBonds[i]->broken)
-      continue;
-    b3dop::GlueBond g;
-    g.a = st.glueBondNodes[i].first;
-    g.b = st.glueBondNodes[i].second;
-    bonds.push_back(g);
-  }
   const b3dop::GlueComponents comp =
-      b3dop::glueComponents(st.glueNodes.size(), bonds);
+      b3dop::glueComponents(st.glueNodes.size(), glueBondList(st, false, true));
 
   bool membership = false;
   for (size_t i = 0; i < st.compounds.size();) {
@@ -571,13 +561,8 @@ void splitBrokenCompounds(Box3DSharedState &st,
       ++i;
       continue;
     }
-    int stay = -1;
     size_t best = 0;
-    for (const auto &kv : count)
-      if (kv.second > best || (kv.second == best && kv.first < stay)) {
-        stay = kv.first;
-        best = kv.second;
-      }
+    const int stay = largestComponent(count, best);
     const b3dop::MergedBody *leave = c.preOk ? &c.pre : nullptr;
     membership = true;
     if (usable && best >= 2 && best * 2 >= c.members.size() &&
@@ -608,10 +593,8 @@ void expandCompoundMoves(Box3DSharedState &st) {
     const b3dop::BodyMove ev = st.moves[i]; // push_back may move the vector
     Box3DCompound &c = *it->second;
     Pose cp;
-    for (int k = 0; k < 3; ++k)
-      cp.p[k] = ev.pos[k];
-    for (int k = 0; k < 4; ++k)
-      cp.q[k] = ev.rot[k];
+    b3dop::copy3(cp.p, ev.pos);
+    b3dop::copy4(cp.q, ev.rot);
     b3dop::MergedBody mb;
     bool awake = false;
     if (!bodyMotion(w, c.body, mb, awake))
@@ -620,18 +603,10 @@ void expandCompoundMoves(Box3DSharedState &st) {
       if (!m.entry)
         continue;
       const Pose pp = placed(cp, m);
-      b3dop::BodyMove mv;
-      mv.userData = m.entry;
-      mv.handle = m.body;
-      for (int k = 0; k < 3; ++k)
-        mv.pos[k] = pp.p[k];
-      for (int k = 0; k < 4; ++k)
-        mv.rot[k] = pp.q[k];
-      mv.fellAsleep = ev.fellAsleep;
       double com[3];
       centreOf(pp, m, com);
       b3dop::pieceVelocity(mb, com, m.entry->glueLin, m.entry->glueAng);
-      st.moves.push_back(mv);
+      st.moves.push_back(moveAt(*m.entry, m.body, pp, ev.fellAsleep));
       // The parked body stays where the piece is: joint frames read it.
       w.setTransformByHandle(m.body, pp.p, pp.q);
     }
@@ -646,19 +621,45 @@ bool compoundGlueHits(Box3DSharedState &st, BodyHandle body, float &hits) {
   const Box3DCompoundMember &m =
       c.members[static_cast<size_t>(it->second.second)];
   hits = 0.0f;
-  if (st.world.typeByHandle(c.body) != b3dop::BodySettings::Type::Dynamic ||
-      !st.world.isAwakeByHandle(c.body))
-    return true;
+  // Per compound, once a tick: hits land on moving bodies, a sleeping one has
+  // none.
   if (c.hitsTick != st.hitsTick) {
-    st.world.contactImpulsesByShape(c.body, c.shapeImpulse);
     c.hitsTick = st.hitsTick;
-    c.hadHit = std::any_of(c.shapeImpulse.begin(), c.shapeImpulse.end(),
-                           [](float v) { return v > 0.0f; });
+    c.hitsActive =
+        st.world.typeByHandle(c.body) == b3dop::BodySettings::Type::Dynamic &&
+        st.world.isAwakeByHandle(c.body);
+    if (c.hitsActive) {
+      st.world.contactImpulsesByShape(c.body, c.shapeImpulse);
+      c.hadHit = std::any_of(c.shapeImpulse.begin(), c.shapeImpulse.end(),
+                             [](float v) { return v > 0.0f; });
+    }
   }
+  if (!c.hitsActive)
+    return true;
   for (int i = m.shapeFirst; i < m.shapeFirst + m.shapeCount &&
                              static_cast<size_t>(i) < c.shapeImpulse.size();
        ++i)
     hits += c.shapeImpulse[static_cast<size_t>(i)];
+  // Inertial load: slowing the whole body at one point also loads the pieces
+  // away from it. A piece takes at least the impulse it needs to follow the
+  // body's change of motion (a piece touching the ground keeps its contact
+  // hit when that is larger).
+  if (st.glueCompoundLoad > 0.0f && c.stepPreOk) {
+    if (c.loadTick != st.hitsTick) {
+      c.loadTick = st.hitsTick;
+      bool awake = false;
+      if (!bodyPose(st.world, c.body, c.postPose) ||
+          !bodyMotion(st.world, c.body, c.stepPost, awake))
+        c.stepPost.ok = false;
+    }
+    if (c.stepPost.ok && c.stepPre.ok) {
+      double com[3];
+      centreOf(placed(c.postPose, m), m, com);
+      hits = std::max(hits,
+                      st.glueCompoundLoad *
+                          b3dop::pieceLoad(c.stepPre, c.stepPost, com, m.mass));
+    }
+  }
   return true;
 }
 

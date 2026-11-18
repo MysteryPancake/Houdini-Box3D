@@ -77,6 +77,8 @@ public:
                       ExportShapes); // every body's collision shapes as data
   GETSET_DATA_FUNCS_B("gluecompound",
                       GlueCompound); // glued groups run as one body
+  GETSET_DATA_FUNCS_F("gluecompoundload",
+                      GlueCompoundLoad); // inertial load on a compound's bonds
 
   // Guide (the node's Guides tab): every body's collision shapes.
   GET_GUIDE_FUNC_B(SIM_NAME_SHOWGUIDE, ShowGuide, false);

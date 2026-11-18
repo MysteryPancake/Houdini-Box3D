@@ -456,7 +456,8 @@ struct GeorepLookup {
 
 bool readPointState(const GU_Detail *gdp, const PointAttrs &a, GA_Offset off,
                     const PackedInfo &pk, Box3DBodyPose &out,
-                    bool *badVelocity = nullptr);
+                    bool *badVelocity = nullptr,
+                    Box3DRestCache *rest = nullptr);
 bool poseDiffers(const Box3DBodyPose &a, const Box3DBodyPose &b);
 Box3DSyncFingerprint makeFingerprint(const GU_Detail *gdp, const PointAttrs &a,
                                      int nodeType,
@@ -483,6 +484,8 @@ struct ScanContext {
   const PointAttrs &a;
   const b3dop::BodySettings &node;
   const bool anyPrims; // else no packed points
+  // The slots' cached rest rotations describe the current `restxform`.
+  bool restReuse = false;
   ShapeSources sources;
   GeorepLookup georep;
 
@@ -617,8 +620,18 @@ struct PointForce {
 // later calls apply the kept ones again, so the frame's force acts in every
 // step, not only the first.
 struct PointForceCarry {
+  // What one object's Force DOPs need that does not change within a frame: the
+  // forces on it and their split into thread-safe resolvers and the rest
+  // (made on first use). Taken again by the frame's first step.
+  struct ObjectForces {
+    std::vector<const SIM_Force *> forces;
+    bool split = false;
+    std::vector<std::unique_ptr<SIM_ForceResolver>> parallel;
+    std::vector<const SIM_Force *> serial;
+  };
   bool replay = false;
   std::unordered_map<int, std::vector<PointForce>> byObject; // object id
+  std::unordered_map<int, ObjectForces> forcesOf;            // object id
 };
 
 ForceStats applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects,

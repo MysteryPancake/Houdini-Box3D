@@ -91,6 +91,7 @@ from b3d_solver_common import (  # noqa: E402
     DOP_PIECES,
     DOPNET_PARMS,
     drop_templates,
+    flatten_folders,
     FETCH_GEOMETRY,
     FETCH_IMPACTS,
     group_tab,
@@ -117,7 +118,6 @@ from b3d_solver_common import (  # noqa: E402
     solver_folders,
     TAB_GROUPS,
     SOLVER_FOLDERS,
-    BOUNCE_PARMS,
     START_FRAME,
     TRANSFER_ATTRIBUTES,
     TRANSFER_ATTRIBUTES_DEFAULT,
@@ -126,7 +126,7 @@ from b3d_solver_common import (  # noqa: E402
     USE_COLLISIONS,
     warn,
 )
-from b3d_solver_breaks import BREAK_PARMS, break_items, GLUE_COMPOUND  # noqa: E402
+from b3d_solver_breaks import BREAK_PARMS, break_items  # noqa: E402
 from b3d_solver_constraints import constraint_items, finish_constraints  # noqa: E402
 from b3d_solver_help import HELP_CARD  # noqa: E402
 
@@ -413,18 +413,17 @@ def build(out_path, packed_hda=None):
             warn(f"none of the {label} settings {names} found on the solver: no {label} folder on the Solver tab")
         else:
             folder_items.append(collapsible(f"b3dsop_{label.lower()}", label, got, open_folder=is_open))
-    bounce = take(BOUNCE_PARMS)
     speed = take((IMPACT_SPEED,))
     shapes = take((SHAPES_TOGGLE,))
-    glue_compound = take((GLUE_COMPOUND,))  # Glue as One Body, in Advanced
     tabs = [(label, drop_templates(contents, set())) for label, contents in tabs]  # folders left empty go
+    # The Advanced tab is regrouped by name (Cache Simulation joins Performance): its DOP folders come apart.
+    tabs = [(label, flatten_folders(contents) if label == "Advanced" else contents) for label, contents in tabs]
     solver_extra = solver_first + folder_items
     # Tab order: Solver, Pieces, Collision, Forces, any other solver tabs, Visualization, then Advanced and
     # Output always last.
     by_label = {label: contents for label, contents in tabs if contents}
-    by_label["Forces"] = by_label.get("Forces", []) + bounce
     # Cache Simulation and Cache Memory (MB) lead the Advanced tab's Performance folder.
-    by_label["Advanced"] = cache_items + glue_compound + by_label.get("Advanced", [])
+    by_label["Advanced"] = cache_items + by_label.get("Advanced", [])
     advanced_groups = [(glabel, names + [pt.name() for pt in cache_items] if glabel == "Performance" else names)
                        for glabel, names in TAB_GROUPS["Advanced"]]
     solver_items = by_label.pop("Solver", [])

@@ -162,30 +162,39 @@ def test_ui():
     expect("Revolute's Joint and Revolute folders are simple",
            (len(ours), all(f.folderType() == hou.folderType.Simple for f in ours)), (2, True))
     solver_tabs = [f for f in all_folders(solver.parmTemplateGroup().entries())
-                   if f.label() in ("Solver", "Collision", "Forces", "Aging", "Output", "Advanced")]
+                   if f.label() in ("Solver", "Forces", "Visualization", "Advanced", "Output")]
     expect("Solver tabs present, as tabs",
            ([f.label() for f in solver_tabs], all(f.folderType() == hou.folderType.Tabs for f in solver_tabs)),
-           (["Solver", "Collision", "Forces", "Aging", "Output", "Advanced"], True))
-    collision_tab = next((f for f in solver_tabs if f.label() == "Collision"), None)
-    expect("Solver Collision tab holds simple Contacts and Bounce / Friction folders",
-           [(f.label(), f.folderType() == hou.folderType.Simple,
-             sorted(c.name() for c in f.parmTemplates() if not c.name().startswith("parmop")))
-            for f in (collision_tab.parmTemplates() if collision_tab else [])
-            if f.type() == hou.parmTemplateType.Folder],
+           (["Solver", "Forces", "Visualization", "Advanced", "Output"], True))
+
+    def tab_folders(label):
+        """[(folder label, simple, parameter names)] of a solver tab's folders."""
+        tab = next((f for f in solver_tabs if f.label() == label), None)
+        return [(f.label(), f.folderType() == hou.folderType.Simple,
+                 sorted(c.name() for c in f.parmTemplates() if not c.name().startswith("parmop")))
+                for f in (tab.parmTemplates() if tab else []) if f.type() == hou.parmTemplateType.Folder]
+
+    def loose(label):
+        tab = next((f for f in solver_tabs if f.label() == label), None)
+        return [c.name() for c in (tab.parmTemplates() if tab else [])
+                if c.type() != hou.parmTemplateType.Folder and not c.name().startswith("parmop")]
+
+    expect("Solver tab's loose parameters", sorted(loose("Solver")), ["solverpasses", "substeps", "timescale"])
+    expect("Solver tab folders", tab_folders("Solver"),
            [("Contacts", True, ["contactdamping", "contactpushspeed", "contactrecycledistance", "contactstiffness"]),
+            ("Sleeping", True, ["enablesleep"]),
+            ("Aging", True, ["enableaging", "reapatframeend", "reapdead"])])
+    expect("Forces tab's loose parameters", loose("Forces"), ["gravity"])
+    expect("Forces tab folders", tab_folders("Forces"),
+           [("Force DOPs", True, ["forceswake", "useforces"]),
             ("Bounce / Friction", True, ["bouncethreshold", "frictionmixing", "restitutioniterations",
-                                         "restitutionmixing", "restitutionpropagation"])])
-    for tab_label, want in (("Solver", ["enablesleep", "solverpasses", "substeps", "timescale"]),
-                            ("Aging", ["enableaging", "reapatframeend", "reapdead"]),
-                            ("Output", ["exportshapes", "impactminspeed"])):
-        tab = next((f for f in solver_tabs if f.label() == tab_label), None)
-        expect(f"Solver {tab_label} tab parameters",
-               sorted(c.name() for c in (tab.parmTemplates() if tab else []) if not c.name().startswith("parmop")),
-               want)
-    forces_tab = next((f for f in solver_tabs if f.label() == "Forces"), None)
-    expect("Solver Forces tab ends with Use Force DOPs, then Forces Wake Bodies",
-           [pt.name() for pt in (forces_tab.parmTemplates() if forces_tab else [])
-            if not pt.name().startswith("parmop")][-2:], ["useforces", "forceswake"])
+                                         "restitutionmixing", "restitutionpropagation"]),
+            ("Glue", True, ["gluecompound", "gluecompoundload"])])
+    expect("Visualization tab folders", tab_folders("Visualization"), [("Geometry", True, ["exportshapes"])])
+    expect("Advanced tab folders", tab_folders("Advanced"),
+           [("Stability", True, ["enablecontinuous", "enablewarmstarting", "isotropicinertia", "maxlinearspeed"]),
+            ("Performance", True, ["autothreads", "threads"])])
+    expect("Output tab folders", tab_folders("Output"), [("Impact Data", True, ["impactminspeed"])])
     expect("Solver Contact Stiffness default", solver.parm("contactstiffness").parmTemplate().defaultValue()[0], 60.0)
     expect("Solver Contact Damping Ratio default", solver.parm("contactdamping").parmTemplate().defaultValue()[0], 3.0)
     expect("Enable Spring label", rev.parm("enable_spring").parmTemplate().label(), "Enable Spring")

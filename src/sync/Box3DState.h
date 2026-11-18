@@ -100,6 +100,11 @@ struct Box3DBodyMirror : Box3DBodyPose {
   int64_t pointId = 0;   // the `id` attribute, else the point number
   int objectId = 0;
   uint64_t stamp = 0; // syncStamp of the last sync that saw it
+  // Where this frame's merged move event of the body is in
+  // Box3DSharedState::moves, valid when moveStamp is the frame's syncStamp
+  // (merging the events of a frame's steps).
+  uint64_t moveStamp = 0;
+  size_t moveSlot = 0;
   Box3DObjectSync *sync =
       nullptr; // its object's record (stable: objectSync is node-based)
 
@@ -216,6 +221,15 @@ private:
   std::unordered_map<uint64_t, uint32_t> index_;
 };
 
+// A point's `restxform` split into its rotation (restRotation), kept on its
+// slot while the attribute's data id is unchanged. `ok` false: the matrix was
+// unset or degenerate.
+struct Box3DRestCache {
+  bool known = false;
+  bool ok = false;
+  float rot[4] = {0, 0, 0, 1};
+};
+
 // One point as syncObject() reads it. Kept between steps; `entry` caches the
 // mirror entry while the point's offset and key are unchanged (all slots are
 // dropped when an entry is erased).
@@ -225,6 +239,7 @@ struct Box3DPointSlot {
   uint64_t key = 0;
   Box3DBodyMirror *entry = nullptr;
   Box3DBodyPose cur;
+  Box3DRestCache rest;
   bool ok = false;          // readPointState succeeded (P is finite)
   bool badVelocity = false; // v or w was not finite (read as zero)
   bool active = true;
@@ -354,6 +369,8 @@ struct Box3DObjectSync {
       bodies; // every body of the object (rebuilt by each full scan)
   // `force` / `torque` data ids right after the solver last zeroed them (or
   // found them all zero): unchanged ids mean nothing new to apply.
+  // `restxform` data id the slots' rest rotations were split at (kNoId: none).
+  GA_DataId restCacheId = GA_DataId(-1);
   GA_DataId forceId = GA_DataId(-1);
   GA_DataId torqueId = GA_DataId(-1);
 
@@ -562,6 +579,7 @@ struct Box3DCompoundMember {
   float lp[3] = {0, 0, 0};     // position in the compound body's space
   float lq[4] = {0, 0, 0, 1};  // rotation in the compound body's space
   float centre[3] = {0, 0, 0}; // the piece's centre of mass, in its own space
+  float mass = 0.0f;           // the piece's own mass
   int shapeFirst = 0;          // its shapes are [shapeFirst, +shapeCount) in
   int shapeCount = 0;          // the compound's, in creation order
   b3dop::BodyProps props;      // as merged
@@ -573,13 +591,22 @@ struct Box3DCompound {
   b3dop::BodyHandle body = 0;
   std::vector<Box3DCompoundMember> members;
   // The impulse on each of its shapes in the last Box3D step read for the glue
-  // (contactImpulsesByShape), and the collectGlueHits call it belongs to.
+  // (contactImpulsesByShape), the collectGlueHits call it belongs to, and
+  // whether the body was awake and dynamic then (a sleeping one has no hits).
   std::vector<float> shapeImpulse;
   uint64_t hitsTick = 0;
+  bool hitsActive = false;
   // Its motion before the last Box3D step (recordCompoundMotion), if awake.
   b3dop::MergedBody pre;
   bool preOk = false;
   bool hadHit = false; // its last step had contact impulse (collectGlueHits)
+  // For the inertial load (glueCompoundLoad): its motion before and after the
+  // last Box3D step, and its pose after it, read once per step
+  // (loadTick: the collectGlueHits call they belong to).
+  b3dop::MergedBody stepPre, stepPost;
+  bool stepPreOk = false;
+  b3dop::BodyPose postPose;
+  uint64_t loadTick = 0;
 };
 
 // Everything shared between timestep copies.
@@ -671,6 +698,9 @@ struct Box3DSharedState {
   // the groups were last worked out from (the graph and body versions), so an
   // unchanged scene skips the work.
   bool glueCompounds = false;
+  // Glued compounds: scales the load slowing the whole body puts on each
+  // piece's bonds (0: off). See compoundGlueHits.
+  float glueCompoundLoad = 0.0f;
   std::vector<std::unique_ptr<Box3DCompound>> compounds;
   std::unordered_map<b3dop::BodyHandle, std::pair<Box3DCompound *, int>>
       compoundOf;

@@ -1282,6 +1282,13 @@ def test_solver_sop_layout():
     advanced = by_path.get(("Advanced",))
     expect("Advanced tab folders", [pt.label() for pt in advanced.parmTemplates()] if advanced else None,
            ["Stability", "Performance"])
+    forces_tab = by_path.get(("Forces",))
+    expect("Forces tab folders", [pt.label() for pt in forces_tab.parmTemplates() if pt.type() ==
+                                  hou.parmTemplateType.Folder] if forces_tab else None,
+           ["Force DOPs", "Bounce / Friction", "Glue"])
+    glue = by_path.get(("Forces", "Glue"))
+    expect("Forces / Glue", [pt.name() for pt in glue.parmTemplates()] if glue else None,
+           ["gluecompound", "gluecompoundload"])
     performance = by_path.get(("Advanced", "Performance"))
     expect("Performance has Cache Simulation (label hidden, joined) first",
            (performance.parmTemplates()[0].isLabelHidden(), performance.parmTemplates()[0].joinsWithNext())

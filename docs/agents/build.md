@@ -160,8 +160,7 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   link and `guide_*` display settings have none and stay off), named `<node>_<setting>`, linked to the inner node
   and Set Initial (`finish_constraints`). `scale_joint_settings` wraps the existing channel reference
   instead of replacing it, so World Scale multiplies the promoted value.
-* Break Thresholds (`b3d_solver_breaks.py`, first on the Constraints tab after Glue as One Body, which the solver's Advanced tab
-  gives up): RBD Bullet Solver's `Constraint_Solver` for the Angle, Distance, Impact and Torque Thresholds and At Frame. A SOP Solver DOP (`constraint_breaks`, Data
+* Break Thresholds (`b3d_solver_breaks.py`, first on the Constraints tab): RBD Bullet Solver's `Constraint_Solver` for the Angle, Distance, Impact and Torque Thresholds and At Frame. A SOP Solver DOP (`constraint_breaks`, Data
   Name `ConstraintGeometry`) with a wrangle (`BREAK_VEX`, over primitives) between its geometry import and its output deletes the
   primitives whose `impact` passes a break entry's threshold, or switches them to `next_constraint_name`. The parameters are
   Bullet's names (`enable_constraintbreaks`, the `breaks` multiparm, `constraint_names#`, `constraint_mode#`,
@@ -199,7 +198,7 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   as the rotation since. Box3D Configure's pack mode differs only in Split's Delete Unused Groups (on, as RBD
   Configure's; `remove_unused_groups`).
 * Simulation Points: DOP Import of the pieces object, Fetch Geometry (`POINTS_TOGGLES`), primitives removed (an Add
-  SOP's Delete Geometry But Keep the Points, found by `POINTS_ONLY_LABELS`; a `removeprim` wrangle only if not), point
+  SOP's Delete Geometry But Keep the Points, found by `POINTS_ONLY_PARM`; a `removeprim` wrangle only if not), point
   attributes cut to `POINTS_KEEP` plus the asset's `transferattributes`. Not Create Points to Represent Objects: that
   makes a point per packed primitive only for SideFX's RBD Packed Object, one per DOP object for ours, so this is
   the one place the asset does not copy RBD Bullet Solver (its `dopimport` uses that style). The points carry
@@ -250,9 +249,10 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   Geometry), then Inspector, as RBD Bullet Solver's; its Display Visualization Geometry master toggle and the
   constraint, guide and impact folders have no counterpart), then Advanced and Output always last; the
   solver's parameters are regrouped by name (`SOLVER_FOLDERS`, `BOUNCE_PARMS`, `IMPACT_SPEED`, `SHAPES_TOGGLE`, pulled
-  with `pull`), whichever DOP tab holds them: Contacts, Sleeping and Aging become folders at the end of the
-  Solver tab (Sleeping and Aging closed), bounce / friction settings go loose into Forces (`TAB_GROUPS` folders them),
-  and DOP tabs left empty (Collision, Aging, Output) are dropped. Solver: the solver's own settings, then Contacts,
+  with `pull`), whichever DOP tab holds them: the DOP's tabs and folders follow this layout (Contacts, Sleeping
+  and Aging folders on the Solver tab, Force DOPs, Bounce / Friction and Glue on Forces, Stability and Performance on Advanced),
+  so only Contacts, Sleeping and Aging are rebuilt (Sleeping and Aging closed), Forces keeps the DOP's folders as they are, Advanced is flattened
+  and regrouped by `TAB_GROUPS` (Cache Simulation joins Performance), and DOP tabs left empty (Visualization, Output) are dropped. Solver: the solver's own settings, then Contacts,
   Sleeping and Aging. Advanced is Stability (warm starting, continuous, speed limit, inertia) and Performance (Cache
   Simulation with its label hidden, joined to Cache Memory (MB) and disabling it when off; then threads). Cache Memory is
   the inner DOP network's value with the parameters on its row (`row_of`, `CACHE_MEMORY`), placed by `group_tab`'s `groups`. Collision: one Collision Geometry folder whose header checkbox is Use External

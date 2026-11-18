@@ -27,6 +27,7 @@
 // Box3DSharedState::mutex held.
 #pragma once
 
+#include "core/Box3DGlue.h"
 #include "core/Box3DWorld.h"
 
 #include <vector>
@@ -64,6 +65,11 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
 // end of the frame spreads those over the bonds, adds them to each `impact` and
 // queues the bonds over their strength for jointsAfterStep.
 void collectGlueHits(Box3DSharedState &st);
+// The live bonds as glueAdvance / glueComponents take them, in the order of
+// `glueBonds`. `withParams` adds each bond's strength settings and impact;
+// `blankBroken` turns a bond broken mid-frame into one that joins nothing.
+std::vector<b3dop::GlueBond> glueBondList(const Box3DSharedState &st,
+                                          bool withParams, bool blankBroken);
 // After collectGlueHits, for glued groups run as compounds (so one body takes
 // the whole hit): bonds already over their strength on the hits so far break
 // now and their compounds split (`elapsed`: seconds of the frame done). The

@@ -19,7 +19,6 @@ from b3d_hda import collapsible
 from b3d_solver_common import (create, GLOBAL_SUBSTEPS, set_named, START_FRAME, WORLD_SCALE, WORLD_SCALE_TOGGLE,
                                warn)
 
-GLUE_COMPOUND = "gluecompound"  # the solver's Glue as One Body, shown on the Advanced tab
 BREAKS = "breaks"  # the number of break entries (a multiparm block)
 BREAKS_TOGGLE = "enable_constraintbreaks"
 BREAK_SOLVER = "constraint_breaks"  # the SOP Solver DOP

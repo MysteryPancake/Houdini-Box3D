@@ -408,7 +408,10 @@ public:
              findIn(*o->second, name.substr(slash + 1), out);
     }
     // Order: a piece in any object, an object with one body, an affector.
-    for (const auto *table : {&myPiece, &mySingleBody, &myAffector}) {
+    for (const ObjectRef &o : myObjects)
+      if (findIn(o, name, out))
+        return true;
+    for (const auto *table : {&mySingleBody, &myAffector}) {
       const auto it = table->find(name);
       if (it != table->end()) {
         out = it->second;
@@ -454,9 +457,6 @@ private:
     myBuilt = true;
     for (const auto &o : myObjects) {
       myObjectByName.try_emplace(o.name, &o);
-      for (const auto &p : o.sync->byName)
-        if (p.second->handle)
-          myPiece.try_emplace(p.first, bodyOf(p.second, o.object));
       if (o.sync->bodies.size() == 1 && o.sync->bodies[0]->handle)
         mySingleBody.try_emplace(o.name, bodyOf(o.sync->bodies[0], o.object));
     }
@@ -473,7 +473,6 @@ private:
 
   mutable bool myBuilt = false;
   mutable std::unordered_map<std::string, const ObjectRef *> myObjectByName;
-  mutable HandleTable myPiece;
   mutable HandleTable mySingleBody;
   mutable HandleTable myAffector;
 };
