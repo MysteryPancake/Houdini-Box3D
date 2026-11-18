@@ -159,13 +159,13 @@ skip.
 ### writeResultsBack
 
 `SIM_SolverBox3D::writeResultsBack` is the driver (it owns the node messages); the work is in `Box3DPostStep.cpp`:
-`collectMovedBodies`, `writeWholeObjects`, `readVelocities`, then per object `writeObjectResults` (`BodyWriter` for one
+`collectMovedBodies`, `writeWholeObjects`, then per object `writeObjectResults` (`BodyWriter` for one
 body's attributes, `writePackedRotations` for step 5).
 
-0. Move events (read once into `st.moves` right after the step; impacts use them too): every awake body and its
-   transform (a body falling asleep appears once more). Only live dynamic entries become items, which point at their
-   move event rather than copying it; `awake` changes are noted. Velocities are fetched in a threaded pass
-   (Box3D allows read-only calls from several threads). Items are grouped per object.
+0. Move events (read once into `st.moves` right after the step; impacts use them too): every awake body, its
+   transform and its velocities (a body falling asleep appears once more, with zero velocity). Only live dynamic entries become items, which point at their
+   move event rather than copying it; `awake` changes are noted. A compound's piece takes its compound's velocity
+   (`glueLin` / `glueAng`). Items are grouped per object.
 1. `box3dWritableGeometry`: a plain `SIM_Geometry` (RBD Packed Object) is replaced once by a `SIM_GeometryCopy`
    (`SIM_DATA_RETURN_EXISTING | SIM_DATA_ADOPT_EXISTING_ON_DELETE`).
 2. `ensureResultAttribs` creates `v`, `w`, `orient` (a new `orient` is set to identity).

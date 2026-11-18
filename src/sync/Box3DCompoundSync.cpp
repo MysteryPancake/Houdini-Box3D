@@ -110,12 +110,17 @@ uint64_t keyOf(const Box3DBodyMirror &e) {
 
 // A move event for a piece of `entry` put at `pp`.
 b3dop::BodyMove moveAt(Box3DBodyMirror &entry, BodyHandle body, const Pose &pp,
-                       bool asleep) {
+                       bool asleep, const float lin[3] = nullptr,
+                       const float ang[3] = nullptr) {
   b3dop::BodyMove mv;
   mv.userData = &entry;
   mv.handle = body;
   b3dop::copy3(mv.pos, pp.p);
   b3dop::copy4(mv.rot, pp.q);
+  if (lin)
+    b3dop::copy3(mv.lin, lin);
+  if (ang)
+    b3dop::copy3(mv.ang, ang);
   mv.fellAsleep = asleep;
   return mv;
 }
@@ -137,8 +142,8 @@ void releasePiece(b3dop::Box3DWorld &w, const Box3DCompoundMember &m,
   } else if (cp) {
     const Pose pp = placed(*cp, m);
     w.setTransformByHandle(m.body, pp.p, pp.q);
+    float lin[3] = {0, 0, 0}, ang[3] = {0, 0, 0};
     if (awake) {
-      float lin[3], ang[3];
       double com[3];
       centreOf(pp, m, com);
       b3dop::pieceVelocity(motion, com, lin, ang);
@@ -147,7 +152,7 @@ void releasePiece(b3dop::Box3DWorld &w, const Box3DCompoundMember &m,
       w.sleepByHandle(m.body);
     }
     if (moves)
-      moves->push_back(moveAt(e, m.body, pp, !awake));
+      moves->push_back(moveAt(e, m.body, pp, !awake, lin, ang));
   }
   e.inCompound = false;
   e.glueEdited = false;
@@ -606,7 +611,8 @@ void expandCompoundMoves(Box3DSharedState &st) {
       double com[3];
       centreOf(pp, m, com);
       b3dop::pieceVelocity(mb, com, m.entry->glueLin, m.entry->glueAng);
-      st.moves.push_back(moveAt(*m.entry, m.body, pp, ev.fellAsleep));
+      st.moves.push_back(moveAt(*m.entry, m.body, pp, ev.fellAsleep,
+                                m.entry->glueLin, m.entry->glueAng));
       // The parked body stays where the piece is: joint frames read it.
       w.setTransformByHandle(m.body, pp.p, pp.q);
     }

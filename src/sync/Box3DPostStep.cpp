@@ -617,6 +617,12 @@ MovedBodies collectMovedBodies(Box3DSharedState &st) {
     }
     items.emplace_back();
     Box3DWriteItem &w = items.back();
+    // The velocities of the move event (a piece of a compound: its compound's,
+    // its own parked body has none).
+    const float *lin = entry->inCompound ? entry->glueLin : mv.lin;
+    const float *ang = entry->inCompound ? entry->glueAng : mv.ang;
+    std::copy(lin, lin + 3, w.lin);
+    std::copy(ang, ang + 3, w.ang);
     w.entry = entry;
     w.move = mi;
     w.objectId = entry->objectId;
@@ -644,33 +650,13 @@ int writeWholeObjects(Box3DSharedState &st, SIM_ObjectArray &objects,
     Box3DBodyMirror *entry = static_cast<Box3DBodyMirror *>(mv.userData);
     SIM_Object *obj =
         box3dObjectById(objects, entry->objectId, st.objectsSorted);
-    float lin[3], ang[3];
-    if (!obj || !st.world.getVelocityByHandle(entry->handle, lin, ang))
+    if (!obj)
       continue;
     entry->awake = !mv.fellAsleep;
-    if (!writeWholeObject(*obj, *entry, mv.pos, mv.rot, lin, ang))
+    if (!writeWholeObject(*obj, *entry, mv.pos, mv.rot, mv.lin, mv.ang))
       ++notWritten;
   }
   return notWritten;
-}
-
-// Velocities (not in move events): Box3D allows read-only calls from several
-// threads.
-void readVelocities(Box3DSharedState &st) {
-  std::vector<Box3DWriteItem> &items = st.writeItems;
-  parallelForEach(
-      items.size(),
-      [&](size_t i) {
-        Box3DWriteItem &w = items[i];
-        if (w.entry->inCompound) { // a piece of a compound: its parked body
-                                   // has no velocity; the compound's was used
-          std::copy(w.entry->glueLin, w.entry->glueLin + 3, w.lin);
-          std::copy(w.entry->glueAng, w.entry->glueAng + 3, w.ang);
-          return;
-        }
-        st.world.getVelocityByHandle(w.entry->handle, w.lin, w.ang);
-      },
-      minParallelWrite());
 }
 
 // ---- step 2 (parallel): write one body's attributes
@@ -922,7 +908,6 @@ void SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData,
   std::vector<Box3DWriteItem> &items = st->writeItems;
   if (items.empty())
     return;
-  readVelocities(*st);
 
   // Grouped by object, so each geometry is locked once.
   forEachObjectRun(items, [&](size_t begin, size_t end) {

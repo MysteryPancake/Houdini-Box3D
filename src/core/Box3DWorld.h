@@ -49,6 +49,8 @@ struct BodyMove {
   BodyHandle handle = 0;
   double pos[3] = {0, 0, 0};
   float rot[4] = {0, 0, 0, 1};
+  float lin[3] = {0, 0, 0}; // velocities at the end of the step (0: asleep)
+  float ang[3] = {0, 0, 0};
   bool fellAsleep = false;
 };
 

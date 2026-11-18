@@ -235,6 +235,8 @@ void toBodyMove(const b3BodyMoveEvent &e, BodyMove &out) {
   out.handle = b3StoreBodyId(e.bodyId);
   storePos(e.transform.p, out.pos);
   storeQuat(e.transform.q, out.rot);
+  storeVec3(e.linearVelocity, out.lin);
+  storeVec3(e.angularVelocity, out.ang);
   out.fellAsleep = e.fellAsleep;
 }
 
