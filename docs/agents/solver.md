@@ -43,9 +43,9 @@ positions (Box3D runs one solve and one relax per pass). Not to be confused with
 targets (`setTargetTransformByHandle`) and the Glue impact decay use the whole frame's `stepDt`, so they hold for any
 Substeps. Box3D clears its move, joint and hit events at the start of every step, so each is merged after every Box3D step:
 moves by body, joints over their force / torque threshold into `brokenThisFrame` (broken once, in Updating Constraint
-States), and hit pairs into `hitPairs` when Impact Min Speed is on (`hitsCollected`). Impacts read the contacts after
-every Box3D step (`collectImpacts`, `impactsCollected`, appended) when some object has Add Impact Data, so a frame's
-impulses add up over its steps; with one step they are read after it. Point `force` / `torque` are read and cleared by
+States), and hit pairs into `hitPairs` when Impact Min Speed is on (`hitsCollected`). Impacts read Box3D's contact impulse events
+after every Box3D step (`collectImpacts`, `impactsCollected`, appended; the world makes them only while some object has
+Add Impact Data), so a frame's impulses add up over its steps; with one step they are read after it. Point `force` / `torque` are read and cleared by
 the first step and applied again from `PointForceCarry` in the others.
 
 ```
@@ -131,6 +131,7 @@ Houdini warns on data it has no `SIM_DataHint` for under its parent ("Unexpected
    **Pass 1b** (`planSlots`; parallel, chunks of `kPlanChunk` with an Escape check between): `planShapes` for those points, into a per-scan
    plan list (`Box3DPointSlot::plan`). Hull building, the slow part of a rebuild, happens here; `ShapeSources`,
    `GeorepLookup` (mutexes) and Box3DWorld's hull calls are thread-safe. Pass 2 takes the plans (`takePlan`).
+   **Pass 1c** (`stampQuietSlots`; parallel): reads the settings (`SlotPlans::props`) of the points that need them (new, rebuilt, every one when a settings marker changed), and stamps the entry of every point with nothing to apply (it owns the entry: same offset and id; pose, type and settings equal the mirror's; not kinematic, deforming, dead or a problem point), so pass 2 only lists it. A duplicate `id` never qualifies, so the entry stays with the point that last owned it.
 6. **Pass 2** (`ApplyPass`; serial, point order): duplicate `id` -> counted, first wins; non-finite `P` -> counted, its body removed;
    `dead` -> queued for deletion, its body removed; unknown key -> `addPointBody`; known key -> `updateExistingBody`:
    mid-simulation updates (shape rebuild, then settings), type change (`wantedType`), then the animated target or an

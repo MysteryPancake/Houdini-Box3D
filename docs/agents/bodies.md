@@ -58,8 +58,8 @@ equal to what its body was built with.
   material (negatives become 0). Tangent velocity is shape-local, so friction must be above 0. Live changes
   (`setSurfaceByHandle`) also rebuild the body's contacts, because Box3D skips material updates on recycled contacts.
   Affector meshes keep these out of their signature, so an animated belt speed updates the shapes, not the mesh.
-* **Impacts** (Box3D Data Add Impact Data): `recordImpacts` reads this step's awake bodies' contacts once and records
-  each for both bodies whose object asks (the sleeping side too, unless it is an asleep dynamic body). A fresh
+* **Impacts** (Box3D Data Add Impact Data): `recordImpacts` records Box3D's contact impulse events of the step (one per
+  manifold point, in the awake set) for both bodies whose object asks (the sleeping side too, unless it is an asleep dynamic body). A fresh
   `SIM_Impacts` each step (`addPointImpact`, normal pointing at the body that gets the impact); no Feedback data.
 * **Dead** (`dead`): never stamped, so the body goes. With Reap Dead Points the point is queued as a `Box3DDeletion`;
   `deleteDeadPoints` resolves all queued points before deleting any, then bumps data ids and forces a scan.

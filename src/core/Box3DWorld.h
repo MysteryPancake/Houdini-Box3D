@@ -160,6 +160,17 @@ struct ContactPoint {
   float impulse = 0.0f;        // total normal impulse over the step (N*s), > 0
 };
 
+// One manifold point that carried impulse in the last step, with both of its
+// bodies (getContactImpulseEvents).
+struct ContactImpulse {
+  BodyHandle a = 0, b = 0;
+  void *userDataA = nullptr, *userDataB = nullptr; // of the bodies
+  double pos[3] = {0, 0, 0};                       // world space
+  float normal[3] = {0, 1, 0};                     // from a into b
+  float impulse = 0.0f; // total normal impulse over the step (N*s), > 0
+  bool awakeA = false, awakeB = false; // in the awake set when it was made
+};
+
 // Box3D's b3Filter, checked by Box3D in its broad phase. Two shapes with the
 // same non-zero group: positive always collide, negative never. Otherwise they
 // collide only when each one's mask has a bit of the other's category. The
@@ -507,6 +518,16 @@ public:
   // Touching contact points that carried impulse in the last step. `out` is
   // cleared first.
   int getContactsByHandle(BodyHandle h, std::vector<ContactPoint> &out) const;
+
+  // Report the contact points that carry impulse after every step
+  // (getContactImpulseEvents), for the contacts in the awake set. Off by
+  // default.
+  void enableContactImpulseEvents(bool on);
+
+  // Every such point of the last step, one record each (what
+  // getContactsByHandle gives for all awake bodies at once, seen once per
+  // contact). `out` is cleared first. Valid until the next step.
+  int getContactImpulseEvents(std::vector<ContactImpulse> &out) const;
 
   // The total normal impulse (N*s) of the body's contacts in the last step,
   // leaving out those with the `skipCount` bodies at `skip` (a body's glued

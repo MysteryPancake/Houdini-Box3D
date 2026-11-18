@@ -1781,6 +1781,34 @@ int Box3DWorld::getContactsByHandle(BodyHandle h,
   return static_cast<int>(out.size());
 }
 
+void Box3DWorld::enableContactImpulseEvents(bool on) {
+  if (isValid())
+    b3World_EnableContactImpulseEvents(myImpl->worldId, on);
+}
+
+int Box3DWorld::getContactImpulseEvents(
+    std::vector<ContactImpulse> &out) const {
+  out.clear();
+  if (!isValid())
+    return 0;
+  const b3ContactEvents ev = b3World_GetContactEvents(myImpl->worldId);
+  out.resize(static_cast<size_t>(ev.impulseCount));
+  for (int i = 0; i < ev.impulseCount; ++i) {
+    const b3ContactImpulseEvent &e = ev.impulseEvents[i];
+    ContactImpulse &c = out[static_cast<size_t>(i)];
+    c.a = b3StoreBodyId(e.bodyIdA);
+    c.b = b3StoreBodyId(e.bodyIdB);
+    c.userDataA = e.userDataA;
+    c.userDataB = e.userDataB;
+    storePos(e.point, c.pos);
+    storeVec3(e.normal, c.normal);
+    c.impulse = e.impulse;
+    c.awakeA = e.awakeA;
+    c.awakeB = e.awakeB;
+  }
+  return ev.impulseCount;
+}
+
 void Box3DWorld::setFilterByHandle(BodyHandle h, const CollisionFilter &f) {
   if (!h)
     return;

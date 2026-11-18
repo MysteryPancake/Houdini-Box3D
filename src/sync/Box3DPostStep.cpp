@@ -261,10 +261,11 @@ void forEachObjectRun(std::vector<Item> &items, const F &f) {
 
 // Add Impact Data: this step's contact points with impulse go into a fresh
 // "Impacts" data (SIM_Impacts) on the objects with the option on, only on steps
-// with at least one; otherwise the data is removed. Contacts are read from the
-// awake bodies (this step's move events, in st.moves) and recorded for both
-// bodies, so sleeping bodies cost nothing and each pair is read once. Contacts
-// where neither body is awake are skipped, as are asleep dynamic bodies.
+// with at least one; otherwise the data is removed. Contacts are Box3D's
+// impulse events of the step (on while some object wants Impacts), one record
+// per manifold point of a contact in the awake set, recorded for both bodies,
+// so sleeping bodies cost nothing and each pair is read once. Contacts where
+// neither body is awake are not reported, and an asleep dynamic body gets none.
 // Normal: of the surface hit, pointing at the body that gets the impact. No
 // Feedback data (that is for interaction with other solvers).
 bool wantsImpacts(const Box3DSharedState &st) {
@@ -274,8 +275,7 @@ bool wantsImpacts(const Box3DSharedState &st) {
   return false;
 }
 
-void collectImpacts(Box3DSharedState &st,
-                    const std::vector<b3dop::BodyMove> &moves, bool append) {
+void collectImpacts(Box3DSharedState &st, bool append) {
   using Hit = Box3DImpactHit;
   st.impactsCollected = true;
   // Per-object hits in st scratch (objects are few: linear search). Groups are
@@ -299,25 +299,37 @@ void collectImpacts(Box3DSharedState &st,
     const bool speedFilter = world.settings().impactMinSpeed > 0.0f;
     if (speedFilter && !st.hitsCollected)
       world.updateHitEvents();
-    for (const b3dop::BodyMove &mv : moves) {
-      const Box3DBodyMirror *e =
-          static_cast<const Box3DBodyMirror *>(mv.userData);
-      if (!e || !e->handle || !st.isLive(*e) ||
-          !world.isAwakeByHandle(e->handle))
-        continue;
-      const bool selfWants = e->sync->addImpact;
-      world.getContactsByHandle(e->handle, st.contacts);
-      for (const b3dop::ContactPoint &cp : st.contacts) {
-        const Box3DBodyMirror *o =
-            static_cast<const Box3DBodyMirror *>(cp.otherUserData);
+    world.getContactImpulseEvents(st.impulseEvents);
+    for (const b3dop::ContactImpulse &ev : st.impulseEvents) {
+      // Each side of the contact in turn: the contact as that awake body
+      // sees it.
+      for (int side = 0; side < 2; ++side) {
+        const bool first = side == 0;
+        const Box3DBodyMirror *e = static_cast<const Box3DBodyMirror *>(
+            first ? ev.userDataA : ev.userDataB);
+        const Box3DBodyMirror *o = static_cast<const Box3DBodyMirror *>(
+            first ? ev.userDataB : ev.userDataA);
+        const bool selfAwake = first ? ev.awakeA : ev.awakeB;
+        const bool otherAwake = first ? ev.awakeB : ev.awakeA;
+        if (!selfAwake || !e || !e->handle || !st.isLive(*e))
+          continue;
+        const bool selfWants = e->sync->addImpact;
         // The other side, unless it is awake (it records its own) or an asleep
         // dynamic body.
         const bool otherWants = o && st.isLive(*o) && o->sync->addImpact &&
-                                !o->dynamic() &&
-                                !world.isAwakeByHandle(cp.other);
+                                !o->dynamic() && !otherAwake;
+        const b3dop::BodyHandle otherHandle = first ? ev.b : ev.a;
         if ((!selfWants && !otherWants) ||
-            (speedFilter && !world.hadHitEvent(e->handle, cp.other)))
+            (speedFilter && !world.hadHitEvent(e->handle, otherHandle)))
           continue;
+        b3dop::ContactPoint cp;
+        cp.other = otherHandle;
+        cp.otherUserData = first ? ev.userDataB : ev.userDataA;
+        b3dop::copy3(cp.pos, ev.pos);
+        const float sgn = first ? 1.0f : -1.0f;
+        for (int k = 0; k < 3; ++k)
+          cp.normal[k] = sgn * ev.normal[k];
+        cp.impulse = ev.impulse;
         if (selfWants)
           hitsFor(e->objectId).push_back({e, o, cp, false});
         if (otherWants)
@@ -333,7 +345,7 @@ void recordImpacts(Box3DSharedState &st, SIM_ObjectArray &objects,
   // One step: the contacts of this step's move events. Substeps: the loop
   // collected them after every step.
   if (!st.impactsCollected)
-    collectImpacts(st, st.moves, false);
+    collectImpacts(st, false);
 
   std::vector<int> wrote;
   for (size_t gi = 0; gi < st.impactGroupCount; ++gi) {

@@ -262,6 +262,12 @@ struct Box3DPointSlot {
   // Index into this scan's shape plans and their packed primitives
   // (SlotPlans in Box3DPointSync.cpp).
   int32_t plan = -1;
+  // Index into this scan's settings read in the parallel pass
+  // (SlotPlans::props), -1: not read.
+  int32_t props = -1;
+  // The parallel pass found nothing to do for the point and has stamped its
+  // entry already (stampQuietSlots): the apply pass only lists it.
+  bool quiet = false;
 };
 
 // One awake body's result on its way to the geometry. Its pose is the move
@@ -540,9 +546,14 @@ struct Box3DJointKind {
 // Constraints to Object).
 struct Box3DJointNetwork {
   uint64_t fingerprint = 0; // geometry identity + data ids of everything read
-  uint64_t bodyVersion = 0; // Box3DSharedState::bodyVersion when last processed
-  uint64_t liveStamp = 0;   // stamp its current entries carry
-  uint64_t visited = 0;     // last sync that saw it
+  // Box3DSharedState::nameVersion when last processed
+  uint64_t nameVersion = 0;
+  // Some primitive's anchors did not resolve (or resolve by an object's name):
+  // bodies coming or going can change what it makes. Else only the removal of
+  // a body one of its joints is on, or a rename, can.
+  bool needsBodies = false;
+  uint64_t liveStamp = 0; // stamp its current entries carry
+  uint64_t visited = 0;   // last sync that saw it
   int objectId = -1; // an object it was found on (and is written back through)
   // the relationship's name; empty: the object's ConstraintGeometry
   std::string relName;
@@ -641,6 +652,13 @@ struct Box3DSharedState {
   // this solve's objects are in id order (box3dObjectById may binary search)
   bool objectsSorted = false;
   uint64_t bodyVersion = 0; // bumped whenever bodies are added or removed
+  // This sync's changes of the body set, for the constraint networks: handles
+  // of the bodies removed, whether any was added, whether an affector came or
+  // went (every network is read again), and a counter of renamed pieces.
+  std::vector<b3dop::BodyHandle> removedBodies;
+  bool bodiesAdded = false;
+  bool allNetworksDirty = false;
+  uint64_t nameVersion = 0;
 
   // Scratch reused every step.
   std::unordered_map<int, std::vector<Box3DPointSlot>> slots; // key: object id
@@ -654,7 +672,7 @@ struct Box3DSharedState {
   std::vector<b3dop::BodyMove> stepEvents;
   std::vector<void *> stepBroken;
   std::unordered_map<b3dop::BodyHandle, size_t> moveSlots;
-  std::vector<b3dop::ContactPoint> contacts;
+  std::vector<b3dop::ContactImpulse> impulseEvents; // this step's, for Impacts
   // recordImpacts scratch: the first `impactGroupCount` entries are in use this
   // step. Entries (and their hit vectors) are kept so capacity is reused.
   std::vector<Box3DImpactGroup> impactGroups;
@@ -753,7 +771,7 @@ struct Box3DSharedState {
            packedWrites.capacity() * sizeof(Box3DPackedWrite) +
            moves.capacity() * sizeof(b3dop::BodyMove) +
            stepEvents.capacity() * sizeof(b3dop::BodyMove) +
-           contacts.capacity() * sizeof(b3dop::ContactPoint) +
+           impulseEvents.capacity() * sizeof(b3dop::ContactImpulse) +
            impactGroups.capacity() * sizeof(Box3DImpactGroup) +
            pointWrites.capacity() * sizeof(Box3DPointWrite) +
            deletions.capacity() * sizeof(Box3DDeletion);

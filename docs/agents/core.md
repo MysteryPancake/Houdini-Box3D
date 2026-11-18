@@ -32,7 +32,8 @@ world switch applies on top; disabling wakes the body), `bodyStateByHandle` (awa
 caller re-adds shapes and applies the mass), `wakeByHandle`, `setTargetTransformByHandle` (kinematic: Box3D sets the
 velocity that reaches the pose in `timeStep`; it remains until cleared) and `getContactsByHandle` (one `ContactPoint`
 per manifold point with `totalNormalImpulse > 0`; position = A's world centre of mass + `anchorA`; normal flipped to
-point from this body into the other). `contactImpulsesByShape` sums the same impulses per shape in creation order (Box3D
+point from this body into the other). `getContactImpulseEvents` gives the same points for every awake contact at
+once (the fork's impulse events, on with `enableContactImpulseEvents`). `contactImpulsesByShape` sums the same impulses per shape in creation order (Box3D
 lists a body's shapes newest first, so it reverses them); a compound's pieces are its shapes, copied with
 `copyShapesByHandle`. They share a `thread_local` shape-id scratch and are called serially. Box3D
 accepts all of them on a disabled body (proxies are only touched when they exist).

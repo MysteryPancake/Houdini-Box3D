@@ -594,8 +594,7 @@ bool wantsImpacts(const Box3DSharedState &st);
 // frame's impact hits; `append` keeps the earlier steps' (Substeps > 1: every
 // step's contacts are impacts, so the frame's impulses add up). Sets
 // st.impactsCollected.
-void collectImpacts(Box3DSharedState &st,
-                    const std::vector<b3dop::BodyMove> &moves, bool append);
+void collectImpacts(Box3DSharedState &st, bool append);
 void recordImpacts(Box3DSharedState &st, SIM_ObjectArray &objects,
                    const SIM_Time &now);
 void writePointAttrs(Box3DSharedState &st, SIM_ObjectArray &objects);

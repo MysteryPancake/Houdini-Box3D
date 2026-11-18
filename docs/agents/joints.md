@@ -99,10 +99,10 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   the fingerprinting, live frames and local frames below.
 * A network is reprocessed only when its fingerprint (identity without the detail's unique id, since the engine copies the geometry into a new detail every timestep; topology, data ids of `P`, `name`, `orient`,
   `constraint_name`, `auto_restlength`, every table attribute, the `broken` group), its kinds, or
-  `Box3DSharedState::bodyVersion` (bumped when bodies or affectors are added / removed) changed. Otherwise its
+  the bodies it depends on changed: a body one of its joints is on was removed (`Box3DSharedState::removedBodies`), bodies were added or removed while some anchor did not resolve (`Box3DJointNetwork::needsBodies`, also set for an anchor that resolves by an object's name), a piece was renamed (`nameVersion`), or an affector came or went. Otherwise its
   joints keep the network's `liveStamp`, like skipped objects' bodies.
 * Per two-point primitive: `constraint_name` -> kind (missing or unknown: counted, ignored), anchors resolved
-  (`Anchors::resolve`, hash tables built on the first resolve of a step, first match in object order: empty = world; a piece name in any object in object order; `object/piece`; an object with
+  (`Anchors::resolve`, tables of single-body objects and affectors built on the first resolve of a step, pieces searched in each object's own name map, first match in object order: empty = world; a piece name in any object in object order; `object/piece`; an object with
   exactly one body; an affector object's name -> its static mesh body). Unresolved: no joint, retried when bodies
   change. **`anchor_id`** (point attribute, with `anchor_type` string `point` / `vertex`, or int 0 / 1): on an anchor that
   resolves to a whole object (an RBD Object) the anchor sits at that point (vertex's point) of the object's geometry

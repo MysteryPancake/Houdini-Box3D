@@ -235,6 +235,9 @@ struct AnchorBody {
   // The DOP object of a body in a solved object (an anchor_id names a point of
   // a whole object's geometry, or of a packed piece's own), else null.
   const SIM_Object *object = nullptr;
+  // Found as an object with a single body: adding or removing a body of that
+  // object changes it.
+  bool byObjectName = false;
 };
 
 // An anchor's anchor_type.
@@ -411,12 +414,16 @@ public:
     for (const ObjectRef &o : myObjects)
       if (findIn(o, name, out))
         return true;
-    for (const auto *table : {&mySingleBody, &myAffector}) {
-      const auto it = table->find(name);
-      if (it != table->end()) {
-        out = it->second;
-        return true;
-      }
+    const auto single = mySingleBody.find(name);
+    if (single != mySingleBody.end()) {
+      out = single->second;
+      out.byObjectName = true;
+      return true;
+    }
+    const auto affector = myAffector.find(name);
+    if (affector != myAffector.end()) {
+      out = affector->second;
+      return true;
     }
     return false;
   }
@@ -997,6 +1004,7 @@ public:
         mySfReaders(bindSideFX(gdp)) {}
 
   void run() {
+    myNet.needsBodies = false;
     for (GA_Iterator it(myGdp->getPrimitiveRange()); !it.atEnd(); ++it) {
       const GA_Offset off = *it;
       const GA_Primitive *prim = myGdp->getPrimitive(off);
@@ -1220,10 +1228,13 @@ private:
     if (!myAnchors.resolve(myRd.anchorName(p0), ab) ||
         !myAnchors.resolve(myRd.anchorName(p1), bb)) {
       ++myCounts.unresolved;
+      myNet.needsBodies = true;
       dropJoint(e);
       return; // not stamped: removed; retried when bodies change
     }
     const b3dop::BodyHandle a = ab.handle, b = bb.handle;
+    if (ab.byObjectName || bb.byObjectName)
+      myNet.needsBodies = true;
     // On a written network current_P / current_orient say where the anchors
     // are now, so a world rebuilt mid-simulation makes its joints from them
     // exactly as frame 1 does from the authored P / orient.
@@ -1233,6 +1244,7 @@ private:
                             authB = asStored(
                                 authoredAnchor(e, true, p1, bb, badAnchor));
     if (badAnchor != AnchorLookup::Ok) {
+      myNet.needsBodies = true;
       ++(badAnchor == AnchorLookup::NoGeometry ? myCounts.anchorNoGeometry
                                                : myCounts.badAnchorId);
       dropJoint(e);
@@ -1306,7 +1318,7 @@ private:
 
 // True if the network's joints were read again (false: left as they are).
 bool processNetwork(Box3DSharedState &st, const NetworkRef &ref,
-                    const Anchors &anchors, bool massChanged,
+                    const Anchors &anchors, bool massChanged, bool bodyRemoved,
                     Box3DJointCounts &counts) {
   Box3DJointNetwork &net = st.jointNetworks[ref.key];
   net.visited = st.syncStamp;
@@ -1331,14 +1343,19 @@ bool processNetwork(Box3DSharedState &st, const NetworkRef &ref,
   if (!gdp)
     return false;
 
-  // Unchanged geometry, bodies and constraint data: the joints stay as they are
-  // (they keep liveStamp).
+  // Unchanged geometry, constraint data and bodies it depends on: the joints
+  // stay as they are (they keep liveStamp). Bodies coming or going matter only
+  // to a network with anchors that did not resolve, one with a joint on a
+  // removed body, and when pieces were renamed or an affector came or went.
   const uint64_t fp = networkFingerprint(gdp);
-  if (fp == net.fingerprint && net.bodyVersion == st.bodyVersion &&
-      !kindsChanged && !massChanged)
+  const bool bodiesMatter =
+      st.allNetworksDirty || bodyRemoved ||
+      (net.needsBodies && (st.bodiesAdded || !st.removedBodies.empty())) ||
+      net.nameVersion != st.nameVersion;
+  if (fp == net.fingerprint && !bodiesMatter && !kindsChanged && !massChanged)
     return false;
   net.fingerprint = fp;
-  net.bodyVersion = st.bodyVersion;
+  net.nameVersion = st.nameVersion;
   net.liveStamp = st.syncStamp;
 
   NetworkPass(st, ref, net, anchors, gdp, counts).run();
@@ -1419,10 +1436,20 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
              !sameSideFXBody(e.extra->massB, sideFXBody(st.world, e.bodyB))))
           massChanged.insert(e.network);
       }
+    // The networks with a joint on a body removed this sync.
+    std::unordered_set<uint64_t> removedOn;
+    if (!st.removedBodies.empty()) {
+      const std::unordered_set<b3dop::BodyHandle> gone(st.removedBodies.begin(),
+                                                       st.removedBodies.end());
+      for (const auto &kv : st.joints)
+        if (gone.count(kv.second.bodyA) || gone.count(kv.second.bodyB))
+          removedOn.insert(kv.second.network);
+    }
     const Anchors anchors(st, objects);
     for (const NetworkRef &ref : refs)
-      changed |= processNetwork(st, ref, anchors,
-                                massChanged.count(ref.key) != 0, counts);
+      changed |=
+          processNetwork(st, ref, anchors, massChanged.count(ref.key) != 0,
+                         removedOn.count(ref.key) != 0, counts);
   }
   for (const auto &kv : st.jointNetworks)
     changed = changed || kv.second.visited != st.syncStamp;

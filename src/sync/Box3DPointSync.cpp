@@ -599,6 +599,7 @@ void storePlan(Box3DBodyMirror &m, const ShapePlan &plan) {
 struct SlotPlans {
   std::vector<ShapePlan> shapes;
   std::vector<PackedInfo> packed;
+  std::vector<b3dop::BodyProps> props; // by Box3DPointSlot::props
 };
 
 // The slot's packed primitive with its pivot: the one planning read, else read
@@ -805,7 +806,9 @@ void updateExistingBody(ScanContext &ctx, Box3DSharedState &st,
   // rebuild.
   const bool rebuild = s.rebuild;
   if (rebuild || checkProps) {
-    b3dop::BodyProps p = ctx.props(off);
+    b3dop::BodyProps p = s.props >= 0
+                             ? plans.props[static_cast<size_t>(s.props)]
+                             : ctx.props(off);
     bool shapesRebuilt = false;
     if (rebuild) {
       std::string note;
@@ -946,6 +949,8 @@ void readSlot(const ScanContext &ctx, int objectId, Box3DPointSlot &s) {
   }
 
   s.plan = -1;
+  s.props = -1;
+  s.quiet = false;
   s.deforming = a.deforming.isValid() && a.deforming.get(s.off) != 0;
   s.refitWanted = a.autofitValid.isValid() && a.autofitValid.get(s.off) == 0;
   s.rebuild = false;
@@ -1037,6 +1042,81 @@ void reserveMirror(Box3DSharedState &st, const SlotList &snaps) {
     st.mirror.reserve(st.mirror.size() + fresh);
 }
 
+// ---- step 3b (parallel): settings, and the points with nothing to do
+// The settings of the points that need them (new bodies, rebuilds, and every
+// body when a settings marker changed) are read here instead of in the apply
+// pass. A point whose body exists and whose pose, type and settings are what
+// the mirror holds has nothing to apply: its entry is stamped here (each point
+// writes only its own entry) and the apply pass only lists it. Only the point
+// that last owned the entry qualifies (same offset and id), so a duplicate `id`
+// never races and the owner keeps the body. Kinematic bodies, edits, rebuilds,
+// deforming and problem points stay with the apply pass.
+bool quietSlot(const ScanContext &ctx, const Box3DPointSlot &s,
+               const b3dop::BodyProps *props) {
+  const Box3DBodyMirror *e = s.entry;
+  // The owner first: a point that does not own the entry reads nothing the
+  // owner writes here (only its stamp, point index and packed data).
+  if (!e || e->pointOff != static_cast<int64_t>(s.off) || e->pointId != s.bid)
+    return false;
+  if (!e->handle || !s.ok || s.dead || s.unpackedPrim || s.badVelocity ||
+      s.rebuild || s.deforming || s.refitWanted || e->driven || e->wholeObject)
+    return false;
+  const b3dop::BodySettings::Type want =
+      e->meshShapes ? b3dop::BodySettings::Type::Static
+                    : wantedType(ctx.node, s.active, s.animated, e->shapeless);
+  if (e->type != want || e->animated != s.animated ||
+      (s.animated && e->type == b3dop::BodySettings::Type::Kinematic))
+    return false;
+  if (poseDiffers(s.cur, *e))
+    return false;
+  if (props) {
+    // What updateExistingBody would find to do with the settings.
+    if (!(*props == e->props))
+      return false;
+    if (ctx.a.awake.isValid() && props->enabled &&
+        (ctx.a.awake.get(s.off) != 0) != e->awake)
+      return false;
+  }
+  return true;
+}
+
+void stampQuietSlots(ScanContext &ctx, Box3DObjectSync &os, int objectId,
+                     SlotList &snaps, SlotPlans &plans, bool checkProps) {
+  size_t need = 0;
+  for (Box3DPointSlot &s : snaps) {
+    const bool wants = s.ok && !s.unpackedPrim && !s.dead &&
+                       (!s.entry || s.rebuild || checkProps);
+    s.props = wants ? static_cast<int32_t>(need++) : -1;
+  }
+  plans.props.resize(need);
+  const uint64_t stamp = ctx.st.syncStamp;
+  parallelForEach(
+      snaps.size(),
+      [&](size_t i) {
+        Box3DPointSlot &s = snaps[i];
+        if (s.props >= 0)
+          plans.props[static_cast<size_t>(s.props)] = ctx.props(s.off);
+        const b3dop::BodyProps *p =
+            (checkProps && s.props >= 0)
+                ? &plans.props[static_cast<size_t>(s.props)]
+                : nullptr;
+        // With settings to compare they must have been read for this point.
+        if (checkProps && !p && s.entry)
+          return;
+        if (!quietSlot(ctx, s, p))
+          return;
+        Box3DBodyMirror &e = *s.entry;
+        // pointOff and pointId already are this point's (it owns the entry).
+        e.pointIndex = s.index;
+        e.objectId = objectId;
+        e.stamp = stamp;
+        e.sync = &os;
+        storePacked(e, s);
+        s.quiet = true;
+      },
+      ctx.anyPrims ? minParallelReadPacked() : minParallelReadPlain());
+}
+
 // Bodies by point `name`, for joint anchors (only while some object has a joint
 // network). Each scan hashes the (name, entry) pairs in point order, without
 // copying a string; the map (os.byName) is rebuilt only when that hash differs
@@ -1088,6 +1168,17 @@ public:
     }
     if (fresh != os.byName)
       ++st.bodyVersion;
+    // A piece still here under another name, or whose name another piece took,
+    // can move a joint's anchor. Pieces added or removed cannot.
+    for (const auto &kv : os.byName) {
+      const auto it = fresh.find(kv.first);
+      if (it != fresh.end() && it->second == kv.second)
+        continue;
+      if (kv.second->stamp == st.syncStamp) {
+        ++st.nameVersion;
+        break;
+      }
+    }
     os.byName.swap(fresh);
     os.nameSig = os.nameSigNext;
   }
@@ -1164,7 +1255,9 @@ private:
   // A point with no body yet: build it from its plan. False if that failed.
   bool addBody(Box3DPointSlot &s, Box3DBodyMirror &entry, bool animated,
                unsigned &writes) {
-    const b3dop::BodyProps p = myCtx.props(s.off);
+    const b3dop::BodyProps p = s.props >= 0
+                                   ? myPlans.props[static_cast<size_t>(s.props)]
+                                   : myCtx.props(s.off);
     std::string fallbackNote;
     const b3dop::BodyHandle handle =
         addPointBody(myCtx, s, takePlan(myCtx, s, myPlans), animated, p, entry,
@@ -1248,6 +1341,14 @@ private:
     // so a body it had is removed. Counted by syncObject.
     if (s.unpackedPrim) {
       s.entry = nullptr;
+      return;
+    }
+
+    if (s.quiet) { // stamped by stampQuietSlots
+      ++mySt.stampedCount;
+      ++stamped;
+      myOs.bodies.push_back(s.entry);
+      myNames.add(myOs, off, s.entry);
       return;
     }
 
@@ -1422,6 +1523,7 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
   if (!planSlots(ctx, snaps, plans, progress))
     return;
   reserveMirror(st, snaps);
+  stampQuietSlots(ctx, os, objectId, snaps, plans, checkProps);
   ApplyPass apply(ctx, os, c, plans, names, objectId, checkProps);
   if (!apply.run(snaps, progress))
     return;

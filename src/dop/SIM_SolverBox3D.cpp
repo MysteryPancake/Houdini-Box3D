@@ -423,6 +423,9 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
     return cancel();
   if (progress.check())
     return cancel();
+  // Impacts read Box3D's impulse events, made only while some object wants
+  // them.
+  st->world.enableContactImpulseEvents(wantsImpacts(*st));
 
   // Substeps: the frame is split into n whole Box3D steps of subDt, each with
   // its own collision detection and Constraint Iterations. st->stepDt stays the
@@ -494,7 +497,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
         // This step's contacts are impacts too (their impulses add up over
         // the frame).
         if (collectImpactHits)
-          collectImpacts(*st, events, i > 0);
+          collectImpacts(*st, i > 0);
       }
       // Box3D clears its move events every step, so merge them: the last
       // event of a body is its final pose (and its fell-asleep flag).
@@ -631,6 +634,9 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
   st->glueCompounds = getGlueCompound();
   st->glueCompoundLoad =
       std::max(0.0f, static_cast<float>(getGlueCompoundLoad()));
+  st->removedBodies.clear();
+  st->bodiesAdded = false;
+  st->allNetworksDirty = false;
   st->pointWrites.clear();
   st->deletions.clear();
   st->writtenObjects.clear();
@@ -671,6 +677,7 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
       if (st->isLive(e))
         return false;
       touched.insert(e.objectId);
+      st->removedBodies.push_back(e.handle);
       st->world.destroyBody(e.handle);
       return true;
     }));
@@ -691,6 +698,8 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
 
   // Joints, once the bodies they name are current. A changed set of bodies
   // re-reads the networks.
+  st->bodiesAdded = counts.added > 0;
+  st->allNetworksDirty = affectorCounts.added || affectorCounts.removed;
   if (counts.added || removed || affectorCounts.added || affectorCounts.removed)
     ++st->bodyVersion;
   Box3DJointCounts jointCounts;
