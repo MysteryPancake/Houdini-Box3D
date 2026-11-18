@@ -42,6 +42,7 @@ import hou
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import b3d_hda  # noqa: E402  (beside this script)
+import b3d_materials  # noqa: E402
 from b3d_layouts import CONFIGURE_LAYOUT  # noqa: E402
 import b3d_prepare  # noqa: E402
 import b3d_settings  # noqa: E402
@@ -116,6 +117,68 @@ def enterState(kwargs):
     if node == viewer.currentNode() and viewer.currentState() != state:
         viewer.enterCurrentNodeState(False)
 """
+
+
+# Material presets, as RBD Configure's Physical Attributes has them: Type, Material and State fill Density, Bounce and
+# Friction. The table is ours (b3d_materials.py), put into the asset's Python Module.
+MATERIAL_TYPES = b3d_materials.TYPES
+MATERIAL_STATES = b3d_materials.STATES
+
+MATERIAL_MODULE = """
+MATERIALS = %(table)r
+BOUNCES = %(bounces)r
+
+
+def buildMaterialMenu(kwargs):
+    node = kwargs["node"]
+    # The Type menu's index: 0 None, then the types
+    rows = MATERIALS.get(node.evalParm("materialtype" + str(kwargs["script_multiparm_index"])) - 1, [])
+    return [item for i, row in enumerate(rows) for item in (str(i), row[1])]
+
+
+def typeChanged(kwargs):
+    node = kwargs["node"]
+    node.parm("materialpreset" + str(kwargs["script_multiparm_index"])).set(0)
+    materialPresetCallback(kwargs)
+
+
+def materialPresetCallback(kwargs):
+    node = kwargs["node"]
+    number = str(kwargs["script_multiparm_index"])
+    kind = node.evalParm("materialtype" + number) - 1
+    rows = MATERIALS.get(kind)
+    if not rows:
+        return
+    row = rows[min(node.evalParm("materialpreset" + number), len(rows) - 1)]
+    state = node.evalParm("materialstate" + number)
+    for name, value in (("density", row[0]), ("bounce", BOUNCES[kind]), ("friction", row[2 + state])):
+        node.parm(name + number).set(value)
+        node.parm("add" + name + number).set(1)
+"""
+
+
+def material_templates():
+    """Material Preset's Type, Material and State: picking one fills the entry's Density, Bounce and Friction
+    (and ticks them). Type None does nothing."""
+    callback = {"script_callback_language": "python"}
+    kind = hou.MenuParmTemplate(
+        "materialtype#", "Type", ("0", "1", "2", "3", "4"), ("None",) + MATERIAL_TYPES, default_value=0,
+        tags=dict(callback, script_callback="kwargs['node'].hm().typeChanged(kwargs)"),
+        help="A kind of material: Material then fills Density, Bounce and Friction for the pieces.")
+    preset = hou.IntParmTemplate(
+        "materialpreset#", "Material", 1, default_value=(0,),
+        tags=dict(callback, script_callback="kwargs['node'].hm().materialPresetCallback(kwargs)"),
+        help="The material: its density, and its friction for the State below.")
+    preset.setItemGeneratorScript("kwargs['node'].hm().buildMaterialMenu(kwargs)")
+    preset.setItemGeneratorScriptLanguage(hou.scriptLanguage.Python)
+    preset.setMenuType(hou.menuType.Normal)
+    state = hou.MenuParmTemplate(
+        "materialstate#", "State", ("0", "1"), MATERIAL_STATES, default_value=0,
+        tags=dict(callback, script_callback="kwargs['node'].hm().materialPresetCallback(kwargs)"),
+        help="Which friction the material has: with the surfaces dry and clean, or lubricated and greasy.")
+    for pt in (preset, state):
+        pt.setConditional(hou.parmCondType.DisableWhen, "{ materialtype# == 0 }")
+    return [kind, preset, state]
 
 
 def visualization_templates():
@@ -402,6 +465,9 @@ def ui(folders):
     ]
     b3d_hda.group_menu(entry[1], 0, "point prim")
     entry[1].setConditional(hou.parmCondType.DisableWhen, "{ enable# == 0 }")
+    presets = b3d_hda.collapsible("b3dcfg_materialpreset_#", "Material Preset", material_templates(), open_folder=False)
+    presets.setConditional(hou.parmCondType.DisableWhen, "{ enable# == 0 }")
+    entry.append(presets)
     for i, (label, rows) in enumerate(folders):
         items = []
         for pt, kind in rows:
@@ -785,7 +851,8 @@ def build(out_path):
     definition.setMaxNumOutputs(len(LABELS))
     definition.setIcon(ICON)
     b3d_hda.set_tab_submenu(definition, warn)
-    b3d_hda.add_python_module(definition, PYTHON_MODULE)
+    b3d_hda.add_python_module(definition, PYTHON_MODULE + MATERIAL_MODULE % {
+        "table": b3d_materials.table(), "bounces": b3d_materials.bounces()})
     definition.setComment("Sets Box3D body settings as point attributes on the pieces in a group, "
                           "like RBD Configure. Point attributes win over Box3D Data.")
     b3d_hda.add_viewer_state(definition, STATE_NAME, STATE_FILE)

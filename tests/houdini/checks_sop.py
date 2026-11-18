@@ -1612,6 +1612,112 @@ def test_constraint_properties_next():
                    f"nothing, then {want_on}, then the next name and stiffness 99)")]
 
 
+def test_constraint_properties_vexpressions():
+    """Use VEXpressions on a type's folder, as RBD Constraint Properties has it: with Revolute picked in Constraint Type
+    and its toggle on, the snippet runs over the constraints in the group after the settings (it can read the
+    Geometry as its second input: a piece's `weight` 4 here), so the line gets custom 5.5 and fromgeo 4. With the
+    toggle off, or another type picked, it does not run."""
+    geo = new_geo("cp_vex")
+    pieces = create(geo, "attribwrangle", "pieces")
+    set_parm(pieces, ["class"], 0)
+    set_parm(pieces, ["snippet"], 'addpointattrib(0, "name", ""); addpointattrib(0, "weight", 0.0); '
+             'int pt = addpoint(0, set(0, 0, 0)); setpointattrib(0, "name", pt, "A"); setpointattrib(0, "weight", pt, 4.0);')
+    lines = create(geo, "attribwrangle", "lines")
+    set_parm(lines, ["class"], 0)
+    set_parm(lines, ["snippet"], 'addpointattrib(0, "name", ""); addprimattrib(0, "constraint_name", ""); '
+             'int a = addpoint(0, set(0, 0, 0)); int b = addpoint(0, set(1, 0, 0)); setpointattrib(0, "name", a, "A"); '
+             'int pr = addprim(0, "polyline", a, b); setprimattrib(0, "constraint_name", pr, "Revolute");')
+    cp = create(geo, "box3d_constraint_properties", "props")
+    cp.setInput(0, pieces)
+    cp.setInput(1, lines)
+    set_parm(cp, ["constrainttype"], 2)
+    set_parm(cp, ["revolute_localexpression"], 'f@custom = 5.5; f@fromgeo = point(1, "weight", 0);')
+
+    def attrs():
+        g = cp.geometry(1)
+        return {a: g.prims()[0].attribValue(a) for a in ("custom", "fromgeo") if g.findPrimAttrib(a) is not None}
+
+    off = attrs()
+    set_parm(cp, ["revolute_uselocalproperties"], 1)
+    on = attrs()
+    set_parm(cp, ["constrainttype"], 0)
+    other = attrs()
+    ok = off == {} and on == {"custom": 5.5, "fromgeo": 4.0} and other == {}
+    return [Result("constraint_properties_vexpressions", Result.PASS if ok else Result.FAIL,
+                   f"line attributes with the toggle off {off}, on {on}, with Weld picked instead {other} (expected "
+                   f"nothing, then custom 5.5 and fromgeo 4, then nothing)")]
+
+
+def test_constraint_properties_collisions():
+    """Disable Collisions (Collisions: Disable / Enable), in RBD Constraint Properties' words: ticked in Edit it
+    writes the primitive attribute collide_connected, 0 for Disable and 1 for Enable; unticked it writes nothing."""
+    geo = new_geo("cp_collisions")
+    lines = create(geo, "attribwrangle", "lines")
+    set_parm(lines, ["class"], 0)
+    set_parm(lines, ["snippet"], 'addpointattrib(0, "name", ""); addprimattrib(0, "constraint_name", ""); '
+             'int a = addpoint(0, set(0, 0, 0)); int b = addpoint(0, set(1, 0, 0)); '
+             'int pr = addprim(0, "polyline", a, b); setprimattrib(0, "constraint_name", pr, "Revolute");')
+    cp = create(geo, "box3d_constraint_properties", "props")
+    cp.setInput(1, lines)
+    set_parm(cp, ["action"], 0)
+
+    def collide():
+        g = cp.geometry(1)
+        return g.prims()[0].attribValue("collide_connected") if g.findPrimAttrib("collide_connected") else None
+
+    off = collide()
+    set_parm(cp, ["docollisions"], 1)
+    set_parm(cp, ["collisions"], 0)
+    disabled = collide()
+    set_parm(cp, ["collisions"], 1)
+    enabled = collide()
+    ok = off is None and disabled == 0 and enabled == 1
+    return [Result("constraint_properties_collisions", Result.PASS if ok else Result.FAIL,
+                   f"collide_connected unticked {off}, Disable {disabled}, Enable {enabled} (expected nothing, 0, 1)")]
+
+
+def test_configure_material_preset():
+    """Material Preset on a Box3D Configure entry, with RBD Configure's presets (the table is tools/b3d_materials.py):
+    Metal and Steel fill Density 8050, Bounce 0.5 and Friction 0.45 (dry and clean surfaces) and tick them; the
+    lubricated and greasy State gives friction 0.15; Glass resets the Material to Default (density 1000, bounce 0.2,
+    friction 1). The pieces carry them."""
+    geo = new_geo("cfg_material")
+    merge = create(geo, "merge", "boxes")
+    for i in range(2):
+        box = create(geo, "box", f"box{i}")
+        set_parm(box, ["t"], (3.0 * i, 3.0, 0.0))
+        merge.setInput(i, box)
+    cfg = create(geo, "box3d_configure", "configure")
+    cfg.setInput(0, merge)
+    module = cfg.hm()
+    kwargs = {"node": cfg, "script_multiparm_index": 1}
+
+    def values():
+        return {n: cfg.parm(f"{n}1").eval() for n in ("density", "bounce", "friction")}, cfg.parm("adddensity1").eval()
+
+    set_parm(cfg, ["materialtype1"], 4)  # Metal (the menu's 0 is None)
+    items = module.buildMaterialMenu(kwargs)
+    steel = items[items.index("Steel") - 1] if "Steel" in items else None
+    set_parm(cfg, ["materialpreset1"], int(steel) if steel is not None else 0)
+    module.materialPresetCallback(kwargs)
+    dry, ticked = values()
+    set_parm(cfg, ["materialstate1"], 1)
+    module.materialPresetCallback(kwargs)
+    greasy, _ = values()
+    set_parm(cfg, ["materialstate1"], 0)  # dry and clean again (a type change keeps the State)
+    set_parm(cfg, ["materialtype1"], 2)  # Glass
+    module.typeChanged(kwargs)
+    glass, _ = values()
+    g = cfg.geometry()
+    attrs = {n: g.points()[0].attribValue(n) for n in ("density", "bounce", "friction") if g.findPointAttrib(n)}
+    ok = (steel is not None and dry == {"density": 8050.0, "bounce": 0.5, "friction": 0.45} and ticked == 1
+          and greasy["friction"] == 0.15 and glass == {"density": 1000.0, "bounce": 0.2, "friction": 1.0}
+          and attrs.get("density") == 1000.0 and attrs.get("friction") == 1.0)
+    return [Result("configure_material_preset", Result.PASS if ok else Result.FAIL,
+                   f"Metal / Steel {dry} (ticked {ticked}), greasy {greasy['friction']}, Glass {glass}, point attributes "
+                   f"{attrs} (expected 8050 / 0.5 / 0.45, 0.15, 1000 / 0.2 / 1, 1000 and 1)")]
+
+
 def test_configure_packs():
     """Box3D Configure packs unpacked input as RBD Configure does: two polygon boxes with no name come
     out as two packed pieces named on their points, with the ticked setting on the group's piece; the
@@ -1937,6 +2043,9 @@ TESTS = {
     "solver_sop_next_constraint_type": test_solver_sop_next_constraint_type,
     "constraint_properties_scaling": test_constraint_properties_scaling,
     "constraint_properties_next": test_constraint_properties_next,
+    "constraint_properties_vexpressions": test_constraint_properties_vexpressions,
+    "constraint_properties_collisions": test_constraint_properties_collisions,
+    "configure_material_preset": test_configure_material_preset,
     "solver_sop_collision_prim_names": test_solver_sop_collision_prim_names,
     "solver_sop_collision_group_names": test_solver_sop_collision_group_names,
     "solver_sop_collision_rest": test_solver_sop_collision_rest,

@@ -53,7 +53,7 @@ DOP_LAYOUT = [
     [("Objects", ["pieces", "collision", "collision_static", "collision_static_data", "collision_source"],
       {"color": PREPARE}),
      ("Relationships", RELATIONSHIP_NAMES, {"grid": 5, "color": EXTRA})],
-    [("Constraints", [f"switch_use_{n}" for n in RELATIONSHIP_NAMES]
+    [("Constraints", ["no_relationship"] + [f"switch_use_{n}" for n in RELATIONSHIP_NAMES]
                      + ["relationships", "constraintnetwork", "use_constraints", "pieces_and_collision",
                         "use_collision"], {"color": PREPARE}),
      ("Ground", ["ground_none", "groundplane", "ground_heightfield", "switch_ground", "ground_data"],
@@ -84,7 +84,8 @@ CONSTRAINT_PROPERTIES_LAYOUT = [
     [("Inputs", ["#0", "#1", "#2", "IN_geometry", "IN_constraints", "IN_proxy"], {"color": INPUTS})],
     [("Select", ["index_lines", "warn_if_no_constraints", "group_constraints", "pick_constraints"],
       {"color": PREPARE})],
-    [("Attributes", ["set_properties", "stash", "apply_edits", "strip_group", "strip_index"],
+    [("Attributes", ["set_properties", "run_vexpressions", "switch_vexpressions", "stash", "apply_edits", "strip_group",
+                     "strip_index"],
       {"color": SIMULATION})],
     [("Viewer", ["edit_lines", "selected_lines", "CONSTRAINT", "get_xform", "HANDLE", "build_guides", "GUIDES",
                  "glow_lines", "GLOW", "number_points", "widgets"], {"color": GROUND})],

@@ -100,6 +100,10 @@ references to the asset's parameters are set once the asset exists (`wire_stage`
   Configure's Initial State) are kept unless the user turns it off.
 * `setup_deforming` (`DEFORMING_VEX`): the Deforming toggle writes `deforming` 1 on every import and, with Overwrite
   Attributes from SOP, sets the SOP Geometry to Set Always (`REIMPORT`), as RBD's Create Deforming Objects.
+* Initial Object Type (`initialstate`: Create Active / Static / Animated Static / Deforming Static / Deforming Active Objects, as RBD Packed Object, plus Custom): Body
+  Type and Deforming follow it, through two hidden parameters the stage reads (`effectivebodytype`, `effectivedeforming`, expressions of the menu; Custom takes the
+  visible `bodytype` / `deforming`, which are greyed out otherwise). A point's own `active`, `animated` or `deforming` still wins. The Solver SOP's collision object sets it to Custom
+  and drives Body Type by Collision Type as before; the Pieces tab has the menu first in Body.
 * Parameters: an Object tab (Object Name `$OS`, Creation Frame (default: the network's Start Frame), Creation Frame Specifies Simulation Frame, Solve on Creation Frame, SOP Path, Use Object
   Transform, Overwrite Attributes from SOP (toggle and attribute list, default `OVERWRITE_DEFAULT`), a hidden Read SOP Every Step (`REIMPORT_SOP`), Deforming, Display Geometry), Initial State (Position, Rotation, Inherit Pivot from Point Position, Pivot, Velocity, Angular Velocity, Inherit Velocity), then each Box3D Data folder as a tab (`pull` moves Add Impact Data from CCD & Contacts
   to Shape, as RBD Packed Object has it with its shape settings; Start Asleep stays in Sleep), read by the stage. Only the object-level settings
@@ -351,6 +355,12 @@ through. No Bullet settings, no Proxy attribute transfer.
   one point per edited line with `__idx` and the fields `orient_a` / `orient_b`, `enable_motor`, `motor_velocity`, each
   with a "not edited" value the network skips (`FIELDS`). `index_lines` numbers the lines (`__idx`, removed again by `strip_index`),
   `apply_edits` writes the stash on top of the settings.
+  Box3D constraint types only: SideFX's (Glue, Hard, Soft, Spring, Cone Twist) are deliberately not on this node, so it stays separate from RBD Constraint Properties. A line can still carry their attributes written by hand or by SideFX's node. Use VEXpressions (`vex_templates`: `<type>_uselocalproperties`, `<type>_localexpression`, a VEX code editor with a snippet menu) ends each type's
+  folder, as RBD Constraint Properties' types do: `run_vexpressions`, a primitive wrangle over the group (Constraint Geometry, Geometry and Proxy
+  Geometry as inputs 0 to 2, the snippet of the type in Constraint Type), sits behind `switch_vexpressions` after `set_properties` and runs when that
+  type's toggle is on. Its `ch()` calls read the wrangle's own parameters (RBD's button for making spare parameters from them is not here).
+  Disable Collisions (`docollisions`, `collisions`: Disable 0, Enable 1) writes `collide_connected`, RBD Constraint Properties' wording for
+  the Joint folder's Collide Connected; it is written after the rows, so it wins if both are ticked.
   The **Next Constraint** folder holds Switch
   Constraint Type When Broken (`usenextconstraint`, the master: no `next_*` attribute is written while it is off), Next Constraint Name,
   Next Constraint Type (`next_constrainttype`, which type's folder shows) and the next
@@ -381,7 +391,11 @@ through. No Bullet settings, no Proxy attribute transfer.
 (labels, defaults, ranges, conditions), written as point attributes. Laid out as RBD Configure: a tabbed multiparm
 (`MULTIPARM`, Number of Attributes) of entries, each with Enable (`enable#`), Group (`group#`) and Box3D Data's folders
 (`b3dcfg_folder<i>_#`), every setting `<name>#` with an `add<name>#` checkbox (`toggle_name`, label hidden); the packing
-settings sit above the entries in the Attributes folder with them. Names map one to one except `MAPPING`: Default Shape -> `bullet_georep` (`GEOREP_VALUES`, menu order), Auto Fit
+settings sit above the entries in the Attributes folder with them.
+Material Preset (`b3dcfg_materialpreset_#`: `materialtype#` None / Concrete / Glass / Wood / Metal, `materialpreset#` the material, `materialstate#` dry and clean or lubricated and greasy
+surfaces) fills the entry's `density#`, `bounce#` and `friction#` and ticks their `add...#` boxes, as RBD Configure's Physical Attributes does. The table is
+`tools/b3d_materials.py`: RBD Configure's presets (materials, densities, the two frictions, Bounce by type) typed in, so nothing is read from its node, put into this asset's Python Module (`MATERIAL_MODULE`: `buildMaterialMenu`, `typeChanged`,
+`materialPresetCallback`, set off the menus' script callbacks, so a script that sets them calls the functions). Names map one to one except `MAPPING`: Default Shape -> `bullet_georep` (`GEOREP_VALUES`, menu order), Auto Fit
 -> `bullet_autofit`, Body Type -> `active` / `animated`, Start Asleep -> `awake` (inverted); `SKIP` holds the
 object-level ones (Hull per Connected, Add Impact Data). Disable conditions also need the referenced
 setting ticked (`rewrite_condition`). Bounds and Attributes are simple folders (`simple_folder`, as RBD Configure's); each Box3D Data folder and Constraints in an entry is an open collapsible folder (`b3d_hda.collapsible`).

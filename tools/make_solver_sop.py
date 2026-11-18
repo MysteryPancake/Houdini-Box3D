@@ -102,6 +102,7 @@ from b3d_solver_common import (  # noqa: E402
     ICON,
     IMPACT_SPEED,
     IMPACT_TOGGLE,
+    INITIAL_TYPE,
     IMPACTS,
     INPUT_LABELS,
     LABEL,
@@ -202,10 +203,10 @@ def data_folders(packed):
 
 
 def moved_settings(packed):
-    """Add Impact Data (the Packed Object's Shape tab) and Start Asleep (its Sleep tab), which the Solver SOP places
-    elsewhere, as {name: template}."""
+    """Add Impact Data (the Packed Object's Shape tab), Start Asleep (its Sleep tab) and Initial Object Type (its Object
+    tab), which the Solver SOP places elsewhere, as {name: template}."""
     group = packed.parmTemplateGroup()
-    found = {name: group.find(name) for name in (IMPACT_TOGGLE, START_ASLEEP)}
+    found = {name: group.find(name) for name in (IMPACT_TOGGLE, START_ASLEEP, INITIAL_TYPE)}
     for name, pt in found.items():
         if pt is None:
             warn(f"{packed.path()} has no {name}: not on the Solver SOP")
@@ -466,6 +467,12 @@ def build(out_path, packed_hda=None):
     # Add Impact Data (the Shape tab) and Start Asleep (the Sleep tab) come out of the Packed Object's folders: Start
     # Asleep leads the Sleep folder below, Add Impact Data goes to the Output tab.
     data_tabs, _ = pull(data_tabs, lambda pt: pt.name() in (IMPACT_TOGGLE, START_ASLEEP))
+    # Initial Object Type (the Packed Object's Object tab) leads the Body folder: Body Type follows it.
+    body = next((t for t in data_tabs if t.label() == "Body"), None)
+    if INITIAL_TYPE in moved and body is not None:
+        body.setParmTemplates([moved[INITIAL_TYPE]] + list(body.parmTemplates()))
+    elif INITIAL_TYPE in moved:
+        warn("no Body folder on the pieces: Initial Object Type is not on the Pieces tab")
     sleep = next((t for t in data_tabs if t.label() == "Sleep"), None)
     if START_ASLEEP in moved and sleep is not None:
         sleep.setParmTemplates([moved[START_ASLEEP]] + list(sleep.parmTemplates()))

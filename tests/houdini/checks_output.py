@@ -708,6 +708,30 @@ def test_packed_object_initial_state():
     return results
 
 
+def test_packed_object_initial_type():
+    """The Box3D Packed Object's Initial Object Type, as RBD Packed Object's: Body Type and Deforming follow it. Active
+    writes neither active nor deforming; Static active 0; Animated Static active 0 and animated 1; Deforming Static
+    active 0 and deforming 1; Deforming Active deforming 1 only. With Custom they are the object's own (Body Type
+    Kinematic: active 0 and animated 1)."""
+    path, _ = packed_boxes("po_initial_type", [{"size": (1, 1, 1), "center": (0, 3, 0)}])
+    want = {"active": {}, "static": {"active": 0}, "animatedstatic": {"active": 0, "animated": 1},
+            "deformingstatic": {"active": 0, "deforming": 1}, "deformingactive": {"deforming": 1}}
+    rows, ok = [], True
+    for token, expected in list(want.items()) + [("custom", {"active": 0, "animated": 1})]:
+        obj = box3d_packed_object(new_dopnet(f"po_initial_{token}"), "pieces", path)
+        set_parm(obj, ["initialstate"], token)
+        if token == "custom":
+            set_parm(obj, ["bodytype"], 1)
+        attrs = stage_points(obj) or {}
+        got = {"active": attrs["active"]} if "active" in attrs else {}
+        got.update({k: attrs[k] for k in ("animated", "deforming") if attrs.get(k)})
+        good = got == expected
+        ok = ok and good
+        rows.append(f"{token}: {got}")
+    return [Result("packed_object_initial_type", Result.PASS if ok else Result.FAIL,
+                   "attributes written per Initial Object Type: " + "; ".join(rows))]
+
+
 def test_packed_object_deforming():
     """The Box3D Packed Object's Deforming toggle writes deforming 1 on the points (off: none) and reads
     the SOP every step, as Overwrite Attributes from SOP does. A Kinematic piece whose SOP object rises
@@ -1128,6 +1152,7 @@ TESTS = {
     "packed_object_attributes": test_packed_object_attributes,
     "packed_object_initial_state": test_packed_object_initial_state,
     "packed_object_deforming": test_packed_object_deforming,
+    "packed_object_initial_type": test_packed_object_initial_type,
     "packed_object_hand_set_shape": test_packed_object_hand_set_shape,
     "tab_submenu": test_tab_submenu,
     "packed_object_use_transform": test_packed_object_use_transform,

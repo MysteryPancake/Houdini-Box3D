@@ -67,12 +67,13 @@ def literal(pt, kind):
     return str(int(d if isinstance(d, (bool, int)) else d[0]))
 
 
-def packed_defaults_vex(rows, parm_path):
+def packed_defaults_vex(rows, parm_path, driven=None):
     """Detail-wrangle VEX for the Box3D Packed Object: each setting whose value (the parameter at
     `parm_path`/<name>) differs from Box3D Data's default becomes a point attribute holding it,
     unless the points already have that attribute (as RBD Packed Object's Attribute Creates with
     Write Values off). Settings left at their defaults write nothing: a missing attribute is the
-    default to the solver."""
+    default to the solver. `driven` ({setting: parameter name}) reads a setting from another parameter."""
+    driven = driven or {}
     lines = ["// Box3D Packed Object: settings that differ from Box3D Data's defaults, as point attributes the",
              "// points do not already have (they win, as on RBD Packed Object)."]
 
@@ -81,7 +82,7 @@ def packed_defaults_vex(rows, parm_path):
 
     for pt, kind in rows:
         n = pt.name()
-        ch = f'"{parm_path}/{n}"'
+        ch = f'"{parm_path}/{driven.get(n, n)}"'
         if kind == "bullet_georep":
             shapes = ", ".join(f'"{v}"' for v in GEOREP_VALUES)
             # A string attribute's default is not applied to the points (Houdini keeps "" for every

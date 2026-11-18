@@ -73,11 +73,24 @@ OVERWRITE_FROM_SOP = "overwritefromsop"  # RBD Packed Object's Overwrite Attribu
 OVERWRITE_ATTRIBS = "overwriteattributes"  # the attributes it copies from the SOP each step (RBD Packed Object's)
 OVERWRITE_DEFAULT = "active animated deforming"
 DEFORMING = "deforming"  # the pieces' shapes follow the SOP (RBD's Create Deforming Objects)
+# Initial Object Type, as RBD Packed Object's: one menu for Body Type and Deforming. Custom leaves them to their own
+# parameters. The stage reads the two effective (hidden) parameters, which follow the menu.
+INITIAL_TYPE = "initialstate"
+INITIAL_ITEMS = ("active", "static", "animatedstatic", "deformingstatic", "deformingactive", "custom")
+INITIAL_LABELS = ("Create Active Objects", "Create Static Objects", "Create Animated Static Objects",
+                  "Create Deforming Static Objects", "Create Deforming Active Objects", "Custom")
+EFFECTIVE_BODY, EFFECTIVE_DEFORM = "effectivebodytype", "effectivedeforming"
+# Body Type's menu is Static 0, Kinematic 1, Dynamic 2: Active and Deforming Active are Dynamic, Animated Static is
+# Kinematic, the others Static.
+BODY_FROM_TYPE = (f'if(ch("{INITIAL_TYPE}") == 5, ch("bodytype"), '
+                  f'if(ch("{INITIAL_TYPE}") == 0 || ch("{INITIAL_TYPE}") == 4, 2, if(ch("{INITIAL_TYPE}") == 2, 1, 0)))')
+DEFORM_FROM_TYPE = (f'if(ch("{INITIAL_TYPE}") == 5, ch("{DEFORMING}"), '
+                    f'ch("{INITIAL_TYPE}") == 3 || ch("{INITIAL_TYPE}") == 4)')
 # Hidden, set by the Solver SOP for an animated collider: the whole SOP is read again every step, as with Deforming
 # but without writing the deforming attribute.
 REIMPORT_SOP = "reimportsop"
 # The re-import condition of the inner SOP Geometry: Overwrite Attributes from SOP, or Deforming.
-REIMPORT = f'ch("../{OVERWRITE_FROM_SOP}") || ch("../{DEFORMING}") || ch("../{REIMPORT_SOP}")'
+REIMPORT = f'ch("../{OVERWRITE_FROM_SOP}") || ch("../{EFFECTIVE_DEFORM}") || ch("../{REIMPORT_SOP}")'
 
 # Initial State, as RBD Packed Object's (same names).
 POS, ROT = "t", "r"
@@ -114,7 +127,7 @@ DEFORMING_VEX = """if (chi("../../%s")) {
     if (!haspointattrib(0, "deforming")) addpointattrib(0, "deforming", 0);
     for (int pt = 0; pt < npoints(0); pt++)
         setpointattrib(0, "deforming", pt, 1);
-}""" % DEFORMING
+}""" % EFFECTIVE_DEFORM
 
 STAGE = "create_attributes"  # the SOP stage (a DOP SOP network), as RBD Packed Object's
 HIRES = "visualize_hires"  # the SOP Guide drawing the render geometry, as RBD Packed Object's
@@ -251,6 +264,19 @@ def set_parm(node, name, value=None, expr=None, lang=hou.exprLanguage.Hscript):
     return True
 
 
+def edit_template(entries, name, change):
+    """`entries` with `change(template)` applied to the template called `name`, folders included (a copy)."""
+    out = []
+    for pt in entries:
+        pt = pt.clone()
+        if pt.type() == hou.parmTemplateType.Folder:
+            pt.setParmTemplates(edit_template(pt.parmTemplates(), name, change))
+        elif pt.name() == name:
+            change(pt)
+        out.append(pt)
+    return out
+
+
 def build_stage(sub, rows):
     """The SOP stage inside the asset (STAGE), as RBD Packed Object's create_or_overwrite_attributes:
     Object Merge of the asset's SOP Path -> setup_defaults -> create_name -> set_rest on the creation
@@ -262,7 +288,7 @@ def build_stage(sub, rows):
     defaults = net.createNode("attribwrangle", "setup_defaults")
     defaults.setInput(0, merge)
     defaults.parm("class").set("detail")
-    defaults.parm("snippet").set(b3d_settings.packed_defaults_vex(rows, "../.."))
+    defaults.parm("snippet").set(b3d_settings.packed_defaults_vex(rows, "../..", {"bodytype": EFFECTIVE_BODY}))
     name = net.createNode("attribwrangle", "create_name")
     name.setInput(0, defaults)
     name.addSpareParmTuple(hou.StringParmTemplate("objname", "Object Name", 1))
@@ -334,7 +360,7 @@ def wire_stage(asset, sop_path_parm, transform_parm, objname_parm):
     sim.parm("objpath1").set('../../..:`ch("../STAMPS/objid")`')
     asset.node(f"{STAGE}/copy_attribs").parm("attribname").set(f'`chs("../../{OVERWRITE_ATTRIBS}")`')
     asset.node(f"{STAGE}/switch_reimport").parm("input").setExpression(
-        f'ch("../../{DEFORMING}") || ch("../../{REIMPORT_SOP}")', hou.exprLanguage.Hscript)
+        f'ch("../../{EFFECTIVE_DEFORM}") || ch("../../{REIMPORT_SOP}")', hou.exprLanguage.Hscript)
     asset.node(f"{STAGE}/create_name").parm("objname").setExpression(f'chs("../../{objname_parm}")',
                                                                        hou.exprLanguage.Hscript)
 
@@ -474,6 +500,21 @@ def build(out_path):
         DEFORMING, "Deforming", default_value=False,
         help="The pieces' shapes follow the SOP: it is read again every step and the shapes are rebuilt.")
 
+    # Initial Object Type: Body Type and Deforming follow it, unless it is Custom (then they are the user's).
+    initial_type = hou.MenuParmTemplate(
+        INITIAL_TYPE, "Initial Object Type", INITIAL_ITEMS, INITIAL_LABELS, default_value=0,
+        help="What kind of object the pieces are made as: Body Type and Deforming follow it. Custom lets you set them "
+             "yourself. A point's own active, animated or deforming attribute still wins.")
+    deforming.setConditional(hou.parmCondType.DisableWhen, f"{{ {INITIAL_TYPE} != custom }}")
+    effective_body = hou.IntParmTemplate(EFFECTIVE_BODY, "Body Type", 1, default_value=(2,),
+                                         default_expression=(BODY_FROM_TYPE,),
+                                         default_expression_language=(hou.scriptLanguage.Hscript,))
+    effective_deform = hou.IntParmTemplate(EFFECTIVE_DEFORM, "Deforming", 1, default_value=(0,),
+                                           default_expression=(DEFORM_FROM_TYPE,),
+                                           default_expression_language=(hou.scriptLanguage.Hscript,))
+    effective_body.hide(True)
+    effective_deform.hide(True)
+
     # Each Box3D Data folder becomes a tab. Its parameters outside the folders are DOP's own data
     # settings (Activation, Group, Data Name ...): not promoted, so the inner node keeps the values a
     # Box3D Data starts with (copied, their template defaults could differ, e.g. an empty Group).
@@ -482,6 +523,8 @@ def build(out_path):
         if entry.type() == hou.parmTemplateType.Folder:
             tabs.append(hou.FolderParmTemplate(f"b3dpo_tab{i}", entry.label(), entry.parmTemplates(),
                                                folder_type=hou.folderType.Tabs))
+    tabs = edit_template(tabs, "bodytype", lambda pt: pt.setConditional(
+        hou.parmCondType.DisableWhen, f"{{ {INITIAL_TYPE} != custom }}"))
     # Box3D Data's Add Impact Data moves from CCD & Contacts to the Shape tab, as RBD Packed Object has it with its
     # shape settings (still linked / written by name, wherever it sits). Start Asleep stays in the Sleep tab.
     object_level = [pt for pt in value_templates(tabs) if pt.name() in b3d_settings.SKIP]
@@ -494,7 +537,7 @@ def build(out_path):
         warn("no Shape tab: Add Impact Data is not on the asset")
     names = [pt for _, pt in promoted]
     names[1:1] = [create_frame, sim_frame]
-    names += [overwrite, overwrite_attribs, reimport, deforming]
+    names += [initial_type, overwrite, overwrite_attribs, reimport, deforming, effective_body, effective_deform]
     names += display_templates()
     group = hou.ParmTemplateGroup()
     group.append(hou.FolderParmTemplate("b3dpo_object", "Object", names, folder_type=hou.folderType.Tabs))
@@ -563,7 +606,8 @@ def check(out_path, dopnet):
     pack.setInput(0, box)
     pack.setDisplayFlag(True)
     probe = dopnet.createNode(TYPE_NAME, "probe")
-    for name, value in ((SOP_PATH, pack.path()), ("friction", 0.25), ("bodytype", 1), ("defaultshape", 1),
+    for name, value in ((SOP_PATH, pack.path()), ("friction", 0.25), (INITIAL_TYPE, "custom"), ("bodytype", 1),
+                        ("defaultshape", 1),
                         (IMPACT_TOGGLE, 1)):
         pt = probe.parmTuple(name)
         if pt is None:
@@ -633,7 +677,7 @@ def check(out_path, dopnet):
     g = out.geometry()
     if g is not None and g.findPointAttrib("v") is not None:
         warn("probe: Inherit Velocity on still wrote v (it should add nothing)")
-    for name, value in ((INHERIT_VEL, 0), (DEFORMING, 1)):
+    for name, value in ((INHERIT_VEL, 0), (INITIAL_TYPE, "custom"), (DEFORMING, 1)):
         if probe.parm(name) is None:
             warn(f"probe: no {name} parameter")
             sop.destroy()

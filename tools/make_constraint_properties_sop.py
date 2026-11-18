@@ -75,6 +75,7 @@ GROUP_ATTRIB = "__tmpconpropgrp"  # the group SideFX's RBD Group Constraints mak
 ROTATE, ROTATE_BOX = "anchorrotate", "addanchorrotate"  # the Anchor Rotation setting (the orient attribute)
 SCALING = ("No Scaling", "Scale by Attribute", "Scale by Value", "Scale by Both")  # RBD Constraint Properties' menu
 TRANSFER_MODES = (("0", "Closest"), ("1", "Min"), ("3", "Max"), ("2", "Average"))  # its tokens
+VEX_DEFAULT = "// Second Input: Geometry\n// Third Input: Proxy Geometry"  # RBD Constraint Properties' placeholder
 UNSET_FLOAT = "-3.4028235e38"  # kUnsetFloat (Box3DJoints.h)
 UNSET_INT = "-1"
 
@@ -256,6 +257,26 @@ def setting_templates(rows, prefix, names, scalable=True, gate=""):
     return items
 
 
+def vex_templates(name):
+    """Use VEXpressions and its snippet, as RBD Constraint Properties' types have: a VEX wrangle over the constraints
+    in the group that runs after the settings are written, with the Geometry and Proxy Geometry as its second and
+    third inputs. Only the type picked in Constraint Type runs."""
+    use = hou.ToggleParmTemplate(
+        f"{name}_uselocalproperties", "Use VEXpressions", default_value=False,
+        help="Run the VEX below over the constraints in the group, after the settings are written.")
+    snippet = hou.StringParmTemplate(
+        f"{name}_localexpression", "VEXpression", 1, default_value=(VEX_DEFAULT,),
+        help="Runs over each constraint (primitive), with the Constraint Geometry as its first input, the Geometry as "
+             "its second and the Proxy Geometry as its third.",
+        tags={"editor": "1", "editorlang": "vex"})
+    snippet.setConditional(hou.parmCondType.HideWhen, f"{{ {name}_uselocalproperties == 0 }}")
+    snippet.setItemGeneratorScript("import vexpressionmenu\n\nreturn vexpressionmenu.buildSnippetMenu("
+                                   f"'box3d_constraint_properties/{name}localexpression', kwargs=kwargs)")
+    snippet.setItemGeneratorScriptLanguage(hou.scriptLanguage.Python)
+    snippet.setMenuType(hou.menuType.Normal)
+    return [use, snippet]
+
+
 def group_tag(inputindex):
     """RBD Constraint Properties' selection button (pick primitives in the viewport)."""
     return {"script_action": "import soputils\nkwargs['geometrytype'] = hou.geometryType.Primitives\n"
@@ -321,9 +342,19 @@ def ui(common, per_type):
     which = hou.MenuParmTemplate("constrainttype", "Constraint Type", tuple(str(i) for i in range(len(JOINT_TYPES))),
                                  tuple(names_menu), default_value=0,
                                  help="Which joint type's settings to show. Every ticked setting is written.")
+    # Disable Collisions, in RBD Constraint Properties' words: it writes collide_connected, the Joint folder's Collide
+    # Connected, the other way round (Disable is 0). It is written after the Joint folder's, so it wins if both are ticked.
+    collide_box = hou.ToggleParmTemplate(
+        "docollisions", "Disable Collisions", default_value=False, join_with_next=True,
+        help="Write whether the two joined bodies collide. Writes the collide_connected primitive attribute.")
+    collide_box.setConditional(hou.parmCondType.HideWhen, "{ action == 1 }")
+    collisions = hou.MenuParmTemplate(
+        "collisions", "Collisions", ("0", "1"), ("Disable", "Enable"), default_value=0,
+        help="Whether the two joined bodies collide with each other: Disable stops them.")
+    collisions.setConditional(hou.parmCondType.DisableWhen, "{ docollisions == 0 action == 0 }")
     props = (string_row("constraintname", "Constraint Name",
                         "The relationship's Data Name the constraints use. Writes constraint_name.", True)
-             + [which])
+             + [collide_box, collisions, which])
 
     common_names = {pt.name() for pt, _ in common}
     # Anchor Rotation: the frame of both anchors, which the viewport handle also edits (Edit Parms).
@@ -342,7 +373,7 @@ def ui(common, per_type):
         if not rows:
             continue
         own = {pt.name() for pt, _ in rows}
-        f = b3d_hda.collapsible(f"b3dcp_{name}", label, setting_templates(rows, f"{name}_", own))
+        f = b3d_hda.collapsible(f"b3dcp_{name}", label, setting_templates(rows, f"{name}_", own) + vex_templates(name))
         f.setConditional(hou.parmCondType.HideWhen, f"{{ constrainttype != {i} }}")
         folders.append(f)
 
@@ -516,6 +547,9 @@ def wrangle_vex(rows):
         if following:  # a next setting is only written while the constraint switches when broken
             applies = f"usenext && ({applies})"
         lines.append(f"if ({applies}) {{ " + put(attr, unset[kind], expression) + " }")
+    # Disable Collisions: Disable 0, Enable 1. Set writes it only when it is Enable (Disable is the joint nodes' default).
+    lines.append('if (chi("../docollisions") || (setmode && chi("../collisions") != 0)) { '
+                 + put("collide_connected", UNSET_INT, 'chi("../collisions")') + " }")
     return "\n".join(lines)
 
 
@@ -710,11 +744,34 @@ def build_network(sub, rows):
     setter.setInput(2, proxy_in)
     setter.parm("class").set("detail")
     setter.parm("snippet").set(wrangle_vex(rows))
+    # Use VEXpressions: the snippet of the type in Constraint Type, run over the constraints in the group after the
+    # settings, when that type's toggle is on (a Switch passes the settings straight through otherwise).
+    vexer = sub.createNode("attribwrangle", "run_vexpressions")
+    vexer.setInput(0, setter)
+    vexer.setInput(1, geo_in)
+    vexer.setInput(2, proxy_in)
+    vexer.parm("class").set("primitive")
+    vexer.parm("group").setExpression(f'ifs(ch("../groupfromgeo"), "{GROUP_ATTRIB}", chs("../constraintgroup"))',
+                                      hou.exprLanguage.Hscript)
+    b3d_hda.set_token(vexer.parm("grouptype"), "prims", warn)
+    snippet, enabled = '""', "0"
+    with_settings = {r[4] for r in rows if r[4] >= 0}  # the types that have a folder, so a VEXpression (Filter has none)
+    for i in reversed(range(len(JOINT_TYPES))):
+        if i not in with_settings:
+            continue
+        name = JOINT_TYPES[i][0]
+        snippet = f'ifs(ch("../constrainttype") == {i}, chs("../{name}_localexpression"), {snippet})'
+        enabled = f'if(ch("../constrainttype") == {i}, ch("../{name}_uselocalproperties"), {enabled})'
+    vexer.parm("snippet").setExpression(snippet, hou.exprLanguage.Hscript)
+    use_vex = sub.createNode("switch", "switch_vexpressions")
+    use_vex.setInput(0, setter)
+    use_vex.setInput(1, vexer)
+    use_vex.parm("input").setExpression(enabled, hou.exprLanguage.Hscript)
     # The viewport edits (the node's stash: one point per edited line) go on top of what the settings write.
     stash = sub.createNode("stash", "stash")
     stash.parm("stash").set(sub.parm("stash"))
     edits = sub.createNode("attribwrangle", "apply_edits")
-    edits.setInput(0, setter)
+    edits.setInput(0, use_vex)
     edits.setInput(1, stash)
     edits.parm("class").set("detail")
     edits.parm("snippet").set(APPLY_EDITS_VEX)

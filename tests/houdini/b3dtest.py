@@ -326,6 +326,8 @@ def box3d_packed_object(dop, name, sop_path, **parms):
     friction=0.0). SetupError if the asset is not installed."""
     obj = create(dop, "box3d_packedobject", name)
     set_parm(obj, ["soppath"], sop_path)
+    if "bodytype" in parms or "deforming" in parms:  # their own values: Initial Object Type Custom
+        set_parm(obj, ["initialstate"], "custom")
     for parm, value in parms.items():
         set_parm(obj, [parm], value)
     return obj

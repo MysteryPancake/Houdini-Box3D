@@ -50,6 +50,11 @@ def animate_collision(collision):
     (the Packed Object's SourceObject data, followSourceSops); Deforming reads the whole SOP every step (Overwrite
     Attributes from SOP and Read SOP Every Step), as the shapes change. All are the Packed Object's own parameters:
     the nested asset stays locked."""
+    kind = collision.parm("initialstate")
+    if kind is None:
+        warn(f"{collision.path()} has no Initial Object Type: its Body Type may be ignored")
+    else:
+        kind.set("custom")  # Body Type below is ours
     p = collision.parm("bodytype")
     if p is None:
         warn(f"{collision.path()} has no Body Type; its parameters: {labels(collision)}")

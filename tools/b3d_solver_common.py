@@ -109,6 +109,7 @@ CONSTRAINTS_TOGGLES = dict(POINTS_TOGGLES)
 # The Output tab, always last, as RBD Bullet Solver's: Impact Data (the pieces' Add Impact Data as the
 # folder's header toggle, the solver's Impact Min Speed, Fetch Impacts; closed), then Transfer Attributes.
 IMPACT_TOGGLE = "addimpact"  # the pieces' Box3D Data toggle (on the Packed Object's Object tab)
+INITIAL_TYPE = "initialstate"  # the Packed Object's Initial Object Type menu
 START_ASLEEP = "startasleep"  # the pieces' Box3D Data toggle (on the Packed Object's Initial State tab)
 IMPACT_SPEED = "impactminspeed"  # the solver's, moved from Advanced
 IMPACTS = "IMPACTS"  # the null holding the imported impact records, what Fetch Impacts merges
