@@ -6,6 +6,11 @@
 
 #include "Box3DCompoundSync.h"
 
+#include <GA/GA_SplittableRange.h>
+
+#include <algorithm>
+#include <mutex>
+
 namespace box3dsolver {
 
 // Collects the SIM_Force data an object carries (Gravity Force, Wind Force, Fan
@@ -75,11 +80,34 @@ void readPointForces(const SIM_Object &obj, Box3DObjectSync &os,
   auto nonZero = [](const UT_Vector3 &v) {
     return v.x() != 0.0f || v.y() != 0.0f || v.z() != 0.0f;
   };
-  for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it) {
-    const UT_Vector3 f = fh.isValid() ? fh.get(*it) : zero;
-    const UT_Vector3 t = th.isValid() ? th.get(*it) : zero;
+  const auto collect = [&](GA_Offset off, std::vector<PointForce> &out) {
+    const UT_Vector3 f = fh.isValid() ? fh.get(off) : zero;
+    const UT_Vector3 t = th.isValid() ? th.get(off) : zero;
     if (nonZero(f) || nonZero(t))
-      pointForces.push_back({*it, f, t});
+      out.push_back({off, f, t});
+  };
+  const GA_Range range(gdp->getPointRange());
+  if (static_cast<size_t>(range.getEntries()) < minParallelPoints()) {
+    for (GA_Iterator it(range); !it.atEnd(); ++it)
+      collect(*it, pointForces);
+  } else {
+    // Read-only: each range gathers its own points, merged under a lock and
+    // sorted by offset afterwards (addPointForce searches by offset).
+    std::mutex mergeLock;
+    UTparallelFor(GA_SplittableRange(range), [&](const GA_SplittableRange &r) {
+      std::vector<PointForce> mine;
+      GA_Offset start, end;
+      for (GA_Iterator it(r); it.blockAdvance(start, end);)
+        for (GA_Offset off = start; off < end; ++off)
+          collect(off, mine);
+      if (mine.empty())
+        return;
+      const std::lock_guard<std::mutex> guard(mergeLock);
+      pointForces.insert(pointForces.end(), mine.begin(), mine.end());
+    });
+    std::sort(
+        pointForces.begin(), pointForces.end(),
+        [](const PointForce &a, const PointForce &b) { return a.off < b.off; });
   }
   if (pointForces.empty()) // all zero: no need to look again until they change
   {
@@ -255,7 +283,9 @@ void applyToObjectBodies(Box3DSharedState &st, const SIM_Object &obj,
   const std::vector<const SIM_Force *> &forces = of.forces;
   b3dop::Box3DWorld &world = st.world;
 
-  std::vector<ForceJob> jobs;
+  // Kept between calls (every object, every substep): no allocation.
+  thread_local std::vector<ForceJob> jobs;
+  jobs.clear();
   jobs.reserve(os.bodies.size());
   for (const Box3DBodyMirror *e : os.bodies) {
     if (!e->handle || !e->dynamic() || !e->props.enabled)
@@ -381,6 +411,7 @@ ForceStats applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects,
   ForceStats stats;
   PointForceCarry::ObjectForces single; // without a carry: made for each call
   std::vector<PointForce> pointForces;
+  const std::vector<PointForce> noForces;
   std::vector<SIM_Object *> cleared;
   const bool replay = carry && carry->replay;
 
@@ -399,22 +430,21 @@ ForceStats applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects,
       of = PointForceCarry::ObjectForces();
       collectForceDops(*obj, of.forces);
     }
+    const std::vector<PointForce> *applied = &pointForces;
     if (replay) {
       // The attributes were cleared by the frame's first step: apply what it
       // read.
       const auto kept = carry->byObject.find(obj->getObjectId());
-      pointForces.clear();
-      if (kept != carry->byObject.end())
-        pointForces = kept->second;
+      applied = kept != carry->byObject.end() ? &kept->second : &noForces;
     } else {
       readPointForces(*obj, os, pointForces);
       if (carry && !pointForces.empty())
         carry->byObject[obj->getObjectId()] = pointForces;
     }
-    if (of.forces.empty() && pointForces.empty())
+    if (of.forces.empty() && applied->empty())
       continue;
 
-    applyToObjectBodies(st, *obj, os, of, pointForces, wake, stats);
+    applyToObjectBodies(st, *obj, os, of, *applied, wake, stats);
     if (!replay && !pointForces.empty() && clearPointForces(*obj, pointForces))
       cleared.push_back(obj);
   }

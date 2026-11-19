@@ -54,7 +54,11 @@ inline void glueSpread(const std::vector<GlueBond> &bonds,
   for (const GlueBond &bond : bonds)
     rounds = std::max(rounds, bond.params.iterations);
   const size_t n = hits.size();
-  std::vector<float> next(n), weight(n);
+  // Kept between calls (every frame): no allocation. `next` trades buffers
+  // with `hits` below; both are fully overwritten each round.
+  thread_local std::vector<float> next, weight;
+  next.resize(n);
+  weight.resize(n);
   for (int round = 0; round < rounds; ++round) {
     // Each node's total share: itself (1) and its bonds' rates.
     std::fill(weight.begin(), weight.end(), 1.0f);
@@ -88,8 +92,13 @@ inline void glueAdvance(std::vector<GlueBond> &bonds, std::vector<float> hits,
                         float dt, std::vector<int> &broken) {
   broken.clear();
   // Node counts in `bonds` must fit `hits`.
-  std::vector<GlueBond> live;
-  std::vector<int> index;
+  // Kept between calls: no allocation.
+  thread_local std::vector<GlueBond> live;
+  thread_local std::vector<int> index;
+  live.clear();
+  index.clear();
+  live.reserve(bonds.size());
+  index.reserve(bonds.size());
   for (size_t i = 0; i < bonds.size(); ++i) {
     const GlueBond &bond = bonds[i];
     if (bond.a < 0 || bond.b < 0 ||

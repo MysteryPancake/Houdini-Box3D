@@ -82,7 +82,9 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp,
     Box3DJointEntry *e;
     GA_Offset pts[2];
   };
-  std::vector<Work> work;
+  // Kept between steps: no allocation.
+  thread_local std::vector<Work> work;
+  work.clear();
   work.reserve(entries.size());
   for (Box3DJointEntry *e : entries) {
     if (e->quiet || !primOk(e->prim))
