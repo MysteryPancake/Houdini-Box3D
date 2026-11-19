@@ -365,6 +365,7 @@ struct WholeObjectScan {
   const b3dop::BodyProps &p;
   uint64_t sig; // wholeObjectShapeSig
   const Box3DBodyPose &cur;
+  float stepDt; // a kinematic body reaches its new pose in this time
   SyncCounts &c;
 
   const b3dop::BodySettings &node() const { return setup.node; }
@@ -455,14 +456,29 @@ void updateWholeObjectBody(Box3DBodyMirror &entry, const WholeObjectScan &s) {
   if (entry.type != wantType) {
     world.setTypeByHandle(entry.handle, wantType);
     entry.type = wantType;
+    entry.driven = false;
     if (entry.dynamic())
       applyBodyMass(world, entry.handle, entry.props, entry.volume);
     ++s.c.retyped;
   }
 
   // Position data edited by another node (keyframes, a Position DOP set to Set
-  // Always).
-  if (poseDiffers(s.cur, entry)) {
+  // Always). A kinematic body drives to the new pose in this step, pushing what
+  // it touches, and its velocity is cleared once the edits stop; any other
+  // body is teleported.
+  if (entry.type == b3dop::BodySettings::Type::Kinematic) {
+    if (poseDiffers(s.cur, entry)) {
+      world.setTargetTransformByHandle(entry.handle, s.cur.pos, s.cur.rot,
+                                       s.stepDt);
+      entry.setPose(s.cur);
+      entry.driven = true;
+      ++s.c.edited;
+    } else if (entry.driven) {
+      const float zero[3] = {0.0f, 0.0f, 0.0f};
+      world.setVelocityByHandle(entry.handle, zero, zero);
+      entry.driven = false;
+    }
+  } else if (poseDiffers(s.cur, entry)) {
     world.setTransformByHandle(entry.handle, s.cur.pos, s.cur.rot);
     world.setVelocityByHandle(entry.handle, s.cur.lin, s.cur.ang);
     entry.setPose(s.cur);
@@ -541,6 +557,7 @@ void syncWholeObject(Box3DSharedState &st, const SIM_Object &obj,
                              p,
                              wholeObjectShapeSig(gdp, m, pivot, setup),
                              cur,
+                             st.stepDt,
                              c};
 
   if (entry)

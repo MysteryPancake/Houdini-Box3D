@@ -1,6 +1,6 @@
-// Static triangle-mesh colliders (what Static Object / affector geometry
-// becomes): a dynamic box and sphere land on a two-triangle floor, and bad
-// input is refused.
+// Triangle-mesh colliders (what Static Object / affector geometry becomes): a
+// dynamic box and sphere land on a two-triangle floor, a kinematic one pushes a
+// cube, and bad input is refused.
 #include "KeyedWorld.h"
 #include "TestUtil.h"
 #include "core/Box3DAffectorMath.h"
@@ -272,6 +272,49 @@ int main() {
     mw.destroyBody(floors.back());
     CHECK(mw.meshCount() == 0);
   }
+
+  // ---- a kinematic mesh floor driven up into a resting cube (no gravity):
+  // the cube is pushed whatever the starting gap, as by a kinematic box ----
+  for (const bool useMesh : {true, false})
+    for (const double gap : {0.02, 0.1, 0.3}) {
+      KeyedWorld kw;
+      WorldSettings ws;
+      ws.gravity[0] = ws.gravity[1] = ws.gravity[2] = 0.0f;
+      CHECK(kw.create(ws));
+      BodySettings kin;
+      kin.type = BodySettings::Type::Kinematic;
+      const BodyHandle kinFloor = kw.createBody(kin, origin, qid);
+      const float floorVerts[] = {-10, 0, -10, 10,  0, -10,
+                                  10,  0, 10,  -10, 0, 10};
+      const int32_t floorTris[] = {0, 2, 1, 0, 3, 2};
+      ShapeSpec slab;
+      slab.halfExtents[0] = slab.halfExtents[2] = 10.0f;
+      slab.halfExtents[1] = 0.01f;
+      CHECK(useMesh
+                ? kw.createMeshShape(kinFloor, kin, floorVerts, 4, floorTris, 2)
+                : kw.createShape(kinFloor, kin, slab));
+      BodySettings dynBody;
+      dynBody.props.restitution = 0.0f;
+      const double cubePos[3] = {0, gap + 0.5, 0};
+      const BodyHandle cube = kw.createBody(dynBody, cubePos, qid);
+      ShapeSpec cubeShape;
+      CHECK(cube && kw.createShape(cube, dynBody, cubeShape));
+      const float dt = 1.0f / 24.0f;
+      double y = 0.0;
+      for (int i = 0; i < 24; ++i) {
+        y += 2.0 * dt;
+        const double target[3] = {0, y, 0};
+        kw.setTargetTransformByHandle(kinFloor, target, qid, dt);
+        kw.step(dt);
+      }
+      double cp[3];
+      float cq[4];
+      CHECK(kw.getTransformByHandle(cube, cp, cq));
+      // The floor ends at y 2: the cube is carried up on it, about 0.5 above.
+      CHECK(std::fabs(cp[1] - 2.55) < 0.1);
+      std::printf("kinematic %s floor, gap %.2f: cube y %.2f\n",
+                  useMesh ? "mesh" : "box", gap, cp[1]);
+    }
 
   std::printf(fails ? "FAILED (%d)\n" : "OK\n", fails);
   return fails ? 1 : 0;

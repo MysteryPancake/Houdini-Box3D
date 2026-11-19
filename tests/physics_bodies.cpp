@@ -417,6 +417,47 @@ void testMassSleepKinematic() {
   std::printf("mass / sleep / kinematic checks done\n");
 }
 
+// A kinematic cube driven by target poses into a resting cube (no gravity):
+// the cube leaves at the kinematic one's speed, and faster with bounce.
+void testKinematicBounce() {
+  using namespace b3dop;
+  for (const float bounce : {0.0f, 0.5f}) {
+    KeyedWorld w;
+    WorldSettings ws;
+    ws.gravity[0] = ws.gravity[1] = ws.gravity[2] = 0.0f;
+    CHECK(w.create(ws));
+    const float qid[4] = {0, 0, 0, 1};
+    BodySettings kin;
+    kin.type = BodySettings::Type::Kinematic;
+    kin.props.restitution = bounce;
+    const double k0[3] = {0, 0, 0};
+    const BodyHandle k = w.createBody(kin, k0, qid);
+    ShapeSpec cube;
+    CHECK(k && w.createShape(k, kin, cube));
+    BodySettings dyn;
+    dyn.props.restitution = bounce;
+    const double d0[3] = {1.2, 0, 0};
+    const BodyHandle d = w.createBody(dyn, d0, qid);
+    CHECK(d && w.createShape(d, dyn, cube));
+    const float dt = 1.0f / 24.0f;
+    double x = 0.0;
+    for (int i = 0; i < 24; ++i) {
+      x += 2.0 * dt;
+      const double target[3] = {x, 0, 0};
+      w.setTargetTransformByHandle(k, target, qid, dt);
+      w.step(dt);
+    }
+    float lin[3], ang[3];
+    CHECK(w.getVelocityByHandle(d, lin, ang));
+    // Bounce 0: carried at 2 m/s. Bounce 0.5 (the default mixing is the
+    // lower of the two): thrown off at 2 + 0.5 * 2.
+    const float expected = bounce > 0.0f ? 3.0f : 2.0f;
+    CHECK(std::fabs(lin[0] - expected) < 0.1f);
+    std::printf("kinematic into a cube, bounce %.1f: speed %.2f\n",
+                static_cast<double>(bounce), static_cast<double>(lin[0]));
+  }
+}
+
 // External forces (what the solver does with Force DOPs).
 void testExternalForces() {
   using namespace b3dop;

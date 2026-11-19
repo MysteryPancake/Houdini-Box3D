@@ -78,8 +78,8 @@ piece hashes, keyed by the source detail's identity (`geometryIdentity`: `getUni
 connected or not). `buildShapes` tries it first for packed convex / concave points: when every hull key it gives is still
 cached, the source geometry is not read or hashed at all. This relies on whoever edits a source bumping its data ids.
 
-**Static meshes and height fields.** `createMeshShape` and `createHeightFieldShape` work on static bodies only (Box3D's
-rule) and validate their input (indices, finiteness, positive scale, at least 2 x 2 heights). Box3D keeps pointers to
+**Meshes and height fields.** `createMeshShape` works on static or kinematic bodies and `createHeightFieldShape` on static
+ones only (Box3D's rule, plus the fork's mesh contact fix for a moving mesh), and both validate their input (indices, finiteness, positive scale, at least 2 x 2 heights). Box3D keeps pointers to
 `b3MeshData` / `b3HeightFieldData`, so `Impl::bodyGeometry` owns them until the body, its shapes or the world go. Meshes are shared
 per world by content (`Impl::sharedMeshes`, keyed by a hash of vertices, indices and weld; a count of users frees one with its last body; `meshCount()`),
 so instances of one piece and identical affectors build and hold one mesh; each shape keeps its own scale. A

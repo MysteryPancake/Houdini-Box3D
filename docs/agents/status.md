@@ -169,8 +169,6 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   for Hard, Soft and Spring (`sidefx_hard_untyped`).
 * SideFX constraint data not mapped: Soft plasticity, Cone Twist's elliptical and wide
   cones, softness, motors and translation ranges, Hard's angular motors.
-* Inactive RBD Object (Create Active Object off) is a static body: animating its Position teleports it, where Bullet
-  drives it as a kinematic body that pushes what it touches.
 * Force DOPs: parallel evaluation of circle / sphere sampled forces (the resolver has only the point call).
 * Sticky collisions. Box3D's contact begin / end and sensor events: Houdini has no output for them (Bullet has none), so
   nothing reads them beyond Impacts. Sensors (trigger zones) would be the useful part.

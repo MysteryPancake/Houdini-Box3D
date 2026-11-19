@@ -26,6 +26,7 @@ void testBodyPropsEquality();
 void testCcdThreshold();
 void testCollisionFiltering();
 void testMassSleepKinematic();
+void testKinematicBounce();
 void testExternalForces();
 void testContactRecycling();
 void testSurfaceMaterial();

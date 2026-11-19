@@ -695,9 +695,9 @@ bool Box3DWorld::createMeshShape(BodyHandle h, const BodySettings &body,
                                  float weldTolerance, const float scale[3]) {
   if (!h || !xyz || !triangles || vertexCount < 3 || triangleCount < 1)
     return false;
-  // Static bodies only (a triangle mesh has no volume or mass): refuse anything
-  // else.
-  if (b3Body_GetType(b3LoadBodyId(h)) != b3_staticBody)
+  // Static or kinematic bodies only (a triangle mesh has no volume or mass):
+  // refuse a dynamic one.
+  if (b3Body_GetType(b3LoadBodyId(h)) == b3_dynamicBody)
     return false;
 
   // Reject bad input here: Box3D asserts on non-finite vertices or out-of-range

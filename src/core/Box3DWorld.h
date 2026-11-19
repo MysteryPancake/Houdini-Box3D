@@ -397,9 +397,9 @@ public:
   // destroyShapesByHandle(dst) clears them).
   int copyShapesByHandle(BodyHandle src, BodyHandle dst, const float center[3],
                          const float rotXYZW[4]);
-  // A static triangle mesh (xyz: body-local vertices, triangles: 3 indices
-  // each, CCW). Static bodies only; false for a non-static body, fewer than 3
-  // vertices or 1 triangle, non-finite vertices or out-of-range indices.
+  // A triangle mesh (xyz: body-local vertices, triangles: 3 indices each,
+  // CCW). Static or kinematic bodies only; false for a dynamic body, fewer than
+  // 3 vertices or 1 triangle, non-finite vertices or out-of-range indices.
   // weldTolerance > 0 welds nearby vertices. The mesh belongs to the body: it
   // is freed with the body or by destroyShapesByHandle. Triangle meshes are
   // single-sided and have no mass. `scale` (optional, per axis, positive)

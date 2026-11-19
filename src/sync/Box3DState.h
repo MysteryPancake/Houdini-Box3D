@@ -423,6 +423,12 @@ struct Box3DAffectorBody {
       0, 0,
       0}; // (not in the signature: animating them must not rebuild the mesh)
   bool poseKnown = false;
+  // A mesh body follows a moved pose as a kinematic body, so it pushes what it
+  // touches: retyped on its first move. Height fields and grounds are
+  // teleported.
+  bool movable = false;
+  bool kinematic = false;
+  bool driven = false; // given a target last step (velocity to clear)
   // Height fields: the heights' hash, and the geometry identity it was taken
   // from (the heights are read again only when that changes).
   uint64_t heightSource = 0;

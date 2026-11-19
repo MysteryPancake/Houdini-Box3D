@@ -706,6 +706,7 @@ const TestCase kTests[] = {
     {"ccd_threshold", testCcdThreshold},
     {"collision_filtering", testCollisionFiltering},
     {"mass_sleep_kinematic", testMassSleepKinematic},
+    {"kinematic_bounce", testKinematicBounce},
     {"external_forces", testExternalForces},
     {"contact_recycling", testContactRecycling},
     {"surface_material", testSurfaceMaterial},

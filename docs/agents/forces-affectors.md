@@ -65,9 +65,15 @@ static bodies: a height field if the geometry has one, else a triangle mesh of i
   object-level scale is lost). With neither, the collider stays in SOP space. Geometry edits only arrive with Use
   Deforming Geometry.
 * Material (`affectorBodySettings`): a Box3D Data on the affector, else its `PhysicalParms` Friction / Bounce, else
-  `nodeBodyDefaults()`. Always static.
+  `nodeBodyDefaults()`. Bodies start static.
+* Moving: a mesh affector whose pose changes (`Box3DAffectorBody::movable`: a rigid transform, not a height field or
+  ground) is retyped kinematic on its first move and driven by `setTargetTransformByHandle(pose, stepDt)` each change,
+  so it pushes what it touches, as Bullet does; the velocity is cleared on the first step without one (`driven`). Height
+  fields and grounds are teleported (`setTransformByHandle`). An inactive RBD Object (Create Active Object off) is one of
+  these: Houdini does not give the solver such an object. Tests `bullet_inactive_push` (a box carried at 2 and 10 m/s as
+  Bullet does), `rbd_object_active`.
 * A failed build keeps handle 0 until the signature changes (one warning per step).
-* Core: `createMeshShape` / `createHeightFieldShape` (static bodies only). Box3D keeps pointers to the mesh and
+* Core: `createMeshShape` (static or kinematic bodies) / `createHeightFieldShape` (static only). Box3D keeps pointers to the mesh and
   height-field data, so `Impl::bodyGeometry` owns them until the body, its shapes or the world go.
 
 **Meshes.** Polygons fan-triangulated; Houdini front faces are clockwise and Box3D's one-sided meshes want

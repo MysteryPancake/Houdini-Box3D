@@ -521,6 +521,35 @@ def test_rbd_object_active():
     return results
 
 
+def test_rbd_object_kinematic_pushes():
+    """An RBD Object with a Kinematic Box3D Data and its Position animated (a Position DOP at Set Always, 2 m/s
+    along x) drives as a kinematic body: it carries a dynamic box in front of it at the same speed (gravity and
+    Bounce off), the box staying about 1 m ahead of it and moving at about 2 m/s, with no solver message."""
+    dop = new_dopnet("rbd_kinematic_pushes")
+    pusher = rbd_object(dop, "pusher", box_sop("rbd_kinematic_pusher", (0, 0, 0)))
+    data = box3d_data(dop, pusher, "pusher_data", bodytype=1, bounce=0.0)
+    mover = create(dop, "position", "mover")
+    mover.setInput(0, data)
+    set_menu_token(mover, ["parmop_t"], "always")
+    mover.parm("tx").setExpression("($FF-1)/$FPS*2")
+    box = rbd_object(dop, "box", box_sop("rbd_kinematic_box", (1.2, 0, 0)))
+    set_parm(box, ["bounce"], 0.0)
+    solver = box3d_solver(dop, merge(dop, [mover, box]), gravity=(0, 0, 0))
+    finish(dop, solver)
+
+    def sample(sim, f):
+        return (centroid(whole_object_points(sim, "pusher"))[0], centroid(whole_object_points(sim, "box"))[0])
+
+    track = step(dop, 25, sample)
+    (px, bx), (_, bx_prev) = track[25], track[24]
+    speed = (bx - bx_prev) * hou.fps()
+    msgs = node_messages(solver)
+    ok = close(px, 2.0, 0.05) and close(bx - px, 1.0, 0.1) and close(speed, 2.0, 0.3) and not msgs
+    return [Result("rbd_object_kinematic_pushes", Result.PASS if ok else Result.FAIL,
+                   f"after 1 s the kinematic pusher is at x {px:.2f} (expected 2.0) and the box {bx - px:.2f} ahead of it "
+                   f"(expected 1.0), moving at {speed:.2f} m/s (expected 2.0); messages {msgs or 'none'}")]
+
+
 def _inertia_node(dop, upstream, name):
     """The RBD Object has no inertia parameters: they belong to the RBD State data. Looks for a
     DOP node type that has computeinertialtensortype (tried on a throw-away node, so the search
@@ -762,6 +791,7 @@ TESTS = {
     "rbd_object_transform": test_rbd_object_transform,
     "other_rbd_objects": test_other_rbd_objects,
     "rbd_object_active": test_rbd_object_active,
+    "rbd_object_kinematic_pushes": test_rbd_object_kinematic_pushes,
     "rbd_object_inertia_type": test_rbd_object_inertia_type,
     "data_change_midsim": test_data_change_midsim,
     "data_under_geometry_objects": test_data_under_geometry_objects,

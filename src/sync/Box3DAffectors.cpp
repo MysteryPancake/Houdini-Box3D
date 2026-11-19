@@ -454,9 +454,24 @@ void updateAffector(Box3DSharedState &st, Box3DAffectorBody &ab,
                          ab.scale[1] == in.scale[1] &&
                          ab.scale[2] == in.scale[2];
   if (!samePose) {
-    st.world.setTransformByHandle(ab.handle, pos, rot);
+    if (ab.movable && st.stepDt > 0.0f) {
+      // Reach the new pose within the step, so the body pushes what it touches.
+      if (!ab.kinematic) {
+        st.world.setTypeByHandle(ab.handle,
+                                 b3dop::BodySettings::Type::Kinematic);
+        ab.kinematic = true;
+      }
+      st.world.setTargetTransformByHandle(ab.handle, pos, rot, st.stepDt);
+      ab.driven = true;
+    } else
+      st.world.setTransformByHandle(ab.handle, pos, rot);
     b3dop::copy3(ab.pos, pos);
     b3dop::copy4(ab.rot, rot);
+  } else if (ab.driven) {
+    // Stopped: clear the velocity the last target left.
+    const float zero[3] = {0.0f, 0.0f, 0.0f};
+    st.world.setVelocityByHandle(ab.handle, zero, zero);
+    ab.driven = false;
   }
   if (!sameScale) {
     st.world.setMeshScaleByHandle(ab.handle, in.scale);
@@ -533,6 +548,7 @@ void buildAffector(Box3DSharedState &st, Box3DAffectorBody &ab, int objectId,
   destroyAffector(st, ab);
   ab.signature = in.sig;
   ab.poseKnown = true;
+  ab.movable = ab.kinematic = ab.driven = false;
   const b3dop::BodySettings &body = in.body;
   // Records the body just built and what it was given.
   auto built = [&](b3dop::BodyHandle h, const double pos[3], const float rot[4],
@@ -610,6 +626,7 @@ void buildAffector(Box3DSharedState &st, Box3DAffectorBody &ab, int objectId,
     return;
   }
   built(h, bodyPos, bodyRot, bodyScale);
+  ab.movable = in.rigid; // a baked transform keeps the body at the origin
   if (in.volume)
     ++counts.heightFields;
   B3D_LOG("  affector id=%d: static mesh built, %d triangle(s)%s%s", objectId,

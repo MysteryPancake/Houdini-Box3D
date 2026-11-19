@@ -11,8 +11,10 @@ import math
 import hou
 
 from b3dtest import (
+    box_sop,
     box3d_data,
     box3d_solver,
+    centroid,
     close,
     create,
     display,
@@ -32,6 +34,7 @@ from b3dtest import (
     point_attributes,
     rbd_object,
     Result,
+    set_menu_token,
     set_parm,
     SetupError,
     solver_for,
@@ -794,6 +797,84 @@ def test_bullet_kinematic_push():
 
 
 # ---------------------------------------------------------------------------
+# An inactive RBD Object driven by its Position
+# ---------------------------------------------------------------------------
+
+
+def inactive_push(kind, bounce=None, speed=2.0, frames=25):
+    """An RBD Object moved along x at `speed` by a Position DOP (Set Always), with a free RBD Object box 0.7 ahead
+    of its face and no gravity: per frame, the pusher's and the box's centre x. kind "bullet": Create Active
+    Object off in the RBD Bullet Solver; "box3d": the same in the Box3D Solver (a static collider); "kinematic":
+    a Kinematic Box3D Data on it in the Box3D Solver. bounce: both objects' Bounce (None: the default)."""
+    tag = f"inactive_push_{kind}" + ("" if bounce is None else f"_b{bounce}")
+    dop = new_dopnet(tag)
+    pusher = rbd_object(dop, "pusher", box_sop(f"{tag}_pusher", (0, 0, 0)))
+    box = rbd_object(dop, "box", box_sop(f"{tag}_box", (1.2, 0, 0)))
+    if bounce is not None:
+        for node in (pusher, box):
+            set_parm(node, ["bounce"], bounce)
+    moved = pusher
+    if kind == "kinematic":
+        moved = box3d_data(dop, pusher, "pusher_data", bodytype=1, **({} if bounce is None else {"bounce": bounce}))
+    else:
+        set_parm(pusher, ["active"], 0)
+    mover = create(dop, "position", "mover")
+    mover.setInput(0, moved)
+    set_menu_token(mover, ["parmop_t"], "always")
+    mover.parm("tx").setExpression(f"($FF-1)/$FPS*{speed}")
+    both = merge(dop, [mover, box])
+    if kind == "bullet":
+        last = create(dop, "bulletrbdsolver", "bullet_solver")  # no Gravity DOP after it
+        last.setInput(0, both)
+    else:
+        last = box3d_solver(dop, both, gravity=(0, 0, 0))
+    finish(dop, last)
+    return step(dop, frames, lambda sim, f: (centroid(whole_object_points(sim, "pusher"))[0],
+                                              centroid(whole_object_points(sim, "box"))[0]))
+
+
+def _inactive_summary(kind, bounce, speed=2.0):
+    runs = {k: inactive_push(k, bounce, speed) for k in (kind, "bullet")}
+    out = {}
+    for k, track in runs.items():
+        (px, bx), (_, bx_prev) = track[25], track[24]
+        out[k] = (px, bx, (bx - bx_prev) * hou.fps())
+    text = ", ".join(f"{k}: pusher x {v[0]:.2f}, box x {v[1]:.2f}, box speed {v[2]:.2f}" for k, v in out.items())
+    text += ". Box x by frame 5, 10, 15, 20, 25: " + "; ".join(
+        f"{k} {[round(runs[k][f][1], 2) for f in (5, 10, 15, 20, 25)]}" for k in runs)
+    return out[kind], out["bullet"], text
+
+
+def test_bullet_kinematic_object_push():
+    """A whole RBD Object with a Kinematic Box3D Data and an animated Position (a Position DOP at Set Always,
+    2 m/s along x, no gravity) pushes a free box as Bullet's inactive RBD Object does. With Bounce 0 on both,
+    after 1 s each pusher follows the animation (x 2, within 0.05), the box is within 0.2 of the same place and
+    its speed within 0.3 m/s. With the default Bounce (0.5) the result is INFO."""
+    a, b, text = _inactive_summary("kinematic", 0.0)
+    ok = (close(a[0], 2.0, 0.05) and close(b[0], 2.0, 0.05) and close(a[1], b[1], 0.2)
+          and close(a[2], b[2], 0.3))
+    return [Result("bullet_kinematic_object_push", Result.PASS if ok else Result.FAIL,
+                   f"Bounce 0, after 1 s ({text}); pusher expected at x 2.0"),
+            Result("bullet_kinematic_object_push", Result.INFO,
+                   f"default Bounce, after 1 s ({_inactive_summary('kinematic', None)[2]})")]
+
+
+def test_bullet_inactive_push():
+    """An RBD Object with Create Active Object off and an animated Position (a Position DOP at Set Always, no
+    gravity, Bounce 0) carries a free box in front of it in Box3D as in Bullet, at 2 m/s and at 10 m/s: after
+    1 s each pusher is on its animation (within 0.05), the box within 0.3 of where Bullet's is and its speed
+    within 0.6 m/s. In Box3D it is a static collider driven as a kinematic body once it moves."""
+    results = []
+    for speed in (2.0, 10.0):
+        a, b, text = _inactive_summary("box3d", 0.0, speed)
+        ok = (close(a[0], speed, 0.05) and close(b[0], speed, 0.05) and close(a[1], b[1], 0.3)
+              and close(a[2], b[2], 0.6))
+        results.append(Result("bullet_inactive_push", Result.PASS if ok else Result.FAIL,
+                              f"{speed:g} m/s, after 1 s ({text})"))
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Primitives that are not polygons
 # ---------------------------------------------------------------------------
 
@@ -1258,5 +1339,7 @@ TESTS = {
     "bullet_cone_twist_goal": test_bullet_cone_twist_goal,
     "bullet_impact_normal": test_bullet_impact_normal,
     "bullet_kinematic_push": test_bullet_kinematic_push,
+    "bullet_kinematic_object_push": test_bullet_kinematic_object_push,
+    "bullet_inactive_push": test_bullet_inactive_push,
     "bullet_primitive_types": test_bullet_primitive_types,
 }

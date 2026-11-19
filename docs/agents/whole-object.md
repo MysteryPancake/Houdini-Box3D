@@ -41,8 +41,9 @@ its state in the object's `Position` data instead of point attributes.
     away from the shape; `bullet_rbd_box_settle`, `bullet_rbd_pivot`). Recomputed only when the geometry or its transform
     changes (`Box3DBodyMirror::pivotKey`). `computecom` off: `p`, read through `getPivot`.
   * `SolverParms` (`ActiveValue`, Create Active Object): off makes the body static (`rbdObjectSetup`), as `active = 0`
-    does on a point. Read every step, so toggling retypes the body. There is no kinematic whole object, so edited
-    Position data teleports it (see Edits).
+    does on a point. Read every step, so toggling retypes the body. In practice Houdini does not give the solver an
+    object with it off (a Static Object does not reach `syncWholeObject` either): it is an affector, a static collider
+    that follows its Position as a kinematic body ([forces-affectors.md](forces-affectors.md)).
   * `PhysicalParms` (`SIM_PhysicalParms`): `friction`, `bounce`. `dynamicfriction`, `bounceforward`, `temperature`
     have no Box3D equivalent.
   * `Geometry/BulletData` (`SIM_BulletData`): `bullet_georep` (unknown names, and plane: the default shape),
@@ -59,8 +60,10 @@ its state in the object's `Position` data instead of point attributes.
   (`pointOff` -1, `pointIndex` -1 in Impacts). The object scans every step (one body: no fingerprint).
   `Box3DObjectSync::wholeObject` makes aging and point `force` / `torque` skip the object; Force DOPs still apply.
   Joint anchors name the object (Anchors: an object with one body).
-* Edits: Position data differing from what the solver last wrote (`poseDiffers`) teleports the body, as an edited point
-  does.
+* Edits: Position data differing from what the solver last wrote (`poseDiffers`) teleports a static or dynamic body, as
+  an edited point does. A kinematic one (a Kinematic Box3D Data) gets `setTargetTransformByHandle(cur, stepDt)` instead,
+  so it pushes what it touches, and its velocity is cleared on the first step without an edit (`driven`), as an
+  `animated` point. It is not written back. Test `rbd_object_kinematic_pushes`, against Bullet `bullet_kinematic_object_push`.
 * Write-back (`writeWholeObject`, from `writeResultsBack`'s move events, serial): the `SIM_PositionSimple` at
   `Position` (created as a `SIM_Motion` if missing; other `SIM_Position` kinds are left alone with a warning): pivot,
   orientation, translation, then velocities when it is a `SIM_Motion` (RBD State stays an RBD State). The translation
