@@ -228,7 +228,9 @@ BuiltShapes wholeObjectShapes(b3dop::Box3DWorld &world, const GU_Detail *gdp,
     return out;
   }
   return buildWholeObjectShapes(world, gdp, m, pivot, setup.node.defaultShape,
-                                setup.node.hullPerConnectedSet);
+                                setup.node.hullPerConnectedSet,
+                                setup.node.type ==
+                                    b3dop::BodySettings::Type::Static);
 }
 
 // What a whole object's shapes are built from: the geometry, its own transform,
@@ -246,6 +248,8 @@ uint64_t wholeObjectShapeSig(const GU_Detail *gdp, const double m[16],
     h = b3dop::mixDouble(h, pivot[i]);
   h = mixHash(h, static_cast<uint64_t>(node.defaultShape));
   h = mixHash(h, node.hullPerConnectedSet ? 1u : 2u);
+  // A static concave object is a triangle mesh, so the shapes depend on it.
+  h = mixHash(h, node.type == b3dop::BodySettings::Type::Static ? 4u : 5u);
   if (setup.explicitShape) {
     h = mixHash(mixHash(h, 3u), b3dop::hashShapeSpec(setup.spec));
   }
@@ -377,6 +381,7 @@ Box3DBodyMirror *createWholeObjectBody(Box3DSharedState &st, uint64_t key,
   entry->volume = shapes.totalVolume;
   entry->shapeSig = s.sig;
   entry->shapeless = shapes.pieces.empty();
+  entry->meshShapes = shapes.mesh;
   entry->wholeObject = true;
   std::copy(s.pivot, s.pivot + 3, entry->pivot);
 
@@ -415,6 +420,14 @@ void updateWholeObjectBody(Box3DBodyMirror &entry, const WholeObjectScan &s) {
   // same body.
   bool rebuilt = false;
   if (entry.shapeSig != s.sig) {
+    // A mesh needs a static body: retype first when it becomes static. Leaving
+    // static, the shapes are rebuilt (as hulls) before the retype below.
+    if (node.type == b3dop::BodySettings::Type::Static &&
+        entry.type != b3dop::BodySettings::Type::Static) {
+      world.setTypeByHandle(entry.handle, b3dop::BodySettings::Type::Static);
+      entry.type = b3dop::BodySettings::Type::Static;
+      ++s.c.retyped;
+    }
     BuiltShapes shapes = wholeObjectShapes(world, s.gdp, s.m, s.pivot, s.setup);
     world.destroyShapesByHandle(entry.handle);
     b3dop::BodySettings b = node;
@@ -425,6 +438,7 @@ void updateWholeObjectBody(Box3DBodyMirror &entry, const WholeObjectScan &s) {
     applyBodyMass(world, entry.handle, p, shapes.totalVolume,
                   false); // even with none: clears Box3D's dirty mass
     entry.volume = shapes.totalVolume;
+    entry.meshShapes = shapes.mesh;
     entry.shapeSig = s.sig;
     std::copy(s.pivot, s.pivot + 3, entry.pivot);
     world.wakeByHandle(entry.handle);

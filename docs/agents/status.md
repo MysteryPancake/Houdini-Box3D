@@ -182,7 +182,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * Export Collision Shapes (unverified): `SIM_DATA_CREATE(obj, "Box3DShapes", SIM_GeometryCopy, SIM_DATA_RETURN_EXISTING)`
   on an object that has no such data, then an empty detail in `SIM_GeometryAutoWriteLock`; `setExtraInfo` keeping other
   entries and surviving the later `save`s (Bullet's extra info is `guide=GUIDE_GEO` among colour entries).
-* Concave meshes: one mesh shared between instances, static RBD Objects as meshes, drawing meshes in the guide.
+* Concave meshes: one mesh shared between instances.
 * Height fields: holes from a mask layer, height fields on points.
 * Constraint networks: agent anchors (`anchor_type` agent), the `anchor_pid` / `anchor_vid` matching; `constraint_type` on our nodes. SideFX's help says a missing `constraint_type`
   is `position`, where the solver takes `all` (checked against Bullet in `bullet_joint_rest` and `sidefx_hard_*`: rerun

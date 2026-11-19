@@ -190,6 +190,14 @@ void drawBody(Lines &out, const b3dop::Box3DWorld &world,
     case b3dop::Box3DWorld::ShapeOutline::Capsule:
       drawCapsule(out, pose.point(s.c1), pose.point(s.c2), s.radius);
       break;
+    case b3dop::Box3DWorld::ShapeOutline::Mesh:
+      for (size_t k = 0; k + 1 < s.loops.size(); k += 2) {
+        const size_t a = static_cast<size_t>(s.loops[k]) * 3;
+        const size_t b = static_cast<size_t>(s.loops[k + 1]) * 3;
+        if (a + 2 < s.verts.size() && b + 2 < s.verts.size())
+          out.add({pose.point(&s.verts[a]), pose.point(&s.verts[b])});
+      }
+      break;
     case b3dop::Box3DWorld::ShapeOutline::Hull: {
       // Each face as a closed loop (shared edges are drawn twice).
       for (size_t k = 0; k < s.loops.size();) {

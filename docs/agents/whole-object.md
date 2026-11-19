@@ -20,9 +20,11 @@ its state in the object's `Position` data instead of point attributes.
 * Object space = the geometry through its own transform (`SIM_Geometry::getTransform`; scale / shear baked into the
   shape points). Shapes (`buildWholeObjectShapes`) from Box3D Data's Default Shape / Create Convex Hull per Set of
   Connected Primitives: box / sphere / capsule fitted to all points (`fitShapeOriented`, as for points; see bodies.md), convex one hull (or per connected set), concave
-  one hull per primitive `name` (or per connected set); unkeyed hulls (by content); `none` or no points: shapeless static. The shape signature
-  (`wholeObjectShapeSig`: geometry identity, P / primitive list data ids, counts, own transform, pivot, shape settings)
-  changing rebuilds the shapes on the same body.
+  one hull per primitive `name` (or per connected set), or, on a static body, one triangle mesh of the polygons (winding flipped as for packed pieces;
+  none: hulls); unkeyed hulls (by content); `none` or no points: shapeless static. The shape signature
+  (`wholeObjectShapeSig`: geometry identity, P / primitive list data ids, counts, own transform, pivot, shape settings, whether the body is static)
+  changing rebuilds the shapes on the same body. A body becoming static is retyped before the rebuild (a mesh needs it); one leaving static is rebuilt as
+  hulls first (`updateWholeObjectBody`). Tests `static_rbd_object_mesh`, `static_rbd_object_retype`.
 * Settings (`readDynamicProps` with unbound point attributes; changes go through `applyPropChanges`, read every step):
   Box3D Data whenever it is attached. Without it, the RBD Object's own data (`readRbdObjectSettings`, then
   `b3dop::rbdObjectSetup` over Box3D Data's defaults; option names from a Houdini 22.0 probe, read by name with

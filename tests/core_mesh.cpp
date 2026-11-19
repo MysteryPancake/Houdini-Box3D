@@ -197,6 +197,32 @@ int main() {
     CHECK(decomposeRigid(id, pos, q) && std::fabs(q[3] - 1) < 1e-6);
   }
 
+  // Outlines for the guide: a flat floor draws only its 4 boundary edges (the
+  // diagonal is flat); the same two triangles folded 90 degrees also draw the
+  // fold (5); the mesh scale is applied to the vertices.
+  {
+    KeyedWorld ow;
+    CHECK(ow.create(WorldSettings()));
+    std::vector<Box3DWorld::ShapeOutline> outs;
+    const BodyHandle flatBody = ow.createBody(st, origin, qid);
+    CHECK(ow.createMeshShape(flatBody, st, verts, 4, tris, 2));
+    CHECK(ow.bodyShapeOutlines(flatBody, outs));
+    CHECK(outs.size() == 1 && outs[0].kind == Box3DWorld::ShapeOutline::Mesh);
+    CHECK(outs.size() == 1 && outs[0].loops.size() == 8);
+
+    const float foldVerts[] = {0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 1, 1};
+    const int32_t foldTris[] = {0, 2, 1, 0, 3, 2};
+    const float scale[3] = {2, 1, 1};
+    const BodyHandle fold = ow.createBody(st, origin, qid);
+    CHECK(ow.createMeshShape(fold, st, foldVerts, 4, foldTris, 2, 0.0f, scale));
+    CHECK(ow.bodyShapeOutlines(fold, outs));
+    CHECK(outs.size() == 1 && outs[0].loops.size() == 10);
+    float maxX = 0;
+    for (size_t i = 0; outs.size() == 1 && i < outs[0].verts.size(); i += 3)
+      maxX = std::fmax(maxX, outs[0].verts[i]);
+    CHECK(std::fabs(maxX - 2.0f) < 1e-5f);
+  }
+
   std::printf(fails ? "FAILED (%d)\n" : "OK\n", fails);
   return fails ? 1 : 0;
 }

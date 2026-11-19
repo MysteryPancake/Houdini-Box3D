@@ -15,6 +15,8 @@ from b3dtest import (
     box3d_data,
     box3d_packed_object,
     box3d_solver,
+    rbd_object,
+    whole_object_points,
     close,
     create,
     det3,
@@ -1151,6 +1153,109 @@ def test_point_object_bullet():
     return [Result("point_object_bullet", Result.INFO, "; ".join(rows))]
 
 
+def shape_lines(static_georep):
+    """Number of polygons in Export Collision Shapes for a static 4 x 0.4 x 4 piece with `static_georep` and a
+    dynamic 1 m box (a hull: 6 faces), read back through a DOP Import of the `Box3DShapes` data."""
+    pieces = [{"size": (4, 0.4, 4), "center": (0, 0, 0), "attrs": {"active": 0, "bullet_georep": static_georep}},
+              {"size": (1, 1, 1), "center": (0, 2, 0), "attrs": {"active": 1, "bullet_georep": "convexhull"}}]
+    path, _ = packed_boxes(f"shapes_{static_georep}_pieces", pieces)
+    dop = new_dopnet(f"shapes_{static_georep}")
+    finish(dop, box3d_solver(dop, packed_object(dop, "pieces", path, keep_velocity=True)))
+    set_parm(dop.node("box3d_solver"), ["exportshapes"], 1)
+    geo = new_geo(f"shapes_{static_georep}_read")
+    imp = create(geo, "dopimport", "import_shapes")
+    set_parm(imp, ["doppath"], dop.path())
+    set_parm(imp, ["objpattern"], "pieces")
+    set_parm(imp, ["geodatapath"], "Box3DShapes")
+    for f in (1, 2, 3):
+        hou.setFrame(f)
+    return len(imp.geometry().prims())
+
+
+def test_collision_shapes_mesh():
+    """Export Collision Shapes / the guide draw a static concave piece's triangle mesh: its 12 box edges (all
+    creased; the flat quads' diagonals are left out), next to the dynamic box's 6 hull faces. A static convex
+    piece gives its 6 hull faces instead."""
+    mesh, hull = shape_lines("concave"), shape_lines("convexhull")
+    ok = mesh == 18 and hull == 12
+    return [Result("collision_shapes_mesh", Result.PASS if ok else Result.FAIL,
+                   f"polygons drawn with a static concave piece {mesh} (expected 12 mesh edges + 6 = 18), with a "
+                   f"static convex piece {hull} (expected 6 + 6 = 12)")]
+
+
+def static_tray_rest(shape_index, static=True, body_type_expression=None):
+    """The lowest point (y) of a sphere RBD Object dropped from y 3 into a static RBD Object tray: an open 4 x 2 x 4
+    box (double sided, so its winding does not matter), its floor at y 0. `shape_index`: the tray's Box3D Data
+    Default Shape (3 Concave, 2 Convex Hull). `body_type_expression`: Hscript for the tray's Body Type, read every step
+    (0 static, 2 dynamic); the result is then the tray's and the ball's lowest points on frames 30, 60 and 96, and the
+    solver's messages."""
+    def tray(geo):
+        box = create(geo, "box")
+        set_parm(box, ["size"], (4, 2, 4))
+        set_parm(box, ["t"], (0, 1, 0))
+        open_top = create(geo, "attribwrangle")
+        open_top.setInput(0, box)
+        set_parm(open_top, ["class"], 1)
+        set_parm(open_top, ["snippet"], 'vector c = primuv(0, "P", @primnum, {0.5, 0.5, 0}); if (c.y > 1.9) removeprim(0, @primnum, 1);')
+        flip = create(geo, "reverse")
+        flip.setInput(0, open_top)
+        both = create(geo, "merge")
+        both.setInput(0, open_top)
+        both.setInput(1, flip)
+        return both
+
+    def ball(geo):
+        sph = create(geo, "sphere")
+        set_parm(sph, ["type"], 1)  # polygon
+        set_parm(sph, ["rad"], (0.5, 0.5, 0.5))
+        set_parm(sph, ["t"], (0, 3, 0))
+        return sph
+
+    dop = new_dopnet(f"tray_{shape_index}")
+    tray_obj = rbd_object(dop, "tray", single_object_geo(f"tray_{shape_index}_geo", tray))
+    data = box3d_data(dop, tray_obj, "tray_data", bodytype=0 if static else 2, defaultshape=shape_index)
+    ball_obj = rbd_object(dop, "ball", single_object_geo(f"tray_{shape_index}_ball", ball))
+    solver = box3d_solver(dop, merge(dop, [data, ball_obj]))
+    finish(dop, solver)
+    if body_type_expression:
+        set_parm(data, ["parmop_bodytype"], 1)  # Set Always
+        data.parm("bodytype").setExpression(body_type_expression)
+
+        def lows(sim, f):
+            return (min(p[1] for p in whole_object_points(sim, "tray")), min(p[1] for p in whole_object_points(sim, "ball")))
+
+        track = step(dop, 96, lows)
+        return [track[f] for f in (30, 60, 96)], node_messages(solver)
+    low = step(dop, 96, lambda sim, f: min(p[1] for p in whole_object_points(sim, "ball")))
+    return low[96]
+
+
+def test_static_rbd_object_mesh():
+    """A static RBD Object with Default Shape Concave collides as its exact polygons (a triangle mesh): a ball
+    dropped into an open tray lands on the tray's floor (lowest point y 0), where a convex hull of the tray would
+    hold it on top (y 2)."""
+    mesh, hull = static_tray_rest(3), static_tray_rest(2)
+    ok = abs(mesh) < 0.06 and abs(hull - 2.0) < 0.1
+    return [Result("static_rbd_object_mesh", Result.PASS if ok else Result.FAIL,
+                   f"ball's lowest point after landing: {mesh:.3f} with a concave static tray (expected 0, on the "
+                   f"floor), {hull:.3f} with a convex one (expected 2, on top)")]
+
+
+def test_static_rbd_object_retype():
+    """An RBD Object whose Body Type changes mid-simulation keeps working with the mesh: static (a mesh) until
+    frame 40 then dynamic (hulls) it starts falling, and dynamic then static from frame 40 it freezes where it is,
+    with no solver message either way."""
+    to_dynamic, msgs1 = static_tray_rest(3, body_type_expression="if($FF<40,0,2)")
+    to_static, msgs2 = static_tray_rest(3, body_type_expression="if($FF<40,2,0)")
+    fell = abs(to_dynamic[0][0]) < 1e-3 and to_dynamic[1][0] < -1.0 and to_dynamic[2][0] < to_dynamic[1][0] - 1.0
+    froze = to_static[0][0] < -1.0 and abs(to_static[1][0] - to_static[2][0]) < 1e-3
+    ok = fell and froze and not msgs1 and not msgs2
+    return [Result("static_rbd_object_retype", Result.PASS if ok else Result.FAIL,
+                   f"tray's lowest y on frames 30, 60, 96: static to dynamic {[round(t[0], 2) for t in to_dynamic]} "
+                   f"(expected 0, then falling), dynamic to static {[round(t[0], 2) for t in to_static]} (expected "
+                   f"falling, then frozen); messages {msgs1 + msgs2 or 'none'}")]
+
+
 TESTS = {
     "rbd_packed_attributes": test_rbd_packed_attributes,
     "rest_reset": test_rest_reset,
@@ -1177,6 +1282,9 @@ TESTS = {
     "impacts": test_impacts,
     "mass_written": test_mass_written,
     "aging": test_aging,
+    "collision_shapes_mesh": test_collision_shapes_mesh,
+    "static_rbd_object_mesh": test_static_rbd_object_mesh,
+    "static_rbd_object_retype": test_static_rbd_object_retype,
     "point_force": test_point_force,
     "gravity_dop": test_gravity_dop,
     "force_dops_many_and_sampled": test_force_dops_many_and_sampled,

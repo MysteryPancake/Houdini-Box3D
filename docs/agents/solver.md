@@ -89,7 +89,7 @@ lines (`drawObjectShapes`, shared with the guide) as world-space open polylines 
 `kShapesDataName` (`Box3DShapes`) on every object with bodies, rewritten each step after the point writes (the solver
 holds the mutex; poses are the written-back ones). `Cd` is white times the dimming; the SOP tints it. The Box3D Solver
 SOP's `GUIDE_GEO` imports it (see [solver-sop.md](solver-sop.md)); turning the toggle off stops writing but leaves the last data
-in the cache. Not drawn: affector colliders, meshes, and anything on an object's creation frame without Solve On Creation Frame (no
+in the cache. A static concave piece's mesh is drawn as its boundary and creased edges (`meshOutline` in `Box3DWorld.cpp`, thinned past `kMaxMeshOutlineEdges`; test `collision_shapes_mesh`). Not drawn: affector colliders, and anything on an object's creation frame without Solve On Creation Frame (no
 body yet; expected).
 
 **New objects.** Objects in `newobjects` (created this timestep) keep their initial state unless their object node has

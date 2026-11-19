@@ -707,11 +707,43 @@ BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
 BuiltShapes buildWholeObjectShapes(b3dop::Box3DWorld &world,
                                    const GU_Detail *gdp, const double m[16],
                                    const double pivot[3], b3dop::ShapeType type,
-                                   bool hullPerConnected) {
+                                   bool hullPerConnected, bool staticMesh) {
   using b3dop::ShapeType;
   BuiltShapes out;
   if (type == ShapeType::None)
     return out;
+
+  // Static concave: the object's polygons as one triangle mesh (meshes only
+  // collide as static). No polygons: hulls as for a moving body.
+  if (staticMesh && type == ShapeType::Concave) {
+    auto mesh = std::make_shared<MeshPiece>();
+    box3dTriangulate(gdp, gdp->getPrimitiveRange(), false, false, mesh->xyz,
+                     mesh->tris);
+    if (!mesh->tris.empty()) {
+      for (size_t k = 0; k + 2 < mesh->xyz.size(); k += 3) {
+        const double p[3] = {mesh->xyz[k], mesh->xyz[k + 1], mesh->xyz[k + 2]};
+        double o[3];
+        b3dop::xformPoint(m, p, o);
+        for (int c = 0; c < 3; ++c)
+          mesh->xyz[k + static_cast<size_t>(c)] =
+              static_cast<float>(o[c] - pivot[c]);
+      }
+      // Houdini's front faces wind clockwise, Box3D's counter-clockwise; a
+      // mirroring transform flips the winding again.
+      double m3[9];
+      b3dop::upper3x3(m, m3);
+      if (b3dop::matrixDeterminant(m3) >= 0.0)
+        for (size_t t = 0; t + 2 < mesh->tris.size(); t += 3)
+          std::swap(mesh->tris[t + 1], mesh->tris[t + 2]);
+      Piece pc;
+      pc.volume = meshVolume(*mesh);
+      pc.mesh = std::move(mesh);
+      out.totalVolume += pc.volume;
+      out.pieces.push_back(std::move(pc));
+      out.mesh = true;
+      return out;
+    }
+  }
 
   PieceGroup g;
   const bool connected =

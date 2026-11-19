@@ -1011,6 +1011,85 @@ HullId Box3DWorld::createHullWithKey(HullId key, const float *xyz,
   return key;
 }
 
+namespace {
+
+// A mesh's edges worth drawing: boundary edges and ones where the two
+// triangles meet at more than ~20 degrees (a flat quad's diagonal is left out).
+// More than kMaxMeshOutlineEdges are thinned evenly.
+void meshOutline(const b3Mesh &mesh, Box3DWorld::ShapeOutline &o) {
+  const b3Vec3 *v = b3GetMeshVertices(mesh.data);
+  const b3MeshTriangle *t = b3GetMeshTriangles(mesh.data);
+  const int vc = mesh.data->vertexCount, tc = mesh.data->triangleCount;
+  if (!v || !t || vc < 3 || tc < 1)
+    return;
+  o.kind = Box3DWorld::ShapeOutline::Mesh;
+  o.verts.resize(static_cast<size_t>(vc) * 3);
+  for (int k = 0; k < vc; ++k) {
+    o.verts[3 * static_cast<size_t>(k)] = v[k].x * mesh.scale.x;
+    o.verts[3 * static_cast<size_t>(k) + 1] = v[k].y * mesh.scale.y;
+    o.verts[3 * static_cast<size_t>(k) + 2] = v[k].z * mesh.scale.z;
+  }
+  struct Edge {
+    uint64_t key;
+    b3Vec3 normal;
+    int count;
+  };
+  std::vector<Edge> edges;
+  edges.reserve(static_cast<size_t>(tc) * 3);
+  for (int k = 0; k < tc; ++k) {
+    const int idx[3] = {t[k].index1, t[k].index2, t[k].index3};
+    if (idx[0] < 0 || idx[1] < 0 || idx[2] < 0 || idx[0] >= vc ||
+        idx[1] >= vc || idx[2] >= vc)
+      continue;
+    const float *p[3];
+    for (int j = 0; j < 3; ++j)
+      p[j] = &o.verts[3 * static_cast<size_t>(idx[j])];
+    const float a[3] = {p[1][0] - p[0][0], p[1][1] - p[0][1],
+                        p[1][2] - p[0][2]};
+    const float b[3] = {p[2][0] - p[0][0], p[2][1] - p[0][1],
+                        p[2][2] - p[0][2]};
+    b3Vec3 n = {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2],
+                a[0] * b[1] - a[1] * b[0]};
+    const float len = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
+    if (len > 0.0f) {
+      n.x /= len;
+      n.y /= len;
+      n.z /= len;
+    }
+    for (int j = 0; j < 3; ++j) {
+      const uint64_t lo =
+          static_cast<uint64_t>(std::min(idx[j], idx[(j + 1) % 3]));
+      const uint64_t hi =
+          static_cast<uint64_t>(std::max(idx[j], idx[(j + 1) % 3]));
+      edges.push_back({(lo << 32) | hi, n, 1});
+    }
+  }
+  std::sort(edges.begin(), edges.end(),
+            [](const Edge &x, const Edge &y) { return x.key < y.key; });
+  std::vector<uint64_t> keep;
+  constexpr float kCreaseDot = 0.94f; // cos 20 degrees
+  for (size_t k = 0; k < edges.size();) {
+    size_t e = k + 1;
+    while (e < edges.size() && edges[e].key == edges[k].key)
+      ++e;
+    bool draw = e - k != 2; // boundary or non-manifold
+    if (!draw) {
+      const b3Vec3 &x = edges[k].normal, &y = edges[k + 1].normal;
+      draw = x.x * y.x + x.y * y.y + x.z * y.z < kCreaseDot;
+    }
+    if (draw)
+      keep.push_back(edges[k].key);
+    k = e;
+  }
+  const size_t stride = keep.size() / kMaxMeshOutlineEdges + 1;
+  for (size_t k = 0; k < keep.size(); k += stride) {
+    o.loops.push_back(static_cast<int>(keep[k] >> 32));
+    o.loops.push_back(static_cast<int>(keep[k] & 0xffffffffu));
+  }
+}
+
+} // namespace
+
 bool Box3DWorld::bodyShapeOutlines(BodyHandle h,
                                    std::vector<ShapeOutline> &out) const {
   out.clear();
@@ -1071,8 +1150,15 @@ bool Box3DWorld::bodyShapeOutlines(BodyHandle h,
       }
       break;
     }
+    case b3_meshShape: {
+      const b3Mesh mesh = b3Shape_GetMesh(shapes[static_cast<size_t>(i)]);
+      if (!mesh.data)
+        continue;
+      meshOutline(mesh, o);
+      break;
+    }
     default:
-      continue; // meshes and compounds: not made for bodies here
+      continue; // compounds: not made for bodies here
     }
     out.push_back(std::move(o));
   }

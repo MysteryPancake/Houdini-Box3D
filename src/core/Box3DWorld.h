@@ -33,6 +33,9 @@ constexpr int kDefaultWorkerCount = 8;
 // checks they match).
 constexpr int kMaxWorkerCount = 32;
 
+// The most edges bodyShapeOutlines returns for one mesh (more are thinned).
+constexpr size_t kMaxMeshOutlineEdges = 20000;
+
 // A body, valid until it is destroyed (or the world is). No hash lookup. 0 is
 // invalid.
 using BodyHandle = uint64_t;
@@ -665,11 +668,14 @@ public:
   // A body's collision shapes in body space, for drawing (the solver's guide
   // geometry). Hulls (boxes too) give their vertices and each face as a loop
   // of vertex indices; spheres a centre (c1) and radius; capsules both centres
-  // and the radius. Other kinds are skipped. False for an invalid handle.
+  // and the radius; meshes their scaled vertices and the edges worth drawing
+  // (boundary and creased ones, at most kMaxMeshOutlineEdges). Other kinds are
+  // skipped. False for an invalid handle.
   struct ShapeOutline {
-    enum Kind { Hull, Sphere, Capsule } kind = Hull;
-    std::vector<float> verts; // hull: xyz per vertex
-    std::vector<int> loops;   // hull: per face, its vertex count then indices
+    enum Kind { Hull, Sphere, Capsule, Mesh } kind = Hull;
+    std::vector<float> verts; // hull, mesh: xyz per vertex
+    std::vector<int> loops;   // hull: per face, its vertex count then indices;
+                              // mesh: vertex index pairs, one per drawn edge
     float c1[3] = {0, 0, 0}, c2[3] = {0, 0, 0};
     float radius = 0.0f;
   };

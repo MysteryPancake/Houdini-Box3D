@@ -399,7 +399,8 @@ BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
 BuiltShapes buildWholeObjectShapes(b3dop::Box3DWorld &world,
                                    const GU_Detail *gdp, const double m[16],
                                    const double pivot[3], b3dop::ShapeType type,
-                                   bool hullPerConnected);
+                                   bool hullPerConnected,
+                                   bool staticMesh = false);
 
 // A point's `bullet_georep` via the shared-string handle (an int read), each
 // distinct handle parsed once per scan (handles are per attribute table, so the
