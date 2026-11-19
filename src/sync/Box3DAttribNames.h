@@ -53,12 +53,15 @@
   X(inertiaStiffness, "inertialtensorstiffness", F)                            \
   X(sleepThreshold, "sleepthreshold", F)                                       \
   X(ccdThreshold, "ccdthreshold", F)                                           \
-  X(fastObject, "fastobject", I) X(collisionGroup, "collision_group", I) X(    \
-      dead, "dead", I) X(contactRecycling, "contactrecycling", I)              \
-      X(lockLinear, "lock_linear", V3) /* per world axis, nonzero = locked */  \
-      X(lockAngular, "lock_angular", V3) X(fastRotation, "fastrotation", I)    \
-          X(rollingResistance, "rollingresistance", F)                         \
-              X(tangentVelocity, "tangentvelocity", V3)
+  X(fastObject, "fastobject", I)                                               \
+  X(collisionGroup, "collision_group", I)                                      \
+  X(dead, "dead", I)                                                           \
+  X(contactRecycling, "contactrecycling", I)                                   \
+  X(lockLinear, "lock_linear", V3) /* per world axis, nonzero = locked */      \
+  X(lockAngular, "lock_angular", V3)                                           \
+  X(fastRotation, "fastrotation", I)                                           \
+  X(rollingResistance, "rollingresistance", F)                                 \
+  X(tangentVelocity, "tangentvelocity", V3)
 
 // Prop markers with no PointAttrs handle (read by name only). Y("attribute"),
 // after the list above.
