@@ -94,6 +94,16 @@ float length3(const float v[3]) {
   return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
 }
 
+// Quaternions here are x, y, z, w arrays; Box3D's b3Quat is (v = xyz, s = w).
+b3Quat toB3(const float q[4]) { return b3Quat{{q[0], q[1], q[2]}, q[3]}; }
+
+void fromB3(const b3Quat &q, float out[4]) {
+  out[0] = q.v.x;
+  out[1] = q.v.y;
+  out[2] = q.v.z;
+  out[3] = q.s;
+}
+
 // Rotation (x, y, z, w) whose z axis is `twist` and x axis is `up` (made
 // perpendicular): Bullet's cone twist turns about x, Box3D's spherical joint
 // about z.
@@ -124,44 +134,14 @@ void twistFrame(const float twistIn[3], const float upIn[3], float q[4]) {
   }
   for (float &c : x)
     c /= lx;
-  const float y[3] = {z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2],
-                      z[0] * x[1] - z[1] * x[0]};
+  const b3Vec3 bx{x[0], x[1], x[2]};
+  const b3Vec3 bz{z[0], z[1], z[2]};
 
   // Columns x, y, z of the rotation matrix -> quaternion.
-  const float m00 = x[0], m01 = y[0], m02 = z[0];
-  const float m10 = x[1], m11 = y[1], m12 = z[1];
-  const float m20 = x[2], m21 = y[2], m22 = z[2];
-  const float tr = m00 + m11 + m22;
-  if (tr > 0.0f) {
-    const float s = std::sqrt(tr + 1.0f) * 2.0f;
-    q[3] = 0.25f * s;
-    q[0] = (m21 - m12) / s;
-    q[1] = (m02 - m20) / s;
-    q[2] = (m10 - m01) / s;
-  } else if (m00 > m11 && m00 > m22) {
-    const float s = std::sqrt(1.0f + m00 - m11 - m22) * 2.0f;
-    q[3] = (m21 - m12) / s;
-    q[0] = 0.25f * s;
-    q[1] = (m01 + m10) / s;
-    q[2] = (m02 + m20) / s;
-  } else if (m11 > m22) {
-    const float s = std::sqrt(1.0f + m11 - m00 - m22) * 2.0f;
-    q[3] = (m02 - m20) / s;
-    q[0] = (m01 + m10) / s;
-    q[1] = 0.25f * s;
-    q[2] = (m12 + m21) / s;
-  } else {
-    const float s = std::sqrt(1.0f + m22 - m00 - m11) * 2.0f;
-    q[3] = (m10 - m01) / s;
-    q[0] = (m02 + m20) / s;
-    q[1] = (m12 + m21) / s;
-    q[2] = 0.25f * s;
-  }
+  const b3Matrix3 m{bx, b3Cross(bz, bx), bz};
+  fromB3(b3MakeQuatFromMatrix(&m), q);
   sanitizeQuat(q);
 }
-
-// Quaternions here are x, y, z, w arrays; Box3D's b3Quat is (v = xyz, s = w).
-b3Quat toB3(const float q[4]) { return b3Quat{{q[0], q[1], q[2]}, q[3]}; }
 
 void rotateVec(const float q[4], const float v[3], float out[3]) {
   const b3Vec3 r = b3RotateVector(toB3(q), b3Vec3{v[0], v[1], v[2]});
@@ -295,8 +275,8 @@ void sideFXFrameOffsets(const SideFXJoint &j, const JointFrame &anchorA,
   }
   const float half = static_cast<float>(0.5 * sep);
   float qa[4], qb[4];
-  quatConj(anchorA.rot, qa);
-  quatConj(anchorB.rot, qb);
+  fromB3(b3Conjugate(toB3(anchorA.rot)), qa);
+  fromB3(b3Conjugate(toB3(anchorB.rot)), qb);
   const float wa[3] = {u[0] * half, u[1] * half, u[2] * half};
   const float wb[3] = {-wa[0], -wa[1], -wa[2]};
   float la[3], lb[3];
@@ -317,16 +297,14 @@ JointFrame applyFrameOffset(const JointFrame &anchor, const JointFrame &adj) {
   rotateVec(anchor.rot, p, w);
   for (int k = 0; k < 3; ++k)
     out.pos[k] = anchor.pos[k] + static_cast<double>(w[k]);
-  quatMul(anchor.rot, adj.rot, out.rot);
+  fromB3(b3MulQuat(toB3(anchor.rot), toB3(adj.rot)), out.rot);
   sanitizeQuat(out.rot);
   return out;
 }
 
 JointFrame removeFrameOffset(const JointFrame &joint, const JointFrame &adj) {
   JointFrame out;
-  float inv[4];
-  quatConj(adj.rot, inv);
-  quatMul(joint.rot, inv, out.rot);
+  fromB3(b3MulQuat(toB3(joint.rot), b3Conjugate(toB3(adj.rot))), out.rot);
   sanitizeQuat(out.rot);
   const float p[3] = {static_cast<float>(adj.pos[0]),
                       static_cast<float>(adj.pos[1]),
