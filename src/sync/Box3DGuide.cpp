@@ -21,6 +21,7 @@
 #include <SIM/SIM_ObjectArray.h>
 
 #include <cmath>
+#include <memory>
 #include <mutex>
 #include <vector>
 
@@ -34,7 +35,13 @@ constexpr float kStaticShade = 0.35f; // static and kinematic bodies
 
 // The shared state of the Box3D world that has this object's bodies: the world
 // data sits on one object of its solver, so look through the engine's objects.
-Box3DSharedState *findState(const SIM_Object &obj) {
+// The guide runs on the viewport's thread while the solver may be stepping (or
+// rebuilding the world), so the state is kept alive by `keep` and its mutex is
+// taken (without waiting) before anything in it is read. Null when the state is
+// busy: the guide is skipped.
+Box3DSharedState *findState(const SIM_Object &obj,
+                            std::shared_ptr<Box3DSharedState> &keep,
+                            std::unique_lock<std::mutex> &lock) {
   const SIM_Engine &engine = obj.getEngine();
   const int id = obj.getObjectId();
   for (int i = 0; i < engine.getNumSimulationObjects(); ++i) {
@@ -43,9 +50,17 @@ Box3DSharedState *findState(const SIM_Object &obj) {
       continue;
     const SIM_Box3DWorld *w =
         SIM_DATA_GETCONST(*o, kBox3DWorldDataName, SIM_Box3DWorld);
-    Box3DSharedState *st = w ? w->state() : nullptr;
-    if (st && st->world.isValid() && st->objectSync.count(id))
-      return st;
+    std::shared_ptr<Box3DSharedState> sp = w ? w->sharedState() : nullptr;
+    if (!sp)
+      continue;
+    std::unique_lock<std::mutex> l(sp->mutex, std::try_to_lock);
+    if (!l.owns_lock())
+      return nullptr;
+    if (sp->world.isValid() && sp->objectSync.count(id)) {
+      keep = std::move(sp);
+      lock = std::move(l);
+      return keep.get();
+    }
   }
   return nullptr;
 }
@@ -288,13 +303,11 @@ void drawObjectShapes(Lines &lines, Box3DSharedState &st, const SIM_Object &obj,
 
 void buildCollisionGuide(const SIM_Object &obj, GU_Detail &out,
                          const UT_Vector3 &color) {
-  Box3DSharedState *st = findState(obj);
+  // `lock` is declared after `keep`, so it is released first.
+  std::shared_ptr<Box3DSharedState> keep;
+  std::unique_lock<std::mutex> lock;
+  Box3DSharedState *st = findState(obj, keep, lock);
   if (!st)
-    return;
-  // The solver holds the lock while it steps; a guide drawn meanwhile is
-  // skipped rather than waiting.
-  std::unique_lock<std::mutex> lock(st->mutex, std::try_to_lock);
-  if (!lock.owns_lock())
     return;
   Lines lines;
   drawObjectShapes(lines, *st, obj, color);

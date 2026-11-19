@@ -135,9 +135,12 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp,
 
   // Each item reads the world (read-only calls may run in parallel) and writes
   // its own entry and its own two points, whose pages are hardened first.
+  // A reference: `work` is thread_local, so naming it inside the lambda would
+  // find each worker thread's own (empty) copy.
+  const std::vector<Work> &items = work;
   auto writeOne = [&](size_t i) {
-    Box3DJointEntry *e = work[i].e;
-    const GA_Offset *pts = work[i].pts;
+    Box3DJointEntry *e = items[i].e;
+    const GA_Offset *pts = items[i].pts;
     b3dop::JointFrame fa, fb;
     if (world.jointWorldFrames(e->handle, fa, fb)) {
       // The anchors, not the frames (SideFX data may offset the frames from

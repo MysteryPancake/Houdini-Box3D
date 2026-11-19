@@ -24,6 +24,10 @@ public:
     return myState.get();
   } // null: no world yet
 
+  // Same state, shared: for readers on other threads (the viewport's guide)
+  // that must outlive a rebuild of this data's world.
+  std::shared_ptr<Box3DSharedState> sharedState() const { return myState; }
+
   // A new shared state with a fresh world, for this data only.
   bool createWorld(const b3dop::WorldSettings &settings);
 
