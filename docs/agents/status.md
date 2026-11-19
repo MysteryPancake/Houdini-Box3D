@@ -178,9 +178,6 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   quadrics inside a Convex hull Per Connected Set, volumes (Bullet: packed falls through, RBD Object stays at 2, Box3D's
   falls), tube taper.
 * Objects solved by another solver: packed ones are ignored as colliders; one-way collision with polygons untested.
-* Export Collision Shapes (unverified): `SIM_DATA_CREATE(obj, "Box3DShapes", SIM_GeometryCopy, SIM_DATA_RETURN_EXISTING)`
-  on an object that has no such data, then an empty detail in `SIM_GeometryAutoWriteLock`; `setExtraInfo` keeping other
-  entries and surviving the later `save`s (Bullet's extra info is `guide=GUIDE_GEO` among colour entries).
 * Height fields: holes from a mask layer, height fields on points.
 * Constraint networks: agent anchors (`anchor_type` agent), the `anchor_pid` / `anchor_vid` matching. A missing `constraint_type` is `position`
   for Hard, Soft and Spring (`sidefx_hard_untyped`).
@@ -190,10 +187,9 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   drives it as a kinematic body that pushes what it touches.
 * Force DOPs: evaluation inside Box3D's Constraint Iterations (needs a callback in the fork); parallel evaluation of circle / sphere
   sampled forces (the resolver has only the point call).
-* Sticky collisions; contact / sensor events beyond Impacts.
+* Sticky collisions. Box3D's contact begin / end and sensor events: Houdini has no output for them (Bullet has none), so
+  nothing reads them beyond Impacts. Sensors (trigger zones) would be the useful part.
 * Box3D Solver SOP:
-  * Collision: Deforming following an unpacked collider that scales (a turn is checked by
-    `unpacked_turning_collider`).
   * Set Always for the Box3D Data settings of the pieces and collider, the relationships and the ground (the solver's
     own settings are Set Always already).
   * Break Thresholds (`b3d_solver_breaks.py`): Impact (`solver_sop_break_impact_bullet`: a glued pair stops breaking at 22.4k
