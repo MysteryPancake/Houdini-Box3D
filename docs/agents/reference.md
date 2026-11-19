@@ -51,7 +51,7 @@ One `UT_ERROR_WARNING` per kind per step with a count: shape fallbacks (on the s
 not become a body, duplicate `id`, non-finite `P`, non-finite `v` / `w` (read as zero; `readPointState`'s
 `badVelocity`), Geometry not writable, bodies not matched to a point at write-back, whole objects that could not
 become a body or whose Position data cannot be written, affectors with no usable collision geometry, constraint
-primitives that name no known relationship, name a missing piece, are not two-point lines or could not be made, and
+primitives that name no known relationship, name a missing piece, carry `constraint_type` position / rotation on one of our nodes, are not two-point lines or could not be made, and
 point attributes that override a Box3D Data value changed from its default (once per object; RBD Packed Object writes
 several). Errors: world creation
 failed or the world limit was reached (`reportWorldCreationFailure`), step cancelled (a message). Also: non-finite solver Gravity

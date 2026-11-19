@@ -716,6 +716,11 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
               "constraint primitive(s) have a constraint_name that names no "
               "Box3D, Glue, Hard, Spring, Soft or Cone Twist constraint "
               "relationship and are ignored");
+    warnCount(objects, jointCounts.typeIgnored,
+              "constraint primitive(s) on a Box3D joint node have a "
+              "constraint_type of position or rotation, which is only read for "
+              "Glue, Hard, Spring, Soft and Cone Twist constraints (the joint "
+              "type decides what is constrained)");
     warnCount(objects, jointCounts.unresolved,
               "constraint primitive(s) name a piece or object that does not "
               "exist and are ignored");

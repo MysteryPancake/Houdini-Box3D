@@ -628,6 +628,9 @@ public:
   // Hulls this world holds, hull builds / attempts (b3CreateHull calls) and the
   // shared cache's bytes.
   int hullCacheSize() const;
+  // The distinct triangle meshes this world holds (bodies with the same mesh
+  // share one).
+  int meshCount() const;
   static size_t sharedHullBytes();
   static int hullBuildAttempts();
 

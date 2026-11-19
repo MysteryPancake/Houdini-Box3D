@@ -1331,17 +1331,19 @@ def test_solver_sop_next_constraint_type():
     """next_constraint_type reaches a SideFX-typed line. A SideFX Hard line holding a box by an anchor 1 beside its centre
     (constraint_type all: rigid) breaks at frame 5 and switches to Hard again. With next_constraint_type position it
     is made as a position-only joint, so the box swings about the anchor and ends further along x (1.7 against 1.0);
-    without it (constraint_type empty again: all) it stays rigid. The line has constraint_type position afterwards."""
+    with next_constraint_type all it stays rigid. The line has the next type afterwards (without one the type is cleared,
+    which reads as position, as in Bullet)."""
     anchors = ((1, 3.5, 0), (1, 3.5, 0))
     base = {"constraint_type": "all", "next_constraint_name": "Hard"}
     swung_attrs, swung = _break_to_next("sop_next_type_a", "Hard", "Hard", dict(base, next_constraint_type="position"),
                                         anchors, 16)
-    held_attrs, held = _break_to_next("sop_next_type_b", "Hard", "Hard", base, anchors, 16)
+    held_attrs, held = _break_to_next("sop_next_type_b", "Hard", "Hard", dict(base, next_constraint_type="all"), anchors,
+                                      16)
     ok = (swung is not None and held is not None and swung[0] - held[0] > 0.3
           and swung_attrs.get("constraint_type") == "position" and not swung_attrs.get("next_constraint_type"))
     return [Result("solver_sop_next_constraint_type", Result.PASS if ok else Result.FAIL,
                    f"box centre x on frame 16 with next_constraint_type position {swung[0] if swung else None} "
-                   f"(expected more than 0.3 above the held one: swung), without {held[0] if held else None} (held); "
+                   f"(expected more than 0.3 above the held one: swung), with all {held[0] if held else None} (held); "
                    f"constraint_type after the switch {swung_attrs.get('constraint_type')!r}, "
                    f"next_constraint_type {swung_attrs.get('next_constraint_type')!r}")]
 

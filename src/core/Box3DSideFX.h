@@ -59,8 +59,10 @@ inline bool sideFXTypeFromDataType(const char *dataType, SideFXType &out) {
 
 // The Constraint Network's `constraint_type` primitive attribute.
 enum class ConstraintMode : int {
-  // position and rotation (also when the attribute is missing or unknown)
+  // position and rotation
   All = 0,
+  // position only (also when the attribute is missing, empty or unknown, as
+  // SideFX's help says and RBD Bullet Solver does)
   Position,
   Rotation,
 };
@@ -70,7 +72,9 @@ inline ConstraintMode constraintModeFromString(const char *s) {
     return ConstraintMode::Position;
   if (s && std::strcmp(s, "rotation") == 0)
     return ConstraintMode::Rotation;
-  return ConstraintMode::All;
+  if (s && std::strcmp(s, "all") == 0)
+    return ConstraintMode::All;
+  return ConstraintMode::Position;
 }
 
 // Every option read from the SideFX data, under its own units (degrees for

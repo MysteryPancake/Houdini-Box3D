@@ -9,7 +9,8 @@ geometry, and constraint relationship nodes wired into its second input hold the
 constraint, named by the primitives' `constraint_name`. Here those nodes are ours, one per Box3D joint type, with Box3D's
 own settings and defaults. SideFX's own constraint data (Glue, Hard, Spring, Bullet Soft, Cone Twist) is mapped onto
 Box3D joints, approximately ([joints-sidefx.md](joints-sidefx.md)). `constraint_type` (position / rotation / all) is read
-for SideFX data only; for our nodes the joint type decides what is constrained. Character-mover joints (mover, pogo)
+for SideFX data only; for our nodes the joint type decides what is constrained, on purpose (a generic joint in the fork would be
+needed to honour it), and a `position` or `rotation` on one warns (`typeIgnored`, test `constraint_type_ignored_warning`). Character-mover joints (mover, pogo)
 are left out.
 
 Naming: attributes holding the state at the initial pose are called `rest*` (`restlength`), or are Houdini's own

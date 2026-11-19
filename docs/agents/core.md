@@ -80,7 +80,9 @@ cached, the source geometry is not read or hashed at all. This relies on whoever
 
 **Static meshes and height fields.** `createMeshShape` and `createHeightFieldShape` work on static bodies only (Box3D's
 rule) and validate their input (indices, finiteness, positive scale, at least 2 x 2 heights). Box3D keeps pointers to
-`b3MeshData` / `b3HeightFieldData`, so `Impl::bodyGeometry` owns them until the body, its shapes or the world go. A
+`b3MeshData` / `b3HeightFieldData`, so `Impl::bodyGeometry` owns them until the body, its shapes or the world go. Meshes are shared
+per world by content (`Impl::sharedMeshes`, keyed by a hash of vertices, indices and weld; a count of users frees one with its last body; `meshCount()`),
+so instances of one piece and identical affectors build and hold one mesh; each shape keeps its own scale. A
 mesh's scale changes in place (`setMeshScaleByHandle`); a height field's cannot. Height fields are quantised to 16 bits
 over their own height range; `holes` become `B3_HEIGHT_FIELD_HOLE` cells.
 

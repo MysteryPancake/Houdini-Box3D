@@ -107,8 +107,10 @@ int main() {
     CHECK(constraintModeFromString("position") == ConstraintMode::Position);
     CHECK(constraintModeFromString("rotation") == ConstraintMode::Rotation);
     CHECK(constraintModeFromString("all") == ConstraintMode::All);
-    CHECK(constraintModeFromString("") == ConstraintMode::All &&
-          constraintModeFromString(nullptr) == ConstraintMode::All);
+    // Missing, empty or unknown: position, as SideFX's help says.
+    CHECK(constraintModeFromString("") == ConstraintMode::Position &&
+          constraintModeFromString(nullptr) == ConstraintMode::Position &&
+          constraintModeFromString("both") == ConstraintMode::Position);
     CHECK(defaultSideFXSettings(SideFXType::Glue).strength == 10000.0f);
     CHECK(defaultSideFXSettings(SideFXType::Spring).strength == 1.0f);
     SideFXSettings a, b;

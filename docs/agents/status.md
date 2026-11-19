@@ -177,16 +177,13 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   (Bullet 0.250); a Circle given as polygons or curves rests at 0.001 with a node message (Bullet 0.020). Not done:
   quadrics inside a Convex hull Per Connected Set, volumes (Bullet: packed falls through, RBD Object stays at 2, Box3D's
   falls), tube taper.
-* Results depend slightly on point order even with `id` (`point_order`): bodies are created in point order.
 * Objects solved by another solver: packed ones are ignored as colliders; one-way collision with polygons untested.
 * Export Collision Shapes (unverified): `SIM_DATA_CREATE(obj, "Box3DShapes", SIM_GeometryCopy, SIM_DATA_RETURN_EXISTING)`
   on an object that has no such data, then an empty detail in `SIM_GeometryAutoWriteLock`; `setExtraInfo` keeping other
   entries and surviving the later `save`s (Bullet's extra info is `guide=GUIDE_GEO` among colour entries).
-* Concave meshes: one mesh shared between instances.
 * Height fields: holes from a mask layer, height fields on points.
-* Constraint networks: agent anchors (`anchor_type` agent), the `anchor_pid` / `anchor_vid` matching; `constraint_type` on our nodes. SideFX's help says a missing `constraint_type`
-  is `position`, where the solver takes `all` (checked against Bullet in `bullet_joint_rest` and `sidefx_hard_*`: rerun
-  before changing).
+* Constraint networks: agent anchors (`anchor_type` agent), the `anchor_pid` / `anchor_vid` matching. A missing `constraint_type` is `position`
+  for Hard, Soft and Spring (`sidefx_hard_untyped`).
 * SideFX constraint data not mapped: Soft plasticity, Cone Twist's elliptical and wide
   cones, softness, motors and translation ranges, Hard's angular motors.
 * Inactive RBD Object (Create Active Object off) is a static body: animating its Position teleports it, where Bullet

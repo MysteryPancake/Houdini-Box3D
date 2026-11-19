@@ -95,4 +95,4 @@ only the pose is used; a sheared transform fails the plane. Several Ground Plane
 Material as above (Box3D Data, else the Ground Plane's Physical tab). The signature is the material alone, so moving or
 turning the plane only moves its body. The object needs no geometry.
 
-Not done: SDF / volume collision, mask holes, mesh sharing between identical affectors, per-pair collider selection.
+Not done: SDF / volume collision, mask holes, per-pair collider selection.

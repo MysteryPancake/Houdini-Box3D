@@ -223,6 +223,56 @@ int main() {
     CHECK(std::fabs(maxX - 2.0f) < 1e-5f);
   }
 
+  // Bodies with the same mesh share one b3MeshData (each shape keeps its own
+  // scale); it is freed with the last of them, and the world's count follows.
+  {
+    KeyedWorld mw;
+    CHECK(mw.create(WorldSettings()));
+    const float s2[3] = {2, 1, 2};
+    std::vector<BodyHandle> floors;
+    for (int i = 0; i < 5; ++i) {
+      const double at[3] = {10.0 * i, 0, 0};
+      const BodyHandle f = mw.createBody(st, at, qid);
+      CHECK(mw.createMeshShape(f, st, verts, 4, tris, 2, 0.0f,
+                               i == 4 ? s2 : nullptr));
+      floors.push_back(f);
+    }
+    CHECK(mw.meshCount() == 1);
+    const size_t one = mw.estimatedBytes();
+    // Another mesh is another entry; the same one again is not.
+    const float other[] = {-5, 0, -5, 5, 0, -5, 5, 0, 5, -5, 0, 5};
+    const BodyHandle g = mw.createBody(st, origin, qid);
+    CHECK(mw.createMeshShape(g, st, other, 4, tris, 2));
+    CHECK(mw.meshCount() == 2);
+    CHECK(mw.estimatedBytes() > one);
+    mw.destroyBody(g);
+    CHECK(mw.meshCount() == 1);
+    // A dynamic body is refused without taking a share.
+    BodySettings dynamic;
+    const BodyHandle d2 = mw.createBody(dynamic, origin, qid);
+    CHECK(!mw.createMeshShape(d2, dynamic, verts, 4, tris, 2));
+    for (size_t i = 0; i + 1 < floors.size(); ++i)
+      mw.destroyBody(floors[i]);
+    CHECK(mw.meshCount() == 1); // the scaled floor still uses it
+    // The scaled floor still collides at its own scale: a box lands on it.
+    BodySettings boxBody;
+    const double bp[3] = {40.0 + 15.0, 2.0, 0};
+    const BodyHandle bx = mw.createBody(boxBody, bp, qid);
+    ShapeSpec boxShape;
+    boxShape.type = ShapeType::Box;
+    boxShape.halfExtents[0] = boxShape.halfExtents[1] =
+        boxShape.halfExtents[2] = 0.5f;
+    CHECK(mw.createShape(bx, boxBody, boxShape));
+    for (int i = 0; i < 120; ++i)
+      mw.step(1.0f / 60.0f);
+    double landed[3];
+    float q[4];
+    CHECK(mw.getTransformByHandle(bx, landed, q));
+    CHECK(std::fabs(landed[1] - 0.5) < 0.05);
+    mw.destroyBody(floors.back());
+    CHECK(mw.meshCount() == 0);
+  }
+
   std::printf(fails ? "FAILED (%d)\n" : "OK\n", fails);
   return fails ? 1 : 0;
 }

@@ -25,6 +25,7 @@ from b3dtest import (
     multisolver,
     new_dopnet,
     new_geo,
+    node_messages,
     packed_boxes,
     packed_object,
     packed_positions,
@@ -252,11 +253,11 @@ def test_anchor_id():
     return results
 
 
-def sidefx_compare(kind, conrel_type, line_attrs, spin=None, anchors=None):
+def sidefx_compare(kind, conrel_type, line_attrs, spin=None, anchors=None, conrel_parms=None):
     """A piece 2 below a fixed one, held by a SideFX constraint with anchors at the centroids,
     in Box3D and in Bullet. Returns {solver: (centroid distance, rotation angle in degrees)}
     after 2 s. spin: initial w (rad/s) of the hanging piece. anchors: (fixed, hanging) anchor
-    positions (default: the centroids)."""
+    positions (default: the centroids). conrel_parms: the relationship node's parameters."""
     from b3dtest import packed_transform
     out = {}
     for solver_kind in ("box3d", "bullet"):
@@ -265,7 +266,8 @@ def sidefx_compare(kind, conrel_type, line_attrs, spin=None, anchors=None):
         pieces = [{"size": (1, 1, 1), "center": (0, 4, 0), "attrs": fixed},
                   {"size": (1, 1, 1), "center": (0.5, 2, 0), "attrs": hang}]
         dop, names = hanging_pair(f"{kind}_{solver_kind}{'_spin' if spin else ''}", None, line_attrs=line_attrs,
-                                  conrels=[(conrel_type, {})], solver_kind=solver_kind, pieces=pieces,
+                                  conrels=[(conrel_type, conrel_parms or {})], solver_kind=solver_kind,
+                                  pieces=pieces,
                                   anchors=anchors or ((0, 4, 0), (0.5, 2, 0)), keep_velocity=bool(spin))
 
         def sample(sim, f):
@@ -724,6 +726,26 @@ def test_static_object_transform():
                    f"box rests at y={y:.3f} (expected 1.5 on the grid moved up 1)")]
 
 
+def test_constraint_type_ignored_warning():
+    """constraint_type is read for SideFX data only: on a line that names one of our nodes, `position` or `rotation` earns a
+    solver warning (the joint type decides what is constrained), `all` and no attribute do not, and the joint holds
+    in every case."""
+    results = []
+    for label, attrs, expect_warning in (("none", None, False), ("all", {"constraint_type": "all"}, False),
+                                         ("position", {"constraint_type": "position"}, True),
+                                         ("rotation", {"constraint_type": "rotation"}, True)):
+        dop, names = hanging_pair(f"conn_type_{label}", "weld", conrels=[("box3d_weldconrel", {})], line_attrs=attrs)
+        solver = dop.node("box3d_solver")
+        track = step(dop, 12, lambda sim, f: (packed_positions(sim, "pieces")[names[1]][1], node_messages(solver)))
+        held = abs(track[12][0] - 2.0) < 0.1
+        warned = any("constraint_type" in m for f in track for m in track[f][1])
+        ok = held and warned == expect_warning
+        results.append(Result("constraint_type_ignored_warning", Result.PASS if ok else Result.FAIL,
+                              f"constraint_type {label}: warned {warned} (expected {expect_warning}), hanging piece "
+                              f"at y {track[12][0]:.2f} (held at 2)"))
+    return results
+
+
 TESTS = {
     "breaking": test_breaking,
     "anchor_id": test_anchor_id,
@@ -732,6 +754,7 @@ TESTS = {
     "next_constraint": test_next_constraint,
     "next_settings": test_next_settings,
     "feedback": test_feedback,
+    "constraint_type_ignored_warning": test_constraint_type_ignored_warning,
     "sidefx_hard": test_sidefx_hard,
     "sidefx_hard_all": test_sidefx_hard_all,
     "rbd_first_frames": test_rbd_first_frames,

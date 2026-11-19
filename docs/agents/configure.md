@@ -61,7 +61,7 @@ setting ticked (`rewrite_condition`). Bounds and Attributes are simple folders (
   no bounds geometry: none). Use Bounds (`use<name>bounds#`, on Body Type and every toggle, `has_bounds`) gives the
   value inside and the opposite outside (Body Type: Dynamic). Pin (`pin_templates`) marks pieces (`PIN_ATTRIB`) and
   `add_pin_constraints` (`PIN_VEX`) appends one line per pinned piece from the world to its point, `constraint_name`
-  from `PIN_TYPES` (Weld, Soft: the Solver SOP's relationship Data Names). The marker and group are stripped.
+  from `PIN_TYPES` (Weld, Soft: the Solver SOP's relationship Data Names; the lines carry no `constraint_type`, so a Soft pin holds position only, as in Bullet). The marker and group are stripped.
 * It uses `setpointattrib`, never `@` bindings: a binding creates its attribute on every point at compile time, even
   inside an `if` that never runs.
 * The build checks a fresh instance: two unpacked boxes come out as two packed pieces named on their points, the

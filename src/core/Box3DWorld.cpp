@@ -1,5 +1,6 @@
 // Box3DWorld.cpp
 #include "Box3DDebug.h"
+#include "Box3DShapes.h"
 #include "Box3DWorldInternal.h"
 
 #include <algorithm>
@@ -9,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <mutex>
 #include <unordered_map>
 #include <utility>
@@ -695,20 +697,48 @@ bool Box3DWorld::createMeshShape(BodyHandle h, const BodySettings &body,
 
   // Reject bad input here: Box3D asserts on non-finite vertices or out-of-range
   // indices.
-  std::vector<b3Vec3> verts;
-  verts.resize(static_cast<size_t>(vertexCount));
-  for (int i = 0; i < vertexCount; ++i) {
+  const size_t floatCount = static_cast<size_t>(vertexCount) * 3;
+  const size_t indexCount = static_cast<size_t>(triangleCount) * 3;
+  for (int i = 0; i < vertexCount; ++i)
     if (!finite3(xyz + 3 * i))
       return false;
-    verts[static_cast<size_t>(i)] = makeVec3(xyz + 3 * i);
-  }
-  std::vector<int32_t> idx;
-  idx.assign(triangles, triangles + 3 * static_cast<size_t>(triangleCount));
-  for (int32_t v : idx)
-    if (v < 0 || v >= vertexCount)
+  for (size_t i = 0; i < indexCount; ++i)
+    if (triangles[i] < 0 || triangles[i] >= vertexCount)
       return false;
 
+  // The same mesh (vertices, indices, weld) on another body shares one
+  // b3MeshData: Box3D only points at it, and the scale is the shape's own. A
+  // hash match is checked against the mesh's own copy of what it was built
+  // from; a different mesh with the same hash takes the next free key.
+  const float weld = weldTolerance > 0.0f ? weldTolerance : 0.0f;
+  uint64_t key = hashFloats(xyz, floatCount);
+  key = hashBytes(key, triangles, indexCount * sizeof(int32_t));
+  key = mixHash(key, static_cast<uint64_t>(std::hash<float>()(weld)));
+  Impl::SharedMesh *shared = nullptr;
+  for (;; ++key) {
+    const auto it = myImpl->sharedMeshes.find(key);
+    if (it == myImpl->sharedMeshes.end())
+      break;
+    const Impl::SharedMesh &m = it->second;
+    if (m.weld == weld && m.xyz.size() == floatCount &&
+        m.tris.size() == indexCount &&
+        std::memcmp(m.xyz.data(), xyz, floatCount * sizeof(float)) == 0 &&
+        std::memcmp(m.tris.data(), triangles, indexCount * sizeof(int32_t)) ==
+            0) {
+      shared = &it->second;
+      break;
+    }
+  }
+
+  std::vector<b3Vec3> verts; // only for a mesh not built yet
+  std::vector<int32_t> idx;
   b3MeshDef def = {};
+  if (!shared) {
+    verts.resize(static_cast<size_t>(vertexCount));
+    for (int i = 0; i < vertexCount; ++i)
+      verts[static_cast<size_t>(i)] = makeVec3(xyz + 3 * i);
+    idx.assign(triangles, triangles + indexCount); // b3MeshDef wants non-const
+  }
   def.vertices = verts.data();
   def.stride = 0;
   def.indices = idx.data();
@@ -720,7 +750,7 @@ bool Box3DWorld::createMeshShape(BodyHandle h, const BodySettings &body,
   def.identifyEdges =
       true; // smooth rolling over triangle edges (less ghost collisions)
 
-  b3MeshData *mesh = b3CreateMesh(&def, nullptr, 0);
+  b3MeshData *mesh = shared ? shared->data : b3CreateMesh(&def, nullptr, 0);
   if (!mesh)
     return false;
 
@@ -728,10 +758,19 @@ bool Box3DWorld::createMeshShape(BodyHandle h, const BodySettings &body,
   const b3ShapeId shape = b3CreateMeshShape(
       b3LoadBodyId(h), &sdef, mesh, scale ? makeVec3(scale) : b3Vec3_one);
   if (B3_IS_NULL(shape)) {
-    b3DestroyMesh(mesh);
+    if (!shared)
+      b3DestroyMesh(mesh);
     return false;
   }
-  myImpl->bodyGeometry[h].meshes.push_back(mesh);
+  if (!shared) {
+    shared = &myImpl->sharedMeshes[key];
+    shared->xyz.assign(xyz, xyz + floatCount);
+    shared->tris.assign(triangles, triangles + indexCount);
+    shared->weld = weld;
+  }
+  shared->data = mesh;
+  ++shared->users;
+  myImpl->bodyGeometry[h].meshKeys.push_back(key);
   return true;
 }
 
@@ -1303,13 +1342,17 @@ size_t Box3DWorld::estimatedBytes() const {
     return 0;
   const b3Counters c = b3World_GetCounters(myImpl->worldId);
   size_t bytes = c.byteCount > 0 ? static_cast<size_t>(c.byteCount) : 0;
+  for (const auto &kv : myImpl->sharedMeshes)
+    bytes += static_cast<size_t>(kv.second.data->byteCount);
   for (const auto &kv : myImpl->bodyGeometry) {
-    for (const b3MeshData *m : kv.second.meshes)
-      bytes += static_cast<size_t>(m->byteCount);
     for (const b3HeightFieldData *hf : kv.second.heightFields)
       bytes += static_cast<size_t>(hf->byteCount);
   }
   return bytes;
+}
+
+int Box3DWorld::meshCount() const {
+  return static_cast<int>(myImpl->sharedMeshes.size());
 }
 
 int Box3DWorld::hullCacheSize() const {

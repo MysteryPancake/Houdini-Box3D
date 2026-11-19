@@ -5,6 +5,7 @@
 // two files include it.
 #pragma once
 
+#include "Box3DDebug.h"
 #include "Box3DWorld.h"
 
 #include <box3d/box3d.h>
@@ -62,19 +63,37 @@ struct Box3DWorld::Impl {
   // Triangle meshes and height fields for static colliders. Box3D keeps a
   // pointer to the b3MeshData / b3HeightFieldData (it does not clone them), so
   // we own them: freed after their body is destroyed, or after the world.
+  // Meshes are shared by content (createMeshShape): one b3MeshData per
+  // distinct mesh, with a count of the bodies using it; a shape's scale is
+  // its own.
+  struct SharedMesh {
+    b3MeshData *data = nullptr;
+    int users = 0;
+    // What it was built from, to tell a hash collision from the same mesh.
+    std::vector<float> xyz;
+    std::vector<int32_t> tris;
+    float weld = 0.0f;
+  };
+  std::unordered_map<uint64_t, SharedMesh> sharedMeshes; // by content hash
   struct OwnedGeometry {
-    std::vector<b3MeshData *> meshes;
+    std::vector<uint64_t> meshKeys; // one per mesh shape, into sharedMeshes
     std::vector<b3HeightFieldData *> heightFields;
-    void release() {
-      for (b3MeshData *m : meshes)
-        b3DestroyMesh(m);
-      for (b3HeightFieldData *hf : heightFields)
-        b3DestroyHeightField(hf);
-      meshes.clear();
-      heightFields.clear();
-    }
   };
   std::unordered_map<BodyHandle, OwnedGeometry> bodyGeometry;
+
+  void releaseOwned(OwnedGeometry &g) {
+    for (const uint64_t key : g.meshKeys) {
+      const auto it = sharedMeshes.find(key);
+      if (it != sharedMeshes.end() && --it->second.users <= 0) {
+        b3DestroyMesh(it->second.data);
+        sharedMeshes.erase(it);
+      }
+    }
+    for (b3HeightFieldData *hf : g.heightFields)
+      b3DestroyHeightField(hf);
+    g.meshKeys.clear();
+    g.heightFields.clear();
+  }
 
   // The meshes and height fields a body's shapes used. Call after the body or
   // its shapes are destroyed.
@@ -82,13 +101,19 @@ struct Box3DWorld::Impl {
     auto it = bodyGeometry.find(body);
     if (it == bodyGeometry.end())
       return;
-    it->second.release();
+    releaseOwned(it->second);
     bodyGeometry.erase(it);
   }
   void destroyAllMeshes() {
     for (auto &kv : bodyGeometry)
-      kv.second.release();
+      releaseOwned(kv.second);
     bodyGeometry.clear();
+    B3D_LOG_IF(!sharedMeshes.empty(),
+               "%zu shared mesh(es) still held at teardown (user count off)",
+               sharedMeshes.size());
+    for (auto &kv : sharedMeshes)
+      b3DestroyMesh(kv.second.data);
+    sharedMeshes.clear();
   }
 };
 

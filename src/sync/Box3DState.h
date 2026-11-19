@@ -399,8 +399,7 @@ struct Box3DObjectSync {
   // Order-sensitive hash of the (name, entry) pairs byName was built from; 0:
   // byName is not built. A scan that hashes the same leaves byName untouched.
   uint64_t nameSig = 0;
-  // Scratch of the scan in progress: its hash and its named points in order.
-  uint64_t nameSigNext = 0;
+  // Scratch of the scan in progress: its named points (sorted by finish).
   std::vector<std::pair<GA_Offset, Box3DBodyMirror *>> namedPoints;
   Box3DSyncFingerprint fp;
 };

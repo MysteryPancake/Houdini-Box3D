@@ -11,7 +11,7 @@ Glue, Hard, Spring, Bullet Soft and Cone Twist mapped onto Box3D joints. Joint n
   only), per option in `sideFXParams()`. Option names are the node
   parameter names, from the same probe. `Box3DJointKind` holds the SideFX type and options instead of a joint type.
 * Per primitive: matching primitive attributes modify the options (floats multiply, ints / vectors replace; our
-  `jointParams` overrides are not applied), `constraint_type` is read (missing or unknown: all), then `mapSideFX`
+  `jointParams` overrides are not applied), `constraint_type` is read (missing, empty or unknown: position, as SideFX's help says and Bullet does: `sidefx_hard_untyped`), then `mapSideFX`
   picks the joint:
   * Glue: rigid weld holding the pieces where they are, never colliding, never broken by force or torque. It breaks
     on the impulse of the hits it takes, as the Glue help describes Bullet's (`core/Box3DGlue.h`, Houdini-free,

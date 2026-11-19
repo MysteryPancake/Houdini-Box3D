@@ -14,6 +14,7 @@ from b3dtest import (
     GROUND,
     append_sop,
     box3d_data,
+    box3d_packed_object,
     box3d_solver,
     bullet_solver,
     close,
@@ -123,7 +124,7 @@ def test_saved_cache():
 
 def test_point_order():
     """Reversing the point order upstream (Sort SOP), with and without `id`, gives every named
-    piece the same result: bodies keep their identity."""
+    piece the same result: bodies keep their identity. With `id` the result is exactly the same."""
     def pieces(with_id):
         # Resting pieces sliding apart at different speeds (no drop: tumbling turns tiny order
         # differences into visible ones).
@@ -136,7 +137,8 @@ def test_point_order():
         return [dict(GROUND, attrs={"active": 0, "v": (0.0, 0.0, 0.0), **({"id": 99} if with_id else {})})] + out
 
     runs = {}
-    for label, with_id, reverse in (("plain", False, False), ("reversed", False, True), ("reversed+id", True, True)):
+    for label, with_id, reverse in (("plain", False, False), ("reversed", False, True), ("plain+id", True, False),
+                                    ("reversed+id", True, True)):
         tag = label.replace("+", "_")
         path, _ = packed_boxes("order_" + tag, pieces(with_id))
         if reverse:
@@ -145,9 +147,10 @@ def test_point_order():
         finish(dop, box3d_solver(dop, packed_object(dop, "pieces", path, keep_velocity=True, bounce=0.0)))
         runs[label] = step(dop, 48, lambda sim, f: packed_positions(sim, "pieces"))[48]
     diffs = {k: max_difference(runs[k], runs["plain"]) for k in ("reversed", "reversed+id")}
+    with_id_diff = max_difference(runs["reversed+id"], runs["plain+id"])
     # Identity: every piece ends nearest its own unsorted result (the pieces end about 3 apart). Exact
-    # equality is not expected: bodies are created in point order and Box3D's results depend
-    # slightly on body order (status.md, Points and packed geometry).
+    # equality is not expected without `id`: bodies are created in id order (the point number when there
+    # is no `id`) and Box3D's results depend slightly on body order.
     def keeps_identity(run):
         for n, p in run.items():
             nearest = min(runs["plain"], key=lambda k: (runs["plain"][k] - p).length())
@@ -156,6 +159,8 @@ def test_point_order():
         return True
 
     ok = all(keeps_identity(runs[k]) for k in ("reversed", "reversed+id"))
+    # With `id` the bodies are created in id order, so the order of the points makes no difference at all.
+    exact = with_id_diff < 1e-6
 
     def detail(run):
         return ", ".join(f"{n}: {tuple(round(c, 2) for c in runs['plain'][n])} -> {tuple(round(c, 2) for c in run[n])}"
@@ -163,10 +168,13 @@ def test_point_order():
 
     results = [Result("point_order", Result.PASS if ok else Result.FAIL,
                       "every piece keeps its identity when the points are reversed, with and without id"
-                      if ok else f"a piece swapped identity: {detail(runs['reversed'])}")]
+                      if ok else f"a piece swapped identity: {detail(runs['reversed'])}"),
+               Result("point_order", Result.PASS if exact else Result.FAIL,
+                      f"with id, reversing the points changes a piece by {with_id_diff:.2e} (expected none)")]
     results.append(Result("point_order", Result.INFO,
                           f"order sensitivity: largest per-piece difference from the unsorted run, reversed "
-                          f"{diffs['reversed']:.2e}, reversed with id {diffs['reversed+id']:.2e}"
+                          f"{diffs['reversed']:.2e}, reversed with id {diffs['reversed+id']:.2e} (against the same "
+                          f"points with id unreversed: {with_id_diff:.2e})"
                           + (f" ({detail(runs['reversed'])})" if diffs["reversed"] >= 1e-3 else "")))
     return results
 
@@ -772,13 +780,25 @@ def test_glue_break_match():
 
 
 def test_sidefx_hard_untyped():
-    """SideFX Hard constraint with no constraint_type attribute (taken as 'all'), piece spinning at
-    the start: distance and rotation after 2 s in Box3D and in Bullet. PASS if they agree."""
-    d = sidefx_compare("hard_untyped", "hardconrel", {}, spin=(0.0, 3.0, 0.0))
-    ok = close(d["box3d"][0], d["bullet"][0], 0.1) and abs(d["box3d"][1] - d["bullet"][1]) < 15
-    return [Result("sidefx_hard_untyped", Result.PASS if ok else Result.FAIL,
-                   f"Box3D: distance {d['box3d'][0]:.3f}, turned {d['box3d'][1]:.0f} deg; Bullet: distance "
-                   f"{d['bullet'][0]:.3f}, turned {d['bullet'][1]:.0f} deg")]
+    """SideFX Hard, Bullet Soft and Spring constraints with no constraint_type attribute (taken as 'position', as Bullet
+    does), piece spinning at the start: distance and rotation after 2 s in Box3D and in Bullet. PASS if they agree, and
+    the untyped line matches an explicit 'position' one in both solvers (and so not 'all', which turns less). The
+    Spring is stiff (5000, damping 200, rest length 0) so that it holds the piece."""
+    results = []
+    stiff = {"strength": 5000.0, "damping": 200.0, "restlength": 0.0}
+    for name, conrel, angle_tol, parms in (("hard", "hardconrel", 15, None), ("soft", "bulletsoftconrel", 10, None),
+                                           ("spring", "springconrel", 10, stiff)):
+        spin = (0.0, 3.0, 0.0)
+        d = sidefx_compare(f"{name}_untyped", conrel, {}, spin=spin, conrel_parms=parms)
+        p = sidefx_compare(f"{name}_position", conrel, {"constraint_type": "position"}, spin=spin, conrel_parms=parms)
+        ok = (close(d["box3d"][0], d["bullet"][0], 0.1) and abs(d["box3d"][1] - d["bullet"][1]) < angle_tol
+              and close(d["box3d"][0], p["box3d"][0], 0.01) and abs(d["box3d"][1] - p["box3d"][1]) < 1.0
+              and abs(d["bullet"][1] - p["bullet"][1]) < 1.0)
+        results.append(Result("sidefx_hard_untyped", Result.PASS if ok else Result.FAIL,
+                              f"{name}: Box3D untyped distance {d['box3d'][0]:.3f}, turned {d['box3d'][1]:.0f} deg "
+                              f"(explicit position {p['box3d'][0]:.3f}, {p['box3d'][1]:.0f} deg); Bullet untyped "
+                              f"{d['bullet'][0]:.3f}, {d['bullet'][1]:.0f} deg (explicit position {p['bullet'][1]:.0f} deg)"))
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -1000,11 +1020,92 @@ def test_name_fusion_probe():
                               f"{label}: " + "; ".join(notes) + (f"; messages {sorted(set(msgs))}" if msgs else "")))
     return results
 
+def held_by_duplicate_name(order):
+    """Two dynamic pieces named `dup` (ids 20 at x 1 and 10 at x -1, as the points `order` lists them) and a fixed
+    piece welded to `dup`: the id of the piece the weld holds (it stays up while the other falls)."""
+    box = {"size": (1, 1, 1)}
+    spots = {20: dict(box, center=(1, 2, 0), attrs={"id": 20, "active": 1}),
+             10: dict(box, center=(-1, 2, 0), attrs={"id": 10, "active": 1})}
+    pieces = [dict(box, center=(0, 2, 0), attrs={"id": 30, "active": 0})] + [spots[i] for i in order]
+    path, names = packed_boxes("dup_names_" + "_".join(map(str, order)), pieces)
+    path = append_sop(path, "attribwrangle", lambda n: (set_parm(n, ["class"], 2),
+                                                         set_parm(n, ["snippet"], 'if (@ptnum >= 1) s@name = "dup";')))
+    dop = new_dopnet("dup_names_" + "_".join(map(str, order)))
+    obj = box3d_packed_object(dop, "pieces", path)
+    node = create(dop, "box3d_weldconrel", "joint")
+    network = constraint_lines(dop.name() + "_network", [(names[0], (0.5, 2, 0), "dup", (0.5, 2, 0), "weld")])
+    net = create(dop, "constraintnetwork", "constraint_network")
+    net.setInput(0, obj)
+    set_parm(net, ["soppath", "constraintsoppath", "geosoppath"], network)
+    net.setInput(1, node)
+    finish(dop, box3d_solver(dop, net))
+
+    def heights(sim, f):
+        geo = sim.findObject("pieces").geometry()
+        return {int(pt.attribValue("id")): pt.position()[1] for pt in geo.points()}
+
+    last = step(dop, 24, heights)[24]
+    return max((20, 10), key=lambda i: last[i]), last
+
+
+def test_duplicate_name_point_order():
+    """Joint anchors that name two pieces sharing a `name` take the first one in point order, whatever the ids are (the
+    pieces are created in id order, so this must not follow it)."""
+    results = []
+    for order in ((20, 10), (10, 20)):
+        held, heights = held_by_duplicate_name(order)
+        results.append(Result("duplicate_name_point_order", Result.PASS if held == order[0] else Result.FAIL,
+                              f"points listed as ids {order}: the weld holds id {held} (expected {order[0]}, the "
+                              f"first point); heights {{id: y}} {({k: round(v, 2) for k, v in heights.items()})}"))
+    return results
+
+
+def duplicate_id_run(xs):
+    """Ground (id 99), two boxes sharing id 7 at the x positions `xs` (in point order), then a box with id 1, so the ids
+    are out of order and pass 2 sorts. Returns (x of the box that fell, node messages)."""
+    box = {"size": (1, 1, 1)}
+    pieces = [dict(GROUND, attrs={"id": 99, "active": 0}),
+              dict(box, center=(xs[0], 3, 0), attrs={"id": 7, "active": 1}),
+              dict(box, center=(xs[1], 3, 0), attrs={"id": 7, "active": 1}),
+              dict(box, center=(10, 3, 0), attrs={"id": 1, "active": 1})]
+    tag = "dup_ids_" + "_".join(str(int(x)) for x in xs)
+    path, _ = packed_boxes(tag + "_pieces", pieces)
+    dop = new_dopnet(tag)
+    solver = box3d_solver(dop, packed_object(dop, "pieces", path, keep_velocity=True))
+    finish(dop, solver)
+
+    def heights(sim, f):
+        geo = sim.findObject("pieces").geometry()
+        return {round(pt.position()[0]): pt.position()[1] for pt in geo.points()}
+
+    last = step(dop, 12, heights)[12]
+    fell = [x for x in (round(xs[0]), round(xs[1])) if last[x] < 2.5]
+    return fell, last, node_messages(solver)
+
+
+def test_duplicate_id_first_point_wins():
+    """Two points with one `id` are one body: the first in point order is simulated (it falls) and the other is left
+    where it is, whichever order the ids are in (pass 2 visits them in id order, point order for equal ids). The
+    solver warns about the duplicate."""
+    results = []
+    for xs in ((0.0, 3.0), (3.0, 0.0)):
+        fell, last, msgs = duplicate_id_run(xs)
+        dup_warned = any("share an `id`" in m for m in msgs)
+        ok = fell == [round(xs[0])] and last[10] < 2.5 and dup_warned
+        results.append(Result("duplicate_id_first_point_wins", Result.PASS if ok else Result.FAIL,
+                              f"duplicates listed at x {xs}: the box that fell {fell} (expected [{round(xs[0])}]); heights "
+                              f"{ {k: round(v, 2) for k, v in last.items()} }; duplicate warning "
+                              f"{'yes' if dup_warned else 'no'}"))
+    return results
+
+
 TESTS = {
     "name_fusion_probe": test_name_fusion_probe,
     "messages_clear": test_messages_clear,
     "saved_cache": test_saved_cache,
     "point_order": test_point_order,
+    "duplicate_name_point_order": test_duplicate_name_point_order,
+    "duplicate_id_first_point_wins": test_duplicate_id_first_point_wins,
     "edited_source": test_edited_source,
     "sop_solver_edit": test_sop_solver_edit,
     "time_scale_kinematic": test_time_scale_kinematic,

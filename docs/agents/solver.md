@@ -134,7 +134,7 @@ Houdini warns on data it has no `SIM_DataHint` for under its parent ("Unexpected
    plan list (`Box3DPointSlot::plan`). Hull building, the slow part of a rebuild, happens here; `ShapeSources`,
    `GeorepLookup` (mutexes) and Box3DWorld's hull calls are thread-safe. Pass 2 takes the plans (`takePlan`).
    **Pass 1c** (`stampQuietSlots`; parallel): reads the settings (`SlotPlans::props`) of the points that need them (new, rebuilt, every one when a settings marker changed), and stamps the entry of every point with nothing to apply (it owns the entry: same offset and id; pose, type and settings equal the mirror's; not kinematic, deforming, dead or a problem point), so pass 2 only lists it. A duplicate `id` never qualifies, so the entry stays with the point that last owned it.
-6. **Pass 2** (`ApplyPass`; serial, point order): duplicate `id` -> counted, first wins; non-finite `P` -> counted, its body removed;
+6. **Pass 2** (`ApplyPass`; serial, in body id order, point order for equal ids, so the bodies are created in the same order whatever order the points are in and the result does not depend on it, test `point_order`; the `name` index still takes the first point in point order, sorted in `NameIndex::finish`, test `duplicate_name_point_order`): duplicate `id` -> counted, first wins (test `duplicate_id_first_point_wins`); non-finite `P` -> counted, its body removed;
    `dead` -> queued for deletion, its body removed; unknown key -> `addPointBody`; known key -> `updateExistingBody`:
    mid-simulation updates (shape rebuild, then settings), type change (`wantedType`), then the animated target or an
    external edit (`poseDiffers`, eps 1e-5, q and -q equal -> `setTransformByHandle` + `setVelocityByHandle`). Both

@@ -825,12 +825,21 @@ struct NetworkReader {
     return live(pt, f) ? f : authored(pt);
   }
 
-  // The primitive's constraint_type (SideFX data only; missing: all).
+  // The primitive's constraint_type (SideFX data only; missing: position).
   b3dop::ConstraintMode mode(GA_Offset prim) const {
     const char *t = conType.isValid()
                         ? static_cast<const char *>(conType.get(prim))
                         : nullptr;
     return b3dop::constraintModeFromString(t);
+  }
+
+  // The primitive says constraint_type position or rotation.
+  bool narrowsType(GA_Offset prim) const {
+    const char *t = conType.isValid()
+                        ? static_cast<const char *>(conType.get(prim))
+                        : nullptr;
+    return t &&
+           (std::strcmp(t, "position") == 0 || std::strcmp(t, "rotation") == 0);
   }
 
   // The primitive's constraint data (by `constraint_name`), or null.
@@ -1204,6 +1213,8 @@ private:
       ++myCounts.unknown;
       return;
     }
+    if (!kind->sideFX && myRd.narrowsType(off))
+      ++myCounts.typeIgnored;
 
     Box3DJointEntry &e = entryFor(off);
 

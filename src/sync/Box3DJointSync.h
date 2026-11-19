@@ -9,7 +9,8 @@
 //                           settings. SideFX's Glue / Hard / Spring / Bullet
 //                           Soft / Cone Twist data are mapped onto Box3D joints
 //                           (b3dop::mapSideFX)
-//   prim  constraint_type   position / rotation / all: SideFX data only
+//   prim  constraint_type   position / rotation / all (missing: position),
+//                           SideFX data only
 //   prim  <setting>         modifies that node's value (b3dop::jointParams
 //   names, or
 //                           b3dop::sideFXParams for SideFX data): floats
@@ -43,7 +44,10 @@ struct Box3DJointCounts {
   // primitives whose constraint_name names no Box3D or supported SideFX
   // constraint relationship
   int unknown = 0;
-  int unresolved = 0;   // an anchor name that matches no body
+  int unresolved = 0; // an anchor name that matches no body
+  // a constraint_type of position or rotation on one of our own joint nodes
+  // (it is read for SideFX data only)
+  int typeIgnored = 0;
   int badAnchorId = 0;  // an anchor_id that is no point / vertex of its object
   int agentAnchors = 0; // anchor_type agent (not simulated here)
   int anchorNoGeometry = 0; // anchor_id on a body whose geometry was not read

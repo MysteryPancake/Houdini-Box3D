@@ -1128,17 +1128,16 @@ void stampQuietSlots(ScanContext &ctx, Box3DObjectSync &os, int objectId,
 }
 
 // Bodies by point `name`, for joint anchors (only while some object has a joint
-// network). Each scan hashes the (name, entry) pairs in point order, without
-// copying a string; the map (os.byName) is rebuilt only when that hash differs
-// from the one it was built from, and the joints re-resolve only if what the
-// names resolve to changed.
+// network). Each scan hashes the (name, entry) pairs in point order (the order
+// the points are visited in does not matter), without copying a string; the map
+// (os.byName) is rebuilt only when that hash differs from the one it was built
+// from, and the joints re-resolve only if what the names resolve to changed.
 class NameIndex {
 public:
   NameIndex(Box3DSharedState &st, Box3DObjectSync &os, const GU_Detail *gdp)
       : myNameH(gdp, GA_ATTRIB_POINT, "name") {
     os.namesKnown = st.wantNames;
     myKeep = st.wantNames && myNameH.isValid();
-    os.nameSigNext = kSeed;
     os.namedPoints.clear();
     if (!myKeep) {
       os.byName.clear();
@@ -1156,18 +1155,29 @@ public:
     const char *v = myNameH.get(off);
     if (!v || !*v)
       return;
-    uint64_t h = os.nameSigNext;
-    h = (h ^ std::hash<std::string_view>()(std::string_view(v))) * kPrime;
-    h = (h ^ static_cast<uint64_t>(reinterpret_cast<uintptr_t>(entry))) *
-        kPrime;
-    os.nameSigNext = h;
     os.namedPoints.emplace_back(off, entry);
   }
 
   // Joint anchors resolve by point `name`: a renamed piece re-resolves the
   // joints.
   void finish(Box3DSharedState &st, Box3DObjectSync &os) const {
-    if (!myKeep || os.nameSigNext == os.nameSig)
+    if (!myKeep)
+      return;
+    // Point order, whatever order the points were applied in (body id order).
+    auto byOffset = [](const auto &a, const auto &b) {
+      return a.first < b.first;
+    };
+    if (!std::is_sorted(os.namedPoints.begin(), os.namedPoints.end(), byOffset))
+      std::sort(os.namedPoints.begin(), os.namedPoints.end(), byOffset);
+    uint64_t h = kSeed;
+    for (const auto &p : os.namedPoints) {
+      h = (h ^ std::hash<std::string_view>()(
+                   std::string_view(myNameH.get(p.first)))) *
+          kPrime;
+      h = (h ^ static_cast<uint64_t>(reinterpret_cast<uintptr_t>(p.second))) *
+          kPrime;
+    }
+    if (h == os.nameSig)
       return;
     std::unordered_map<std::string, Box3DBodyMirror *> fresh;
     fresh.reserve(os.namedPoints.size());
@@ -1190,7 +1200,7 @@ public:
       }
     }
     os.byName.swap(fresh);
-    os.nameSig = os.nameSigNext;
+    os.nameSig = h;
   }
 
 private:
@@ -1200,7 +1210,7 @@ private:
   bool myKeep = false;
 };
 
-// ---- step 4 (serial, point order): apply to Box3D and the mirror
+// ---- step 4 (serial, body id order): apply to Box3D and the mirror
 // An entry already carrying this step's stamp belongs to an earlier point
 // (duplicate id). Escape is checked between points (the hulls were built by the
 // planning step).
@@ -1214,11 +1224,25 @@ public:
 
   // False if the user cancelled.
   bool run(SlotList &snaps, StepProgress &progress) {
-    size_t pointIndex = 0;
-    for (Box3DPointSlot &s : snaps) {
-      if (pointIndex++ % kProgressEvery == 0 && progress.check())
+    // In body id order (point order for equal ids), so the bodies of a scan
+    // are created in the same order whatever order the points are in: Box3D's
+    // results depend slightly on it. Already sorted (the usual case): no sort.
+    thread_local std::vector<uint32_t> order; // scratch kept between scans
+    bool sorted = true;
+    for (size_t i = 1; i < snaps.size() && sorted; ++i)
+      sorted = snaps[i - 1].bid <= snaps[i].bid;
+    if (!sorted) {
+      order.resize(snaps.size());
+      for (size_t i = 0; i < order.size(); ++i)
+        order[i] = static_cast<uint32_t>(i);
+      std::stable_sort(order.begin(), order.end(), [&](uint32_t x, uint32_t y) {
+        return snaps[x].bid < snaps[y].bid;
+      });
+    }
+    for (size_t k = 0; k < snaps.size(); ++k) {
+      if (k % kProgressEvery == 0 && progress.check())
         return false;
-      applyPoint(s);
+      applyPoint(sorted ? snaps[k] : snaps[order[k]]);
     }
     return true;
   }
