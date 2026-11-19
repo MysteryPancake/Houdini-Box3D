@@ -194,6 +194,7 @@ def test_ui():
     expect("Visualization tab folders", tab_folders("Visualization"), [("Geometry", True, ["exportshapes"])])
     expect("Advanced tab folders", tab_folders("Advanced"),
            [("Stability", True, ["enablecontinuous", "enablewarmstarting", "isotropicinertia", "maxlinearspeed"]),
+            ("Ground Box", True, ["groundsize"]),
             ("Performance", True, ["autothreads", "threads"])])
     expect("Output tab folders", tab_folders("Output"), [("Impact Data", True, ["impactminspeed"])])
     expect("Solver Contact Stiffness default", solver.parm("contactstiffness").parmTemplate().defaultValue()[0], 60.0)
