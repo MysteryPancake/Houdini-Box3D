@@ -51,7 +51,7 @@ its state in the object's `Position` data instead of point attributes.
     not read either, so Impacts stay opt-in through Box3D Data.
   Values Box3D cannot use (non-positive mass / density / inertia, negative friction / bounce, non-finite) keep Box3D
   Data's defaults. Houdini's RBD Object defaults match Box3D Data's (`nodeBodyDefaults`: density 1000 with Compute
-  Mass, so a 1 m box is 1000 kg; friction 1; a convex hull) except bounce (0.5 against 0). Body type is the node's, or static
+  Mass, so a 1 m box is 1000 kg; friction 1; bounce 0.5; a convex hull). Body type is the node's, or static
   with Create Active Object off (no `animated`).
 * Mirror: one entry, key `makeBodyKey(objectId, kWholeObjectId = -1)`, `wholeObject = true`, `pivot`, no point
   (`pointOff` -1, `pointIndex` -1 in Impacts). The object scans every step (one body: no fingerprint).

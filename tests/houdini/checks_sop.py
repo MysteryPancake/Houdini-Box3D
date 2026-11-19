@@ -8,6 +8,10 @@ import hou
 
 from b3dtest import (
     append_sop,
+    box3d_packed_object,
+    finish,
+    new_dopnet,
+    solver_for,
     GROUND,
     Result,
     close,
@@ -2321,7 +2325,121 @@ def test_configure_pin():
                    f"(expected 3), the other at {y_free:.3f} (expected below 2: fell)")]
 
 
+# ---------------------------------------------------------------------------
+# Packed Object: Overwrite Attributes from SOP
+# ---------------------------------------------------------------------------
+
+
+def overwrite_fall(overwrite, frames=30):
+    """A box falling from y 20 whose SOP sets `active` to 0 from frame 13: its height on frames 12, 13 and
+    `frames`, and what the Packed Object's own node reports."""
+    path, names = packed_boxes(f"overwrite_{overwrite}_pieces",
+                               [{"size": (1, 1, 1), "center": (0, 20, 0), "attrs": {"active": 1}}])
+    sop = hou.node(path)
+    wr = create(sop.parent(), "attribwrangle", "switch")
+    wr.setInput(0, sop)
+    set_parm(wr, ["class"], 2)
+    set_parm(wr, ["snippet"], "i@active = @Frame < 13 ? 1 : 0;")
+    display(wr)
+    dop = new_dopnet(f"overwrite_{overwrite}")
+    obj = box3d_packed_object(dop, "pieces", wr.path(), overwritefromsop=overwrite,
+                              overwriteattributes="active")
+    finish(dop, solver_for("box3d", dop, obj))
+    ys = step(dop, frames, lambda sim, f: next(iter(packed_positions(sim, "pieces").values()))[1])
+    return ys[12], ys[13], ys[frames]
+
+
+def test_packed_object_overwrite_from_sop():
+    """Overwrite Attributes from SOP on the Box3D Packed Object: with it on and `active` in the list, the SOP's
+    `active` (1, then 0 from frame 13) reaches the solver, so the box, after falling for 12 frames, stays where it is. With it off
+    the SOP's later values are ignored and the box keeps falling."""
+    on, off = overwrite_fall(1), overwrite_fall(0)
+    held = on[0] < 19.5 and abs(on[2] - on[1]) < 0.01 and abs(on[1] - on[0]) < 0.01
+    fell = off[2] < off[1] - 1.0
+    return [Result("packed_object_overwrite_from_sop", Result.PASS if held and fell else Result.FAIL,
+                   f"box height on frames 12, 13 and 30: on {on[0]:.3f} {on[1]:.3f} {on[2]:.3f} (expected it to have fallen, then frozen), off "
+                   f"{off[0]:.3f} {off[1]:.3f} {off[2]:.3f} (expected still falling)")]
+
+
+# ---------------------------------------------------------------------------
+# The group / attribute menus beside the fields (MENU_SOURCE in tools/b3d_hda.py)
+# ---------------------------------------------------------------------------
+
+
+def menu_tokens(parm):
+    return list(parm.menuItems())
+
+
+def test_asset_menus():
+    """Every parameter with a group / attribute menu script: it builds without an error on connected geometry,
+    and lists what the geometry holds (point and primitive groups and attributes; the SOP a Packed Object
+    names; Constraint Properties' second input)."""
+    geo = new_geo("menus")
+    path, names = packed_boxes("menus_pieces", [{"size": (1, 1, 1), "center": (0, 0, 0)},
+                                                {"size": (1, 1, 1), "center": (3, 0, 0)}])
+    src = hou.node(path)
+    tag = create(src.parent(), "attribwrangle", "tag")
+    tag.setInput(0, src)
+    set_parm(tag, ["class"], 2)
+    set_parm(tag, ["snippet"], 'f@myattr = 1; setpointgroup(0, "grpA", @ptnum, 1);')
+    tag2 = create(src.parent(), "attribwrangle", "tag2")
+    tag2.setInput(0, tag)
+    set_parm(tag2, ["class"], 1)
+    set_parm(tag2, ["snippet"], 'f@pa = 1; setprimgroup(0, "primB", @primnum, 1);')
+    display(tag2)
+    lines = create(geo, "attribwrangle", "lines")
+    set_parm(lines, ["class"], 0)
+    set_parm(lines, ["snippet"], 'addprimattrib(0, "constraint_name", ""); addprimattrib(0, "stiff", 0.0); '
+             'int a = addpoint(0, set(0, 0, 0)); int b = addpoint(0, set(1, 0, 0)); '
+             'int pr = addprim(0, "polyline", a, b); setprimattrib(0, "constraint_name", pr, "Revolute"); '
+             'setprimattrib(0, "stiff", pr, 1.0); setprimgroup(0, "lineGrp", pr, 1);')
+    results = []
+    problems = []
+
+    def check(label, parm, want):
+        try:
+            tokens = menu_tokens(parm)
+        except Exception as e:  # noqa: BLE001
+            problems.append(f"{label}: menu failed ({e})")
+            return
+        for item in want:
+            if item not in tokens:
+                problems.append(f"{label}: {item} missing from {tokens}")
+
+    cfg = create(geo, "box3d_configure", "configure")
+    cfg_in = create(geo, "object_merge", "cfg_in")
+    set_parm(cfg_in, ["objpath1"], tag2.path())
+    set_parm(cfg_in, ["xformtype"], 0)
+    cfg.setInput(0, cfg_in)
+    check("Configure transfer_attributes", cfg.parm("transfer_attributes"), ["myattr", "age", "v", "w"])
+    check("Configure transfer_renderattributes", cfg.parm("transfer_renderattributes"), ["myattr", "pa"])
+
+    cp = create(geo, "box3d_constraint_properties", "props")
+    cp.setInput(0, cfg_in)
+    cp.setInput(1, lines)
+    check("Constraint Properties group1", cp.parm("group1"), ["grpA", "primB"])
+    check("Constraint Properties constraintgroup", cp.parm("constraintgroup"), ["lineGrp"])
+    check("Constraint Properties clusterattrib", cp.parm("clusterattrib"), ["myattr", "pa"])
+    check("Constraint Properties force_thresholdattribute", cp.parm("force_thresholdattribute"), ["stiff", "myattr"])
+    scripted = [p for p in cp.parms() if "Menu" in (getattr(p.parmTemplate(), "itemGeneratorScript", lambda: "")() or "")]
+    for p in scripted:
+        check(f"Constraint Properties {p.name()}", p, [])
+
+    dop = new_dopnet("menus_dop")
+    obj = box3d_packed_object(dop, "po", path)
+    set_parm(obj, ["soppath"], tag2.path())
+    check("Packed Object overwriteattributes", obj.parm("overwriteattributes"), ["myattr"])
+
+    ok = not problems and len(scripted) > 20
+    results.append(Result("asset_menus", Result.PASS if ok else Result.FAIL,
+                          f"{len(scripted)} Constraint Properties menus built; " +
+                          ("every checked menu lists its geometry" if not problems else "; ".join(problems))))
+    return results
+
+
 TESTS = {
+    "asset_menus": test_asset_menus,
+    "packed_object_overwrite_from_sop": test_packed_object_overwrite_from_sop,
     "solver_sop_collision": test_solver_sop_collision,
     "solver_sop_pieces": test_solver_sop_pieces,
     "solver_sop_global_substeps": test_solver_sop_global_substeps,

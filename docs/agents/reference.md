@@ -13,7 +13,7 @@ Solver (read every step; only the thread count rebuilds the world): `gravity`, `
 `WorldSettings` keeps `kDefaultWorkerCount`), `enablesleep`, `timescale`, `enableaging`, `reapdead`, `reapatframeend` (disabled while `reapdead` is off), and Box3D's tuning
 (Box3D's defaults except the contact stiffness and damping, tuned for bouncier, more rigid contacts): `contactstiffness`, `contactdamping`, `contactpushspeed`, `bouncethreshold`,
 `contactrecycledistance`, `maxlinearspeed`, `enablecontinuous`, `enablewarmstarting`, `isotropicinertia`,
-`restitutioniterations`, `restitutionpropagation`, `impactminspeed`, `gluecompound` (on: glued groups as one body, see joints.md), `gluecompoundload` (0: off, scales the inertial load on a compound's bonds). Force DOPs: `useforces`, `forceswake` (disabled while
+`restitutioniterations`, `restitutionpropagation`, `impactminspeed`, `gluecompound` (on: glued groups as one body, see [glue-compound.md](glue-compound.md)), `gluecompoundload` (0: off, scales the inertial load on a compound's bonds). Force DOPs: `useforces`, `forceswake` (disabled while
 `useforces` is off). Box3D Data: `startasleep` and `sleepthreshold` are disabled while `enablesleep` is off,
 `mass` / `density` by `computemass`; joint nodes: see `enabledBy` in [joints.md](joints.md). Solver
 `frictionmixing` and `restitutionmixing` menus list the rules in the same order (geometric mean, minimum, maximum,
@@ -42,7 +42,7 @@ may be negative). Identity is `(object id, id or point number)`.
 
 Written: `P`, `orient`, `v`, `w` and packed transforms (awake dynamic bodies), `awake` (if it exists),
 `restxform` / `pivot` / `orient` on new packed bodies without a rest ([bodies.md](bodies.md)), `bullet_autofit_valid`, `mass` (computemass), `age` / `dead` (aging), `force` / `torque` zeroed once applied; `dead` points lose their body, and are deleted with
-`reapdead` (off by default) or kept, frozen. Constraint networks get `broken`, feedback and live frames
+`reapdead` (on by default) or kept, frozen. Constraint networks get `broken`, feedback and live frames
 ([joints.md](joints.md)); whole objects their `Position` data ([whole-object.md](whole-object.md)).
 
 ## Warnings surfaced on the node

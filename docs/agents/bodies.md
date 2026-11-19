@@ -31,7 +31,7 @@ equal to what its body was built with.
 * **Mass** (`computemass`, `density`, `inertialtensorstiffness`): `boxDensity` = density with computemass, else
   mass / volume. With computemass the mass is written to `mass` on creation, rebuild or change.
 * **CCD threshold** (`ccdthreshold`) -> `b3BodyDef::safetyFactor` (Box3D's name; negatives keep the default).
-* **Fast rotation** (`fastrotation`) -> `allowFastRotation`; without it Box3D caps spin at `B3_MAX_ROTATION` per DOP step.
+* **Fast rotation** (`fastrotation`) -> `allowFastRotation`; without it Box3D caps spin at `B3_MAX_ROTATION` per Box3D step (the DOP step over Substeps).
 * **Motion locks** (`lock_linear`, `lock_angular`, nonzero = locked world axis) -> `motionLocks`; Box3D zeroes locked
   velocity components every iteration.
 * **Collision filtering** (`collision_category`, `collision_mask` read as `GA_ROHandleID` so `-1` means every bit;
@@ -95,7 +95,7 @@ packed transform as before. A new packed body (`initRest`) takes `restRot` from 
 transform stored as float (what the attribute will hold, so both paths split the same matrix) and queues `kRest`:
 restxform, `pivot` = P, `orient` from the mirror's pose (identity unless it moved this step). As Bullet's solver, an
 incoming restxform is kept: resetting it when an object is created is the object's job (the Box3D Packed Object's SOP
-stage, as RBD Packed Object's; [build.md](build.md)), so a world rebuilt mid-simulation keeps the rest too. Editing only a packed
+stage, as RBD Packed Object's; [assets.md](assets.md)), so a world rebuilt mid-simulation keeps the rest too. Editing only a packed
 transform after rest is ignored, as in Bullet: edit `orient` / `P`. `restPos` (the packed pivot through restxform)
 is where the body's origin was at rest; joints map authored anchors with it ([joints.md](joints.md)).
 

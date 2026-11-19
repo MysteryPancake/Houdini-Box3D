@@ -4,7 +4,7 @@ RBD Bullet Solver breaks constraints in a SOP Solver after its solver (`Constrai
 object's ConstraintGeometry deletes the primitives whose `impact`, `force`, `distance`, `torque` or `angle` passes a
 threshold, or switches them to their `next_constraint_name`. This is the same, for Angle, Distance, Impact and Torque
 (Force is left out: Bullet's `force` on Glue is not a joint force, see docs/notes.md), and for At Frame. Impact is the
-one that breaks SideFX Glue the way Houdini does: the solver writes `impact` on Glue, see docs/agents/joints.md.
+one that breaks SideFX Glue the way Houdini does: the solver writes `impact` on Glue, see docs/agents/joints-sidefx.md.
 
 The parameters follow Bullet's names (`breaks`, `constraint_names#`, `constraint_mode#`, `constraint_useimpact#`,
 `constraint_impactthreshold#` ...) and its rules: a threshold is multiplied by World Scale, "Scale by Attribute"

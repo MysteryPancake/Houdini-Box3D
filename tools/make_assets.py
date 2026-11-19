@@ -9,7 +9,7 @@ and checks out its license once. The build runs this (CMakeLists.txt, BOX3DDOP_M
 plugin or any script in tools/ changes.
 
 Never fails the build: each asset's problems are printed as warnings and the script exits 0, as
-the three make_*.py scripts do on their own.
+the make_*.py scripts do on their own.
 """
 
 import os

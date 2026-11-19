@@ -11,14 +11,12 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 
 **Not yet run in Houdini**
 
-* Packed Object Initial Object Type (`initialstate`, hidden `effectivebodytype` / `effectivedeforming`; test `packed_object_initial_type`): not built or run. The tests
-  that set `bodytype` or `deforming` on a Box3D Packed Object now set Custom first (`box3d_packed_object` in b3dtest.py). Not checked: the Solver SOP's collision
-  object (Custom), the Pieces tab's Body Type greying out with the menu, and Deforming Static / Active against RBD Packed Object.
+* Packed Object Initial Object Type (`initialstate`; test `packed_object_initial_type` passes). The tests that set `bodytype` or `deforming` on a Box3D Packed
+  Object set Custom first (`box3d_packed_object` in b3dtest.py). Not checked: the Solver SOP's collision object (Custom), the Pieces tab's Body Type greying
+  out with the menu, and Deforming Static / Active against RBD Packed Object.
 
-* Constraint Properties Disable Collisions (`docollisions`, test `constraint_properties_collisions`): not built or run.
-
-* Constraint Properties Use VEXpressions (`run_vexpressions`, test `constraint_properties_vexpressions`): not built or run. Not checked: the snippet
-  menu (`vexpressionmenu.buildSnippetMenu` with our own key lists nothing unless snippets are saved under it), and the type folders' layout.
+* Constraint Properties Use VEXpressions (`run_vexpressions`; test passes). Not checked: the snippet menu (`vexpressionmenu.buildSnippetMenu` with
+  our own key lists nothing unless snippets are saved under it), and the type folders' layout.
 
 * Switch Constraint Type When Broken with its next settings (`applyNextSettings`, `takenext`, the Next Constraint folder; tests `next_settings`,
   `constraint_properties_next`, `solver_sop_break_next_settings`, `solver_sop_next_constraint_type`) pass, including `next_constraint_type`
@@ -27,23 +25,21 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   22.0.502). Not checked against RBD Constraint Properties: Closest uses piece point positions (Bullet uses the nearest surface point),
   a piece that is missing leaves the value unscaled (Bullet skips the setting), integers, toggles and vectors have no scaling, and there
   is no Next Constraint scaling. Randomize and Variance are on every number setting here (Bullet: Glue Strength only), seeded per setting.
-* The group / attribute menus beside the fields (`MENU_SOURCE` in `b3d_hda.py`): not built or run. Check each menu fills from the
-  connected geometry (the SOP Path for the Packed Object's list, the node's output for Inspector Attributes), a multi-name field
-  toggles picks in and out, and the menus work on the Solver SOP's nested nodes.
+* The group / attribute menus beside the fields (`MENU_SOURCE` in `b3d_hda.py`): `asset_menus` builds every Constraint Properties menu and checks Configure's,
+  Constraint Properties' and the Packed Object's list the connected geometry. Not checked: a multi-name field toggling picks in and out
+  (a click), the menus on the Solver SOP's nested nodes, and the node's output (Inspector Attributes).
 
 * Animated bodies following their source SOP (`followSourceSops`): the animated-collider, kinematic and Packed Object tests pass
   (Houdini 22.0.502). Not checked: a source `orient` / `pscale` attribute on the animated piece (only its packed transform
   is read), a Solver SOP whose collision path is a context geometry rather than a SOP node, many animated pieces (one cook and one
   name pass per step), and a DOP Start Frame other than 1.
 
-* Overwrite Attributes from SOP as an Attribute Copy list (`copy_attribs`, `SIM_GEO` in the Packed Object stage): not built or
-  run. Check the list reaches the solver (`active` changed over time), the object merge of its own geometry cooks without a
-  dependency loop, and an animated collider (`reimportsop`) still moves.
+* Overwrite Attributes from SOP as an Attribute Copy list (`copy_attribs`, `SIM_GEO` in the Packed Object stage): `packed_object_overwrite_from_sop`
+  shows `active` changing over time reaches the solver and cooks without a dependency loop. Not checked: an animated collider (`reimportsop`) still moving.
 
-* `computecom` on points (default on, as Bullet): not built or run. Bullet, measured with an L-shaped packed piece
-  spun at 3 rad/s with no gravity, moves the point on an arc with it on and leaves it fixed with it off. Check Box3D
-  gives the same, that `v` (the centre's velocity here) is right, and that joints, Glue and forces behave. Also unchecked: the
-  Packed Object's Initial State Position / Rotation / Inherit Pivot / Pivot and Creation Frame Specifies Simulation Frame against Bullet.
+* `computecom` on points (default on, as Bullet): `bullet_computecom` (a bar spun at 3 rad/s, no gravity) matches Bullet's packed transform on and off. Bullet
+  also moves the point to the centre of mass and writes `pivot`, which Box3D does not. Not checked: `v` (the centre's velocity here), and joints, Glue and
+  forces with it on. Also unchecked: the Packed Object's Initial State Position / Rotation / Inherit Pivot / Pivot and Creation Frame Specifies Simulation Frame against Bullet.
 * Box3D Packed Object's Display Geometry (`visualize_hires`) and Collider Label (`add_display`): checked against a
   stand-in `hou` only. The build's `check` probes both.
 * Box3D Configure's Bounds / Use Bounds and World Scale on FORCES: no test, only the builders' `check`s (Use Bounds, the
@@ -77,9 +73,9 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   whether `gl_wireframe` -1 on the merged guide still shows a Shaded plane shaded.
 * Box3D Data's Default Shape menu (Plane and Cylinder at the end) and the Packed Object / Configure menus built from
   it: built, not opened in Houdini. `bullet_cylinder` and the cylinder cases of `bullet_shape_attributes` pass against Bullet.
-* `bullet_georep` `plane` on a packed piece (`ShapeType::Plane`, `buildShapes`): written without building or running. Its
-  Bullet placement (through the piece's origin, +Y, as a Ground Plane) is assumed, and a piece turning moving mid-simulation
-  rebuilds as a box.
+* `bullet_georep` `plane` on a packed piece (`ShapeType::Plane`, `buildShapes`): `bullet_plane_piece` has a box rest on it at the piece's height
+  (through the piece's origin, +Y, as a Ground Plane). A box dropped on it in Bullet fell through, so there is nothing to compare against. A piece turning moving
+  mid-simulation rebuilds as a box.
 * Ground planes: a Static Object whose SDF Representation is set to Implicit Plane is taken as a plane facing +y through its
   origin, as a Ground Plane DOP's is (only the Ground Plane is tested). A plane tilted off the axes has a large broad-phase box,
   so every body in the world keeps a cheap contact with it. A fast body against a plane uses conservative advancement
@@ -107,51 +103,32 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * The "not set" skip (`isUnsetFloat`, `applyOverrides`) is not covered by a core test.
 
 **Bullet semantics not compared**
-* The extra `restRotation` split per packed point in every full scan (the rest convention itself matches Bullet:
-  `bullet_rest_convention`; `bullet_rest_rescan` forces a scan every step and matches).
-* Solve on Creation Frame on the SOP for the collider, against Bullet's (`solver_sop_solve_first_frame_bullet`): the
-  free-falling box matches with the option off and on. A box on a collider lifted 0.5 a frame ends at 1.1 to 2.3 in Box3D
-  (the box clips into the collider: a bug in Box3D, see the fork list) and stays at 1.0 in Bullet, whose collider may not
-  be moving (set as `collision_initialstate` 1).
-* Before-start outputs and Export Broken Constraints (`solver_sop_before_start`, `solver_sop_keep_broken`), against the
-  RBD Bullet Solver SOP: `solver_sop_keep_broken_bullet` matches. `solver_sop_before_start_bullet` matches on the box and on the
-  geometry, constraints and points outputs; the proxy output with no proxy input is a copy of the geometry in Box3D and
-  empty in Bullet.
-* Joints from authored anchors through `restToNow` and the `angle` since rest, against Bullet: `bullet_joint_rest_held`
-  (Hard, Rest Length set to the start distance, piece turned 30 degrees) holds in both but never turns, so the `angle` is
-  untested: `bullet_joint_angle` (spin, other axes) holds with a turn of 0 in both too. With both anchors at one point (`bullet_joint_rest`, INFO) the centres end 2.19 and 2.59 apart, past the 2.06 possible.
-* `bullet_primR` rotation order: XYZ Euler degrees matches Bullet. Settled thin boxes have the same face down
-  (`bullet_primr_order`), and boxes turned by 90 degrees have the same face up (`bullet_shape_attributes`: 90 90 0,
-  0 90 90, 90 0 90 pick XYZ out of the six orders). A tilted box's top is a corner and the plate test stops on it
-  roughly: Box3D reads 0.44 and Bullet 0.33 for 0 70 50 (true top 0.437), so that case is not compared. Bullet's
-  dynamic hand-set box rests at y = Box3D's (the half thickness, 0.10) minus the shape's vertical half extent as
-  first turned (0.10 unturned, 0.26 for 50 70 50, 0.44 for 0 70 50, 0.52 for 0 0 50, 0.29 for 50 0 0): the rule fits
-  every case probed, so Bullet's reported point sits that much lower, not the shape. Not understood: with primR
-  30 0 60 the piece fell through the ground in Bullet (`bullet_primr_through`: 30 0 0, 0 0 30, 0 0 60, 30 0 30 and 0 0 45 end
-  0.14 to 0.47 below it, 0 30 0 and 0 60 0 on it, Box3D always at 0.10). `bullet_primS`, `bullet_primT`, `bullet_radius` and
-  `bullet_length` match Bullet. Bullet ignores `bullet_primT` for a dynamic piece's rest height
-  (0.25, shape centred on the body) where Box3D keeps the offset (-0.05); a static piece away from the origin is
-  not found by a plate in Bullet. Not compared: the `deforming` and `bullet_autofit_valid`
-  toggles, AutoFit on whole objects and fractured pieces.
-* Where Bullet puts a hand-set shape on a static piece away from the origin: a plate over a piece at x 3 never
-  stopped in Bullet, where Box3D has the shape on the piece (`bullet_shape_position`; its dynamic case is rerun, the
-  first run had made the ground a hand-set box too).
-* Whether a fresh `SIM_Impacts` each step suits Houdini's impact tools (the normal direction matches Bullet:
-  `bullet_impact_normal`). A box landing and resting for 3 s has Box3D records on 13 frames (at most 8 on one), Bullet's on
-  49 (at most 40): Bullet keeps writing contacts while at rest (`bullet_impact_fresh`).
-* Bullet's placement of a hand-set shape (`bullet_shape_probe`, the same with a neutral ground): a dynamic hand-set piece
-  dropped from x 2 ends at x 0, z 0 (plus `bullet_primT`'s x and z), so Bullet drops the piece's position, and its
-  height follows `bullet_primT`'s y (0.3 up gives 0.25 to 0.3, 0.3 down gives -0.3) rather than the shape. Box3D keeps
-  the piece where it is with primT as an offset. Not copied: it would move every hand-set piece to the world origin.
-* Whole RBD Object pivot (`wholeObjectPose`, tests `hull_centroid`, `bullet_rbd_pivot`): Bullet's `p` is 0.03 off the hull
-  centroid Box3D gives for boxes (an L: (0.205, 0.795) against (0.238, 0.762)), unexplained, the same for an L moved 5 in x and a T
-  (`bullet_rbd_pivot_far`). A concave object with Hull per Piece is not checked against Bullet.
-* Which end is Cone Twist's goal (taken as point 1; test `bullet_cone_twist_goal`): Bullet's piece fell freely with both
-  anchors at one point, turned or not, so it cannot say. With the anchors apart (`bullet_cone_twist_goal_apart`) it fell
-  freely again (distance 20.9).
-* Unpacked geometry (`unpacked_geometry_bullet`, `unpacked_geometry_match`): an object of polygons only is skipped by both (ours warns). Bullet
-  ignores loose polygons beside packed pieces without a message (ours warns) and gives that message for loose points
-  (ours simulates them). Loose points beside a packed piece: Bullet ignores them without a message, ours simulates them.
+* The extra `restRotation` split per packed point in every full scan (the rest convention matches Bullet: `bullet_rest_convention`, `bullet_rest_rescan`).
+* Solve on Creation Frame on the SOP's collider (`solver_sop_solve_first_frame_bullet`): a free-falling box matches. A box on a collider lifted 0.5 a frame
+  ends at 1.1 to 2.3 in Box3D (it clips into the collider: fork list) and at 1.0 in Bullet.
+* Before-start outputs and Export Broken Constraints match (`solver_sop_before_start_bullet`, `solver_sop_keep_broken_bullet`) except the proxy
+  output with no proxy input: a copy of the geometry in Box3D, empty in Bullet.
+* The joint `angle` since rest is untested: `bullet_joint_rest_held` and `bullet_joint_angle` hold with a turn of 0 in both. With both anchors at one point
+  (`bullet_joint_rest`, INFO) the centres end 2.19 and 2.59 apart, past the 2.06 possible.
+* Hand-set shapes: `bullet_primS`, `bullet_primR` (XYZ Euler degrees), `bullet_radius` and `bullet_length` match (`bullet_shape_attributes`, `bullet_primr_order`).
+  Differences kept on purpose (`bullet_shape_position`, `bullet_shape_probe`): Bullet drops a dynamic hand-set piece's x and z (to 0 plus `bullet_primT`'s),
+  takes the height from `bullet_primT`'s y, and finds a static piece away from the origin at the origin; Box3D keeps the shape on the piece with `bullet_primT`
+  as an offset, as copying Bullet would move every hand-set piece to the world origin. Bullet's dynamic box rests lower than Box3D's by the shape's vertical
+  half extent as first turned (the rule fits every case probed). Not understood: with `bullet_primR` 30 0 60 the piece fell through the ground in Bullet
+  (`bullet_primr_through`: 30 0 0, 0 0 30, 0 0 60, 30 0 30 and 0 0 45 end 0.14 to 0.47 below it, Box3D always at 0.10). A tilted box's top is a corner the
+  plate test stops on roughly (0 70 50: Box3D 0.44, Bullet 0.33, true 0.437), so that case is not compared. Not compared: `deforming`, `bullet_autofit_valid`,
+  AutoFit on whole objects and fractured pieces.
+* Impacts: the normal direction matches (`bullet_impact_normal`). A box landing and resting for 3 s has Box3D records on 13 frames (at most 8 on one),
+  Bullet's on 49 (at most 40) because Bullet keeps writing contacts at rest (`bullet_impact_fresh`). Whether a fresh `SIM_Impacts` each step suits Houdini's
+  impact tools is open.
+* Whole RBD Object pivot (`wholeObjectPose`, tests `hull_centroid`, `bullet_rbd_pivot`, `bullet_rbd_pivot_far`): Bullet's `p` is 0.03 off the hull centroid
+  Box3D gives for boxes (an L: (0.205, 0.795) against (0.238, 0.762); the same moved 5 in x, and for a T), unexplained. A concave object with Hull per Piece
+  is not checked against Bullet.
+* Which end is Cone Twist's goal (taken as point 1; `bullet_cone_twist_goal`, `bullet_cone_twist_goal_apart`): Bullet's piece fell freely in both,
+  so it cannot say.
+* Unpacked geometry (`unpacked_geometry_bullet`, `unpacked_geometry_match`): an object of polygons only is skipped by both (ours warns). Bullet ignores loose
+  polygons beside packed pieces without a message (ours warns), gives that message for loose points alone and ignores loose points
+  beside a packed piece without one (ours simulates them).
 
 **Whole objects**
 * An RBD Object without Box3D Data colliding as its convex hull; `bullet_primT` / `bullet_primS` meaning there.
@@ -234,7 +211,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
     rewrites the constraint geometry each step, so the solver reads the whole network again). Not there: the Force
     Threshold (Bullet's `force` of a Glue is the difference of its pieces' forces times their mean mass,
     Box3D's is the joint's), Group, Update from Input, plastic flow, the VEX snippet.
-* Glue as one body (`gluecompound`, `Box3DCompoundSync.cpp`, how it works: joints.md; on by default, so the glue tests run
+* Glue as one body (`gluecompound`, `Box3DCompoundSync.cpp`, how it works: glue-compound.md; on by default, so the glue tests run
   it, and `glue_compound_break` and `glue_compound_load` check its breaking). Unchecked:
   * That a group merges, moves, writes its pieces back and breaks as the weld joints do: compare the same scene with the
     switch off (stiffness, break impact and `kGlueStrengthScale`, which was measured against weld joints).
@@ -281,7 +258,7 @@ Workarounds in the wrapper that the engine could own, roughly by value:
   setter updates existing contacts. `setSurfaceByHandle` rebuilds after a rolling resistance or tangent velocity
   change too, but `b3UpdateConvexContact` re-reads both, so that rebuild may be unneeded (unchecked).
 * **Generic joint.** No 6-DOF joint with a lock, limit, spring and motor per axis, so SideFX Hard, Soft, Spring and
-  Cone Twist are approximated by weld, distance, motor and spherical joints (`Box3DSideFX.cpp`, [joints.md](joints.md)):
+  Cone Twist are approximated by weld, distance, motor and spherical joints (`Box3DSideFX.cpp`, [joints-sidefx.md](joints-sidefx.md)):
   Hard's rotation is a motor joint with a stiff angular spring because Box3D has no rigid rotation-only joint, and
   Cone Twist loses its translation ranges and motors. One joint with per-axis settings would remove the mapping
   and the unmapped list above.

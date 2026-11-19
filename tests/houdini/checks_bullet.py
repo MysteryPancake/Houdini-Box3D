@@ -1139,7 +1139,104 @@ def test_bullet_rbd_pivot_far():
     return results
 
 
+# ---------------------------------------------------------------------------
+# computecom
+# ---------------------------------------------------------------------------
+
+
+def offset_bar(name):
+    """One packed bar (2 x 1 x 1) whose point is at the origin and whose shape is centred 1 m along x:
+     Returns (sop path, piece name)."""
+    geo = new_geo(name)
+    box = create(geo, "box", "bar")
+    set_parm(box, ["size"], (2.0, 1.0, 1.0))
+    set_parm(box, ["t"], (1.0, 0.0, 0.0))
+    pack = create(geo, "pack", "pack")
+    pack.setInput(0, box)
+    set_parm(pack, ["pivot"], 0)  # origin: the point is not the shape's centre
+    wr = create(geo, "attribwrangle", "attributes")
+    wr.setInput(0, pack)
+    set_parm(wr, ["class"], 0)
+    set_parm(wr, ["snippet"], "s@name = \"bar\"; i@active = 1;")
+    display(wr)
+    return wr.path(), "bar"
+
+
+def spin_reach(kind, computecom, frames=48):
+    """(the furthest the bar's packed transform gets from the origin, where it ends) over `frames` frames with no
+    gravity. The packed transform, not the point: Bullet moves the point to the centre of mass and writes
+    `pivot`, Box3D keeps the point on the body origin, and the transform is what the geometry follows."""
+    path, piece = offset_bar(f"computecom_{kind}_{computecom}_pieces")
+    dop = new_dopnet(f"computecom_{kind}_{computecom}")
+    finish(dop, solver_for(kind, dop, packed_object(dop, "pieces", path, computecom=computecom, angvely=171.887),
+                          gravity=(0, 0, 0)))
+    if kind != "box3d":
+        set_parm(dop.node("gravity"), ["force"], (0, 0, 0))
+
+    def where(sim, f):
+        prim = sim.findObject("pieces").geometry().prims()[0]
+        return hou.Vector3(prim.intrinsicValue("packedfulltransform")[12:15])
+
+    track = step(dop, frames, where)
+    return max(p.length() for p in track.values()), track[frames]
+
+
+def test_bullet_computecom():
+    """computecom on a point: a bar whose shape is 1 m from its point, spun at 3 rad/s (RBD Packed Object's angular velocity, which also writes computecom) with no gravity. On, the
+    centre of mass stays fixed and the piece swings round it (furthest reach about 2); off, the point is the
+    centre and stays at the origin. Box3D must do both and agree with Bullet (within 0.02)."""
+    reach = {(kind, com): spin_reach(kind, com) for kind in KINDS for com in (1, 0)}
+    results = []
+    for com in (1, 0):
+        (rb, eb), (rt, et) = reach[("box3d", com)], reach[("bullet", com)]
+        apart = (eb - et).length()
+        if com:
+            ok = rb > 1.5 and close(rb, rt, 0.02) and apart < 0.02
+        else:
+            ok = rb < 0.02 and rt < 0.02
+        results.append(Result("bullet_computecom", Result.PASS if ok else Result.FAIL,
+                              f"computecom {com}: the bar's transform reaches {rb:.3f} from the origin in Box3D, "
+                              f"{rt:.3f} in Bullet, and the two end {apart:.4f} apart (on: about 2 and agreeing; "
+                              f"off: it stays put)"))
+    return results
+
+
+# ---------------------------------------------------------------------------
+# bullet_georep plane on a packed piece
+# ---------------------------------------------------------------------------
+
+
+def plane_rest(kind, georep, frames=90):
+    """Height a 1 m box dropped from y 3 stops at, over a static piece at (0, 1, 0) whose shape is `georep`."""
+    ground = {"size": (1, 1, 1), "center": (0, 1, 0),
+              "attrs": {"active": 0, "bullet_georep": georep, "bullet_autofit": 1}}
+    box = {"size": (1, 1, 1), "center": (0, 3, 0),
+           "attrs": {"active": 1, "bullet_georep": "box", "bullet_autofit": 1}}
+    path, names = packed_boxes(f"plane_{kind}_{georep}_pieces", [ground, box])
+    dop = new_dopnet(f"plane_{kind}_{georep}")
+    finish(dop, solver_for(kind, dop, packed_object(dop, "pieces", path, keep_velocity=True)))
+    return step(dop, frames, lambda sim, f: packed_positions(sim, "pieces")[names[1]][1])[frames]
+
+
+def test_bullet_plane_piece():
+    """bullet_georep plane on a static packed piece: an infinite plane through the piece's point facing +y,
+    so a 1 m box dropped on it rests at the piece's height plus 0.5 (1.5 here). As a box the piece would
+    carry the box up to 2.0. Box3D must give 1.5; Bullet's result is INFO."""
+    results = []
+    got = {kind: plane_rest(kind, "plane") for kind in KINDS}
+    asbox = plane_rest("box3d", "box")
+    ok = close(got["box3d"], 1.5, 0.03) and close(asbox, 2.0, 0.03)
+    results.append(Result("bullet_plane_piece", Result.PASS if ok else Result.FAIL,
+                          f"box on a plane piece at y 1 rests at {got['box3d']:.3f} in Box3D (expected 1.5); on a box "
+                          f"piece {asbox:.3f} (expected 2.0)"))
+    results.append(Result("bullet_plane_piece", Result.INFO,
+                          f"Bullet: the same box on a plane piece ends at y {got['bullet']:.3f}"))
+    return results
+
+
 TESTS = {
+    "bullet_computecom": test_bullet_computecom,
+    "bullet_plane_piece": test_bullet_plane_piece,
     "bullet_rest_rescan": test_bullet_rest_rescan,
     "bullet_joint_angle": test_bullet_joint_angle,
     "bullet_cone_twist_goal_apart": test_bullet_cone_twist_goal_apart,

@@ -67,12 +67,19 @@ Load only the file for the area you are changing.
 | File | Covers |
 |---|---|
 | [docs/agents/build.md](docs/agents/build.md) | CMake options, build scripts, tests, debug logging, the Houdini package |
+| [docs/agents/assets.md](docs/agents/assets.md) | The digital assets' shared notes (menus, layout) and the Box3D Packed Object |
+| [docs/agents/solver-sop.md](docs/agents/solver-sop.md) | Box3D Solver SOP: inner DOP network, collision, ground, forces, outputs, World Scale |
+| [docs/agents/solver-sop-ui.md](docs/agents/solver-sop-ui.md) | Box3D Solver SOP: parameter tabs, joint settings, Break Thresholds, viewer state |
+| [docs/agents/constraint-properties.md](docs/agents/constraint-properties.md) | Box3D Constraint Properties asset |
+| [docs/agents/configure.md](docs/agents/configure.md) | Box3D Configure asset |
 | [docs/agents/core.md](docs/agents/core.md) | `b3dop::Box3DWorld`: handle API, mass, filtering, shapes and the hull cache, world settings |
 | [docs/agents/solver.md](docs/agents/solver.md) | Shared world state, step order, `syncObject`, the skip fingerprint, write-back, threading |
 | [docs/agents/bodies.md](docs/agents/bodies.md) | Mid-simulation updates, per-attribute features (sleep, CCD, locks, filters, impacts, ...), building shapes |
 | [docs/agents/forces-affectors.md](docs/agents/forces-affectors.md) | Force DOPs, point `force` / `torque`, Static Object colliders |
 | [docs/agents/whole-object.md](docs/agents/whole-object.md) | RBD Object style bodies (one body per DOP object) |
-| [docs/agents/joints.md](docs/agents/joints.md) | Constraint networks, joint nodes, SideFX constraint data mapping |
+| [docs/agents/joints.md](docs/agents/joints.md) | Constraint networks, joint nodes, live frames |
+| [docs/agents/joints-sidefx.md](docs/agents/joints-sidefx.md) | SideFX constraint data (Glue, Hard, Spring, Soft, Cone Twist) mapped to joints, frame offsets |
+| [docs/agents/glue-compound.md](docs/agents/glue-compound.md) | Glue as One Body (`gluecompound`) |
 | [docs/agents/reference.md](docs/agents/reference.md) | Parameters, point attributes, node warnings, what is not supported, the parameter-tab builder |
 | [docs/agents/status.md](docs/agents/status.md) | Unverified, TODO, HDK calls checked |
 
@@ -104,7 +111,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DRbdObject.h    Header-only: an RBD Object's own mass / friction / bounce / Bullet Data shape -> whole-object settings
     Box3DWorld.h/.cpp   Pimpl wrapper over one b3World: bodies, shapes, hulls, settings; defines TaskRunner
     Box3DWorldJoints.cpp  Box3DWorld's joint methods
-    Box3DWorldInternal.h  The world's private state (Impl) shared by those two .cpp files. With them, the ONLY files that include Box3D headers
+    Box3DWorldInternal.h  The world's private state (Impl) shared by those two .cpp files. With them (and `Box3DSideFX.cpp`, for `<box3d/math_functions.h>`), the ONLY files that include Box3D headers
     Box3DAffectorMath.h Header-only: affector (Static Object) transform math
     Box3DDebug.h        B3D_LOG / counters, compiled out unless BOX3DDOP_DEBUG (args still type-checked, never evaluated)
   dop/                Houdini SIM_Data classes: the nodes and the world cache
@@ -118,6 +125,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DState.h           Box3DSharedState: mirror entries, per-object sync records, affector bodies, joint entries, scratch
     Box3DAttribNames.h     The point attributes the solver reads, by name (PointAttrs and the prop markers come from it)
     Box3DSolverInternal.h  What the solver's parts share (namespace box3dsolver); only the solver's files include it
+    Box3DSourceSync.cpp    Animated bodies following their source SOP (`followSourceSops`)
     Box3DShapeBuild.cpp    Packed primitives, collision source geometry (pieces, summary cache), buildShapes
     Box3DPointSync.cpp     One body per point: point state, fingerprint, body settings, shape plans, syncObject
     Box3DWholeObject.cpp   One body per DOP object (RBD Object etc.): sync and Position write-back
@@ -134,9 +142,9 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DHoudiniTasks.h TaskRunner on Houdini's TBB pool (UT_TaskGroup). Only SIM_Box3DWorld.cpp includes it
 examples/            make_examples.py: builds demo scenes into examples/scenes (git-ignored)
 package/             Box3D.json.in: the Houdini package file the build configures
-tools/               make_assets.py (runs the three asset builders in one hython, as the build does),
-                     make_packed_object.py, make_configure_sop.py, make_constraint_properties_sop.py, make_solver_sop.py (the assets; the Solver SOP's inner builders are in b3d_solver_common.py, b3d_solver_network.py, b3d_solver_dops.py, b3d_solver_ground.py, b3d_solver_constraints.py, b3d_solver_breaks.py and b3d_solver_help.py; b3d_solver_state.py, b3d_configure_state.py and b3d_constraint_properties_state.py are the SOPs' viewer states, read as text by the builders; b3d_layouts.py places both SOP assets' nodes),
-                     b3d.py (finds Houdini; runs the checks, examples or ctest on any OS), b3d_hda.py (warn, create, set_operations and the parameter-template helpers the asset builders share), b3d_prepare.py (the input packing both SOP assets share), b3d_settings.py (Box3D Data's
+tools/               make_assets.py (runs the four asset builders in one hython, as the build does),
+                     make_packed_object.py, make_configure_sop.py, make_constraint_properties_sop.py, make_solver_sop.py (the assets; the Solver SOP's inner builders are in b3d_solver_common.py, b3d_solver_network.py, b3d_solver_dops.py, b3d_solver_ground.py, b3d_solver_constraints.py, b3d_solver_breaks.py, b3d_solver_activeage.py, b3d_solver_updates.py and b3d_solver_help.py; b3d_solver_state.py, b3d_configure_state.py and b3d_constraint_properties_state.py are the SOPs' viewer states, read as text by the builders; b3d_layouts.py places both SOP assets' nodes),
+                     b3d.py (finds Houdini; runs the checks, examples or ctest on any OS), b3d_hda.py (warn, create, set_operations and the parameter-template helpers the asset builders share), b3d_prepare.py (the input packing both SOP assets share), b3d_materials.py (Configure's material presets), find_houdini.bat (finds HFS for test.bat, make_examples.bat and build.bat), b3d_settings.py (Box3D Data's
                      settings as point attributes and the creation-frame rest, for Configure and the Packed Object),
                      check_docs.py,
                      houdini_network_dump.py (dumps a node's networks to text, for reading SideFX assets)
@@ -177,7 +185,7 @@ Layering (keep it):
 * A `SIM_DopDescription` must live in zero-filled static memory (a function-local static, or placement new into a
   static buffer as `SIM_Box3DConRel::describe` does), never on the heap: heap ones crash Houdini 22 now and then in
   `SIM_DopDescription::computeLiveInput` (a member its constructor leaves unset).
-* Box3D headers only in `Box3DWorld.cpp`, `Box3DWorldJoints.cpp` and `Box3DWorldInternal.h`; `UT/UT_DSOVersion.h` only in `SIM_Box3DRegister.cpp`; new `SIM_Data` classes
+* Box3D headers only in `Box3DWorld.cpp`, `Box3DWorldJoints.cpp`, `Box3DWorldInternal.h` and (`math_functions.h` alone) `Box3DSideFX.cpp`; `UT/UT_DSOVersion.h` only in `SIM_Box3DRegister.cpp`; new `SIM_Data` classes
   registered in `initializeSIM`.
 * The solver's parts live in `namespace box3dsolver`; anything one part uses from another is declared in
   `Box3DSolverInternal.h` (default arguments there, not on the definitions). Small Houdini helpers used by several

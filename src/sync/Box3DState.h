@@ -503,8 +503,8 @@ struct Box3DJointEntry {
   float restRotB[4] = {0, 0, 0, 1};
 
   // SideFX Glue: breaks on the impulse of the hits its bodies take, not on a
-  // load (core/Box3DGlue.h, docs/agents/joints.md); its bond and `impact` are
-  // in `extra`.
+  // load (core/Box3DGlue.h, docs/agents/joints-sidefx.md); its bond and
+  // `impact` are in `extra`.
   bool glue = false;
   // Its place in Box3DSharedState::glueBonds, -1 when it is not a live bond.
   int glueIndex = -1;

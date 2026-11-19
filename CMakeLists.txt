@@ -279,7 +279,7 @@ add_custom_command(TARGET Box3DDOP POST_BUILD
 # hython session: Box3D Packed Object, Box3D Configure, Box3D Constraint Properties, then the Box3D Solver
 # SOP, which contains the Packed Object). All copy parameters from the plugin just built, so they are remade whenever the
 # plugin is relinked or any script in tools/ changes. Problems print a warning and never fail the build.
-option(BOX3DDOP_MAKE_HDA "Build the Box3D digital assets (Packed Object, Configure, Solver SOP) with hython after the plugin" ON)
+option(BOX3DDOP_MAKE_HDA "Build the Box3D digital assets (Packed Object, Configure, Constraint Properties, Solver SOP) with hython after the plugin" ON)
 if(BOX3DDOP_MAKE_HDA)
     find_program(BOX3DDOP_HYTHON NAMES hython
         HINTS "${Houdini_DIR}/../../bin" "$ENV{HFS}/bin" NO_DEFAULT_PATH)

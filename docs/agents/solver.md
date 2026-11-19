@@ -63,7 +63,7 @@ world.step         n = Substeps (`substeps`, at least 1; 1 when stepDt is 0). Ea
                    into st.moves by body (Box3D clears them every step; the last event wins, so fell-asleep survives).
                    applyExternalForces (Use Force DOPs): SIM_Force data per object -> getForce at each dynamic body's
                    centre of mass, plus point force / torque -> applyForceByHandle
-expandCompoundMoves  Glue as One Body: a move event per piece of a moved compound (joints.md)
+expandCompoundMoves  Glue as One Body: a move event per piece of a moved compound (glue-compound.md)
 writeResultsBack   awake dynamic bodies (move events): P / orient / v / w / packed transform / awake
 jointsAfterStep    broken joints, feedback and live frames onto the networks (joints.md)
 recordImpacts      Add Impact Data -> SIM_Impacts (only on steps with an impact)
@@ -77,7 +77,7 @@ stamp = now
 flat under the node (the HDK has no way to nest solve events in the Stats view; group events only showed their own,
 near-zero time). Stages in solve order: Rebuilding World, Updating Bodies, Updating Colliders, Removing Bodies,
 Updating Constraints, Applying Forces, Stepping World, Exporting Simulation Results, Updating Constraint States,
-Recording Impacts, Updating Points. Opened only on the solve thread.
+Recording Impacts, Updating Points, and Exporting Collision Shapes (Export Collision Shapes on). Opened only on the solve thread.
 
 **Guide geometry** (`Box3DGuide.cpp`; Guide Options: Show Collision Shapes, Shape Color). A `SIM_GuidePerObject`
 built by `buildCollisionGuide` from the live world (`bodyShapeOutlines`: hulls, spheres, capsules), each body placed at
@@ -88,7 +88,7 @@ dimmed for sleeping and static / kinematic bodies. The mutex is only tried: a gu
 lines (`drawObjectShapes`, shared with the guide) as world-space open polylines in a `SIM_GeometryCopy` named
 `kShapesDataName` (`Box3DShapes`) on every object with bodies, rewritten each step after the point writes (the solver
 holds the mutex; poses are the written-back ones). `Cd` is white times the dimming; the SOP tints it. The Box3D Solver
-SOP's `GUIDE_GEO` imports it (see build.md); turning the toggle off stops writing but leaves the last data
+SOP's `GUIDE_GEO` imports it (see [solver-sop.md](solver-sop.md)); turning the toggle off stops writing but leaves the last data
 in the cache. Not drawn: affector colliders, meshes, and anything on an object's creation frame without Solve On Creation Frame (no
 body yet; expected).
 
