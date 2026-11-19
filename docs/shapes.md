@@ -9,7 +9,7 @@
 | `box`, `sphere`, `capsule`, `cylinder` | Fitted to the packed geometry, or sized from `pscale` / `scale`. Capsules and cylinders run along Y |
 | `convexhull` | One convex hull around the packed geometry |
 | `concave`, `compound` | Static piece: the exact polygons, as a triangle mesh. Moving piece: one convex hull per `name` piece, or per set of connected primitives when Hull per Connected is on |
-| `plane` | Static piece: an infinite plane through its origin, facing its +Y. Moving piece: a box |
+| `plane` | Static piece: a very wide, deep ground box whose top is the plane through its origin, facing its +Y (sized by the solver's Ground Box Size). Moving piece: a box |
 | `none` | A static body with no collision |
 
 A Sphere primitive (Sphere SOP at Primitive Type Primitive) that is the only primitive of its piece and uniformly scaled is a true sphere, whatever the shape type. Tube, Circle and Metaball primitives are treated like points on their surface, sized as in RBD Bullet Solver. Volumes are not shapes.

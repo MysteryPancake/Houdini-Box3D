@@ -453,6 +453,90 @@ int main() {
     CHECK(!mergePieces(pieces).ok);
   }
 
+  // ---- how a compound reads and takes velocity and force (no gravity) ----
+  {
+    WorldSettings zero = ws;
+    zero.gravity[0] = zero.gravity[1] = zero.gravity[2] = 0.0f;
+    Box3DWorld w;
+    CHECK(w.create(zero));
+    BodySettings b;
+    // Two cubes side by side: the centre of mass is half a cube from the
+    // origin.
+    auto pair = [&](double y) {
+      const double p[3] = {0, y, 0};
+      const BodyHandle h = w.createBody(b, p, kQid);
+      CHECK(w.createShape(h, b, cube(0.0f), false));
+      CHECK(w.createShape(h, b, cube(2.0f * kHalf), false));
+      w.applyMassFromShapes(h);
+      return h;
+    };
+
+    // Angular velocity turns the body about its centre of mass: the origin,
+    // half a cube from it, swings round it, and the centre stays where it was.
+    const BodyHandle spun = pair(0.0);
+    const float none[3] = {0, 0, 0}, spin[3] = {0, 0, 2.0f};
+    CHECK(w.setVelocityByHandle(spun, none, spin));
+    w.step(kDt);
+    double pos[3];
+    float rot[4], lin[3], ang[3];
+    CHECK(w.getTransformByHandle(spun, pos, rot));
+    const double theta = 2.0 * kDt;
+    CHECK(near(pos[1], -kHalf * std::sin(theta), 2e-4));
+    CHECK(near(pos[0], kHalf - kHalf * std::cos(theta), 2e-4));
+    CHECK(w.getVelocityByHandle(spun, lin, ang));
+    CHECK(near(lin[0], 0.0, 1e-3) && near(lin[1], 0.0, 1e-3));
+
+    // The linear velocity is the centre's, so a spin-free body moves its origin
+    // at the same speed.
+    const BodyHandle slid = pair(10.0);
+    const float push[3] = {1.0f, 0, 0};
+    CHECK(w.setVelocityByHandle(slid, push, none));
+    w.step(kDt);
+    CHECK(w.getTransformByHandle(slid, pos, rot));
+    CHECK(near(pos[0], kDt, 1e-4));
+
+    // Forces add up within a step: two calls move a body twice as fast as one.
+    const BodyHandle once = pair(20.0), twice = pair(30.0);
+    const float up[3] = {0, 50.0f, 0};
+    w.applyForceByHandle(once, up, none, false);
+    w.applyForceByHandle(twice, up, none, false);
+    w.applyForceByHandle(twice, up, none, false);
+    w.step(kDt);
+    float v1[3], v2[3];
+    CHECK(w.getVelocityByHandle(once, v1, ang) &&
+          w.getVelocityByHandle(twice, v2, ang));
+    CHECK(v1[1] > 1e-3f && near(v2[1], 2.0 * v1[1], 1e-3 * v1[1]));
+  }
+
+  // ---- a disabled (parked) body's joints: enabling one piece leaves it free
+  // ----
+  {
+    Box3DWorld w;
+    CHECK(w.create(ws));
+    BodySettings b;
+    const double pa[3] = {0, 5, 0}, pb[3] = {1, 5, 0};
+    const BodyHandle a = w.createBody(b, pa, kQid);
+    const BodyHandle bb = w.createBody(b, pb, kQid);
+    CHECK(w.createShape(a, b, cube(0.0f)));
+    CHECK(w.createShape(bb, b, cube(0.0f)));
+    CHECK(
+        w.createJoint(JointType::Weld, a, bb, frameAt(0.5, 5), frameAt(0.5, 5),
+                      Box3DWorld::defaultJointSettings(JointType::Weld)) != 0);
+    w.setEnabledByHandle(a, false);
+    w.setEnabledByHandle(bb, false);
+    for (int i = 0; i < 30; ++i)
+      w.step(kDt);
+    // Parked: nothing moves.
+    CHECK(near(bodyY(w, a), 5.0, 1e-4) && near(bodyY(w, bb), 5.0, 1e-4));
+    // One enabled again: it falls as a free body, not held by the weld.
+    w.setEnabledByHandle(a, true);
+    for (int i = 0; i < 30; ++i)
+      w.step(kDt);
+    const double fall = 0.5 * 9.80665 * 0.5 * 0.5; // after half a second
+    CHECK(near(5.0 - bodyY(w, a), fall, 0.1 * fall));
+    CHECK(near(bodyY(w, bb), 5.0, 1e-4));
+  }
+
   if (fails) {
     std::printf("%d check(s) failed\n", fails);
     return 1;

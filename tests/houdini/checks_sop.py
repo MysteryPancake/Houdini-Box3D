@@ -96,6 +96,35 @@ def test_solver_sop_collision():
     return results
 
 
+def test_solver_sop_quadrics():
+    """Sphere, Tube, Circle and Metaball primitives packed and dropped through the Solver SOP, whose pieces
+    use Hull per Connected: each rests on the ground at the height its shape should."""
+    from checks_bullet import primitive_sop
+
+    cases = (
+        ("tube", "tube", "Primitive", {("rad1",): 0.5, ("rad2",): 0.5, ("height",): 1.0}, 0.5),
+        ("ellipsoid", "sphere", "Primitive", {("rad",): (0.5, 0.25, 0.5)}, 0.25),
+        ("sphere", "sphere", "Primitive", {("rad",): (0.5, 0.5, 0.5)}, 0.5),
+        ("metaball", "metaball", None, {("rad", "radius"): (0.5, 0.5, 0.5)}, 0.25),
+        ("circle", "circle", "Polygon", {("rad", "radius"): (0.5, 0.5)}, 0.02),
+    )
+    ground, _ = packed_boxes("sop_quadric_ground", [GROUND])
+    rows, ok = [], True
+    for label, sop_type, item, parms, expect in cases:
+        path = primitive_sop(f"sop_quadric_{label}_piece", sop_type, item, parms, True)
+        sop = solver_sop(f"sop_quadric_{label}", geometry=path, collision=ground)
+
+        def sample(s, f):
+            pts = s.geometry(0).points() if f == 72 else None
+            return pts[0].position()[1] if pts else None
+
+        y = play(sop, 72, sample)[72]
+        good = y is not None and close(y, expect, 0.03)
+        ok = ok and good
+        rows.append(f"{label} rests at {y if y is None else round(y, 3)} (expected {expect})")
+    return [Result("solver_sop_quadrics", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
 def test_solver_sop_collision_static():
     """Collide As Static Object on the Collision input: an unpacked grid and a flat HeightField SOP each hold a
     box at y = 0.5 (with Enable Collision Geometry on only), a packed collider stays packed pieces by default,
@@ -725,7 +754,7 @@ def test_solver_sop_world_scale():
 
 
 def test_solver_sop_ground():
-    """The Ground Collision menu on the Box3D Solver SOP: None lets a box fall, Ground Plane (Position and
+    """The Ground Collision menu on the Box3D Solver SOP: None lets a box fall, Ground Box (Position and
     Rotation) holds it at the plane, Height Field holds it on a flat HeightField SOP (also with Use
     Deforming Geometry), and the Physical settings reach the ground's Box3D Data."""
     pieces, names = packed_boxes("sop_ground_pieces", [{"size": (1, 1, 1), "center": (0, 4, 0)}])
@@ -756,6 +785,34 @@ def test_solver_sop_ground():
     y = settle(scaled)
     results.append(Result("solver_sop_ground", Result.PASS if close(y or 0, 1.5, 0.05) else Result.FAIL,
                           f"Ground Plane at y=1 with World Scale 10: box at y={y} after 3 s (expected 1.5)"))
+
+    # Size (Ground Collision): the ground reaches half its x from its position: a box over it rests, one past its
+    # edge falls (also with World Scale 10, which scales the size with the scene).
+    for label, scale in (("", None), (" with World Scale 10", 10)):
+        edge_pieces, edge_names = packed_boxes(f"sop_ground_width_pieces{scale}", [
+            {"size": (1, 1, 1), "center": (2, 4, 0)}, {"size": (1, 1, 1), "center": (8, 4, 0)}])
+        edge = solver_sop(f"sop_ground_width{scale}", geometry=edge_pieces)
+        set_parm(edge, ["useground"], 1)
+        set_parm(edge, ["groundsize"], (10.0, 20.0, 2000.0))
+        if scale:
+            set_parm(edge, ["usescale"], 1)
+            set_parm(edge, ["scale"], scale)
+        track = play(edge, 96, lambda s, f: named_positions(s.geometry(0)) if f == 96 else None)
+        near_y, far_y = (track[96][edge_names[i]][1] for i in (0, 1))
+        results.append(Result("solver_sop_ground", Result.PASS if close(near_y, 0.5, 0.05) and far_y < -1.0
+                              else Result.FAIL,
+                              f"Ground Box Size x 10{label}: box at x=2 at y={near_y:.3f} (expected 0.5), box at x=8 at "
+                              f"y={far_y:.3f} (expected below -1: past the edge at 5)"))
+
+    # Size is in the Ground Collision folder, labelled Size, and the Ground Type's plane item is the Ground Box.
+    size_parm = edge.parmTuple("groundsize")
+    folders = list(size_parm.containingFolders()) if size_parm is not None else []
+    menu = list(edge.parm("useground").menuLabels())
+    ok = "Ground Collision" in folders and size_parm.parmTemplate().label() == "Size" and menu == [
+        "None", "Ground Box", "Height Field"]
+    results.append(Result("solver_sop_ground", Result.PASS if ok else Result.FAIL,
+                          f"Size sits in {folders} labelled {size_parm.parmTemplate().label() if size_parm else None}; "
+                          f"Ground Type items {menu} (expected Ground Collision, Size, None / Ground Box / Height Field)"))
 
     # Rotation: a plane turned -90 degrees about z faces +x through the origin: a box starting at x = 3 rests
     # against it with its face at x = 0.5.
@@ -2443,6 +2500,7 @@ TESTS = {
     "asset_menus": test_asset_menus,
     "packed_object_overwrite_from_sop": test_packed_object_overwrite_from_sop,
     "solver_sop_collision": test_solver_sop_collision,
+    "solver_sop_quadrics": test_solver_sop_quadrics,
     "solver_sop_pieces": test_solver_sop_pieces,
     "solver_sop_global_substeps": test_solver_sop_global_substeps,
     "solver_sop_before_start_bullet": test_solver_sop_before_start_bullet,

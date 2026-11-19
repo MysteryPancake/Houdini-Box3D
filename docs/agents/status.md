@@ -11,35 +11,27 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 
 **Not yet run in Houdini**
 
-* Packed Object Initial Object Type (`initialstate`; test `packed_object_initial_type` passes). The tests that set `bodytype` or `deforming` on a Box3D Packed
-  Object set Custom first (`box3d_packed_object` in b3dtest.py). Not checked: the Solver SOP's collision object (Custom), the Pieces tab's Body Type greying
-  out with the menu, and Deforming Static / Active against RBD Packed Object.
+* Packed Object Initial Object Type (`initialstate`): not checked are the Solver SOP's collision object (Custom), the Pieces tab's
+  Body Type greying out with the menu, and Deforming Static / Active against RBD Packed Object.
 
-* Constraint Properties Use VEXpressions (`run_vexpressions`; test passes). Not checked: the snippet menu (`vexpressionmenu.buildSnippetMenu` with
-  our own key lists nothing unless snippets are saved under it), and the type folders' layout.
-
-* Switch Constraint Type When Broken with its next settings (`applyNextSettings`, `takenext`, the Next Constraint folder; tests `next_settings`,
-  `constraint_properties_next`, `solver_sop_break_next_settings`, `solver_sop_next_constraint_type`) pass, including `next_constraint_type`
-  on a SideFX Hard line.
-* Constraint Properties scaling and Geometry Attribute Transfer (`SCALE_VEX`, tests `constraint_properties_scaling`) pass (Houdini
-  22.0.502). Not checked against RBD Constraint Properties: Closest uses piece point positions (Bullet uses the nearest surface point),
+* Constraint Properties Use VEXpressions (`run_vexpressions`): not checked are the snippet menu (`vexpressionmenu.buildSnippetMenu` with
+  our own key lists nothing unless snippets are saved under it) and the type folders' layout.
+* Constraint Properties scaling and Geometry Attribute Transfer (`SCALE_VEX`). Not checked against RBD Constraint Properties: Closest uses piece point positions (Bullet uses the nearest surface point),
   a piece that is missing leaves the value unscaled (Bullet skips the setting), integers, toggles and vectors have no scaling, and there
   is no Next Constraint scaling. Randomize and Variance are on every number setting here (Bullet: Glue Strength only), seeded per setting.
 * The group / attribute menus beside the fields (`MENU_SOURCE` in `b3d_hda.py`): `asset_menus` builds every Constraint Properties menu and checks Configure's,
   Constraint Properties' and the Packed Object's list the connected geometry. Not checked: a multi-name field toggling picks in and out
   (a click), the menus on the Solver SOP's nested nodes, and the node's output (Inspector Attributes).
 
-* Animated bodies following their source SOP (`followSourceSops`): the animated-collider, kinematic and Packed Object tests pass
-  (Houdini 22.0.502). Not checked: a source `orient` / `pscale` attribute on the animated piece (only its packed transform
+* Animated bodies following their source SOP (`followSourceSops`). Not checked: a source `orient` / `pscale` attribute on the animated piece (only its packed transform
   is read), a Solver SOP whose collision path is a context geometry rather than a SOP node, many animated pieces (one cook and one
   name pass per step), and a DOP Start Frame other than 1.
 
-* Overwrite Attributes from SOP as an Attribute Copy list (`copy_attribs`, `SIM_GEO` in the Packed Object stage): `packed_object_overwrite_from_sop`
-  shows `active` changing over time reaches the solver and cooks without a dependency loop. Not checked: an animated collider (`reimportsop`) still moving.
+* Overwrite Attributes from SOP as an Attribute Copy list (`copy_attribs`, `SIM_GEO` in the Packed Object stage): not checked is an
+  animated collider (`reimportsop`) still moving.
 
-* `computecom` on points (default on, as Bullet): `bullet_computecom` (a bar spun at 3 rad/s, no gravity) matches Bullet's packed transform on and off. Bullet
-  also moves the point to the centre of mass and writes `pivot`, which Box3D does not. Not checked: `v` (the centre's velocity here), and joints, Glue and
-  forces with it on. Also unchecked: the Packed Object's Initial State Position / Rotation / Inherit Pivot / Pivot and Creation Frame Specifies Simulation Frame against Bullet.
+* `computecom` on points (default on, as Bullet; `bullet_computecom` matches). Bullet also moves the point to the centre of mass and writes `pivot`,
+  which Box3D does not. Not checked: `v` (the centre's velocity here), and joints, Glue and forces with it on. Also unchecked: the Packed Object's Initial State Position / Rotation / Inherit Pivot / Pivot and Creation Frame Specifies Simulation Frame against Bullet.
 * Box3D Packed Object's Display Geometry (`visualize_hires`) and Collider Label (`add_display`): checked against a
   stand-in `hou` only. The build's `check` probes both.
 * Box3D Configure's Bounds / Use Bounds and World Scale on FORCES: no test, only the builders' `check`s (Use Bounds, the
@@ -76,10 +68,10 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * `bullet_georep` `plane` on a packed piece (`ShapeType::Plane`, `buildShapes`): `bullet_plane_piece` has a box rest on it at the piece's height
   (through the piece's origin, +Y, as a Ground Plane). A box dropped on it in Bullet fell through, so there is nothing to compare against. A piece turning moving
   mid-simulation rebuilds as a box.
-* Ground planes: a Static Object whose SDF Representation is set to Implicit Plane is taken as a plane facing +y through its
-  origin, as a Ground Plane DOP's is (only the Ground Plane is tested). A plane tilted off the axes has a large broad-phase box,
-  so every body in the world keeps a cheap contact with it. A fast body against a plane uses conservative advancement
-  (`b3PlaneTimeOfImpact`), checked only by a straight 400 m/s sphere drop (`core_plane`).
+* Ground: a Static Object whose SDF Representation is set to Implicit Plane is taken as a ground box facing +y through its
+  origin, as a Ground Plane DOP's is (only the Ground Plane is tested). A ground tilted off the axes has a large broad-phase
+  box, so every body in the world keeps a cheap contact with it. A box in a 90 degree trough of two grounds with the default
+  friction wedges slightly high (`ground_plane`: 0.82 against 0.71), and sits flat with a friction of 0.2.
 
 **Box3D Configure** (`tools/make_configure_sop.py`, tests `configure`, `configure_packs`)
 * The packing (`b3d_prepare.py`): Transfer Groups carrying primitive groups onto the pieces, the Assembles' path /
@@ -137,8 +129,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 **Box3D Solver SOP** (`tools/make_solver_sop.py`, `tests/houdini/checks_sop.py`)
 * Collision Type Animated / Deforming: whether the Packed Object's Overwrite Attributes from SOP (SOP Geometry's Set Always) re-imports every step (the build prints which menus it drives),
   and the solver's cost of a full rescan of the collider each step.
-* The Solver SOP's Collide As Static Object, Constraints tab, help card and Set Always settings pass
-  their tests. Still unchecked: the Static Object's default Collision Detection on a mesh (distance field cost), the
+* The Solver SOP's Collide As Static Object, Constraints tab, help card and Set Always settings: unchecked are the Static Object's default Collision Detection on a mesh (distance field cost), the
   help card's look in Houdini's help browser (its wiki markup parses with `bookish.wiki.wikipages.parse_to_root` in
   hython), and whether every setting tolerates being re-applied each step.
 * Box3D Data's hand-set shape and Rotational Stiffness set on a Box3D Data DOP itself (`BodySettings::prim`, `inertiaScale`):
@@ -168,15 +159,10 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 
 * Box3D Configure has no Units (RBD Configure's Unit Mass and Unit Length, which scale Density by `unitlength / unitmass`,
   each over 1000).
-* Packed primitive spheres and nested packed primitives collide as one point, half sunk (`odd_packed_contents`).
-* Quadric primitives (Sphere, Tube, Circle, Metaball), packed or as RBD Objects: sampled on their surface
-  (`Box3DQuadrics.h`, `appendQuadricSamples` in `Box3DShapeBuild.cpp`) and sized like Bullet's. Run (`bullet_primitive_types`):
-  sphere 0.500 and metaball 0.250 match Bullet; a Sphere that is the only primitive of its piece and uniformly scaled
-  is a real Box3D sphere (`NamedPiece::sphereValid`). Tubes and Sphere Primitives rest at 0.500 in both, packed or as an
-  RBD Object. As an RBD Object a polygon Sphere rests 0 to 0.04 low in Box3D (0.46 to 0.48) and a metaball at 0.224
-  (Bullet 0.250); a Circle given as polygons or curves rests at 0.001 with a node message (Bullet 0.020). Not done:
-  quadrics inside a Convex hull Per Connected Set, volumes (Bullet: packed falls through, RBD Object stays at 2, Box3D's
-  falls), tube taper.
+* Quadric primitives (how they are sampled: [bodies.md](bodies.md)): a denser sphere mesh (Polygon Mesh, NURBS) rests at 0.46 to 0.48
+  where Bullet rests at 0.499, because a Box3D hull keeps about 44 vertices and loses the poles (keeping the farthest point per
+  direction rested lower: a 38-vertex ball tips onto a face). Volumes: Bullet's packed one falls through, its RBD Object stays at 2,
+  Box3D's falls.
 * Objects solved by another solver: packed ones are ignored as colliders; one-way collision with polygons untested.
 * Height fields: holes from a mask layer, height fields on points.
 * Constraint networks: agent anchors (`anchor_type` agent), the `anchor_pid` / `anchor_vid` matching. A missing `constraint_type` is `position`
@@ -185,13 +171,10 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   cones, softness, motors and translation ranges, Hard's angular motors.
 * Inactive RBD Object (Create Active Object off) is a static body: animating its Position teleports it, where Bullet
   drives it as a kinematic body that pushes what it touches.
-* Force DOPs: evaluation inside Box3D's Constraint Iterations (needs a callback in the fork); parallel evaluation of circle / sphere
-  sampled forces (the resolver has only the point call).
+* Force DOPs: parallel evaluation of circle / sphere sampled forces (the resolver has only the point call).
 * Sticky collisions. Box3D's contact begin / end and sensor events: Houdini has no output for them (Bullet has none), so
   nothing reads them beyond Impacts. Sensors (trigger zones) would be the useful part.
 * Box3D Solver SOP:
-  * Set Always for the Box3D Data settings of the pieces and collider, the relationships and the ground (the solver's
-    own settings are Set Always already).
   * Break Thresholds (`b3d_solver_breaks.py`): Impact (`solver_sop_break_impact_bullet`: a glued pair stops breaking at 22.4k
     in Box3D and 22.9k in the RBD Bullet Solver SOP) and At Frame (`solver_sop_break_atframe_bullet`: same frame as Bullet,
     also relative to Start Frame) match. Distance is `distance` = the anchors' distance (as Bullet, test
@@ -205,16 +188,10 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
     Threshold (Bullet's `force` of a Glue is the difference of its pieces' forces times their mean mass,
     Box3D's is the joint's), Group, Update from Input, plastic flow, the VEX snippet.
 * Glue as one body (`gluecompound`, `Box3DCompoundSync.cpp`, how it works: glue-compound.md; on by default, so the glue tests run
-  it, and `glue_compound_break` and `glue_compound_load` check its breaking). Unchecked:
-  * That a group merges, moves, writes its pieces back and breaks as the weld joints do: compare the same scene with the
-    switch off (stiffness, break impact and `kGlueStrengthScale`, which was measured against weld joints).
-  * `setVelocityByHandle` is the centre of mass velocity (a single piece's centre is its origin, so only a compound
-    can tell), repeated `applyForceByHandle` calls add, and enabling a parked body does not leave a piece on a joint
-    to another parked body.
-  * Pieces falling asleep with a compound, and the pieces' `awake` after a dissolve.
-  * Not covered: Impacts and the collision guide for pieces, pieces with another joint or a custom inertia (they stay
-    on welds, as does their whole group), a group changed only by editing a piece's settings while it never merged
-    (it is worked out again when the Glue graph or the bodies change).
+  it; `glue_compound_break`, `glue_compound_load`, `glue_compound_vs_welds`, `glue_compound_sleep` and `core_compound` check it).
+  Not covered: Impacts and the collision guide for pieces, pieces with another joint or a custom inertia (they stay
+  on welds, as does their whole group), a group changed only by editing a piece's settings while it never merged
+  (it is worked out again when the Glue graph or the bodies change).
 
 ## Box3D fork (`extern/box3d`)
 

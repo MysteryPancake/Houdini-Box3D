@@ -527,9 +527,10 @@ ShapePlan planShapes(ScanContext &ctx, GA_Offset off, int64_t bodyId,
   const bool autofit =
       a.autofit.isValid() ? (a.autofit.get(off) != 0) : ctx.node.autoFit;
   plan.plannedStatic = staticBody;
-  plan.shapes = buildShapes(
-      ctx.world, ctx.sources, plan.type, ctx.node.hullPerConnectedSet, ps, sc,
-      pk, autofit, readPrimOverrides(a, off, ctx.node.prim), staticBody);
+  plan.shapes = buildShapes(ctx.world, ctx.sources, plan.type,
+                            ctx.node.hullPerConnectedSet, ps, sc, pk, autofit,
+                            readPrimOverrides(a, off, ctx.node.prim),
+                            staticBody, ctx.world.settings().ground);
   if (plan.shapes.note)
     B3D_LOG("  body id=%lld: %s", static_cast<long long>(bodyId),
             plan.shapes.note);

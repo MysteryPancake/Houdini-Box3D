@@ -158,7 +158,7 @@ tests/
   physics_bodies.cpp  Physics cases for body settings, filtering, forces, sleep and world settings
   core_mesh.cpp       Static triangle meshes, mesh scale, decomposeScaledRigid
   core_heightfield.cpp Static height fields: pose, scale, ramps, holes, refused input
-  core_plane.cpp      Static infinite planes: resting, troughs, slopes, no tunnelling, refused input
+  core_ground.cpp     Static ground boxes (Ground Plane): resting, tumbling hulls, troughs, slopes, no tunnelling, refused input
   core_quadrics.cpp   Quadric primitive surface points: sizes, position, transform
   core_threads.cpp    1 worker vs N workers: timing + determinism
   core_taskrunner.cpp Host-supplied TaskRunner shared by 40+ worlds: no extra threads, same results as 1 worker

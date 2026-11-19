@@ -551,6 +551,69 @@ def test_glue_global_iterations():
                    f"-1 alone = 1 round: {one_round})")]
 
 
+def test_glue_compound_vs_welds():
+    """Glue as One Body against the same scene on weld joints (the switch off): a row of 4 glued boxes landing from 3
+    at a Strength that never breaks it stays one row on the ground (spacing 1, resting at y 0.5) in both, and the
+    Strength at which it stops breaking agrees within a factor of 1.5 (kGlueStrengthScale was measured against
+    welds)."""
+    rows, ok = [], True
+    for compound in (True, False):
+        dop = glue_row_scene(f"glue_vs_welds_{int(compound)}", "box3d", 1e12, n=4, height=3.0, compound=compound)
+        pos = step(dop, 72, lambda sim, f: packed_positions(sim, "pieces"))[72]
+        row = [pos[k] for k in sorted(pos) if abs(pos[k][1] - 0.5) < 1.0 and pos[k][1] > 0]
+        spacing = max(abs((row[i + 1] - row[i]).length() - 1.0) for i in range(len(row) - 1)) if len(row) > 1 else 9.0
+        low = max(abs(p[1] - 0.5) for p in row) if row else 9.0
+        good = len(row) == 4 and spacing < 0.05 and low < 0.02
+        ok = ok and good
+        rows.append(f"{'one body' if compound else 'welds'}: {len(row)} pieces, spacing off by {spacing:.3f}, "
+                    f"height off by {low:.3f} (expected 4, under 0.05, under 0.02)")
+    strength = {c: glue_row_threshold("box3d", 48, n=4, height=3.0, compound=c) for c in (True, False)}
+    if None in strength.values():
+        ok = False
+        rows.append(f"no breaking threshold found: {strength}")
+    else:
+        ratio = strength[True] / strength[False]
+        ok = ok and 1 / 1.5 <= ratio <= 1.5
+        rows.append(f"Strength at which it stops breaking {strength[True]:.0f} as one body, {strength[False]:.0f} on welds "
+                    f"(ratio {ratio:.2f}, expected 0.67 to 1.5)")
+    return [Result("glue_compound_vs_welds", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+def test_glue_compound_sleep():
+    """Glued pieces run as one body sleep and wake as the pieces do with the switch off. A row of 3 boxes with an
+    `awake` attribute, a box dropped on the first: with a Strength that never breaks them, the `awake` values over the
+    first 72 frames are the same with the switch on and off, give or take 3 frames (asleep before the box lands, awake on
+    landing). With a
+    Strength of 1000 that breaks the bonds, all 3 are asleep before the landing, the first is awake after it and all
+    are asleep again by frame 120 in both (the pieces of a dissolved or split compound can sleep again)."""
+    def awake_track(compound, strength, frames):
+        dop = glue_row_scene(f"glue_sleep_{int(compound)}_{int(strength)}", "box3d", strength, n=3, drop=4.0,
+                             compound=compound, awake=True)
+
+        def sample(sim, f):
+            geo = sim.findObject("pieces").geometry()
+            return tuple(pt.attribValue("awake") for pt in list(geo.points())[:3])
+
+        return step(dop, frames, sample)
+
+    rows, ok = [], True
+    held = {c: awake_track(c, 1e12, 72) for c in (True, False)}
+    # The switch changes when a body falls asleep by a frame or two, so a frame only differs when the other run
+    # has no such value within 3 frames.
+    differ = [f for f in range(1, 73)
+              if not any(held[False].get(g) == held[True][f] for g in range(f - 3, f + 4))]
+    cycles = any(held[True][f] == (0, 0, 0) for f in range(1, 73)) and held[True][26] == (1, 1, 1)
+    ok = ok and not differ and cycles
+    rows.append(f"no break: frames where on and off differ {differ}, asleep then awake on landing: {cycles}")
+    for compound in (True, False):
+        t = awake_track(compound, 1e3, 120)
+        good = t[22] == (0, 0, 0) and t[26][0] == 1 and t[120] == (0, 0, 0)
+        ok = ok and good
+        rows.append(f"bonds break, switch {'on' if compound else 'off'}: frame 22 {t[22]}, 26 {t[26]}, 120 {t[120]} "
+                    f"(expected all 0, the hit piece 1, all 0)")
+    return [Result("glue_compound_sleep", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
 def test_glue_compound_load():
     """Glue Inertial Load: a column of 6 glued boxes (run as one body) landing on its end breaks its bottom bond on
     a hard hit, but with the load on, the bonds up the column break too, as the whole body is slowed: at some
@@ -665,18 +728,20 @@ _GLUE_RUNS = itertools.count()
 
 
 def glue_row_scene(tag, kind, strength, n=2, height=3.0, drop=None, bounce=None, iterations=None,
-                   global_iterations=None, column=False, load=None):
+                   global_iterations=None, column=False, load=None, compound=None, awake=False):
     """n glued boxes side by side. With drop=None they fall from `height` onto the ground (the landing is the hit).
     Otherwise they rest on it and a box is dropped from `drop` above the first one. bounce: RBD Packed Object's.
     iterations: the Glue's Propagation Iterations. global_iterations: the network's propagate_iteration detail attribute.
-    column: the boxes stand one on another instead (the first lowest). load: the solver's Glue Inertial Load."""
+    column: the boxes stand one on another instead (the first lowest). load: the solver's Glue Inertial Load.
+    compound: the solver's Glue as One Body (None: its default). awake: the pieces carry an `awake` point attribute."""
     dop = new_dopnet(tag)
     y = height if drop is None else 0.5
     at = (lambda i: (0, y + i, 0)) if column else (lambda i: (i, y, 0))
-    pieces = [{"size": (1, 1, 1), "center": at(i), "attrs": {"active": 1}} for i in range(n)]
+    attrs = {"active": 1, "awake": 1} if awake else {"active": 1}
+    pieces = [{"size": (1, 1, 1), "center": at(i), "attrs": dict(attrs)} for i in range(n)]
     if drop is not None:
-        pieces.append({"size": (1, 1, 1), "center": (0, 1.5 + drop, 0), "attrs": {"active": 1}})
-    pieces.append(dict(GROUND, attrs={"active": 0}))
+        pieces.append({"size": (1, 1, 1), "center": (0, 1.5 + drop, 0), "attrs": dict(attrs)})
+    pieces.append(dict(GROUND, attrs=dict(attrs, active=0)))
     path, names = packed_boxes(tag + "_pieces", pieces)
     obj = packed_object(dop, "pieces", path, **({} if bounce is None else {"bounce": bounce}))
     glue = create(dop, "glueconrel", "glue")
@@ -700,6 +765,8 @@ def glue_row_scene(tag, kind, strength, n=2, height=3.0, drop=None, bounce=None,
     solver = solver_for(kind, dop, net)
     if load is not None:
         set_parm(solver, ["gluecompoundload"], load)
+    if compound is not None:
+        set_parm(solver, ["gluecompound"], 1 if compound else 0)
     finish(dop, solver)
     return dop
 
@@ -1118,6 +1185,8 @@ TESTS = {
     "glue_impact": test_glue_impact,
     "glue_compound_break": test_glue_compound_break,
     "glue_compound_load": test_glue_compound_load,
+    "glue_compound_vs_welds": test_glue_compound_vs_welds,
+    "glue_compound_sleep": test_glue_compound_sleep,
     "glue_impact_scale": test_glue_impact_scale,
     "glue_global_iterations": test_glue_global_iterations,
     "glue_impact_trace": test_glue_impact_trace,

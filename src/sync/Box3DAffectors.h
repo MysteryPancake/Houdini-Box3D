@@ -25,7 +25,7 @@ struct Box3DAffectorCounts {
   int baked =
       0; // built with a scaled / sheared transform baked into the vertices
   int heightFields = 0; // of `added`: built from a height field
-  int planes = 0;       // of `added`: infinite planes (Ground Plane DOP)
+  int planes = 0;       // of `added`: grounds (Ground Plane DOP)
 };
 
 // `objects` are the objects being solved (their affectors are gathered here).

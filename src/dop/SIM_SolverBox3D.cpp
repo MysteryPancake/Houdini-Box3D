@@ -163,6 +163,14 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                   R{0, 1, true},
                   "Treats nearly spherical bodies as spheres for spin. Applies "
                   "to new bodies and mass changes.")
+          .subfolder("Ground Box")
+          .vector("groundsize", "Ground Box Size", {2000, 20, 2000},
+                  "The box a Ground Plane DOP or a static plane piece makes: "
+                  "its width "
+                  "along x, its depth below the surface (y) and its length "
+                  "along z, centred on its position. Nothing collides past "
+                  "the edge.",
+                  PRM_XYZ_J)
           .subfolder("Performance")
           .toggle("autothreads", "Use All Threads", false,
                   autoThreadsHelp.c_str())
@@ -279,6 +287,11 @@ b3dop::WorldSettings SIM_SolverBox3D::currentWorldSettings() const {
   s.isotropicInertiaTolerance = static_cast<float>(getIsotropicInertia());
   s.warmStarting = getEnableWarmStarting();
   s.impactMinSpeed = static_cast<float>(getImpactMinSpeed());
+  {
+    const UT_Vector3 g = getGroundSize();
+    for (int i = 0; i < 3; ++i)
+      s.ground.size[i] = static_cast<float>(g(i));
+  }
   // Menu index -> rule. Both menus: Geometric Mean, Minimum, Maximum, Average,
   // Multiply. Out of range (set from a script): the menus' defaults.
   using FM = b3dop::WorldSettings::FrictionMixing;

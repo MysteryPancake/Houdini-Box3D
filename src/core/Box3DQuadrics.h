@@ -55,6 +55,8 @@ constexpr double kMetaballRadiusScale = 0.5;
 // its normal so the hull has volume (the Bullet Solver's flat circle rests at
 // about 0.02).
 constexpr double kCircleHalfThickness = 0.02;
+// The same thickness (half) for any flat piece that cannot be hulled.
+constexpr float kFlatHalfThickness = static_cast<float>(kCircleHalfThickness);
 // True if the Sphere's transform is a uniform scale (with any turn): its three
 // columns have the same length and are at right angles, within 0.1%. Then it is
 // an exact sphere of that radius, which Box3D has as a shape; otherwise (an

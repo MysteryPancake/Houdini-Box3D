@@ -28,6 +28,7 @@ class SIM_ObjectArray;
 class SIM_SolverBox3D : public SIM_Solver, public SIM_OptionsUser {
 public:
   GETSET_DATA_FUNCS_V3("gravity", Gravity);
+  GETSET_DATA_FUNCS_V3("groundsize", GroundSize); // x, depth (y), z
   GETSET_DATA_FUNCS_B(
       "useforces", UseForces); // apply the Force DOPs attached to the objects
   GETSET_DATA_FUNCS_B("forceswake",

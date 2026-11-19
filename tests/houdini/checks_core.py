@@ -356,7 +356,7 @@ def test_winding():
 
 
 # ---------------------------------------------------------------------------
-# Ground Plane DOP: infinite planes, several at once
+# Ground Plane DOP: a wide, deep ground box, several at once
 # ---------------------------------------------------------------------------
 
 
@@ -384,8 +384,46 @@ def ground_plane_scene(name, planes, pieces, frames=120):
     return [track[frames][n] for n in names], messages
 
 
+def test_ground_plane_size():
+    """The solver's Ground Box Size (x, depth, z) on a Ground Plane DOP: with an x of 10 a box over it rests, one past its
+    edge (5 from the position) falls; the default ground holds both. The same for a static `plane` piece."""
+    pieces = [{"size": (1, 1, 1), "center": (2, 3, 0)}, {"size": (1, 1, 1), "center": (8, 3, 0)}]
+    rows, ok = [], True
+    for width in (None, 10.0):
+        dop = new_dopnet(f"ground_size_{width}")
+        path, names = packed_boxes(f"ground_size_{width}_box", pieces)
+        box = packed_object(dop, "box", path)
+        plane = create(dop, "groundplane", "plane")
+        solver = box3d_solver(dop, merge(dop, [box, plane]))
+        if width is not None:
+            set_parm(solver, ["groundsize"], (width, 20.0, 2000.0))
+        finish(dop, solver)
+        track = step(dop, 120, lambda sim, f: packed_positions(sim, "box"))[120]
+        near, far = track[names[0]][1], track[names[1]][1]
+        good = close(near, 0.5, 0.05) and (close(far, 0.5, 0.05) if width is None else far < -1.0)
+        ok = ok and good
+        rows.append(f"Ground Box Size x {width or 'default'}: box at x=2 rests at y={near:.3f}, box at x=8 at y={far:.3f}")
+    # A static `plane` piece takes the size from the Box3D Data on its object the same way.
+    attrs = {"bullet_autofit": 1}
+    path, names = packed_boxes("ground_size_piece", [
+        {"size": (1, 1, 1), "center": (0, 0, 0), "attrs": dict(attrs, active=0, bullet_georep="plane")},
+        {"size": (1, 1, 1), "center": (2, 3, 0), "attrs": dict(attrs, active=1, bullet_georep="box")},
+        {"size": (1, 1, 1), "center": (8, 3, 0), "attrs": dict(attrs, active=1, bullet_georep="box")}])
+    dop = new_dopnet("ground_size_piece")
+    solver = box3d_solver(dop, packed_object(dop, "pieces", path))
+    set_parm(solver, ["groundsize"], (10.0, 20.0, 2000.0))
+    finish(dop, solver)
+    track = step(dop, 120, lambda sim, f: packed_positions(sim, "pieces"))[120]
+    near, far = track[names[1]][1], track[names[2]][1]
+    good = close(near, 0.5, 0.05) and far < -1.0
+    ok = ok and good
+    rows.append(f"plane piece with Ground Box Size x 10: box at x=2 rests at y={near:.3f}, box at x=8 at y={far:.3f}")
+    return [Result("ground_plane_size", Result.PASS if ok else Result.FAIL,
+                   "; ".join(rows) + " (expected 0.5 and 0.5 by default, 0.5 and fell past the edge at 10)")]
+
+
 def test_ground_plane():
-    """A Ground Plane DOP is an infinite plane: a box lands on it at its Position, also far outside
+    """A Ground Plane DOP is a ground (a wide, deep box): a box lands on it at its Position, also far outside
     the 10 x 10 guide grid; two tilted planes (Rotation) make a trough that holds a box in the
     middle. No collision-geometry warning."""
     results = []
@@ -407,9 +445,9 @@ def test_ground_plane():
         "ground_plane_trough", [{"rz": 45.0}, {"rz": -45.0}],
         [{"size": (1, 1, 1), "center": (0.2, 3, 0)}], frames=240)
     x, y = final[0][0], final[0][1]
-    results.append(Result("ground_plane", Result.PASS if abs(x) < 0.15 and 0.5 < y < 0.8 else Result.FAIL,
+    results.append(Result("ground_plane", Result.PASS if abs(x) < 0.15 and 0.5 < y < 0.9 else Result.FAIL,
                           f"a box in a 90 degree trough of two planes rests at x={x:.3f}, y={y:.3f} "
-                          "(expected x near 0, y near 0.71)"))
+                          "(expected x near 0, y 0.71 sitting flat, or up to 0.82 wedged by the default friction)"))
     return results
 
 
@@ -486,5 +524,6 @@ TESTS = {
     "pscale": test_pscale,
     "winding": test_winding,
     "ground_plane": test_ground_plane,
+    "ground_plane_size": test_ground_plane_size,
     "rbd_defaults": test_rbd_defaults,
 }

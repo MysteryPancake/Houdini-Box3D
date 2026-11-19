@@ -14,14 +14,16 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   null as spare input and `npoints(-1) > 0`, DOP Switches with `npoints(opinputpath("..", i)) > 0` (the DOP
   network's inputs; collision also needs Enable Collision Geometry), as RBD Bullet Solver does.
 * Ground Collision (`b3d_solver_ground.py`, Collision tab, a collapsible folder with Ground Type as its header, as RBD Bullet
-  Solver's): `useground` None / Ground Plane / Height Field drives a DOP Switch (`switch_ground`) over a Null, a Ground
+  Solver's): `useground` None / Ground Box / Height Field drives a DOP Switch (`switch_ground`) over a Null, a Ground
   Plane (Position `ground_pos` x World Scale, Rotation `ground_rot`) and a Static Object (SOP Path the `GROUND_HEIGHTFIELD`
   null, Use Deforming Geometry `ground_animategeo`, Collision Detection Volume, Mode Heightfield). The SOP side is an Object
   Merge of the Height Field parameter (`groundheightfield`, set after the promotion by `finish_ground`), a HeightField
   Transform for World Scale and a Switch. A Box3D Data (`ground_data`, Set Initial) after the Switch takes Friction, Bounce,
   Rolling Resistance and Conveyor Velocity from the Physical folder (`ground_*`, templates cloned from the node, Conveyor
   Velocity scaled by World Scale). Both go through a Merge with the pieces (mutual affectors) and arrive as affectors
-  ([forces-affectors.md](forces-affectors.md)): the Ground Plane as an infinite plane, the Static Object as a height field.
+  ([forces-affectors.md](forces-affectors.md)): the Ground Box (a Ground Plane DOP) as a ground box, the Static Object as a height field. The box's
+  Size is the solver's `groundsize` (Ground Box Size), pulled out of the DOP's Advanced tab into this folder after Rotation (`take`
+  in `make_solver_sop.py`, shown for Ground Box) and scaled by World Scale (`SCALED_SETTINGS`).
   The guide (RBD Bullet Solver's, read from its dump; `build_ground_guide`): DOP Imports of the object `groundplane`
   (`import_ground_plane`, Geometry Data Path `DisplayGeometry`; `import_ground_field`, `Geometry`), the plane as lines
   (`convertline`) or its polygons by a Switch-If on Show Ground as (`shadeground`: Wireframe, Shaded), both scaled back

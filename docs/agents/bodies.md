@@ -155,4 +155,10 @@ dedupes, reads and hashes them. Packed fragments share one source detail, read w
 (not `getPackedDetail()`, whose detail does not match `getPrimitiveRange()`); a fragment is keyed by its first
 primitive. The pivot is `getPivot`; the body origin is the point's `P`. Packed rotation is read from
 `getFullTransform4` and written with `setLocalTransform` through `splitPackedMatrix` / `composePackedMatrix` (HDK
-quaternions; shear dropped).
+quaternions; shear dropped). A packed primitive inside a source contributes its own points, carried into the source's
+space by `(p - pivot) * M + P` (`appendNestedPacked`, recursive); its own point is not a collision point. Quadric primitives (Sphere, Tube, Circle, Metaball) have one point and a transform, so
+`appendQuadricSamples` adds points on their surface (`Box3DQuadrics.h`, sized like Bullet's, `bullet_primitive_types`). A
+Tube's rings come from `GEO_PrimTube::evaluatePoint` (taper included). A Sphere or Metaball that is a piece's only
+primitive and uniformly scaled is a real Box3D sphere (`NamedPiece::sphereValid`). A flat piece that cannot be hulled
+(a Circle as polygons) becomes a box `kFlatHalfThickness` thick. Nested packs and quadrics are read the same way for
+Hull per Connected pieces.

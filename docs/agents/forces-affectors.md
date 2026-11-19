@@ -89,10 +89,10 @@ named `height` that is one voxel thick (with no `name` attribute, the first such
   but is unused here.
 
 **Ground planes** (`isGroundPlane`). An affector whose `Volume` data is a `SIM_SDF` in Implicit Plane mode (`kImplicitPlaneMode`,
-the SDF Representation menu's index, which a Ground Plane DOP sets) becomes a static plane at the object's own `y = 0`,
+the SDF Representation menu's index, which a Ground Plane DOP sets) becomes a static ground box (`groundSpec(settings.ground)`, the solver's Ground Box Size) whose top is the object's own `y = 0`,
 facing +y, instead of a mesh of its guide grid. Pose and scale come from `SIMgetGeometryTransform` as for any affector, but
-only the pose is used; a sheared transform fails the plane. Several Ground Plane DOPs give several planes, each its own body.
-Material as above (Box3D Data, else the Ground Plane's Physical tab). The signature is the material alone, so moving or
-turning the plane only moves its body. The object needs no geometry.
+only the pose is used; a sheared transform fails the ground. Several Ground Plane DOPs give several grounds, each its own body.
+Material as above (Box3D Data, else the Ground Plane's Physical tab). The signature is the material and the size, so moving or
+turning the ground only moves its body. The object needs no geometry.
 
 Not done: SDF / volume collision, mask holes, per-pair collider selection.

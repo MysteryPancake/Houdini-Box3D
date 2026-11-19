@@ -86,13 +86,12 @@ so instances of one piece and identical affectors build and hold one mesh; each 
 mesh's scale changes in place (`setMeshScaleByHandle`); a height field's cannot. Height fields are quantised to 16 bits
 over their own height range; `holes` become `B3_HEIGHT_FIELD_HOLE` cells.
 
-**Planes.** `createPlaneShape(h, body, normal, offset)` is the fork's `b3_planeShape` (`extern/box3d/src/plane.c`): a static
-half-space, solid where `dot(normal, x) <= offset` in body space. Normal and offset are normalised here; a dynamic body,
-a zero or non-finite normal or a non-finite offset is refused. Box3D's broad phase needs a finite box, so a plane only
-covers `B3_PLANE_EXTENT` (a quarter of `B3_HUGE`) around its body: far beyond that, or as deep below, nothing collides.
-It collides with spheres, capsules and hulls. A hull gives at most four points, picked by area from the vertices within the
-speculative distance, keyed by vertex index. Fast bodies use `b3PlaneTimeOfImpact`, a conservative advancement bounded by
-the sweep's linear and angular speed. Covered by `tests/core_plane.cpp`.
+**Ground.** `ShapeType::Plane` (a Ground Plane DOP, a static `plane` piece) is a box, `groundBoxSpec()` in `Box3DShapes.h`:
+`GroundSize` (x, depth, z), its top face the plane y = 0 of the static body that holds it (a dynamic body is refused).
+`groundSpec(size)` is a `ShapeSpec` of type Plane whose half extents carry the clamped size (`kMinGroundSize`,
+`kMaxGroundSize`; a non-finite value is the default), so a new size is a new shape. `WorldSettings::ground` holds it (the
+solver's Ground Box Size, applied each step with the rest of the tuning, read when a ground is built). It is an ordinary hull, so it has Box3D's hull contacts and continuous collision; nothing
+collides past its edge. The fork has no plane shape (a hull sometimes clipped through it and stuck). Covered by `tests/core_ground.cpp`.
 
 **Angular spring error (fork).** `b3AngularSpringError` (`extern/box3d/src/math_internal.h`) gives the spherical joint's
 spring, the motor joint's angular spring and the weld joint's soft angular constraint (`angularHertz > 0`) their rotation
@@ -104,7 +103,7 @@ rest, about the target's z-axis), each with magnitude 2 * sin(angle / 2), so til
 `b3DeltaQuatToRotation`: a hard lock, not a spring. Covered by `TestAngularSpringTwist` in `extern/box3d/test/test_joint.c`.
 
 **`Box3DShapes.h`** (all unit-tested): `parseShapeType` (exact lowercase Houdini names; `compound`
-= `concave`; `plane` is `ShapeType::Plane` (static bodies only: `buildShapes` falls back to a box with a note, whole
+= `concave`; `plane` is `ShapeType::Plane`, the ground box (static bodies only: `buildShapes` falls back to a box with a note, whole
 objects ignore it); `cylinder` is `ShapeType::Cylinder`, a `ShapeSpec` like a capsule (`radius`, `halfLength` = half the
 height) built by `Box3DWorld::cylinderShape` as a `b3CreateCylinder` hull (`kCylinderSides`), moved and turned by
 re-hulling its points, cached under a key of size and pose; unknown values return false; the solver memoises per shared-string handle

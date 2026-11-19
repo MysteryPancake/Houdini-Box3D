@@ -384,7 +384,7 @@ struct BuiltShapes {
   std::vector<Piece> pieces;
   float totalVolume = 0.0f;
   const char *note = nullptr; // set when something fell back
-  bool mesh = false; // static-only pieces: one triangle mesh, or a plane
+  bool mesh = false; // static-only pieces: one triangle mesh, or a ground
 };
 
 // staticMesh: the body will be static, so `concave` becomes a triangle mesh of
@@ -394,8 +394,8 @@ BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
                         b3dop::ShapeType type, bool hullPerConnected,
                         float pscale, const float scale[3],
                         const PackedInfo &pk, bool autofit,
-                        const b3dop::PrimOverrides &ov,
-                        bool staticMesh = false);
+                        const b3dop::PrimOverrides &ov, bool staticMesh = false,
+                        const b3dop::GroundSize &ground = b3dop::GroundSize());
 BuiltShapes buildWholeObjectShapes(b3dop::Box3DWorld &world,
                                    const GU_Detail *gdp, const double m[16],
                                    const double pivot[3], b3dop::ShapeType type,

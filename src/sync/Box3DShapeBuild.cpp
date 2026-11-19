@@ -7,6 +7,7 @@
 #include "core/Box3DQuadrics.h"
 
 #include <GA/GA_PrimitiveTypes.h>
+#include <GEO/GEO_PrimTube.h>
 #include <GEO/GEO_Quadric.h>
 #include <UT/UT_Matrix3.h>
 
@@ -132,6 +133,32 @@ void readPackedPivot(PackedInfo &pk) {
 // Collision source geometry
 // ---------------------------------------------------------------------------
 
+// A Tube's two end rings as Houdini evaluates them, which includes its taper
+// (one radius at each end). False if the primitive cannot be evaluated, then
+// the unit tube is sampled instead.
+bool appendTubePoints(const GA_Primitive &prim, NamedPiece &np) {
+  const GEO_PrimTube *tube = dynamic_cast<const GEO_PrimTube *>(&prim);
+  if (!tube)
+    return false;
+  std::vector<float> ring;
+  for (int end = 0; end < 2; ++end)
+    for (int j = 0; j < b3dop::kQuadricSegments; ++j) {
+      UT_Vector4 pos;
+      // u around, v along; v = 1 is the end u wraps to, so stay inside [0, 1).
+      if (tube->evaluatePoint(pos,
+                              static_cast<float>(j) /
+                                  static_cast<float>(b3dop::kQuadricSegments),
+                              static_cast<float>(end)) != 0 ||
+          !std::isfinite(pos.x() + pos.y() + pos.z()))
+        return false;
+      ring.push_back(pos.x());
+      ring.push_back(pos.y());
+      ring.push_back(pos.z());
+    }
+  np.samples.insert(np.samples.end(), ring.begin(), ring.end());
+  return true;
+}
+
 // A Sphere, Tube, Circle or Metaball primitive has one point and a transform,
 // so its points alone make no shape: its surface is sampled too
 // (Box3DQuadrics.h). Their transform is GEO_Quadric::getTransform (no
@@ -156,22 +183,96 @@ void appendQuadricSamples(const GU_Detail *gdp, const GA_Primitive &prim,
       a[c * 3 + r] = m(r, c);
   const UT_Vector3 p = gdp->getPos3(prim.getPointOffset(0));
   const double centre[3] = {p.x(), p.y(), p.z()};
-  b3dop::appendQuadricPoints(kind, a, centre, np.samples);
+  if (!(kind == b3dop::QuadricKind::Tube && appendTubePoints(prim, np)))
+    b3dop::appendQuadricPoints(kind, a, centre, np.samples);
   double radius = 0;
-  if (kind == b3dop::QuadricKind::Sphere &&
+  if ((kind == b3dop::QuadricKind::Sphere ||
+       kind == b3dop::QuadricKind::Metaball) &&
       b3dop::quadricSphereRadius(a, radius)) {
+    if (kind == b3dop::QuadricKind::Metaball)
+      radius *= b3dop::kMetaballRadiusScale;
     np.sphereValid = true;
     np.sphereRadius = radius;
     std::copy(centre, centre + 3, np.sphereCentre);
   }
 }
 
+const GU_PackedFragment *asFragment(const GU_PrimPacked &prim);
 void appendPrimPoints(const GU_Detail *gdp, const GA_Primitive &prim,
-                      NamedPiece &np) {
+                      NamedPiece &np, int depth = 0);
+
+// A packed primitive inside a source: its own points (recursively, for packed
+// primitives nested deeper) carried into the source's space, (p - pivot) * M +
+// P with M its full transform's 3x3 and P its point's position. Appended to
+// np.samples; the primitive's own point is not a collision point.
+void appendNestedPacked(const GU_Detail *gdp, const GU_PrimPacked &packed,
+                        NamedPiece &np, int depth) {
+  constexpr int kMaxDepth = 8; // a cycle cannot be built, but stay bounded
+  if (depth >= kMaxDepth || packed.getVertexCount() < 1)
+    return;
+  const GU_PackedFragment *frag = asFragment(packed);
+  GU_ConstDetailHandle handle =
+      frag ? frag->detailPtr() : packed.getPackedDetail();
+  GU_DetailHandleAutoReadLock lock(handle);
+  const GU_Detail *inner = lock.getGdp();
+  if (!inner)
+    return;
+
+  // The inner points in the packed primitive's own space.
+  NamedPiece in;
+  bool anyPrim = false;
+  const GA_Range prims =
+      frag ? frag->getPrimitiveRange() : inner->getPrimitiveRange();
+  for (GA_Iterator it(prims); !it.atEnd(); ++it)
+    if (const GA_Primitive *prim = inner->getPrimitive(*it)) {
+      anyPrim = true;
+      appendPrimPoints(inner, *prim, in, depth + 1);
+    }
+  if (!anyPrim)
+    for (GA_Iterator it(inner->getPointRange()); !it.atEnd(); ++it)
+      in.points.push_back(*it);
+  std::sort(in.points.begin(), in.points.end());
+  in.points.erase(std::unique(in.points.begin(), in.points.end()),
+                  in.points.end());
+  std::vector<float> pts;
+  pts.reserve(3 * in.points.size() + in.samples.size());
+  for (const GA_Offset pt : in.points) {
+    const UT_Vector3 p = inner->getPos3(pt);
+    pts.push_back(p.x());
+    pts.push_back(p.y());
+    pts.push_back(p.z());
+  }
+  pts.insert(pts.end(), in.samples.begin(), in.samples.end());
+
+  double m4[16], m3[9];
+  fetchFull4(packed, m4);
+  b3dop::upper3x3(m4, m3);
+  UT_Vector3 pv(0, 0, 0);
+  packed.getPivot(pv);
+  const UT_Vector3 P = gdp->getPos3(packed.getPointOffset(0));
+  const double pivot[3] = {pv.x(), pv.y(), pv.z()};
+  const double origin[3] = {P.x(), P.y(), P.z()};
+  for (size_t i = 0; i + 2 < pts.size(); i += 3) {
+    double d[3];
+    for (int k = 0; k < 3; ++k)
+      d[k] = static_cast<double>(pts[i + static_cast<size_t>(k)]) - pivot[k];
+    for (int j = 0; j < 3; ++j)
+      np.samples.push_back(static_cast<float>(d[0] * m3[j] + d[1] * m3[3 + j] +
+                                              d[2] * m3[6 + j] + origin[j]));
+  }
+}
+
+void appendPrimPoints(const GU_Detail *gdp, const GA_Primitive &prim,
+                      NamedPiece &np, int depth) {
+  ++np.primCount;
+  if (GU_PrimPacked::isPackedPrimitive(prim)) {
+    appendNestedPacked(gdp, static_cast<const GU_PrimPacked &>(prim), np,
+                       depth);
+    return;
+  }
   const GA_Size nv = prim.getVertexCount();
   for (GA_Size i = 0; i < nv; ++i)
     np.points.push_back(prim.getPointOffset(i));
-  ++np.primCount;
   appendQuadricSamples(gdp, prim, np);
 }
 
@@ -234,10 +335,12 @@ void collectPieces(const GU_Detail *gdp, PieceGroup &out) {
 void collectConnectedPieces(const GU_Detail *gdp, const GA_Range &prims,
                             PieceGroup &out) {
   std::vector<std::vector<GA_Offset>> primPoints;
+  std::vector<const GA_Primitive *> primList;
   for (GA_Iterator it(prims); !it.atEnd(); ++it) {
     const GA_Primitive *prim = gdp->getPrimitive(*it);
     if (!prim)
       continue;
+    primList.push_back(prim);
     primPoints.emplace_back();
     const GA_Size nv = prim->getVertexCount();
     for (GA_Size i = 0; i < nv; ++i)
@@ -247,8 +350,19 @@ void collectConnectedPieces(const GU_Detail *gdp, const GA_Range &prims,
   const std::vector<int> setOf = b3dop::connectedSets(primPoints);
   for (size_t i = 0; i < primPoints.size(); ++i) {
     NamedPiece &np = out.piece(std::to_string(setOf[i]));
+    // Quadrics and nested packed primitives add their surface points (the
+    // same as appendPrimPoints); their own point is a collision point only for
+    // a quadric.
+    if (GU_PrimPacked::isPackedPrimitive(*primList[i])) {
+      ++np.primCount;
+      appendNestedPacked(gdp, static_cast<const GU_PrimPacked &>(*primList[i]),
+                         np, 0);
+      continue;
+    }
     np.points.insert(np.points.end(), primPoints[i].begin(),
                      primPoints[i].end());
+    ++np.primCount;
+    appendQuadricSamples(gdp, *primList[i], np);
   }
   finishPieces(gdp, out);
 }
@@ -481,6 +595,15 @@ bool pieceFromPoints(b3dop::Box3DWorld &world, uint64_t key,
       if (!b3dop::fitShapeToPoints(b3dop::ShapeType::Box, pts.data(), n,
                                    out.spec))
         return false;
+      // A flat piece (a Circle as polygons, a grid) gets some thickness, as
+      // the Bullet Solver's flat hull has.
+      float widest = 0.0f;
+      for (const float h : out.spec.halfExtents)
+        widest = std::max(widest, h);
+      if (widest > b3dop::kFlatHalfThickness)
+        for (float &h : out.spec.halfExtents)
+          if (h < 0.01f * widest)
+            h = b3dop::kFlatHalfThickness;
       out.isHull = false;
       out.volume = b3dop::shapeVolume(out.spec);
       note = kHullFallbackNote;
@@ -527,7 +650,8 @@ BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
                         b3dop::ShapeType type, bool hullPerConnected,
                         float pscale, const float scale[3],
                         const PackedInfo &pk, bool autofit,
-                        const b3dop::PrimOverrides &ov, bool staticMesh) {
+                        const b3dop::PrimOverrides &ov, bool staticMesh,
+                        const b3dop::GroundSize &ground) {
   using namespace b3dop;
   BuiltShapes out;
   auto add = [&](const Piece &pc) {
@@ -535,12 +659,12 @@ BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
     out.pieces.push_back(pc);
   };
 
-  // `plane`: an infinite plane, only on a static body. Otherwise a box (fitted
-  // or pscale sized) with a note.
+  // `plane`: a ground box (groundSpec, the size from Box3D Data), only on a
+  // static body. Otherwise a box (fitted or pscale sized) with a note.
   if (type == ShapeType::Plane) {
     if (staticMesh) {
       Piece pc;
-      pc.spec.type = ShapeType::Plane;
+      pc.spec = groundSpec(ground);
       add(pc);
       out.mesh = true; // static-only shapes
       return out;

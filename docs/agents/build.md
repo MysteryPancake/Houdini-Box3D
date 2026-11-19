@@ -82,7 +82,7 @@ that every module is registered and every test named and documented, lint (pyfla
 the docs name tests that exist, `baseline.json`, and that no file mixes line endings.
 
 Core tests (`ctest`; each `tests/core_<name>.cpp` is `b3dop_core_<name>`, see `CMakeLists.txt`): smoke, physics
-(handle API, shapes, mass, setters, locks, CCD, filtering, forces, ...), mesh, heightfield, plane, quadrics, joints,
+(handle API, shapes, mass, setters, locks, CCD, filtering, forces, ...), mesh, heightfield, ground, quadrics, joints,
 sidefx, glue, rbdobject, worlds, taskrunner and threads (`[workers] ...` arguments; threads fails if 1 vs N workers
 differ by more than 1e-4). The file's header comment says what it covers. The physics cases are in `core_physics.cpp`
 (case list and `main`), `physics_shapes.cpp` and `physics_bodies.cpp`, declared in `PhysicsCases.h`.

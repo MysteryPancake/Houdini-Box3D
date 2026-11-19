@@ -33,7 +33,7 @@ The Solver SOP's parameter tabs, joint settings, Break Thresholds, constraint at
   constraints. Overwrite with SOP (`constraint_reloadfromsops`, Advanced > Constraints) drives the Constraint Network's Reload from SOPs
   (read the whole input again every step) and greys the update out. Test `solver_sop_constraint_updates_bullet`.
 * Help card: `HELP_CARD` (`b3d_solver_help.py`, Houdini wiki markup) as the definition's `Help` section.
-* The Solver and Pieces tabs are labelled Setup and Properties (`TAB_LABELS`), as RBD Bullet Solver's; the docs and code keep the old names.
+* The Solver and Pieces tabs are labelled Setup and Properties (`TAB_LABELS`), as RBD Bullet Solver's; the code and these docs call them Solver and Pieces.
 * Output tab, as RBD Bullet Solver's: Impact Data, a closed collapsible folder whose header toggle is the pieces' Add
   Impact Data (`sidefx::header_toggle`), with the solver's Impact Min Speed and Fetch Impacts; Transfer Attributes, with Transfer to Geometry / Proxy Geometry choosing each Transform Pieces' Attributes to
   Copy as RBD Bullet Solver's: the list while on, else `w` (`copy_attributes`, `TRANSFER_TO`); Transform Pieces'

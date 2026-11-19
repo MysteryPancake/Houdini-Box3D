@@ -104,6 +104,7 @@ from b3d_solver_common import (  # noqa: E402
     IMPACT_SPEED,
     IMPACT_TOGGLE,
     INITIAL_TYPE,
+    USE_GROUND,
     IMPACTS,
     INPUT_LABELS,
     LABEL,
@@ -152,6 +153,8 @@ from b3d_solver_ground import (  # noqa: E402
     finish_ground,
     GROUND_DATA,
     GROUND_MATERIAL,
+    GROUND_SIZE,
+    GROUND_ROT,
     ground_items,
     ground_visualization,
 )
@@ -416,6 +419,17 @@ def build(out_path, packed_hda=None):
             folder_items.append(collapsible(f"b3dsop_{label.lower()}", label, got, open_folder=is_open))
     aging = take(AGING_PARMS)
     speed = take((IMPACT_SPEED,))
+    # The ground box's Size is the solver's Ground Box Size, shown in Ground Collision for a Ground Box.
+    size = take((GROUND_SIZE,))
+    if size:
+        for pt in size:
+            pt.setLabel("Size")
+            pt.setConditional(hou.parmCondType.HideWhen, f"{{ {USE_GROUND} != 1 }}")
+        items = list(ground_folder.parmTemplates())
+        at = next((i + 1 for i, pt in enumerate(items) if pt.name() == GROUND_ROT), len(items))
+        ground_folder.setParmTemplates(items[:at] + size + items[at:])
+    else:
+        warn(f"no {GROUND_SIZE} on the solver: no Size in Ground Collision")
     shapes = take((SHAPES_TOGGLE,))
     tabs = [(label, drop_templates(contents, set())) for label, contents in tabs]  # folders left empty go
     # The Advanced tab is regrouped by name: its DOP folders come apart.

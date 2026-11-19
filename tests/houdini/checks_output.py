@@ -200,14 +200,15 @@ def test_packed_alembic():
 
 
 # ---------------------------------------------------------------------------
-# Primitive spheres and nested packing (status: expected to be wrong; record what happens)
+# Primitive spheres and nested packing
 # ---------------------------------------------------------------------------
 
 
 def test_odd_packed_contents():
-    """What happens to a packed primitive sphere (radius 0.5) and to a packed box inside another
-    packed primitive. INFO: the notes expect hulls from points only to be wrong here."""
+    """A packed primitive sphere (radius 0.5) and a packed box inside another packed primitive
+    each rest on the ground spanning y 0 to 1."""
     rows = []
+    ok = True
     for label in ("primitive sphere", "nested packed box"):
         geo = new_geo("odd_" + label.split()[0])
         if label == "primitive sphere":
@@ -228,8 +229,42 @@ def test_odd_packed_contents():
         display(xf)
         _, track = drop_one("odd_" + label.split()[0], xf.path())
         lo, hi = track[72]
-        rows.append(f"{label}: rests spanning y {lo[1]:.2f} to {hi[1]:.2f} (correct: 0 to 1)")
-    return [Result("odd_packed_contents", Result.INFO, "; ".join(rows))]
+        ok = ok and close(lo[1], 0.0, 0.03) and close(hi[1], 1.0, 0.03)
+        rows.append(f"{label}: rests spanning y {lo[1]:.2f} to {hi[1]:.2f} (expected 0 to 1)")
+    return [Result("odd_packed_contents", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+def test_packed_tube_taper():
+    """A tapered tube lying on its side (radius 0.5 at the top, 0.25 at the bottom, height 1) as a Tube
+    primitive and as polygons: both settle with the same axis tilt, so the primitive's taper is read the
+    right way round."""
+    turns = {}
+    for item in ("prim", "poly"):
+        geo = new_geo("taper_" + item.lower())
+        tube = create(geo, "tube")
+        set_menu_token(tube, ["type"], item)
+        set_parm(tube, ["rad1"], 0.5)
+        set_parm(tube, ["rad2"], 0.25)
+        set_parm(tube, ["height"], 1.0)
+        asm = create(geo, "assemble")
+        asm.setInput(0, tube)
+        set_parm(asm, ["pack_geo", "packgeo", "pack"], 1)
+        xf = create(geo, "xform")
+        xf.setInput(0, asm)
+        set_parm(xf, ["t"], (0, 2, 0))
+        set_parm(xf, ["r"], (0, 0, 90))
+        display(xf)
+        dop = new_dopnet("taper_" + item.lower())
+        obj = packed_object(dop, "piece", xf.path())
+        finish(dop, box3d_solver(dop, merge(dop, [ground_object(dop, "taper_ground_" + item.lower()), obj])))
+        turns[item] = step(dop, 96, lambda sim, f: packed_transform(sim, "piece"))[96]
+    # The tube settles on its slanted side, its axis tilted by the taper (about 14 degrees, so the Y row's
+    # height is about 0.24 for the one end up and about -0.24 for the other); how far it rolled about the
+    # axis is chaotic, so only the tilt is compared.
+    a, b = turns["prim"][1][1], turns["poly"][1][1]
+    ok = close(a, b, 0.05) and abs(a) > 0.15
+    return [Result("packed_tube_taper", Result.PASS if ok else Result.FAIL,
+                   f"axis tilt (the Y row's height) {a:.3f} as a primitive, {b:.3f} as polygons (expected equal, about 0.24)")]
 
 
 # ---------------------------------------------------------------------------
@@ -1277,6 +1312,7 @@ TESTS = {
     "packed_disk": test_packed_disk,
     "packed_alembic": test_packed_alembic,
     "odd_packed_contents": test_odd_packed_contents,
+    "packed_tube_taper": test_packed_tube_taper,
     "mirrored_piece": test_mirrored_piece,
     "written_velocity": test_written_velocity,
     "impacts": test_impacts,

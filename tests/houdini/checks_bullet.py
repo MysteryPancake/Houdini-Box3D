@@ -1219,7 +1219,7 @@ def plane_rest(kind, georep, frames=90):
 
 
 def test_bullet_plane_piece():
-    """bullet_georep plane on a static packed piece: an infinite plane through the piece's point facing +y,
+    """bullet_georep plane on a static packed piece: a ground (a wide, deep box) through the piece's point facing +y,
     so a 1 m box dropped on it rests at the piece's height plus 0.5 (1.5 here). As a box the piece would
     carry the box up to 2.0. Box3D must give 1.5; Bullet's result is INFO."""
     results = []

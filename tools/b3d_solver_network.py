@@ -138,7 +138,7 @@ SCALE_ACTIVE = f'if(ch("../{WORLD_SCALE_TOGGLE}"), ch("../{WORLD_SCALE}") != 1, 
 # (inner node relative to the asset, parameter tuple, power of the scale it follows).
 SCALED_SETTINGS = [("dopnet/box3d_solver", n, 1) for n in
                    ("gravity", "maxlinearspeed", "contactpushspeed", "bouncethreshold",
-                    "contactrecycledistance", "impactminspeed")] + \
+                    "contactrecycledistance", "impactminspeed", "groundsize")] + \
     [("dopnet/pieces", "density", -3)] + \
     [("dopnet/pieces", n, 1) for n in ("sleepthreshold", "tangentvelocity")] + \
     [("dopnet/collision", "tangentvelocity", 1), ("dopnet/collision_static_data", "tangentvelocity", 1),

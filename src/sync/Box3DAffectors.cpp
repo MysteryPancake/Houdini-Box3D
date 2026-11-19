@@ -265,13 +265,14 @@ struct AffectorInput {
   bool transposed =
       false; // grid columns along a2 (keeps the frame right-handed)
 
-  // An infinite plane (a Ground Plane DOP): the object's local y = 0, facing
-  // +y, posed by pos / rot. The geometry and scale are ignored.
+  // A ground (a Ground Plane DOP): a wide, deep box (groundBoxSpec) whose top
+  // is the object's local y = 0, facing +y, posed by pos / rot. The geometry
+  // and scale are ignored.
   bool plane = false;
 };
 
 // A Ground Plane DOP (or any object whose Volume representation is an Implicit
-// Plane): its collision is the infinite plane, not the guide grid.
+// Plane): its collision is the ground box, not the guide grid.
 bool isGroundPlane(const SIM_Object &obj) {
   const SIM_Geometry *geo = obj.getGeometry();
   if (!geo)
@@ -332,11 +333,13 @@ uint64_t affectorSignature(const GU_Detail *gdp, const AffectorInput &in) {
   return sig;
 }
 
-// A plane depends only on its material: the pose is the body's.
-uint64_t planeSignature(const AffectorInput &in) {
+// A ground depends only on its material and size: the pose is the body's.
+uint64_t planeSignature(const AffectorInput &in,
+                        const b3dop::GroundSize &ground) {
   const float mat[2] = {in.body.props.friction, in.body.props.restitution};
-  return b3dop::mixHash(b3dop::mixHash(b3dop::kHashSeed, 5),
-                        b3dop::hashFloats(mat, 2));
+  return b3dop::mixHash(b3dop::mixHash(b3dop::mixHash(b3dop::kHashSeed, 5),
+                                       b3dop::hashFloats(mat, 2)),
+                        b3dop::hashFloats(ground.size, 3));
 }
 
 // A height-field affector. The Box3D height field's frame (columns along x,
@@ -544,21 +547,21 @@ void buildAffector(Box3DSharedState &st, Box3DAffectorBody &ab, int objectId,
   };
 
   if (in.plane) {
-    const float normal[3] = {0.0f, 1.0f, 0.0f};
     const b3dop::BodyHandle h =
         st.world.createBody(body, in.pos, in.rot, nullptr);
     if (!h) {
       ++counts.failed;
       return;
     }
-    if (!st.world.createPlaneShape(h, body, normal, 0.0f)) {
+    if (!st.world.createShape(h, body,
+                              b3dop::groundSpec(st.world.settings().ground))) {
       st.world.destroyBody(h);
       ++counts.failed;
       return;
     }
     built(h, in.pos, in.rot, in.scale);
     ++counts.planes;
-    B3D_LOG("  affector id=%d: static plane built", objectId);
+    B3D_LOG("  affector id=%d: static ground built", objectId);
     return;
   }
 
@@ -674,7 +677,7 @@ void syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects,
     in.body = affectorBodySettings(*obj);
 
     if (plane) {
-      // Pose only: a scale on the object does not change an infinite plane.
+      // Pose only: a scale on the object does not change the ground.
       if (!in.rigid) {
         destroyAffector(st, ab);
         ab.poseKnown = false;
@@ -683,7 +686,7 @@ void syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects,
       }
       in.plane = true;
       in.scale[0] = in.scale[1] = in.scale[2] = 1.0f;
-      in.sig = planeSignature(in);
+      in.sig = planeSignature(in, st.world.settings().ground);
       if (ab.poseKnown && ab.signature == in.sig)
         updateAffector(st, ab, in, counts);
       else

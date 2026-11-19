@@ -92,8 +92,8 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   Object). Network key = hash of the relationship name (or the object id). `anyJointNetwork` checks the same, without
   reading geometry; while true, each full object scan fills `Box3DObjectSync::byName` (point `name` -> entry, first
   wins) and an object without `namesKnown` cannot skip. `name` is a prop marker, so a renamed piece rescans.
-* Kinds (`networkKinds`): `constraint_name` matches a data name exactly, else ignoring case (so the old lowercase
-  defaults, `weld` etc., still find `Weld`). The `SIM_Box3DConRel` subdata, by data name, of the relationship, its
+* Kinds (`networkKinds`): `constraint_name` matches a data name exactly, else ignoring case (so a lowercase
+  `weld` finds `Weld`). The `SIM_Box3DConRel` subdata, by data name, of the relationship, its
   `SIM_ConstraintNetworkRelationship` and its geometry (internal: the ConstraintGeometry and the object); the first
   name found wins. Kinds are re-read every sync (a few subdata); any change reprocesses the network.
   The HDK's `SIM_ConstraintNetwork` iterators / accessors are not used: the geometry is read directly, which keeps
@@ -138,7 +138,7 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   it and the attribute cleared (so it switches once), its local frames (read before it was destroyed) put through the
   bodies' poses give the anchors' `current_P` / `current_orient` (`switchFrames`: written by `writeLiveFrames` as if the joint were
   live), and the fingerprint is zeroed so the next sync reprocesses the network and makes the new joint from the saved
-  local frames, exactly where the old one was. It also takes its next settings (`applyNextSettings`): every primitive attribute
+  local frames, exactly where the previous one was. It also takes its next settings (`applyNextSettings`): every primitive attribute
   `next_<setting>` that is set (a number above kUnsetFloat, a toggle or integer of 0 or more, a non-empty string) becomes `<setting>`
   (made with every other primitive "not set" if the geometry has none) and is cleared; `next_constraint_type` becomes
   `constraint_type` (written by hand: Constraint Properties does not edit SideFX constraints). The Solver SOP's break wrangle does the same from a list of the settings (`takenext`, `next_setting_names`).

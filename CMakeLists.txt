@@ -156,7 +156,7 @@ target_sources(b3dop_core_physics PRIVATE
 b3dop_add_test_cases(physics)
 b3dop_add_test(mesh)
 b3dop_add_test(heightfield)
-b3dop_add_test(plane)
+b3dop_add_test(ground)
 b3dop_add_test(joints)
 b3dop_add_test(sidefx)
 b3dop_add_test(glue)

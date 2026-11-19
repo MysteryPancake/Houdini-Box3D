@@ -4,41 +4,30 @@ What the nodes expose and what is deliberately left out. Index and rules: [CLAUD
 
 ## Parameters
 
-Defaults, ranges and menus are defined once, in the `Box3DParms` tables: the solver's in `src/dop/SIM_SolverBox3D.cpp`,
-Box3D Data's in `src/dop/SIM_Box3DData.cpp`. Look values up there; do not copy them into docs. The worker-count bounds
-are `b3dop::kDefaultWorkerCount` / `kMaxWorkerCount` (`Box3DWorld.h`).
+Names, defaults, ranges and menus are defined once, in the `Box3DParms` tables: the solver's in `src/dop/SIM_SolverBox3D.cpp`,
+Box3D Data's in `src/dop/SIM_Box3DData.cpp` (`toBodySettings()` maps them to `b3dop::BodySettings`). Look values up
+there; do not copy them into docs. The worker-count bounds are `b3dop::kDefaultWorkerCount` / `kMaxWorkerCount`
+(`Box3DWorld.h`).
 
-Solver (read every step; only the thread count rebuilds the world): `gravity`, `substeps` (Substeps), `solverpasses` (Constraint Iterations), `autothreads`, `threads`
-(default `b3dop::defaultWorkerCount()` in `Box3DCpu.h`: the machine's physical performance cores, as Box3D recommends;
-`WorldSettings` keeps `kDefaultWorkerCount`), `enablesleep`, `timescale`, `enableaging`, `reapdead`, `reapatframeend` (disabled while `reapdead` is off), and Box3D's tuning
-(Box3D's defaults except the contact stiffness and damping, tuned for bouncier, more rigid contacts): `contactstiffness`, `contactdamping`, `contactpushspeed`, `bouncethreshold`,
-`contactrecycledistance`, `maxlinearspeed`, `enablecontinuous`, `enablewarmstarting`, `isotropicinertia`,
-`restitutioniterations`, `restitutionpropagation`, `impactminspeed`, `gluecompound` (on: glued groups as one body, see [glue-compound.md](glue-compound.md)), `gluecompoundload` (0: off, scales the inertial load on a compound's bonds). Force DOPs: `useforces`, `forceswake` (disabled while
-`useforces` is off). Box3D Data: `startasleep` and `sleepthreshold` are disabled while `enablesleep` is off,
-`mass` / `density` by `computemass`; joint nodes: see `enabledBy` in [joints.md](joints.md). Solver
-`frictionmixing` and `restitutionmixing` menus list the rules in the same order (geometric mean, minimum, maximum,
-average, multiply); `currentWorldSettings` maps the index to each enum (their orders differ). Settings on one node that
-need a setting on the other (sleep, Fast Object, impacts, contact recycling) say so in the tooltip: Houdini can't
-disable across nodes.
-
-Box3D Data (per object): `defaultshape` (menu order: box, sphere, convex hull, concave, capsule, none, plane, cylinder; the stored value
-is the menu index; default convex hull), `autofit`, `hullperconnected`, `bullet_primS` / `bullet_radius` / `bullet_length` /
-`bullet_primT` / `bullet_primR` (the hand-set shape), `bodytype` (static, kinematic,
-dynamic), `computemass`, `computecom`, `mass`, `density`, `inertialtensorstiffness`, `gravityscale`, `friction`, `bounce`, `rollingresistance`,
-`tangentvelocity` (Conveyor Velocity), `lineardamping`, `angulardamping`, `ccdthreshold`, `fastobject`,
-`contactrecycling`, `enablesleep`, `startasleep`, `sleepthreshold`, `addimpact`. Names match the point attributes that override them; material values
-have a hard minimum of 0 (Box3D asserts on negatives). `toBodySettings()` maps them to `b3dop::BodySettings`.
+* Solver: read every step, except the thread count, which rebuilds the world. `threads` defaults to
+  `b3dop::defaultWorkerCount()` (`Box3DCpu.h`: the machine's physical performance cores, as Box3D recommends).
+  The Box3D tuning settings are Box3D's defaults except the contact stiffness and damping, tuned for bouncier, more rigid
+  contacts. `gluecompound` and `gluecompoundload`: [glue-compound.md](glue-compound.md).
+* Disabled conditions: `reapatframeend` while `reapdead` is off, `forceswake` while `useforces` is off, Box3D Data's
+  `startasleep` / `sleepthreshold` while `enablesleep` is off, `mass` / `density` by `computemass`. Joint nodes: `enabledBy`
+  in [joints.md](joints.md). Settings on one node that need a setting on the other (sleep, Fast Object, impacts,
+  contact recycling) say so in the tooltip: Houdini can't disable across nodes.
+* The solver's `frictionmixing` and `restitutionmixing` menus list the rules in the same order (geometric mean, minimum,
+  maximum, average, multiply); `currentWorldSettings` maps the index to each enum (their orders differ).
+* Box3D Data's `defaultshape` stores the menu index (order: box, sphere, convex hull, concave, capsule, none, plane,
+  cylinder; default convex hull). Its names match the point attributes that override them. Material values have a hard
+  minimum of 0 (Box3D asserts on negatives).
 
 ## Point attributes
 
-`P` (required), `orient` (packed: the rotation since `restxform`), `restxform`, `v`, `w` (rad/s), `id`, `active`, `animated`, `mass`, `computemass`, `computecom`,
-`density`, `inertialtensorstiffness`, `friction`, `bounce`, `lineardamping`, `angulardamping`, `gravityscale`,
-`enablesleep`, `sleepthreshold`, `ccdthreshold`, `awake`, `enabled`, `fastobject`, `fastrotation`, `contactrecycling`,
-`rollingresistance`, `tangentvelocity`, `collision_category`, `collision_mask`, `collision_group`, `lock_linear`, `lock_angular`, `dead`, `age`, `life`,
-`deforming`, `bullet_autofit_valid`, `bullet_georep`, `bullet_autofit`, `bullet_primS` / `R` / `T`, `bullet_radius`,
-`bullet_length`, `pscale`, `scale`, `force` / `torque`, `name` (joint anchors). The list the sync reads by name is
-`Box3DAttribNames.h`. Negative material values are clamped to 0, non-finite ones ignored (`gravityscale`
-may be negative). Identity is `(object id, id or point number)`.
+The list the sync reads by name is `Box3DAttribNames.h` (user reference: [attributes.md](../attributes.md)). Negative
+material values are clamped to 0, non-finite ones ignored (`gravityscale` may be negative). `name` is read for joint
+anchors. Identity is `(object id, id or point number)`.
 
 Written: `P`, `orient`, `v`, `w` and packed transforms (awake dynamic bodies), `awake` (if it exists),
 `restxform` / `pivot` / `orient` on new packed bodies without a rest ([bodies.md](bodies.md)), `bullet_autofit_valid`, `mass` (computemass), `age` / `dead` (aging), `force` / `torque` zeroed once applied; `dead` points lose their body, and are deleted with
@@ -80,6 +69,6 @@ are simple folders, each a one-folder switcher with `PRM_SpareData::groupTypeSim
 uses one kind, except `subfolder()`: a simple folder inside a tab (`<prefix>sub<index>`), counted as one parameter of
 the tab. The solver uses tabs by subject, laid out like the Box3D Solver SOP's (same tab order and folder names): Solver (time scale, Substeps, Constraint Iterations; simple folders Contacts, Sleeping, Aging),
 Forces (gravity; folders Force DOPs, Bounce / Friction, Glue), Visualization (folder Geometry: Export Collision Shapes),
-Advanced (folders Stability and Performance) and Output (folder Impact Data); its guide parameters are a plain list on Houdini's own Guide Options tab (so the
+Advanced (folders Stability, Ground Box: Ground Box Size, and Performance) and Output (folder Impact Data); its guide parameters are a plain list on Houdini's own Guide Options tab (so the
 solver's tabs sit inside Data Options). Box3D Data and the joint nodes use simple folders: Box3D Data's are Shape, Body, Material, CCD & Contacts (CCD Threshold, Fast Object, Contact Recycling, Add
 Impact Data) and Sleep (Allow Sleeping, Start Asleep, Sleep Threshold). A function-local static, because Houdini keeps pointers into it. Menu tokens are "0", "1", ... in item order (read as ints).

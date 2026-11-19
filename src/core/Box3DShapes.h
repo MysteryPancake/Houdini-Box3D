@@ -27,8 +27,8 @@ enum class ShapeType : int {
   Concave = 3,
   Capsule = 4,  // axis along the body's Y
   None = 5,     // no collision shape: a static body that nothing collides with
-  Plane = 6,    // infinite plane through the body origin, facing the body's +Y;
-                // static bodies only
+  Plane = 6,    // a ground slab: its top is the plane through the body origin,
+                // facing the body's +Y (groundSpec); static bodies only
   Cylinder = 7, // axis along the body's Y; a polygon prism hull (Box3DWorld)
 };
 
@@ -51,6 +51,40 @@ struct ShapeSpec {
                   // sphere ignores it
                   1.0f};
 };
+
+// A ground (a Ground Plane DOP, a static `plane` piece): a wide, deep box whose
+// top face is the plane y = 0 of its body. Wide and long, so nothing walks off
+// its edge; deep, so a fast body cannot get through. The defaults are well
+// inside Box3D's world bounds (B3_HUGE) and small enough that float
+// coordinates stay fine near the body; the user can change them (the solver's
+// Ground Size).
+struct GroundSize {
+  // Along x, below the surface (y), along z.
+  float size[3] = {2000.0f, 20.0f, 2000.0f};
+};
+constexpr float kMinGroundSize = 0.1f;
+constexpr float kMaxGroundSize[3] = {20000.0f, 5000.0f,
+                                     20000.0f}; // below B3_HUGE
+
+// `v` kept within [kMinGroundSize, max]; the default for a non-finite value.
+inline float clampGroundSize(float v, float max, float fallback) {
+  if (!std::isfinite(v))
+    return fallback;
+  return v < kMinGroundSize ? kMinGroundSize : (v > max ? max : v);
+}
+
+// The ground as a ShapeSpec of type Plane: halfExtents are half the size on
+// each axis, so a spec carries its size (and a change of size is a change of
+// shape).
+inline ShapeSpec groundSpec(const GroundSize &g = GroundSize()) {
+  const GroundSize d;
+  ShapeSpec s;
+  s.type = ShapeType::Plane;
+  for (int i = 0; i < 3; ++i)
+    s.halfExtents[i] =
+        0.5f * clampGroundSize(g.size[i], kMaxGroundSize[i], d.size[i]);
+  return s;
+}
 
 // `bullet_georep` -> ShapeType, Houdini's lowercase names, exact match.
 // `compound` and `concave` are both Concave. False (out untouched) for null,
@@ -175,7 +209,7 @@ inline float shapeVolume(const ShapeSpec &s) {
   case ShapeType::Cylinder:
     return pi * r * r * (2.0f * s.halfLength);
   case ShapeType::Plane:
-    return 0.0f;
+    return 0.0f; // static: no mass
   default:
     return 8.0f * s.halfExtents[0] * s.halfExtents[1] * s.halfExtents[2];
   }

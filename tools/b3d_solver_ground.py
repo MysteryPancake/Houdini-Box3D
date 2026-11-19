@@ -1,10 +1,11 @@
 """Box3D Solver SOP: Ground Collision, as RBD Bullet Solver's Ground Collision folder.
 
-A Ground Type menu (None, Ground Plane, Height Field) picks, through a DOP Switch with a Null, a Ground
-Plane DOP and a Static Object DOP, what joins the pieces. The Ground Plane takes Position and Rotation.
+A Ground Type menu (None, Ground Box, Height Field) picks, through a DOP Switch with a Null, a Ground
+Plane DOP and a Static Object DOP, what joins the pieces. The Ground Box (the Ground Plane DOP) takes Position,
+Rotation and Size.
 The Static Object takes the geometry of a Height Field node, through a HeightField Transform for World
 Scale, and Use Deforming Geometry. A Box3D Data after the Switch gives either one its friction, bounce,
-rolling resistance and conveyor velocity."""
+rolling resistance and conveyor velocity. Size is the solver's Ground Box Size."""
 
 import hou
 
@@ -24,6 +25,7 @@ from b3d_solver_common import (
 
 GROUND_POS = "ground_pos"
 GROUND_ROT = "ground_rot"
+GROUND_SIZE = "groundsize"  # the solver's Ground Box Size, pulled from its tab into this folder (make_solver_sop.py)
 GROUND_HEIGHTFIELD = "groundheightfield"  # the Height Field node's path (a node reference)
 GROUND_DEFORMING = "ground_animategeo"
 GROUND_MERGE = "ground_heightfield_in"  # reads the Height Field parameter (see finish_ground)
@@ -88,7 +90,7 @@ def ground_visualization():
     show.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_GROUND} == 0 }}")
     shade = hou.MenuParmTemplate(
         SHADE_GROUND, "Show Ground as", ("0", "1"), menu_labels=("Wireframe", "Shaded"), default_value=0,
-        help="How a ground plane is drawn. A height field is always shaded.")
+        help="How a ground box is drawn. A height field is always shaded.")
     shade.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_GROUND} != 1 }}")
     b3d_hda.show_in_toolbar(show)  # the bar along the top of the viewport
     folder = collapsible("b3dsop_show_ground", "Ground", [show, shade])
@@ -156,17 +158,18 @@ def material_templates(data):
 
 
 def ground_items(data):
-    """The asset's Ground Collision folder, and the links (inner node path, inner name, outer name)
-    for the material settings. `data` is the Box3D Data node the folder takes its settings from."""
+    """The asset's Ground Collision folder (Size is added to it once it is pulled from the solver's tabs), and
+    the links (inner node path, inner name, outer name) for the material settings. `data` is the Box3D Data node the folder takes its settings from."""
     material, names = material_templates(data)
     menu = hou.MenuParmTemplate(
         USE_GROUND, "Ground Type", ("0", "1", "2"),  # numeric tokens: the hide conditions compare numbers
-        menu_labels=("None", "Ground Plane", "Height Field"), default_value=0,
-        help="A ground for the pieces to land on, besides the Collision input. A ground plane is infinite.")
+        menu_labels=("None", "Ground Box", "Height Field"), default_value=0,
+        help="A ground for the pieces to land on, besides the Collision input. A ground box is a very wide, "
+             "deep box with a flat top: Size sets how big.")
     pos = hou.FloatParmTemplate(GROUND_POS, "Position", 3, default_value=(0.0, 0.0, 0.0),
-                                help="A point on the ground plane.")
+                                help="A point on the ground box's top.")
     rot = hou.FloatParmTemplate(GROUND_ROT, "Rotation", 3, default_value=(0.0, 0.0, 0.0),
-                                help="Turns the ground plane, in degrees. It faces up before it is turned.")
+                                help="Turns the ground box, in degrees. It faces up before it is turned.")
     for pt in (pos, rot):
         pt.setConditional(hou.parmCondType.HideWhen, f"{{ {USE_GROUND} != 1 }}")
     field = hou.StringParmTemplate(
