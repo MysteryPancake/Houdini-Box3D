@@ -789,7 +789,9 @@ def test_sidefx_hard_untyped():
 def _aging_pop_compare(tag, reap, frame_end):
     """A piece with life 0.5 in Box3D against a particle with life 0.5 in the POP Solver, with reaping
     and Reap At Frame End set to reap / frame_end on both. Returns the two per-frame tracks."""
-    path, names = packed_boxes(f"age_box3d_{tag}", [GROUND, {"size": (1, 1, 1), "center": (0, 0.5, 0),
+    # The ground is in the same geometry, so it has a life too: long, as a piece with a life of 0 dies.
+    ground = dict(GROUND, attrs=dict(GROUND["attrs"], life=1.0e6, age=0.0))
+    path, names = packed_boxes(f"age_box3d_{tag}", [ground, {"size": (1, 1, 1), "center": (0, 0.5, 0),
                                                              "attrs": {"active": 1, "life": 0.5, "age": 0.0}}])
     dop = new_dopnet(f"age_box3d_{tag}")
     pieces = packed_object(dop, "pieces", path)

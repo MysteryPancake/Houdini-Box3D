@@ -35,7 +35,7 @@ moved by the simulated points with the same name (Transform Pieces, once per obj
 Collider Label PackedObject, as RBD Packed Object: other solvers collide with the object as packed
 pieces, and the Box3D Solver keeps it one body per point.
 
-Its parameters: the Object tab (object name, creation frame, solve on creation frame, SOP path,
+Its parameters: the Object tab (object name, creation frame, solve on creation frame, Geometry Source, SOP path,
 object transform, overwrite from SOP, deforming, Add Impact Data, display geometry), Initial State (with
 Start Asleep), then every Box3D Data folder as a tab. The asset is listed under Box3D in the Tab menu.
 
@@ -80,6 +80,11 @@ INITIAL_ITEMS = ("active", "static", "animatedstatic", "deformingstatic", "defor
 INITIAL_LABELS = ("Create Active Objects", "Create Static Objects", "Create Animated Static Objects",
                   "Create Deforming Static Objects", "Create Deforming Active Objects", "Custom")
 EFFECTIVE_BODY, EFFECTIVE_DEFORM = "effectivebodytype", "effectivedeforming"
+# Geometry Source, as RBD Packed Object's: the SOP Path, or the DOP network's first to fourth input. The stage reads
+# the hidden path this gives (EFFECTIVE_SOP).
+GEO_SOURCE, EFFECTIVE_SOP = "geosource", "effectivesoppath"
+GEO_SOURCES = (("sop", "SOP"), ("first", "First Context Geometry"), ("second", "Second Context Geometry"),
+               ("third", "Third Context Geometry"), ("fourth", "Fourth Context Geometry"))
 # Body Type's menu is Static 0, Kinematic 1, Dynamic 2: Active and Deforming Active are Dynamic, Animated Static is
 # Kinematic, the others Static.
 BODY_FROM_TYPE = (f'if(ch("{INITIAL_TYPE}") == 5, ch("bodytype"), '
@@ -347,7 +352,7 @@ def wire_stage(asset, sop_path_parm, transform_parm, objname_parm):
     Object Transform: Into This Object, the DOP network's space, so world space), and the name
     prefix."""
     merge = asset.node(f"{STAGE}/object_merge")
-    merge.parm("objpath1").set(f'`chsop("../../{sop_path_parm}")`')
+    merge.parm("objpath1").set(f'`chsop("../../{sop_path_parm}")`')  # the effective path
     if transform_parm and merge.parm("xformtype") is not None:
         merge.parm("xformtype").setExpression(f'ch("../../{transform_parm}")', hou.exprLanguage.Hscript)
     elif transform_parm:
@@ -492,7 +497,7 @@ def build(out_path):
         OVERWRITE_ATTRIBS, "Overwrite Attributes from SOP", 1, default_value=(OVERWRITE_DEFAULT,),
         disable_when=f"{{ {OVERWRITE_FROM_SOP} == 0 }}",
         help="The point attributes copied from the SOP each step, matched by name. Wildcards work.")
-    b3d_hda.attrib_menu(overwrite_attribs, classes="point", source=f"parm:{SOP_PATH}")
+    b3d_hda.attrib_menu(overwrite_attribs, classes="point", source=f"parm:{EFFECTIVE_SOP}")
     reimport = hou.ToggleParmTemplate(REIMPORT_SOP, "Read SOP Every Step", default_value=False,
                                       help="Reads the whole SOP again every step (animated colliders).")
     reimport.hide(True)
@@ -538,6 +543,22 @@ def build(out_path):
     names = [pt for _, pt in promoted]
     names[1:1] = [create_frame, sim_frame]
     names += [initial_type, overwrite, overwrite_attribs, reimport, deforming, effective_body, effective_deform]
+    # Geometry Source above SOP Path, which only the SOP choice uses. The stage reads the path the choice gives.
+    geo_source = hou.MenuParmTemplate(
+        GEO_SOURCE, "Geometry Source", tuple(token for token, _ in GEO_SOURCES),
+        tuple(label for _, label in GEO_SOURCES), default_value=0,
+        help="Where the pieces come from: the SOP Path, or the geometry wired into the DOP network's first to "
+             "fourth input.")
+    effective_sop = hou.StringParmTemplate(
+        EFFECTIVE_SOP, "SOP Path", 1, default_value=("",),
+        default_expression=(f'ifs(ch("{GEO_SOURCE}") == 0, chs("{SOP_PATH}"), '
+                            f'dopcontextgeo(".", ch("{GEO_SOURCE}") - 1))',),
+        default_expression_language=(hou.scriptLanguage.Hscript,))
+    effective_sop.hide(True)
+    at = next(i for i, pt in enumerate(names) if pt.name() == SOP_PATH)
+    names[at].setConditional(hou.parmCondType.DisableWhen, f"{{ {GEO_SOURCE} != sop }}")
+    names[at:at] = [geo_source]
+    names.append(effective_sop)
     names += display_templates()
     group = hou.ParmTemplateGroup()
     group.append(hou.FolderParmTemplate("b3dpo_object", "Object", names, folder_type=hou.folderType.Tabs))
@@ -574,7 +595,7 @@ def build(out_path):
                           "from Box3D Data's defaults become point attributes; a point's own attribute wins.")
 
     asset.allowEditingOfContents()
-    wire_stage(asset, SOP_PATH, transform_parm, OBJECT_NAME)
+    wire_stage(asset, EFFECTIVE_SOP, transform_parm, OBJECT_NAME)
     wire_hires(asset, transform_parm)
     wire_overwrite(asset)
     for node, pt in promoted:

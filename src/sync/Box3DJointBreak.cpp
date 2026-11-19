@@ -632,17 +632,33 @@ void markQuietJoints(const b3dop::Box3DWorld &world,
   }
 }
 
+// Enable Aging, as RBD Bullet Solver: every constraint primitive's `age` (made
+// if missing) grows by the time step.
+void ageConstraints(GU_Detail *gdp, float dt) {
+  if (!gdp->findPrimitiveAttribute("age"))
+    gdp->addFloatTuple(GA_ATTRIB_PRIMITIVE, "age", 1);
+  GA_RWHandleF age(gdp, GA_ATTRIB_PRIMITIVE, "age");
+  if (!age.isValid())
+    return;
+  for (GA_Iterator it(gdp->getPrimitiveRange()); !it.atEnd(); ++it)
+    age.set(*it, age.get(*it) + dt);
+  age.getAttribute()->bumpDataId();
+}
+
 // One network's results into its (locked, writable) geometry. True if a
 // constraint_name switched.
 bool writeNetworkResults(const b3dop::Box3DWorld &world, GU_Detail *gdp,
                          const std::vector<Box3DJointEntry *> &entries,
-                         const std::vector<Box3DJointEntry *> *broken) {
+                         const std::vector<Box3DJointEntry *> *broken,
+                         float ageDt) {
   const PrimExists primOk{gdp};
   const bool switched =
       broken && writeBrokenJoints(world, gdp, primOk, *broken);
   markQuietJoints(world, entries);
   writeLiveFrames(world, gdp, entries, primOk);
   writeFeedback(world, gdp, primOk, entries);
+  if (ageDt > 0.0f)
+    ageConstraints(gdp, ageDt);
   return switched;
 }
 
@@ -688,7 +704,8 @@ int jointsAfterStep(Box3DSharedState &st, SIM_ObjectArray &objects) {
       SIM_GeometryAutoWriteLock lock(geo);
       GU_Detail *gdp = &lock.getGdp();
       switched = writeNetworkResults(world, gdp, entries,
-                                     anyBroken ? &broken->second : nullptr);
+                                     anyBroken ? &broken->second : nullptr,
+                                     st.constraintAgeDt);
     }
     // Our own write is not an edit: re-record the fingerprint (the lock is
     // released). A switched constraint_name is ours too, but must be read:

@@ -5,6 +5,7 @@ import hou
 import b3d_prepare
 from b3d_hda import layout, set_operation
 from b3d_layouts import DOP_LAYOUT, SOLVER_LAYOUT
+from b3d_solver_activeage import build_active_age_sop, build_age_sop, build_constraint_age_sop
 from b3d_solver_common import (
     COLLISION,
     COLLISION_TYPE,
@@ -551,11 +552,12 @@ def build_network(sub):
     # Ground Collision: the Height Field chain (the DOP network reads its end).
     build_ground_sops(sub)
 
-    # The DOP network, its context geometry three streams (dopcontextgeo(".", i) inside).
+    # The DOP network, its context geometry three streams (read inside by Geometry Source, CONTEXT_GEOMETRY).
     dopnet = create(sub, "dopnet", "dopnet")
-    dopnet.setInput(DOP_PIECES, sim_scaled)
-    dopnet.setInput(DOP_CONSTRAINTS, scale_wrangle(sub, "scale_constraint_attribs", scaled[CONSTRAINTS],
-                                                   SCALE_CONSTRAINTS_VEX, inverse=False, run_over="primitive"))
+    dopnet.setInput(DOP_PIECES, build_active_age_sop(sub, build_age_sop(sub, sim_scaled)))
+    dopnet.setInput(DOP_CONSTRAINTS, build_constraint_age_sop(sub, scale_wrangle(
+        sub, "scale_constraint_attribs", scaled[CONSTRAINTS], SCALE_CONSTRAINTS_VEX, inverse=False,
+        run_over="primitive")))
     deforming = create(sub, "attribwrangle", "collision_deforming")
     deforming.setInput(0, collision_rest(sub, dopnet, collision_pieces))
     deforming.parm("class").set("point")

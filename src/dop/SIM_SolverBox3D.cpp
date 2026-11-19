@@ -93,7 +93,7 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
           .toggle("enableaging", "Enable Aging", false,
                   "Add the frame time step (not Time Scale-adjusted) to each "
                   "point's age, and mark points dead once age exceeds life.")
-          .toggle("reapdead", "Reap Dead Points", false,
+          .toggle("reapdead", "Reap Dead Points", true,
                   "Delete points whose dead attribute is 1. Off keeps them "
                   "where they died, no longer simulated.")
           .toggle("reapatframeend", "Reap At Frame End", true,
@@ -544,6 +544,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   {
     UT_PerfMonAutoSolveEvent perf(this, "Updating Constraint States");
     advanceGlue(*st, st->stepDt);
+    st->constraintAgeDt = getEnableAging() ? static_cast<float>(dt) : 0.0f;
     if (const int broke = jointsAfterStep(*st, objects))
       B3D_LOG("  joints: %d broke", broke);
   }

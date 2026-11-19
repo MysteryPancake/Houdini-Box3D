@@ -68,7 +68,7 @@ Node layout: small networks (the packing subnets, the Packed Object's stage) use
 `tools/make_packed_object.py` builds it from the plugin just compiled, so it always matches Box3D Data. It copies RBD
 Packed Object (read from `houdini_network_dump.py` dumps of RBD Bullet Solver and RBD Packed Object): Empty Object -> SOP
 Geometry (data name `Geometry`) -> Box3D Data -> `visualize_hires` -> Collider Label, the output (no input); SOP Geometry reads a SOP stage inside the asset (`STAGE`,
-RBD Packed Object's `create_or_overwrite_attributes`): Object Merge of the asset's SOP Path (Use Object Transform drives
+RBD Packed Object's `create_or_overwrite_attributes`): Object Merge of the asset's effective SOP path (`EFFECTIVE_SOP`, hidden: SOP Path, or `dopcontextgeo(".", n)` for Geometry Source First to Fourth Context Geometry; Use Object Transform drives
 its Transform, Into This Object: the DOP network's space; SOP Geometry's own stays off, as 22.0's has no OBJ Path to
 point at an object) -> `setup_defaults` -> `create_name` -> `set_rest`, `initial_transform` and `setup_velocities` on the creation frame
 only -> `setup_deforming` -> `OUT`. The stage's
@@ -104,7 +104,7 @@ references to the asset's parameters are set once the asset exists (`wire_stage`
   Type and Deforming follow it, through two hidden parameters the stage reads (`effectivebodytype`, `effectivedeforming`, expressions of the menu; Custom takes the
   visible `bodytype` / `deforming`, which are greyed out otherwise). A point's own `active`, `animated` or `deforming` still wins. The Solver SOP's collision object sets it to Custom
   and drives Body Type by Collision Type as before; the Pieces tab has the menu first in Body.
-* Parameters: an Object tab (Object Name `$OS`, Creation Frame (default: the network's Start Frame), Creation Frame Specifies Simulation Frame, Solve on Creation Frame, SOP Path, Use Object
+* Parameters: an Object tab (Object Name `$OS`, Creation Frame (default: the network's Start Frame), Creation Frame Specifies Simulation Frame, Solve on Creation Frame, Geometry Source (`GEO_SOURCE`, greys out SOP Path unless SOP), SOP Path, Use Object
   Transform, Overwrite Attributes from SOP (toggle and attribute list, default `OVERWRITE_DEFAULT`), a hidden Read SOP Every Step (`REIMPORT_SOP`), Deforming, Display Geometry), Initial State (Position, Rotation, Inherit Pivot from Point Position, Pivot, Velocity, Angular Velocity, Inherit Velocity), then each Box3D Data folder as a tab (`pull` moves Add Impact Data from CCD & Contacts
   to Shape, as RBD Packed Object has it with its shape settings; Start Asleep stays in Sleep), read by the stage. Only the object-level settings
   (`b3d_settings.SKIP`: Hull per Connected, Add Impact Data) are channel references into the inner Box3D
@@ -139,7 +139,7 @@ Traps it handles:
 name is another table), after the Packed Object, which it installs first. The module docstring draws the network.
 Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry, Constraints, Proxy, Simulation Points).
 * A SOP-level DOP network whose inputs 0-2 are the simulated pieces (Geometry, or Proxy when connected), Constraints
-  and Collision, read inside with `dopcontextgeo(".", i)`.
+  and Collision, read inside by the objects' Geometry Source (`CONTEXT_GEOMETRY`: First and Third Context Geometry, as RBD Bullet Solver's, the SOP Path empty).
   Pieces and collision are Box3D Packed Objects, Use Object Transform off (SOP space). Unconnected inputs are switched
   out by point count, so an empty input counts as unconnected everywhere alike: SOP Switches with the input's `IN_*`
   null as spare input and `npoints(-1) > 0`, DOP Switches with `npoints(opinputpath("..", i)) > 0` (the DOP
@@ -188,15 +188,23 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   Bullet's names (`enable_constraintbreaks`, the `breaks` multiparm, `constraint_names#`, `constraint_mode#`,
   `constraint_usefromframe#`, `constraint_useatframe#`, and per key in `THRESHOLDS` `constraint_use<key>#`,
   `constraint_<key>threshold#`, `constraint_scale<key>#`, `constraint_use<key>var#`) and rules (Distance and Impact
-  thresholds x World Scale, x the `strength` attribute with Scale by Attribute, scattered by Variance with `__primid` else
+  thresholds x World Scale, x the `strength` attribute with Scale by Attribute (with Update from Input,
+  `constraint_<key>attribupdate#`, the same constraint's value in the live Constraints input: `live_constraints`, an Object Merge of the
+  DOP network's constraints input as the wrangle's input 2, found by `__primid`, which `store_primid` writes on the input), scattered by Variance with `__primid` else
   the primitive number; Distance compares against threshold + `restlength`; At Frame's window is 0.5 / Global Substeps). The wrangle reads them by path. The SOP Solver is the
   Multiple Solver's last input, behind an Enable Solver DOP (`enable_constraint_breaks`): off, the constraint geometry is not
   imported, because a rewrite changes its data ids and the solver then reads the whole network again each step. Test
   `solver_sop_break_impact_bullet`, `solver_sop_break_atframe_bullet`, `solver_sop_break_distance_bullet` and the INFO
-  `solver_sop_break_angle_torque_bullet` (against the RBD Bullet Solver SOP). Not there: Force (see status.md), Group, Update from Input, plastic flow and the VEX snippet.
+  `solver_sop_break_angle_torque_bullet` and `solver_sop_break_attrib_update_bullet` (against the RBD Bullet Solver SOP). Not there: Force (see status.md), Group, plastic flow and the VEX snippet.
+* Constraint attribute updates (`tools/b3d_solver_updates.py`, as RBD Bullet Solver's): the Constraints tab's Override Attributes folder
+  (`enable_constraintupdates` with its label hidden, joined to `constraint_attributes`, then `constraint_attribgroup`) runs a SOP Solver DOP
+  (`constraint_updates`) over the ConstraintGeometry behind an Enable Solver DOP, before the breaks: an Attribute Copy SOP copies the listed
+  attributes from `live_constraints` (an Object Merge of the DOP network's constraints input) matched by `__primid`, onto the Group's
+  constraints. Overwrite with SOP (`constraint_reloadfromsops`, Advanced > Constraints) drives the Constraint Network's Reload from SOPs
+  (read the whole input again every step) and greys the update out. Test `solver_sop_constraint_updates_bullet`.
 * Help card: `HELP_CARD` (`b3d_solver_help.py`, Houdini wiki markup) as the definition's `Help` section.
-* The Constraint Network DOP uses Second Context Geometry and Attach Internal Constraints to Object (as RBD Bullet
-  Solver), so the network is the pieces object's `ConstraintGeometry`. Only the pieces go through it, the collision
+* The Constraint Network DOP uses Second Context Geometry and Attach Internal Constraints to Object, with Reload from SOPs off (as RBD Bullet
+  Solver; its default expression reloads while the input changes over time, which would make every attribute follow the input), so the network is the pieces object's `ConstraintGeometry`. Only the pieces go through it, the collision
   object is merged after: a second object would get its own copy and make every joint twice. Every relationship in
   `RELATIONSHIPS` (ours and SideFX's) is merged into it with default Data Names, so any `constraint_name` finds one.
   Their parameters are not promoted: set values per primitive (floats multiply the node's).
@@ -289,7 +297,7 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   Contacts folders (`COLLIDER_FOLDERS`, all named `collision_*`), the last cut to Contact Recycling as Contacts
   (`COLLIDER_DROPPED`: the rest does nothing for a Static / Kinematic body). Pieces: the pieces' Box3D Data folders
   (Shape, Body, Material, CCD & Contacts, Sleep) without their Allow Sleeping (`PIECES_DROPPED`; `drop_templates`),
-  then an Override Attributes folder holding Override Attributes from SOP (`overwritefromsop`, off, linked to the pieces' Packed
+  then an Override Attributes simple folder holding Override Attributes from SOP (`overwritefromsop`, label hidden, joined to Attributes, off, linked to the pieces' Packed
   Object, which then reads the SOP every step; the collision's is driven by Collision Type),
   the solver's Allow Sleeping is in the Solver tab's Sleeping folder instead (one switch for every body); names the solver also uses would
   get `piece_`. Conditions are rewritten with the names (the pieces' Start Asleep and Sleep Threshold grey out
@@ -361,9 +369,12 @@ through. No Bullet settings, no Proxy attribute transfer.
   type's toggle is on. Its `ch()` calls read the wrangle's own parameters (RBD's button for making spare parameters from them is not here).
   Disable Collisions (`docollisions`, `collisions`: Disable 0, Enable 1) writes `collide_connected`, RBD Constraint Properties' wording for
   the Joint folder's Collide Connected; it is written after the rows, so it wins if both are ticked.
-  The **Next Constraint** folder holds Switch
-  Constraint Type When Broken (`usenextconstraint`, the master: no `next_*` attribute is written while it is off), Next Constraint Name,
-  Next Constraint Type (`next_constrainttype`, which type's folder shows) and the next
+  The three type controls have RBD's hidden tick in front of the menu, hidden in Set mode: Constraint Type (`doconstrainttype`; in Edit mode
+  a type's ticked settings are written only while it is ticked, and the type's folders and menu are greyed out without it), Switch
+  Constraint Type When Broken (`dousenextconstraint` with `usenextconstraint`, a Disable / Enable menu) and Next Constraint Type
+  (`donext_constrainttype`, the same for the next settings). The **Next Constraint** folder holds Switch
+  Constraint Type When Broken (`usenextconstraint` Enable, ticked in Edit mode, is the master: no `next_*` attribute is written otherwise),
+  Next Constraint Name, Next Constraint Type (`next_constrainttype`, which type's folder shows) and the next
   settings, a folder per type with the same checkboxes (`next_<type>_<setting>`, written as `next_<setting>`, no scaling). In Set the next name
   is always written while the master is on, and the next settings that differ from the node's defaults. The solver turns them into the
   settings when the constraint switches ([joints.md](joints.md)).
@@ -390,10 +401,12 @@ through. No Bullet settings, no Proxy attribute transfer.
 `tools/make_configure_sop.py <out.hda>` builds `box3d_configure` (SOP): Box3D Data's settings, copied from the node
 (labels, defaults, ranges, conditions), written as point attributes. Laid out as RBD Configure: a tabbed multiparm
 (`MULTIPARM`, Number of Attributes) of entries, each with Enable (`enable#`), Group (`group#`) and Box3D Data's folders
-(`b3dcfg_folder<i>_#`), every setting `<name>#` with an `add<name>#` checkbox (`toggle_name`, label hidden); the packing
+(`b3dcfg_folder<i>_#`), every setting `<name>#` with an `add<name>#` checkbox (`toggle_name`, label hidden). A setting with Use Bounds is an integer slider clamped to 0 - 1 when it is an on / off one (`on_off_slider`), as RBD Configure's, so the row fills and Use Bounds sits at the right. The packing
 settings sit above the entries in the Attributes folder with them.
-Material Preset (`b3dcfg_materialpreset_#`: `materialtype#` None / Concrete / Glass / Wood / Metal, `materialpreset#` the material, `materialstate#` dry and clean or lubricated and greasy
-surfaces) fills the entry's `density#`, `bounce#` and `friction#` and ticks their `add...#` boxes, as RBD Configure's Physical Attributes does. The table is
+Var (`VAR_SETTINGS`: Density, Bounce, Friction, Rotational Stiffness; `use<name>var#` and `<name>var#` joined to the value, as RBD
+Configure's) multiplies each piece's value by `fit01(rand(@ptnum), 1 - var, 1 + var)` in the wrangle, as RBD's (`configure_var`).
+Material Preset (the top of the Material folder, above Bounce and Friction: `materialtype#` None / Concrete / Glass / Wood / Metal, `materialpreset#` the material, `materialstate#` dry and clean or lubricated and greasy
+surfaces, Type and Material joined) fills the entry's `density#`, `bounce#` and `friction#` and ticks their `add...#` boxes, as RBD Configure's Physical Attributes does. The table is
 `tools/b3d_materials.py`: RBD Configure's presets (materials, densities, the two frictions, Bounce by type) typed in, so nothing is read from its node, put into this asset's Python Module (`MATERIAL_MODULE`: `buildMaterialMenu`, `typeChanged`,
 `materialPresetCallback`, set off the menus' script callbacks, so a script that sets them calls the functions). Names map one to one except `MAPPING`: Default Shape -> `bullet_georep` (`GEOREP_VALUES`, menu order), Auto Fit
 -> `bullet_autofit`, Body Type -> `active` / `animated`, Start Asleep -> `awake` (inverted); `SKIP` holds the

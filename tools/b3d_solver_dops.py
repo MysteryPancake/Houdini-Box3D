@@ -4,11 +4,15 @@ import hou
 
 import b3d_hda
 from b3d_hda import labels
+from b3d_solver_activeage import build_active_age_dop
 from b3d_solver_breaks import build_breaks
+from b3d_solver_updates import build_constraint_updates
 from b3d_solver_ground import build_ground_dops, setp
 from b3d_solver_common import (
     COLLISION_SOURCE,
     COLLISION_TYPE,
+    CONSTRAINT_RELOAD,
+    CONTEXT_GEOMETRY,
     create,
     DOP_COLLISION,
     DOP_CONSTRAINTS,
@@ -36,7 +40,7 @@ from b3d_solver_common import (
 def packed_object(dopnet, name, context_input, object_name):
     obj = create(dopnet, PACKED_OBJECT, name)
     set_named(obj, "objname", object_name)
-    set_named(obj, "soppath", f'`dopcontextgeo(".", {context_input})`')
+    set_menu(obj, "geosource", CONTEXT_GEOMETRY[context_input])  # the SOP Path stays empty, as RBD Bullet Solver's
     set_named(obj, "usetransform", 0)  # SOP space, like RBD Bullet Solver
     # One hull per connected set, as RBD Bullet Solver sets bullet_groupconnected on its objects:
     # pieces sharing a `name` are packed together and must not merge into one hull.
@@ -120,8 +124,19 @@ def build_dops(dopnet):
     network = create(dopnet, "constraintnetwork", "constraintnetwork")
     network.setInput(0, pieces)
     network.setInput(1, rel_merge)
-    set_menu(network, "geosource", "second")  # Second Context Geometry
+    set_menu(network, "geosource", CONTEXT_GEOMETRY[DOP_CONSTRAINTS])
     set_named(network, "attachinternalconstraints", 1)
+    # Reload from SOPs is Overwrite with SOP, off by default, as RBD Bullet Solver's (the node's own default is an
+    # expression that reloads while the input changes over time): the constraints are read once, so an attribute that
+    # changes on the input afterwards only reaches the simulation through Update from Input or Enable Attribute
+    # Update from SOPs.
+    reload = network.parm("reloadfromsops")
+    if reload is None:
+        warn(f"{network.path()} has no Reload from SOPs: the constraints may be read again every step")
+    else:
+        reload.deleteAllKeyframes()
+        reload.setExpression(f'ch("{reload.node().relativePathTo(dopnet.parent())}/{CONSTRAINT_RELOAD}")',
+                             hou.exprLanguage.Hscript)
     constrained = create(dopnet, "switch", "use_constraints")
     constrained.setInput(0, pieces)
     constrained.setInput(1, network)
@@ -157,7 +172,9 @@ def build_dops(dopnet):
     multi.setInput(1, forces, FORCES_OUTPUTS.index("PRESOLVE"))
     multi.setInput(2, solver)
     multi.setInput(3, forces, FORCES_OUTPUTS.index("POSTSOLVE"))
-    multi.setInput(4, build_breaks(dopnet))  # Break Thresholds, after everything else
+    multi.setInput(4, build_active_age_dop(dopnet, "pieces"))  # Add Active Age Attribute, Just Activated
+    multi.setInput(5, build_constraint_updates(dopnet))  # Enable Attribute Update from SOPs, before the breaks
+    multi.setInput(6, build_breaks(dopnet))  # Break Thresholds, after everything else
     out = create(dopnet, "output", "output")
     out.setInput(0, multi)
     out.setDisplayFlag(True)

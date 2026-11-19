@@ -15,8 +15,9 @@ All are optional except `P`. A missing one uses the Box3D Data value. Every step
 | `animated` | int | With `active = 0`: follows its animation and pushes what it touches |
 | `enabled` | int | `0` = left out of the simulation |
 | `awake` | int | `0` = asleep. Sets the starting state, and is updated as the body sleeps |
-| `dead` | int | Nonzero = remove the body. With Reap Dead Points on, the point is deleted too |
-| `age` / `life` | float | With Enable Aging: `dead` once `age` passes `life` |
+| `dead` | int | Nonzero = remove the body. With Reap Dead Points (on by default), the point is deleted too |
+| `age` / `life` | float | With Enable Aging: `dead` once `age` passes `life`, so a `life` of 0 dies on the first step. No `life` attribute never dies |
+| `active_age` | float | Solver SOP with Add Active Age Attribute: the time the piece has been active, 0 while it is not |
 | `mass`, `computemass`, `density` | float / int | Mass, or `computemass` = 1 for `density` × volume |
 | `computecom` | int | 1 spins a piece about its shape's centre of mass, 0 about its point |
 | `inertialtensorstiffness` | float | Scales how hard the body is to spin |

@@ -15,8 +15,11 @@ SOLVER_LAYOUT = [
     [("Inputs", ["#0", "#1", "#2", "#3", "IN_geometry", "IN_constraints", "IN_proxy", "IN_collision"],
       {"color": INPUTS})],
     [("Geometry", ["world_scale_geometry", "world_scale_proxy", "sim_source", "sim_source_unscaled",
-                   "prepare_pieces", "collision_names_pieces", "scale_attributes", "switch_scale_attributes"], {"color": PREPARE}),
-     ("Constraints", ["world_scale_constraints", "scale_constraint_attribs", "switch_scale_constraint_attribs"],
+                   "prepare_pieces", "collision_names_pieces", "scale_attributes", "switch_scale_attributes",
+                   "create_age", "switch_create_age", "set_active_age_prepare", "set_active_age",
+                   "switch_active_age"], {"color": PREPARE}),
+     ("Constraints", ["world_scale_constraints", "scale_constraint_attribs", "switch_scale_constraint_attribs",
+                     "create_constraint_age", "switch_create_constraint_age", "store_primid"],
       {"color": PREPARE}),
      ("Collision", ["world_scale_collision", "prepare_collision", "collision_names_collision", "collision_at_start", "collision_rest",
                     "collision_deforming", "collision_unpack", "COLLISION_STATIC"], {"color": PREPARE}),
@@ -59,7 +62,7 @@ DOP_LAYOUT = [
      ("Ground", ["ground_none", "groundplane", "ground_heightfield", "switch_ground", "ground_data"],
       {"color": GROUND}),
      ("Forces", ["FORCES", "scale_forces"], {"color": EXTRA})],
-    [("Solve", ["objects_and_ground", "box3d_solver", "constraint_breaks", "enable_constraint_breaks", "multisolver",
+    [("Solve", ["objects_and_ground", "box3d_solver", "add_active_age", "enable_active_age", "constraint_updates", "enable_constraint_updates", "constraint_breaks", "enable_constraint_breaks", "multisolver",
                  "output"], {"color": SIMULATION})],
 ]
 

@@ -679,7 +679,7 @@ struct Box3DSharedState {
   bool wantNames = false;
   // solver Reap Dead Points: `dead` points are deleted (else kept, out of the
   // simulation)
-  bool reapDead = false;
+  bool reapDead = true;
   // solver Reap At Frame End: points that die during the step (aging) are
   // deleted at its end; else kept this frame and deleted by the next step
   bool reapAtFrameEnd = true;
@@ -720,6 +720,9 @@ struct Box3DSharedState {
       impactObjects; // objects with Impacts data from last step (sorted)
 
   float stepDt = 0.0f; // this step's Box3D time step (DOP step * Time Scale)
+  // Enable Aging: the time step added to each constraint's `age` this step (the
+  // DOP step, not Time Scale-adjusted), 0 when aging is off.
+  float constraintAgeDt = 0.0f;
   // Joints that went over their threshold in any of this frame's Box3D steps
   // (Substeps > 1): Box3D clears its joint events every step, so the last
   // step's would otherwise be all breakJoints saw. Used only when

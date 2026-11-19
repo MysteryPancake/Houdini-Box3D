@@ -51,7 +51,14 @@ TAB_GROUPS = {
 SOLVER_FOLDERS = [("Contacts", ("contactstiffness", "contactdamping", "contactpushspeed", "contactrecycledistance"), True),
                   ("Sleeping", ("enablesleep",), False)]
 # Aging goes to the Output tab's Attributes folder, as RBD Bullet Solver's Age Attribute.
-AGING_PARMS = ("enableaging", "reapdead", "reapatframeend")
+# Constraints: Enable Attribute Update from SOPs with its attributes and group, and Overwrite with SOP
+# (b3d_solver_updates.py).
+ENABLE_CONSTRAINT_UPDATES, CONSTRAINT_ATTRIBUTES = "enable_constraintupdates", "constraint_attributes"
+CONSTRAINT_ATTRIB_GROUP, CONSTRAINT_RELOAD = "constraint_attribgroup", "constraint_reloadfromsops"
+ENABLE_AGING = "enableaging"
+AGING_PARMS = (ENABLE_AGING, "reapdead", "reapatframeend")
+# Add Active Age Attribute and Just Activated (with its Type), after them (b3d_solver_activeage.py).
+ADD_ACTIVE_AGE, JUST_ACTIVATED, JUST_ACTIVATED_TYPE = "addactiveage", "justactivatedgroup", "justactivatedtype"
 
 # The DOP subnet for forces, the asset's dive target, and its outputs in the order the Multiple
 # Solver runs them around the Box3D Solver.
@@ -120,8 +127,10 @@ FETCH_IMPACTS = (
     f"m.parm('objpath1').set(m.relativePathTo(n.node('{IMPACTS}'))); "
     "m.setPosition(n.position() + hou.Vector2(3, -1)); m.setSelected(True, clear_all_selected=True)")
 GEO, CONSTRAINTS, PROXY, COLLISION = range(4)  # the asset's inputs
-# The inner DOP network's inputs (read inside with dopcontextgeo(".", i)): not the asset's numbers.
+# The inner DOP network's inputs, read inside by a Geometry Source menu (CONTEXT_GEOMETRY[i], as RBD Bullet Solver's
+# First / Third Context Geometry): not the asset's numbers.
 DOP_PIECES, DOP_CONSTRAINTS, DOP_COLLISION = range(3)
+CONTEXT_GEOMETRY = ("first", "second", "third", "fourth")
 # Collide As Static Object: the Collision input unpacked (a null the Static Object reads by path), also the
 # DOP network's fourth input so the Switches can count its primitives (a height field has no points).
 DOP_STATIC = 3

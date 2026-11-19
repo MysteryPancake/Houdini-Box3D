@@ -24,11 +24,11 @@ Inside:
     IN_* nulls -> sim_source (Proxy when it has points, else Geometry) -> prepare_pieces (pack mode)
       -> dopnet (SOP-level DOP network); IN_collision -> prepare_collision (pack mode) -> collision_rest
       (rest from a Time Shift to the start frame) -> dopnet input 2
-      dopnet: pieces (Box3D Packed Object, SOP Path `dopcontextgeo(".", 0)`)
+      dopnet: pieces (Box3D Packed Object, Geometry Source: First Context Geometry)
               -> constraintnetwork (Geometry Source: Second Context Geometry, Attach Internal Constraints
                  to Object, only when input 1 has points; every Box3D and SideFX constraint
                  relationship merged into it)
-              collision (Box3D Packed Object, convex hulls, `dopcontextgeo(".", 2)`, only when Use External
+              collision (Box3D Packed Object, convex hulls, Geometry Source: Third Context Geometry, only when Use External
                          Collisions is on and input 3 has points; Collision Type Animated / Deforming: Kinematic and re-imported every step, else Static)
                          merged in after the constraint network
               -> multisolver (FORCES/PRESOLVE, scale_forces, box3d_solver, FORCES/POSTSOLVE) -> output
@@ -91,6 +91,7 @@ from b3d_solver_common import (  # noqa: E402
     COLLIDER_RELABEL,
     COLLISION_SOURCE,
     DIVE_TARGET,
+    CONTEXT_GEOMETRY,
     DOP_COLLISION,
     DOP_PIECES,
     DOPNET_PARMS,
@@ -139,6 +140,8 @@ from b3d_solver_common import (  # noqa: E402
     USE_COLLISIONS,
     warn,
 )
+from b3d_solver_activeage import active_age_templates  # noqa: E402
+from b3d_solver_updates import reload_template, update_folder, wire_constraint_updates  # noqa: E402
 from b3d_solver_breaks import BREAK_PARMS, break_items  # noqa: E402
 from b3d_solver_constraints import constraint_items, finish_constraints  # noqa: E402
 from b3d_solver_help import HELP_CARD  # noqa: E402
@@ -423,7 +426,7 @@ def build(out_path, packed_hda=None):
     # The joint types' settings are on Advanced under Constraints, as RBD Bullet Solver's.
     by_label["Advanced"] = by_label.get("Advanced", []) + [
         collapsible("b3dsop_advanced_collision", "Collision", [collision_solve_first]),
-        collapsible("b3dsop_advanced_constraints", "Constraints", constraint_folders)]
+        collapsible("b3dsop_advanced_constraints", "Constraints", [reload_template()] + constraint_folders)]
     solver_items = by_label.pop("Solver", [])
     at = next((i for i, pt in enumerate(solver_items) if pt.name() == "substeps"), len(solver_items))
     if at < len(solver_items):
@@ -452,11 +455,13 @@ def build(out_path, packed_hda=None):
             forces_items[at].setConditional(hou.parmCondType.DisableWhen, f"{{ {ADD_GRAVITY} == 0 }}")
             # A Gravity folder with Add Gravity as its header checkbox (the toggle just before the folder).
             gravity = collapsible("b3dsop_gravity", "Gravity", [forces_items[at]], header_toggle=ADD_GRAVITY)
-            forces_items[at:at + 1] = [hou.ToggleParmTemplate(
+            add_gravity = hou.ToggleParmTemplate(
                 ADD_GRAVITY, "Add Gravity", default_value=True,
-                help="Off turns Gravity off. Force DOPs still act."), gravity]
+                help="Off turns Gravity off. Force DOPs still act.")
+            add_gravity.hideLabel(True)  # as RBD Bullet Solver's
+            forces_items[at:at + 1] = [add_gravity, gravity]
         ordered.append(("Forces", forces_items))
-    ordered.append(("Constraints", break_items() + [keep_broken]))
+    ordered.append(("Constraints", break_items() + [update_folder(), keep_broken]))
     ordered += list(by_label.items()) + [("Visualization", None)] + last + [("Output", None)]  # filled below
     print("make_solver_sop: solver tabs: " + ", ".join(t.label() for t in solver_tabs))
 
@@ -512,8 +517,11 @@ def build(out_path, packed_hda=None):
             disable_when=f"{{ {OVERWRITE_FROM_SOP} == 0 }}",
             help="The point attributes copied each step, matched by name. Wildcards work.")
         b3d_hda.attrib_menu(override_attribs, 0, "point")
-        pieces_items.append(collapsible("b3dsop_override", "Override Attributes", [override, override_attribs],
-                                        header_toggle=OVERWRITE_FROM_SOP))
+        # A simple folder, the toggle's label hidden and joined to the attributes, as RBD Bullet Solver's
+        override.hideLabel(True)
+        override.setJoinWithNext(True)
+        pieces_items.append(hou.FolderParmTemplate("b3dsop_override", "Override Attributes",
+                                                   [override, override_attribs], folder_type=hou.folderType.Simple))
         links.append((sub.relativePathTo(pieces), OVERWRITE_FROM_SOP, OVERWRITE_FROM_SOP))
         links.append((sub.relativePathTo(pieces), OVERWRITE_ATTRIBS, OVERWRITE_ATTRIBS))
     output_items = output_tab(impact, speed, aging)
@@ -563,6 +571,7 @@ def build(out_path, packed_hda=None):
     b3d_hda.set_message_nodes(asset, MESSAGE_NODES, warn)
 
     asset.allowEditingOfContents()
+    wire_constraint_updates(asset)
     for inner_path, inner_name, outer_name in links:
         link(asset.node(inner_path), inner_name, asset, outer_name)
     # The solver exports the shapes while either Show Collision Shape is on (the pieces' or the collider's).
@@ -621,7 +630,7 @@ def output_tab(impact, speed, aging):
         items.append(collapsible("b3dsop_impacts", "Impact Data", contents, open_folder=False,
                                  header_toggle=toggle.name()))
     if aging:
-        items.append(collapsible("b3dsop_attributes", "Attributes", aging))
+        items.append(collapsible("b3dsop_attributes", "Attributes", aging + active_age_templates()))
     else:
         warn("no aging settings on the solver: no Attributes folder on the Output tab")
     transfer = hou.StringParmTemplate(
@@ -881,10 +890,10 @@ def check(out_path):
             warn(f"no {path} subnet with an output0 inside the asset")
     for path, index in (("dopnet/pieces", DOP_PIECES), ("dopnet/collision", DOP_COLLISION)):
         obj = probe.node(path)
-        pt = obj.parmTuple("soppath") if obj is not None else None
-        want = f'dopcontextgeo(".", {index})'
-        if pt is None or want not in pt[0].unexpandedString():
-            warn(f"{path}'s SOP Path is {pt[0].unexpandedString() if pt else '?'!r}, expected `{want}`")
+        source = obj.parm("geosource") if obj is not None else None
+        want = CONTEXT_GEOMETRY[index]
+        if source is None or source.evalAsString() != want:
+            warn(f"{path}'s Geometry Source is {source.evalAsString() if source else '?'!r}, expected {want!r}")
     geo.destroy()
 
 

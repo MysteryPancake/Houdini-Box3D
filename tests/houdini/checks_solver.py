@@ -129,7 +129,8 @@ def test_ui():
            disabled(solver, "reapatframeend", {"reapdead": 0}), True)
     expect("Solver Reap At Frame End enabled with Reap Dead Points on",
            disabled(solver, "reapatframeend", {"reapdead": 1}), False)
-    expect("Solver Reap Dead Points default (off)", solver.parm("reapdead").parmTemplate().defaultValue(), False)
+    expect("Solver Reap Dead Points default (on, as RBD Bullet Solver)", solver.parm("reapdead").parmTemplate().defaultValue(),
+           True)
     expect("Solver Reap At Frame End default (on, as POP)",
            solver.parm("reapatframeend").parmTemplate().defaultValue(), True)
     t = solver.parm("solverpasses").parmTemplate()

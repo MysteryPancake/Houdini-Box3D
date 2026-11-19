@@ -17,7 +17,8 @@ import hou
 
 import b3d_hda
 from b3d_hda import collapsible
-from b3d_solver_common import (create, GLOBAL_SUBSTEPS, RELATIONSHIPS, set_named, START_FRAME, WORLD_SCALE,
+from b3d_solver_common import (create, DOP_CONSTRAINTS, GLOBAL_SUBSTEPS, RELATIONSHIPS, set_named, START_FRAME,
+                               WORLD_SCALE,
                                WORLD_SCALE_TOGGLE, warn)
 from b3d_solver_constraints import node_settings
 
@@ -26,6 +27,7 @@ BREAKS_TOGGLE = "enable_constraintbreaks"
 BREAK_SOLVER = "constraint_breaks"  # the SOP Solver DOP
 BREAK_ENABLE = "enable_constraint_breaks"  # the Enable Solver DOP in front of it
 BREAK_WRANGLE = "break_constraints"
+BREAK_LIVE = "live_constraints"  # the SOP Solver's Object Merge of the live constraints input, the wrangle's input 2
 CONSTRAINT_GEOMETRY = "ConstraintGeometry"
 
 # The thresholds, in the order Bullet checks them: (key, label, default threshold, default on, scaled by World Scale,
@@ -45,7 +47,8 @@ BREAK_PARMS = [BREAKS_TOGGLE, BREAKS] + [
                                  "relatframe")] + [
     n for key, *_ in THRESHOLDS
     for n in (f"constraint_use{key}#", f"constraint_{key}threshold#", f"constraint_scale{key}#",
-              f"constraint_use{key}var#", f"constraint_{key}var#", f"constraint_{key}attrib#")]
+              f"constraint_use{key}var#", f"constraint_{key}var#", f"constraint_{key}attrib#",
+              f"constraint_{key}attribupdate#")]
 
 # The wrangle (Run Over Primitives) in the SOP Solver. REL is the path from the wrangle to the asset.
 BREAK_VEX = '''// Breaks the constraints the Break Thresholds name, as RBD Bullet Solver's break_constraints (Force excepted).
@@ -126,7 +129,17 @@ int passes(string key, n; float scale; int primnum, id; float rest)
     {
         string attrib = chs("REL/constraint_" + key + "attrib" + n);
         if (attrib != "" && hasprimattrib(0, attrib))
-            threshold *= float(prim(0, attrib, primnum));
+        {
+            float value = prim(0, attrib, primnum);
+            // Update from Input, as RBD Bullet Solver: the same constraint's value in the live input, found by __primid
+            if (chi("REL/constraint_" + key + "attribupdate" + n) && hasprimattrib(1, attrib))
+            {
+                int live = findattribval(1, "prim", "__primid", id);
+                if (live >= 0)
+                    value = prim(1, attrib, live);
+            }
+            threshold *= value;
+        }
     }
     return float(prim(0, key, primnum)) > threshold + rest;
 }
@@ -233,7 +246,13 @@ def break_items():
                                                  default_value=("strength",)),
                           1, "prim", toggle=False, numeric=True),
                       off, f"constraint_scale{key}# == 0", kind=hou.parmCondType.HideWhen)
-        items += [use, threshold, scaling, use_var, variance, attrib]
+        # Update from Input on the Attribute's row, as RBD Bullet Solver's
+        attrib.setJoinWithNext(True)
+        update = when(toggle(f"constraint_{key}attribupdate#", "Update from Input",
+                             help="Read the attribute from the live Constraints input every step, so one that changes "
+                                  "over time moves the threshold. Off: its value when the constraint was made."),
+                      off, f"constraint_scale{key}# == 0", kind=hou.parmCondType.HideWhen)
+        items += [use, threshold, scaling, use_var, variance, attrib, update]
 
     block = hou.FolderParmTemplate(BREAKS, "Number of Breaks", items,
                                    folder_type=hou.folderType.TabbedMultiparmBlock, default_value=1)
@@ -274,6 +293,13 @@ def build_breaks(dopnet):
         return solver
     wrangle.setInput(0, outputs[0].inputs()[0])
     outputs[0].setInput(0, wrangle)
+    # Update from Input: the constraints as the SOP gives them now, the wrangle's input 2 (an Object Merge of the
+    # DOP network's constraints input, read only while Break Thresholds are on).
+    live = solver.createNode("object_merge", BREAK_LIVE)
+    live.parm("objpath1").set(f'`dopcontextgeo("..", {DOP_CONSTRAINTS})`')
+    live.parm("enable1").setExpression(f'ch("{live.relativePathTo(dopnet.parent())}/{BREAKS_TOGGLE}")',
+                                       hou.exprLanguage.Hscript)
+    wrangle.setInput(1, live)
     set_named(wrangle, "class", 1)  # primitives
     floats, ints, vectors = next_setting_names(dopnet)
 

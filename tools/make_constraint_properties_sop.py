@@ -241,6 +241,9 @@ def setting_templates(rows, prefix, names, scalable=True, gate=""):
                 help="The attribute that scales the setting: a primitive attribute of the constraints, or a point "
                      "attribute of the pieces.")
             b3d_hda.menu_script(attrib, "buildScaleAttribMenu(kwargs)", toggle=False)
+            # On the value's row without its label, as RBD Constraint Properties'
+            value.setJoinWithNext(True)
+            scaling.hideLabel(True)
             scaling.setConditional(hou.parmCondType.DisableWhen, grey)
             attrib.setConditional(hou.parmCondType.DisableWhen, grey)
             attrib.setConditional(hou.parmCondType.HideWhen, f"{{ {pname}scaling == 0 }} {{ {pname}scaling == 2 }}")
@@ -309,8 +312,9 @@ def ui(common, per_type):
     pieces[0].setConditional(hou.parmCondType.DisableWhen, "{ groupfromgeo == 0 }")
     pieces[1].setConditional(hou.parmCondType.DisableWhen, "{ groupfromgeo == 0 }")
     pieces[2].setConditional(hou.parmCondType.DisableWhen, "{ usegroups < 1 } { groupfromgeo == 0 }")
-    enable_color = hou.ToggleParmTemplate("enablecolor", "Enable Color", default_value=False,
+    enable_color = hou.ToggleParmTemplate("enablecolor", "Enable Color", default_value=False, join_with_next=True,
                                           help="Colour the edited constraints.")
+    enable_color.hideLabel(True)  # joined to Color, as RBD Constraint Properties'
     color = hou.FloatParmTemplate("constraintcolor", "Color", 3, default_value=(1.0, 1.0, 1.0),
                                   look=hou.parmLook.ColorSquare, naming_scheme=hou.parmNamingScheme.RGBA,
                                   help="The colour, written as Cd.")
@@ -337,16 +341,28 @@ def ui(common, per_type):
             box.setConditional(hou.parmCondType.DisableWhen, gate)
         return [box, value]
 
-    off = "{ usenextconstraint == 0 }"  # the Next Constraint folder is off until Switch Constraint Type When Broken
+    # The Next Constraint folder is off until Switch Constraint Type When Broken is Enable (and, in Edit mode, ticked)
+    off = "{ usenextconstraint == 0 } { action == 0 dousenextconstraint == 0 }"
+    edit_off = "{ action == 0 donext_constrainttype == 0 }"  # Next Constraint Type's own tick, in Edit mode
+    type_off = "{ action == 0 doconstrainttype == 0 }"  # Constraint Type's tick, in Edit mode
 
     which = hou.MenuParmTemplate("constrainttype", "Constraint Type", tuple(str(i) for i in range(len(JOINT_TYPES))),
                                  tuple(names_menu), default_value=0,
-                                 help="Which joint type's settings to show. Every ticked setting is written.")
+                                 help="Which joint type's settings to show. Every ticked setting of the type is written.")
+    which.setConditional(hou.parmCondType.DisableWhen, type_off)
+    # RBD Constraint Properties' tick in front of the menu: Edit mode writes the type's settings only while it is ticked.
+    do_type = hou.ToggleParmTemplate(
+        "doconstrainttype", "Constraint Type", default_value=False, join_with_next=True,
+        help="Write the ticked settings of the Constraint Type's joint type.")
+    do_type.hideLabel(True)
+    do_type.setConditional(hou.parmCondType.HideWhen, "{ action == 1 }")
+    which.setJoinWithNext(False)
     # Disable Collisions, in RBD Constraint Properties' words: it writes collide_connected, the Joint folder's Collide
     # Connected, the other way round (Disable is 0). It is written after the Joint folder's, so it wins if both are ticked.
     collide_box = hou.ToggleParmTemplate(
         "docollisions", "Disable Collisions", default_value=False, join_with_next=True,
         help="Write whether the two joined bodies collide. Writes the collide_connected primitive attribute.")
+    collide_box.hideLabel(True)
     collide_box.setConditional(hou.parmCondType.HideWhen, "{ action == 1 }")
     collisions = hou.MenuParmTemplate(
         "collisions", "Collisions", ("0", "1"), ("Disable", "Enable"), default_value=0,
@@ -354,7 +370,7 @@ def ui(common, per_type):
     collisions.setConditional(hou.parmCondType.DisableWhen, "{ docollisions == 0 action == 0 }")
     props = (string_row("constraintname", "Constraint Name",
                         "The relationship's Data Name the constraints use. Writes constraint_name.", True)
-             + [collide_box, collisions, which])
+             + [collide_box, collisions, do_type, which])
 
     common_names = {pt.name() for pt, _ in common}
     # Anchor Rotation: the frame of both anchors, which the viewport handle also edits (Edit Parms).
@@ -375,23 +391,36 @@ def ui(common, per_type):
         own = {pt.name() for pt, _ in rows}
         f = b3d_hda.collapsible(f"b3dcp_{name}", label, setting_templates(rows, f"{name}_", own) + vex_templates(name))
         f.setConditional(hou.parmCondType.HideWhen, f"{{ constrainttype != {i} }}")
+        f.setConditional(hou.parmCondType.DisableWhen, type_off)
         folders.append(f)
 
     # Switch Constraint Type When Broken: what a broken constraint becomes (its next_constraint_name) and the settings it
     # then has (next_<setting>), for the type in Next Constraint Type. The solver applies them when the constraint
     # switches.
-    use_next = hou.ToggleParmTemplate(
-        "usenextconstraint", "Switch Constraint Type When Broken", default_value=False,
-        help="A constraint that breaks becomes the Next Constraint instead, with the next settings below.")
+    do_use_next = hou.ToggleParmTemplate(
+        "dousenextconstraint", "Switch Constraint Type When Broken", default_value=False, join_with_next=True,
+        help="Write the Switch Constraint Type When Broken choice.")
+    do_use_next.hideLabel(True)
+    do_use_next.setConditional(hou.parmCondType.HideWhen, "{ action == 1 }")
+    use_next = hou.MenuParmTemplate(
+        "usenextconstraint", "Switch Constraint Type When Broken", ("0", "1"), ("Disable", "Enable"), default_value=0,
+        help="Enable: a constraint that breaks becomes the Next Constraint instead, with the next settings below.")
+    use_next.setConditional(hou.parmCondType.DisableWhen, "{ action == 0 dousenextconstraint == 0 }")
     next_type = hou.MenuParmTemplate(
         "next_constrainttype", "Next Constraint Type", tuple(str(i) for i in range(len(JOINT_TYPES))),
         tuple(names_menu), default_value=0,
         help="Which joint type's next settings to show. Every ticked next setting is written.")
-    next_type.setConditional(hou.parmCondType.DisableWhen, off)
-    next_items = ([use_next]
+    next_type.setConditional(hou.parmCondType.DisableWhen, off + " " + edit_off)
+    do_next_type = hou.ToggleParmTemplate(
+        "donext_constrainttype", "Next Constraint Type", default_value=False, join_with_next=True,
+        help="Write the ticked next settings of the Next Constraint Type's joint type.")
+    do_next_type.hideLabel(True)
+    do_next_type.setConditional(hou.parmCondType.HideWhen, "{ action == 1 }")
+    do_next_type.setConditional(hou.parmCondType.DisableWhen, off)
+    next_items = ([do_use_next, use_next]
                   + string_row("next_constraintname", "Next Constraint Name",
                                "What a broken constraint switches to. Writes next_constraint_name.", True, gate=off)
-                  + [next_type])
+                  + [do_next_type, next_type])
     next_folders = [b3d_hda.collapsible("b3dcp_next_common", "Joint",
                                         setting_templates(common, "next_", common_names, scalable=False, gate=off))]
     for i, (name, label) in enumerate(JOINT_TYPES):
@@ -403,13 +432,14 @@ def ui(common, per_type):
                                 setting_templates(rows, f"next_{name}_", own, scalable=False, gate=off),
                                 open_folder=False)
         f.setConditional(hou.parmCondType.HideWhen, f"{{ next_constrainttype != {i} }}")
+        f.setConditional(hou.parmCondType.DisableWhen, edit_off)
         next_folders.append(f)
     next_folder = b3d_hda.collapsible("b3dcp_next", "Next Constraint", next_items + next_folders, open_folder=False)
 
     # The viewport bar (export level 3), as RBD Constraint Properties' three.
     clear = hou.ButtonParmTemplate(
         "clearedits", "Clear Edits", script_callback="kwargs['node'].hdaViewerStateModule().clearEdits(kwargs)",
-        script_callback_language=hou.scriptLanguage.Python,
+        script_callback_language=hou.scriptLanguage.Python, join_with_next=True,
         help="Forgets every edit made in the viewport.")
     importing = hou.ButtonParmTemplate(
         "importedits", "Import Edits", script_callback="kwargs['node'].hdaViewerStateModule().importEdits(kwargs)",
@@ -513,7 +543,7 @@ def wrangle_vex(rows):
         "else prims = expandprimgroup(0, group);",
         'int setmode = chi("../action");',
         'int constrainttype = chi("../constrainttype");',
-        'int usenext = chi("../usenextconstraint");',
+        'int usenext = chi("../usenextconstraint") && (setmode || chi("../dousenextconstraint"));',
         'int nexttype = chi("../next_constrainttype");',
         'string clusterattr = chs("../clusterattrib");',
         'int transfermode = chi("../transfermode");',
@@ -542,8 +572,9 @@ def wrangle_vex(rows):
         which = "nexttype" if following else "constrainttype"
         if joint < 0:
             applies = f'(setmode && {differs}) || (!setmode && chi("../{box}"))'
-        else:
-            applies = f'(setmode && {which} == {joint} && {differs}) || (!setmode && chi("../{box}"))'
+        else:  # a type's setting: in Edit mode also its type's tick
+            tick = "donext_constrainttype" if following else "doconstrainttype"
+            applies = f'(setmode && {which} == {joint} && {differs}) || (!setmode && chi("../{tick}") && chi("../{box}"))'
         if following:  # a next setting is only written while the constraint switches when broken
             applies = f"usenext && ({applies})"
         lines.append(f"if ({applies}) {{ " + put(attr, unset[kind], expression) + " }")
@@ -860,7 +891,8 @@ def probe(out_path):
         'if (i == 0) setprimgroup(0, "chosen", pr, 1); }')
     cfg = geo.createNode(TYPE_NAME, "probe")
     cfg.setInput(1, lines)
-    wanted = (("action", 0), ("constraintgroup", "chosen"), ("constrainttype", 2), ("addrevolute_stiffness", 1),
+    wanted = (("action", 0), ("constraintgroup", "chosen"), ("doconstrainttype", 1), ("constrainttype", 2),
+              ("addrevolute_stiffness", 1),
               ("revolute_stiffness", 7.0), ("addrevolute_enable_spring", 1), ("revolute_enable_spring", 1),
               ("doconstraintname", 1), ("constraintname", "Weld"))
     for n, v in wanted:

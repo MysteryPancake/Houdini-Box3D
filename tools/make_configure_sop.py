@@ -121,6 +121,8 @@ def enterState(kwargs):
 
 # Material presets, as RBD Configure's Physical Attributes has them: Type, Material and State fill Density, Bounce and
 # Friction. The table is ours (b3d_materials.py), put into the asset's Python Module.
+# The preset's rows are the top of the folder with this label (Bounce and Friction).
+PRESET_FOLDER = "Material"
 MATERIAL_TYPES = b3d_materials.TYPES
 MATERIAL_STATES = b3d_materials.STATES
 
@@ -176,8 +178,14 @@ def material_templates():
         "materialstate#", "State", ("0", "1"), MATERIAL_STATES, default_value=0,
         tags=dict(callback, script_callback="kwargs['node'].hm().materialPresetCallback(kwargs)"),
         help="Which friction the material has: with the surfaces dry and clean, or lubricated and greasy.")
+    kind.setConditional(hou.parmCondType.DisableWhen, "{ enable# == 0 }")
     for pt in (preset, state):
-        pt.setConditional(hou.parmCondType.DisableWhen, "{ materialtype# == 0 }")
+        pt.setConditional(hou.parmCondType.DisableWhen, "{ materialtype# == 0 } { enable# == 0 }")
+    # One row, as RBD Configure's Physical Attributes has them: only Type keeps its label
+    for pt in (kind, preset):
+        pt.setJoinWithNext(True)
+    for pt in (preset, state):
+        pt.hideLabel(True)
     return [kind, preset, state]
 
 
@@ -225,7 +233,8 @@ def pin_templates():
     add = hou.ToggleParmTemplate("addpin#", "Add Pin", default_value=False, join_with_next=True,
                                  help="Add a constraint pinning each piece to the world.")
     add.hideLabel(True)
-    pin = hou.ToggleParmTemplate("pin#", "Pin", default_value=True, help="Pin the pieces.")
+    pin = hou.IntParmTemplate("pin#", "Pin", 1, default_value=(1,), min=0, max=1, min_is_strict=True,
+                              max_is_strict=True, help="Pin the pieces.")
     ptype = hou.MenuParmTemplate("pintype#", "Type", tuple(str(i) for i in range(len(PIN_TYPES))),
                                  tuple(label for label, _ in PIN_TYPES), default_value=0,
                                  help="Weld holds rigidly. Soft holds with a spring.")
@@ -233,6 +242,8 @@ def pin_templates():
                                     help="Pin the pieces inside the bounds and free the others.")
     for pt in (pin, ptype, bounds):
         pt.setConditional(hou.parmCondType.DisableWhen, "{ addpin# == 0 } { enable# == 0 }")
+    pin.setJoinWithNext(True)
+    ptype.setJoinWithNext(True)
     return [add, pin, ptype, bounds]
 
 
@@ -245,6 +256,9 @@ def packing_templates():
     path = hou.StringParmTemplate("path", "Path Attribute", 1, default_value=("op:`opfullpath('.')`",),
                                   help="The path attribute value of each packed piece.")
     path.setConditional(hou.parmCondType.DisableWhen, "{ createpath == 0 }")
+    create_path = hou.ToggleParmTemplate("createpath", "Create Path Attribute", default_value=False,
+                                         join_with_next=True, help="Gives each packed piece a path attribute.")
+    create_path.hideLabel(True)
     return [
         hou.StringParmTemplate("nameprefix", "Name Prefix", 1, default_value=(b3d_prepare.DEFAULT_PREFIX,),
                                help="Prefix of the names given to pieces that have none."),
@@ -258,8 +272,7 @@ def packing_templates():
                                    default_value=("shop_materialpath path",),
                                    help="Attributes copied onto the pieces packed from the Geometry input."),
             0, "point prim"),
-        hou.ToggleParmTemplate("createpath", "Create Path Attribute", default_value=False,
-                               help="Gives each packed piece a path attribute."),
+        create_path,
         path,
         hou.ToggleParmTemplate("createpackedfragments", "Create Packed Fragments", default_value=True,
                                help="Packs pieces as fragments of one shared geometry instead of one geometry each."),
@@ -317,6 +330,26 @@ def has_bounds(pt, kind):
     """Settings with a Use Bounds checkbox (RBD Configure's): Body Type and the on / off ones."""
     return kind in ("active/animated", "awake") or (
         kind == "i" and pt.type() == hou.parmTemplateType.Toggle)
+
+
+def on_off_slider(value):
+    """A checkbox as an integer slider clamped to 0 - 1, as RBD Configure's on / off settings beside Use Bounds: the
+    slider takes the row's width, which puts Use Bounds at the right."""
+    return hou.IntParmTemplate(value.name(), value.label(), 1, default_value=(int(value.defaultValue()),),
+                                 min=0, max=1, min_is_strict=True, max_is_strict=True, help=value.help(),
+                                 tags=value.tags())
+
+
+# Settings with a Var: each piece's value is scattered up and down by up to that fraction (RBD Configure's Var).
+VAR_SETTINGS = ("density", "bounce", "friction", "inertialtensorstiffness")
+
+
+def var_toggle_name(name):
+    return f"use{name}var"
+
+
+def var_name(name):
+    return f"{name}var"
 
 
 def bounds_name(name):
@@ -388,6 +421,11 @@ def setting_vex(pt, kind):
         body = put(n, literal(pt, kind), ch("chv"))
     elif kind == "w":  # degrees per second on the node, radians per second on the points
         body = put("w", "{0.0, 0.0, 0.0}", f'radians({ch("chv")})')
+    elif kind == "f" and n in VAR_SETTINGS:
+        # As RBD Configure: times a random 1 - Var to 1 + Var per piece (rand of its point number)
+        var = ch("chf", var_name(n))
+        scatter = f'(chi("../{var_toggle_name(n)}" + num) ? fit01(rand(@ptnum), 1 - {var}, 1 + {var}) : 1.0)'
+        body = put(n, literal(pt, kind), f'{ch("chf")} * {scatter}')
     elif kind == "f":
         body = put(n, literal(pt, kind), ch("chf"))
     elif kind == "s":
@@ -465,11 +503,8 @@ def ui(folders):
     ]
     b3d_hda.group_menu(entry[1], 0, "point prim")
     entry[1].setConditional(hou.parmCondType.DisableWhen, "{ enable# == 0 }")
-    presets = b3d_hda.collapsible("b3dcfg_materialpreset_#", "Material Preset", material_templates(), open_folder=False)
-    presets.setConditional(hou.parmCondType.DisableWhen, "{ enable# == 0 }")
-    entry.append(presets)
     for i, (label, rows) in enumerate(folders):
-        items = []
+        items = material_templates() if label == PRESET_FOLDER else []
         for pt, kind in rows:
             n = pt.name()
             value = pt.clone()
@@ -478,6 +513,8 @@ def ui(folders):
             if lab:
                 value.setLabel(lab)
             attr = n if kind in ("f", "i", "v", "w", "s") else kind
+            if has_bounds(pt, kind) and value.type() == hou.parmTemplateType.Toggle:
+                value = on_off_slider(value)
             value.setHelp(help_text or f"{first_sentence(pt.help())} Writes the {attr} point attribute.")
             # The checkbox has a real label, hidden (an empty label shows the name instead).
             box = hou.ToggleParmTemplate(f"{toggle_name(n)}#", value.label(), default_value=False,
@@ -489,7 +526,23 @@ def ui(folders):
                 f"{{ {toggle_name(n)}# == 0 }} {{ enable# == 0 }}"
             value.setConditional(hou.parmCondType.DisableWhen, new)
             items += [box, value]
+            if n in VAR_SETTINGS:
+                # One row, as RBD Configure's: the value, Var and its fraction (label hidden)
+                value.setJoinWithNext(True)
+                use_var = hou.ToggleParmTemplate(
+                    f"{var_toggle_name(n)}#", "Var", default_value=False, join_with_next=True,
+                    help="Scatter each piece's value up or down by up to the Var fraction. 0.1 on 1000 gives 900 to 1100.")
+                amount = hou.FloatParmTemplate(
+                    f"{var_name(n)}#", f"{value.label()} Var", 1, default_value=(0.1,), min=0.0, max=1.0,
+                    min_is_strict=True, max_is_strict=True, help="The fraction: 1 scatters from 0 to twice the value.")
+                amount.hideLabel(True)
+                use_var.setConditional(hou.parmCondType.DisableWhen,
+                                       f"{{ {toggle_name(n)}# == 0 }} {{ enable# == 0 }}")
+                amount.setConditional(hou.parmCondType.DisableWhen,
+                                      f"{{ {var_toggle_name(n)}# == 0 }} {{ {toggle_name(n)}# == 0 }} {{ enable# == 0 }}")
+                items += [use_var, amount]
             if has_bounds(pt, kind):
+                value.setJoinWithNext(True)
                 use = hou.ToggleParmTemplate(f"{bounds_name(n)}#", "Use Bounds", default_value=False,
                                              help="Inside the bounds this value, outside the opposite "
                                                   "(Body Type: Dynamic).")

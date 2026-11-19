@@ -459,10 +459,11 @@ void writePointAttrs(Box3DSharedState &st, SIM_ObjectArray &objects) {
   items.clear();
 }
 
-// Enable Aging: age += dt on every point; dead = 1 once age exceeds a positive
-// life (as the POP Solver). With Reap Dead Points and Reap At Frame End,
-// points that die are queued in st.deletions, so deleteDeadPoints removes them
-// in this same step; otherwise the next step's sync queues them.
+// Enable Aging: age += dt on every point; with a `life` attribute, dead = 1 once
+// age exceeds it (as RBD Bullet Solver: a life of 0 or less dies on the first
+// step, no `life` attribute never dies). With Reap Dead Points and Reap At Frame
+// End, points that die are queued in st.deletions, so deleteDeadPoints removes
+// them in this same step; otherwise the next step's sync queues them.
 void ageObjects(Box3DSharedState &st, SIM_ObjectArray &objects, float dt) {
   for (exint i = 0; i < objects.entries(); ++i) {
     SIM_Object *obj = objects(i);
@@ -501,7 +502,7 @@ void ageObjects(Box3DSharedState &st, SIM_ObjectArray &objects, float dt) {
         age.set(off, a);
         if (killing) {
           const float l = life.get(off);
-          if (l > 0.0f && a > l && dead.get(off) == 0) {
+          if (a > l && dead.get(off) == 0) {
             dead.set(off, 1);
             anyDead.store(true, std::memory_order_relaxed);
             if (!st.reapDead || !st.reapAtFrameEnd)

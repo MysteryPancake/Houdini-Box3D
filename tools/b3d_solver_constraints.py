@@ -70,19 +70,24 @@ def head_templates(node, name):
         help="Off leaves this constraint type out of the simulation.")]
     links = []
     if data_name is not None:
-        items.append(b3d_hda.menu_script(hou.StringParmTemplate(
+        data_name_template = b3d_hda.menu_script(hou.StringParmTemplate(
             f"{name}_dataname", "Data Name", 1, default_value=(data_name.eval(),),
             help="The name `constraint_name` uses to pick this type."), "buildConstraintNameMenu(kwargs, 1)",
-            toggle=False))
+            toggle=False)
+        # One row with Default Operation, as RBD Bullet Solver's
+        data_name_template.setJoinWithNext(default_op is not None)
+        items.append(data_name_template)
         links.append(("dataname", f"{name}_dataname"))
     else:
         warn(f"{node.path()} has no dataname: no Data Name on its folder")
     if default_op is not None:
-        items.append(hou.MenuParmTemplate(
+        default_op_template = hou.MenuParmTemplate(
             default_op_name(name), "Default Operation", ("0", "1", "2"),
             menu_labels=("Set Initial", "Set Always", "Set Never"), default_value=0,
             help="Set Initial applies the values when a constraint is created. Set Always applies them every step, "
-                 "so animated values act. Set Never ignores them."))
+                 "so animated values act. Set Never ignores them.")
+        default_op_template.hideLabel(True)
+        items.append(default_op_template)
         links.append(("defaultparmop", default_op_name(name)))
     else:
         warn(f"{node.path()} has no defaultparmop: no Default Operation on its folder")

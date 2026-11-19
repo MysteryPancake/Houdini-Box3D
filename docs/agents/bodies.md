@@ -70,8 +70,18 @@ equal to what its body was built with.
 * **Dead** (`dead`): never stamped, so the body goes. With Reap Dead Points the point is queued as a `Box3DDeletion`;
   `deleteDeadPoints` resolves all queued points before deleting any, then bumps data ids and forces a scan.
 * **Aging** (solver Enable Aging): `age += dt` on every point (not on the creation frame without Solve On Creation
-  Frame), `dead = 1` once `age > life` (life 0 never dies), matching POP (`aging_vs_pop*`). Reap At Frame End
-  deletes it in the same step, else the next sync does. Parallel past `kMinParallelPoints`.
+  Frame), and with a `life` attribute `dead = 1` once `age > life`, a life of 0 or less included (no `life` never
+  dies), as RBD Bullet Solver (`solver_sop_aging_bullet`) and, for a positive life, POP (`aging_vs_pop*`). Reap Dead
+  Points is on by default, as Bullet always deletes dead points. Reap At Frame End deletes it in the same step, else
+  the next sync does. The Solver SOP's `create_age` stage gives the pieces `age` 0 before the first step, as Bullet's
+  Age Attribute. Constraint primitives age too, as Bullet's (`ageConstraints` in `Box3DJointBreak.cpp` adds the time step to their `age`,
+  `create_constraint_age` makes it 0 on the first frame, `life` is ignored: `solver_sop_constraint_aging_bullet`).
+  Parallel past `kMinParallelPoints`.
+* **Active age** (Solver SOP only, `tools/b3d_solver_activeage.py`; Add Active Age Attribute and Just Activated under
+  Output > Attributes, on while Enable Aging is): RBD Bullet Solver's two wranglers, not C++. A SOP stage before the
+  DOP network gives the pieces their first `active_age` (one time step if active) and Just Activated group or attribute;
+  a Geometry Wrangle DOP behind an Enable Solver DOP in the Multiple Solver, bound to its own geometry, adds the time
+  step while `active` is 1 (missing counts as 1) and resets it to 0 otherwise. Test `solver_sop_active_age_bullet`.
 * **Time Scale**: Box3D steps by `stepDt = dt * timescale`.
 
 **Point writes after the step** (`Box3DPointWrite`: `kAutofitValid`, `kMass`, `kRest`): grouped per object

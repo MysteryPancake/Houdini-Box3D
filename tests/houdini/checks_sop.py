@@ -7,6 +7,7 @@ import math
 import hou
 
 from b3dtest import (
+    append_sop,
     GROUND,
     Result,
     close,
@@ -15,7 +16,10 @@ from b3dtest import (
     display,
     new_geo,
     packed_boxes,
+    packed_positions,
+    set_menu_token,
     set_parm,
+    step,
 )
 
 
@@ -1008,6 +1012,137 @@ def test_solver_sop_solve_first_frame_bullet():
     return results
 
 
+def _active_age_run(tag, bullet, as_attribute):
+    """Two boxes far apart, one active from the start and one only from frame 6 (its `active` is set by a wrangle
+    each step, read through Override Attributes from SOP), through the Solver SOP (bullet: RBD Bullet Solver SOP)
+    with Add Active Age Attribute on and Just Activated named `fresh`. Returns {frame: {piece: (active_age, just
+    activated)}} for frames 1 to 12, read from the simulation points."""
+    pieces, names = packed_boxes(f"age_{tag}_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0)},
+                                                       {"size": (1, 1, 1), "center": (10, 3, 0)}])
+    pieces = append_sop(pieces, "attribwrangle", lambda n: (
+        set_parm(n, ["class"], "point"), set_parm(n, ["snippet"], "i@active = @ptnum == 0 || @Frame >= 6;")))
+    sop = (bullet_sop if bullet else solver_sop)(f"age_{tag}", geometry=pieces)
+    set_parm(sop, ["overwritefromsop"], 1)
+    set_parm(sop, ["doage" if bullet else "enableaging"], 1)
+    set_parm(sop, ["doactiveage" if bullet else "addactiveage"], 1)
+    set_parm(sop, ["justactivatedgroup"], "fresh")
+    set_parm(sop, ["justactivatedtype"], 1 if as_attribute else 0)
+    set_parm(sop, ["transferattributes"], "age w active_age" + (" fresh" if as_attribute else ""))
+
+    def sample(s, f):
+        geo = s.geometry(3)
+        found = {}
+        for pt in geo.points():
+            name = pt.attribValue("name")
+            age = pt.attribValue("active_age") if geo.findPointAttrib("active_age") else None
+            if as_attribute:
+                fresh = pt.attribValue("fresh") if geo.findPointAttrib("fresh") else None
+            else:
+                group = geo.findPointGroup("fresh")
+                fresh = int(group.contains(pt)) if group else None
+            found[name] = (None if age is None else round(age, 4), fresh)
+        return found
+
+    return names, play(sop, 12, sample)
+
+
+def test_solver_sop_active_age_bullet():
+    """Add Active Age Attribute and Just Activated, against the RBD Bullet Solver SOP: a box active from the start and
+    one made active on frame 6 have the same active_age (time active, 0 while inactive) and the same Just
+    Activated membership on frames 1 to 12, as a point group and as an attribute."""
+    results = []
+    for as_attribute in (False, True):
+        kind = "attribute" if as_attribute else "group"
+        runs = {label: _active_age_run(f"{label}_{kind}", label == "bullet", as_attribute)
+                for label in ("box3d", "bullet")}
+        # The pieces are named in order of creation: compare by position in the sorted names.
+        def series(label):
+            names, track = runs[label]
+            ordered = sorted(names)
+            return {f: [track[f].get(n) for n in ordered] for f in track}
+        mine, theirs = series("box3d"), series("bullet")
+        same = mine == theirs
+        sample_frames = (1, 5, 6, 7, 12)
+        show = lambda d: {f: d[f] for f in sample_frames}  # noqa: E731
+        results.append(Result("solver_sop_active_age_bullet", Result.PASS if same else Result.FAIL,
+                              f"Just Activated as a {kind}, (active_age, just activated) per piece: Box3D "
+                              f"{show(mine)}, Bullet {show(theirs)}"))
+    return results
+
+
+AGING_CASES = {
+    "no life attribute": None,
+    "life 0 and 0.25": "f@life = @ptnum == 0 ? 0.25 : 0.0;",
+    "life 0.25 and -1": "f@life = @ptnum == 0 ? 0.25 : -1.0;",
+    "life 100 on both": "f@life = 100.0;",
+    "dead set on one": "i@dead = @ptnum == 1;",
+}
+
+
+def test_solver_sop_aging_bullet():
+    """Enable Aging against the RBD Bullet Solver SOP's Age Attribute, on two boxes with different `life` / `dead`
+    set on the input: with no life attribute nothing dies, a life of 0 or less dies on the first step, a life of
+    0.25 on frame 8, a long life never, and a `dead` set by hand is deleted on the first step. `age` is there from
+    frame 1 and grows alike. Compared: the frame each piece is gone on and (age, dead) of what is left on frames 1,
+    2 and 12."""
+    results = []
+    for case, snippet in AGING_CASES.items():
+        tag = "".join(ch for ch in case if ch.isalnum())
+        pieces, names = packed_boxes(f"agecmp_{tag}_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0)},
+                                                             {"size": (1, 1, 1), "center": (10, 3, 0)}])
+        if snippet:
+            pieces = append_sop(pieces, "attribwrangle", lambda n, code=snippet: (
+                set_parm(n, ["class"], "point"), set_parm(n, ["snippet"], code)))
+        rows = {}
+        for label in ("bullet", "box3d"):
+            sop = (bullet_sop if label == "bullet" else solver_sop)(f"agecmp_{tag}_{label}", geometry=pieces)
+            set_parm(sop, ["doage" if label == "bullet" else "enableaging"], 1)
+            set_parm(sop, ["transferattributes"], "age life dead")
+
+            def sample(s, f):
+                geo = s.geometry(3)
+                return {pt.attribValue("name"): (round(pt.attribValue("age"), 3) if geo.findPointAttrib("age") else None,
+                                                 pt.attribValue("dead") if geo.findPointAttrib("dead") else None)
+                        for pt in geo.points()}
+
+            track = play(sop, 12, sample)
+            gone = {n: next((f for f in sorted(track) if n not in track[f]), None) for n in names}
+            rows[label] = (gone, track[1], track[2], track[12])
+        results.append(Result("solver_sop_aging_bullet", Result.PASS if rows["box3d"] == rows["bullet"] else Result.FAIL,
+                              f"{case}: (gone on, frame 1, frame 2, frame 12) Box3D {rows['box3d']}, "
+                              f"Bullet {rows['bullet']}"))
+    return results
+
+
+def test_solver_sop_constraint_aging_bullet():
+    """Enable Aging on constraints, against the RBD Bullet Solver SOP: a glued pair's constraint has `age` 0 on frame
+    1 and the time step more each step, alike in both, and a `life` on the constraint changes nothing (it is not
+    killed)."""
+    pieces, names = packed_boxes("cage_pieces", [{"size": (1, 1, 1), "center": (0, 2, 0), "attrs": {"active": 1}},
+                                                 {"size": (1, 1, 1), "center": (0, 1, 0), "attrs": {"active": 1}}])
+    ground, _ = packed_boxes("cage_ground", [GROUND])
+    results = []
+    for case, extra in (("plain", {}), ("with_life", {"life": 0.25})):
+        lines = constraint_lines(f"cage_net_{case}", [(names[0], (0, 1.5, 0), names[1], (0, 1.5, 0), "Glue",
+                                                       dict({"strength": 1e6}, **extra))])
+        rows = {}
+        for label in ("bullet", "box3d"):
+            sop = (bullet_sop if label == "bullet" else solver_sop)(f"cage_{case}_{label}", geometry=pieces,
+                                                                    constraints=lines, collision=ground)
+            set_parm(sop, ["doage" if label == "bullet" else "enableaging"], 1)
+
+            def sample(s, f):
+                geo = s.geometry(1)
+                return [round(p.attribValue("age"), 4) if geo.findPrimAttrib("age") else None for p in geo.prims()]
+
+            track = play(sop, 12, sample)
+            rows[label] = {f: track[f] for f in (1, 2, 3, 8, 9, 12)}
+        results.append(Result("solver_sop_constraint_aging_bullet",
+                              Result.PASS if rows["box3d"] == rows["bullet"] and rows["box3d"][12] == [0.4583] else Result.FAIL,
+                              f"constraint {case}, age by frame: Box3D {rows['box3d']}, Bullet {rows['bullet']}"))
+    return results
+
+
 def test_solver_sop_keep_broken_bullet():
     """Export Broken Constraints, against the RBD Bullet Solver SOP, on the scene of solver_sop_keep_broken (a
     glued pair dropped on the ground, Glue far too weak to hold the landing): with it off and on, the number of
@@ -1092,7 +1227,7 @@ def test_solver_sop_break_impact_bullet():
 
 
 def _first_break(kind, tag, cname, anchors, hang=None, enable=(), parms=None, names="Glue", line_attrs=None, frames=24,
-                 centers=((0, 4, 0), (0, 2, 0)), fixed=True, ground=False):
+                 centers=((0, 4, 0), (0, 2, 0)), fixed=True, ground=False, animate=None):
     """The first frame on which a two-piece scene (a fixed box over a free one, 2 apart) has no constraint left on
     the Break Thresholds of the Box3D Solver SOP ("box3d") or the RBD Bullet Solver SOP ("bullet"), None if it
     holds for `frames`. `anchors`: the two line points; `hang`: the free box's point attributes; `enable`: the
@@ -1103,6 +1238,9 @@ def _first_break(kind, tag, cname, anchors, hang=None, enable=(), parms=None, na
                                                      "attrs": dict(hang or {}, active=1)}])
     collision = packed_boxes(f"{tag}_ground", [GROUND])[0] if ground else None
     lines = constraint_lines(f"{tag}_network", [(pnames[0], anchors[0], pnames[1], anchors[1], cname, line_attrs or {})])
+    if animate:  # VEX run over the constraint lines every frame
+        lines = append_sop(lines, "attribwrangle", lambda n: (set_parm(n, ["class"], "primitive"),
+                                                              set_parm(n, ["snippet"], animate)))
     inputs = {"collision": collision} if ground else {}
     sop = (solver_sop if kind == "box3d" else bullet_sop)(f"{tag}_{kind}", geometry=pieces, constraints=lines,
                                                           **inputs)
@@ -1218,6 +1356,79 @@ def test_solver_sop_break_distance_bullet():
                 problems.append(f"{kind} with a threshold of {thr}: gone on {f}")
     return [Result("solver_sop_break_distance_bullet", Result.FAIL if problems else Result.PASS,
                    f"gone on frame: {', '.join(rows)}" + (f"; PROBLEMS: {'; '.join(problems)}" if problems else ""))]
+
+
+def test_solver_sop_break_attrib_update_bullet():
+    """Break Thresholds, Update from Input, against the RBD Bullet Solver SOP: a Hard constraint 2 apart with a
+    Distance Threshold of 0.2 scaled by an attribute (`mystr`) that is 1000 until frame 5 and 1 from frame 6 on the
+    Constraints input. With Update from Input off the value it had when the constraint was made counts, so it holds;
+    on, the live value counts and it breaks soon after frame 6. The same in both."""
+    problems, rows = [], []
+    for update in (0, 1):
+        got = {}
+        for kind in ("box3d", "bullet"):
+            got[kind] = _first_break(
+                kind, f"sop_update_{kind}{update}", "Hard", ((0, 3.5, 0), (0, 1.5, 0)), enable=("distance",),
+                parms={"constraint_distancethreshold1": 0.2, "constraint_scaledistance1": 1,
+                       "constraint_distanceattrib1": "mystr", "constraint_distanceattribupdate1": update},
+                names="Hard", line_attrs={"mystr": 1000.0}, frames=12, animate="f@mystr = @Frame < 6 ? 1000.0 : 1.0;")
+        rows.append(f"Update from Input {update}: Box3D {got['box3d']}, Bullet {got['bullet']}")
+        if update == 0 and (got["box3d"] is not None or got["bullet"] is not None):
+            problems.append("a constraint broke with Update from Input off")
+        if update == 1 and (got["box3d"] is None or got["bullet"] is None or abs(got["box3d"] - got["bullet"]) > 1
+                            or got["box3d"] < 6):
+            problems.append(f"with it on they went on {got['box3d']} / {got['bullet']}, expected the same frame from 6")
+    return [Result("solver_sop_break_attrib_update_bullet", Result.FAIL if problems else Result.PASS,
+                   "gone on frame: " + "; ".join(rows) + (f"; PROBLEMS: {'; '.join(problems)}" if problems else ""))]
+
+
+def test_solver_sop_constraint_updates_bullet():
+    """Enable Attribute Update from SOPs and Overwrite with SOP, against the RBD Bullet Solver SOP: the scene of
+    solver_sop_break_attrib_update_bullet (a Distance Threshold of 0.2 scaled by `mystr`, 1000 until frame 5 and 1
+    from frame 6 on the Constraints input, Update from Input off). Holds with neither; breaks soon after frame 6 with
+    Enable Attribute Update from SOPs listing `mystr` or with Overwrite with SOP; holds again when the update's Group
+    names no constraint. The same frame in both."""
+    base = {"constraint_distancethreshold1": 0.2, "constraint_scaledistance1": 1, "constraint_distanceattrib1": "mystr",
+            "constraint_distanceattribupdate1": 0}
+    cases = (
+        ("neither", {}, False),
+        ("update listing mystr", {"enable_constraintupdates": 1, "constraint_attributes": "mystr"}, True),
+        ("update listing mystr, group of none", {"enable_constraintupdates": 1, "constraint_attributes": "mystr",
+                                                 "constraint_attribgroup": "@constraint_name=Nothing"}, False),
+        ("update listing another attribute", {"enable_constraintupdates": 1, "constraint_attributes": "other"}, False),
+    )
+    problems, rows = [], []
+    for i, (label, extra, breaks) in enumerate(cases):
+        got = {}
+        for kind in ("box3d", "bullet"):
+            got[kind] = _first_break(
+                kind, f"sop_cupd{i}_{kind}", "Hard", ((0, 3.5, 0), (0, 1.5, 0)), enable=("distance",),
+                parms=dict(base, **extra), names="Hard", line_attrs={"mystr": 1000.0}, frames=12,
+                animate="f@mystr = @Frame < 6 ? 1000.0 : 1.0;")
+        rows.append(f"{label}: Box3D {got['box3d']}, Bullet {got['bullet']}")
+        a, b = got["box3d"], got["bullet"]
+        if (a is None) != (b is None) or (a is not None and abs(a - b) > 1) or (a is not None) != breaks:
+            problems.append(f"{label}: {a} / {b}, expected {'a break from frame 6' if breaks else 'no break'} in both")
+    # Overwrite with SOP: the constraints' own `mystr` on frame 9 (1000 when read once, 1 when read again every step)
+    pieces, pnames = packed_boxes("sop_reload_pieces", [{"size": (1, 1, 1), "center": (0, 4, 0), "attrs": {"active": 0}},
+                                                        {"size": (1, 1, 1), "center": (0, 2, 0), "attrs": {"active": 1}}])
+    lines = constraint_lines("sop_reload_net", [(pnames[0], (0, 3.5, 0), pnames[1], (0, 1.5, 0), "Hard",
+                                                 {"mystr": 1000.0})])
+    lines = append_sop(lines, "attribwrangle", lambda n: (set_parm(n, ["class"], "primitive"), set_parm(
+        n, ["snippet"], "f@mystr = @Frame < 6 ? 1000.0 : 1.0;")))
+    for reload in (0, 1):
+        seen = {}
+        for kind in ("box3d", "bullet"):
+            sop = (solver_sop if kind == "box3d" else bullet_sop)(f"sop_reload{reload}_{kind}", geometry=pieces,
+                                                                  constraints=lines)
+            set_parm(sop, ["enable_constraintbreaks"], 0)  # RBD Bullet Solver's is on by default
+            set_parm(sop, ["constraint_reloadfromsops"], reload)
+            seen[kind] = play(sop, 9, lambda s, f: [p.attribValue("mystr") for p in s.geometry(1).prims()])[9]
+        rows.append(f"Overwrite with SOP {reload}: mystr on frame 9 Box3D {seen['box3d']}, Bullet {seen['bullet']}")
+        if seen["box3d"] != seen["bullet"] or seen["box3d"] != [1.0 if reload else 1000.0]:
+            problems.append(f"Overwrite with SOP {reload}: {seen['box3d']} / {seen['bullet']}")
+    return [Result("solver_sop_constraint_updates_bullet", Result.FAIL if problems else Result.PASS,
+                   "gone on frame: " + "; ".join(rows) + (f"; PROBLEMS: {'; '.join(problems)}" if problems else ""))]
 
 
 def test_solver_sop_break_angle_torque_bullet():
@@ -1344,7 +1555,8 @@ def test_solver_sop_layout():
            ["Contacts", "Sleeping"])
     attributes = by_path.get(("Output", "Attributes"))
     expect("Output / Attributes", [pt.name() for pt in attributes.parmTemplates()] if attributes else None,
-           ["enableaging", "reapdead", "reapatframeend"])
+           ["enableaging", "reapdead", "reapatframeend", "addactiveage", "justactivatedgroup",
+            "justactivatedtype"])
     expect("Output tab folders", [pt.label() for pt in by_path[("Output",)].parmTemplates()]
            if ("Output",) in by_path else None, ["Impact Data", "Attributes", "Attribute Transfer"])
     sleeping = by_path.get(("Setup", "Sleeping"))
@@ -1411,7 +1623,7 @@ def test_solver_sop_layout():
     expect("Advanced / Constraints has folders", len(all_constraint) > 0, True)
     expect("Constraints tab folders", [pt.label() for pt in by_path[("Constraints",)].parmTemplates()
                                        if pt.type() == hou.parmTemplateType.Folder] if ("Constraints",) in by_path
-           else None, ["Break Thresholds"])
+           else None, ["Break Thresholds", "Override Attributes"])
     breaks = by_path.get(("Constraints", "Break Thresholds"))
     expect("Break Thresholds: open, header toggle", (breaks.tags().get("group_default"),
                                                     breaks.tags().get("sidefx::header_toggle")) if breaks else None,
@@ -1547,8 +1759,8 @@ def test_constraint_properties_scaling():
     cp = create(geo, "box3d_constraint_properties", "props")
     cp.setInput(0, pieces)
     cp.setInput(1, lines)
-    for name, value in (("action", 0), ("addrevolute_stiffness", 1), ("revolute_stiffness", 10.0),
-                        ("revolute_stiffnessattribute", "weight")):
+    for name, value in (("action", 0), ("doconstrainttype", 1), ("addrevolute_stiffness", 1),
+                        ("revolute_stiffness", 10.0), ("revolute_stiffnessattribute", "weight")):
         set_parm(cp, [name], value)
 
     def stiffness(scaling, mode):
@@ -1590,7 +1802,7 @@ def test_constraint_properties_next():
     cp.setInput(1, lines)
     for name, value in (("action", 0), ("donext_constraintname", 1), ("next_constraintname", "Weld"),
                         ("addnext_revolute_stiffness", 1), ("next_revolute_stiffness", 99.0),
-                        ("next_constrainttype", 2)):
+                        ("next_constrainttype", 2), ("donext_constrainttype", 1)):
         set_parm(cp, [name], value)
 
     def attrs():
@@ -1600,16 +1812,23 @@ def test_constraint_properties_next():
                 if g.findPrimAttrib(a) is not None}
 
     off = attrs()
-    set_parm(cp, ["usenextconstraint"], 1)
+    set_parm(cp, ["usenextconstraint"], 1)  # Enable, but its tick (dousenextconstraint) is off in Edit mode
+    unticked = attrs()
+    set_parm(cp, ["dousenextconstraint"], 1)
     on = attrs()
+    set_parm(cp, ["donext_constrainttype"], 0)  # the next type's settings need its tick too
+    no_type = attrs()
+    set_parm(cp, ["donext_constrainttype"], 1)
     set_parm(cp, ["action"], 1)
     in_set = attrs()
     want_on = {"next_constraint_name": "Weld", "next_stiffness": 99.0}
-    ok = ("next_constraint_name" not in off and "next_stiffness" not in off and on == want_on
+    ok = ("next_constraint_name" not in off and "next_stiffness" not in off and unticked == {}
+          and no_type == {"next_constraint_name": "Weld"} and on == want_on
           and in_set.get("next_constraint_name") == "Weld" and in_set.get("next_stiffness") == 99.0)
     return [Result("constraint_properties_next", Result.PASS if ok else Result.FAIL,
-                   f"line attributes with the switch off {off}, on in Edit {on}, on in Set {in_set} (expected "
-                   f"nothing, then {want_on}, then the next name and stiffness 99)")]
+                   f"line attributes with the switch off {off}, Enable but unticked {unticked}, ticked in Edit {on}, "
+                   f"without the next type's tick {no_type}, in Set {in_set} (expected nothing, nothing, {want_on}, "
+                   f"the name only, then the next name and stiffness 99)")]
 
 
 def test_constraint_properties_vexpressions():
@@ -1716,6 +1935,59 @@ def test_configure_material_preset():
     return [Result("configure_material_preset", Result.PASS if ok else Result.FAIL,
                    f"Metal / Steel {dry} (ticked {ticked}), greasy {greasy['friction']}, Glass {glass}, point attributes "
                    f"{attrs} (expected 8050 / 0.5 / 0.45, 0.15, 1000 / 0.2 / 1, 1000 and 1)")]
+
+
+def test_configure_var():
+    """Var on Box3D Configure's Density, Bounce, Friction and Rotational Stiffness, against RBD Configure's (its User
+    value with Var): six pieces get the same value each, the base times a random 1 - Var to 1 + Var by point
+    number, and with Var off every piece has the base."""
+    pieces, _ = packed_boxes("cfg_var_pieces", [{"size": (1, 1, 1), "center": (3.0 * i, 1, 0)} for i in range(6)])
+    base = {"density": (500.0, 0.5), "bounce": (0.4, 0.5), "friction": (0.7, 0.3), "inertialtensorstiffness": (2.0, 0.3)}
+    rbd_names = {"density": "density", "bounce": "bounce", "friction": "friction",
+                 "inertialtensorstiffness": "inertialtensorstiffness"}
+    got = {}
+    for label in ("box3d", "rbd"):
+        geo = new_geo(f"cfg_var_{label}")
+        src = create(geo, "object_merge", "pieces")
+        set_parm(src, ["objpath1"], pieces)
+        cfg = create(geo, "box3d_configure" if label == "box3d" else "rbdconfigure", "configure")
+        cfg.setInput(0, src)
+        for name, (value, var) in base.items():
+            if label == "box3d":
+                set_parm(cfg, [f"add{name}1"], 1)
+                set_parm(cfg, [f"{name}1"], value)
+                set_parm(cfg, [f"use{name}var1"], 1)
+                set_parm(cfg, [f"{name}var1"], var)
+            elif name == "inertialtensorstiffness":
+                set_parm(cfg, ["addrotationalstiffness1"], 1)
+                set_parm(cfg, [f"{name}1"], value)
+                set_parm(cfg, [f"use{name}var1"], 1)
+                set_parm(cfg, [f"{name}var1"], var)
+            else:
+                set_parm(cfg, [f"add{name}1"], 1)
+                set_parm(cfg, [f"adduser{name}1"], 1)
+                set_parm(cfg, [f"user{name}1"], value)
+                set_parm(cfg, [f"useuser{name}var1"], 1)
+                set_parm(cfg, [f"user{name}var1"], var)
+        display(cfg)
+        g = cfg.geometry(0)
+        got[label] = {name: [round(pt.attribValue(name), 4) for pt in g.points()] for name in base
+                      if g.findPointAttrib(name)}
+    # Var off: the plain base on every piece
+    geo = new_geo("cfg_var_off")
+    src = create(geo, "object_merge", "pieces")
+    set_parm(src, ["objpath1"], pieces)
+    cfg = create(geo, "box3d_configure", "configure")
+    cfg.setInput(0, src)
+    set_parm(cfg, ["adddensity1"], 1)
+    set_parm(cfg, ["density1"], 500.0)
+    display(cfg)
+    flat = {round(pt.attribValue("density"), 4) for pt in cfg.geometry(0).points()}
+    scattered = len(set(got["box3d"].get("density", []))) > 1
+    ok = got["box3d"] == got["rbd"] and scattered and flat == {500.0}
+    return [Result("configure_var", Result.PASS if ok else Result.FAIL,
+                   f"Box3D {got['box3d']}, RBD Configure {got['rbd']}, Var off {sorted(flat)} "
+                   f"(expected the same values, scattered, and 500 with Var off)")]
 
 
 def test_configure_packs():
@@ -1832,11 +2104,15 @@ def test_constraint_properties():
     for n, v in (("action", 0), ("constraintgroup", "chosen"), ("constrainttype", 2), ("addrevolute_stiffness", 1),
                  ("revolute_stiffness", 7.0), ("addrevolute_enable_spring", 1), ("revolute_enable_spring", 1)):
         set_parm(cp, [n], v)
+    # Edit mode writes a type's ticked settings only once Constraint Type is ticked
+    unticked = cp.geometry(1).findPrimAttrib("stiffness") is None
+    set_parm(cp, ["doconstrainttype"], 1)
     g = cp.geometry(1)
     prims = g.prims()
     first = (round(prims[0].attribValue("stiffness"), 3), prims[0].attribValue("enable_spring"))
     other = (prims[1].attribValue("stiffness"), prims[1].attribValue("enable_spring"))
-    ok = first == (7.0, 1) and other[0] <= -3.0e38 and other[1] < 0 and g.findPrimGroup("__tmpconpropgrp") is None
+    ok = (unticked and first == (7.0, 1) and other[0] <= -3.0e38 and other[1] < 0
+          and g.findPrimGroup("__tmpconpropgrp") is None)
     return [Result("constraint_properties", Result.PASS if ok else Result.FAIL,
                    f"(stiffness, enable_spring) on the group's line {first} (expected (7, 1)), on the other {other} "
                    "(expected not set: below -3e38 and -1)")]
@@ -1953,6 +2229,38 @@ def test_no_subdata_warnings():
                    f"data hint warnings: {found or 'none'} (expected none)")]
 
 
+def test_packed_object_geometry_source():
+    """The Box3D Packed Object's Geometry Source, as RBD Packed Object's: First and Second Context Geometry take the
+    pieces wired into the DOP network's first and second input (the SOP Path left empty), SOP Path is greyed out
+    for them, and a piece dropped from y = 3 has fallen after 1 s."""
+    pieces, _ = packed_boxes("geosrc_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0)}])
+    rows = []
+    ok = True
+    for token, wire in (("first", 0), ("second", 1)):
+        geo = new_geo(f"geosrc_{token}")
+        src = create(geo, "object_merge", "pieces")
+        set_parm(src, ["objpath1"], pieces)
+        net = create(geo, "dopnet", "dop")
+        net.setInput(wire, src)
+        po = create(net, "box3d_packedobject", "po")
+        set_menu_token(po, ["geosource"], token)
+        solver = create(net, "box3d_solver", "solver")
+        solver.setInput(0, po)
+        out = create(net, "output", "output")
+        out.setInput(0, solver)
+        display(out)
+        track = step(net, 25, lambda sim, f: packed_positions(sim, "po"))
+        pos = track[25]
+        y = next(iter(pos.values())).y() if pos else None
+        # Houdini evaluates the condition in the UI (Parm.isDisabled does not): it is on SOP Path, and the menu is not on SOP.
+        cond = po.parm("soppath").parmTemplate().conditionals().get(hou.parmCondType.DisableWhen, "")
+        greyed = cond == "{ geosource != sop }" and po.parm("geosource").evalAsString() != "sop"
+        rows.append(f"{token}: y {y} after 1 s, SOP Path greyed {greyed}")
+        ok = ok and y is not None and y < 2.0 and greyed
+    return [Result("packed_object_geometry_source", Result.PASS if ok else Result.FAIL,
+                   "; ".join(rows) + " (expected y below 2 and SOP Path greyed out)")]
+
+
 def test_configure_initial_state():
     """Box3D Configure's Initial State: Velocity (2, 0, 0) moves the group's piece 2 in 1 s through the Box3D
     Solver SOP (no gravity needed in x), and Angular Velocity (0, 90, 0) degrees per second is written
@@ -2024,6 +2332,8 @@ TESTS = {
     "solver_sop_break_atframe_bullet": test_solver_sop_break_atframe_bullet,
     "solver_sop_break_distance_bullet": test_solver_sop_break_distance_bullet,
     "solver_sop_break_angle_torque_bullet": test_solver_sop_break_angle_torque_bullet,
+    "solver_sop_break_attrib_update_bullet": test_solver_sop_break_attrib_update_bullet,
+    "solver_sop_constraint_updates_bullet": test_solver_sop_constraint_updates_bullet,
     "solver_sop_before_start": test_solver_sop_before_start,
     "solver_sop_solve_first_frame": test_solver_sop_solve_first_frame,
     "solver_sop_keep_broken": test_solver_sop_keep_broken,
@@ -2046,6 +2356,11 @@ TESTS = {
     "constraint_properties_vexpressions": test_constraint_properties_vexpressions,
     "constraint_properties_collisions": test_constraint_properties_collisions,
     "configure_material_preset": test_configure_material_preset,
+    "configure_var": test_configure_var,
+    "packed_object_geometry_source": test_packed_object_geometry_source,
+    "solver_sop_active_age_bullet": test_solver_sop_active_age_bullet,
+    "solver_sop_aging_bullet": test_solver_sop_aging_bullet,
+    "solver_sop_constraint_aging_bullet": test_solver_sop_constraint_aging_bullet,
     "solver_sop_collision_prim_names": test_solver_sop_collision_prim_names,
     "solver_sop_collision_group_names": test_solver_sop_collision_group_names,
     "solver_sop_collision_rest": test_solver_sop_collision_rest,

@@ -414,11 +414,12 @@ def test_mass_written():
 
 def test_aging():
     """With Enable Aging, age grows by one per second (frames 2..25: the object is not solved on its
-    creation frame). A piece with life 0.5 is dead after a second and, with Reap Dead Points off (the
-    default), kept; one with life 0 never dies."""
+    creation frame). As RBD Bullet Solver, a piece dies once its age passes its life, a life of 0 on the first step,
+    and with Reap Dead Points on (the default) it is deleted; a piece with a long life lives on."""
     pieces = [
         {"size": (1, 1, 1), "center": (0, 0.5, 0), "attrs": {"life": 0.5, "age": 0.0}},
         {"size": (1, 1, 1), "center": (3, 0.5, 0), "attrs": {"life": 0.0, "age": 0.0}},
+        {"size": (1, 1, 1), "center": (6, 0.5, 0), "attrs": {"life": 100.0, "age": 0.0}},
     ]
     path, names = packed_boxes("aging_pieces", pieces)
     dop = new_dopnet("aging")
@@ -431,13 +432,17 @@ def test_aging():
         return {n: point_attributes(sim, "pieces", n, ["age", "dead", "name"]) for n in names}
 
     track = step(dop, 25, sample)
-    short, forever = track[25][names[0]], track[25][names[1]]
-    short_gone = short is None or short.get("name") != names[0]
-    age = forever["age"]
-    rows = [f"life 0 piece: age {age:.4f} on frame 25 (1.0 expected), dead={forever['dead']}",
-            "life 0.5 piece: " + ("deleted (should be kept: Reap Dead Points is off)" if short_gone
-                                  else f"kept, age {short['age']:.3f}, dead={short['dead']}")]
-    ok = close(age, 1.0, 1e-3) and not forever["dead"] and not short_gone and short["dead"] == 1
+
+    def gone(i):
+        return next((f for f in sorted(track) if track[f][names[i]] is None or track[f][names[i]].get("name") != names[i]),
+                    None)
+
+    long_lived = track[25][names[2]]
+    age = long_lived["age"]
+    rows = [f"life 100 piece: age {age:.4f} on frame 25 (1.0 expected), dead={long_lived['dead']}",
+            f"life 0.5 piece gone on frame {gone(0)} (expected 14: age 0.5 passes on step 13), "
+            f"life 0 piece gone on frame {gone(1)} (expected 2)"]
+    ok = close(age, 1.0, 1e-3) and not long_lived["dead"] and gone(0) in (13, 14) and gone(1) == 2
     return [Result("aging", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
 
 

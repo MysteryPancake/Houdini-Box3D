@@ -15,10 +15,6 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   that set `bodytype` or `deforming` on a Box3D Packed Object now set Custom first (`box3d_packed_object` in b3dtest.py). Not checked: the Solver SOP's collision
   object (Custom), the Pieces tab's Body Type greying out with the menu, and Deforming Static / Active against RBD Packed Object.
 
-* Box3D Configure Material Preset (`MATERIAL_MODULE`, table `tools/b3d_materials.py`, test `configure_material_preset`): not built or run. The table was
-  typed in from RBD Configure's Python Module (Houdini 22.0.502) and compared with it: same rows, densities, frictions and bounces. RBD
-  Configure's State menu is "Dry and Clean Surfaces" (0) or "Lubricated and Greasy Surfaces" (1), the choice between a material's two
-  friction values. Not here: Units (Unit Mass and Unit Length, which scale Density by `unitlength / unitmass`, each over 1000).
 * Constraint Properties Disable Collisions (`docollisions`, test `constraint_properties_collisions`): not built or run.
 
 * Constraint Properties Use VEXpressions (`run_vexpressions`, test `constraint_properties_vexpressions`): not built or run. Not checked: the snippet
@@ -193,6 +189,8 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 
 ## TODO
 
+* Box3D Configure has no Units (RBD Configure's Unit Mass and Unit Length, which scale Density by `unitlength / unitmass`,
+  each over 1000).
 * Packed primitive spheres and nested packed primitives collide as one point, half sunk (`odd_packed_contents`).
 * Quadric primitives (Sphere, Tube, Circle, Metaball), packed or as RBD Objects: sampled on their surface
   (`Box3DQuadrics.h`, `appendQuadricSamples` in `Box3DShapeBuild.cpp`) and sized like Bullet's. Run (`bullet_primitive_types`):
