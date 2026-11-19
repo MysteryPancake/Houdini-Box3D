@@ -246,12 +246,12 @@ Workarounds in the wrapper that the engine could own, roughly by value:
   `b3Body_SetMassData`, and must run again after every shape change or type change, before the next step. Wanted: a
   body-level override (centre at origin, inertia scale, explicit inertia) that survives
   `b3Body_ApplyMassFromShapes`.
-* **Events across steps, and impulse in hit events.** Box3D clears move, joint and hit events at the start of each
-  `b3World_Step`, so with Substeps the solver merges them after every step (`brokenThisFrame`, `st.moves`,
-  `hitPairs`). `b3ContactHitEvent` has point, normal and approach speed but no impulse, so Impacts scan every awake
-  body's contacts after each step (`getContactsByHandle`) and match pairs against the hit events: with Impact Min
-  Speed off, a hit that separates within one step is lost. Wanted: events that accumulate until cleared,
-  and the normal impulse in the hit event. Impacts could then come from events alone.
+* **Events across steps, and impulse in hit events.** Box3D clears move, joint, hit and impulse events at the start of each
+  `b3World_Step`, so with Substeps the solver merges them after every step (`brokenThisFrame`, `st.moves`, `hitPairs`,
+  `collectImpacts` appending). Impacts come from the fork's contact impulse events (`getContactImpulseEvents`). A
+  `b3ContactHitEvent` has the approach speed but no impulse, so with Impact Min Speed on a record is kept only when its
+  body pair also had a hit event (`updateHitEvents`, `hadHitEvent`). Wanted: events that accumulate until cleared, and
+  the normal impulse in the hit event, so the pair matching and the per-step merging go.
 * **Live contact recycling flag.** `b3Body_EnableContactRecycling` only reaches contacts made afterwards (`contact.c`
   sets the flag at creation), so `setContactRecyclingByHandle` disables and enables the body (`rebuildContacts`).
   That wakes the touching bodies and zeroes the body's velocity, which the wrapper saves and restores. Wanted: the
