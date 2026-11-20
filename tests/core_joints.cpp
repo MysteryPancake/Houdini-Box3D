@@ -827,6 +827,36 @@ int main() {
     steps(w, 5);
   }
 
+  // Settings that hold NaN compare equal to themselves: the sync updates a
+  // joint (and wakes its bodies) only when a setting differs, so a NaN that
+  // has not changed must not look like a change. A different value still does.
+  {
+    const float nan = std::nanf("");
+    for (const JointParam &p : jointParams()) {
+      if (p.kind == JointParam::Toggle)
+        continue;
+      for (int t = 0; t < kJointTypeCount; ++t) {
+        const JointType type = JointType(t);
+        if (!p.usedBy(type))
+          continue;
+        JointSettings a = Box3DWorld::defaultJointSettings(type);
+        float *value = p.f   ? &(a.*p.f)
+                       : p.v ? &(a.*p.v)[0]
+                       : p.q ? &(a.*p.q)[0]
+                             : nullptr;
+        CHECK(value != nullptr);
+        if (!value)
+          continue;
+        *value = nan;
+        JointSettings b = a;
+        CHECK(sameJointSettings(type, a, b));
+        b = Box3DWorld::defaultJointSettings(type);
+        CHECK(!sameJointSettings(type, a, b));
+        CHECK(!sameJointSettings(type, b, a));
+      }
+    }
+  }
+
   CHECK(Box3DWorld::assertCount() == assertsBefore); // nothing Box3D refused
   if (!fails)
     std::printf("OK\n");

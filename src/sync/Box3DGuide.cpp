@@ -13,7 +13,8 @@
 // the shapes, so they follow the cached frames without the guide's lookups.
 #include "sync/Box3DSolverInternal.h"
 
-#include <GU/GU_PrimPoly.h>
+#include <GA/GA_PolyCounts.h>
+#include <GEO/GEO_PrimPoly.h>
 #include <SIM/SIM_Engine.h>
 #include <SIM/SIM_Geometry.h>
 #include <SIM/SIM_GeometryCopy.h>
@@ -23,6 +24,7 @@
 #include <cmath>
 #include <memory>
 #include <mutex>
+#include <numeric>
 #include <vector>
 
 namespace box3dsolver {
@@ -94,24 +96,29 @@ public:
     endLine();
   }
 
+  // Every line is an open polygon, built in one block: the points are made
+  // with the polygons, which take them in order, and the polygons are at
+  // consecutive offsets.
   void write(GU_Detail &gdp) const {
+    if (myEnds.empty())
+      return;
     GA_RWHandleV3 cd(gdp.addFloatTuple(GA_ATTRIB_PRIMITIVE, "Cd", 3));
     if (cd.isValid())
       cd.getAttribute()->setTypeInfo(GA_TYPE_COLOR);
+    GA_PolyCounts sizes;
     size_t begin = 0;
-    for (size_t i = 0; i < myEnds.size(); ++i) {
-      const size_t end = myEnds[i];
-      GU_PrimPoly *poly = GU_PrimPoly::build(
-          &gdp, static_cast<GA_Size>(end - begin), /*open=*/true);
-      if (poly) {
-        for (size_t k = begin; k < end; ++k)
-          gdp.setPos3(poly->getPointOffset(static_cast<GA_Size>(k - begin)),
-                      myPoints[k]);
-        if (cd.isValid())
-          cd.set(poly->getMapOffset(), myColors[i]);
-      }
+    for (const size_t end : myEnds) {
+      sizes.append(static_cast<GA_Size>(end - begin));
       begin = end;
     }
+    std::vector<int> pointNumbers(myPoints.size());
+    std::iota(pointNumbers.begin(), pointNumbers.end(), 0);
+    const GA_Offset first = GEO_PrimPoly::buildBlock(
+        &gdp, myPoints.data(), static_cast<GA_Size>(myPoints.size()), sizes,
+        pointNumbers.data(), /*closed=*/false);
+    if (cd.isValid() && GAisValid(first))
+      for (size_t i = 0; i < myColors.size(); ++i)
+        cd.set(first + static_cast<GA_Offset>(i), myColors[i]);
   }
 
 private:
@@ -215,9 +222,10 @@ void drawBody(Lines &out, const b3dop::Box3DWorld &world,
       break;
     case b3dop::Box3DWorld::ShapeOutline::Hull: {
       // Each face as a closed loop (shared edges are drawn twice).
+      std::vector<UT_Vector3> loop; // one buffer for every face
       for (size_t k = 0; k < s.loops.size();) {
         const int n = s.loops[k++];
-        std::vector<UT_Vector3> loop;
+        loop.clear();
         loop.reserve(static_cast<size_t>(n) + 1);
         for (int j = 0; j < n && k < s.loops.size(); ++j, ++k) {
           const size_t v = static_cast<size_t>(s.loops[k]) * 3;

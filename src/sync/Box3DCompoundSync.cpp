@@ -89,12 +89,12 @@ bool bodyMotion(const b3dop::Box3DWorld &w, BodyHandle h, b3dop::MergedBody &mb,
 // The settings that belong to a body, not a shape: pieces that differ here
 // cannot share one.
 bool sameBodyLevel(const b3dop::BodyProps &a, const b3dop::BodyProps &b) {
-  auto same = [](float x, float y) { return x == y || (x != x && y != y); };
-  return same(a.linearDamping, b.linearDamping) &&
-         same(a.angularDamping, b.angularDamping) &&
-         same(a.gravityScale, b.gravityScale) &&
-         same(a.sleepThreshold, b.sleepThreshold) &&
-         same(a.ccdThreshold, b.ccdThreshold) &&
+  using b3dop::sameFloat;
+  return sameFloat(a.linearDamping, b.linearDamping) &&
+         sameFloat(a.angularDamping, b.angularDamping) &&
+         sameFloat(a.gravityScale, b.gravityScale) &&
+         sameFloat(a.sleepThreshold, b.sleepThreshold) &&
+         sameFloat(a.ccdThreshold, b.ccdThreshold) &&
          a.contactRecycling == b.contactRecycling &&
          a.enableSleep == b.enableSleep && a.fastObject == b.fastObject &&
          a.fastRotation == b.fastRotation && a.locks == b.locks;
@@ -497,7 +497,6 @@ bool merge(Box3DSharedState &st, const std::vector<Box3DBodyMirror *> &group) {
   const BodyHandle body = w.createBody(bs, lead.p, lead.q);
   if (!body)
     return false;
-  w.setCcdThresholdByHandle(body, bs.props.ccdThreshold);
 
   auto c = std::make_unique<Box3DCompound>();
   c->body = body;

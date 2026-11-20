@@ -173,7 +173,10 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
     the current, stretched distance. Not `restlength`: that attribute multiplies the node's value, and -1 times the
     distance would be negative again. It is only read while the joint's rest length is negative.
   * Our writes bump `current_P` / `current_orient`, which are in the network fingerprint; the fingerprint is re-recorded after the
-    write, so an unchanged network still skips. Writing happens every step.
+    write, so an unchanged network still skips. Writing happens every step, except for a network whose joints are
+    all quiet (`markQuietJoints`): bodies at rest and already written that way, or joints that broke and had their last
+    values written. With nothing broken and no Enable Aging, that network is left alone: no write lock, no new data
+    ids, no fingerprint.
   * A Constraint Network with Overwrite with SOP re-imports the SOP every step, dropping `current_*`: the joints
     carry on (their signature leaves the frames out), but a world rebuilt from a cached frame other than the first
     makes them from the authored anchors there.

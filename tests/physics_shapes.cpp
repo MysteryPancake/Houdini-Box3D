@@ -320,6 +320,31 @@ void testConvexShapes() {
     std::vector<float> bad = box;
     bad[4] = std::nanf("");
     CHECK(!Box3DWorld::fitShapeOriented(ShapeType::Box, bad.data(), 8, again));
+
+    // The same cache under a packed source's key: a miss, a store, then a hit
+    // that is that fit; another type, pivot or scale is another key, and 0 is
+    // not a key.
+    const double fitPivot[3] = {0.1, 0.2, 0.3}, fitOther[3] = {0.1, 0.2, 0.4};
+    const double fitScale[3] = {1.0, 2.0, 3.0}, fitScale2[3] = {1.0, 2.0, 3.5};
+    const uint64_t fk = packedFitKey(4242, fitPivot, fitScale, ShapeType::Box);
+    CHECK(fk != 0 &&
+          fk != packedFitKey(4242, fitPivot, fitScale, ShapeType::Sphere) &&
+          fk != packedFitKey(4242, fitOther, fitScale, ShapeType::Box) &&
+          fk != packedFitKey(4242, fitPivot, fitScale2, ShapeType::Box) &&
+          fk != packedFitKey(4243, fitPivot, fitScale, ShapeType::Box) &&
+          fk != packedHullKey(4242, fitPivot, fitScale, 1) &&
+          fk != packedHullKey(4242, fitPivot, fitScale, 2));
+    ShapeSpec hit;
+    CHECK(!Box3DWorld::findFit(fk, hit));
+    Box3DWorld::storeFit(fk, again);
+    CHECK(Box3DWorld::findFit(fk, hit) && hit.type == again.type);
+    for (int i = 0; i < 3; ++i)
+      CHECK(hit.halfExtents[i] == again.halfExtents[i] &&
+            hit.center[i] == again.center[i]);
+    CHECK(!Box3DWorld::findFit(
+        packedFitKey(4242, fitPivot, fitScale, ShapeType::Sphere), hit));
+    Box3DWorld::storeFit(0, again);
+    CHECK(!Box3DWorld::findFit(0, hit));
   }
   // Geometry along the body axes keeps them exactly (no turn from float
   // noise).

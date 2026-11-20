@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "Box3DJoints.h"
+#include "Box3DMath.h" // sameFloat
 #include "Box3DShapes.h"
 
 namespace b3dop {
@@ -49,7 +50,7 @@ using JointHandle = uint64_t;
 // final transform. A body that fell asleep this step appears once more with
 // fellAsleep set. Bodies moved by the caller (setTransform...) do not appear.
 struct BodyMove {
-  void *userData = nullptr; // whatever setBodyUserData stored
+  void *userData = nullptr; // whatever createBody stored
   BodyHandle handle = 0;
   double pos[3] = {0, 0, 0};
   float rot[4] = {0, 0, 0, 1};
@@ -272,38 +273,36 @@ struct BodyProps {
       return false;
     if (boundsInertia)
       for (int i = 0; i < 3; ++i)
-        if (boundsExtents[i] != o.boundsExtents[i])
+        if (!sameFloat(boundsExtents[i], o.boundsExtents[i]))
           return false;
     if (customInertia != o.customInertia)
       return false;
     if (!customInertia)
       return true;
     for (int i = 0; i < 6; ++i)
-      if (inverseInertia[i] != o.inverseInertia[i] &&
-          (inverseInertia[i] == inverseInertia[i] ||
-           o.inverseInertia[i] == o.inverseInertia[i]))
+      if (!sameFloat(inverseInertia[i], o.inverseInertia[i]))
         return false;
     return true;
   }
 
   bool operator==(const BodyProps &o) const {
-    auto same = [](float a, float b) { return a == b || (a != a && b != b); };
-    return same(mass, o.mass) && same(density, o.density) &&
+    return sameFloat(mass, o.mass) && sameFloat(density, o.density) &&
            computeMass == o.computeMass && computeCom == o.computeCom &&
-           same(inertiaScale, o.inertiaScale) && sameInertia(o) &&
-           same(friction, o.friction) && same(restitution, o.restitution) &&
-           same(rollingResistance, o.rollingResistance) &&
-           same(tangentVelocity[0], o.tangentVelocity[0]) &&
-           same(tangentVelocity[1], o.tangentVelocity[1]) &&
-           same(tangentVelocity[2], o.tangentVelocity[2]) &&
-           same(linearDamping, o.linearDamping) &&
-           same(angularDamping, o.angularDamping) &&
-           same(gravityScale, o.gravityScale) &&
+           sameFloat(inertiaScale, o.inertiaScale) && sameInertia(o) &&
+           sameFloat(friction, o.friction) &&
+           sameFloat(restitution, o.restitution) &&
+           sameFloat(rollingResistance, o.rollingResistance) &&
+           sameFloat(tangentVelocity[0], o.tangentVelocity[0]) &&
+           sameFloat(tangentVelocity[1], o.tangentVelocity[1]) &&
+           sameFloat(tangentVelocity[2], o.tangentVelocity[2]) &&
+           sameFloat(linearDamping, o.linearDamping) &&
+           sameFloat(angularDamping, o.angularDamping) &&
+           sameFloat(gravityScale, o.gravityScale) &&
            contactRecycling == o.contactRecycling &&
            enableSleep == o.enableSleep && enabled == o.enabled &&
            fastObject == o.fastObject && fastRotation == o.fastRotation &&
-           same(sleepThreshold, o.sleepThreshold) &&
-           same(ccdThreshold, o.ccdThreshold) && filter == o.filter &&
+           sameFloat(sleepThreshold, o.sleepThreshold) &&
+           sameFloat(ccdThreshold, o.ccdThreshold) && filter == o.filter &&
            locks == o.locks;
   }
   bool operator!=(const BodyProps &o) const { return !(*this == o); }
@@ -516,10 +515,6 @@ public:
   void setTargetTransformByHandle(BodyHandle h, const double pos[3],
                                   const float rotXYZW[4], float timeStep);
 
-  // Touching contact points that carried impulse in the last step. `out` is
-  // cleared first.
-  int getContactsByHandle(BodyHandle h, std::vector<ContactPoint> &out) const;
-
   // Report the contact points that carry impulse after every step
   // (getContactImpulseEvents), for the contacts in the awake set. Off by
   // default.
@@ -635,6 +630,12 @@ public:
 
   // ---- test-only inspection ---------------------------------------------
   // Only the tests call these; the plugin does not.
+  // Touching contact points that carried impulse in the last step. `out` is
+  // cleared first.
+  int getContactsByHandle(BodyHandle h, std::vector<ContactPoint> &out) const;
+  // Replaces the user data createBody stored (returned in BodyMove /
+  // ContactPoint).
+  void setBodyUserData(BodyHandle h, void *userData);
   // Read back what was set. Material is the first shape's; 0 / false if
   // unknown.
   bool getMaterialByHandle(BodyHandle h, float &friction,
@@ -722,6 +723,12 @@ public:
   // process-wide by the points' content, so identical pieces fit once.
   static bool fitShapeOriented(ShapeType type, const float *xyz, int count,
                                ShapeSpec &out);
+  // The same cache under a caller's key (packedFitKey), for fits of packed
+  // instances of one source that need not build their points to look it up.
+  // storeFit keeps what fitShapeOriented returned for that source; findFit is
+  // false on a miss. 0 is not a key. Thread-safe.
+  static bool findFit(uint64_t key, ShapeSpec &out);
+  static void storeFit(uint64_t key, const ShapeSpec &spec);
   // The centroid of the convex hull of the points (the centre of its volume,
   // as Bullet's RBD Object takes its pivot), in the points' own space. False
   // for fewer than 4 points, non-finite or flat input. Thread-safe, nothing
@@ -753,10 +760,8 @@ public:
   // ---- move events (valid until the next step or a body is removed) --------
   int getMoveEvents(
       std::vector<BodyMove> &out) const; // resizes `out`; returns the count
-  // What setBodyUserData stored (null for a body made without any).
+  // What createBody stored (null for a body made without any).
   void *bodyUserDataByHandle(BodyHandle h) const;
-  void setBodyUserData(BodyHandle h,
-                       void *userData); // returned in BodyMove / ContactPoint
 
   // ---- misc --------------------------------------------------------------
   static void version(int &major, int &minor, int &revision);

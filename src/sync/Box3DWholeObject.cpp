@@ -431,7 +431,7 @@ void updateWholeObjectBody(Box3DBodyMirror &entry, const WholeObjectScan &s) {
     b.type = entry.type;
     b.props = p;
     b.props.density = boxDensity(p, shapes.totalVolume);
-    entry.shapeless = addShapes(world, entry.handle, b, shapes) == 0;
+    entry.shapeless = !addAllShapes(world, entry.handle, b, shapes);
     applyBodyMass(world, entry.handle, p, shapes.totalVolume,
                   false); // even with none: clears Box3D's dirty mass
     entry.volume = shapes.totalVolume;

@@ -435,10 +435,15 @@ private:
   std::unordered_map<uint64_t, std::shared_ptr<const SourceSummary>> myMap;
 };
 
-// The identity SourceSummaryCache is keyed by.
+// The identity SourceSummaryCache is keyed by: the geometry's, and the
+// primitive `name` attribute the pieces are grouped by (editing it changes
+// neither P nor the primitive list).
 uint64_t sourceIdentity(const GU_Detail *gdp, GA_Offset fragmentFirst,
                         bool connected) {
   uint64_t h = geometryIdentity(gdp);
+  const GA_Attribute *name = gdp->findPrimitiveAttribute("name");
+  h = b3dop::mixHash(h,
+                     name ? static_cast<uint64_t>(name->getDataId()) : ~0ull);
   h = b3dop::mixHash(
       h, static_cast<uint64_t>(static_cast<int64_t>(fragmentFirst)));
   return b3dop::mixHash(h, connected ? 1 : 2);
@@ -717,7 +722,13 @@ BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
   // instances share them and the points are built only on a miss. A degenerate
   // transform has no scale: by content.
   double S[3];
-  const bool keyed = pk.prim && wantGeometry && packedScale(pk.m4, S);
+  const bool scaled =
+      pk.prim && (wantGeometry || autofit) && packedScale(pk.m4, S);
+  const bool keyed = scaled && wantGeometry;
+  // AutoFit of a box / sphere / capsule / cylinder: the fit is keyed by source
+  // too, so an instance of a known source is looked up without its points
+  // being built.
+  const bool fitKeyed = scaled && !wantGeometry;
 
   // A source seen before (in any world): its summary gives the keys, and when
   // every hull is still cached the source geometry is not read at all.
@@ -747,6 +758,19 @@ BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
       if (all) {
         for (const Piece &pc : found)
           add(pc);
+        return out;
+      }
+    }
+  }
+  if (fitKeyed) {
+    const std::shared_ptr<const SourceSummary> sum =
+        ShapeSources::summary(*pk.prim, false);
+    if (sum && !sum->pieceHashes.empty()) {
+      Piece pc;
+      if (Box3DWorld::findFit(packedFitKey(sum->groupHash, pk.pivot, S, type),
+                              pc.spec)) {
+        pc.volume = shapeVolume(pc.spec);
+        add(pc);
         return out;
       }
     }
@@ -819,6 +843,9 @@ BuiltShapes buildShapes(b3dop::Box3DWorld &world, ShapeSources &src,
     Piece pc;
     if (Box3DWorld::fitShapeOriented(
             type, pts.data(), static_cast<int>(pts.size() / 3), pc.spec)) {
+      if (fitKeyed)
+        Box3DWorld::storeFit(packedFitKey(group->hash, pk.pivot, S, type),
+                             pc.spec);
       pc.volume = shapeVolume(pc.spec);
       add(pc);
     }

@@ -358,7 +358,7 @@ void noteOverriddenData(const GU_Detail *gdp, Box3DObjectSync &os,
                         SyncCounts &c, const b3dop::BodySettings &node) {
   const b3dop::BodySettings d = b3dop::nodeBodyDefaults();
   const b3dop::BodyProps &n = node.props, &p = d.props;
-  auto differs = [](float a, float b) { return a != b && (a == a || b == b); };
+  auto differs = [](float a, float b) { return !b3dop::sameFloat(a, b); };
   const bool tangent = differs(n.tangentVelocity[0], p.tangentVelocity[0]) ||
                        differs(n.tangentVelocity[1], p.tangentVelocity[1]) ||
                        differs(n.tangentVelocity[2], p.tangentVelocity[2]);
@@ -571,6 +571,18 @@ int addShapes(b3dop::Box3DWorld &world, b3dop::BodyHandle h,
   return added;
 }
 
+// Every piece or none, so a body is never left with only some of its shapes.
+// True if the body has its shapes (false with no pieces to add too).
+bool addAllShapes(b3dop::Box3DWorld &world, b3dop::BodyHandle h,
+                  const b3dop::BodySettings &b, const BuiltShapes &shapes) {
+  const int added = addShapes(world, h, b, shapes);
+  if (added == static_cast<int>(shapes.pieces.size()))
+    return added > 0;
+  if (added > 0)
+    world.destroyShapesByHandle(h);
+  return false;
+}
+
 // A body with settings `b` at `pose` (its user data `entry`), its `shapes` and
 // mass, then its initial velocity when `giveVelocity`: after the mass is final
 // (a moving centre of mass shifts the velocity), and not for a static body or
@@ -702,7 +714,7 @@ bool rebuildPointShapes(ScanContext &ctx, const Box3DPointSlot &s,
     b.type = entry.type;
     b.props = p;
     b.props.density = boxDensity(p, plan.shapes.totalVolume);
-    if (addShapes(world, h, b, plan.shapes) > 0)
+    if (addAllShapes(world, h, b, plan.shapes))
       entry.shapeless = false;
     else
       noShape = true;

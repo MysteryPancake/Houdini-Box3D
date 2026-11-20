@@ -522,6 +522,8 @@ struct ShapePlan {
 
 int addShapes(b3dop::Box3DWorld &world, b3dop::BodyHandle h,
               const b3dop::BodySettings &b, const BuiltShapes &shapes);
+bool addAllShapes(b3dop::Box3DWorld &world, b3dop::BodyHandle h,
+                  const b3dop::BodySettings &b, const BuiltShapes &shapes);
 b3dop::BodyHandle
 createBodyWithShapes(b3dop::Box3DWorld &world, const b3dop::BodySettings &b,
                      const Box3DBodyPose &pose, const BuiltShapes &shapes,

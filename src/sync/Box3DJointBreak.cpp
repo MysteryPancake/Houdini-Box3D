@@ -29,6 +29,7 @@
 #include <UT/UT_Vector3.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <deque>
@@ -140,6 +141,7 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp,
   // A reference: `work` is thread_local, so naming it inside the lambda would
   // find each worker thread's own (empty) copy.
   const std::vector<Work> &items = work;
+  std::atomic<bool> wroteFrames{false};
   auto writeOne = [&](size_t i) {
     Box3DJointEntry *e = items[i].e;
     const GA_Offset *pts = items[i].pts;
@@ -160,6 +162,7 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp,
       orientH.set(pts[k],
                   UT_QuaternionF(f.rot[0], f.rot[1], f.rot[2], f.rot[3]));
     }
+    wroteFrames.store(true, std::memory_order_relaxed);
   };
   constexpr size_t kMinParallelFrames = 4096;
   if (work.size() >= kMinParallelFrames) {
@@ -174,8 +177,12 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp,
     for (size_t i = 0; i < work.size(); ++i)
       writeOne(i);
   }
-  pH.getAttribute()->bumpDataId();
-  orientH.getAttribute()->bumpDataId();
+  // Only what was written changes its data id (anything watching these
+  // attributes sees a change only when there is one).
+  if (wroteFrames.load()) {
+    pH.getAttribute()->bumpDataId();
+    orientH.getAttribute()->bumpDataId();
+  }
   if (wroteRestLength)
     restLengthH.getAttribute()->bumpDataId();
   if (wroteLocal) {
@@ -552,6 +559,12 @@ bool writeBrokenJoints(const b3dop::Box3DWorld &world, GU_Detail *gdp,
   return switched;
 }
 
+// Every joint is quiet (markQuietJoints): nothing of it needs writing.
+bool allQuiet(const std::vector<Box3DJointEntry *> &entries) {
+  return std::all_of(entries.begin(), entries.end(),
+                     [](const Box3DJointEntry *e) { return e->quiet; });
+}
+
 // The bodies' relative rotation since rest, in radians (Bullet's `angle`): 0
 // while the joint holds them as they started, however they were rotated then.
 // Box3D's own reading compares the bodies' absolute rotations instead.
@@ -578,6 +591,8 @@ float angleSinceRest(const b3dop::Box3DWorld &world, const Box3DJointEntry &e,
 void writeFeedback(const b3dop::Box3DWorld &world, GU_Detail *gdp,
                    const PrimExists &primOk,
                    const std::vector<Box3DJointEntry *> &entries) {
+  if (allQuiet(entries))
+    return;
   // The handles by name (a handful, all string literals): a linear search with
   // no string built per lookup. A deque, so the references stay valid.
   std::deque<std::pair<const char *, GA_RWHandleF>> scalars;
@@ -667,8 +682,9 @@ bool bodyMoves(const b3dop::Box3DWorld &world, b3dop::BodyHandle h) {
          world.isAwakeByHandle(h);
 }
 
-// Joints whose bodies are both at rest and were already written that way: their
-// frames and feedback cannot have changed, so this step does not write them.
+// Joints whose bodies are both at rest and were already written that way, and
+// joints that broke and had their last values written: their frames and
+// feedback cannot have changed, so this step does not write them.
 void markQuietJoints(const b3dop::Box3DWorld &world,
                      const std::vector<Box3DJointEntry *> &entries) {
   for (Box3DJointEntry *e : entries) {
@@ -676,11 +692,16 @@ void markQuietJoints(const b3dop::Box3DWorld &world,
         e->handle && !bodyMoves(world, e->bodyA) && !bodyMoves(world, e->bodyB);
     // A bond inside a compound joins parked (never awake) bodies that move with
     // their compound: never quiet.
-    e->quiet =
-        !e->inCompound && asleep && e->asleepWritten && e->wrote &&
-        !e->writeLocal && !e->switchFrames && e->madeRestLength < 0.0f &&
+    const bool nothingPending =
+        !e->inCompound && !e->writeLocal && !e->switchFrames &&
+        e->madeRestLength < 0.0f &&
         // a Glue's impact decays each step until it reaches zero
         (!e->glue || (e->extra && e->extra->glueImpact == e->impactWritten));
+    // A joint that broke has no frames or feedback left to write, only a
+    // Glue's final impact.
+    const bool spent = e->broken && !e->handle && nothingPending;
+    e->quiet =
+        spent || (asleep && e->asleepWritten && e->wrote && nothingPending);
     e->asleepWritten = asleep;
   }
 }
@@ -707,7 +728,6 @@ bool writeNetworkResults(const b3dop::Box3DWorld &world, GU_Detail *gdp,
   const PrimExists primOk{gdp};
   const bool switched =
       broken && writeBrokenJoints(world, gdp, primOk, *broken);
-  markQuietJoints(world, entries);
   writeLiveFrames(world, gdp, entries, primOk);
   writeFeedback(world, gdp, primOk, entries);
   if (ageDt > 0.0f)
@@ -741,6 +761,15 @@ int jointsAfterStep(Box3DSharedState &st, SIM_ObjectArray &objects) {
     const auto ents = entriesOf.find(kv.first);
     if (ents == entriesOf.end() && !anyBroken)
       continue; // no joints to keep live, nothing broke
+    static const std::vector<Box3DJointEntry *> kNone;
+    const std::vector<Box3DJointEntry *> &entries =
+        ents != entriesOf.end() ? ents->second : kNone;
+    // Nothing broke, no age to add and every joint is as it was last written
+    // (both bodies at rest): the geometry is left alone, with no write lock,
+    // no new data ids and no fingerprint to take again.
+    markQuietJoints(world, entries);
+    if (!anyBroken && st.constraintAgeDt <= 0.0f && allQuiet(entries))
+      continue;
     SIM_Object *obj = box3dObjectById(objects, net.objectId, st.objectsSorted);
     NetworkSource src;
     src.inGroup = net.inGroup;
@@ -749,9 +778,6 @@ int jointsAfterStep(Box3DSharedState &st, SIM_ObjectArray &objects) {
     net.writable = geo != nullptr;
     if (!geo)
       continue;
-    static const std::vector<Box3DJointEntry *> kNone;
-    const std::vector<Box3DJointEntry *> &entries =
-        ents != entriesOf.end() ? ents->second : kNone;
     bool switched = false;
     {
       SIM_GeometryAutoWriteLock lock(geo);

@@ -370,6 +370,17 @@ inline uint64_t packedHullKey(uint64_t sourceHash, const double pivot[3],
   return h ? h : 1ull;
 }
 
+// A packed AutoFit's cache key (Box3DWorld::findFit): the source's pieces hash,
+// pivot and scale (the inputs of packedPointsToBodyLocal) and the shape type,
+// so instances of one source share the fit without their points being moved
+// into body space and hashed. Never 0.
+inline uint64_t packedFitKey(uint64_t sourceHash, const double pivot[3],
+                             const double S[3], ShapeType type) {
+  constexpr uint32_t kFitKindBase = 16; // above packedHullKey's hull kinds
+  return packedHullKey(sourceHash, pivot, S,
+                       kFitKindBase + static_cast<uint32_t>(type));
+}
+
 // Connected sets of primitives (sharing points, directly or not).
 // primPoints[i]: points of primitive i. Returns each primitive's set, numbered
 // in order of first appearance.

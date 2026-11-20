@@ -115,7 +115,9 @@ private:
   // A new world for this data (other timesteps keep the old one). False if
   // Box3D could not create one; the data then still holds its old state, which
   // must not be continued.
-  bool createFreshWorld(SIM_Box3DWorld &worldData, const char *reason);
+  bool createFreshWorld(SIM_Box3DWorld &worldData,
+                        const b3dop::WorldSettings &settings,
+                        const char *reason);
   // The node error for a world that could not be created (names the world limit
   // if hit).
   void reportWorldCreationFailure(SIM_ObjectArray &objects);

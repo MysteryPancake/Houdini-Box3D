@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "Box3DJoints.h"
+#include "Box3DMath.h" // sameFloat
 
 namespace b3dop {
 
@@ -186,7 +187,7 @@ inline const std::vector<SideFXParam> &sideFXParams() {
   return kParams;
 }
 
-// The options type `t` uses are equal (exact compare).
+// The options type `t` uses are equal (exact compare, two NaNs equal).
 inline bool sameSideFXSettings(SideFXType t, const SideFXSettings &a,
                                const SideFXSettings &b) {
   for (const SideFXParam &p : sideFXParams()) {
@@ -194,7 +195,7 @@ inline bool sameSideFXSettings(SideFXType t, const SideFXSettings &a,
       continue;
     switch (p.kind) {
     case SideFXParam::Float:
-      if (a.*p.f != b.*p.f)
+      if (!sameFloat(a.*p.f, b.*p.f))
         return false;
       break;
     case SideFXParam::Int:
@@ -203,7 +204,7 @@ inline bool sameSideFXSettings(SideFXType t, const SideFXSettings &a,
       break;
     case SideFXParam::Vec3:
       for (int k = 0; k < 3; ++k)
-        if ((a.*p.v)[k] != (b.*p.v)[k])
+        if (!sameFloat((a.*p.v)[k], (b.*p.v)[k]))
           return false;
       break;
     }

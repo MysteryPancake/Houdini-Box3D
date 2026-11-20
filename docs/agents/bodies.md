@@ -131,6 +131,8 @@ is where the body's origin was at rest; joints map authored anchors with it ([jo
 * Packed points sharing a `name` are separate bodies, as in Bullet (`name_fusion_probe`); Bullet's only coupling, the
   first point's starting `v`, is not copied.
 * Notes become one node warning per kind, on the step a shape is built.
+* A rebuild adds all of a body's shapes or none (`addAllShapes`): a body is never left with some of them. When it gets none it
+  is static until a later rebuild gives it shapes (a `fallbacks` warning).
 * Point attributes win over Box3D Data, as in Bullet. `noteOverriddenData` lists the attributes present that replace
   a Box3D Data value changed from its default (`nodeBodyDefaults`; once per object, `overridesReported`): a value left
   at its default is not reported, so the Box3D Packed Object's attributes over its default Box3D Data are not.
@@ -141,7 +143,8 @@ hull, each face normal paired with each of its edges. A turned frame must beat t
 measured against Bullet (`autofit_bullet`): box = the bounds; sphere = centred on them, through the farthest point;
 capsule = along the axis nearest body Y, radius through the farthest point from it, caps ending at the bounds.
 Fits are cached process-wide by point content and shape type (`FitLibrary`, Box3DWorld.cpp), so instances of one piece
-fit once.
+fit once. A packed instance of a source with a summary is looked up first by `packedFitKey` (the summary's group hash,
+pivot, scale and type: `findFit` / `storeFit`), before its points are moved into body space and hashed, as the hulls are.
 `fitShapeToPoints` (body axes) is the fallback when a piece cannot be hulled.
 
 **Explicit primitives** (autofit off, `box` / `sphere` / `capsule`): `bullet_primS` = box half extents,

@@ -117,10 +117,9 @@ inline bool solve3(const double m[9], const double v[3], double out[3]) {
       !(std::fabs(det) > 1e-12 * biggest * biggest * biggest))
     return false;
   const double inv = 1.0 / det;
-  out[0] =
-      ((m[4] * m[8] - m[5] * m[7]) * v[0] + (m[2] * m[7] - m[1] * m[8]) * v[1] +
-       (m[1] * m[5] - m[2] * m[4]) * v[2]) *
-      inv;
+  out[0] = (c0 * v[0] + (m[2] * m[7] - m[1] * m[8]) * v[1] +
+            (m[1] * m[5] - m[2] * m[4]) * v[2]) *
+           inv;
   out[1] = (c1 * v[0] + (m[0] * m[8] - m[2] * m[6]) * v[1] +
             (m[2] * m[3] - m[0] * m[5]) * v[2]) *
            inv;
@@ -272,7 +271,7 @@ inline bool pathThroughBounds(const double com[3], const float lin[3],
 class GlueHolds {
 public:
   bool empty() const { return myUntil.empty(); }
-  size_t size() const { return myUntil.size(); }
+  size_t size() const { return myUntil.size(); } // (the tests count them)
   bool held(uint64_t piece) const { return myUntil.count(piece) != 0; }
   // Holds `piece` until `until` (never shortens a hold it has).
   void hold(uint64_t piece, double until) {

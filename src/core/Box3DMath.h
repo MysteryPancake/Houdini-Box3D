@@ -28,6 +28,10 @@ inline float clampNonNegOr(float v, float fallback) {
   return v > 0.0f ? v : 0.0f;
 }
 
+// Equal, or both NaN: a setting that is NaN and has not changed is not a
+// change.
+inline bool sameFloat(float a, float b) { return a == b || (a != a && b != b); }
+
 // dst[0..2] = src[0..2] / dst[0..3] = src[0..3]. The element types may differ
 // (double -> float).
 template <class D, class S> inline void copy3(D *dst, const S *src) {

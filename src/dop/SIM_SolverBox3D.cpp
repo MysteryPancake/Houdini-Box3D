@@ -369,6 +369,10 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
     return SIM_SOLVER_FAIL;
   }
 
+  // The solver parameters now. Animated ones reach the live world through
+  // applyTuning; only the thread count needs a new world.
+  const b3dop::WorldSettings tuning = currentWorldSettings();
+
   // ---- is the cached world usable? ---------------------------------------
   char reasonBuf[200];
   const char *reason = nullptr;
@@ -378,8 +382,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
       reason = "no valid world (first step, reset, or copied from empty)";
     } else {
       std::lock_guard<std::mutex> lock(st->mutex);
-      st->objectsSorted = box3dObjectsSortedById(objects);
-      if (st->world.settings().workerCount != currentWorkerCount()) {
+      if (st->world.settings().workerCount != tuning.workerCount) {
         // The pool is sized at creation; a rebuild only loses warm starting and
         // sleep.
         reason = "thread count changed";
@@ -402,7 +405,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   // time: never continue it.
   if (reason) {
     UT_PerfMonAutoSolveEvent perf(this, "Pre-Solve/Rebuilding World");
-    if (!createFreshWorld(*worldData, reason)) {
+    if (!createFreshWorld(*worldData, tuning, reason)) {
       reportWorldCreationFailure(objects);
       return SIM_SOLVER_FAIL;
     }
@@ -422,8 +425,6 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   // The physics advances by dt * Time Scale.
   const double timeScale = std::max(0.0, static_cast<double>(getTimeScale()));
   st->stepDt = static_cast<float>(dt * timeScale);
-  // Solver parameters may be animated; only the thread count needs a new world.
-  const b3dop::WorldSettings tuning = currentWorldSettings();
   if (!b3dop::finite3(tuning.gravity))
     message(objects,
             "Gravity is not a finite number; the previous gravity is kept");
@@ -631,13 +632,14 @@ SIM_SolverBox3D::findOrCreateWorldData(SIM_ObjectArray &objects) {
 }
 
 bool SIM_SolverBox3D::createFreshWorld(SIM_Box3DWorld &worldData,
+                                       const b3dop::WorldSettings &settings,
                                        const char *reason) {
   B3D_COUNT(rebuilds);
   B3D_LOG("REBUILD #%d: %s", B3D_COUNTER(rebuilds), reason);
 
   // The old state stays for other timesteps; the empty mirror makes every point
   // a new body.
-  return worldData.createWorld(currentWorldSettings());
+  return worldData.createWorld(settings);
 }
 
 void SIM_SolverBox3D::reportWorldCreationFailure(SIM_ObjectArray &objects) {

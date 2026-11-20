@@ -21,9 +21,7 @@ namespace {
 // A cap: < 0 (or non-finite) is unlimited.
 float cap(float v) { return (std::isfinite(v) && v >= 0.0f) ? v : FLT_MAX; }
 
-float finiteOr(float v, float fallback = 0.0f) {
-  return std::isfinite(v) ? v : fallback;
-}
+float finiteOr(float v) { return std::isfinite(v) ? v : 0.0f; }
 
 // A distance joint's spring force limits and maximum length: a negative setting
 // means unlimited.

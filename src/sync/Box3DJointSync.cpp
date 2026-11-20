@@ -889,8 +889,7 @@ struct NetworkReader {
     const auto it = kinds.find(std::string(n));
     if (it != kinds.end())
       return &it->second;
-    // No exact match: ignore case, so lowercase names (the joint nodes' Data
-    // Names before they were capitalised, e.g. "weld") still find "Weld".
+    // No exact match: ignore case, so "weld" finds a node named "Weld".
     for (const auto &kv : kinds)
       if (UT_String(kv.first.c_str()).equal(n, false))
         return &kv.second;

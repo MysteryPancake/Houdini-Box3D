@@ -474,6 +474,27 @@ int main() {
                 worst);
   }
 
+  // Options that hold NaN compare equal to themselves (a Glue's strength read
+  // from a NaN attribute must not look changed every step); a different value
+  // still differs.
+  {
+    const float nan = std::nanf("");
+    for (int t = 0; t < kSideFXTypeCount; ++t) {
+      const SideFXType type = static_cast<SideFXType>(t);
+      for (const SideFXParam &p : sideFXParams()) {
+        if (!p.usedBy(type) || p.kind == SideFXParam::Int)
+          continue;
+        SideFXSettings a = defaultSideFXSettings(type);
+        float *value = p.f ? &(a.*p.f) : &(a.*p.v)[0];
+        *value = nan;
+        SideFXSettings b = a;
+        CHECK(sameSideFXSettings(type, a, b));
+        b = defaultSideFXSettings(type);
+        CHECK(!sameSideFXSettings(type, a, b));
+      }
+    }
+  }
+
   CHECK(Box3DWorld::assertCount() == assertsBefore);
   if (fails) {
     std::printf("%d check(s) failed\n", fails);

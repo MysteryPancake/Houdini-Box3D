@@ -514,7 +514,8 @@ inline const std::vector<int> &jointParamIndices(JointType t) {
                                          : kNone;
 }
 
-// The settings type `t` uses are equal (exact compare; the rest is ignored).
+// The settings type `t` uses are equal (exact compare, two NaNs equal; the rest
+// is ignored).
 inline bool sameJointSettings(JointType t, const JointSettings &a,
                               const JointSettings &b) {
   const std::vector<JointParam> &params = jointParams();
@@ -527,18 +528,18 @@ inline bool sameJointSettings(JointType t, const JointSettings &a,
       break;
     case JointParam::Float:
     case JointParam::Angle:
-      if (a.*p.f != b.*p.f)
+      if (!sameFloat(a.*p.f, b.*p.f))
         return false;
       break;
     case JointParam::Vec3:
     case JointParam::Vec3Angle:
       for (int i = 0; i < 3; ++i)
-        if ((a.*p.v)[i] != (b.*p.v)[i])
+        if (!sameFloat((a.*p.v)[i], (b.*p.v)[i]))
           return false;
       break;
     case JointParam::Rotation:
       for (int i = 0; i < 4; ++i)
-        if ((a.*p.q)[i] != (b.*p.q)[i])
+        if (!sameFloat((a.*p.q)[i], (b.*p.q)[i]))
           return false;
       break;
     }

@@ -148,17 +148,19 @@ private:
 };
 
 // ---- the process-wide fit cache ---------------------------------------------
-// What fitShapeOriented found for a point set (by content and shape type), so
-// many packed instances of one piece fit once. Half is dropped when it grows
-// too big.
+// What fitShapeOriented found for a point set (by content and shape type, or
+// under a caller's key: findFit / storeFit), so many packed instances of one
+// piece fit once. Half is dropped when it grows too big.
 class FitLibrary {
 public:
   static FitLibrary &instance() {
     static FitLibrary lib;
     return lib;
   }
+  // Under a shared lock: every packed instance of a fresh scan asks, from
+  // several threads, and a lookup changes nothing.
   bool find(uint64_t key, ShapeSpec &out) {
-    std::lock_guard<std::mutex> lock(myMutex);
+    std::shared_lock<std::shared_mutex> lock(myMutex);
     const auto it = myEntries.find(key);
     if (it == myEntries.end())
       return false;
@@ -166,7 +168,7 @@ public:
     return true;
   }
   void insert(uint64_t key, const ShapeSpec &spec) {
-    std::lock_guard<std::mutex> lock(myMutex);
+    std::unique_lock<std::shared_mutex> lock(myMutex);
     if (myEntries.size() >= kMaxFitEntries) {
       // Half goes (in the map's order), so a scene past the cap keeps most of
       // what it just used instead of losing all of it.
@@ -179,7 +181,7 @@ public:
 
 private:
   static constexpr size_t kMaxFitEntries = 262144;
-  std::mutex myMutex;
+  std::shared_mutex myMutex;
   std::unordered_map<uint64_t, ShapeSpec> myEntries;
 };
 
@@ -1340,6 +1342,15 @@ bool Box3DWorld::fitShapeOriented(ShapeType type, const float *xyz, int count,
   return true;
 }
 
+bool Box3DWorld::findFit(uint64_t key, ShapeSpec &out) {
+  return key != 0 && FitLibrary::instance().find(key, out);
+}
+
+void Box3DWorld::storeFit(uint64_t key, const ShapeSpec &spec) {
+  if (key != 0)
+    FitLibrary::instance().insert(key, spec);
+}
+
 void Box3DWorld::pruneHulls() {
   std::unique_lock<std::shared_mutex> lock(myImpl->held_mutex);
   myImpl->held.clear();
@@ -1959,16 +1970,23 @@ int Box3DWorld::contactImpulsesByShape(
   const int n = fetchContacts(id, data);
   if (n <= 0)
     return got; // no contacts: no need to index the shapes
-  thread_local std::unordered_map<uint64_t, int> indexOf;
+  // Shape id -> creation index: sorted by id and searched. (A hash map cleared
+  // for every call costs its bucket count, which a large compound left behind.)
+  thread_local std::vector<std::pair<uint64_t, int>> indexOf;
   indexOf.clear();
   for (int i = 0; i < got; ++i)
-    indexOf[b3StoreShapeId(shapes[static_cast<size_t>(i)])] = got - 1 - i;
+    indexOf.emplace_back(b3StoreShapeId(shapes[static_cast<size_t>(i)]),
+                         got - 1 - i);
+  std::sort(indexOf.begin(), indexOf.end());
   for (int i = 0; i < n; ++i) {
     const b3ContactData &cd = data[static_cast<size_t>(i)];
     const bool aIsMine = sameBody(b3Shape_GetBody(cd.shapeIdA), id);
     const b3ShapeId mine = aIsMine ? cd.shapeIdA : cd.shapeIdB;
-    const auto it = indexOf.find(b3StoreShapeId(mine));
-    if (it == indexOf.end())
+    const uint64_t mineKey = b3StoreShapeId(mine);
+    const auto it = std::lower_bound(indexOf.begin(), indexOf.end(), mineKey,
+                                     [](const std::pair<uint64_t, int> &e,
+                                        uint64_t k) { return e.first < k; });
+    if (it == indexOf.end() || it->first != mineKey)
       continue;
     if (ignore && (*ignore)(b3StoreBodyId(
                       b3Shape_GetBody(aIsMine ? cd.shapeIdB : cd.shapeIdA))))
