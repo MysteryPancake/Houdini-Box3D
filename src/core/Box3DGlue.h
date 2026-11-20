@@ -30,6 +30,27 @@ namespace b3dop {
 // Measured, not derived, from one scene.
 constexpr float kGlueStrengthScale = 5.3f;
 
+// A compound is taken apart (see holdCompoundsForApproach) for a body that is
+// faster than this (m/s) and can deliver more than the weakest bond's break
+// impulse, and stays apart this many seconds after the last such body came
+// near it.
+constexpr float kGlueHoldMinSpeed = 2.0f;
+constexpr float kGlueHoldSeconds = 2.0f;
+// How far ahead (seconds of the body's motion) it is looked for: only when the
+// release starts, which has to be before the body touches the compound (the
+// pieces must be free in the step it hits; at least two frames are used, see
+// holdCompoundsForApproach). Which pieces are freed is the body's whole way
+// through the compound, not what it reaches in this time.
+constexpr float kGlueHoldLeadSeconds = 0.25f;
+// The pieces taken out of a compound are those in the body's swept bounds grown
+// by this many times its own half size, so the pieces around its path can
+// give way too.
+constexpr float kGlueHoldHaloScale = 3.0f;
+// Held pieces merge back only when they move together: while their velocities
+// differ by more than this (m/s) the hold is extended by kGlueHoldRetrySeconds.
+constexpr float kGlueMergeSpread = 0.5f;
+constexpr float kGlueHoldRetrySeconds = 0.25f;
+
 struct GlueParams {
   float strength = 10000.0f; // impulse to break; < 0 never
   float halfLife = 0.1f;     // seconds for the impact to halve

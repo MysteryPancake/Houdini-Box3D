@@ -1786,8 +1786,9 @@ int fetchContacts(b3BodyId id, std::vector<b3ContactData> &data) {
 
 } // namespace
 
-float Box3DWorld::contactImpulseByHandle(BodyHandle h, const BodyHandle *skip,
-                                         size_t skipCount) const {
+float Box3DWorld::contactImpulseByHandle(
+    BodyHandle h, const BodyHandle *skip, size_t skipCount,
+    const std::function<bool(BodyHandle)> *ignore) const {
   if (!h)
     return 0.0f;
   const b3BodyId id = b3LoadBodyId(h);
@@ -1796,11 +1797,13 @@ float Box3DWorld::contactImpulseByHandle(BodyHandle h, const BodyHandle *skip,
   float total = 0.0f;
   for (int i = 0; i < n; ++i) {
     const b3ContactData &cd = data[static_cast<size_t>(i)];
-    if (skipCount > 0) {
+    if (skipCount > 0 || ignore) {
       const b3BodyId a = b3Shape_GetBody(cd.shapeIdA);
       const b3BodyId other = sameBody(a, id) ? b3Shape_GetBody(cd.shapeIdB) : a;
-      if (std::find(skip, skip + skipCount, b3StoreBodyId(other)) !=
-          skip + skipCount)
+      const BodyHandle otherHandle = b3StoreBodyId(other);
+      if (std::find(skip, skip + skipCount, otherHandle) != skip + skipCount)
+        continue;
+      if (ignore && (*ignore)(otherHandle))
         continue;
     }
     for (int m = 0; m < cd.manifoldCount; ++m) {
@@ -1813,8 +1816,106 @@ float Box3DWorld::contactImpulseByHandle(BodyHandle h, const BodyHandle *skip,
   return total;
 }
 
-int Box3DWorld::contactImpulsesByShape(BodyHandle h,
-                                       std::vector<float> &out) const {
+namespace {
+
+struct SweptBodies {
+  std::vector<b3BodyId> ids;
+  b3BodyId self;
+};
+
+bool collectSweptBody(b3ShapeId shape, void *context) {
+  SweptBodies &c = *static_cast<SweptBodies *>(context);
+  const b3BodyId body = b3Shape_GetBody(shape);
+  if (sameBody(body, c.self) || b3Body_GetType(body) != b3_dynamicBody)
+    return true;
+  for (const b3BodyId &id : c.ids)
+    if (sameBody(id, body))
+      return true;
+  c.ids.push_back(body);
+  return true;
+}
+
+} // namespace
+
+void Box3DWorld::approachingBodies(const BodyHandle *movers, size_t count,
+                                   float dt, float minSpeed, float minMomentum,
+                                   std::vector<Approach> &out) const {
+  if (!isValid() || !(dt > 0.0f))
+    return;
+  SweptBodies hit;
+  for (size_t i = 0; i < count; ++i) {
+    if (!movers[i])
+      continue;
+    const b3BodyId id = b3LoadBodyId(movers[i]);
+    if (!b3Body_IsValid(id) || b3Body_GetType(id) == b3_staticBody ||
+        !b3Body_IsAwake(id) || b3Body_GetShapeCount(id) == 0)
+      continue;
+    const b3Vec3 v = b3Body_GetLinearVelocity(id);
+    if (!b3IsValidVec3(v) || b3Length(v) < minSpeed)
+      continue;
+    const bool dynamic = b3Body_GetType(id) == b3_dynamicBody;
+    const float mass = dynamic ? b3Body_GetMass(id) : 0.0f;
+    if (dynamic && !(mass * b3Length(v) >= minMomentum))
+      continue;
+    b3AABB box = b3Body_ComputeAABB(id);
+    const b3Vec3 size = b3Sub(box.upperBound, box.lowerBound);
+    const float half = 0.5f * std::max(size.x, std::max(size.y, size.z));
+    const b3Vec3 d = b3MulSV(dt, v);
+    box.lowerBound = b3Add(box.lowerBound, b3Min(d, b3Vec3_zero));
+    box.upperBound = b3Add(box.upperBound, b3Max(d, b3Vec3_zero));
+    hit.ids.clear();
+    hit.self = id;
+    b3World_OverlapAABB(myImpl->worldId, box, b3DefaultQueryFilter(),
+                        collectSweptBody, &hit);
+    const b3Pos centre = b3Body_GetWorldCenter(id);
+    for (const b3BodyId &target : hit.ids) {
+      // The mover's velocity relative to what the target does at the mover's
+      // centre: a body that moves with the target (a carrier, a platform) is
+      // not coming at it.
+      const b3Vec3 r = b3SubPos(centre, b3Body_GetWorldCenter(target));
+      const b3Vec3 atMover =
+          b3Add(b3Body_GetLinearVelocity(target),
+                b3Cross(b3Body_GetAngularVelocity(target), r));
+      const b3Vec3 rel = b3Sub(v, atMover);
+      if (!b3IsValidVec3(rel) || b3Length(rel) < minSpeed)
+        continue;
+      Approach a;
+      a.mover = movers[i];
+      a.target = b3StoreBodyId(target);
+      a.moverMass = mass;
+      storePos(centre, a.moverCom);
+      storeVec3(v, a.moverLin);
+      storeVec3(rel, a.relLin);
+      a.moverHalf = half;
+      out.push_back(a);
+    }
+  }
+}
+
+bool Box3DWorld::boundsByHandle(BodyHandle h, double lo[3],
+                                double hi[3]) const {
+  if (!h)
+    return false;
+  const b3BodyId id = b3LoadBodyId(h);
+  if (!b3Body_IsValid(id) || b3Body_GetShapeCount(id) == 0)
+    return false;
+  const b3AABB box = b3Body_ComputeAABB(id);
+  lo[0] = box.lowerBound.x;
+  lo[1] = box.lowerBound.y;
+  lo[2] = box.lowerBound.z;
+  hi[0] = box.upperBound.x;
+  hi[1] = box.upperBound.y;
+  hi[2] = box.upperBound.z;
+  return true;
+}
+
+bool Box3DWorld::bodyExists(BodyHandle h) const {
+  return h && isValid() && b3Body_IsValid(b3LoadBodyId(h));
+}
+
+int Box3DWorld::contactImpulsesByShape(
+    BodyHandle h, std::vector<float> &out,
+    const std::function<bool(BodyHandle)> *ignore) const {
   out.clear();
   if (!h)
     return 0;
@@ -1837,10 +1938,13 @@ int Box3DWorld::contactImpulsesByShape(BodyHandle h,
     indexOf[b3StoreShapeId(shapes[static_cast<size_t>(i)])] = got - 1 - i;
   for (int i = 0; i < n; ++i) {
     const b3ContactData &cd = data[static_cast<size_t>(i)];
-    const b3ShapeId mine =
-        sameBody(b3Shape_GetBody(cd.shapeIdA), id) ? cd.shapeIdA : cd.shapeIdB;
+    const bool aIsMine = sameBody(b3Shape_GetBody(cd.shapeIdA), id);
+    const b3ShapeId mine = aIsMine ? cd.shapeIdA : cd.shapeIdB;
     const auto it = indexOf.find(b3StoreShapeId(mine));
     if (it == indexOf.end())
+      continue;
+    if (ignore && (*ignore)(b3StoreBodyId(
+                      b3Shape_GetBody(aIsMine ? cd.shapeIdB : cd.shapeIdA))))
       continue;
     float total = 0.0f;
     for (int m = 0; m < cd.manifoldCount; ++m) {

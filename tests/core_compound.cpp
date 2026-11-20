@@ -220,6 +220,292 @@ int main() {
     }
   }
 
+  // ---- approachingBodies: who a fast body reaches in the next step ----
+  {
+    WorldSettings flying = ws;
+    flying.gravity[0] = flying.gravity[1] = flying.gravity[2] = 0.0f;
+    Box3DWorld w;
+    CHECK(w.create(flying));
+    BodySettings b;
+    const double pBox[3] = {0, 0, 0}, pBall[3] = {-0.6, 0, 0};
+    const BodyHandle box = w.createBody(b, pBox, kQid);
+    CHECK(w.createShape(box, b, cube(0.0f)));
+    const BodyHandle ball = w.createBody(b, pBall, kQid);
+    ShapeSpec s;
+    s.type = ShapeType::Sphere;
+    s.radius = 0.25f;
+    CHECK(w.createShape(ball, b, s));
+    staticBox(w, -0.5, 0.4, 0.3, 0.3); // in the way too, but static
+    const float fast[3] = {20, 0, 0}, slow[3] = {1, 0, 0}, none[3] = {0, 0, 0};
+
+    std::vector<Box3DWorld::Approach> out;
+    w.setVelocityByHandle(ball, fast, none);
+    w.approachingBodies(&ball, 1, kDt, 2.0f, 0.0f, out);
+    CHECK(out.size() == 1);
+    if (out.size() == 1) {
+      CHECK(out[0].mover == ball && out[0].target == box);
+      CHECK(near(out[0].moverMass, w.massByHandle(ball), 1e-4));
+      CHECK(near(out[0].moverLin[0], 20.0, 1e-4));
+      CHECK(near(out[0].moverCom[0], -0.6, 1e-4));
+      // The box is at rest: the relative velocity is the ball's.
+      CHECK(near(out[0].relLin[0], 20.0, 1e-4));
+    }
+    // Too slow to look at, or too far to reach in the time given.
+    out.clear();
+    w.setVelocityByHandle(ball, slow, none);
+    w.approachingBodies(&ball, 1, kDt, 2.0f, 0.0f, out);
+    CHECK(out.empty());
+    const double farPos[3] = {-3, 0, 0};
+    w.setVelocityByHandle(ball, fast, none);
+    w.setTransformByHandle(ball, farPos, kQid);
+    w.approachingBodies(&ball, 1, kDt, 2.0f, 0.0f, out);
+    CHECK(out.empty());
+    // A longer look gets there.
+    w.approachingBodies(&ball, 1, 0.5f, 2.0f, 0.0f, out);
+    CHECK(out.size() == 1);
+    // A dynamic body whose own momentum is below the least asked for is not
+    // looked at (the cube is about 1.25 kg of density 1000 times 0.5^3).
+    out.clear();
+    const double nearPos[3] = {-0.6, 0, 0};
+    w.setTransformByHandle(ball, nearPos, kQid);
+    w.approachingBodies(&ball, 1, kDt, 2.0f, 1e9f, out);
+    CHECK(out.empty());
+    // A body that moves with what it overlaps is not coming at it: the box goes
+    // along with the ball.
+    w.setVelocityByHandle(box, fast, none);
+    w.approachingBodies(&ball, 1, kDt, 2.0f, 0.0f, out);
+    CHECK(out.empty());
+    // ... nor is one that moves slower than it relative to it: the box moves at
+    // 15 and the ball at 20, a relative 5.
+    const float fifteen[3] = {15, 0, 0};
+    w.setVelocityByHandle(box, fifteen, none);
+    w.approachingBodies(&ball, 1, kDt, 2.0f, 0.0f, out);
+    CHECK(out.size() == 1 && near(out[0].relLin[0], 5.0, 1e-3));
+    w.setVelocityByHandle(box, none, none);
+    // A kinematic mover is looked at too, with mass 0 and no momentum limit.
+    out.clear();
+    w.setTypeByHandle(ball, BodySettings::Type::Kinematic);
+    w.setVelocityByHandle(ball, fast, none);
+    w.approachingBodies(&ball, 1, kDt, 2.0f, 1e9f, out);
+    CHECK(out.size() == 1 && out[0].moverMass == 0.0f);
+    // A body that is gone gives nothing and does not crash.
+    out.clear();
+    w.destroyBody(ball);
+    w.approachingBodies(&ball, 1, kDt, 2.0f, 0.0f, out);
+    CHECK(out.empty());
+  }
+
+  // ---- contactImpulseByHandle: contacts the caller ignores are left out ----
+  {
+    Box3DWorld w;
+    CHECK(w.create(ws));
+    staticBox(w, 0.0, -0.5, 5.0, 0.5);
+    BodySettings b;
+    const double pa[3] = {0, 0.26, 0}, pb[3] = {0, 0.77, 0};
+    const BodyHandle lower = w.createBody(b, pa, kQid);
+    CHECK(w.createShape(lower, b, cube(0.0f)));
+    const BodyHandle upper = w.createBody(b, pb, kQid);
+    CHECK(w.createShape(upper, b, cube(0.0f)));
+    for (int i = 0; i < 60; ++i)
+      w.step(kDt);
+    // The lower cube presses on the ground and carries the upper one.
+    const float all = w.contactImpulseByHandle(lower, nullptr, 0);
+    const std::function<bool(BodyHandle)> notUpper = [upper](BodyHandle h) {
+      return h == upper;
+    };
+    const std::function<bool(BodyHandle)> everything = [](BodyHandle) {
+      return true;
+    };
+    const float ground = w.contactImpulseByHandle(lower, nullptr, 0, &notUpper);
+    CHECK(all > 0.0f && ground > 0.0f && ground < all);
+    // Skipping the upper cube by handle comes to the same.
+    CHECK(near(ground, w.contactImpulseByHandle(lower, &upper, 1), 1e-5 * all));
+    CHECK(w.contactImpulseByHandle(lower, nullptr, 0, &everything) == 0.0f);
+  }
+
+  // ---- contactImpulsesByShape: contacts the caller ignores are left out ----
+  {
+    Box3DWorld w;
+    CHECK(w.create(ws));
+    staticBox(w, 0.0, -0.5, 5.0, 0.5);
+    BodySettings b;
+    const double pLow[3] = {0, 0.26, 0}, pHigh[3] = {0, 0.77, 0};
+    const BodyHandle lower = w.createBody(b, pLow, kQid);
+    CHECK(w.createShape(lower, b, cube(0.0f)));
+    const BodyHandle upper = w.createBody(b, pHigh, kQid);
+    CHECK(w.createShape(upper, b, cube(0.0f)));
+    for (int i = 0; i < 60; ++i)
+      w.step(kDt);
+    std::vector<float> all, groundOnly, none;
+    w.contactImpulsesByShape(lower, all);
+    const std::function<bool(BodyHandle)> notUpper = [upper](BodyHandle h) {
+      return h == upper;
+    };
+    const std::function<bool(BodyHandle)> everything = [](BodyHandle) {
+      return true;
+    };
+    w.contactImpulsesByShape(lower, groundOnly, &notUpper);
+    w.contactImpulsesByShape(lower, none, &everything);
+    CHECK(all.size() == 1 && groundOnly.size() == 1 && none.size() == 1);
+    CHECK(all[0] > 0.0f && groundOnly[0] > 0.0f && groundOnly[0] < all[0]);
+    CHECK(none[0] == 0.0f);
+  }
+
+  // ---- the ledger of held pieces (GlueHolds) ----
+  {
+    GlueHolds holds;
+    CHECK(holds.empty());
+    holds.hold(1, 10.0);
+    holds.hold(2, 10.0);
+    holds.hold(3, 10.0);
+    holds.hold(4, 4.0);
+    holds.hold(4, 3.0); // never shortens
+    CHECK(holds.size() == 4 && holds.held(2) && !holds.held(9));
+    // 1 - 2 - 3 are bonded in a row, 4 is on its own.
+    const auto neighbours = [](uint64_t piece, const auto &visit) {
+      if (piece == 1)
+        visit(2);
+      if (piece == 2) {
+        visit(1);
+        visit(3);
+      }
+      if (piece == 3)
+        visit(2);
+    };
+    // Refreshing from 1 reaches 2 and 3, not 4, and the time moves on.
+    holds.refresh(1, 20.0, neighbours);
+    const auto still = [](uint64_t, float lin[3]) {
+      lin[0] = lin[1] = lin[2] = 0.0f;
+    };
+    const auto alive = [](uint64_t) { return true; };
+    // At 5 only piece 4 is due (its 4.0): it goes, the others stay held.
+    CHECK(holds.expire(5.0, 0.25, 0.5f, alive, still));
+    CHECK(!holds.held(4) && holds.held(1) && holds.held(2) && holds.held(3));
+    // At 15 nothing is due yet.
+    CHECK(!holds.expire(15.0, 0.25, 0.5f, alive, still));
+    // At 21 all three are due and at rest: they go together.
+    CHECK(holds.expire(21.0, 0.25, 0.5f, alive, still));
+    CHECK(holds.empty());
+    // Pieces moving apart are not let go: one at 3 m/s against two at rest
+    // spreads by 2 m/s from the mean, over the limit. Their time moves on.
+    holds.hold(5, 1.0);
+    holds.hold(6, 1.0);
+    holds.hold(7, 1.0);
+    const auto apart = [](uint64_t piece, float lin[3]) {
+      lin[0] = piece == 5 ? 3.0f : 0.0f;
+      lin[1] = lin[2] = 0.0f;
+    };
+    CHECK(!holds.expire(2.0, 0.25, 0.5f, alive, apart));
+    CHECK(holds.size() == 3);
+    CHECK(!holds.expire(2.2, 0.25, 0.5f, alive, apart)); // not due again yet
+    // Once they move together they go.
+    CHECK(holds.expire(2.3, 0.25, 0.5f, alive, still));
+    CHECK(holds.empty());
+    // A piece whose body is gone is dropped without being asked its velocity.
+    holds.hold(8, 1.0);
+    const auto gone = [](uint64_t) { return false; };
+    const auto never = [](uint64_t, float[3]) { CHECK(false); };
+    CHECK(holds.expire(2.0, 0.25, 0.5f, gone, never));
+    CHECK(holds.empty());
+  }
+
+  // ---- the path through a compound: from the body to where it leaves ----
+  {
+    const double lo[3] = {-5, 0, -5}, hi[3] = {5, 20, 5};
+    double a[3], b[3];
+    // Coming at the compound from outside: swept to its far side, and its own
+    // half size beyond.
+    const double com[3] = {-10, 8, 0};
+    const float fast[3] = {10, 0, 0};
+    CHECK(pathThroughBounds(com, fast, 1.5, lo, hi, a, b));
+    CHECK(near(a[0], -11.5, 1e-9) && near(b[0], 5.0 + 1.5, 1e-9));
+    CHECK(near(a[1], 6.5, 1e-9) && near(b[1], 9.5, 1e-9));
+    // A sideways component leaves through whichever side it reaches first: the
+    // far side here (1.5 s away, the top is 2 s).
+    const float diagonal[3] = {10, 6, 0};
+    CHECK(pathThroughBounds(com, diagonal, 1.0, lo, hi, a, b));
+    CHECK(near(b[0], -10 + 1.0 + 15.0, 1e-9) &&
+          near(b[1], 8 + 1.0 + 9.0, 1e-9));
+    // At rest, or moving away from bounds it is already out of: its own bounds.
+    const float still[3] = {0, 0, 0}, away[3] = {-10, 0, 0};
+    CHECK(!pathThroughBounds(com, still, 1.5, lo, hi, a, b));
+    CHECK(near(a[0], -11.5, 1e-9) && near(b[0], -8.5, 1e-9));
+    CHECK(!pathThroughBounds(com, away, 1.5, lo, hi, a, b));
+    CHECK(near(a[0], -11.5, 1e-9) && near(b[0], -8.5, 1e-9));
+    // Passing the compound's top (centre above it, going up and across) never
+    // goes through it.
+    const double above[3] = {-10, 25, 0};
+    const float risingAcross[3] = {10, 4, 0};
+    CHECK(!pathThroughBounds(above, risingAcross, 1.0, lo, hi, a, b));
+    // Inside the bounds it goes through, to the side it reaches first.
+    const double inside[3] = {0, 8, 0};
+    CHECK(pathThroughBounds(inside, fast, 1.0, lo, hi, a, b));
+    CHECK(near(b[0], 5.0 + 1.0, 1e-9));
+  }
+
+  // ---- a weld from a free body to a compound, at a piece's place in it ----
+  {
+    WorldSettings flying = ws;
+    flying.gravity[0] = flying.gravity[1] = flying.gravity[2] = 0.0f;
+    Box3DWorld w;
+    CHECK(w.create(flying));
+    BodySettings b;
+    // Pieces at x 0 and 0.5 (touching) carried by one body at the origin, the
+    // second turned a quarter about z, and a free cube touching the second.
+    const float quarter[4] = {0, 0, 0.70710678f, 0.70710678f};
+    const double pFirst[3] = {0, 0, 0}, pSecond[3] = {0.5, 0, 0},
+                 pCube[3] = {1.0, 0, 0};
+    const BodyHandle first = w.createBody(b, pFirst, kQid);
+    const BodyHandle second = w.createBody(b, pSecond, quarter);
+    CHECK(w.createShape(first, b, cube(0.0f)) &&
+          w.createShape(second, b, cube(0.0f)));
+    const BodyHandle body = w.createBody(b, pFirst, kQid);
+    const float none3[3] = {0, 0, 0};
+    CHECK(w.copyShapesByHandle(first, body, none3, kQid) == 1);
+    const float lp[3] = {0.5f, 0, 0};
+    CHECK(w.copyShapesByHandle(second, body, lp, quarter) == 1);
+    w.applyMassFromShapes(body);
+    w.destroyBody(first);
+    w.destroyBody(second);
+    const BodyHandle freeCube = w.createBody(b, pCube, kQid);
+    CHECK(w.createShape(freeCube, b, cube(0.0f)));
+
+    // The bond's frame in the second piece's own axes: its face towards the
+    // free cube, a half along the piece's local y (the piece is turned).
+    JointSettings s = Box3DWorld::defaultJointSettings(JointType::Weld);
+    s.collideConnected = false;
+    JointFrame inPiece, onFree, onBody;
+    inPiece.pos[0] = 0.0;
+    inPiece.pos[1] = -kHalf; // local -y is world +x for a quarter turn about z
+    inPiece.pos[2] = 0.0;
+    for (int i = 0; i < 4; ++i)
+      inPiece.rot[i] = kQid[i];
+    onFree.pos[0] = -kHalf;
+    onFree.pos[1] = onFree.pos[2] = 0.0;
+    for (int i = 0; i < 4; ++i)
+      onFree.rot[i] = quarter[i]; // the bond's axes, as the piece's own
+    frameInCompound(lp, quarter, inPiece.pos, inPiece.rot, onBody.pos,
+                    onBody.rot);
+    CHECK(near(onBody.pos[0], 1.0 - kHalf, 1e-5));
+    CHECK(w.createJoint(JointType::Weld, freeCube, body, onFree, onBody, s,
+                        nullptr, true) != 0);
+
+    // The compound is pushed and the cube is not: the weld drags it along, and
+    // it stays where it was relative to the compound.
+    const float push[3] = {0, 3, 0};
+    w.setVelocityByHandle(body, push, none3);
+    for (int i = 0; i < 90; ++i)
+      w.step(kDt);
+    double pb[3], pfree[3];
+    float q[4];
+    CHECK(w.getTransformByHandle(body, pb, q) &&
+          w.getTransformByHandle(freeCube, pfree, q));
+    CHECK(pb[1] > 2.0 && pfree[1] > 2.0); // both moved: the weld drags it
+    // The pair turns about its centre, so the distance between them is what
+    // stays.
+    CHECK(near(std::hypot(pfree[0] - pb[0], pfree[1] - pb[1]), 1.0, 0.02));
+  }
+
   // ---- copying the shapes of two bodies onto a third (a compound) ----
   {
     Box3DWorld w;

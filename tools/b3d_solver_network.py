@@ -324,10 +324,10 @@ def before_start(sub, dopnet, name, result, original):
 
 
 def build_ground_guide(sub, dopnet, empty):
-    """The ground in the viewport, as RBD Bullet Solver's: DOP Imports of the ground object, a Ground
-    Plane's display grid (lines, or the polygons while Show Ground as is Shaded) or the height field,
-    chosen by Ground Type and Show Ground, and nothing before the Start Frame. Both are scaled back by
-    World Scale."""
+    """The ground in the viewport: for a Ground Box the box itself (Size, Position and Rotation of Ground
+    Collision, as the collider is posed), drawn like the external collision geometry, or just its edges while
+    Show Ground as is Wireframe; for a Height Field the DOP Import of its geometry. Chosen by
+    Ground Type and Show Ground, nothing before the Start Frame. Both are in the inputs' units (not scaled)."""
     def ground_import(name, data_path):
         node = create(sub, "dopimport", name)
         node.parm("doppath").set("../dopnet")
@@ -338,19 +338,30 @@ def build_ground_guide(sub, dopnet, empty):
         set_named(node, "keepworldspacepos", 0)
         return node
 
-    plane = ground_import("import_ground_plane", "DisplayGeometry")
+    # The box: its top face on the local plane y = 0, Size deep below it, then posed by Position / Rotation.
+    box = create(sub, "box", "ground_box")
+    for i, axis in enumerate("xyz"):
+        box.parm(f"size{axis}").setExpression(f'ch("../groundsize{axis}")', hou.exprLanguage.Hscript)
+    box.parm("ty").setExpression('-ch("../groundsizey") / 2', hou.exprLanguage.Hscript)
+    pose = create(sub, "xform", "pose_ground_box")
+    pose.setInput(0, box)
+    for axis in "xyz":
+        pose.parm(f"t{axis}").setExpression(f'ch("../ground_pos{axis}")', hou.exprLanguage.Hscript)
+        pose.parm(f"r{axis}").setExpression(f'ch("../ground_rot{axis}")', hou.exprLanguage.Hscript)
     try:
-        lines = create(sub, "convertline", "ground_plane_lines")
-        lines.setInput(0, plane)
+        lines = create(sub, "convertline", "ground_box_edges")
+        lines.setInput(0, pose)
     except RuntimeError as e:
-        warn(f"{e}; the ground plane is drawn shaded whatever Show Ground as says")
-        lines = plane
-    shade = create(sub, "switchif", "switch_ground_shaded")
-    shade.setInput(0, lines)
-    shade.setInput(1, plane)
-    if shade.parm("expr1") is not None:
-        shade.parm("expr1").setExpression(f'ch("../{SHADE_GROUND}")', hou.exprLanguage.Hscript)
-    plane_out = scale_xform(sub, "unscale_ground_plane", shade, inverse=True)
+        warn(f"{e}; Show Ground as Wireframe draws the solid box")
+        lines = pose
+    style = create(sub, "switch", "switch_ground_style")
+    style.setInput(0, pose)
+    style.setInput(1, lines)
+    style.parm("input").setExpression(f'ch("../{SHADE_GROUND}")', hou.exprLanguage.Hscript)
+    plane_out = create(sub, "attribwrangle", "dim_ground_box")
+    plane_out.setInput(0, style)
+    plane_out.parm("class").set("primitive")
+    plane_out.parm("snippet").set(COLLISION_GUIDE_VEX)
 
     field = ground_import("import_ground_field", "Geometry")
     field_out = field

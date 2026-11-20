@@ -11,6 +11,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -532,18 +533,52 @@ public:
   // contact). `out` is cleared first. Valid until the next step.
   int getContactImpulseEvents(std::vector<ContactImpulse> &out) const;
 
+  // The dynamic bodies each of `movers` reaches in the next step of `dt`
+  // seconds: those whose bounds overlap the mover's bounds swept along its
+  // velocity. Movers that are not awake, dynamic or kinematic and valid, that
+  // move slower than `minSpeed` or (a dynamic one) whose own momentum is below
+  // `minMomentum` are skipped (a kinematic mover has mass 0 and no momentum
+  // limit), and so are bodies the mover moves with: the pair's relative speed
+  // (see `relLin`) has to reach `minSpeed` too. One record per (mover, body)
+  // pair, added to `out` (not cleared). Contacts are not read: a fast body has
+  // none before it hits.
+  struct Approach {
+    BodyHandle mover = 0, target = 0;
+    float moverMass = 0.0f;
+    double moverCom[3] = {0, 0, 0};
+    float moverLin[3] = {0, 0, 0};
+    // The mover's velocity relative to the target's motion at the mover's
+    // centre (the target's velocity plus its spin about its own centre).
+    float relLin[3] = {0, 0, 0};
+    // The largest half extent of the mover's own bounds.
+    float moverHalf = 0.0f;
+  };
+  void approachingBodies(const BodyHandle *movers, size_t count, float dt,
+                         float minSpeed, float minMomentum,
+                         std::vector<Approach> &out) const;
+  // A body's bounds (its shapes' boxes together). False for no shapes.
+  bool boundsByHandle(BodyHandle h, double lo[3], double hi[3]) const;
+  // Whether the handle names a body that exists now (a destroyed body's handle
+  // does not).
+  bool bodyExists(BodyHandle h) const;
+
   // The total normal impulse (N*s) of the body's contacts in the last step,
   // leaving out those with the `skipCount` bodies at `skip` (a body's glued
   // neighbours): what getContactsByHandle's records add up to, without
-  // building them.
-  float contactImpulseByHandle(BodyHandle h, const BodyHandle *skip,
-                               size_t skipCount) const;
+  // building them. `ignore` (optional) is asked about the other body of each
+  // contact that is not skipped: true leaves that contact out too.
+  float contactImpulseByHandle(
+      BodyHandle h, const BodyHandle *skip, size_t skipCount,
+      const std::function<bool(BodyHandle)> *ignore = nullptr) const;
 
   // The total normal impulse (N*s) of the last step's contacts on each shape of
   // the body, in the order the shapes were created (a compound's pieces). `out`
   // is resized to the shape count; returns it. A contact between two shapes of
-  // the same body cannot exist, so nothing is skipped.
-  int contactImpulsesByShape(BodyHandle h, std::vector<float> &out) const;
+  // the same body cannot exist, so nothing is skipped. `ignore` (optional) is
+  // asked about the other body of each contact: true leaves that contact out.
+  int contactImpulsesByShape(
+      BodyHandle h, std::vector<float> &out,
+      const std::function<bool(BodyHandle)> *ignore = nullptr) const;
 
   // Hit events of the last step (pairs that approached faster than
   // impactMinSpeed).

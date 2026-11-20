@@ -16,6 +16,7 @@
 #include "core/Box3DWorld.h"
 
 struct Box3DBodyMirror;
+struct Box3DCompound;
 struct Box3DSharedState;
 
 // Merges the groups that qualify and dissolves the ones that changed (a bond
@@ -28,6 +29,38 @@ void syncCompounds(Box3DSharedState &st);
 // offset), with the piece's velocity kept on its mirror entry (glueLin /
 // glueAng), and the parked bodies are put where the pieces are.
 void expandCompoundMoves(Box3DSharedState &st);
+
+// The glue group (st.glueGroup: the pieces joined by bonds) of a compound's
+// pieces, -1 if none of them is a glue node.
+int compoundGlueGroup(const Box3DSharedState &st, const Box3DCompound &c);
+
+// Whether `body` is a glue node of glue group `group` or the body of a compound
+// of it (st.compoundGroup, made by collectGlueHits).
+bool glueSameGroup(const Box3DSharedState &st, b3dop::BodyHandle body,
+                   int group);
+
+// Destroys the bridges whose bond's joint is gone (broke mid-frame).
+void pruneCompoundBridges(Box3DSharedState &st);
+
+// At the start of a frame, before syncCompounds: advances the clock holds are
+// measured on by the frame's time and lets the groups merge again once their
+// hold has run out.
+void releaseExpiredHolds(Box3DSharedState &st, float frameDt);
+
+// Before a Box3D step: a compound is one rigid body, so a fast heavy body that
+// reaches it takes the whole building's mass and rebounds in that step, where
+// glued pieces on their weld joints give way. So a body of `seen` (the move
+// events of the last step: faster than kGlueHoldMinSpeed, not glued itself,
+// able to deliver more than the weakest bond's break impulse) whose motion over
+// the next kGlueHoldLeadSeconds (two frames at least) reaches a compound
+// (`Box3DWorld::approachingBodies`) takes the pieces in its way out of the
+// compound, all the way through it (pathThroughBounds), for kGlueHoldSeconds:
+// they are enabled where the compound has them (a move event each in `moves`,
+// to go before the step's own) and stay unmerged, as with Glue as One Body off,
+// while a body keeps coming near them.
+void holdCompoundsForApproach(Box3DSharedState &st,
+                              const std::vector<b3dop::BodyMove> &seen,
+                              std::vector<b3dop::BodyMove> &moves);
 
 // Before every Box3D step: each compound's motion, which the pieces that leave
 // it take (they were not slowed by the hit that broke it). It is kept while the

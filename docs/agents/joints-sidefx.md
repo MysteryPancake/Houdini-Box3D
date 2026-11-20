@@ -16,7 +16,7 @@ Glue, Hard, Spring, Bullet Soft and Cone Twist mapped onto Box3D joints. Joint n
   * Glue: rigid weld holding the pieces where they are, never colliding, never broken by force or torque. It breaks
     on the impulse of the hits it takes, as the Glue help describes Bullet's (`core/Box3DGlue.h`, Houdini-free,
     `tests/core_glue.cpp`): after every Box3D step `collectGlueHits` adds the normal impulse of each glued body's contacts
-    (not its glued neighbours') to its hits; at the end of the frame `advanceGlue` spreads them over the bonds
+    (not its glued neighbours', nor its own glue group's: see `glueSameGroup`, [glue-compound.md](glue-compound.md)) to its hits; at the end of the frame `advanceGlue` spreads them over the bonds
     (`impulse` shares: itself 1, each bond its Propagation Rate, `propagationiterations` rounds), adds the two bodies'
     results to the bond's `impact` after it decayed by `impulse_halflife`, and queues a bond over its Strength
     divided by `kGlueStrengthScale` (< 0 never) for `jointsAfterStep`, which breaks it with the force ones (the `broken` group, `next_constraint_name`).

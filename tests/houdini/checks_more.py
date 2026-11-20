@@ -4,8 +4,10 @@ Import output, dead pieces in a constraint network, an animated Static Object, o
 solver, Attach Internal Constraints, and SideFX Glue / Hard / Cone Twist / aging compared with
 Bullet and the POP Solver."""
 
+import importlib.util
 import itertools
 import os
+import sys
 import tempfile
 
 import hou
@@ -577,6 +579,91 @@ def test_glue_compound_vs_welds():
         rows.append(f"Strength at which it stops breaking {strength[True]:.0f} as one body, {strength[False]:.0f} on welds "
                     f"(ratio {ratio:.2f}, expected 0.67 to 1.5)")
     return [Result("glue_compound_vs_welds", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+def test_glue_compound_hit():
+    """The `building` example (2600 glued pieces, a 110 tonne ball thrown at it at 30 m/s): with Glue as One Body on the
+    ball must do what it does on weld joints (the switch off), not be thrown back by the building as one rigid body (that
+    rebounded it at -12 m/s where the welds slowed it to -1 or 3). Thrown from 12 away, so the building is whole when it
+    is hit, at Strengths of 2e4 (the ball plows in) and 3e5 (it is stopped), its speed 10 frames in is within 1.5 m/s of
+    the weld speed. Thrown from 32 away at 3e5, its speed after the hit is within 1.5 m/s of the weld speed, and on frame
+    130, past the time the released pieces are held for (they merge back into compounds), it is within 6 of where it is on
+    welds. Each run is a new scene, as the scene is large."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    spec = importlib.util.spec_from_file_location("make_examples", os.path.join(here, "..", "..", "examples", "make_examples.py"))
+    examples = importlib.util.module_from_spec(spec)
+    sys.modules["make_examples"] = examples
+    spec.loader.exec_module(examples)
+
+    def ball_x(sim, f):
+        for obj in sim.objects():
+            geo = obj.geometry()
+            if geo is not None and geo.findPointAttrib("name") is not None:
+                for pt in geo.points():
+                    if pt.attribValue("name") == "ball":
+                        return pt.position()[0]
+        return None
+
+    def run(compound, strength, start_x, frames, hit_frame):
+        """(the ball's speed between hit_frame - 1 and hit_frame, its x on the last frame)"""
+        hou.hipFile.clear(suppress_save_prompt=True)
+        dop, _frames = examples.scene_building(start_x)
+        solver = next(n for n in dop.allSubChildren()
+                      if "box3d" in n.type().name().lower() and "solver" in n.type().name().lower())
+        glue = next(n for n in dop.allSubChildren() if "glue" in n.type().name().lower() and n.parm("strength") is not None)
+        glue.parm("strength").set(strength)
+        solver.parm("gluecompound").set(1 if compound else 0)
+        try:
+            xs = step(dop, frames, ball_x)
+        finally:
+            # The runner lays the scene out for review after the test, which takes over 10 GB for this one.
+            hou.hipFile.clear(suppress_save_prompt=True)
+        speed = (xs[hit_frame] - xs[hit_frame - 1]) * hou.fps()
+        return speed, xs[frames]
+
+    try:
+        rows, ok = [], True
+        for strength in (2e4, 3e5):
+            on, off = run(True, strength, -12.0, 14, 10)[0], run(False, strength, -12.0, 14, 10)[0]
+            ok = ok and abs(on - off) <= 1.5
+            rows.append(f"from 12 away at {strength:g} the ball's speed 10 frames in is {on:.1f} with Glue as One Body, {off:.1f} on welds")
+        (on, x_on), (off, x_off) = run(True, 3e5, -32.0, 130, 26), run(False, 3e5, -32.0, 130, 26)
+        ok = ok and abs(on - off) <= 1.5 and abs(x_on - x_off) <= 6.0
+        rows.append(f"from 32 away at 3e+05 its speed after the hit is {on:.1f} and {off:.1f}, and on frame 130 it is at x {x_on:.1f} "
+                    f"and {x_off:.1f}")
+    finally:
+        sys.modules.pop("make_examples", None)
+    return [Result("glue_compound_hit", Result.PASS if ok else Result.FAIL,
+                   "; ".join(rows) + " (expected speeds within 1.5 m/s of each other, positions within 6)")]
+
+
+def test_glue_group_contacts():
+    """Weight on a piece of the same glue group is no hit. A box rests on two fixed supports, bonded to the first, and the
+    supports are bonded to each other (all one group), at a Strength of 100 that any hit would break: it presses on the
+    second support, which it is not bonded to, and nothing breaks and it stays put (a contact with a piece of its own
+    group counted as a hit before, so a building of glued pieces broke up under its own weight in weld mode)."""
+    tag = "glue_group_contacts"
+    dop = new_dopnet(tag)
+    pieces = [{"size": (1, 1, 1), "center": (0, 0.5, 0), "attrs": {"active": 0}},
+              {"size": (1, 1, 1), "center": (1, 0.5, 0), "attrs": {"active": 0}},
+              {"size": (2, 1, 1), "center": (0.5, 1.5, 0), "attrs": {"active": 1}}]
+    path, names = packed_boxes(tag + "_pieces", pieces)
+    obj = packed_object(dop, "pieces", path)
+    glue = create(dop, "glueconrel", "glue")
+    set_parm(glue, ["strength"], 100.0)
+    lines = [(names[2], (0.0, 1.0, 0), names[0], (0.0, 1.0, 0), "Glue"),
+             (names[0], (0.5, 0.5, 0), names[1], (0.5, 0.5, 0), "Glue")]
+    net = create(dop, "constraintnetwork", "constraint_network")
+    net.setInput(0, obj)
+    set_parm(net, ["soppath", "constraintsoppath", "geosoppath"], constraint_lines(tag + "_network", lines))
+    net.setInput(1, glue)
+    finish(dop, solver_for("box3d", dop, net))
+    track = step(dop, 48, lambda sim, f: (packed_positions(sim, "pieces"), broken_count(sim)))
+    pos, broken = track[48]
+    y = pos[names[2]][1]
+    ok = broken == 0 and abs(y - 1.5) < 0.05
+    return [Result("glue_group_contacts", Result.PASS if ok else Result.FAIL,
+                   f"{broken} bonds broken and the box at y {y:.2f} on frame 48 (expected 0 and 1.5)")]
 
 
 def test_glue_compound_sleep():
@@ -1186,6 +1273,8 @@ TESTS = {
     "glue_compound_break": test_glue_compound_break,
     "glue_compound_load": test_glue_compound_load,
     "glue_compound_vs_welds": test_glue_compound_vs_welds,
+    "glue_compound_hit": test_glue_compound_hit,
+    "glue_group_contacts": test_glue_group_contacts,
     "glue_compound_sleep": test_glue_compound_sleep,
     "glue_impact_scale": test_glue_impact_scale,
     "glue_global_iterations": test_glue_global_iterations,

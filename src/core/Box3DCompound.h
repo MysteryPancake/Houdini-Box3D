@@ -19,6 +19,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <limits>
+#include <map>
+#include <unordered_map>
 #include <vector>
 
 namespace b3dop {
@@ -224,6 +228,145 @@ inline float pieceLoad(const MergedBody &before, const MergedBody &after,
                        static_cast<double>(lin1[2]) - lin0[2]};
   return mass *
          static_cast<float>(std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]));
+}
+
+// The box a body covers going through a compound: its own bounds (half size
+// `half` about `com`) swept along its velocity `lin` until its centre leaves
+// the compound's bounds [`lo`, `hi`], so every piece it will plow through is
+// inside. False (and just its own bounds) when it is not heading into or
+// through them: at rest, or with its volume already out of the bounds on an
+// axis it is moving away along, from where it can never touch them.
+inline bool pathThroughBounds(const double com[3], const float lin[3],
+                              double half, const double lo[3],
+                              const double hi[3], double outLo[3],
+                              double outHi[3]) {
+  double t = std::numeric_limits<double>::infinity();
+  for (int i = 0; i < 3; ++i) {
+    const double v = lin[i];
+    if (v > 1e-6)
+      t = std::min(t, (hi[i] + half - com[i]) / v);
+    else if (v < -1e-6)
+      t = std::min(t, (lo[i] - half - com[i]) / v);
+  }
+  const bool through = std::isfinite(t) && t >= 0.0;
+  if (!through)
+    t = 0.0;
+  for (int i = 0; i < 3; ++i) {
+    const double d = static_cast<double>(lin[i]) * t;
+    outLo[i] = com[i] - half + std::min(0.0, d);
+    outHi[i] = com[i] + half + std::max(0.0, d);
+  }
+  return through;
+}
+
+// The pieces held out of their compounds while a fast body comes through
+// (holdCompoundsForApproach), each with the time it may merge again.
+// Houdini-free so its rules are tested in tests/core_compound.cpp; pieces are
+// named by BodyHandle.
+class GlueHolds {
+public:
+  bool empty() const { return myUntil.empty(); }
+  size_t size() const { return myUntil.size(); }
+  bool held(uint64_t piece) const { return myUntil.count(piece) != 0; }
+  // Holds `piece` until `until` (never shortens a hold it has).
+  void hold(uint64_t piece, double until) {
+    double &t = myUntil[piece];
+    t = std::max(t, until);
+  }
+  // Holds `start` and the held pieces reached from it through `neighbours`
+  // (called as neighbours(piece, visit), visit(other) for each bonded piece),
+  // until `until`: the structure a body is still coming through, not every held
+  // piece in the scene.
+  template <class Neighbours>
+  void refresh(uint64_t start, double until, Neighbours &&neighbours) {
+    std::vector<uint64_t> stack{start};
+    while (!stack.empty()) {
+      const uint64_t piece = stack.back();
+      stack.pop_back();
+      const auto it = myUntil.find(piece);
+      if (it == myUntil.end() || it->second >= until)
+        continue;
+      it->second = until;
+      neighbours(piece, [&stack](uint64_t other) { stack.push_back(other); });
+    }
+  }
+  // Lets go of the pieces whose time is up at `now`. Pieces that no longer
+  // exist (`alive(piece)` false) are just dropped. The others go only when they
+  // move together: velocity(piece, lin) gives each one's velocity, and if any
+  // differs from the mean of the ones due by more than `limit` the structure is
+  // still coming apart, so their time moves on to now + `retry` (one rigid body
+  // made of pieces moving apart would freeze them). True if any were let go.
+  template <class Alive, class Velocity>
+  bool expire(double now, double retry, float limit, Alive &&alive,
+              Velocity &&velocity) {
+    return expire(now, retry, limit, alive, velocity,
+                  [](uint64_t) { return 0; });
+  }
+  // As above, with the due pieces judged per `group(piece)` (an int): the
+  // pieces of one structure move together or not regardless of another's.
+  template <class Alive, class Velocity, class Group>
+  bool expire(double now, double retry, float limit, Alive &&alive,
+              Velocity &&velocity, Group &&group) {
+    std::map<int, std::vector<uint64_t>> due;
+    bool released = false;
+    for (auto it = myUntil.begin(); it != myUntil.end();) {
+      if (it->second > now) {
+        ++it;
+      } else if (!alive(it->first)) {
+        it = myUntil.erase(it);
+        released = true;
+      } else {
+        due[group(it->first)].push_back(it->first);
+        ++it;
+      }
+    }
+    for (const auto &entry : due) {
+      const std::vector<uint64_t> &pieces = entry.second;
+      std::vector<float> lin(3 * pieces.size());
+      double mean[3] = {0, 0, 0};
+      for (size_t k = 0; k < pieces.size(); ++k) {
+        velocity(pieces[k], &lin[3 * k]);
+        for (int i = 0; i < 3; ++i)
+          mean[i] += lin[3 * k + i] / static_cast<double>(pieces.size());
+      }
+      double spread2 = 0.0;
+      for (size_t k = 0; k < pieces.size(); ++k) {
+        double d2 = 0.0;
+        for (int i = 0; i < 3; ++i) {
+          const double d = lin[3 * k + i] - mean[i];
+          d2 += d * d;
+        }
+        spread2 = std::max(spread2, d2);
+      }
+      if (spread2 > static_cast<double>(limit) * limit) {
+        for (const uint64_t piece : pieces)
+          myUntil[piece] = now + retry;
+        continue;
+      }
+      for (const uint64_t piece : pieces)
+        myUntil.erase(piece);
+      released = true;
+    }
+    return released;
+  }
+
+private:
+  std::unordered_map<uint64_t, double> myUntil;
+};
+
+// A frame given in a piece's own axes (`pos`, `rot`), in the axes of the
+// compound body that carries the piece at `lp` / `lq` (the piece's place in
+// it): what a weld to the compound's body needs in place of the weld to the
+// piece.
+inline void frameInCompound(const float lp[3], const float lq[4],
+                            const double pos[3], const float rot[4],
+                            double outPos[3], float outRot[4]) {
+  double r[3];
+  quatRotate(lq, pos, r);
+  for (int i = 0; i < 3; ++i)
+    outPos[i] = static_cast<double>(lp[i]) + r[i];
+  quatMul(lq, rot, outRot);
+  sanitizeQuat(outRot);
 }
 
 } // namespace b3dop

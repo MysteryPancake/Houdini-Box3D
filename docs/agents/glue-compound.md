@@ -24,6 +24,30 @@
   group is dissolved whole when a piece is removed, rebuilt, changed (`shapeSig`, `props`) or edited by another node
   (`glueEdited`, set where the sync sees the edit), or when less than half of it stays together; its pieces are
   enabled where the compound left them and the groups are worked out again.
+  * Hit by a fast body: a compound is rigid, so it would throw back a heavy fast body in the step it is hit (Box3D breaks
+    bonds after a step, so `breakGlueEarly` cannot help). `holdCompoundsForApproach` (before each Box3D step) takes the
+    pieces in the body's way out of the compound instead.
+  * Which bodies: the last step's move events faster than `kGlueHoldMinSpeed`. `Box3DWorld::approachingBodies` keeps those
+    with the momentum to break the weakest bond (`weakestBreak`; a kinematic body has no limit; nothing is held when no
+    bond can break) whose bounds, swept for `kGlueHoldLeadSeconds` (two frames at least), overlap a dynamic body. The pair
+    must be closing (`Approach::relLin`: relative to the target's motion), and the body must not be of the target's glue
+    group (`glueSameGroup`). The momentum is compared with `compoundWeakest` or, for a held piece, `nodeWeakest`.
+  * Which pieces: `releaseNear` takes those within `Box3DCompoundMember::radius` of the body's bounds swept to where its
+    centre leaves the compound (`pathThroughBounds`), grown by `kGlueHoldHaloScale` times its half size. It is the whole
+    way through, because a rigid piece left behind the freed ones throws the body back. They leave with `shrink` (a move
+    event each ahead of the step's own), or the compound is dissolved when fewer than two would stay.
+  * Holds: the pieces go into `glueHold` (`b3dop::GlueHolds`, `tests/core_compound.cpp`) until `glueClock` passes
+    `kGlueHoldSeconds` from the last body near them. A body near held pieces extends the ones bonded to them
+    (`GlueHolds::refresh`). `syncCompounds` leaves held pieces and their bonds out of the glue graph.
+  * Bridges: a bond between a held piece and a piece still in the compound has its own weld parked with the compound's
+    piece (Box3D leaves a joint disabled while either body is), so a `Box3DBridge` welds the free piece to the compound's
+    body at that piece's place (`bridgeBond`, `frameInCompound`). `bridgeReleased` and `bridgeBoundaries` make them,
+    `dropBridges` and `pruneBridges` remove them, `bridgesDirty` asks `syncCompounds` to make them again.
+  * Merging back: `releaseExpiredHolds` (start of the frame) advances the clock. Expired pieces are let go only when
+    their velocities are within `kGlueMergeSpread` of each other (`GlueHolds::expire`, else `kGlueHoldRetrySeconds`
+    more), then the compound is one group larger than its members and is dissolved and merged whole.
+  * Contacts inside a glue group are no hits, so the weight of held pieces resting on the compound breaks nothing
+    (`glueSameGroup`, `compoundGlueHits`, `collectGlueHits`).
   Bonds that break (`jointsAfterStep`, `breakGlueEarly`) are taken out of the glue lists in place (`removeGlueBonds`: `glueRemoved`
   -> swapped out of `glueBonds`, the nodes' `partners` / `bonds` and `glueSignature`), so a frame with a few breaks costs a few
   bonds, not the scene. Nodes left without bonds stay until a quarter of them have, then the lists are rebuilt

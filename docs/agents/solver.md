@@ -73,11 +73,11 @@ deleteDeadPoints   `dead` points
 stamp = now
 ```
 
-**Performance Monitor.** Each stage is a `UT_PerfMonAutoSolveEvent(this, "<stage>")` named like Bullet's, listed
-flat under the node (the HDK has no way to nest solve events in the Stats view; group events only showed their own,
-near-zero time). Stages in solve order: Rebuilding World, Updating Bodies, Updating Colliders, Removing Bodies,
-Updating Constraints, Applying Forces, Stepping World, Exporting Simulation Results, Updating Constraint States,
-Recording Impacts, Updating Points, and Exporting Collision Shapes (Export Collision Shapes on). Opened only on the solve thread.
+**Performance Monitor.** Each stage is a `UT_PerfMonAutoSolveEvent(this, "<category>/<stage>")`: the `/` makes the
+Stats view nest the stage under its category, as Bullet's Pre-Solve / Stepping Simulation / Post-Solve. Pre-Solve: Rebuilding World,
+Updating Bodies, Updating Colliders, Removing Bodies, Updating Constraints. Stepping Simulation: Applying Forces, Stepping World.
+Post-Solve: Exporting Simulation Results, Updating Constraint States, Recording Impacts, Updating Points, and Exporting
+Collision Shapes (Export Collision Shapes on). Opened only on the solve thread.
 
 **Guide geometry** (`Box3DGuide.cpp`; Guide Options: Show Collision Shapes, Shape Color). A `SIM_GuidePerObject`
 built by `buildCollisionGuide` from the live world (`bodyShapeOutlines`: hulls, spheres, capsules), each body placed at

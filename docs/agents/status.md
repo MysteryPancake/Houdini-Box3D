@@ -11,6 +11,15 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 
 **Not yet run in Houdini**
 
+* Glue as One Body releasing the pieces in a fast body's way (`holdCompoundsForApproach`,
+  [glue-compound.md](glue-compound.md)): only the `building` example has run it (`glue_compound_hit`). At Strength
+  20000 most of its bonds break from the building's weight on the ground in both modes before anything hits it
+  (probably a resting body's ground contact counting as a hit: not looked into). Not checked: other scenes, a slow heavy
+  body (the example's slow ball lands on the roof), many glued groups at once, the cost of a very large compound, a
+  kinematic body in a scene (only the core query is tested), the force and torque a bond reads while its weld is a
+  bridge's (the bond's own joint is parked, so they read zero), bridges of bonds remade while pieces are held, and what
+  the `clang-tidy` checks say about the files that need the HDK (`src/sync`, `src/dop`).
+
 * Packed Object Initial Object Type (`initialstate`): not checked are the Solver SOP's collision object (Custom), the Pieces tab's
   Body Type greying out with the menu, and Deforming Static / Active against RBD Packed Object.
 
@@ -62,7 +71,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   Force DOP (the test prints its ratios to Point: 4.6 and 9.2 for a 2 m box); how a force scales over a size is the Force
   DOP's own.
 * The ground guide (`build_ground_guide`, test `solver_sop_ground_guide` checks the geometry): not seen in a viewport, so
-  whether `gl_wireframe` -1 on the merged guide still shows a Shaded plane shaded.
+  whether the ground box is drawn solid and transparent like the collider geometry under `gl_wireframe` -1.
 * Box3D Data's Default Shape menu (Plane and Cylinder at the end) and the Packed Object / Configure menus built from
   it: built, not opened in Houdini. `bullet_cylinder` and the cylinder cases of `bullet_shape_attributes` pass against Bullet.
 * `bullet_georep` `plane` on a packed piece (`ShapeType::Plane`, `buildShapes`): `bullet_plane_piece` has a box rest on it at the piece's height

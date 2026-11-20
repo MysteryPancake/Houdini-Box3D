@@ -60,7 +60,7 @@ struct ShapeSpec {
 // Ground Size).
 struct GroundSize {
   // Along x, below the surface (y), along z.
-  float size[3] = {2000.0f, 20.0f, 2000.0f};
+  float size[3] = {1000.0f, 10.0f, 1000.0f};
 };
 constexpr float kMinGroundSize = 0.1f;
 constexpr float kMaxGroundSize[3] = {20000.0f, 5000.0f,

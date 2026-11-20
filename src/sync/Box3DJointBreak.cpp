@@ -8,6 +8,7 @@
 #include "Box3DHoudiniUtil.h"
 #include "Box3DJointNetwork.h"
 #include "Box3DJointSync.h"
+#include "core/Box3DCompound.h"
 #include "core/Box3DDebug.h"
 #include "dop/SIM_Box3DWorld.h"
 
@@ -31,6 +32,7 @@
 #include <cmath>
 #include <cstring>
 #include <deque>
+#include <functional>
 #include <initializer_list>
 #include <string>
 #include <unordered_map>
@@ -199,10 +201,38 @@ void destroyBrokenJoint(b3dop::Box3DWorld &world, Box3DJointEntry &e) {
 
 } // namespace
 
+// The glue group of each node (st.glueGroup), if the bonds changed.
+void refreshGlueGroups(Box3DSharedState &st) {
+  if (st.glueGroupKnown && st.glueGroupSignature == st.glueSignature &&
+      st.glueGroupNodes == st.glueNodes.size())
+    return;
+  st.glueGroup =
+      b3dop::glueComponents(st.glueNodes.size(), glueBondList(st, false, true))
+          .of;
+  st.glueGroupSignature = st.glueSignature;
+  st.glueGroupNodes = st.glueNodes.size();
+  st.glueGroupKnown = true;
+}
+
 void collectGlueHits(Box3DSharedState &st) {
   b3dop::Box3DWorld &world = st.world;
   ++st.hitsTick;
-  for (Box3DGlueNode &n : st.glueNodes) {
+  refreshGlueGroups(st);
+  st.compoundGroup.clear();
+  for (const auto &c : st.compounds)
+    st.compoundGroup[c->body] = compoundGlueGroup(st, *c);
+  // A contact with a piece of its own group (or with the body of a compound of
+  // it) is not a hit: pieces of one glued structure press on each other with
+  // its weight (and push each other along with whatever hits it, which the hit
+  // itself counts). Not bonded to each other, they do collide.
+  const bool weightPossible = !st.glueNodes.empty();
+  int group = -1;
+  const std::function<bool(b3dop::BodyHandle)> sameGroup =
+      [&st, &group](b3dop::BodyHandle other) {
+        return glueSameGroup(st, other, group);
+      };
+  for (size_t i = 0; i < st.glueNodes.size(); ++i) {
+    Box3DGlueNode &n = st.glueNodes[i];
     // A piece of a compound takes the hits on its shapes of the compound.
     float pieceHits = 0.0f;
     if (compoundGlueHits(st, n.body, pieceHits)) {
@@ -214,8 +244,10 @@ void collectGlueHits(Box3DSharedState &st) {
         !world.isAwakeByHandle(n.body))
       continue;
     // A glued neighbour is not a hit (the pair never collides anyway).
+    group = st.glueGroup[i];
     n.hits += world.contactImpulseByHandle(n.body, n.partners.data(),
-                                           n.partners.size());
+                                           n.partners.size(),
+                                           weightPossible ? &sameGroup : nullptr);
   }
 }
 

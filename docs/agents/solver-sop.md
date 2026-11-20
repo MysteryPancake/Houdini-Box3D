@@ -24,10 +24,12 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   ([forces-affectors.md](forces-affectors.md)): the Ground Box (a Ground Plane DOP) as a ground box, the Static Object as a height field. The box's
   Size is the solver's `groundsize` (Ground Box Size), pulled out of the DOP's Advanced tab into this folder after Rotation (`take`
   in `make_solver_sop.py`, shown for Ground Box) and scaled by World Scale (`SCALED_SETTINGS`).
-  The guide (RBD Bullet Solver's, read from its dump; `build_ground_guide`): DOP Imports of the object `groundplane`
-  (`import_ground_plane`, Geometry Data Path `DisplayGeometry`; `import_ground_field`, `Geometry`), the plane as lines
-  (`convertline`) or its polygons by a Switch-If on Show Ground as (`shadeground`: Wireframe, Shaded), both scaled back
-  by World Scale (the field by a HeightField Transform), then `switch_ground_guide` on `useground * showground` and
+  The guide (RBD Bullet Solver's, read from its dump; `build_ground_guide`): a Ground Box is drawn as a real box
+  (`ground_box`, Size and Position / Rotation read from the outer parameters, top face on y = 0, then `pose_ground_box`)
+  dimmed like the external collision geometry (`dim_ground_box` after the switch, `COLLISION_GUIDE_VEX`), or just its edges
+  (`ground_box_edges`) by `switch_ground_style` on Show Ground as (`shadeground`: Solid, Wireframe); no DOP
+  Import, and in the inputs' units (not scaled). A Height Field is the DOP Import `import_ground_field` of the object
+  `groundplane` (Geometry Data Path `Geometry`), scaled back by a HeightField Transform. Then `switch_ground_guide` on `useground * showground` and
   `switchif_beforestart_ground`, into `merge_guide` (so `guide_wireframe` applies to it as to the rest). Show Ground and
   Show Ground as are the Visualization tab's Ground folder (`ground_visualization`). No Collision Padding or Dynamic
   Friction Scale (nothing in Box3D). Tests `solver_sop_ground`, `solver_sop_ground_guide`.

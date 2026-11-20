@@ -115,15 +115,8 @@ addpointattrib(0, "bullet_autofit", 1);
 """
 
 
-COPY_ATTRIBUTES = """\
-// The body attributes from the template point this packed copy was made from.
-s@name = point(1, "name", @ptnum);
-i@active = point(1, "active", @ptnum);
-f@density = point(1, "density", @ptnum);
-s@bullet_georep = point(1, "bullet_georep", @ptnum);
-i@bullet_autofit = point(1, "bullet_autofit", @ptnum);
-v@Cd = point(1, "Cd", @ptnum);
-"""
+# The template point attributes Copy to Points transfers onto each packed copy.
+COPY_ATTRIBUTES = "name active density bullet_georep bullet_autofit Cd"
 
 
 def mk(p, name, orient=(0, 0, 0, 1), cd=(0.7, 0.7, 0.7), active=1, density=1000.0, georep="box"):
@@ -197,14 +190,11 @@ class Pieces:
         copy.setInput(0, shape)
         copy.setInput(1, pts)
         set_parm(copy, ["pack", "packgeo"], 1)
-        # Copy to Points leaves some point attributes behind when it packs (active was lost, so
-        # static pieces fell), so copy them explicitly: copy i is made from template point i.
-        attrs = create(self.geo, "attribwrangle", f"{tag}_attributes")
-        attrs.setInput(0, copy)
-        attrs.setInput(1, pts)
-        set_parm(attrs, "snippet", COPY_ATTRIBUTES)
-        self.merge.setInput(len(self.merge.inputs()), attrs)
-        return attrs
+        # Copy to Points carries the template points' body attributes onto the packed copies.
+        set_parm(copy, "targetattribs", 1)
+        set_parm(copy, "applyattribs1", COPY_ATTRIBUTES)
+        self.merge.setInput(len(self.merge.inputs()), copy)
+        return copy
 
     def boxes(self, tag, size, calls, note=""):
         return self.stream(tag, self.shape_box(tag, size), "\n".join(calls), note)
@@ -479,7 +469,7 @@ Allow Sleeping is on Box3D Data. With Bullet the same scene is usually much slow
     return dop, 360
 
 
-def scene_building():
+def scene_building(start_x=-32.0):
     p = Pieces("building_pieces")
     ground(p, 80.0)
     geo = p.geo
@@ -557,7 +547,7 @@ v@Cd = set(shade, shade * 0.98, shade * 0.93);
     constraints.setInput(0, glue_lines)
 
     # --- A heavy ball thrown at the third floor.
-    radius, speed, target_y, start_x = 1.5, 30.0, 7.5, -32.0
+    radius, speed, target_y = 1.5, 30.0, 7.5
     flight = (half - start_x) / speed
     start_y = target_y + 0.5 * 9.80665 * flight * flight  # falls to the third floor by the time it arrives
     p.stream("ball", p.shape_sphere("ball", radius, freq=4),
@@ -567,7 +557,7 @@ v@Cd = set(shade, shade * 0.98, shade * 0.93);
         "// The ball is thrown at the building (Box3D Packed Object keeps the points' v).\n"
         f'v@v = s@name == "ball" ? {vec((speed, 0, 0))} : {{0, 0, 0}};')
 
-    strength = 1.0e4
+    strength = 3.0e5
     dop, _, names_used = build_dops(
         "building_sim", path, network_path=constraints.path(), keep_velocity=True,
         joints=[("glueconrel", "glue", {"strength": strength})])
@@ -583,14 +573,14 @@ building_pieces makes the floors and wall panels from Box SOPs, RBD Material Fra
 (Concrete) breaks each one into chunks, and Connect Adjacent Pieces joins every pair of
 touching chunks with a line: one glue bond each.
 
-Breaking: the Glue Constraint Relationship's Strength ({strength:g}) sets how hard a bond is
-to break. Box3D makes each bond a weld that breaks once the force on it passes
-Strength / timestep in one step (Bullet's half-life and propagation are not used). Broken
-bonds go into the constraint geometry's 'broken' group, so a SOP Solver can react to them.
+Breaking: the Glue Constraint Relationship's Strength ({strength:g}) sets how much impulse
+from hits a bond takes before it breaks (weight is no hit). At this Strength the building
+stops the ball; a lower one lets it plow in. Broken bonds go into the constraint geometry's
+'broken' group, so a SOP Solver can react to them.
 
-Try: lower Strength on 'glue' for a weaker building (too low and it falls under its own
-weight); raise it until the ball only dents it; change the ball's speed or height in
-building_pieces; on 'fracture', change the number of chunks."""
+Try: lower Strength on 'glue' for a weaker building, raise it for one that only dents;
+change the ball's speed or height in building_pieces; on 'fracture', change the number of
+chunks."""
     tidy(240, note, dop)
     return dop, 240
 

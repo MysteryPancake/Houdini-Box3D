@@ -862,8 +862,8 @@ def test_solver_sop_ground():
 
 def test_solver_sop_ground_guide():
     """The ground in the viewport (the asset's Guide Geometry, GUIDE_GEO), as RBD Bullet Solver's: Ground
-    Type None draws nothing; a Ground Plane is lines (Show Ground as Wireframe) or closed polygons
-    (Shaded), and nothing with Show Ground off; a Height Field is volumes."""
+    Type None draws nothing; a Ground Box is closed polygons (Show Ground as Solid) or only its edges as
+    lines (Wireframe), and nothing with Show Ground off; a Height Field is volumes."""
     pieces, _ = packed_boxes("sop_ground_guide_pieces", [{"size": (1, 1, 1), "center": (0, 4, 0)}])
 
     def guide(sop):
@@ -888,19 +888,19 @@ def test_solver_sop_ground_guide():
     none = solver_sop("sop_ground_guide_none", geometry=pieces)
     check("Ground Type None", none, set())
 
+    solid = solver_sop("sop_ground_guide_solid", geometry=pieces)
+    set_parm(solid, ["useground"], 1)
+    check("Ground Box, Solid", solid, {"closed"})
+
     wire = solver_sop("sop_ground_guide_wire", geometry=pieces)
     set_parm(wire, ["useground"], 1)
-    check("Ground Plane, Wireframe", wire, {"open"})
-
-    shaded = solver_sop("sop_ground_guide_shaded", geometry=pieces)
-    set_parm(shaded, ["useground"], 1)
-    set_parm(shaded, ["shadeground"], 1)
-    check("Ground Plane, Shaded", shaded, {"closed"})
+    set_parm(wire, ["shadeground"], 1)
+    check("Ground Box, Wireframe", wire, {"open"})
 
     hidden = solver_sop("sop_ground_guide_hidden", geometry=pieces)
     set_parm(hidden, ["useground"], 1)
     set_parm(hidden, ["showground"], 0)
-    check("Ground Plane, Show Ground off", hidden, set())
+    check("Ground Box, Show Ground off", hidden, set())
 
     field_geo = new_geo("sop_ground_guide_field")
     field = create(field_geo, "heightfield", "field")

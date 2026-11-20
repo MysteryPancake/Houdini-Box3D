@@ -610,16 +610,30 @@ struct Box3DCompoundMember {
   float lq[4] = {0, 0, 0, 1};  // rotation in the compound body's space
   float centre[3] = {0, 0, 0}; // the piece's centre of mass, in its own space
   float mass = 0.0f;           // the piece's own mass
+  float radius = 0.0f;         // half the diagonal of its bounds
   int shapeFirst = 0;          // its shapes are [shapeFirst, +shapeCount) in
   int shapeCount = 0;          // the compound's, in creation order
   b3dop::BodyProps props;      // as merged
   uint64_t shapeSig = 0;       // as merged
 };
 
+// A Glue bond between a piece of a compound and a piece that is not in it (one
+// taken out while a fast body comes through, `Box3DSharedState::glueHold`). The
+// bond's own weld is parked with the piece that is in the compound, so this
+// weld joins the free piece to the compound's body at that piece's place in
+// it. `original` is the bond's joint, which wakes by itself when its piece
+// leaves the compound.
+struct Box3DBridge {
+  b3dop::JointHandle original = 0;
+  b3dop::JointHandle handle = 0;
+  b3dop::BodyHandle member = 0; // the piece in the compound
+};
+
 // A glued group run as one Box3D body (core/Box3DCompound.h).
 struct Box3DCompound {
   b3dop::BodyHandle body = 0;
   std::vector<Box3DCompoundMember> members;
+  std::vector<Box3DBridge> bridges;
   // The impulse on each of its shapes in the last Box3D step read for the glue
   // (contactImpulsesByShape), the collectGlueHits call it belongs to, and
   // whether the body was awake and dynamic then (a sleeping one has no hits).
@@ -742,6 +756,14 @@ struct Box3DSharedState {
   // node indices, parallel to glueBonds.
   std::vector<Box3DGlueNode> glueNodes;
   std::unordered_map<b3dop::BodyHandle, int> glueNodeOf;
+  // The glue group (the pieces joined by bonds) of each node, which
+  // collectGlueHits keeps contacts inside from counting as hits. Worked out
+  // again when the bond list or the node count changed (a bond broken in the
+  // middle of a frame splits its group from the next frame).
+  std::vector<int> glueGroup;
+  uint64_t glueGroupSignature = 0;
+  size_t glueGroupNodes = 0;
+  bool glueGroupKnown = false;
   std::vector<Box3DJointEntry *> glueBonds;
   std::vector<std::pair<int, int>> glueBondNodes;
   // The bonds that broke since the lists were made: syncJoints takes them out
@@ -791,6 +813,25 @@ struct Box3DSharedState {
       ~static_cast<uint64_t>(0); // of the Glue graph, as grouped
   uint64_t groupsBodyVersion = ~static_cast<uint64_t>(0);
   bool groupsRecheck = true;
+  // The pieces taken out of their compounds for a fast body coming at them
+  // (holdCompoundsForApproach), with the glueClock time each may merge again.
+  // glueClock is the simulated time, advanced a frame at a time by
+  // releaseExpiredHolds.
+  b3dop::GlueHolds glueHold;
+  double glueClock = 0.0;
+  // Each compound's body -> the glue group its pieces are in, for contacts
+  // with a compound of the same group (collectGlueHits makes it).
+  std::unordered_map<b3dop::BodyHandle, int> compoundGroup;
+  // A compound lost or gained pieces while some are held: its bridges
+  // (Box3DBridge) are worked out again.
+  bool bridgesDirty = false;
+  // The weakest break impulse of any bond (the Glue's Strength over
+  // kGlueStrengthScale; infinity: none can break), worked out again once per
+  // glueClock value that is asked for it: what a body has to be able to deliver
+  // to be looked at at all.
+  float glueMinBreak = 0.0f;
+  double glueMinBreakClock = -1.0;
+  uint64_t glueMinBreakSignature = 0;
   // Live SideFX Spring joints last step: syncJoints looks for changed masses
   // only while there are any.
   size_t springEntries = 0;
