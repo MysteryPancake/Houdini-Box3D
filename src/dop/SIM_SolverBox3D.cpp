@@ -414,6 +414,8 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   }
 
   std::lock_guard<std::mutex> lock(st->mutex);
+  // Also for a freshly made state, which starts unsorted.
+  st->objectsSorted = box3dObjectsSortedById(objects);
 
   followSourceSops(*st, objects, now, dt);
 
@@ -729,8 +731,15 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
 
   // Objects not seen lose their records (their bodies were just removed).
   for (auto it = st->objectSync.begin(); it != st->objectSync.end();)
-    it = (it->second.visited == st->syncStamp) ? std::next(it)
-                                               : st->objectSync.erase(it);
+    if (it->second.visited == st->syncStamp) {
+      ++it;
+    } else {
+      // Their per-point and source records go with them.
+      st->slots.erase(it->first);
+      st->sourcePoses.erase(it->first);
+      st->sourceCaches.erase(it->first);
+      it = st->objectSync.erase(it);
+    }
 
   // Joints, once the bodies they name are current. A changed set of bodies
   // re-reads the networks.

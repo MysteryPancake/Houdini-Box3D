@@ -504,7 +504,7 @@ inline const std::vector<int> &jointParamIndices(JointType t) {
     const std::vector<JointParam> &params = jointParams();
     for (int ty = 0; ty < kJointTypeCount; ++ty)
       for (size_t i = 0; i < params.size(); ++i)
-        if (params[i].usedBy(JointType(ty)))
+        if (params[i].usedBy(static_cast<JointType>(ty)))
           idx[static_cast<size_t>(ty)].push_back(static_cast<int>(i));
     return idx;
   }();

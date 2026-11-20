@@ -117,11 +117,10 @@ struct WorldSettings {
 
   float gravity[3] = {0.0f, -9.80665f, 0.0f};
   int subSteps = 4; // Box3D recommends ~4 per step
-  int workerCount =
-      // parallel tasks per step, fixed at creation (1 to kMaxWorkerCount). With
-      // a TaskRunner these run on the host's pool; without one, on threads
-      // Box3D starts for this world
-      kDefaultWorkerCount;
+  // Parallel tasks per step, fixed at creation (1 to kMaxWorkerCount). With a
+  // TaskRunner these run on the host's pool; without one, on threads Box3D
+  // starts for this world.
+  int workerCount = kDefaultWorkerCount;
   bool enableSleep = true;
   // continuous collision vs static bodies (fast objects: vs moving ones too)
   bool enableContinuous = true;
@@ -141,16 +140,14 @@ struct WorldSettings {
 
   int restitutionIterations = 2;       // extra solver passes for bounce (0-63)
   bool restitutionPropagation = false; // bounce passes on through stacks
-  float isotropicInertiaTolerance =
-      // 0-1; near-spherical bodies lose gyroscopic torque. New bodies / mass
-      // changes only
-      0.2f;
-  bool warmStarting =
-      true; // off only for comparing against the reference solver
-  float impactMinSpeed =
-      // Box3D hit event threshold (m/s): Impacts only for pairs that hit this
-      // fast. 0 = every contact
-      0.0f;
+  // 0-1; near-spherical bodies lose gyroscopic torque. New bodies / mass
+  // changes only.
+  float isotropicInertiaTolerance = 0.2f;
+  // Off only for comparing against the reference solver.
+  bool warmStarting = true;
+  // Box3D hit event threshold (m/s): Impacts only for pairs that hit this
+  // fast. 0 = every contact.
+  float impactMinSpeed = 0.0f;
   // The size of every ground (a Ground Plane DOP, a `plane` piece), read when a
   // ground is built: a new size rebuilds them.
   GroundSize ground;
@@ -743,8 +740,7 @@ public:
   static void setSharedHullBudget(size_t bytes);
   static int hullBuildCount();
 
-  // ---- pose and velocity (never pass a stale handle)
-  // -------------------------
+  // ---- pose and velocity (never pass a stale handle) -----------------------
   bool getTransformByHandle(BodyHandle h, double outPos[3],
                             float outRotXYZW[4]) const;
   bool getVelocityByHandle(BodyHandle h, float outLinear[3],
@@ -754,8 +750,7 @@ public:
   bool setTransformByHandle(BodyHandle h, const double pos[3],
                             const float rotXYZW[4]);
 
-  // ---- move events (valid until the next step or a body is removed)
-  // ----------
+  // ---- move events (valid until the next step or a body is removed) --------
   int getMoveEvents(
       std::vector<BodyMove> &out) const; // resizes `out`; returns the count
   // What setBodyUserData stored (null for a body made without any).

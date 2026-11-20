@@ -2,10 +2,13 @@
 //
 // Debug logging to stderr (Houdini's console), compiled in with BOX3DDOP_DEBUG
 // (CMake option, off by default). Environment variables (debug builds only):
-//     BOX3DDOP_REQUESTED_CACHE=<int>  what getRequestedCacheSubclass() returns
-//     (read every step) BOX3DDOP_VERBOSE=1              also log what can
-//     happen every step (slow) BOX3DDOP_VERIFY_READBACK=1      re-read written
-//     points and log "READBACK MISMATCH" (slow)
+//
+//   BOX3DDOP_REQUESTED_CACHE=<int>
+//       what getRequestedCacheSubclass() returns (read every step)
+//   BOX3DDOP_VERBOSE=1
+//       also log what can happen every step (slow)
+//   BOX3DDOP_VERIFY_READBACK=1
+//       re-read written points and log "READBACK MISMATCH" (slow)
 #pragma once
 
 #include <atomic>

@@ -245,9 +245,9 @@ void collectGlueHits(Box3DSharedState &st) {
       continue;
     // A glued neighbour is not a hit (the pair never collides anyway).
     group = st.glueGroup[i];
-    n.hits += world.contactImpulseByHandle(n.body, n.partners.data(),
-                                           n.partners.size(),
-                                           weightPossible ? &sameGroup : nullptr);
+    n.hits += world.contactImpulseByHandle(
+        n.body, n.partners.data(), n.partners.size(),
+        weightPossible ? &sameGroup : nullptr);
   }
 }
 
@@ -321,6 +321,22 @@ void breakGlueEarly(Box3DSharedState &st, float elapsed,
 
 void advanceGlue(Box3DSharedState &st, float dt) {
   if (st.glueBonds.empty())
+    return;
+  // Nothing hit this frame and no bond carries any impact: the decay and the
+  // spread would change nothing, so skip building the bond list.
+  bool idle = true;
+  for (const Box3DGlueNode &n : st.glueNodes)
+    if (n.hits > 0.0f) {
+      idle = false;
+      break;
+    }
+  if (idle)
+    for (const Box3DJointEntry *e : st.glueBonds)
+      if (e->extra->glueImpact > 0.0f || std::isnan(e->extra->glueImpact)) {
+        idle = false;
+        break;
+      }
+  if (idle)
     return;
   std::vector<float> hits(st.glueNodes.size());
   for (size_t i = 0; i < hits.size(); ++i)

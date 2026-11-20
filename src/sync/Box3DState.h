@@ -663,13 +663,35 @@ inline uint64_t glueBondHash(b3dop::BodyHandle bodyA, b3dop::BodyHandle bodyB) {
   return b3dop::mixHash(b3dop::mixHash(0x5bd1e995ull, a), b);
 }
 
-// Everything shared between timestep copies.
 // A piece's pose in its source SOP, as last seen (Box3DSourceSync.cpp).
 struct Box3DSourcePose {
   double pos[3] = {0, 0, 0};
   float rot[4] = {0, 0, 0, 1};
 };
 
+// What followSourceSops keeps per object so a step where nothing changed does
+// not walk every point again (Box3DSourceSync.cpp).
+struct Box3DSourceFollower {
+  GA_Offset off = GA_INVALID_OFFSET;
+  std::string name;
+  float rest[4] = {0, 0, 0, 1}; // the rotation of its restxform
+};
+
+struct Box3DSourceCache {
+  // The pieces that follow, and the markers of the geometry they were read
+  // from (not P or orient: the solver writes those every step).
+  bool followersKnown = false;
+  uint64_t followersKey = 0;
+  std::vector<Box3DSourceFollower> followers;
+  std::unordered_map<std::string, bool> wanted; // their names
+  // The source SOP's point for each wanted name, and the markers of the
+  // source it was read from.
+  bool indexKnown = false;
+  uint64_t indexKey = 0;
+  std::unordered_map<std::string, GA_Offset> index;
+};
+
+// Everything shared between timestep copies.
 struct Box3DSharedState {
   b3dop::Box3DWorld world;
   Box3DMirrorMap mirror; // key: makeBodyKey(object id, point id)
@@ -677,6 +699,7 @@ struct Box3DSharedState {
   // piece is moved only when this changes, so other edits (a SOP Solver) stand.
   std::unordered_map<int, std::unordered_map<std::string, Box3DSourcePose>>
       sourcePoses;
+  std::unordered_map<int, Box3DSourceCache> sourceCaches; // per object
 
   // Bumped once per sync; stampedCount current entries (equal to mirror.size():
   // nothing to remove).

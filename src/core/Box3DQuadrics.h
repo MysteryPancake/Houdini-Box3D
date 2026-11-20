@@ -102,8 +102,8 @@ inline void appendQuadricPoints(QuadricKind kind, const double a[9],
     xyz.push_back(
         static_cast<float>(centre[2] + a[6] * x + a[7] * y + a[8] * z));
   };
-  const double kTwoPi = 6.283185307179586;
-  const double kPi = kTwoPi / 2.0;
+  const double twoPi = 6.283185307179586;
+  const double halfTurn = twoPi / 2.0;
   switch (kind) {
   case QuadricKind::Sphere:
   case QuadricKind::Metaball: {
@@ -111,10 +111,10 @@ inline void appendQuadricPoints(QuadricKind kind, const double a[9],
     put(0, s, 0); // poles exactly, so a sphere rests on its true radius
     put(0, -s, 0);
     for (int i = 1; i < kQuadricRings; ++i) {
-      const double phi = kPi * i / kQuadricRings;
+      const double phi = halfTurn * i / kQuadricRings;
       const double r = s * std::sin(phi), y = s * std::cos(phi);
       for (int j = 0; j < kQuadricSegments; ++j) {
-        const double th = kTwoPi * j / kQuadricSegments;
+        const double th = twoPi * j / kQuadricSegments;
         put(r * std::cos(th), y, r * std::sin(th));
       }
     }
@@ -123,7 +123,7 @@ inline void appendQuadricPoints(QuadricKind kind, const double a[9],
   case QuadricKind::Tube:
     for (int cap = 0; cap < 2; ++cap)
       for (int j = 0; j < kQuadricSegments; ++j) {
-        const double th = kTwoPi * j / kQuadricSegments;
+        const double th = twoPi * j / kQuadricSegments;
         put(std::cos(th), cap ? 0.5 : -0.5, std::sin(th));
       }
     break;
@@ -140,7 +140,7 @@ inline void appendQuadricPoints(QuadricKind kind, const double a[9],
       nz = kCircleHalfThickness;
     for (int side = 0; side < 2; ++side)
       for (int j = 0; j < kQuadricSegments; ++j) {
-        const double th = kTwoPi * j / kQuadricSegments;
+        const double th = twoPi * j / kQuadricSegments;
         const double sgn = side ? 1.0 : -1.0;
         xyz.push_back(static_cast<float>(centre[0] + a[0] * std::cos(th) +
                                          a[1] * std::sin(th) + sgn * nx));

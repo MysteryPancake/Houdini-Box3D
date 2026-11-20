@@ -32,4 +32,7 @@ exit /b 1
 
 :have_hfs
 endlocal & set "HFS=%HFS%"
+rem Houdini uses %HOME% as its preferences folder when it is set (Git Bash sets it), which
+rem would send the plugin and the checks to C:\Users\<you>\houdiniX.Y instead of Documents.
+if not defined HOUDINI_USER_PREF_DIR set "HOME="
 exit /b 0

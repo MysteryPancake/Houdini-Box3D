@@ -13,6 +13,7 @@
 #include <functional>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -86,6 +87,19 @@ public:
     myHints[group] = budget;
   }
 
+  // Keys whose points cannot be hulled (flat, too complex): a key always means
+  // the same points, so they are not tried again.
+  bool knownFailure(HullId key) {
+    std::lock_guard<std::mutex> lock(myMutex);
+    return myFailed.count(key) != 0;
+  }
+  void noteFailure(HullId key) {
+    std::lock_guard<std::mutex> lock(myMutex);
+    if (myFailed.size() >= kMaxFailedKeys)
+      myFailed.clear();
+    myFailed.insert(key);
+  }
+
   size_t bytes() {
     std::lock_guard<std::mutex> lock(myMutex);
     return myBytes;
@@ -126,6 +140,8 @@ private:
   std::mutex myMutex;
   std::unordered_map<HullId, Entry> myEntries;
   std::unordered_map<uint64_t, int> myHints;
+  static constexpr size_t kMaxFailedKeys = 65536;
+  std::unordered_set<HullId> myFailed;
   size_t myBytes = 0;
   size_t myBudget = static_cast<size_t>(256) << 20;
   uint64_t myTick = 0;
@@ -478,7 +494,8 @@ bool Box3DWorld::create(const WorldSettings &s,
     return false;
 
   myImpl->settings = s;
-  myImpl->settings.gravity[0] = def.gravity.x; // as applied (finite)
+  myImpl->settings.subSteps = std::max(1, s.subSteps); // at least one
+  myImpl->settings.gravity[0] = def.gravity.x;         // as applied (finite)
   myImpl->settings.gravity[1] = def.gravity.y;
   myImpl->settings.gravity[2] = def.gravity.z;
   myImpl->tasks = std::move(tasks);
@@ -1016,18 +1033,23 @@ HullId Box3DWorld::createHullWithKey(HullId key, const float *xyz,
 
   // The group's last working budget is tried first.
   HullLibrary &lib = HullLibrary::instance();
+  if (lib.knownFailure(key))
+    return 0;
   const int hint = lib.budgetHint(budgetGroup);
   int budget = 0, tries = 0;
   b3HullData *hull = createHullLadder(pts, hint, budget, tries);
   lib.attempts.fetch_add(tries, std::memory_order_relaxed);
-  if (!hull)
+  if (!hull) {
+    lib.noteFailure(key);
     return 0;
+  }
   if (budget != hint)
     lib.setBudgetHint(budgetGroup, budget);
   lib.builds.fetch_add(1, std::memory_order_relaxed);
 
   if (!(hull->volume > 1e-9f) || !std::isfinite(hull->volume)) {
     b3DestroyHull(hull); // flat: no mass, no stable contacts
+    lib.noteFailure(key);
     return 0;
   }
   const HullRef ref = lib.insert(key, hull);
@@ -1299,7 +1321,9 @@ bool fitOrientedUncached(ShapeType type, const float *xyz, int count,
 
 bool Box3DWorld::fitShapeOriented(ShapeType type, const float *xyz, int count,
                                   ShapeSpec &out) {
-  if (!xyz || count < 4)
+  if (!xyz || count <= 0)
+    return false;
+  if (count < 4)
     return fitShapeToPoints(type, xyz, count, out);
   // Before hashing: a non-finite point must not find a cached fit.
   for (int i = 0; i < count * 3; ++i)
@@ -1376,8 +1400,7 @@ BodySettings::Type Box3DWorld::typeByHandle(BodyHandle h) const {
   }
 }
 
-// ---- changes to existing bodies
-// -------------------------------------------------
+// ---- changes to existing bodies -------------------------------------------
 
 namespace {
 
@@ -1828,9 +1851,7 @@ bool collectSweptBody(b3ShapeId shape, void *context) {
   const b3BodyId body = b3Shape_GetBody(shape);
   if (sameBody(body, c.self) || b3Body_GetType(body) != b3_dynamicBody)
     return true;
-  for (const b3BodyId &id : c.ids)
-    if (sameBody(id, body))
-      return true;
+  // One entry per shape: the caller sorts and drops the repeats.
   c.ids.push_back(body);
   return true;
 }
@@ -1867,6 +1888,12 @@ void Box3DWorld::approachingBodies(const BodyHandle *movers, size_t count,
     hit.self = id;
     b3World_OverlapAABB(myImpl->worldId, box, b3DefaultQueryFilter(),
                         collectSweptBody, &hit);
+    std::sort(hit.ids.begin(), hit.ids.end(),
+              [](const b3BodyId &x, const b3BodyId &y) {
+                return b3StoreBodyId(x) < b3StoreBodyId(y);
+              });
+    hit.ids.erase(std::unique(hit.ids.begin(), hit.ids.end(), sameBody),
+                  hit.ids.end());
     const b3Pos centre = b3Body_GetWorldCenter(id);
     for (const b3BodyId &target : hit.ids) {
       // The mover's velocity relative to what the target does at the mover's
@@ -2050,6 +2077,7 @@ void Box3DWorld::applyTuning(const WorldSettings &s) {
   // previous value, and the worker count is fixed for the life of the world.
   WorldSettings next = s;
   next.workerCount = cur.workerCount;
+  next.subSteps = std::max(1, next.subSteps); // at least one
   if (!finite3(next.gravity))
     std::copy(cur.gravity, cur.gravity + 3, next.gravity);
   if (!std::isfinite(next.contactRecycleDistance))

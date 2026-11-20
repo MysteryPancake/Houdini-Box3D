@@ -51,6 +51,10 @@ constexpr float kGlueHoldHaloScale = 3.0f;
 constexpr float kGlueMergeSpread = 0.5f;
 constexpr float kGlueHoldRetrySeconds = 0.25f;
 
+// The most rounds of propagation a bond may ask for: each costs a pass over
+// every bond every frame, so a typo (1e6) must not freeze the solve.
+constexpr int kMaxGlueIterations = 1000;
+
 struct GlueParams {
   float strength = 10000.0f; // impulse to break; < 0 never
   float halfLife = 0.1f;     // seconds for the impact to halve
@@ -73,7 +77,8 @@ inline void glueSpread(const std::vector<GlueBond> &bonds,
                        std::vector<float> &hits) {
   int rounds = 1;
   for (const GlueBond &bond : bonds)
-    rounds = std::max(rounds, bond.params.iterations);
+    rounds =
+        std::min(std::max(rounds, bond.params.iterations), kMaxGlueIterations);
   const size_t n = hits.size();
   // Kept between calls (every frame): no allocation. `next` trades buffers
   // with `hits` below; both are fully overwritten each round.

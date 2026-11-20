@@ -13,6 +13,8 @@
 
 namespace box3dsolver {
 
+namespace {
+
 // Collects the SIM_Force data an object carries (Gravity Force, Wind Force, Fan
 // Force, POP Force, any custom force DOP): the lookup Houdini's own solvers use
 // (see SIM_SolverHair).
@@ -38,8 +40,6 @@ void forceAttribIds(const GU_Detail *gdp, GA_DataId &forceId,
   forceId = f ? f->getDataId() : Box3DSyncFingerprint::kNoId;
   torqueId = t ? t->getDataId() : Box3DSyncFingerprint::kNoId;
 }
-
-namespace {
 
 // The SIM_Force data on the object.
 void collectForceDops(const SIM_Object &obj,

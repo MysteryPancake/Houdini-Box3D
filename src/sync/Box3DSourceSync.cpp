@@ -29,13 +29,6 @@ namespace {
 
 constexpr const char *kSourceDataName = "SourceObject";
 
-// A piece to move: its point in the object's Geometry and the pose it has now.
-struct Follower {
-  GA_Offset off;
-  std::string name;
-  float rest[4]; // the rotation of its restxform
-};
-
 // The source SOP of `obj`, or null; `useTransform` is whether the SOP's object
 // transform applies (the data's `usetransform`, written by the Box3D Packed
 // Object).
@@ -76,8 +69,11 @@ bool sourcePose(const GU_Detail *src, GA_Offset off, const UT_Matrix4D &xf,
   return splitPackedMatrix(m3, rot, scale);
 }
 
-// The poses the pieces in `names` have in `sop` at global time `t`, by name.
+// The poses the pieces in `names` (a subset of cache.wanted) have in `sop` at
+// global time `t`, by name. The source's points are walked only when its point
+// count or `name` attribute changed since the cache's index was made.
 void readSourcePoses(SOP_Node &sop, double t, bool useTransform,
+                     Box3DSourceCache &cache,
                      const std::unordered_map<std::string, bool> &names,
                      std::unordered_map<std::string, Box3DSourcePose> &out) {
   OP_Context context(t);
@@ -90,14 +86,29 @@ void readSourcePoses(SOP_Node &sop, double t, bool useTransform,
   GA_ROHandleS srcNames(src, GA_ATTRIB_POINT, "name");
   if (!srcNames.isValid())
     return;
-  GA_Offset off;
-  GA_FOR_ALL_PTOFF(src, off) {
-    const std::string name = srcNames.get(off).c_str();
-    if (names.find(name) == names.end())
+  const uint64_t key = b3dop::mixHash(
+      b3dop::mixHash(b3dop::mixHash(b3dop::kHashSeed,
+                                    static_cast<uint64_t>(src->getNumPoints())),
+                     static_cast<uint64_t>(src->getNumPointOffsets())),
+      static_cast<uint64_t>(srcNames.getAttribute()->getDataId()));
+  if (!cache.indexKnown || cache.indexKey != key) {
+    cache.index.clear();
+    GA_Offset off;
+    GA_FOR_ALL_PTOFF(src, off) {
+      const std::string name = srcNames.get(off).c_str();
+      if (cache.wanted.find(name) != cache.wanted.end())
+        cache.index[name] = off; // the last point of a name, as a scan finds
+    }
+    cache.indexKey = key;
+    cache.indexKnown = true;
+  }
+  for (const auto &kv : names) {
+    const auto it = cache.index.find(kv.first);
+    if (it == cache.index.end())
       continue;
     Box3DSourcePose pose;
-    if (sourcePose(src, off, xf, pose.pos, pose.rot))
-      out[name] = pose;
+    if (sourcePose(src, it->second, xf, pose.pos, pose.rot))
+      out[kv.first] = pose;
   }
 }
 
@@ -124,7 +135,7 @@ void followSourceSops(Box3DSharedState &st, SIM_ObjectArray &objects,
         SIM_DATA_GETCONST(obj, kBox3DDataName, SIM_Box3DData);
     const bool allKinematic =
         dataNode && static_cast<int>(dataNode->getBodyType()) == 1;
-    std::vector<Follower> followers;
+    Box3DSourceCache &cache = st.sourceCaches[obj.getObjectId()];
     {
       const SIM_Geometry *geo =
           SIM_DATA_GETCONST(obj, SIM_GEOMETRY_DATANAME, SIM_Geometry);
@@ -141,45 +152,76 @@ void followSourceSops(Box3DSharedState &st, SIM_ObjectArray &objects,
       if (!names.isValid() || !restxform.isValid() || !orient.isValid() ||
           (!allKinematic && !animated.isValid()))
         continue;
-      GA_Offset off;
-      GA_FOR_ALL_PTOFF(gdp, off) {
-        if (!allKinematic && animated.get(off) == 0)
-          continue;
-        Follower f;
-        f.off = off;
-        f.name = names.get(off).c_str();
-        if (!restRotation(restxform.get(off), f.rest))
-          continue;
-        followers.push_back(std::move(f));
+      // The followers depend on these markers only (P and orient change every
+      // step: the solver writes them), so an unchanged object is not walked.
+      const auto idOf = [](const GA_ROHandleS &h) {
+        return h.isValid()
+                   ? static_cast<uint64_t>(h.getAttribute()->getDataId())
+                   : ~0ull;
+      };
+      uint64_t key = b3dop::kHashSeed;
+      key = b3dop::mixHash(key, static_cast<uint64_t>(gdp->getNumPoints()));
+      key =
+          b3dop::mixHash(key, static_cast<uint64_t>(gdp->getNumPointOffsets()));
+      key = b3dop::mixHash(key, idOf(names));
+      key = b3dop::mixHash(
+          key, static_cast<uint64_t>(restxform.getAttribute()->getDataId()));
+      key = b3dop::mixHash(
+          key, animated.isValid()
+                   ? static_cast<uint64_t>(animated.getAttribute()->getDataId())
+                   : ~0ull);
+      key = b3dop::mixHash(
+          key, gdp->getNumPrimitives() > 0
+                   ? static_cast<uint64_t>(gdp->getPrimitiveList().getDataId())
+                   : ~0ull);
+      key = b3dop::mixHash(key, allKinematic ? 1 : 2);
+      if (!cache.followersKnown || cache.followersKey != key) {
+        cache.followers.clear();
+        cache.wanted.clear();
+        GA_Offset off;
+        GA_FOR_ALL_PTOFF(gdp, off) {
+          if (!allKinematic && animated.get(off) == 0)
+            continue;
+          Box3DSourceFollower f;
+          f.off = off;
+          f.name = names.get(off).c_str();
+          if (!restRotation(restxform.get(off), f.rest))
+            continue;
+          cache.wanted.emplace(f.name, true);
+          cache.followers.push_back(std::move(f));
+        }
+        cache.followersKey = key;
+        cache.followersKnown = true;
+        cache.indexKnown = false; // the wanted names changed
       }
     }
+    const std::vector<Box3DSourceFollower> &followers = cache.followers;
     if (followers.empty())
       continue;
-    std::unordered_map<std::string, bool> wanted;
-    for (const Follower &f : followers)
-      wanted.emplace(f.name, true);
+    const std::unordered_map<std::string, bool> &wanted = cache.wanted;
 
     // What each piece had when last read; pieces seen for the first time take
     // the SOP a step earlier.
     const SIM_Engine &engine = obj.getEngine();
     auto &known = st.sourcePoses[obj.getObjectId()];
     std::unordered_map<std::string, bool> unseen;
-    for (const Follower &f : followers)
+    for (const Box3DSourceFollower &f : followers)
       if (known.find(f.name) == known.end())
         unseen.emplace(f.name, true);
     if (!unseen.empty()) {
       std::unordered_map<std::string, Box3DSourcePose> before;
       readSourcePoses(*sop, engine.getGlobalTime(SIM_Time(now - dt)),
-                      useTransform, unseen, before);
+                      useTransform, cache, unseen, before);
       for (const auto &kv : before)
         known[kv.first] = kv.second;
     }
     std::unordered_map<std::string, Box3DSourcePose> current;
     readSourcePoses(*sop, engine.getGlobalTime(SIM_Time(now)), useTransform,
-                    wanted, current);
+                    cache, wanted, current);
 
-    std::vector<std::pair<const Follower *, const Box3DSourcePose *>> moves;
-    for (const Follower &f : followers) {
+    std::vector<std::pair<const Box3DSourceFollower *, const Box3DSourcePose *>>
+        moves;
+    for (const Box3DSourceFollower &f : followers) {
       auto it = current.find(f.name);
       if (it == current.end())
         continue;
@@ -203,7 +245,7 @@ void followSourceSops(Box3DSharedState &st, SIM_ObjectArray &objects,
     if (!orient.isValid())
       continue;
     for (const auto &mv : moves) {
-      const Follower &f = *mv.first;
+      const Box3DSourceFollower &f = *mv.first;
       const Box3DSourcePose &pose = *mv.second;
       float since[4];
       box3dAbsoluteToRest(f.rest, pose.rot, since);

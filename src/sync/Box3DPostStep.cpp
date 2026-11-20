@@ -12,11 +12,12 @@
 
 namespace box3dsolver {
 
+namespace {
+
 // Adds the float point attribute `name` with the given type info unless it
 // exists. True if added.
-static bool addPointAttribIfMissing(GU_Detail *gdp, const char *name,
-                                    int tupleSize,
-                                    GA_TypeInfo typeInfo = GA_TYPE_VOID) {
+bool addPointAttribIfMissing(GU_Detail *gdp, const char *name, int tupleSize,
+                             GA_TypeInfo typeInfo = GA_TYPE_VOID) {
   if (gdp->findPointAttribute(name))
     return false;
   // The add returns the new attribute, so no second lookup.
@@ -27,14 +28,14 @@ static bool addPointAttribIfMissing(GU_Detail *gdp, const char *name,
 }
 
 // Adds the int point attribute `name` unless it exists.
-static void addIntPointAttribIfMissing(GU_Detail *gdp, const char *name,
-                                       int tupleSize) {
+void addIntPointAttribIfMissing(GU_Detail *gdp, const char *name,
+                                int tupleSize) {
   if (!gdp->findPointAttribute(name))
     gdp->addIntTuple(GA_ATTRIB_POINT, name, tupleSize);
 }
 
 // A new quaternion attribute is 0,0,0,0: start every point at identity.
-static void startOrientAtIdentity(GU_Detail *gdp) {
+void startOrientAtIdentity(GU_Detail *gdp) {
   GA_RWHandleQ qOut(gdp, GA_ATTRIB_POINT, "orient");
   if (!qOut.isValid())
     return;
@@ -101,8 +102,8 @@ void hardenWrittenPages(const GU_Detail *gdp,
 }
 
 // The point `pointId` (its `id`, else its point number) is still at `off`.
-static bool samePointAt(const GU_Detail *gdp, const GA_ROHandleI &id,
-                        GA_Offset off, int64_t pointId) {
+bool samePointAt(const GU_Detail *gdp, const GA_ROHandleI &id, GA_Offset off,
+                 int64_t pointId) {
   if (off < 0 || off >= gdp->getNumPointOffsets() ||
       gdp->getPointMap().isOffsetVacant(off))
     return false;
@@ -148,6 +149,8 @@ void resolvePointOffsets(const GU_Detail *gdp, const PointAttrs &a,
   }
 }
 
+} // namespace
+
 void noteOwnWrite(Box3DSharedState &st, const SIM_Object &obj) {
   st.writtenObjects.push_back(obj.getObjectId());
 }
@@ -189,6 +192,8 @@ void forceScan(Box3DSharedState &st, int objectId) {
   if (f != st.objectSync.end())
     f->second.canSkip = false;
 }
+
+namespace {
 
 // f(begin, end) per run of items with the same objectId. Items are first
 // grouped by object, in O(n): a stable bucket pass (items of one object keep
@@ -258,6 +263,8 @@ void forEachObjectRun(std::vector<Item> &items, const F &f) {
     runBegin = runEnd;
   }
 }
+
+} // namespace
 
 // Add Impact Data: this step's contact points with impulse go into a fresh
 // "Impacts" data (SIM_Impacts) on the objects with the option on, only on steps
@@ -918,9 +925,22 @@ void SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData,
             "object(s) have Position data the solver cannot write (not a "
             "Position or Motion); their results were not written back");
 
+  const auto reportMissing = [&](int count) {
+    if (!count)
+      return;
+    B3D_LOG_VERBOSE("  writeBack: %d moved bodies had no readable state or no "
+                    "point to write to",
+                    count);
+    warnCount(objects, count,
+              "body(ies) could not be matched to a point; their results were "
+              "not written back");
+  };
+
   std::vector<Box3DWriteItem> &items = st->writeItems;
-  if (items.empty())
+  if (items.empty()) {
+    reportMissing(missing); // bodies without a handle
     return;
+  }
 
   // Grouped by object, so each geometry is locked once.
   forEachObjectRun(items, [&](size_t begin, size_t end) {
@@ -948,12 +968,5 @@ void SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData,
     noteOwnWrite(*st, *obj);
   });
 
-  if (missing) {
-    B3D_LOG_VERBOSE("  writeBack: %d moved bodies had no readable state or no "
-                    "point to write to",
-                    missing);
-    warnCount(objects, missing,
-              "body(ies) could not be matched to a point; their results were "
-              "not written back");
-  }
+  reportMissing(missing);
 }

@@ -81,6 +81,8 @@ bool readWholePose(const SIM_Object &obj, double pivot[3], Box3DBodyPose &out,
   return true;
 }
 
+namespace {
+
 // RBD State's inertia options: `computeinertialtensor` (off keeps the computed
 // inertia) and `computeinertialtensortype` (Use Volume / Use Bounding Box, an
 // index or a token naming the box).
@@ -130,8 +132,6 @@ void objectBoundsExtents(const GU_Detail *gdp, const double m[16],
     extents[c] = hi[c] >= lo[c] ? static_cast<float>(hi[c] - lo[c]) : 0.0f;
 }
 
-namespace {
-
 // One data with its options looked up once (each read would cast again).
 struct Source {
   const SIM_Data *data;
@@ -142,8 +142,6 @@ struct Source {
     return data && box3dDataOption(*data, opts, name, out);
   }
 };
-
-} // namespace
 
 // The RBD Object's own settings (used without Box3D Data): mass and inertia
 // from its RBD State (Position), whether it is active from SolverParms,
@@ -255,8 +253,6 @@ uint64_t wholeObjectShapeSig(const GU_Detail *gdp, const double m[16],
   }
   return h ? h : 1;
 }
-
-namespace {
 
 // The object's record, reset for a whole-object sync (nothing is skipped;
 // anchors name the object).

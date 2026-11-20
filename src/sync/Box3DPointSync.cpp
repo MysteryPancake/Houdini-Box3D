@@ -157,6 +157,8 @@ Box3DSyncFingerprint makeFingerprint(const GU_Detail *gdp, const PointAttrs &a,
 }
 
 #ifdef BOX3DDOP_DEBUG
+namespace {
+
 // Markers that differ, old -> new, for the debug log.
 std::string describeFingerprintDifference(const Box3DSyncFingerprint &was,
                                           const Box3DSyncFingerprint &now) {
@@ -186,6 +188,8 @@ std::string describeFingerprintDifference(const Box3DSyncFingerprint &was,
     out += out.empty() ? "Box3D Data values" : ", Box3D Data values";
   return out;
 }
+
+} // namespace
 #endif
 
 // ---------------------------------------------------------------------------
@@ -338,6 +342,8 @@ bool startAwakeFor(const b3dop::BodySettings &node, const PointAttrs &a,
   return a.awake.isValid() ? a.awake.get(off) != 0 : node.startAwake;
 }
 
+namespace {
+
 // Point attributes that replace a Box3D Data value the user changed, on an
 // object with a Box3D Data node. RBD Packed Object writes several of them onto
 // every point from its own parameters (mass, density, computemass, friction,
@@ -448,8 +454,8 @@ uint64_t shapeSignature(b3dop::ShapeType type, const BuiltShapes &s) {
       h = b3dop::mixHash(
           b3dop::mixHash(h, 3),
           b3dop::hashFloats(pc.mesh->xyz.data(), pc.mesh->xyz.size()));
-      for (const int32_t t : pc.mesh->tris)
-        h = b3dop::mixHash(h, static_cast<uint64_t>(static_cast<uint32_t>(t)));
+      h = b3dop::hashBytes(h, pc.mesh->tris.data(),
+                           pc.mesh->tris.size() * sizeof(int32_t));
     } else if (pc.isHull)
       h = b3dop::mixHash(b3dop::mixHash(h, 1), pc.hull);
     else {
@@ -543,6 +549,8 @@ ShapePlan planShapes(ScanContext &ctx, GA_Offset off, int64_t bodyId,
   return plan;
 }
 
+} // namespace
+
 // Adds the pieces without mass updates (the caller calls applyBodyMass).
 // Returns the count.
 int addShapes(b3dop::Box3DWorld &world, b3dop::BodyHandle h,
@@ -577,8 +585,11 @@ createBodyWithShapes(b3dop::Box3DWorld &world, const b3dop::BodySettings &b,
   const b3dop::BodyHandle h = world.createBody(b, pose.pos, pose.rot, &entry);
   if (!h || shapeless)
     return h;
-  if (addShapes(world, h, b, shapes) == 0) {
-    world.destroyBody(h); // never a shapeless body, except `none`
+  if (addShapes(world, h, b, shapes) !=
+      static_cast<int>(shapes.pieces.size())) {
+    // Never a shapeless body (except `none`) or one with only some of its
+    // shapes: the caller counts it as failed.
+    world.destroyBody(h);
     return 0;
   }
   applyBodyMass(world, h, p, shapes.totalVolume, false);
@@ -590,6 +601,8 @@ createBodyWithShapes(b3dop::Box3DWorld &world, const b3dop::BodySettings &b,
     world.setVelocityByHandle(h, pose.lin, pose.ang);
   return h;
 }
+
+namespace {
 
 // What the body was built from, into its mirror entry.
 void storePlan(Box3DBodyMirror &m, const ShapePlan &plan) {
@@ -704,6 +717,8 @@ bool rebuildPointShapes(ScanContext &ctx, const Box3DPointSlot &s,
 
 enum : unsigned { kPropsChanged = 1, kMassChanged = 2 };
 
+} // namespace
+
 // Push the settings that differ. After a rebuild the new shapes already carry
 // material, mass and filter profile. Returns kPropsChanged / kMassChanged.
 unsigned applyPropChanges(b3dop::Box3DWorld &world, Box3DBodyMirror &e,
@@ -769,6 +784,8 @@ unsigned applyPropChanges(b3dop::Box3DWorld &world, Box3DBodyMirror &e,
   e.props = p;
   return changed;
 }
+
+namespace {
 
 // Queue a point attribute write for after the step.
 void queuePointWrite(Box3DSharedState &st, Box3DBodyMirror &m, unsigned flags,
@@ -902,8 +919,6 @@ void updateExistingBody(ScanContext &ctx, Box3DSharedState &st,
     ++c.edited;
   }
 }
-
-namespace {
 
 using SlotList = std::vector<Box3DPointSlot>;
 

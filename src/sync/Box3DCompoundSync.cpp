@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <functional>
 #include <unordered_map>
 #include <unordered_set>
@@ -616,7 +617,7 @@ void syncCompounds(Box3DSharedState &st) {
     Box3DCompound &c = *st.compounds[i];
     if (resolveMembers(st, c)) {
       dissolve(st, c);
-      st.compounds.erase(st.compounds.begin() + static_cast<long>(i));
+      st.compounds.erase(st.compounds.begin() + static_cast<std::ptrdiff_t>(i));
       dissolved = true;
       membership = true;
     } else {
@@ -767,7 +768,7 @@ void syncCompounds(Box3DSharedState &st) {
       ++i;
     } else {
       dissolve(st, c);
-      st.compounds.erase(st.compounds.begin() + static_cast<long>(i));
+      st.compounds.erase(st.compounds.begin() + static_cast<std::ptrdiff_t>(i));
       membership = true;
     }
   }
@@ -1138,7 +1139,7 @@ void splitBrokenCompounds(Box3DSharedState &st,
       ++i;
     } else {
       dissolve(st, c, leave, &moves);
-      st.compounds.erase(st.compounds.begin() + static_cast<long>(i));
+      st.compounds.erase(st.compounds.begin() + static_cast<std::ptrdiff_t>(i));
     }
   }
   if (membership) {

@@ -186,10 +186,10 @@ b3dop::BodySettings SIM_Box3DData::toBodySettings() const {
   // Out-of-range menu values (set from a script) fall back to the defaults.
   const int bodyType = static_cast<int>(getBodyType());
   if (bodyType >= 0 && bodyType <= 2)
-    s.type = b3dop::BodySettings::Type(bodyType);
+    s.type = static_cast<b3dop::BodySettings::Type>(bodyType);
   const int shape = static_cast<int>(getDefaultShape());
   if (shape >= 0 && shape <= 7)
-    s.defaultShape = b3dop::ShapeType(shape);
+    s.defaultShape = static_cast<b3dop::ShapeType>(shape);
 
   b3dop::BodyProps &p = s.props;
   p.mass = static_cast<float>(getMass());

@@ -181,6 +181,13 @@ endif()
 if(DEFINED ENV{HFS})
     list(APPEND CMAKE_PREFIX_PATH "$ENV{HFS}/toolkit/cmake")
 endif()
+# On Windows Houdini uses $HOME as its preferences folder when it is set, and Git
+# Bash / MSYS set it, so a build from there installed into C:/Users/<you>/houdiniX.Y
+# instead of Documents/houdiniX.Y, where the Houdini app looks. Drop it for this
+# configure unless HOUDINI_USER_PREF_DIR says where the preferences are.
+if(WIN32 AND DEFINED ENV{HOME} AND NOT DEFINED ENV{HOUDINI_USER_PREF_DIR})
+    unset(ENV{HOME})
+endif()
 find_package(Houdini REQUIRED)
 
 add_library(Box3DDOP SHARED

@@ -119,9 +119,13 @@ SIM_Box3DConRel::describe(b3dop::JointType t,
                       disableWhen.c_str());
     else if (b3dop::jointParamSize(p) == 1) {
       const b3dop::JointRange r = b3dop::jointParamRange(p, t);
-      st.parms.number(p.name, p.label, v[0],
-                      Box3DParms::Range{r.min, r.max, r.hardMax, r.hardMin},
-                      p.help, disableWhen.c_str());
+      Box3DParms::Range range;
+      range.min = r.min;
+      range.max = r.max;
+      range.hardMin = r.hardMin;
+      range.hardMax = r.hardMax;
+      st.parms.number(p.name, p.label, v[0], range, p.help,
+                      disableWhen.c_str());
     } else
       st.parms.vector(p.name, p.label, {v[0], v[1], v[2]}, p.help, PRM_FLT_J,
                       disableWhen.c_str());

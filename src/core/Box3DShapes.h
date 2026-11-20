@@ -341,19 +341,21 @@ inline uint64_t mixDouble(uint64_t h, double d) {
 
 // Every field of a shape spec: equal specs hash alike.
 inline uint64_t hashShapeSpec(const ShapeSpec &sp) {
+  // 0.0f + x turns -0 into +0, so equal specs hash alike.
+  auto z = [](float v) { return v + 0.0f; };
   const float f[] = {static_cast<float>(static_cast<int>(sp.type)),
-                     sp.halfExtents[0],
-                     sp.halfExtents[1],
-                     sp.halfExtents[2],
-                     sp.radius,
-                     sp.halfLength,
-                     sp.center[0],
-                     sp.center[1],
-                     sp.center[2],
-                     sp.rot[0],
-                     sp.rot[1],
-                     sp.rot[2],
-                     sp.rot[3]};
+                     z(sp.halfExtents[0]),
+                     z(sp.halfExtents[1]),
+                     z(sp.halfExtents[2]),
+                     z(sp.radius),
+                     z(sp.halfLength),
+                     z(sp.center[0]),
+                     z(sp.center[1]),
+                     z(sp.center[2]),
+                     z(sp.rot[0]),
+                     z(sp.rot[1]),
+                     z(sp.rot[2]),
+                     z(sp.rot[3])};
   return hashFloats(f, sizeof(f) / sizeof(f[0]));
 }
 

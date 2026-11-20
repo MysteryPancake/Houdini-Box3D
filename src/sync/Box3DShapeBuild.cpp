@@ -133,6 +133,8 @@ void readPackedPivot(PackedInfo &pk) {
 // Collision source geometry
 // ---------------------------------------------------------------------------
 
+namespace {
+
 // A Tube's two end rings as Houdini evaluates them, which includes its taper
 // (one radius at each end). False if the primitive cannot be evaluated, then
 // the unit tube is sampled instead.
@@ -307,6 +309,8 @@ const GU_PackedFragment *asFragment(const GU_PrimPacked &prim) {
   return dynamic_cast<const GU_PackedFragment *>(prim.sharedImplementation());
 }
 
+} // namespace
+
 // Pieces by the primitive `name` attribute (unnamed prims share one; no prims:
 // one piece).
 void collectPieces(const GU_Detail *gdp, PieceGroup &out) {
@@ -367,6 +371,8 @@ void collectConnectedPieces(const GU_Detail *gdp, const GA_Range &prims,
   finishPieces(gdp, out);
 }
 
+namespace {
+
 // A packed fragment shares the whole source detail but stands for the
 // primitives in its range: those points, as one piece.
 void collectFragmentPiece(const GU_Detail *gdp, const GA_Range &range,
@@ -378,12 +384,16 @@ void collectFragmentPiece(const GU_Detail *gdp, const GA_Range &range,
   finishPieces(gdp, out);
 }
 
+} // namespace
+
 // What a source's pieces hash to, so a packed hull can be looked up without
 // reading the source geometry. Non-empty pieces only, in piece order.
 struct SourceSummary {
   uint64_t groupHash = 0;
   std::vector<uint64_t> pieceHashes;
 };
+
+namespace {
 
 // Source summaries by the source detail's identity (unique id, P and primitive
 // list data ids, counts, fragment, connected sets or not). Process-wide, so a
@@ -433,6 +443,8 @@ uint64_t sourceIdentity(const GU_Detail *gdp, GA_Offset fragmentFirst,
       h, static_cast<uint64_t>(static_cast<int64_t>(fragmentFirst)));
   return b3dop::mixHash(h, connected ? 1 : 2);
 }
+
+} // namespace
 
 // The source's summary, if one was recorded for it (no geometry is read).
 std::shared_ptr<const SourceSummary>
@@ -495,6 +507,8 @@ const PieceGroup *ShapeSources::innerPieces(const GU_PrimPacked &prim,
   return entry->connected.pieces.empty() ? nullptr : &entry->connected;
 }
 
+namespace {
+
 // The polygons of `prims` as triangles in Houdini's order (box3dTriangulate).
 std::shared_ptr<const MeshPiece>
 collectTriangles(const GU_Detail *gdp, const GA_Range &prims, bool fragment) {
@@ -504,6 +518,8 @@ collectTriangles(const GU_Detail *gdp, const GA_Range &prims, bool fragment) {
     return nullptr;
   return mesh;
 }
+
+} // namespace
 
 std::shared_ptr<const MeshPiece>
 ShapeSources::innerTriangles(const GU_PrimPacked &prim) {
@@ -526,6 +542,8 @@ ShapeSources::innerTriangles(const GU_PrimPacked &prim) {
 // ---------------------------------------------------------------------------
 // Building the Box3D shapes for one point
 // ---------------------------------------------------------------------------
+
+namespace {
 
 // The volume a closed mesh encloses (the divergence theorem); an open one gives
 // some value near it, never negative.
@@ -598,12 +616,12 @@ bool pieceFromPoints(b3dop::Box3DWorld &world, uint64_t key,
       // A flat piece (a Circle as polygons, a grid) gets some thickness, as
       // the Bullet Solver's flat hull has.
       float widest = 0.0f;
-      for (const float h : out.spec.halfExtents)
-        widest = std::max(widest, h);
+      for (const float half : out.spec.halfExtents)
+        widest = std::max(widest, half);
       if (widest > b3dop::kFlatHalfThickness)
-        for (float &h : out.spec.halfExtents)
-          if (h < 0.01f * widest)
-            h = b3dop::kFlatHalfThickness;
+        for (float &half : out.spec.halfExtents)
+          if (half < 0.01f * widest)
+            half = b3dop::kFlatHalfThickness;
       out.isHull = false;
       out.volume = b3dop::shapeVolume(out.spec);
       note = kHullFallbackNote;
@@ -636,6 +654,8 @@ bool spherePiece(const NamedPiece &np, const ToBody &toBody, Piece &out) {
   out.volume = b3dop::shapeVolume(out.spec);
   return true;
 }
+
+} // namespace
 
 // A point's shapes (docs/agents/bodies.md, "Pieces and packed geometry"):
 //  box / sphere / capsule: fitted to the packed geometry with autofit, else

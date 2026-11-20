@@ -108,7 +108,13 @@ inline bool solve3(const double m[9], const double v[3], double out[3]) {
   const double c1 = m[5] * m[6] - m[3] * m[8];
   const double c2 = m[3] * m[7] - m[4] * m[6];
   const double det = m[0] * c0 + m[1] * c1 + m[2] * c2;
-  if (!(std::fabs(det) > 1e-30))
+  // Relative to the matrix's size, so a tiny piece (small inertia, any units)
+  // still gets a spin. The determinant scales with the cube of the entries.
+  double biggest = 0.0;
+  for (int i = 0; i < 9; ++i)
+    biggest = std::max(biggest, std::fabs(m[i]));
+  if (!(biggest > 0.0) ||
+      !(std::fabs(det) > 1e-12 * biggest * biggest * biggest))
     return false;
   const double inv = 1.0 / det;
   out[0] =

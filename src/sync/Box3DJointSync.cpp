@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -411,9 +412,17 @@ public:
              findIn(*o->second, name.substr(slash + 1), out);
     }
     // Order: a piece in any object, an object with one body, an affector.
-    for (const ObjectRef &o : myObjects)
-      if (findIn(o, name, out))
+    if (myPieces) {
+      const auto piece = myPieceTable.find(name);
+      if (piece != myPieceTable.end()) {
+        out = piece->second;
         return true;
+      }
+    } else {
+      for (const ObjectRef &o : myObjects)
+        if (findIn(o, name, out))
+          return true;
+    }
     const auto single = mySingleBody.find(name);
     if (single != mySingleBody.end()) {
       out = single->second;
@@ -473,7 +482,20 @@ private:
         b.handle = kv.second.handle;
         myAffector.try_emplace(kv.second.name, b);
       }
+    // With many objects a scan per anchor costs more than one table of every
+    // piece (the first object in order wins, as in the scan). The keys point
+    // into the objects' own name maps, which do not change during a sync.
+    if (myObjects.size() > kPieceTableObjects) {
+      myPieces = true;
+      for (const ObjectRef &o : myObjects)
+        for (const auto &kv : o.sync->byName)
+          if (kv.second->handle)
+            myPieceTable.try_emplace(std::string_view(kv.first),
+                                     bodyOf(kv.second, o.object));
+    }
   }
+
+  static constexpr size_t kPieceTableObjects = 16;
 
   const Box3DSharedState &myState;
   std::vector<ObjectRef> myObjects;
@@ -482,6 +504,8 @@ private:
   mutable std::unordered_map<std::string, const ObjectRef *> myObjectByName;
   mutable HandleTable mySingleBody;
   mutable HandleTable myAffector;
+  mutable bool myPieces = false; // myPieceTable is in use
+  mutable std::unordered_map<std::string_view, AnchorBody> myPieceTable;
 };
 
 // The primitive attributes that override a setting, bound once per network.
@@ -608,14 +632,21 @@ void applySideFXOverrides(const std::vector<SideFXReader> &readers,
     if (!p.usedBy(type))
       continue;
     switch (p.kind) {
-    case SideFXParam::Float:
-      s.*p.f *= r.f.get(prim);
+    case SideFXParam::Float: {
+      // "Not set" (Box3D Constraint Properties writes it on lines it does not
+      // edit, under names both tables share): leave the option alone.
+      const float value = r.f.get(prim);
+      if (!b3dop::isUnsetFloat(value))
+        s.*p.f *= value;
       break;
+    }
     case SideFXParam::Int:
       s.*p.i = r.i.get(prim);
       break;
     case SideFXParam::Vec3: {
       const UT_Vector3 a = r.v.get(prim);
+      if (b3dop::isUnsetFloat(a.x()))
+        break;
       (s.*p.v)[0] = a.x();
       (s.*p.v)[1] = a.y();
       (s.*p.v)[2] = a.z();
@@ -755,13 +786,17 @@ struct NetworkReader {
   // the detail attribute's (one round when there is none).
   int glueIterations(int bondCount) const {
     if (bondCount >= 0)
-      return std::max(bondCount, 1);
+      return std::clamp(bondCount, 1, b3dop::kMaxGlueIterations);
     int n = 1;
     if (globalIterations.isValid())
       n = globalIterations.get(GA_Offset(0));
-    else if (globalIterationsF.isValid())
-      n = static_cast<int>(globalIterationsF.get(GA_Offset(0)));
-    return std::max(n, 1);
+    else if (globalIterationsF.isValid()) {
+      const float f = globalIterationsF.get(GA_Offset(0));
+      if (std::isfinite(f))
+        n = static_cast<int>(
+            std::clamp(f, 1.0f, static_cast<float>(b3dop::kMaxGlueIterations)));
+    }
+    return std::clamp(n, 1, b3dop::kMaxGlueIterations);
   }
 
   // The anchor's anchor_id: -1 (also: no attribute) is the object's own

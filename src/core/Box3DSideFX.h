@@ -50,8 +50,9 @@ inline bool sideFXTypeFromDataType(const char *dataType, SideFXType &out) {
   if (!dataType)
     return false;
   for (int i = 0; i < kSideFXTypeCount; ++i)
-    if (std::strcmp(dataType, sideFXDataType(SideFXType(i))) == 0) {
-      out = SideFXType(i);
+    if (std::strcmp(dataType, sideFXDataType(static_cast<SideFXType>(i))) ==
+        0) {
+      out = static_cast<SideFXType>(i);
       return true;
     }
   return false;
