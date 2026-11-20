@@ -862,8 +862,8 @@ def test_solver_sop_ground():
 
 def test_solver_sop_ground_guide():
     """The ground in the viewport (the asset's Guide Geometry, GUIDE_GEO), as RBD Bullet Solver's: Ground
-    Type None draws nothing; a Ground Box is closed polygons (Show Ground as Solid) or only its edges as
-    lines (Wireframe), and nothing with Show Ground off; a Height Field is volumes."""
+    Type None draws nothing; a Ground Box is the plane and the box, closed polygons (Show Ground as Solid)
+    or only lines (Wireframe, the default), and nothing with Show Ground off; a Height Field is volumes."""
     pieces, _ = packed_boxes("sop_ground_guide_pieces", [{"size": (1, 1, 1), "center": (0, 4, 0)}])
 
     def guide(sop):
@@ -890,12 +890,12 @@ def test_solver_sop_ground_guide():
 
     solid = solver_sop("sop_ground_guide_solid", geometry=pieces)
     set_parm(solid, ["useground"], 1)
+    set_parm(solid, ["shadeground"], 0)
     check("Ground Box, Solid", solid, {"closed"})
 
     wire = solver_sop("sop_ground_guide_wire", geometry=pieces)
     set_parm(wire, ["useground"], 1)
-    set_parm(wire, ["shadeground"], 1)
-    check("Ground Box, Wireframe", wire, {"open"})
+    check("Ground Box, Wireframe (default)", wire, {"open"})
 
     hidden = solver_sop("sop_ground_guide_hidden", geometry=pieces)
     set_parm(hidden, ["useground"], 1)
@@ -1512,14 +1512,14 @@ def test_solver_sop_break_angle_torque_bullet():
 
 
 def test_solver_sop_global_substeps():
-    """Global Substeps on the Solver tab, just above Box3D Substeps: a slider from 1 with no upper limit, default 1,
+    """Global Substeps on the Solver tab, just above Substeps: a slider from 1 with no upper limit, default 1,
     and it sets the Substeps of the DOP network inside. Two global substeps give nearly the same height after
     0.5 s as one (within 0.05), and values above 10 can be set."""
     sop = solver_sop("sop_global_substeps")
     names = [pt.name() for pt in sop.parmTemplateGroup().entriesWithoutFolders()]
     pt = sop.parmTemplateGroup().find("globalsubsteps")
     at = names.index("globalsubsteps") if "globalsubsteps" in names else -1
-    placed = at >= 0 and names[at + 1] == "substeps" and sop.parm("substeps").parmTemplate().label() == "Box3D Substeps"
+    placed = at >= 0 and names[at + 1] == "substeps" and sop.parm("substeps").parmTemplate().label() == "Substeps"
     rng = pt is not None and (pt.minValue(), pt.maxValue(), pt.minIsStrict(), pt.maxIsStrict(), pt.defaultValue()) ==         (1, 10, True, False, (1,))
     sop.parm("globalsubsteps").set(14)
     linked = sop.node("dopnet").parm("substep").eval() == 14
@@ -1533,7 +1533,7 @@ def test_solver_sop_global_substeps():
         ys[n] = pos[1] if pos else None
     ok = placed and rng and linked and ys[1] is not None and ys[2] is not None and close(ys[1], ys[2], 0.05)
     return [Result("solver_sop_global_substeps", Result.PASS if ok else Result.FAIL,
-                   f"just above Box3D Substeps: {placed}; range 1 to 10, only the minimum strict, default 1: {rng}; sets "
+                   f"just above Substeps: {placed}; range 1 to 10, only the minimum strict, default 1: {rng}; sets "
                    f"the DOP network's Substeps (14 here): {linked}; height after 0.5 s with 1 / 2: "
                    f"{ys[1]} / {ys[2]}")]
 

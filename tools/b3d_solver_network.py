@@ -282,11 +282,6 @@ COLLISION_GUIDE_VEX = """\
 v@Cd = hasprimattrib(0, "Cd") ? v@Cd * 0.5 : {0.5, 0.5, 0.5};
 """
 
-# The ground box: the collision geometry's colour at half opacity, so it stays in the background.
-GROUND_GUIDE_VEX = COLLISION_GUIDE_VEX + """\
-f@Alpha = 0.5;
-"""
-
 # Pieces the solver deleted (dead, reaped) leave the Geometry / Proxy outputs: RBD Bullet Solver's
 # remove_deleted, on the names-mode pieces (input 1: the simulation points; input 2, Geometry only:
 # what was simulated, so pieces that never were, such as geometry without a proxy piece, stay).
@@ -329,10 +324,10 @@ def before_start(sub, dopnet, name, result, original):
 
 
 def build_ground_guide(sub, dopnet, empty):
-    """The ground in the viewport: for a Ground Box the box itself (Size, Position and Rotation of Ground
-    Collision, as the collider is posed), drawn like the external collision geometry, or just its edges while
-    Show Ground as is Wireframe; for a Height Field the DOP Import of its geometry. Chosen by
-    Ground Type and Show Ground, nothing before the Start Frame. Both are in the inputs' units (not scaled)."""
+    """The ground in the viewport. A Ground Box is the Ground Plane DOP's DisplayGeometry (DOP Import, scaled back
+    by World Scale) with the collision box on top (Size, Position and Rotation of Ground Collision, in the inputs'
+    units); each is closed polygons while Show Ground as is Solid, or lines while Wireframe. A Height Field is the
+    DOP Import of its geometry. Chosen by Ground Type and Show Ground, nothing before the Start Frame."""
     def ground_import(name, data_path):
         node = create(sub, "dopimport", name)
         node.parm("doppath").set("../dopnet")
@@ -363,10 +358,23 @@ def build_ground_guide(sub, dopnet, empty):
     style.setInput(0, pose)
     style.setInput(1, lines)
     style.parm("input").setExpression(f'ch("../{SHADE_GROUND}")', hou.exprLanguage.Hscript)
-    plane_out = create(sub, "attribwrangle", "dim_ground_box")
-    plane_out.setInput(0, style)
-    plane_out.parm("class").set("primitive")
-    plane_out.parm("snippet").set(GROUND_GUIDE_VEX)
+    box_out = style
+
+    plane = ground_import("import_ground_plane", "DisplayGeometry")
+    try:
+        plane_lines = create(sub, "convertline", "ground_plane_lines")
+        plane_lines.setInput(0, plane)
+    except RuntimeError as e:
+        warn(f"{e}; the ground plane is drawn solid whatever Show Ground as says")
+        plane_lines = plane
+    plane_style = create(sub, "switch", "switch_ground_plane_style")
+    plane_style.setInput(0, plane)
+    plane_style.setInput(1, plane_lines)
+    plane_style.parm("input").setExpression(f'ch("../{SHADE_GROUND}")', hou.exprLanguage.Hscript)
+    plane_scaled = scale_xform(sub, "unscale_ground_plane", plane_style, inverse=True)
+    plane_out = create(sub, "merge", "merge_ground_box")
+    plane_out.setInput(0, plane_scaled)
+    plane_out.setInput(1, box_out)
 
     field = ground_import("import_ground_field", "Geometry")
     field_out = field

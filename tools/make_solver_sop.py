@@ -307,7 +307,7 @@ def build(out_path, packed_hda=None):
              "much smaller or larger than about 1 unit.")
     world_scale.setConditional(hou.parmCondType.DisableWhen, f"{{ {WORLD_SCALE_TOGGLE} == 0 }}")
 
-    # Slider 1 to 10, no upper limit when typed. Above Box3D Substeps on the Solver tab.
+    # Slider 1 to 10, no upper limit when typed. Above Substeps on the Solver tab.
     global_substeps = hou.IntParmTemplate(
         GLOBAL_SUBSTEPS, "Global Substeps", 1, default_value=(1,), min=1, max=10, min_is_strict=True,
         max_is_strict=False,
@@ -444,7 +444,7 @@ def build(out_path, packed_hda=None):
     solver_items = by_label.pop("Solver", [])
     at = next((i for i, pt in enumerate(solver_items) if pt.name() == "substeps"), len(solver_items))
     if at < len(solver_items):
-        solver_items[at].setLabel("Box3D Substeps")  # the DOP's Substeps, told apart from Global Substeps
+        solver_items[at].setLabel("Substeps")  # the DOP's Substeps
     solver_items.insert(at, global_substeps)
     # The Solver tab: General (World Scale, Time Scale), Simulation (the other settings), then Contacts and Sleeping.
     solver_items, time_scale = pull(solver_items, lambda pt: pt.name() == "timescale")

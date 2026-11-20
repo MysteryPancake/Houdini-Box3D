@@ -44,7 +44,8 @@ SOLVER_LAYOUT = [
                 "constraint_guide_radius", "false_color_constraints", "constraint_guide_wire", "switch_show_constraints", "switchif_beforestart_constraint_guide", "color_impacts",
                 "switch_show_impacts", "switchif_beforestart_impact_guide", "import_collision_geo", "dim_collision_geo", "unscale_collision_geo",
                 "switch_show_collision_geo", "switchif_beforestart_collision_geo", "ground_box", "pose_ground_box",
-                "dim_ground_box", "ground_box_edges", "switch_ground_style", "import_ground_field",
+                "ground_box_edges", "switch_ground_style", "import_ground_plane", "ground_plane_lines",
+                "switch_ground_plane_style", "unscale_ground_plane", "merge_ground_box", "import_ground_field",
                 "unscale_ground_field", "switch_unscale_ground_field", "switch_ground_guide",
                 "switchif_beforestart_ground", "merge_guide", "guide_wireframe", "GUIDE_GEO"], {"color": EXTRA})],
 ]

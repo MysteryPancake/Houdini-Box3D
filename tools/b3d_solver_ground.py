@@ -89,8 +89,8 @@ def ground_visualization():
                                   help="Draws the ground in the viewport.")
     show.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_GROUND} == 0 }}")
     shade = hou.MenuParmTemplate(
-        SHADE_GROUND, "Show Ground as", ("0", "1"), menu_labels=("Solid", "Wireframe"), default_value=0,
-        help="How a ground box is drawn. A height field is always solid.")
+        SHADE_GROUND, "Show Ground as", ("0", "1"), menu_labels=("Solid", "Wireframe"), default_value=1,
+        help="How the ground plane and box are drawn. A height field is always solid.")
     shade.setConditional(hou.parmCondType.DisableWhen, f"{{ {USE_GROUND} != 1 }}")
     b3d_hda.show_in_toolbar(show)  # the bar along the top of the viewport
     folder = collapsible("b3dsop_show_ground", "Ground", [show, shade])
