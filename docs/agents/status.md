@@ -21,7 +21,8 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   the `clang-tidy` checks say about the files that need the HDK (`src/sync`, `src/dop`).
 
 * Packed Object Initial Object Type (`initialstate`): not checked are the Solver SOP's collision object (Custom), the Pieces tab's
-  Body Type greying out with the menu, and Deforming Static / Active against RBD Packed Object.
+  Body Type greying out with the menu (hython's `Parm.isDisabled()` never evaluates conditionals: Auto Fit's reads False too, so
+  only the UI shows it), and Deforming Static / Active against RBD Packed Object.
 
 * Constraint Properties Use VEXpressions (`run_vexpressions`): not checked are the snippet menu (`vexpressionmenu.buildSnippetMenu` with
   our own key lists nothing unless snippets are saved under it) and the type folders' layout.
@@ -72,8 +73,8 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   DOP's own.
 * The ground guide (`build_ground_guide`, test `solver_sop_ground_guide` checks the geometry): not seen in a viewport, so
   whether the ground box is drawn solid and transparent like the collider geometry under `gl_wireframe` -1.
-* Box3D Data's Default Shape menu (Plane and Cylinder at the end) and the Packed Object / Configure menus built from
-  it: built, not opened in Houdini. `bullet_cylinder` and the cylinder cases of `bullet_shape_attributes` pass against Bullet.
+* Box3D Data's Default Shape menu and the Packed Object / Configure menus built from it, opened in Houdini's UI
+  (`default_shape_menus` checks their entries and what Plane and Cylinder write). `bullet_cylinder` and the cylinder cases of `bullet_shape_attributes` pass against Bullet.
 * `bullet_georep` `plane` on a packed piece (`ShapeType::Plane`, `buildShapes`): `bullet_plane_piece` has a box rest on it at the piece's height
   (through the piece's origin, +Y, as a Ground Plane). A box dropped on it in Bullet fell through, so there is nothing to compare against. A piece turning moving
   mid-simulation rebuilds as a box.
@@ -101,7 +102,6 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   handle's Euler order matches the stored quaternion on every rotation, the guide colours and size.
 * Not done: Proxy attribute transfer; the wheel edits only the spherical joint's `motor_velocity` (the other motor
   settings are multiplying floats), and Toggle Motor does not cover the Wheel joint's spin motor.
-* The "not set" skip (`isUnsetFloat`, `applyOverrides`) is not covered by a core test.
 
 **Bullet semantics not compared**
 * The extra `restRotation` split per packed point in every full scan (the rest convention matches Bullet: `bullet_rest_convention`, `bullet_rest_rescan`).
@@ -141,9 +141,8 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * The Solver SOP's Collide As Static Object, Constraints tab, help card and Set Always settings: unchecked are the Static Object's default Collision Detection on a mesh (distance field cost), the
   help card's look in Houdini's help browser (its wiki markup parses with `bookish.wiki.wikipages.parse_to_root` in
   hython), and whether every setting tolerates being re-applied each step.
-* Box3D Data's hand-set shape and Rotational Stiffness set on a Box3D Data DOP itself (`BodySettings::prim`, `inertiaScale`):
-  unchecked, `packed_object_hand_set_shape` covers the attribute route through the Packed Object only. The Solver SOP's Override
-  Attributes from SOP (the pieces' `overwritefromsop`) is checked for its link, not for changed attributes reaching the solver.
+* The Solver SOP's Override Attributes from SOP (the pieces' `overwritefromsop`) is checked for its link, not for changed
+  attributes reaching the solver.
 * `anchor_id` passes on whole objects (`anchor_id`) and on packed pieces against Bullet (`bullet_anchor_id`, ids 0 and 5,
   points and vertices; the test's pieces are fragments). Untested: other ids (a fragment's points are taken in source order,
   its vertices in primitive order), a piece that has moved before its joint is made (`nowToRest`), and non-fragment packed

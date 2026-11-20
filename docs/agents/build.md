@@ -68,6 +68,8 @@ note holding the test's docstring and results, so write docstrings for a reader 
 guessed a node or parameter name wrong; the message lists the real ones. The last status of each test is in
 `tests/houdini/out/last_results.json`.
 
+In Git Bash run hython with `HOME` unset (`unset HOME`): Houdini takes `HOME` as its preferences folder, so the plugin and assets in `Documents/houdiniX.Y` are not found and every test reports SETUP or a missing node type (`test.bat` does this itself).
+
 Tests are in `tests/houdini/checks_*.py` by area, each module with a `TESTS` dict listed in `MODULES`
 (`run_tests.py`); helpers in `b3dtest.py`. The exit code is 1 if anything failed, errored or crashed. A test
 function can carry `.env` (environment for its process, e.g. `HOUDINI_MAXTHREADS=1`). When a check settles an item in

@@ -857,6 +857,35 @@ int main() {
     }
   }
 
+  { // "not set": only a float at the very bottom of the range counts
+    CHECK(isUnsetFloat(kUnsetFloat));
+    // What a 32-bit attribute written from the double kUnsetFloat reads back
+    // as.
+    CHECK(isUnsetFloat(static_cast<float>(static_cast<double>(kUnsetFloat))));
+    CHECK(isUnsetFloat(0.95f * kUnsetFloat));
+    CHECK(!isUnsetFloat(0.0f) && !isUnsetFloat(-1.0f) && !isUnsetFloat(1.0f));
+    CHECK(!isUnsetFloat(0.5f * kUnsetFloat) && !isUnsetFloat(-1e30f));
+    CHECK(!isUnsetFloat(std::nanf("")));
+    // Applied to a setting the attribute multiplies (a node value of 0 stays 0,
+    // -1 flips sign) or, with replace, is the value.
+    const JointParam *p = findJointParam("force_threshold");
+    CHECK(p && p->f && p->usedBy(JointType::Weld));
+    if (p && p->f && p->usedBy(JointType::Weld)) {
+      JointSettings s = Box3DWorld::defaultJointSettings(JointType::Weld);
+      s.*p->f = 8.0f;
+      applyFloatAttribute(s, *p, JointType::Weld, 0.5f, false);
+      CHECK(s.*p->f == 4.0f);
+      s.*p->f = 0.0f;
+      applyFloatAttribute(s, *p, JointType::Weld, 5.0f, false);
+      CHECK(s.*p->f == 0.0f);
+      s.*p->f = -1.0f;
+      applyFloatAttribute(s, *p, JointType::Weld, 3.0f, false);
+      CHECK(s.*p->f == -3.0f);
+      applyFloatAttribute(s, *p, JointType::Weld, 7.0f, true);
+      CHECK(s.*p->f == 7.0f);
+    }
+  }
+
   CHECK(Box3DWorld::assertCount() == assertsBefore); // nothing Box3D refused
   if (!fails)
     std::printf("OK\n");

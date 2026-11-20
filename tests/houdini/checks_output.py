@@ -832,6 +832,85 @@ def test_packed_object_hand_set_shape():
     return results
 
 
+def _find_template(group, name):
+    """The parameter template called `name` anywhere in a template group (folders included)."""
+    for entry in group.entries() if hasattr(group, "entries") else group.parmTemplates():
+        if entry.name() == name:
+            return entry
+        if hasattr(entry, "parmTemplates"):
+            found = _find_template(entry, name)
+            if found is not None:
+                return found
+    return None
+
+
+def test_default_shape_menus():
+    """Default Shape's menu on Box3D Data, the Box3D Packed Object and Box3D Configure ends with Plane and Cylinder
+    (in that order, after None), and on the Packed Object picking them writes bullet_georep "plane" and "cylinder"
+    on the points."""
+    rows, ok = [], True
+    for category, name, parm in ((hou.dopNodeTypeCategory(), "box3d_data", "defaultshape"),
+                                 (hou.dopNodeTypeCategory(), "box3d_packedobject", "defaultshape"),
+                                 (hou.sopNodeTypeCategory(), "box3d_configure", "defaultshape#")):
+        node_type = hou.nodeType(category, name)
+        if node_type is None:
+            raise SetupError(f"node type {name} is not installed")
+        template = _find_template(node_type.parmTemplateGroup(), parm)
+        labels = list(template.menuLabels()) if template is not None else []
+        good = [lbl for lbl in labels[-3:]] == ["None", "Plane", "Cylinder"]
+        ok = ok and good
+        rows.append(f"{name}: last three entries {labels[-3:]}")
+    path, _ = packed_boxes("shape_menu_box", [{"size": (1, 1, 1), "center": (0, 3, 0)}])
+    written = {}
+    for index, token in ((6, "plane"), (7, "cylinder")):
+        obj = box3d_packed_object(new_dopnet(f"shape_menu_{token}"), "pieces", path, defaultshape=index)
+        written[token] = (stage_points(obj) or {}).get("bullet_georep")
+        ok = ok and written[token] == token
+    rows.append(f"bullet_georep written for menu items 6 and 7: {written} (expected plane, cylinder)")
+    return [Result("default_shape_menus", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+def test_box3d_data_hand_set_shape():
+    """Box3D Data's hand-set shape and Rotational Stiffness set on a Box3D Data DOP itself, below a Box3D Packed Object
+    left at its defaults (RBD Packed Object would stamp attributes that win over the node), at Set Always
+    (the asset's own Box3D Data was made at its creation): Default Shape Box with Auto Fit off and Box Size 0.5 0.25 0.5 rests a unit box
+    piece at y = 0.25 on the ground (0.5 without the node), and Rotational Stiffness 4 makes a point torque of 1
+    on a 1 kg unit box spin a quarter as fast (w.z 0.25 becomes 0.0625)."""
+    results = []
+    heights = {}
+    for kind in ("plain", "shaped"):
+        path, names = packed_boxes(f"data_shape_{kind}", [{"size": (1, 1, 1), "center": (0, 3, 0)}])
+        dop = new_dopnet(f"data_shape_{kind}")
+        obj = box3d_packed_object(dop, "pieces", path)
+        if kind == "shaped":
+            obj = box3d_data(dop, obj, "data", defaultshape=0, autofit=0, bullet_primS=(0.5, 0.25, 0.5))
+            for parm in ("defaultshape", "autofit", "bullet_primS"):
+                set_menu_token(obj, [f"parmop_{parm}"], "always")
+        finish(dop, box3d_solver(dop, merge(dop, [ground_object(dop, f"data_shape_{kind}_ground"), obj])))
+        heights[kind] = step(dop, 72, lambda sim, f: packed_positions(sim, "pieces"))[72][names[0]][1]
+    ok = close(heights["plain"], 0.5, 0.03) and close(heights["shaped"], 0.25, 0.03)
+    results.append(Result("box3d_data_hand_set_shape", Result.PASS if ok else Result.FAIL,
+                          f"rest height without / with Box Size 0.5 0.25 0.5 on a Box3D Data DOP: "
+                          f"{heights['plain']:.3f} / {heights['shaped']:.3f} (expected 0.5 / 0.25)"))
+
+    spins = {}
+    for stiffness in (1.0, 4.0):
+        path, names = packed_boxes(f"data_stiff_{int(stiffness)}",
+                                   [{"size": (1, 1, 1), "center": (0, 0, 0), "attrs": {"torque": (0.0, 0.0, 1.0)}}])
+        dop = new_dopnet(f"data_stiff_{int(stiffness)}")
+        obj = box3d_packed_object(dop, "pieces", path, computemass=0, mass=1.0)
+        data = box3d_data(dop, obj, "data", inertialtensorstiffness=stiffness)
+        set_menu_token(data, ["parmop_inertialtensorstiffness"], "always")
+        finish(dop, box3d_solver(dop, data, gravity=(0, 0, 0)))
+        spins[stiffness] = step(dop, 2, lambda sim, f: point_attributes(sim, "pieces", names[0], ["w"])["w"][2]
+                                if f == 2 else None)[2]
+    ok = close(spins[1.0], 0.25, 0.02) and close(spins[4.0], 0.0625, 0.01)
+    results.append(Result("box3d_data_hand_set_shape", Result.PASS if ok else Result.FAIL,
+                          f"w.z after one step with Rotational Stiffness 1 / 4: {spins[1.0]:.4f} / {spins[4.0]:.4f} "
+                          f"(expected 0.25 / 0.0625)"))
+    return results
+
+
 def test_tab_submenu():
     """The three assets are listed under Box3D in the Tab menu: each has a Tools.shelf section naming that
     submenu."""
@@ -1299,6 +1378,8 @@ TESTS = {
     "packed_object_deforming": test_packed_object_deforming,
     "packed_object_initial_type": test_packed_object_initial_type,
     "packed_object_hand_set_shape": test_packed_object_hand_set_shape,
+    "default_shape_menus": test_default_shape_menus,
+    "box3d_data_hand_set_shape": test_box3d_data_hand_set_shape,
     "tab_submenu": test_tab_submenu,
     "packed_object_use_transform": test_packed_object_use_transform,
     "data_under_geometry": test_data_under_geometry,

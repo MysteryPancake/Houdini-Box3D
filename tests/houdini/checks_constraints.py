@@ -123,12 +123,43 @@ def test_breaking():
 
 def test_attribute_multiplies():
     """A float primitive attribute multiplies the node's value: Break Force 1e9 on the node times
-    force_threshold 1e-12 on the line breaks the joint."""
-    dop, names = hanging_pair("multiply", "weld", line_attrs={"force_threshold": 1e-12},
-                              conrels=[("box3d_weldconrel", {"breakable": 1, "force_threshold": 1e9})])
-    y = step(dop, 24, lambda sim, f: packed_positions(sim, "pieces"))[24][names[1]][1]
-    return [Result("attribute_multiplies", Result.PASS if y < 1.5 else Result.FAIL,
-                   f"piece at y={y:.2f} (it falls only if 1e9 x 1e-12 was used as the break force)")]
+    force_threshold 1e-12 on the line breaks the joint, while the node's 1e9 alone holds it (Break Torque is out of
+    reach in both, as its default breaks the hanging weld by itself)."""
+    ys = {}
+    for kind, attrs in (("alone", None), ("times", {"force_threshold": 1e-12})):
+        dop, names = hanging_pair("multiply_" + kind, "weld", line_attrs=attrs,
+                                  conrels=[("box3d_weldconrel", {"breakable": 1, "force_threshold": 1e9,
+                                                                 "torque_threshold": 1e12})])
+        ys[kind] = step(dop, 24, lambda sim, f: packed_positions(sim, "pieces"))[24][names[1]][1]
+    ok = ys["alone"] > 1.5 and ys["times"] < 1.5
+    return [Result("attribute_multiplies", Result.PASS if ok else Result.FAIL,
+                   f"piece at y={ys['alone']:.2f} with the node's 1e9 alone (expected held) and y={ys['times']:.2f} "
+                   f"with 1e-12 on the line (expected fell: 1e9 x 1e-12 used as the break force)")]
+
+
+def test_unset_attributes():
+    """A line attribute at "not set" (Box3D Constraint Properties writes it on lines it does not edit: a float at
+    -3.4028235e38) keeps the node's value instead of multiplying it. A Breakable weld with Break Force 1e-3 (Break
+    Torque out of reach) still breaks with force_threshold unset, and the other way round with torque_threshold. Controls:
+    with both out of reach and nothing on the line the weld holds, and a real factor 1e-12 on a Break Force of 1e9 breaks it."""
+    unset = -3.4028235e38
+    far = 1e12
+    rows, ok = [], True
+    for label, node, attrs, falls in (
+            ("both out of reach", {"force_threshold": far, "torque_threshold": far}, None, False),
+            ("force_threshold 1e-12 on 1e9", {"force_threshold": 1e9, "torque_threshold": far},
+             {"force_threshold": 1e-12}, True),
+            ("force_threshold unset on 1e-3", {"force_threshold": 1e-3, "torque_threshold": far},
+             {"force_threshold": unset}, True),
+            ("torque_threshold unset on 1e-3", {"force_threshold": far, "torque_threshold": 1e-3},
+             {"torque_threshold": unset}, True)):
+        dop, names = hanging_pair("unset_" + label.replace(" ", "_"), "weld", line_attrs=attrs,
+                                  conrels=[("box3d_weldconrel", dict(node, breakable=1))])
+        y = step(dop, 24, lambda sim, f: packed_positions(sim, "pieces"))[24][names[1]][1]
+        good = (y < 1.5) == falls
+        ok = ok and good
+        rows.append(f"{label}: y={y:.2f} ({'fell' if y < 1.5 else 'held'}, expected {'fell' if falls else 'held'})")
+    return [Result("unset_attributes", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
 
 
 def test_next_constraint():
@@ -782,6 +813,7 @@ TESTS = {
     "attribute_multiplies": test_attribute_multiplies,
     "next_constraint": test_next_constraint,
     "next_settings": test_next_settings,
+    "unset_attributes": test_unset_attributes,
     "feedback": test_feedback,
     "constraint_type_ignored_warning": test_constraint_type_ignored_warning,
     "sidefx_hard": test_sidefx_hard,
