@@ -282,6 +282,11 @@ COLLISION_GUIDE_VEX = """\
 v@Cd = hasprimattrib(0, "Cd") ? v@Cd * 0.5 : {0.5, 0.5, 0.5};
 """
 
+# The ground box: the collision geometry's colour at half opacity, so it stays in the background.
+GROUND_GUIDE_VEX = COLLISION_GUIDE_VEX + """\
+f@Alpha = 0.5;
+"""
+
 # Pieces the solver deleted (dead, reaped) leave the Geometry / Proxy outputs: RBD Bullet Solver's
 # remove_deleted, on the names-mode pieces (input 1: the simulation points; input 2, Geometry only:
 # what was simulated, so pieces that never were, such as geometry without a proxy piece, stay).
@@ -361,7 +366,7 @@ def build_ground_guide(sub, dopnet, empty):
     plane_out = create(sub, "attribwrangle", "dim_ground_box")
     plane_out.setInput(0, style)
     plane_out.parm("class").set("primitive")
-    plane_out.parm("snippet").set(COLLISION_GUIDE_VEX)
+    plane_out.parm("snippet").set(GROUND_GUIDE_VEX)
 
     field = ground_import("import_ground_field", "Geometry")
     field_out = field
