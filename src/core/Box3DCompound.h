@@ -239,8 +239,8 @@ inline float pieceLoad(const MergedBody &before, const MergedBody &after,
 // `half` about `com`) swept along its velocity `lin` until its centre leaves
 // the compound's bounds [`lo`, `hi`], so every piece it will plow through is
 // inside. False (and just its own bounds) when it is not heading into or
-// through them: at rest, or with its volume already out of the bounds on an
-// axis it is moving away along, from where it can never touch them.
+// through them: at rest, or with its centre already out of the bounds on an
+// axis it is moving away along, from where it is only leaving them.
 inline bool pathThroughBounds(const double com[3], const float lin[3],
                               double half, const double lo[3],
                               const double hi[3], double outLo[3],
@@ -249,9 +249,9 @@ inline bool pathThroughBounds(const double com[3], const float lin[3],
   for (int i = 0; i < 3; ++i) {
     const double v = lin[i];
     if (v > 1e-6)
-      t = std::min(t, (hi[i] + half - com[i]) / v);
+      t = std::min(t, (hi[i] - com[i]) / v);
     else if (v < -1e-6)
-      t = std::min(t, (lo[i] - half - com[i]) / v);
+      t = std::min(t, (lo[i] - com[i]) / v);
   }
   const bool through = std::isfinite(t) && t >= 0.0;
   if (!through)

@@ -827,15 +827,15 @@ namespace {
 
 // Takes the pieces of `c` that a body is about to plow through out of it and
 // holds them until `until`: the body's bounds swept along its velocity relative
-// to the compound until it leaves the compound's bounds (pathThroughBounds),
-// grown by kGlueHoldHaloScale times its size. They are enabled where the
-// compound has them (a move event each in `moves`), and the compound keeps the
-// rest as one body, joined to them by bridges. The path is the whole way
-// through, not a time ahead: a piece left in the compound behind the freed ones
-// is rigid and throws the body back. Nothing is done for a body that is not
-// heading into or through the compound. If fewer than two pieces would stay,
-// all of it is taken apart. `nodes` collects the glue nodes whose bonds changed
-// sides.
+// to the compound until its centre leaves the compound's bounds
+// (pathThroughBounds), grown by kGlueHoldHaloScale times its size. They are
+// enabled where the compound has them (a move event each in `moves`), and the
+// compound keeps the rest as one body, joined to them by bridges. The path is
+// the whole way through, not a time ahead: a piece left in the compound behind
+// the freed ones is rigid and throws the body back. Nothing is done for a body
+// that is not heading into or through the compound. If fewer than two pieces
+// would stay, all of it is taken apart. `nodes` collects the glue nodes whose
+// bonds changed sides.
 void releaseNear(Box3DSharedState &st, Box3DCompound &c,
                  const b3dop::Box3DWorld::Approach &a, double until,
                  std::vector<b3dop::BodyMove> &moves, std::vector<int> &nodes) {
