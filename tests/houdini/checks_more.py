@@ -811,6 +811,88 @@ def test_glue_impact_trace():
                    "; ".join(rows) + " (expected the peaks within a factor of 4)")]
 
 
+def fracture_glue_left(kind, strength, frames=24, sep=0.15, tag="frac", **solver_parms):
+    """Glue bonds left on the last frame of a fractured cube dropped on a ground plane: a Box rotated 45
+    degrees on x and lifted 3, Points from Volume (Jitter Scale 1, Particle Separation `sep`), Voronoi Fracture
+    (the cube first, the points second) and the solver SOP with the fracture's two outputs (pieces and its own
+    constraints, named Glue) as its inputs, ground plane on. `kind`: "box3d" (Solver SOP, solver_parms are its parameters) or
+    "bullet" (RBD Bullet Solver SOP). The Glue Strength (a `strength` primitive attribute on the constraints) is `strength`. Returns (bonds left, bonds at the start)."""
+    from checks_sop import play
+    geo = new_geo(tag)
+    try:
+        box = create(geo, "box", "box")
+        xf = create(geo, "xform", "xf")
+        xf.setInput(0, box)
+        set_parm(xf, ["rx"], 45)
+        set_parm(xf, ["ty"], 3)
+        pfv = create(geo, "pointsfromvolume", "pfv")
+        pfv.setInput(0, xf)
+        set_parm(pfv, ["jitterscale"], 1.0)
+        set_parm(pfv, ["particlesep"], sep)
+        fracture = create(geo, "voronoifracture", "fracture")
+        fracture.setInput(0, xf)
+        fracture.setInput(1, pfv)
+        sop = create(geo, "box3d_solver" if kind == "box3d" else "rbdbulletsolver", "solver")
+        sop.setInput(0, fracture, 0)
+        # Voronoi's constraints have no constraint_name: the Bullet solver refuses them and ours ignores them, so
+        # both get the same one-line name.
+        glue = create(geo, "attribwrangle", "glue_name")
+        glue.setInput(0, fracture, 1)
+        set_parm(glue, ["class"], "primitive")
+        set_parm(glue, ["snippet"], 's@constraint_name = "Glue"; f@strength = %r;' % float(strength))
+        sop.setInput(1, glue)
+        display(sop)
+        set_parm(sop, ["useground"], 1)
+        for parm, value in solver_parms.items():
+            set_parm(sop, [parm], value)
+        counts = play(sop, frames, lambda s, f: len(s.geometry(1).prims()) if f in (1, frames) else None)
+    finally:
+        geo.destroy()
+    return counts[frames], counts[1]
+
+
+def equivalent_strength(target, grid):
+    """The strength at which a curve [(strength, bonds left)] (left rising with strength) reaches `target`
+    bonds, interpolated in log space: None if the curve never gets there."""
+    if grid and target <= grid[0][1]:
+        return grid[0][0]
+    for (s0, l0), (s1, l1) in zip(grid, grid[1:]):
+        if l0 <= target <= l1:
+            if l1 == l0:
+                return s0
+            t = (target - l0) / (l1 - l0)
+            return s0 * (s1 / s0) ** t
+    return None
+
+
+def test_glue_fracture_vs_bullet():
+    """A fractured cube shattering on the ground: the Glue Strength at which Box3D leaves as many bonds
+    unbroken after the landing (frame 24) as Bullet does at 100, 300 and 1000. Reported as Box3D's
+    equivalent / Bullet's, both with Glue as One Body off (a weld per bond) and on (its default): a ratio of 1 is
+    the same stiffness, below 1 is Box3D stiffer (it needs less Strength to hold as much). Passes (per mode) when all three are within a factor of 4."""
+    bullet = {s: fracture_glue_left("bullet", s, tag=f"frac_bullet_{int(s)}")[0] for s in (100.0, 300.0, 1000.0)}
+    grid = (0.3, 1.0, 3.0, 10.0, 30.0, 100.0, 300.0, 1000.0, 3000.0)
+    results = []
+    for compound in (0, 1):
+        curve = [(s, fracture_glue_left("box3d", s, tag=f"frac_box3d_{compound}_{int(s * 10)}", gluecompound=compound)[0])
+                 for s in grid]
+        rows, ok = [], True
+        for s, left in bullet.items():
+            equivalent = equivalent_strength(left, curve)
+            if equivalent is None:
+                ok = False
+                rows.append(f"Bullet {s:g} leaves {left}: Box3D never does (curve {[l for _, l in curve]})")
+                continue
+            ratio = equivalent / s
+            ok = ok and 0.25 <= ratio <= 4.0
+            rows.append(f"Bullet {s:g} leaves {left}, Box3D does at {equivalent:.0f} (Box3D / Bullet {ratio:.2f})")
+        label = "glue_fracture_vs_bullet" + ("" if compound else "_welds")
+        results.append(Result(label, Result.PASS if ok else Result.FAIL,
+                              f"Glue as One Body {'on' if compound else 'off'}: " + "; ".join(rows) +
+                              " (expected Box3D / Bullet within 0.25 to 4)"))
+    return results
+
+
 _GLUE_RUNS = itertools.count()
 
 
@@ -1279,6 +1361,7 @@ TESTS = {
     "glue_impact_scale": test_glue_impact_scale,
     "glue_global_iterations": test_glue_global_iterations,
     "glue_impact_trace": test_glue_impact_trace,
+    "glue_fracture_vs_bullet": test_glue_fracture_vs_bullet,
     "glue_break_match": test_glue_break_match,
     "sidefx_hard_untyped": test_sidefx_hard_untyped,
     "aging_vs_pop": test_aging_vs_pop,

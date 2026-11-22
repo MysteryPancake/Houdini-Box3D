@@ -67,14 +67,25 @@ void holdCompoundsForApproach(Box3DSharedState &st,
 // compound's last step had hits, and taken again at the start of a frame.
 void recordCompoundMotion(Box3DSharedState &st, bool frameStart);
 
+// A bond that broke: its two bodies and the most impulse it could have passed
+// (its break threshold).
+struct GlueCut {
+  b3dop::BodyHandle a = 0, b = 0;
+  float limit = 0.0f;
+};
+
 // After bonds broke in the middle of a frame (breakGlueEarly): the compounds
 // that lost pieces shrink or dissolve at once. Each piece that left gets a move
 // event in `moves`.
 // `touched`: the glue nodes the broken bonds joined (their components are the
 // only ones that can have split).
+// `cuts`: the bonds that broke. The pieces that stay do not take the whole hit:
+// only what the cut bonds carried before they broke, so they keep their motion
+// from before the step less that.
 void splitBrokenCompounds(Box3DSharedState &st,
                           std::vector<b3dop::BodyMove> &moves,
-                          const std::vector<int> &touched);
+                          const std::vector<int> &touched,
+                          const std::vector<GlueCut> &cuts = {});
 
 // The glue's hits on a piece of a compound: the impulse on its shapes in the
 // last Box3D step. False if `body` is not a piece of a compound.

@@ -298,10 +298,22 @@ void breakGlueEarly(Box3DSharedState &st, float elapsed,
   b3dop::glueAdvance(bonds, std::move(hits), elapsed, over);
   bool any = false;
   std::vector<int> touched; // the nodes the broken bonds joined
+  std::vector<GlueCut> cuts;
   for (const int i : over) {
     Box3DJointEntry *e = st.glueBonds[static_cast<size_t>(i)];
     if (!e->handle || !e->inCompound)
       continue;
+    {
+      // The most impulse the bond could have passed before it broke.
+      const float strength = e->extra->glueParams.strength;
+      GlueCut cut;
+      cut.a = e->bodyA;
+      cut.b = e->bodyB;
+      cut.limit = std::isfinite(strength) && strength >= 0.0f
+                      ? strength / b3dop::kGlueStrengthScale
+                      : 0.0f;
+      cuts.push_back(cut);
+    }
     destroyBrokenJoint(st.world, *e);
     st.earlyBroken.push_back(e);
     any = true;
@@ -323,7 +335,7 @@ void breakGlueEarly(Box3DSharedState &st, float elapsed,
   if (!any)
     return;
   st.glueDirty = true;
-  splitBrokenCompounds(st, moves, touched);
+  splitBrokenCompounds(st, moves, touched, cuts);
 }
 
 void advanceGlue(Box3DSharedState &st, float dt) {

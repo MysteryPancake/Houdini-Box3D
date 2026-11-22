@@ -17,7 +17,10 @@
   (`glueAdvance` on copies) for bonds inside compounds, destroys the ones over (`earlyBroken`, written by `jointsAfterStep`;
   `advanceGlue` skips them) and `splitBrokenCompounds` splits their compounds at once. The pieces that leave take the
   compound's motion from before the hit (`recordCompoundMotion`, `Box3DCompound::pre`, kept while its last step had hits,
-  taken again each frame), so a corner landing crumbles; the pieces that stay keep the motion after it. The compound keeps its body for the largest
+  taken again each frame), so a corner landing crumbles. The pieces that stay take only the impulse the broken bonds could have carried (`GlueCut`: their break
+  thresholds, `shrink`): they take that share of the change in velocity and keep the rest of their motion from before
+  the hit, so they go on to hit what is below them and a landing cascades through the structure as it does with welds.
+  The share counts the linear change only. The compound keeps its body for the largest
   group of pieces left (`shrink`: the pieces that leave are enabled where the compound has them, their shapes are
   destroyed with `destroyShapeRangesByHandle`, and the body takes the velocity of the rest, `v + w x (new centre -
   old centre)`, so the contacts of the pieces that stay survive); the pieces that left may form new compounds. A

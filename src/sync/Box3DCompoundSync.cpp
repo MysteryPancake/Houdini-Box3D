@@ -430,7 +430,8 @@ void dissolveAll(Box3DSharedState &st) {
 // motion, the ones that stay keep the compound's now.
 bool shrink(Box3DSharedState &st, Box3DCompound &c, const std::vector<int> &cid,
             int mainId, const b3dop::MergedBody *leave = nullptr,
-            std::vector<b3dop::BodyMove> *moves = nullptr) {
+            std::vector<b3dop::BodyMove> *moves = nullptr,
+            const std::vector<GlueCut> *cuts = nullptr) {
   b3dop::Box3DWorld &w = st.world;
   Pose cp;
   b3dop::MergedBody was;
@@ -473,6 +474,38 @@ bool shrink(Box3DSharedState &st, Box3DCompound &c, const std::vector<int> &cid,
   // centre of mass moved, so its velocity is v + w x (new centre - old centre).
   b3dop::BodyState now;
   if (awake && w.bodyStateByHandle(c.body, now)) {
+    // The hit that broke the bonds was taken by the whole rigid body, but the
+    // pieces that stay were only joined to the ones that were hit through the
+    // bonds that broke, which carry at most their threshold. So they keep their
+    // motion from before the step, less that impulse (along the hit). An
+    // approximation: the hit is measured by the linear velocity change alone
+    // and a bond's threshold stands for what it carried (an upper bound).
+    if (leave && cuts && !cuts->empty()) {
+      std::unordered_set<BodyHandle> stay;
+      float mass = 0.0f;
+      for (const Box3DCompoundMember &m : c.members) {
+        stay.insert(m.body);
+        mass += m.mass;
+      }
+      double carried = 0.0;
+      for (const GlueCut &cut : *cuts)
+        if (stay.count(cut.a) != stay.count(cut.b))
+          carried += static_cast<double>(cut.limit);
+      double dv[3], dw[3], dl = 0.0;
+      for (int i = 0; i < 3; ++i) {
+        dv[i] = static_cast<double>(was.lin[i]) - leave->lin[i];
+        dw[i] = static_cast<double>(was.ang[i]) - leave->ang[i];
+        dl += dv[i] * dv[i];
+      }
+      const double hit = static_cast<double>(mass) * std::sqrt(dl);
+      const double share = hit > 0.0 ? std::min(1.0, carried / hit) : 1.0;
+      b3dop::MergedBody stayMotion = was;
+      for (int i = 0; i < 3; ++i) {
+        stayMotion.lin[i] = static_cast<float>(leave->lin[i] + share * dv[i]);
+        stayMotion.ang[i] = static_cast<float>(leave->ang[i] + share * dw[i]);
+      }
+      was = stayMotion;
+    }
     float lin[3], ang[3];
     b3dop::pieceVelocity(was, now.com, lin, ang);
     w.setVelocityByHandle(c.body, lin, ang);
@@ -1093,7 +1126,8 @@ void recordCompoundMotion(Box3DSharedState &st, bool frameStart) {
 
 void splitBrokenCompounds(Box3DSharedState &st,
                           std::vector<b3dop::BodyMove> &moves,
-                          const std::vector<int> &touched) {
+                          const std::vector<int> &touched,
+                          const std::vector<GlueCut> &cuts) {
   if (st.compounds.empty() || touched.empty())
     return;
   // The components the broken bonds were in, over the bonds still holding (an
@@ -1134,7 +1168,7 @@ void splitBrokenCompounds(Box3DSharedState &st,
     const b3dop::MergedBody *leave = c.preOk ? &c.pre : nullptr;
     membership = true;
     if (usable && best >= 2 && best * 2 >= c.members.size() &&
-        shrink(st, c, cid, stay, leave, &moves)) {
+        shrink(st, c, cid, stay, leave, &moves, &cuts)) {
       ++i;
     } else {
       dissolve(st, c, leave, &moves);
