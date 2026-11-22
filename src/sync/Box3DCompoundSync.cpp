@@ -317,7 +317,7 @@ void pruneBridges(Box3DSharedState &st) {
         continue;
       }
       st.world.destroyJoint(it->handle);
-          it = c->bridges.erase(it);
+      it = c->bridges.erase(it);
       st.bridgesDirty = true;
     }
 }

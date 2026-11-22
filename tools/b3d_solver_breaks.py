@@ -156,8 +156,9 @@ float window = 0.5 / max(chi("REL/GLOBAL_SUBSTEPS"), 1);
 for (int i = 1; i <= count; ++i)
 {
     string n = itoa(i);
-    string names[] = split(chs("REL/constraint_names" + n), " ");
-    if (find(names, cname) < 0)
+    // Names match ignoring case, as the solver finds a constraint's data by `constraint_name`.
+    string names[] = split(tolower(chs("REL/constraint_names" + n)), " ");
+    if (find(names, tolower(cname)) < 0)
         continue;
     int mode = chi("REL/constraint_mode" + n);
     int hit = 0;

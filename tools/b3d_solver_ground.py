@@ -10,7 +10,6 @@ rolling resistance and conveyor velocity. Size is the solver's Ground Box Size."
 import hou
 
 import b3d_hda
-import b3d_hda
 from b3d_hda import collapsible
 from b3d_solver_common import (
     create,

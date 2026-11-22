@@ -18,7 +18,6 @@ from b3dtest import (
     box3d_data,
     box3d_packed_object,
     box3d_solver,
-    bullet_solver,
     close,
     constraint_lines,
     create,

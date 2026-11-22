@@ -13,6 +13,14 @@ import stateutils
 VIEWS = ["Geometry", "Constraint Geometry", "Proxy Geometry"]
 
 
+def attrib_or_empty(element, name):
+    """`element`'s attribute `name`, or "" when the geometry has none."""
+    try:
+        return element.attribValue(name)
+    except hou.OperationFailed:
+        return ""
+
+
 def format_value(value, precision):
     """An attribute value as text: floats with `precision` decimals, tuples element by element."""
     fmt = "%%0.%df" % precision
@@ -108,7 +116,11 @@ class SolverState(object):
         with hou.undos.group("Mouse Wheel"):
             wheel = device.mouseWheel()
             parm = "inspectorprecision" if device.isCtrlKey() else "inspectorfontsize"
-            node.parm(parm).set(int(node.evalParm(parm) + wheel))
+            p = node.parm(parm)
+            template = p.parmTemplate()
+            # The parameter's range is not strict, so a script can leave it: stay inside it here.
+            value = int(node.evalParm(parm) + wheel)
+            p.set(max(template.minValue(), min(template.maxValue(), value)))
         self.__refresh = True
         self.onMouseEvent(kwargs)
 
@@ -147,13 +159,11 @@ class SolverState(object):
         point = points[0]
         if node.outputForViewFlag() == 1:
             # Constraint geometry: a line between two pieces, named at its ends.
-            self.__text_at_cursor = "Name 1: %s<br />" % point.attribValue("name")
-            self.__text_at_cursor += "Name 2: %s<br /><br />" % points[-1].attribValue("name")
+            self.__text_at_cursor = "Name 1: %s<br />" % attrib_or_empty(point, "name")
+            self.__text_at_cursor += "Name 2: %s<br /><br />" % attrib_or_empty(points[-1], "name")
         else:
-            try:
-                self.__text_at_cursor = "Name: %s<br />" % prim.attribValue("name")
-            except hou.OperationFailed:
-                self.__text_at_cursor = "Name: %s<br />" % point.attribValue("name")
+            name = attrib_or_empty(prim, "name") or attrib_or_empty(point, "name")
+            self.__text_at_cursor = "Name: %s<br />" % name
             self.__text_at_cursor += "<br />"
             for attrib in sorted(a.name() for a in geo.pointAttribs() if hou.text.patternMatch(pattern, a.name())):
                 self.__text_at_cursor += "%s: %s<br />" % (attrib, format_value(point.attribValue(attrib), precision))

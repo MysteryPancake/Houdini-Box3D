@@ -33,8 +33,7 @@
 #include <vector>
 
 // Houdini's quaternion product composes in the order of the row-vector
-// matrices: M(a * b) = M(b) * M(a) (checked by
-// tests/houdini/quat_convention.py). So Bullet's packed convention, absolute =
+// matrices: M(a * b) = M(b) * M(a). So Bullet's packed convention, absolute =
 // rest * since as matrices, is the product `since * rest` here.
 inline UT_QuaternionD box3dQuatD(const float q[4]) {
   return UT_QuaternionD(q[0], q[1], q[2], q[3]);

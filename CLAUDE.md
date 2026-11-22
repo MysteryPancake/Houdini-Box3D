@@ -204,7 +204,7 @@ Layering (keep it):
   inside macros on their own line: a trailing comment after a `\` continuation gets wrapped into the macro. A
   comment too long to sit after its code goes on its own line above it.
 * Casts: `static_cast<T>(x)`, never `T(x)` or `(T)x` (clang-tidy's `google-readability-casting`).
-* Before finishing a change: the core builds with no warnings (`-Wall -Wextra`), `ctest` passes, `clang-tidy -p build`
+* Before finishing a change: the core builds with no warnings (`-Wall -Wextra -Wshadow -Wconversion`, MSVC `/W4`), `ctest` passes, `clang-tidy -p build`
   is clean on the files you touched (`.clang-tidy`), and `python tools/check_docs.py` passes. CI
   (`.github/workflows/ci.yml`) runs the same checks except clang-tidy. Text files are UTF-8 with LF line endings
   (`.editorconfig`).

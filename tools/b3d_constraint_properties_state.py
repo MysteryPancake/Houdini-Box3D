@@ -99,7 +99,8 @@ def set_edits(node, edits):
 
 def remove_edits(node, ids):
     fields = stash_fields(node)
-    write_stash(node, {i: v for i, v in fields.items() if i not in set(ids)})
+    gone = set(ids)
+    write_stash(node, {i: v for i, v in fields.items() if i not in gone})
 
 
 def line_values(node, name):

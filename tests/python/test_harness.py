@@ -106,6 +106,8 @@ class Lint(unittest.TestCase):
             self.skipTest("pyflakes is not installed (pip install pyflakes)")
         files = sorted(glob.glob(os.path.join(HOUDINI_TESTS, "*.py")) + glob.glob(os.path.join(ROOT, "tools", "*.py"))
                        + glob.glob(os.path.join(ROOT, "tests", "python", "*.py")))
+        # The viewer states run inside Houdini, which provides `hou` and `kwargs`.
+        files = [f for f in files if not f.endswith("_state.py")]
         run = subprocess.run([sys.executable, "-m", "pyflakes"] + files, capture_output=True, text=True)
         self.assertEqual(run.stdout + run.stderr, "")
 

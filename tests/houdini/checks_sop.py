@@ -1322,7 +1322,7 @@ def test_solver_sop_break_atframe_bullet():
     """Break Thresholds, At Frame, against the RBD Bullet Solver SOP: a Glue too strong to break (Strength 1e12) with no
     threshold on goes at Frame 5 in both: the frame it is gone on differs by at most 1. Relative to Start Frame
     with a Start Frame of 3 moves that to 8. Nothing breaks before."""
-    results, problems = [], []
+    problems = []
     got = {}
     for kind in ("box3d", "bullet"):
         for rel, at in ((0, 5), (1, 5)):
@@ -2006,8 +2006,6 @@ def test_configure_var():
     number, and with Var off every piece has the base."""
     pieces, _ = packed_boxes("cfg_var_pieces", [{"size": (1, 1, 1), "center": (3.0 * i, 1, 0)} for i in range(6)])
     base = {"density": (500.0, 0.5), "bounce": (0.4, 0.5), "friction": (0.7, 0.3), "inertialtensorstiffness": (2.0, 0.3)}
-    rbd_names = {"density": "density", "bounce": "bounce", "friction": "friction",
-                 "inertialtensorstiffness": "inertialtensorstiffness"}
     got = {}
     for label in ("box3d", "rbd"):
         geo = new_geo(f"cfg_var_{label}")

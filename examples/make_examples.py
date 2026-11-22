@@ -734,7 +734,7 @@ def scene_paddle_mixer():
     half_x, half_z, height, wall = 8.0, 5.75, 22.0, 0.3
     paddle = (2 * half_x - 3.0, 0.6, 2 * half_z - 0.5)  # length (x), thickness, depth (z)
     hub = (0.0, paddle[0] / 2 + 0.3, 0.0)
-    outer_x, outer_z = half_x + wall, half_z + wall
+    outer_x = half_x + wall
     tank = [("tank_left", (wall, height, 2 * half_z), (-half_x - wall / 2, height / 2, 0)),
             ("tank_right", (wall, height, 2 * half_z), (half_x + wall / 2, height / 2, 0)),
             ("tank_back", (2 * outer_x, height, wall), (0, height / 2, -half_z - wall / 2)),

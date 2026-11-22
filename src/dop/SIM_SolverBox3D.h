@@ -109,7 +109,7 @@ private:
   int currentWorkerCount() const;
 
   // The world data on the first object carrying it, else created on the
-  // lowest-id object.
+  // first object of the solve.
   SIM_Box3DWorld *findOrCreateWorldData(SIM_ObjectArray &objects);
 
   // A new world for this data (other timesteps keep the old one). False if

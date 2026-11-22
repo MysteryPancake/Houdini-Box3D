@@ -115,7 +115,8 @@ def run_isolated(name, out_dir):
            "--result-file", result_file]
     env = dict(os.environ, **getattr(TESTS[name], "env", {}))  # e.g. HOUDINI_MAXTHREADS=1
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1800, env=env)
+        proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
+                              timeout=1800, env=env)
         output = (proc.stdout or "") + (proc.stderr or "")
         code = proc.returncode
         if os.environ.get("BOX3DDOP_TEST_LOG"):  # a debug build's [b3dop] lines, else dropped
@@ -125,8 +126,8 @@ def run_isolated(name, out_dir):
     except subprocess.TimeoutExpired:
         return [Result(name, Result.CRASH, "no result after 30 minutes (hang?)")]
     if not os.path.exists(result_file):
-        tail = "\n".join(output.strip().splitlines()[:12])
-        return [Result(name, Result.CRASH, f"hython exited with code {code} and no result. Start of its output:\n{tail}")]
+        tail = "\n".join(output.strip().splitlines()[-12:])
+        return [Result(name, Result.CRASH, f"hython exited with code {code} and no result. End of its output:\n{tail}")]
     with open(result_file) as f:
         data = json.load(f)
     os.remove(result_file)

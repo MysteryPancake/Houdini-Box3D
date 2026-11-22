@@ -390,7 +390,7 @@ def anchor_id_run(kind, k, anchor_type):
 
     pieces = [{"size": (1, 1, 1), "center": (0, 4, 0), "attrs": {"active": 0}},
               {"size": (1, 1, 1), "center": (2, 4, 0), "attrs": {"active": 0}}]
-    dop, names = hanging_pair(f"anchor_id_{kind}_{k}_{anchor_type or 'point'}", None,
+    dop, _ = hanging_pair(f"anchor_id_{kind}_{k}_{anchor_type or 'point'}", None,
                               line_attrs={"constraint_type": "position"}, conrels=[("hardconrel", {})],
                               solver_kind=kind, pieces=pieces, anchors=((0, 4, 0), (3, 4, 1)),
                               gravity=(0, 0, 0), network_edit=edit)
@@ -1247,7 +1247,7 @@ def spin_reach(kind, computecom, frames=48):
     """(the furthest the bar's packed transform gets from the origin, where it ends) over `frames` frames with no
     gravity. The packed transform, not the point: Bullet moves the point to the centre of mass and writes
     `pivot`, Box3D keeps the point on the body origin, and the transform is what the geometry follows."""
-    path, piece = offset_bar(f"computecom_{kind}_{computecom}_pieces")
+    path, _ = offset_bar(f"computecom_{kind}_{computecom}_pieces")
     dop = new_dopnet(f"computecom_{kind}_{computecom}")
     finish(dop, solver_for(kind, dop, packed_object(dop, "pieces", path, computecom=computecom, angvely=171.887),
                           gravity=(0, 0, 0)))

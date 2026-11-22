@@ -204,7 +204,8 @@ SCALE_ATTRIBS_VEX = """\
 float s = chf("scale");
 if (haspointattrib(0, "density")) setpointattrib(0, "density", @ptnum, 1 / pow(s, 3), "mult");
 if (haspointattrib(0, "w")) setpointattrib(0, "w", @ptnum, 1 / s, "mult");
-foreach (string n; {"bullet_primS", "bullet_primT", "bullet_radius", "bullet_length", "sleepthreshold"})
+foreach (string n; {"bullet_primS", "bullet_primT", "bullet_radius", "bullet_length", "sleepthreshold",
+                          "tangentvelocity"})
     if (haspointattrib(0, n)) setpointattrib(0, n, @ptnum, s, "mult");
 """
 # Outputs scaled back (chf("scale") is 1 / World Scale): Bullet's scale_simpoints, scale_attribs and
@@ -218,7 +219,7 @@ if (haspointattrib(0, "v")) v@v *= s;
 UNSCALE_CONSTRAINTS_VEX = """\
 float s = chf("scale");
 foreach (string n; {"force", "distance", "current_length", "current_translation", "current_speed",
-                    "motor_force"})
+                    "motor_force", "impact"})
     if (hasprimattrib(0, n)) setprimattrib(0, n, @primnum, s, "mult");
 foreach (string n; {"torque", "motor_torque", "spin_torque"})
     if (hasprimattrib(0, n)) setprimattrib(0, n, @primnum, s * s, "mult");

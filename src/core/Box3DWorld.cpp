@@ -245,6 +245,14 @@ b3Vec3 makeVec3(const float *v) // null -> origin
   return r;
 }
 
+// A unit quaternion from any input (zero, non-finite or off-unit values become
+// a valid rotation): Box3D asserts on anything else.
+b3Quat cleanQuat(const float q[4]) {
+  float c[4] = {q[0], q[1], q[2], q[3]};
+  sanitizeQuat(c);
+  return makeQuat(c);
+}
+
 void storePos(const b3Pos &p, double out[3]) {
   out[0] = static_cast<double>(p.x);
   out[1] = static_cast<double>(p.y);
@@ -572,7 +580,7 @@ BodyHandle Box3DWorld::createBody(const BodySettings &body,
   b3BodyDef def = b3DefaultBodyDef();
   def.type = toB3Type(body.type);
   def.position = makePos(position);
-  def.rotation = makeQuat(rotationXYZW);
+  def.rotation = cleanQuat(rotationXYZW);
   def.linearDamping = p.linearDamping;
   def.angularDamping = p.angularDamping;
   def.gravityScale = p.gravityScale;
@@ -729,6 +737,9 @@ bool Box3DWorld::createMeshShape(BodyHandle h, const BodySettings &body,
   for (size_t i = 0; i < indexCount; ++i)
     if (triangles[i] < 0 || triangles[i] >= vertexCount)
       return false;
+  if (scale && (!finite3(scale) || !(scale[0] > 0.0f) || !(scale[1] > 0.0f) ||
+                !(scale[2] > 0.0f)))
+    return false;
 
   // The same mesh (vertices, indices, weld) on another body shares one
   // b3MeshData: Box3D only points at it, and the scale is the shape's own. A
@@ -913,7 +924,7 @@ bool Box3DWorld::capsuleShape(BodyHandle h, const BodySettings &b, float radius,
   float axis[3] = {0.0f, 1.0f, 0.0f};
   if (!isIdentityRotation(rotationXYZW)) {
     const b3Vec3 up = {0.0f, 1.0f, 0.0f};
-    const b3Vec3 r = b3RotateVector(makeQuat(rotationXYZW), up);
+    const b3Vec3 r = b3RotateVector(cleanQuat(rotationXYZW), up);
     axis[0] = r.x;
     axis[1] = r.y;
     axis[2] = r.z;
@@ -1796,7 +1807,7 @@ void Box3DWorld::setTargetTransformByHandle(BodyHandle h, const double pos[3],
     return;
   b3WorldTransform t;
   t.p = makePos(pos);
-  t.q = makeQuat(rotXYZW);
+  t.q = cleanQuat(rotXYZW);
   b3Body_SetTargetTransform(b3LoadBodyId(h), t, timeStep, true);
 }
 
@@ -2294,7 +2305,7 @@ bool Box3DWorld::setTransformByHandle(BodyHandle h, const double pos[3],
                                       const float rotXYZW[4]) {
   if (!h)
     return false;
-  b3Body_SetTransform(b3LoadBodyId(h), makePos(pos), makeQuat(rotXYZW));
+  b3Body_SetTransform(b3LoadBodyId(h), makePos(pos), cleanQuat(rotXYZW));
   return true;
 }
 

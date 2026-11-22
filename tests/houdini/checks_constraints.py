@@ -194,7 +194,7 @@ def test_next_settings():
     """A breaking weld that switches to a spherical joint also takes its next settings: next_enable_cone_limit 1 and
     next_cone_angle 0.25 become enable_cone_limit and cone_angle on the line and are cleared (not set again), so the
     ball joint is made with them."""
-    dop, names = hanging_pair(
+    dop, _ = hanging_pair(
         "next_settings", "weld",
         line_attrs={"next_constraint_name": "spherical", "next_enable_cone_limit": 1, "next_cone_angle": 0.25},
         conrels=[("box3d_weldconrel", {"breakable": 1, "force_threshold": 1e-3}), ("box3d_sphericalconrel", {})])
@@ -221,7 +221,7 @@ def test_next_settings():
 
 def test_feedback():
     """The solver writes force, torque, distance and angle onto a holding weld's line."""
-    dop, names = hanging_pair("feedback", "weld", conrels=[("box3d_weldconrel", {})],
+    dop, _ = hanging_pair("feedback", "weld", conrels=[("box3d_weldconrel", {})],
                               packed_parms={"computemass": 0, "mass": 1.0})
 
     def sample(sim, f):

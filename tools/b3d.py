@@ -26,11 +26,18 @@ def is_hfs(path):
     return bool(path) and os.path.isdir(os.path.join(path, "toolkit", "cmake"))
 
 
+def version_key(path):
+    """The version numbers in the last part of `path` that has any (macOS: .../Versions/20.5/Resources)."""
+    for part in reversed(re.split(r"[/\\]+", path.rstrip("/\\"))):
+        numbers = [int(n) for n in re.findall(r"\d+", part)]
+        if numbers:
+            return numbers
+    return [0]
+
+
 def newest(candidates):
     found = [c for c in candidates if is_hfs(c)]
-    # The highest version number in the folder name
-    return max(found, key=lambda c: [int(n) for n in re.findall(r"\d+", os.path.basename(c.rstrip("/\\")))] or [0]) \
-        if found else None
+    return max(found, key=version_key) if found else None
 
 
 def registry_hfs():

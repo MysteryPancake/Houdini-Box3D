@@ -85,7 +85,10 @@ target_compile_definitions(box3d PUBLIC B3_MAX_WORLDS=${BOX3DDOP_MAX_WORLDS})
 add_library(b3dop_core STATIC
     src/core/Box3DMath.h
     src/core/Box3DShapes.h
+    src/core/Box3DQuadrics.h
     src/core/Box3DJoints.h
+    src/core/Box3DGlue.h
+    src/core/Box3DCompound.h
     src/core/Box3DSideFX.h
     src/core/Box3DSideFX.cpp
     src/core/Box3DRbdObject.h
