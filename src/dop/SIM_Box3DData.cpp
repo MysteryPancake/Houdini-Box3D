@@ -49,7 +49,7 @@ const SIM_DopDescription *SIM_Box3DData::getDescription() {
                   "Half the box's size on each axis. Needs Auto Fit off. "
                   "Overridden by the bullet_primS attribute.",
                   PRM_XYZ_J, "{ autofit == 1 }")
-          .number("bullet_radius", "Radius", 0.5, R{0, 5},
+          .number("bullet_radius", "Radius", 1.0, R{0, 5},
                   "Sphere or capsule radius. Needs Auto Fit off. Overridden by "
                   "the bullet_radius attribute.",
                   "{ autofit == 1 }")

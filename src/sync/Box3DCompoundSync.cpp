@@ -240,12 +240,9 @@ int largestComponent(const std::unordered_map<int, size_t> &count,
 
 // Enables the pieces where the compound left them and destroys the compound
 // body. Pieces whose entry is gone (`entry` null) were destroyed with their
-// points. `leave` (optional): the motion the pieces take instead of the
-// compound's now (its motion before the step that broke it), `moves`
-// (optional): gets a move event for each piece, for a split in the middle of a
-// frame.
+// points. `moves` (optional): gets a move event for each piece, for a release
+// in the middle of a frame.
 void dissolve(Box3DSharedState &st, Box3DCompound &c,
-              const b3dop::MergedBody *leave = nullptr,
               std::vector<b3dop::BodyMove> *moves = nullptr) {
   b3dop::Box3DWorld &w = st.world;
   dropBridges(st, c);
@@ -253,8 +250,6 @@ void dissolve(Box3DSharedState &st, Box3DCompound &c,
   b3dop::MergedBody mb;
   bool awake = false;
   const bool have = bodyPose(w, c.body, cp) && bodyMotion(w, c.body, mb, awake);
-  if (leave && have && awake)
-    mb = *leave;
   for (Box3DCompoundMember &m : c.members) {
     st.compoundOf.erase(m.body);
     if (m.entry)
@@ -322,7 +317,7 @@ void pruneBridges(Box3DSharedState &st) {
         continue;
       }
       st.world.destroyJoint(it->handle);
-      it = c->bridges.erase(it);
+          it = c->bridges.erase(it);
       st.bridgesDirty = true;
     }
 }
@@ -429,9 +424,7 @@ void dissolveAll(Box3DSharedState &st) {
 // `leave` and `moves` as for dissolve: the pieces that leave take `leave`'s
 // motion, the ones that stay keep the compound's now.
 bool shrink(Box3DSharedState &st, Box3DCompound &c, const std::vector<int> &cid,
-            int mainId, const b3dop::MergedBody *leave = nullptr,
-            std::vector<b3dop::BodyMove> *moves = nullptr,
-            const std::vector<GlueCut> *cuts = nullptr) {
+            int mainId, std::vector<b3dop::BodyMove> *moves = nullptr) {
   b3dop::Box3DWorld &w = st.world;
   Pose cp;
   b3dop::MergedBody was;
@@ -457,7 +450,7 @@ bool shrink(Box3DSharedState &st, Box3DCompound &c, const std::vector<int> &cid,
     }
     doomed.emplace_back(m.shapeFirst, m.shapeCount);
     st.compoundOf.erase(m.body);
-    releasePiece(w, m, &cp, awake, leave ? *leave : was, moves);
+    releasePiece(w, m, &cp, awake, was, moves);
   }
   w.destroyShapeRangesByHandle(c.body, doomed);
 
@@ -474,38 +467,6 @@ bool shrink(Box3DSharedState &st, Box3DCompound &c, const std::vector<int> &cid,
   // centre of mass moved, so its velocity is v + w x (new centre - old centre).
   b3dop::BodyState now;
   if (awake && w.bodyStateByHandle(c.body, now)) {
-    // The hit that broke the bonds was taken by the whole rigid body, but the
-    // pieces that stay were only joined to the ones that were hit through the
-    // bonds that broke, which carry at most their threshold. So they keep their
-    // motion from before the step, less that impulse (along the hit). An
-    // approximation: the hit is measured by the linear velocity change alone
-    // and a bond's threshold stands for what it carried (an upper bound).
-    if (leave && cuts && !cuts->empty()) {
-      std::unordered_set<BodyHandle> stay;
-      float mass = 0.0f;
-      for (const Box3DCompoundMember &m : c.members) {
-        stay.insert(m.body);
-        mass += m.mass;
-      }
-      double carried = 0.0;
-      for (const GlueCut &cut : *cuts)
-        if (stay.count(cut.a) != stay.count(cut.b))
-          carried += static_cast<double>(cut.limit);
-      double dv[3], dw[3], dl = 0.0;
-      for (int i = 0; i < 3; ++i) {
-        dv[i] = static_cast<double>(was.lin[i]) - leave->lin[i];
-        dw[i] = static_cast<double>(was.ang[i]) - leave->ang[i];
-        dl += dv[i] * dv[i];
-      }
-      const double hit = static_cast<double>(mass) * std::sqrt(dl);
-      const double share = hit > 0.0 ? std::min(1.0, carried / hit) : 1.0;
-      b3dop::MergedBody stayMotion = was;
-      for (int i = 0; i < 3; ++i) {
-        stayMotion.lin[i] = static_cast<float>(leave->lin[i] + share * dv[i]);
-        stayMotion.ang[i] = static_cast<float>(leave->ang[i] + share * dw[i]);
-      }
-      was = stayMotion;
-    }
     float lin[3], ang[3];
     b3dop::pieceVelocity(was, now.com, lin, ang);
     w.setVelocityByHandle(c.body, lin, ang);
@@ -833,30 +794,17 @@ void releaseExpiredHolds(Box3DSharedState &st, float frameDt) {
   st.glueClock += static_cast<double>(frameDt);
   if (st.glueHold.empty())
     return;
-  refreshGlueGroups(st);
-  // The pieces merge again once they move together (GlueHolds::expire): a
-  // structure still coming apart is not made one rigid body.
-  const bool let = st.glueHold.expire(
-      st.glueClock, static_cast<double>(b3dop::kGlueHoldRetrySeconds),
-      b3dop::kGlueMergeSpread,
-      [&st](uint64_t piece) { return st.world.bodyExists(piece); },
-      [&st](uint64_t piece, float lin[3]) {
-        float ang[3];
-        if (!st.world.getVelocityByHandle(piece, lin, ang))
-          lin[0] = lin[1] = lin[2] = 0.0f;
-      },
-      [&st](uint64_t piece) {
-        const auto n = st.glueNodeOf.find(piece);
-        return n != st.glueNodeOf.end() &&
-                       static_cast<size_t>(n->second) < st.glueGroup.size()
-                   ? st.glueGroup[static_cast<size_t>(n->second)]
-                   : -1;
-      });
+  const bool let = st.glueHold.expire(st.glueClock);
   if (let)
     st.groupsRecheck = true; // the pieces can merge again
 }
 
 namespace {
+
+void releasePieces(Box3DSharedState &st, Box3DCompound &c,
+                   const std::vector<int> &cid, size_t leaving, double until,
+                   std::vector<b3dop::BodyMove> &moves,
+                   std::vector<int> &nodes);
 
 // Takes the pieces of `c` that a body is about to plow through out of it and
 // holds them until `until`: the body's bounds swept along its velocity relative
@@ -915,6 +863,16 @@ void releaseNear(Box3DSharedState &st, Box3DCompound &c,
   }
   if (leaving == 0)
     return;
+  releasePieces(st, c, cid, leaving, until, moves, nodes);
+}
+
+// Takes the pieces of `c` marked 1 in `cid` out of it and holds them until
+// `until` (`leaving` of them); all of it is taken apart when fewer than two
+// would stay.
+void releasePieces(Box3DSharedState &st, Box3DCompound &c,
+                   const std::vector<int> &cid, size_t leaving, double until,
+                   std::vector<b3dop::BodyMove> &moves,
+                   std::vector<int> &nodes) {
   const auto hold = [&](const Box3DCompoundMember &m) {
     st.glueHold.hold(m.body, until);
     const auto n = st.glueNodeOf.find(m.body);
@@ -925,7 +883,7 @@ void releaseNear(Box3DSharedState &st, Box3DCompound &c,
     for (const Box3DCompoundMember &m : c.members)
       hold(m);
     const Box3DCompound *raw = &c;
-    dissolve(st, c, nullptr, &moves);
+    dissolve(st, c, &moves);
     eraseCompound(st, raw);
   };
   if (c.members.size() - leaving < 2) {
@@ -939,10 +897,66 @@ void releaseNear(Box3DSharedState &st, Box3DCompound &c,
       hold(c.members[k]);
       released.push_back(c.members[k].body);
     }
-  if (shrink(st, c, cid, 0, nullptr, &moves))
+  if (shrink(st, c, cid, 0, &moves))
     bridgeReleased(st, c, released);
   else
     takeAllApart();
+}
+
+// Takes the pieces of the moving compound `c` that are about to reach `target`
+// (a static body, the ground, or any body that is not of its group) out of it:
+// those within reach of where the compound's bounds, swept along its velocity
+// for `lead` seconds, overlap the target's. A compound is rigid, so it would
+// take the whole hit through the pieces that touch and be stopped before its
+// bonds could break; free and welded, the pieces near the contact give way as
+// they do on welds.
+void releaseTowards(Box3DSharedState &st, Box3DCompound &c, BodyHandle target,
+                    const float lin[3], float lead, double until,
+                    std::vector<b3dop::BodyMove> &moves,
+                    std::vector<int> &nodes) {
+  double lo[3], hi[3], tlo[3], thi[3];
+  if (!st.world.boundsByHandle(c.body, lo, hi) ||
+      !st.world.boundsByHandle(target, tlo, thi))
+    return;
+  double sweptLo[3], sweptHi[3];
+  for (int i = 0; i < 3; ++i) {
+    const double d = static_cast<double>(lin[i]) * static_cast<double>(lead);
+    sweptLo[i] = lo[i] + std::min(d, 0.0);
+    sweptHi[i] = hi[i] + std::max(d, 0.0);
+  }
+  double overLo[3], overHi[3];
+  for (int i = 0; i < 3; ++i) {
+    overLo[i] = std::max(sweptLo[i], tlo[i]);
+    overHi[i] = std::min(sweptHi[i], thi[i]);
+    if (overLo[i] > overHi[i])
+      return;
+  }
+  if (resolveMembers(st, c))
+    return;
+  Pose cp;
+  if (!bodyPose(st.world, c.body, cp))
+    return;
+  std::vector<int> cid(c.members.size(), 0); // 0: stays, 1: leaves
+  size_t leaving = 0;
+  for (size_t k = 0; k < c.members.size(); ++k) {
+    const Box3DCompoundMember &m = c.members[k];
+    if (!m.entry)
+      continue;
+    double com[3];
+    centreOf(placed(cp, m), m, com);
+    const double reach = 2.0 * static_cast<double>(m.radius);
+    bool inside = true;
+    for (int i = 0; i < 3; ++i)
+      inside =
+          inside && com[i] >= overLo[i] - reach && com[i] <= overHi[i] + reach;
+    if (inside) {
+      cid[k] = 1;
+      ++leaving;
+    }
+  }
+  if (leaving == 0)
+    return;
+  releasePieces(st, c, cid, leaving, until, moves, nodes);
 }
 
 // The weakest break impulse (the Glue's Strength over kGlueStrengthScale) of
@@ -1085,6 +1099,36 @@ void holdCompoundsForApproach(Box3DSharedState &st,
     else
       st.glueHold.refresh(a.target, until, neighbours);
   }
+  // A compound heading into something that is not of its group (the ground,
+  // another body): the pieces about to touch it are freed too.
+  for (const b3dop::Box3DWorld::Approach &a : approaches) {
+    const auto m = byBody.find(a.mover);
+    if (m == byBody.end())
+      continue;
+    const int group = st.compoundGroup[a.mover];
+    if (group >= 0 && glueSameGroup(st, a.target, group))
+      continue;
+    const float breakAt = compoundWeakest(st, *m->second);
+    const double speed =
+        std::sqrt(static_cast<double>(a.relLin[0]) * a.relLin[0] +
+                  static_cast<double>(a.relLin[1]) * a.relLin[1] +
+                  static_cast<double>(a.relLin[2]) * a.relLin[2]);
+    if (!std::isfinite(breakAt) ||
+        !(static_cast<double>(a.moverMass) * speed >= breakAt))
+      continue;
+    const auto live =
+        std::find_if(st.compounds.begin(), st.compounds.end(),
+                     [&m](const std::unique_ptr<Box3DCompound> &p) {
+                       return p.get() == m->second;
+                     });
+    if (live == st.compounds.end())
+      continue;
+    std::vector<int> moved;
+    releaseTowards(st, *m->second, a.target, a.moverLin, lead, until, moves,
+                   moved);
+    if (!moved.empty())
+      markCompoundBonds(st, &moved);
+  }
 
   std::vector<int> nodes;
   for (const Target &t : take) {
@@ -1101,86 +1145,15 @@ void holdCompoundsForApproach(Box3DSharedState &st,
     markCompoundBonds(st, &nodes);
 }
 
-void recordCompoundMotion(Box3DSharedState &st, bool frameStart) {
-  const bool wantLoad = st.glueCompoundLoad > 0.0f;
+void recordCompoundMotion(Box3DSharedState &st) {
+  if (st.glueCompoundLoad <= 0.0f)
+    return;
   for (auto &c : st.compounds) {
-    // Kept while the last step had hits: the motion from before the impact.
-    const bool keep = !frameStart && c->preOk && c->hadHit;
-    if (keep && !wantLoad)
-      continue;
     b3dop::MergedBody mb;
     bool awake = false;
-    const bool ok = st.world.isAwakeByHandle(c->body) &&
-                    bodyMotion(st.world, c->body, mb, awake) && awake;
-    if (wantLoad) {
-      c->stepPre = mb;
-      c->stepPreOk = ok;
-    }
-    if (!keep) {
-      c->pre = mb;
-      c->preOk = ok;
-      c->hadHit = false;
-    }
-  }
-}
-
-void splitBrokenCompounds(Box3DSharedState &st,
-                          std::vector<b3dop::BodyMove> &moves,
-                          const std::vector<int> &touched,
-                          const std::vector<GlueCut> &cuts) {
-  if (st.compounds.empty() || touched.empty())
-    return;
-  // The components the broken bonds were in, over the bonds still holding (an
-  // early break took its bond out of its nodes' partners).
-  const Reach reach = reachFrom(st, touched);
-
-  bool membership = false;
-  for (size_t i = 0; i < st.compounds.size();) {
-    Box3DCompound &c = *st.compounds[i];
-    std::vector<int> cid(c.members.size(), -1);
-    std::unordered_map<int, size_t> count;
-    bool bad = false, anyIn = false, anyOut = false;
-    for (size_t k = 0; k < c.members.size(); ++k) {
-      const auto n = st.glueNodeOf.find(c.members[k].body);
-      if (n == st.glueNodeOf.end() || !c.members[k].entry) {
-        bad = true;
-        continue;
-      }
-      cid[k] = reach.componentOf(n->second);
-      if (cid[k] >= 0) {
-        anyIn = true;
-        ++count[cid[k]];
-      } else {
-        anyOut = true; // part of it is in a component that did not change
-      }
-    }
-    if (!anyIn && !bad) { // not one of the components that can have split
-      ++i;
-      continue;
-    }
-    const bool usable = !bad && !anyOut;
-    if (usable && count.size() == 1) { // still one group
-      ++i;
-      continue;
-    }
-    size_t best = 0;
-    const int stay = largestComponent(count, best);
-    const b3dop::MergedBody *leave = c.preOk ? &c.pre : nullptr;
-    membership = true;
-    if (usable && best >= 2 && best * 2 >= c.members.size() &&
-        shrink(st, c, cid, stay, leave, &moves, &cuts)) {
-      ++i;
-    } else {
-      dissolve(st, c, leave, &moves);
-      st.compounds.erase(st.compounds.begin() + static_cast<std::ptrdiff_t>(i));
-    }
-  }
-  if (membership) {
-    std::vector<int> nodes;
-    nodes.reserve(reach.of.size());
-    for (const auto &kv : reach.of)
-      nodes.push_back(kv.first);
-    markCompoundBonds(st, &nodes);
+    c->stepPreOk = st.world.isAwakeByHandle(c->body) &&
+                   bodyMotion(st.world, c->body, mb, awake) && awake;
+    c->stepPre = mb;
   }
 }
 
@@ -1246,8 +1219,6 @@ bool compoundGlueHits(Box3DSharedState &st, BodyHandle body, float &hits) {
           };
       st.world.contactImpulsesByShape(c.body, c.shapeImpulse,
                                       group >= 0 ? &sameGroup : nullptr);
-      c.hadHit = std::any_of(c.shapeImpulse.begin(), c.shapeImpulse.end(),
-                             [](float v) { return v > 0.0f; });
     }
   }
   if (!c.hitsActive)

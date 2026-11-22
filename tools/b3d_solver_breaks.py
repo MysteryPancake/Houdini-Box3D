@@ -36,7 +36,7 @@ THRESHOLDS = (
     ("angle", "Angle", 0.0, False, False, "Break a constraint whose angle (radians, since the start) passes this."),
     ("distance", "Distance", 1.0, True, True,
      "Break a constraint whose anchors are further apart than this, beyond its Rest Length."),
-    ("impact", "Impact", 10000.0, True, True,
+    ("impact", "Impact", 0.0, False, True,
      "Break a constraint whose impact passes this. A Glue's impact is the impulse it has taken from hits."),
     ("torque", "Torque", 0.0, False, False, "Break a constraint whose torque passes this."),
 )
@@ -202,7 +202,7 @@ def break_items():
         return pt
 
     names = hou.StringParmTemplate(
-        "constraint_names#", "Constraint Names", 1, default_value=("Glue",),
+        "constraint_names#", "Constraint Names", 1, default_value=("Soft Hard",),
         help="The constraint types to break, by Data Name, separated by spaces. Glue is the only type with an impact.")
     b3d_hda.menu_script(names, "buildConstraintNameMenu(kwargs, 1)")
     mode = hou.MenuParmTemplate(
@@ -243,7 +243,7 @@ def break_items():
                         off, f"constraint_use{key}var# == 0", kind=hou.parmCondType.HideWhen)
         attrib = when(b3d_hda.attrib_menu(
                           hou.StringParmTemplate(f"constraint_{key}attrib#", f"{label} Attribute", 1,
-                                                 default_value=("strength",)),
+                                                 default_value=("",)),
                           1, "prim", toggle=False, numeric=True),
                       off, f"constraint_scale{key}# == 0", kind=hou.parmCondType.HideWhen)
         # Update from Input on the Attribute's row, as RBD Bullet Solver's
@@ -258,7 +258,7 @@ def break_items():
                                    folder_type=hou.folderType.TabbedMultiparmBlock, default_value=1)
     folder = collapsible("b3dsop_break_thresholds", "Break Thresholds", [block], header_toggle=BREAKS_TOGGLE)
     folder.setConditional(hou.parmCondType.DisableWhen, on)
-    header = hou.ToggleParmTemplate(BREAKS_TOGGLE, "Enable Break Thresholds", default_value=False,
+    header = hou.ToggleParmTemplate(BREAKS_TOGGLE, "Enable Break Thresholds", default_value=True,
                                     help="Break constraints that pass a threshold, as RBD Bullet Solver's "
                                          "Break Thresholds. Off costs nothing.")
     return [header, folder]

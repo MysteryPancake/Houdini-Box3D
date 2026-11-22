@@ -12,7 +12,12 @@ The Solver SOP's parameter tabs, joint settings, Break Thresholds, constraint at
   Switch `switch_use_<name>` in front of the relationship node), Data Name (the node's `dataname`, which `constraint_name` matches)
   and Default Operation (`<name>_defaultparmop`, linked to the node's and driving each promoted setting's `parmop_*` menu: 0 initial,
   1 always, 2 never, so a Set Always one acts every step).
-* Break Thresholds (`b3d_solver_breaks.py`, first on the Constraints tab, then Export Broken Constraints): RBD Bullet Solver's `Constraint_Solver` for the Angle, Distance, Impact and Torque Thresholds and At Frame. A SOP Solver DOP (`constraint_breaks`, Data
+  `SOP_DEFAULTS` gives Glue, Hard, Soft and Spring settings RBD Bullet Solver's defaults (its SOP uses 1 where SideFX's nodes have their
+  own: Glue Strength and Half-life 1, Soft stiffness and thresholds 1, Spring damping 1, Hard CFM and ERP 1), `SOP_DATA_NAMES` and `SOP_ENABLED`
+  its Spring (named `Spring`, off), `PIECE_DEFAULTS` the Pieces Bounce (0.25): a `strength` attribute multiplies the setting in both solvers,
+  so the same scene breaks at the same impulse (`glue_fracture_vs_bullet`). Cone Twist keeps the node's defaults: Bullet's own do not hold a
+  piece (`bullet_cone_twist_goal`), so there is nothing to match.
+* Break Thresholds (`b3d_solver_breaks.py`, first on the Constraints tab, then Export Broken Constraints): RBD Bullet Solver's `Constraint_Solver` for the Angle, Distance, Impact and Torque Thresholds and At Frame. A SOP Solver DOP (`constraint_breaks`, Data Defaults are RBD Bullet Solver's (enabled, Constraint Names `Soft Hard`, only the Distance Threshold on at 1, no Scale Attribute), so a Soft or Hard constraint stretched past its Rest Length by 1 breaks in both.
   Name `ConstraintGeometry`) with a wrangle (`BREAK_VEX`, over primitives) between its geometry import and its output deletes the
   primitives whose `impact` passes a break entry's threshold, or switches them to `next_constraint_name`. The parameters are
   Bullet's names (`enable_constraintbreaks`, the `breaks` multiparm, `constraint_names#`, `constraint_mode#`,

@@ -49,8 +49,9 @@ references to the asset's parameters are set once the asset exists (`wire_stage`
   only on the creation frame: SOP Geometry stamps `$SF` and `$OBJCF`, which a `STAMPS` null reads, so a re-import
   (Overwrite Attributes from SOP, which the Solver SOP's Collision Type turns on) keeps the rest it was given.
 * `setup_velocities` (`VELOCITY_VEX`): RBD Packed Object's Initial State tab (`vel`, `angvel` in degrees per second
-  written as radians, `inheritvelocity`). Inherit defaults on, unlike RBD's, so the points' own `v` / `w` (Box3D
-  Configure's Initial State) are kept unless the user turns it off.
+  written as radians, `inheritvelocity`). Inherit defaults off, as RBD's; the Solver SOP turns it on for its
+  pieces (`packed_object` in `b3d_solver_dops.py`), as RBD Bullet Solver reads the points' `v` / `w`, so Box3D Configure's Initial State
+  reaches the simulation there and needs the toggle in a DOP network.
 * `setup_deforming` (`DEFORMING_VEX`): the Deforming toggle writes `deforming` 1 on every import and, with Overwrite
   Attributes from SOP, sets the SOP Geometry to Set Always (`REIMPORT`), as RBD's Create Deforming Objects.
 * Initial Object Type (`initialstate`: Create Active / Static / Animated Static / Deforming Static / Deforming Active Objects, as RBD Packed Object, plus Custom): Body

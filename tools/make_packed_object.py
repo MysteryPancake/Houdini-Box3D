@@ -16,9 +16,9 @@ geometry when the object is created:
                        -> [creation frame] set_rest -> initial_transform -> apply_initial_xform -> setup_velocities -> setup_deforming -> OUT
 
 setup_velocities writes Velocity / Angular Velocity as v / w on the creation frame, unless Inherit
-Velocity keeps the points' own (on by default, so Box3D Configure's Initial State reaches the
-simulation). Deforming writes the deforming attribute on every import and re-imports the SOP every
-step, as RBD Packed Object's Create Deforming Objects, so the solver rebuilds the shapes.
+Velocity keeps the points' own (off by default, as RBD Packed Object's; the Box3D Solver SOP turns it on
+for its pieces so Box3D Configure's Initial State reaches the simulation). Deforming writes the deforming
+attribute on every import and re-imports the SOP every step, as RBD Packed Object's Create Deforming Objects, so the solver rebuilds the shapes.
 
 setup_defaults writes each per-body setting whose value differs from Box3D Data's default as a
 point attribute (b3d_settings.packed_defaults_vex), unless the points already have it, so a point
@@ -162,7 +162,7 @@ def initial_state_templates():
                               help="The pieces' starting velocity, in units per second."),
         hou.FloatParmTemplate(ANGVEL, "Angular Velocity", 3, default_value=(0, 0, 0), disable_when=inherit,
                               help="The pieces' starting spin, in degrees per second about each world axis."),
-        hou.ToggleParmTemplate(INHERIT_VEL, "Inherit Velocity from Point Velocity", default_value=True,
+        hou.ToggleParmTemplate(INHERIT_VEL, "Inherit Velocity from Point Velocity", default_value=False,
                                help="Keeps the points' own v and w (Box3D Configure's Initial State). Off: "
                                     "Velocity and Angular Velocity replace them."),
     ]
@@ -693,8 +693,10 @@ def check(out_path, dopnet):
     own = g.points()[0].attribValue("friction") if g is not None and g.findPointAttrib("friction") else None
     if own is None or abs(own - 0.75) > 1e-6:
         warn(f"probe: a point's own friction 0.75 came out as {own}")
-    # Initial State: inherited by default (no v written), Velocity / Angular Velocity once it is off;
+    # Initial State: with Inherit Velocity on no v is written, Velocity / Angular Velocity once it is off (its default);
     # Deforming writes deforming and re-imports.
+    if probe.parm(INHERIT_VEL) is not None:
+        probe.parm(INHERIT_VEL).set(1)
     g = out.geometry()
     if g is not None and g.findPointAttrib("v") is not None:
         warn("probe: Inherit Velocity on still wrote v (it should add nothing)")

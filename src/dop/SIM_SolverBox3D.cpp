@@ -471,7 +471,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
       warnCount(objects, fs.nonFinite, kNonFiniteForce);
     }
     UT_PerfMonAutoSolveEvent perf(this, "Stepping Simulation/Stepping World");
-    recordCompoundMotion(*st, true);
+    recordCompoundMotion(*st);
     std::vector<b3dop::BodyMove> left; // pieces of a compound taken apart
     holdCompoundsForApproach(*st, st->moves, left);
     st->world.step(subDt);
@@ -479,7 +479,6 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
     st->world.getMoveEvents(st->moves); // read once: write-back and impacts
     // Before the step's own events: they carry the final poses.
     st->moves.insert(st->moves.begin(), left.begin(), left.end());
-    breakGlueEarly(*st, subDt, st->moves);
     pruneCompoundBridges(*st);
   } else {
     // The last frame's events: the bodies to look at before the first step.
@@ -512,7 +511,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
       {
         UT_PerfMonAutoSolveEvent perf(this,
                                       "Stepping Simulation/Stepping World");
-        recordCompoundMotion(*st, i == 0);
+        recordCompoundMotion(*st);
         std::vector<b3dop::BodyMove> left; // pieces of a compound taken apart
         holdCompoundsForApproach(*st, i == 0 ? lastFrame : events, left);
         st->world.step(subDt);
@@ -520,7 +519,6 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
         st->world.getMoveEvents(events);
         // Before the step's own events: they carry the final poses.
         events.insert(events.begin(), left.begin(), left.end());
-        breakGlueEarly(*st, subDt * static_cast<float>(i + 1), events);
         pruneCompoundBridges(*st);
         // Joint events are cleared by the next step too: keep every joint that
         // went over its threshold (once each).

@@ -75,15 +75,9 @@ void collectGlueHits(Box3DSharedState &st);
 void refreshGlueGroups(Box3DSharedState &st);
 // The live bonds as glueAdvance / glueComponents take them, in the order of
 // `glueBonds`. `withParams` adds each bond's strength settings and impact;
-// `blankBroken` turns a bond broken mid-frame into one that joins nothing.
+// `blankBroken` turns a broken bond into one that joins nothing.
 std::vector<b3dop::GlueBond> glueBondList(const Box3DSharedState &st,
                                           bool withParams, bool blankBroken);
-// After collectGlueHits, for glued groups run as compounds (so one body takes
-// the whole hit): bonds already over their strength on the hits so far break
-// now and their compounds split (`elapsed`: seconds of the frame done). The
-// pieces that left get a move event in `moves`.
-void breakGlueEarly(Box3DSharedState &st, float elapsed,
-                    std::vector<b3dop::BodyMove> &moves);
 void advanceGlue(Box3DSharedState &st, float dt);
 
 // After the step: joints over their force / torque threshold are destroyed and

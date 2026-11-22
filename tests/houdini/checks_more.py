@@ -893,6 +893,55 @@ def test_glue_fracture_vs_bullet():
     return results
 
 
+def glue_beam_run(strength, compound, ball, frames=36):
+    """A beam of 8 glued boxes (x 0 to 7, y 5) lying on a fixed block under its middle four, so its two ends overhang by 2
+    and only the glue keeps them up, and with `ball` a heavy box falling at 30 m/s onto its right tip (x 7). Returns the
+    beam's positions on the last frame, by box (index 0 is the left end)."""
+    tag = f"glue_beam_{int(compound)}_{int(ball)}"
+    dop = new_dopnet(tag)
+    pieces = [{"size": (4, 1, 1), "center": (3.5, 4, 0), "attrs": {"active": 0, "v": (0.0, 0.0, 0.0)}}]
+    pieces += [{"size": (1, 1, 1), "center": (i, 5, 0), "attrs": {"active": 1, "v": (0.0, 0.0, 0.0)}} for i in range(8)]
+    if ball:
+        pieces.append({"size": (1.2, 1.2, 1.2), "center": (7, 8, 0), "attrs": {"active": 1, "v": (0.0, -30.0, 0.0)}})
+    path, names = packed_boxes(tag + "_pieces", pieces)
+    obj = packed_object(dop, "pieces", path, keep_velocity=True)
+    glue = create(dop, "glueconrel", "glue")
+    set_parm(glue, ["strength"], strength)
+    lines = [(names[i], (i - 0.5, 5, 0), names[i + 1], (i - 0.5, 5, 0), "Glue") for i in range(1, 8)]
+    net = create(dop, "constraintnetwork", "constraint_network")
+    net.setInput(0, obj)
+    set_parm(net, ["soppath", "constraintsoppath", "geosoppath"], constraint_lines(tag + "_network", lines))
+    net.setInput(1, glue)
+    solver = solver_for("box3d", dop, net)
+    set_parm(solver, ["gluecompound"], 1 if compound else 0)
+    finish(dop, solver)
+    track = step(dop, frames, lambda sim, f: packed_positions(sim, "pieces") if f == frames else None)
+    pos = track[frames]
+    return [pos[n] for n in names[1:9]]
+
+
+def test_glue_compound_bridges():
+    """A beam of 8 glued boxes lying on a fixed block under its middle four, its ends in the air with only the glue to
+    hold them, stays as it is as one body or on welds, and when a heavy ball falls on its right tip (the pieces near it
+    are freed from the compound while it comes, and the rest stays in it, joined to them by bridges) the left end is
+    still in the air where it is on welds. Without a ball no box is more than 0.1 from where it started after 36 frames
+    (one body and welds); with it box 0 is within 0.3 of its place on welds and above y 4.5 in both."""
+    strength = 2e5
+    rows, ok = [], True
+    for compound in (False, True):
+        quiet = glue_beam_run(strength, compound, False)
+        drift = max(((p[1] - 5.0) ** 2 + (p[0] - i) ** 2) ** 0.5 for i, p in enumerate(quiet))
+        ok = ok and drift < 0.1
+        rows.append(f"no ball, {'one body' if compound else 'welds'}: beam moved at most {drift:.3f}")
+    welds = glue_beam_run(strength, False, True)
+    body = glue_beam_run(strength, True, True)
+    gap = sum((a - b) ** 2 for a, b in zip(welds[0], body[0])) ** 0.5
+    ok = ok and gap < 0.3 and welds[0][1] > 4.5 and body[0][1] > 4.5
+    rows.append(f"ball on the tip: left end at y {body[0][1]:.2f} as one body, {welds[0][1]:.2f} on welds ({gap:.3f} apart)")
+    return [Result("glue_compound_bridges", Result.PASS if ok else Result.FAIL,
+                   "; ".join(rows) + " (expected under 0.1 and 0.1, then within 0.3 and above 4.5)")]
+
+
 _GLUE_RUNS = itertools.count()
 
 
@@ -1362,6 +1411,7 @@ TESTS = {
     "glue_global_iterations": test_glue_global_iterations,
     "glue_impact_trace": test_glue_impact_trace,
     "glue_fracture_vs_bullet": test_glue_fracture_vs_bullet,
+    "glue_compound_bridges": test_glue_compound_bridges,
     "glue_break_match": test_glue_break_match,
     "sidefx_hard_untyped": test_sidefx_hard_untyped,
     "aging_vs_pop": test_aging_vs_pop,

@@ -5,6 +5,7 @@
 #include "core/Box3DCompound.h"
 #include "core/Box3DMath.h"
 #include "core/Box3DWorld.h"
+#include <algorithm>
 
 #include <cmath>
 #include <cstdio>
@@ -235,12 +236,23 @@ int main() {
     s.type = ShapeType::Sphere;
     s.radius = 0.25f;
     CHECK(w.createShape(ball, b, s));
-    staticBox(w, -0.5, 0.4, 0.3, 0.3); // in the way too, but static
+    staticBox(w, -0.5, 0.4, 0.3, 0.3); // in the way too, static
+    // The static body is reported like any other (a compound landing on the
+    // ground is one that reaches it); the cases below look at the box.
+    const auto onlyBox = [box](std::vector<Box3DWorld::Approach> &list) {
+      list.erase(std::remove_if(list.begin(), list.end(),
+                                [box](const Box3DWorld::Approach &a) {
+                                  return a.target != box;
+                                }),
+                 list.end());
+    };
     const float fast[3] = {20, 0, 0}, slow[3] = {1, 0, 0}, none[3] = {0, 0, 0};
 
     std::vector<Box3DWorld::Approach> out;
     w.setVelocityByHandle(ball, fast, none);
     w.approachingBodies(&ball, 1, kDt, 2.0f, 0.0f, out);
+    CHECK(out.size() == 2);
+    onlyBox(out);
     CHECK(out.size() == 1);
     if (out.size() == 1) {
       CHECK(out[0].mover == ball && out[0].target == box);
@@ -254,14 +266,17 @@ int main() {
     out.clear();
     w.setVelocityByHandle(ball, slow, none);
     w.approachingBodies(&ball, 1, kDt, 2.0f, 0.0f, out);
+    onlyBox(out);
     CHECK(out.empty());
     const double farPos[3] = {-3, 0, 0};
     w.setVelocityByHandle(ball, fast, none);
     w.setTransformByHandle(ball, farPos, kQid);
     w.approachingBodies(&ball, 1, kDt, 2.0f, 0.0f, out);
+    onlyBox(out);
     CHECK(out.empty());
     // A longer look gets there.
     w.approachingBodies(&ball, 1, 0.5f, 2.0f, 0.0f, out);
+    onlyBox(out);
     CHECK(out.size() == 1);
     // A dynamic body whose own momentum is below the least asked for is not
     // looked at (the cube is about 1.25 kg of density 1000 times 0.5^3).
@@ -269,17 +284,20 @@ int main() {
     const double nearPos[3] = {-0.6, 0, 0};
     w.setTransformByHandle(ball, nearPos, kQid);
     w.approachingBodies(&ball, 1, kDt, 2.0f, 1e9f, out);
+    onlyBox(out);
     CHECK(out.empty());
     // A body that moves with what it overlaps is not coming at it: the box goes
     // along with the ball.
     w.setVelocityByHandle(box, fast, none);
     w.approachingBodies(&ball, 1, kDt, 2.0f, 0.0f, out);
+    onlyBox(out);
     CHECK(out.empty());
     // ... nor is one that moves slower than it relative to it: the box moves at
     // 15 and the ball at 20, a relative 5.
     const float fifteen[3] = {15, 0, 0};
     w.setVelocityByHandle(box, fifteen, none);
     w.approachingBodies(&ball, 1, kDt, 2.0f, 0.0f, out);
+    onlyBox(out);
     CHECK(out.size() == 1 && near(out[0].relLin[0], 5.0, 1e-3));
     w.setVelocityByHandle(box, none, none);
     // A kinematic mover is looked at too, with mass 0 and no momentum limit.
@@ -287,6 +305,7 @@ int main() {
     w.setTypeByHandle(ball, BodySettings::Type::Kinematic);
     w.setVelocityByHandle(ball, fast, none);
     w.approachingBodies(&ball, 1, kDt, 2.0f, 1e9f, out);
+    onlyBox(out);
     CHECK(out.size() == 1 && out[0].moverMass == 0.0f);
     // A body that is gone gives nothing and does not crash.
     out.clear();
@@ -374,38 +393,13 @@ int main() {
     };
     // Refreshing from 1 reaches 2 and 3, not 4, and the time moves on.
     holds.refresh(1, 20.0, neighbours);
-    const auto still = [](uint64_t, float lin[3]) {
-      lin[0] = lin[1] = lin[2] = 0.0f;
-    };
-    const auto alive = [](uint64_t) { return true; };
     // At 5 only piece 4 is due (its 4.0): it goes, the others stay held.
-    CHECK(holds.expire(5.0, 0.25, 0.5f, alive, still));
+    CHECK(holds.expire(5.0));
     CHECK(!holds.held(4) && holds.held(1) && holds.held(2) && holds.held(3));
     // At 15 nothing is due yet.
-    CHECK(!holds.expire(15.0, 0.25, 0.5f, alive, still));
-    // At 21 all three are due and at rest: they go together.
-    CHECK(holds.expire(21.0, 0.25, 0.5f, alive, still));
-    CHECK(holds.empty());
-    // Pieces moving apart are not let go: one at 3 m/s against two at rest
-    // spreads by 2 m/s from the mean, over the limit. Their time moves on.
-    holds.hold(5, 1.0);
-    holds.hold(6, 1.0);
-    holds.hold(7, 1.0);
-    const auto apart = [](uint64_t piece, float lin[3]) {
-      lin[0] = piece == 5 ? 3.0f : 0.0f;
-      lin[1] = lin[2] = 0.0f;
-    };
-    CHECK(!holds.expire(2.0, 0.25, 0.5f, alive, apart));
-    CHECK(holds.size() == 3);
-    CHECK(!holds.expire(2.2, 0.25, 0.5f, alive, apart)); // not due again yet
-    // Once they move together they go.
-    CHECK(holds.expire(2.3, 0.25, 0.5f, alive, still));
-    CHECK(holds.empty());
-    // A piece whose body is gone is dropped without being asked its velocity.
-    holds.hold(8, 1.0);
-    const auto gone = [](uint64_t) { return false; };
-    const auto never = [](uint64_t, float[3]) { CHECK(false); };
-    CHECK(holds.expire(2.0, 0.25, 0.5f, gone, never));
+    CHECK(!holds.expire(15.0));
+    // At 21 all three are due: they go together.
+    CHECK(holds.expire(21.0));
     CHECK(holds.empty());
   }
 

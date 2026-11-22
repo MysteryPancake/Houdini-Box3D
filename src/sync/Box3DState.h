@@ -640,10 +640,6 @@ struct Box3DCompound {
   std::vector<float> shapeImpulse;
   uint64_t hitsTick = 0;
   bool hitsActive = false;
-  // Its motion before the last Box3D step (recordCompoundMotion), if awake.
-  b3dop::MergedBody pre;
-  bool preOk = false;
-  bool hadHit = false; // its last step had contact impulse (collectGlueHits)
   // For the inertial load (glueCompoundLoad): its motion before and after the
   // last Box3D step, and its pose after it, read once per step
   // (loadTick: the collectGlueHits call they belong to).
@@ -808,9 +804,6 @@ struct Box3DSharedState {
     return sum;
   }
   std::vector<void *> glueBroken;
-  // Bonds broken in the middle of the frame (breakGlueEarly): their joints are
-  // gone, jointsAfterStep writes them like the others.
-  std::vector<Box3DJointEntry *> earlyBroken;
   bool glueDirty = true;
   // The joint entries of each network (key: network key) for jointsAfterStep,
   // rebuilt only after syncJoints changed the joints.

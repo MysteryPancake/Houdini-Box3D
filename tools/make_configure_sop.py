@@ -340,6 +340,10 @@ def on_off_slider(value):
                                  tags=value.tags())
 
 
+# What RBD Configure starts with: Density and Bounce ticked, Bounce 0.25 (Box3D Data's is 0.5).
+ON_BY_DEFAULT = ("density", "bounce")
+SETTING_DEFAULTS = {"bounce": 0.25}
+
 # Settings with a Var: each piece's value is scattered up and down by up to that fraction (RBD Configure's Var).
 VAR_SETTINGS = ("density", "bounce", "friction", "inertialtensorstiffness")
 
@@ -509,6 +513,8 @@ def ui(folders):
             n = pt.name()
             value = pt.clone()
             value.setName(f"{n}#")
+            if n in SETTING_DEFAULTS:
+                value.setDefaultValue((SETTING_DEFAULTS[n],))
             lab, help_text = SPECIAL_LABELS.get(n, (None, None))
             if lab:
                 value.setLabel(lab)
@@ -517,7 +523,7 @@ def ui(folders):
                 value = on_off_slider(value)
             value.setHelp(help_text or f"{first_sentence(pt.help())} Writes the {attr} point attribute.")
             # The checkbox has a real label, hidden (an empty label shows the name instead).
-            box = hou.ToggleParmTemplate(f"{toggle_name(n)}#", value.label(), default_value=False,
+            box = hou.ToggleParmTemplate(f"{toggle_name(n)}#", value.label(), default_value=n in ON_BY_DEFAULT,
                                          join_with_next=True, help="Write this setting onto the pieces.")
             box.hideLabel(True)
             box.setConditional(hou.parmCondType.DisableWhen, "{ enable# == 0 }")

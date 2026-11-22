@@ -183,12 +183,19 @@ DOP_SUBSTEPS = "substep"
 HULL_PER_CONNECTED = "hullperconnected"
 
 
+# Pieces settings whose default on the SOP is RBD Bullet Solver's, not Box3D Data's (Bounce: 0.25, as RBD Configure).
+PIECE_DEFAULTS = {"bounce": 0.25}
+
+
 def default_hull_per_connected(templates):
-    """`templates` with the Hull per Connected toggle (under its own or a prefixed name) defaulting on."""
+    """`templates` with the Hull per Connected toggle (under its own or a prefixed name) defaulting on, and the
+    settings in PIECE_DEFAULTS at the SOP's own defaults."""
     out = list(templates)
     for t in out:
         if t.type() == hou.parmTemplateType.Toggle and t.name().endswith(HULL_PER_CONNECTED):
             t.setDefaultValue(True)
+        elif t.name() in PIECE_DEFAULTS:
+            t.setDefaultValue((PIECE_DEFAULTS[t.name()],))
     return out
 
 

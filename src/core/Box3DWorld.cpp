@@ -1860,7 +1860,7 @@ struct SweptBodies {
 bool collectSweptBody(b3ShapeId shape, void *context) {
   SweptBodies &c = *static_cast<SweptBodies *>(context);
   const b3BodyId body = b3Shape_GetBody(shape);
-  if (sameBody(body, c.self) || b3Body_GetType(body) != b3_dynamicBody)
+  if (sameBody(body, c.self))
     return true;
   // One entry per shape: the caller sorts and drops the repeats.
   c.ids.push_back(body);

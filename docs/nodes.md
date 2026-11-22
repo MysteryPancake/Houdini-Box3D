@@ -4,7 +4,7 @@
 
 - RBD Packed Object also works, but writes its own `mass`, `density`, `computemass`, `friction` and `bounce` onto every point, which win over Box3D Data.
 - A Box3D Packed Object writes the settings you change on it as point attributes when its object is created. To change them mid-simulation, edit the attributes (with a SOP Solver or POP Wrangle).
-- Its Initial State tab sets a starting velocity and spin. Inherit Velocity (on by default) keeps the points' own `v` and `w` instead.
+- Its Initial State tab sets a starting velocity and spin. Inherit Velocity (off by default, always on inside the Box3D Solver SOP) keeps the points' own `v` and `w` instead.
 - Turn on Deforming when the pieces change shape over time. The shapes are rebuilt every step.
 - Geometry Source can take the pieces from the DOP network's first to fourth input instead of the SOP Path.
 - Set its Display Geometry to Render Geometry to show a hi-res version (Render SOP Path) moving with the simulated pieces, matched by `name`.

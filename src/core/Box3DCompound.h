@@ -295,61 +295,15 @@ public:
       neighbours(piece, [&stack](uint64_t other) { stack.push_back(other); });
     }
   }
-  // Lets go of the pieces whose time is up at `now`. Pieces that no longer
-  // exist (`alive(piece)` false) are just dropped. The others go only when they
-  // move together: velocity(piece, lin) gives each one's velocity, and if any
-  // differs from the mean of the ones due by more than `limit` the structure is
-  // still coming apart, so their time moves on to now + `retry` (one rigid body
-  // made of pieces moving apart would freeze them). True if any were let go.
-  template <class Alive, class Velocity>
-  bool expire(double now, double retry, float limit, Alive &&alive,
-              Velocity &&velocity) {
-    return expire(now, retry, limit, alive, velocity,
-                  [](uint64_t) { return 0; });
-  }
-  // As above, with the due pieces judged per `group(piece)` (an int): the
-  // pieces of one structure move together or not regardless of another's.
-  template <class Alive, class Velocity, class Group>
-  bool expire(double now, double retry, float limit, Alive &&alive,
-              Velocity &&velocity, Group &&group) {
-    std::map<int, std::vector<uint64_t>> due;
+  // Lets go of the pieces whose time is up at `now`. True if any were.
+  bool expire(double now) {
     bool released = false;
     for (auto it = myUntil.begin(); it != myUntil.end();) {
       if (it->second > now) {
         ++it;
-      } else if (!alive(it->first)) {
-        it = myUntil.erase(it);
-        released = true;
-      } else {
-        due[group(it->first)].push_back(it->first);
-        ++it;
-      }
-    }
-    for (const auto &entry : due) {
-      const std::vector<uint64_t> &pieces = entry.second;
-      std::vector<float> lin(3 * pieces.size());
-      double mean[3] = {0, 0, 0};
-      for (size_t k = 0; k < pieces.size(); ++k) {
-        velocity(pieces[k], &lin[3 * k]);
-        for (int i = 0; i < 3; ++i)
-          mean[i] += lin[3 * k + i] / static_cast<double>(pieces.size());
-      }
-      double spread2 = 0.0;
-      for (size_t k = 0; k < pieces.size(); ++k) {
-        double d2 = 0.0;
-        for (int i = 0; i < 3; ++i) {
-          const double d = lin[3 * k + i] - mean[i];
-          d2 += d * d;
-        }
-        spread2 = std::max(spread2, d2);
-      }
-      if (spread2 > static_cast<double>(limit) * limit) {
-        for (const uint64_t piece : pieces)
-          myUntil[piece] = now + retry;
         continue;
       }
-      for (const uint64_t piece : pieces)
-        myUntil.erase(piece);
+      it = myUntil.erase(it);
       released = true;
     }
     return released;

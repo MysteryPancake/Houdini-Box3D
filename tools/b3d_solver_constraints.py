@@ -18,6 +18,21 @@ from b3d_solver_common import RELATIONSHIPS, rename_templates, warn
 # What a DOP data node has of its own, left out when a node has no parameter folders to take the settings from.
 DATA_PARMS = {"activation", "group", "dataname", "data_name", "createobjectifmissing", "constraint_name"}
 
+# Settings whose default on this tab is RBD Bullet Solver's own, not the DOP node's (SideFX's Glue node has
+# Strength 10000 and Impulse Half-life 0.1, its SOP has 1 and 1): a `strength` attribute multiplies the setting,
+# so a scene set up for one solver breaks at the same impulse in the other.
+SOP_DEFAULTS = {
+    ("glue", "strength"): 1.0, ("glue", "impulse_halflife"): 1.0,
+    ("hard", "cfm"): 1.0, ("hard", "erp"): 1.0,
+    ("soft", "stiffness"): 1.0, ("soft", "angularstiffness"): 1.0,
+    ("soft", "plasticthreshold"): 1.0, ("soft", "angularplasticthreshold"): 1.0,
+    ("spring", "damping"): 1.0,
+}
+# The same for a folder's Data Name and Enable: RBD Bullet Solver calls the Spring "Spring" (SideFX's node
+# "ConRelSpring") and leaves it off.
+SOP_DATA_NAMES = {"spring": "Spring"}
+SOP_ENABLED = {"spring": False}
+
 
 def folder_label(node):
     """'Box3D Weld Constraint Relationship' -> 'Weld'."""
@@ -66,12 +81,12 @@ def head_templates(node, name):
     data_name = node.parm("dataname")
     default_op = node.parm("defaultparmop")
     items = [hou.ToggleParmTemplate(
-        enable_name(name), "Enable", default_value=True,
+        enable_name(name), "Enable", default_value=SOP_ENABLED.get(name, True),
         help="Off leaves this constraint type out of the simulation.")]
     links = []
     if data_name is not None:
         data_name_template = b3d_hda.menu_script(hou.StringParmTemplate(
-            f"{name}_dataname", "Data Name", 1, default_value=(data_name.eval(),),
+            f"{name}_dataname", "Data Name", 1, default_value=(SOP_DATA_NAMES.get(name, data_name.eval()),),
             help="The name `constraint_name` uses to pick this type."), "buildConstraintNameMenu(kwargs, 1)",
             toggle=False)
         # One row with Default Operation, as RBD Bullet Solver's
@@ -108,6 +123,9 @@ def constraint_items(dopnet, sub):
         if not found:
             warn(f"{node.path()}: no settings found, not on the Constraints tab")
             continue
+        for pt in found:
+            if (name, pt.name()) in SOP_DEFAULTS:
+                pt.setDefaultValue((SOP_DEFAULTS[(name, pt.name())],))
         renames = {pt.name(): f"{name}_{pt.name()}" for pt in found}
         head, head_links = head_templates(node, name)
         # Enable is the folder's header checkbox; the rest greys out while it is off.

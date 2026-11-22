@@ -46,11 +46,6 @@ constexpr float kGlueHoldLeadSeconds = 0.25f;
 // by this many times its own half size, so the pieces around its path can
 // give way too.
 constexpr float kGlueHoldHaloScale = 3.0f;
-// Held pieces merge back only when they move together: while their velocities
-// differ by more than this (m/s) the hold is extended by kGlueHoldRetrySeconds.
-constexpr float kGlueMergeSpread = 0.5f;
-constexpr float kGlueHoldRetrySeconds = 0.25f;
-
 // The most rounds of propagation a bond may ask for: each costs a pass over
 // every bond every frame, so a typo (1e6) must not freeze the solve.
 constexpr int kMaxGlueIterations = 1000;

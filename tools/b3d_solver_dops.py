@@ -45,6 +45,8 @@ def packed_object(dopnet, name, context_input, object_name):
     # One hull per connected set, as RBD Bullet Solver sets bullet_groupconnected on its objects:
     # pieces sharing a `name` are packed together and must not merge into one hull.
     set_named(obj, "hullperconnected", 1)
+    # The Packed Object's own default is RBD's (off); the SOP keeps the points' own v and w, as RBD Bullet Solver does.
+    set_named(obj, "inheritvelocity", 1)
     return obj
 
 

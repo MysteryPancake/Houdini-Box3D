@@ -23,6 +23,8 @@ setting ticked (`rewrite_condition`). Bounds and Attributes are simple folders (
   `packing_templates`), and Transfer Groups is RBD Configure's (`TRANSFER_GROUPS`) so Group still finds the pieces.
   Without a proxy (or without geometry) the configured stream is the geometry output; with both, the packed geometry
   passes through and the proxy gets the settings.
+* A new entry starts as RBD Configure's: Density and Bounce ticked and Bounce 0.25 (`ON_BY_DEFAULT`, `SETTING_DEFAULTS`; Box3D Data's is 0.5),
+  so a scene bounces the same in both solvers.
 * One point wrangle (`set_attributes`, `wrangle_vex`) loops over the entries: an enabled entry whose group holds the
   point writes each ticked setting, creating the attribute with Box3D Data's default first (`addpointattrib`) so
   points outside the group keep the default rather than VEX's 0 (`active` 0 is static). Group is tested with

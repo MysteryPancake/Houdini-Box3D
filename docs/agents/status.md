@@ -166,6 +166,11 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 ## TODO
 
 * `glue_fracture_vs_bullet` (Box, Points from Volume, Voronoi Fracture's constraints named Glue, frame 24): Box3D's equivalent Strength is 0.3 to 1.5x Bullet's with Glue as One Body on and 0.5 to 0.7x with it off, only checked on that scene.
+* `glue_compound_bridges` (a beam balanced on a block, a ball falling on its tip) passes only at Strength 2e5. At 1e5 the hold frees
+  5 of 8 pieces on the first frame, `kGlueHoldHaloScale` times the ball's size around its path, and the 3 left in the compound
+  are held up by one bridge weld and creep off the block; a halo of 1 fixes that but the ball bounces back in
+  `glue_compound_hit`. At 3e5 the beam tilts: a bridge weld carries the hit into the compound in the step it lands, where
+  welds would have broken. Welds hold the beam at every Strength tried.
 * Box3D Configure has no Units (RBD Configure's Unit Mass and Unit Length, which scale Density by `unitlength / unitmass`,
   each over 1000).
 * Quadric primitives (how they are sampled: [bodies.md](bodies.md)): a denser sphere mesh (Polygon Mesh, NURBS) rests at 0.46 to 0.48
