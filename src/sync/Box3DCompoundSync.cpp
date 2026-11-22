@@ -1217,8 +1217,8 @@ bool compoundGlueHits(Box3DSharedState &st, BodyHandle body, float &hits) {
           [&st, group](BodyHandle other) {
             return glueSameGroup(st, other, group);
           };
-      st.world.contactImpulsesByShape(c.body, c.shapeImpulse,
-                                      group >= 0 ? &sameGroup : nullptr);
+      st.world.hitImpulsesByShape(c.body, c.shapeImpulse,
+                                  group >= 0 ? &sameGroup : nullptr);
     }
   }
   if (!c.hitsActive)

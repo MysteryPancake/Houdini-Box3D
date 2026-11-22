@@ -463,6 +463,10 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   const char *const kNonFiniteForce =
       "body(ies) got a non-finite force or torque from a Force DOP; it was "
       "ignored";
+  // Hit events: the Impact Min Speed filter reads them, and so does Glue (only
+  // a body with a hit event takes its rise in contact impulse as a hit).
+  const bool wantHits =
+      st->world.settings().impactMinSpeed > 0.0f || !st->glueNodes.empty();
   if (n == 1) { // one step, nothing to merge
     if (getUseForces()) {
       UT_PerfMonAutoSolveEvent perf(this,
@@ -475,6 +479,10 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
     std::vector<b3dop::BodyMove> left; // pieces of a compound taken apart
     holdCompoundsForApproach(*st, st->moves, left);
     st->world.step(subDt);
+    if (wantHits) {
+      st->world.updateHitEvents();
+      st->hitsCollected = true;
+    }
     collectGlueHits(*st);
     st->world.getMoveEvents(st->moves); // read once: write-back and impacts
     // Before the step's own events: they carry the final poses.
@@ -487,7 +495,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
     st->brokenThisFrame.clear();
     st->brokenCollected = true;
     // Hit events are cleared every step too; only the speed filter reads them.
-    const bool collectHits = st->world.settings().impactMinSpeed > 0.0f;
+    const bool collectHits = wantHits;
     st->hitsCollected = collectHits;
     std::unordered_map<b3dop::BodyHandle, size_t> &slot = st->moveSlots;
     std::vector<b3dop::BodyMove> &events = st->stepEvents;
@@ -515,6 +523,9 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
         std::vector<b3dop::BodyMove> left; // pieces of a compound taken apart
         holdCompoundsForApproach(*st, i == 0 ? lastFrame : events, left);
         st->world.step(subDt);
+        // Before the glue reads them; appended across the frame's steps.
+        if (collectHits)
+          st->world.updateHitEvents(i > 0);
         collectGlueHits(*st);
         st->world.getMoveEvents(events);
         // Before the step's own events: they carry the final poses.
@@ -522,8 +533,6 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
         pruneCompoundBridges(*st);
         // Joint events are cleared by the next step too: keep every joint that
         // went over its threshold (once each).
-        if (collectHits)
-          st->world.updateHitEvents(i > 0);
         st->world.brokenJoints(broken);
         st->brokenThisFrame.insert(st->brokenThisFrame.end(), broken.begin(),
                                    broken.end());

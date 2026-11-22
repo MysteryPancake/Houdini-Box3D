@@ -228,11 +228,12 @@ void collectGlueHits(Box3DSharedState &st) {
   st.compoundGroup.clear();
   for (const auto &c : st.compounds)
     st.compoundGroup[c->body] = compoundGlueGroup(st, *c);
-  // A contact with a piece of its own group (or with the body of a compound of
-  // it) is not a hit: pieces of one glued structure press on each other with
-  // its weight (and push each other along with whatever hits it, which the hit
-  // itself counts). Not bonded to each other, they do collide.
-  const bool weightPossible = !st.glueNodes.empty();
+  // A hit is a contact Box3D made a hit event for: one approaching faster than
+  // its hit threshold, with the impulse of the whole contact. A body resting on
+  // something has none, so the weight it carries is never a hit. An event with
+  // a piece of the body's own group (or the body of a compound of it) is not
+  // one either: pieces of one glued structure knock into each other when it
+  // moves (the hit on the structure itself counts).
   int group = -1;
   const std::function<bool(b3dop::BodyHandle)> sameGroup =
       [&st, &group](b3dop::BodyHandle other) {
@@ -250,11 +251,8 @@ void collectGlueHits(Box3DSharedState &st) {
     if (world.typeByHandle(n.body) != b3dop::BodySettings::Type::Dynamic ||
         !world.isAwakeByHandle(n.body))
       continue;
-    // A glued neighbour is not a hit (the pair never collides anyway).
     group = st.glueGroup[i];
-    n.hits += world.contactImpulseByHandle(
-        n.body, n.partners.data(), n.partners.size(),
-        weightPossible ? &sameGroup : nullptr);
+    n.hits += world.hitImpulseByHandle(n.body, &sameGroup);
   }
 }
 

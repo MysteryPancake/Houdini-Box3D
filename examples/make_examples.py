@@ -27,6 +27,7 @@ Scenes:
 
 import argparse
 import colorsys
+import hashlib
 import math
 import os
 import sys
@@ -301,14 +302,15 @@ def network_sop(name, lines):
 
 def packed_pieces(dop, pieces_path, name="pieces"):
     """The pieces' DOP object: a Box3D Packed Object (the asset the build makes), which keeps the
-    points' own attributes (density, v ...) and writes only the settings changed on it (none here).
-    Without the asset: an RBD Packed Object keeping the points' v."""
+    points' own attributes (density ...) and writes only the settings changed on it (none here), with
+    Inherit Velocity on so the points' v is used. Without the asset: an RBD Packed Object, the same."""
     try:
         obj = dop.createNode("box3d_packedobject", name)
     except hou.OperationFailed:
         print("  (no Box3D Packed Object asset: using RBD Packed Object)")
         obj = create(dop, "rbdpackedobject", name)
-        set_parm(obj, ["inheritvelocity", "usepointvelocity", "inheritvel"], 1)
+    # Inherit Velocity is off on both: the scenes throw things with the points' own v (the building's ball).
+    set_parm(obj, ["inheritvelocity", "usepointvelocity", "inheritvel"], 1)
     set_parm(obj, "soppath", pieces_path)
     return obj
 
@@ -469,6 +471,25 @@ Allow Sleeping is on Box3D Data. With Bullet the same scene is usually much slow
     return dop, 360
 
 
+def cached_fracture(geo, source, snippet):
+    """A File SOP named `fracture` that reads the fractured `source`. The Material Fracture is slow on the
+    building, so its output is written once to scenes/cache (keyed by what it fractures) and read from then on:
+    every build after the first, and the checks that rebuild the scene, skip it. Delete the folder to refracture."""
+    key = hashlib.md5(snippet.encode("utf-8")).hexdigest()[:12]
+    path = os.path.join(OUT_DIR, "cache", f"building_fracture_{key}.bgeo.sc").replace("\\", "/")
+    if not os.path.exists(path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        build = create(geo, "rbdmaterialfracture", "fracture_build")
+        build.setInput(0, source)
+        tmp = path + ".tmp.bgeo.sc"
+        build.geometry().saveToFile(tmp)
+        os.replace(tmp, path)  # a cook that was interrupted leaves no half-written cache
+        build.destroy()
+    reader = create(geo, "file", "fracture")
+    set_parm(reader, ["file"], path)
+    return reader
+
+
 def scene_building(start_x=-32.0):
     p = Pieces("building_pieces")
     ground(p, 80.0)
@@ -514,8 +535,7 @@ def scene_building(start_x=-32.0):
     set_parm(named, "class", 1)  # primitives
     set_parm(named, "snippet", "// Each copy is a 6-face box: name every part, so each is fractured on its own.\n"
                                's@name = sprintf("part%d", @primnum / 6);')
-    fracture = create(geo, "rbdmaterialfracture", "fracture")
-    fracture.setInput(0, named)
+    fracture = cached_fracture(geo, named, layout.parm("snippet").eval())
     # Concrete (the default material) breaks every named part into chunks.
     pack = create(geo, "pack", "pack_pieces")
     pack.setInput(0, fracture, 0)

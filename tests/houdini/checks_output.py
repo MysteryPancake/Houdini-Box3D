@@ -724,7 +724,7 @@ def test_box3d_packed_object():
 
 
 def test_packed_object_initial_state():
-    """The Box3D Packed Object's Initial State tab, as RBD Packed Object's. Inherit Velocity (the default)
+    """The Box3D Packed Object's Initial State tab, as RBD Packed Object's. Inherit Velocity (off on the asset)
     keeps the point's own v: a point v of (2, 0, 0) moves 2 in 1 s whatever Velocity says. With it off,
     Velocity (1, 0, 0) and Angular Velocity (0, 90, 0) degrees per second apply: it moves 1 and w.y is
     pi / 2 radians per second."""

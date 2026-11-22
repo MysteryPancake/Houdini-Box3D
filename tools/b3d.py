@@ -81,7 +81,12 @@ def hython(hfs):
 
 def run(cmd):
     print(" ".join(cmd), flush=True)
-    return subprocess.call(cmd, cwd=ROOT)
+    env = dict(os.environ)
+    # Houdini uses %HOME% as its preferences folder when it is set (Git Bash sets it), which would look for
+    # the plugin in C:\Users\<you>\houdiniX.Y instead of Documents\houdiniX.Y. The .bat launchers clear it too.
+    if sys.platform == "win32" and "HOUDINI_USER_PREF_DIR" not in env:
+        env.pop("HOME", None)
+    return subprocess.call(cmd, cwd=ROOT, env=env)
 
 
 def main(argv):

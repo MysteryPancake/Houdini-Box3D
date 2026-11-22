@@ -323,9 +323,12 @@ def ground_object(dop, name="ground", **parms):
 def box3d_packed_object(dop, name, sop_path, **parms):
     """A Box3D Packed Object (the asset tools/make_packed_object.py builds): the packed geometry
     without RBD Packed Object's stamped attributes; parms: its parameters (Box3D Data's, e.g.
-    friction=0.0). SetupError if the asset is not installed."""
+    friction=0.0). Inherit Velocity is off on the asset, so it is switched on here (the points' own v / w are
+    used, as the tests that give points a velocity expect) unless `parms` sets it. SetupError if the asset
+    is not installed."""
     obj = create(dop, "box3d_packedobject", name)
     set_parm(obj, ["soppath"], sop_path)
+    parms = {"inheritvelocity": 1, **parms}
     if "bodytype" in parms or "deforming" in parms:  # their own values: Initial Object Type Custom
         set_parm(obj, ["initialstate"], "custom")
     for parm, value in parms.items():

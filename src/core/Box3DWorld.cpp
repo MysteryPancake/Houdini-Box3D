@@ -2157,22 +2157,86 @@ void Box3DWorld::applyTuning(const WorldSettings &s) {
 void Box3DWorld::updateHitEvents(bool append) {
   if (!append)
     myImpl->hitPairs.clear();
+  myImpl->hitRecords.clear();
   if (!isValid())
     return;
   const b3ContactEvents ev = b3World_GetContactEvents(myImpl->worldId);
   for (int i = 0; i < ev.hitCount; ++i) {
-    const BodyHandle a =
-        b3StoreBodyId(b3Shape_GetBody(ev.hitEvents[i].shapeIdA));
-    const BodyHandle b =
-        b3StoreBodyId(b3Shape_GetBody(ev.hitEvents[i].shapeIdB));
+    const b3ContactHitEvent &e = ev.hitEvents[i];
+    const BodyHandle a = b3StoreBodyId(b3Shape_GetBody(e.shapeIdA));
+    const BodyHandle b = b3StoreBodyId(b3Shape_GetBody(e.shapeIdB));
     myImpl->hitPairs.emplace_back(std::min(a, b), std::max(a, b));
+    myImpl->hitRecords.push_back(
+        {a, b, b3StoreShapeId(e.shapeIdA), e.normalImpulse});
+    myImpl->hitRecords.push_back(
+        {b, a, b3StoreShapeId(e.shapeIdB), e.normalImpulse});
   }
-  // Sorted once per step (the vector keeps its capacity), so a lookup is a
+  // Sorted once per step (the vectors keep their capacity), so a lookup is a
   // binary search.
   std::sort(myImpl->hitPairs.begin(), myImpl->hitPairs.end());
   myImpl->hitPairs.erase(
       std::unique(myImpl->hitPairs.begin(), myImpl->hitPairs.end()),
       myImpl->hitPairs.end());
+  std::sort(
+      myImpl->hitRecords.begin(), myImpl->hitRecords.end(),
+      [](const HitRecord &x, const HitRecord &y) { return x.self < y.self; });
+}
+
+namespace {
+
+// The records of `self` (a range of the sorted list).
+std::pair<const HitRecord *, const HitRecord *>
+hitRange(const std::vector<HitRecord> &records, BodyHandle self) {
+  const auto lo = std::lower_bound(
+      records.begin(), records.end(), self,
+      [](const HitRecord &r, BodyHandle h) { return r.self < h; });
+  auto hi = lo;
+  while (hi != records.end() && hi->self == self)
+    ++hi;
+  return {records.data() + (lo - records.begin()),
+          records.data() + (hi - records.begin())};
+}
+
+} // namespace
+
+float Box3DWorld::hitImpulseByHandle(
+    BodyHandle h, const std::function<bool(BodyHandle)> *ignore) const {
+  if (!h)
+    return 0.0f;
+  const auto range = hitRange(myImpl->hitRecords, h);
+  float total = 0.0f;
+  for (auto *r = range.first; r != range.second; ++r)
+    if (!ignore || !(*ignore)(r->other))
+      total += r->impulse;
+  return total;
+}
+
+int Box3DWorld::hitImpulsesByShape(
+    BodyHandle h, std::vector<float> &out,
+    const std::function<bool(BodyHandle)> *ignore) const {
+  out.clear();
+  if (!h)
+    return 0;
+  const b3BodyId id = b3LoadBodyId(h);
+  const int count = b3Body_GetShapeCount(id);
+  if (count <= 0)
+    return 0;
+  // Box3D lists a body's shapes newest first: reverse that into creation order.
+  thread_local std::vector<b3ShapeId> shapes;
+  shapes.resize(static_cast<size_t>(count));
+  const int got = b3Body_GetShapes(id, shapes.data(), count);
+  out.assign(static_cast<size_t>(got), 0.0f);
+  const auto range = hitRange(myImpl->hitRecords, h);
+  for (auto *r = range.first; r != range.second; ++r) {
+    if (ignore && (*ignore)(r->other))
+      continue;
+    for (int i = 0; i < got; ++i)
+      if (b3StoreShapeId(shapes[static_cast<size_t>(i)]) == r->selfShape) {
+        out[static_cast<size_t>(got - 1 - i)] += r->impulse;
+        break;
+      }
+  }
+  return got;
 }
 
 bool Box3DWorld::hadHitEvent(BodyHandle a, BodyHandle b) const {
