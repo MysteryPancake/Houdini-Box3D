@@ -469,10 +469,8 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   const char *const kNonFiniteForce =
       "body(ies) got a non-finite force or torque from a Force DOP; it was "
       "ignored";
-  // Hit events: the Impact Min Speed filter reads them, and so does Glue (only
-  // a body with a hit event takes its rise in contact impulse as a hit).
-  const bool wantHits =
-      st->world.settings().impactMinSpeed > 0.0f || !st->glueNodes.empty();
+  // Hit events: only the Impact Min Speed filter reads them.
+  const bool wantHits = st->world.settings().impactMinSpeed > 0.0f;
   if (n == 1) { // one step, nothing to merge
     if (getUseForces()) {
       UT_PerfMonAutoSolveEvent perf(this,

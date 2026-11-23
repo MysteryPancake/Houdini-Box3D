@@ -594,7 +594,7 @@ building_pieces makes the floors and wall panels from Box SOPs, RBD Material Fra
 touching chunks with a line: one glue bond each.
 
 Breaking: the Glue Constraint Relationship's Strength ({strength:g}) sets how much impulse
-from hits a bond takes before it breaks (weight is no hit). At this Strength the building
+from hits a bond takes before it breaks. At this Strength the building
 stops the ball; a lower one lets it plow in. Broken bonds go into the constraint geometry's
 'broken' group, so a SOP Solver can react to them.
 

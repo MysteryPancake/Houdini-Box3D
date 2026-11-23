@@ -11,7 +11,9 @@
 //     after that has decayed by the half-life;
 //   * a bond whose impact passes its strength (< 0: never) divided by
 //   kGlueStrengthScale breaks.
-// Steady loads (weight) are not hits, so they never break a bond.
+// A hit is the normal impulse of a body's contacts, as in Bullet, so a body
+// resting on something adds its weight every step. A piece hanging from its
+// bond has no contacts and holds at any strength.
 #pragma once
 
 #include <algorithm>

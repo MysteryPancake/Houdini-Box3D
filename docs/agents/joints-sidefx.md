@@ -21,8 +21,9 @@ Glue, Hard, Spring, Bullet Soft and Cone Twist mapped onto Box3D joints. Joint n
     results to the bond's `impact` after it decayed by `impulse_halflife`, and queues a bond over its Strength
     divided by `kGlueStrengthScale` (< 0 never) for `jointsAfterStep`, which breaks it with the force ones (the `broken` group, `next_constraint_name`).
     `impact` is written to the primitives and read back when a joint is remade. The bonds are listed by `syncJoints`'s
-    removal loop (no pass of their own); `contactImpulseByHandle` sums the contacts' impulses without building records. Weight is no hit, so a hanging piece
-    holds at any Strength (`sidefx_glue`); a landing is (`glue_impact`). `impact` matches Bullet's own (peak within
+    removal loop (no pass of their own); `contactImpulseByHandle` sums the contacts' impulses without building records. Every contact counts, a resting body's weight
+    included, as in Bullet (a deliberate match: only the contacts inside a glue group are left out). A hanging piece has no contacts and
+    holds at any Strength (`sidefx_glue`); a landing is a hit (`glue_impact`). `impact` matches Bullet's own (peak within
     ~20%, the same decay: `glue_impact_trace`); a Bullet glue holds from about 5 to 6 times its peak impact, so
     the break test uses `kGlueStrengthScale` (measured from one scene: `glue_impact_scale`). A negative iteration count is the global one
     (the `propagate_iteration` detail attribute of the network, read by `NetworkReader::glueIterations`; one round without it);

@@ -1372,8 +1372,7 @@ GLUE_MATCH_SCENES = [
 def test_glue_break_match():
     """SideFX Glue in Box3D and Bullet over several kinds of hit: the largest `impact` a bond reaches (with
     a Strength that never breaks it), and the Strength at which the bonds stop breaking. The impacts are
-    what must agree (Box3D from 0.4 to 2 times Bullet's: a box dropped on a resting pair reads about half, as the
-    ground's push-back is not a hit in Box3D). The Strength per impact is for information: Bullet breaks
+    what must agree (Box3D from 0.5 to 2 times Bullet's). The Strength per impact is for information: Bullet breaks
     at about its impact when something hits a resting glued pair, and at several times its impact when
     the glued pieces land themselves (more with speed and bounce); Box3D uses one factor
     (kGlueStrengthScale)."""
@@ -1385,8 +1384,7 @@ def test_glue_break_match():
             got[kind] = (peak, glue_row_threshold(kind, frames, **scene))
         (pb, tb), (px, tx) = got["bullet"], got["box3d"]
         ratio = px / pb if pb else float("inf")
-        # A box landing on a pair at rest reads about half of Bullet's: the support's push-back has no hit event.
-        ok = ok and 0.4 <= ratio <= 2.0
+        ok = ok and 0.5 <= ratio <= 2.0
 
         def per_peak(peak, threshold):
             return "none" if not threshold or not peak else f"{threshold:.0f} ({threshold / peak:.1f}x)"

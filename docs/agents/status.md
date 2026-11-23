@@ -13,8 +13,8 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 
 * Glue as One Body releasing the pieces in a fast body's way (`holdCompoundsForApproach`,
   [glue-compound.md](glue-compound.md)): only the `building` example has run it (`glue_compound_hit`). At Strength
-  20000 most of its bonds break from the building's weight on the ground in both modes before anything hits it
-  (probably a resting body's ground contact counting as a hit: not looked into). Not checked: other scenes, a slow heavy
+  20000 most of its bonds break from the building's weight on the ground in both modes before anything hits it:
+  Glue counts a resting body's contact impulse as a hit, as Bullet does ([joints-sidefx.md](joints-sidefx.md)). Not checked: other scenes, a slow heavy
   body (the example's slow ball lands on the roof), many glued groups at once, the cost of a very large compound, a
   kinematic body in a scene (only the core query is tested), the force and torque a bond reads while its weld is a
   bridge's (the bond's own joint is parked, so they read zero), bridges of bonds remade while pieces are held, and what
@@ -255,12 +255,12 @@ Workarounds in the wrapper that the engine could own, roughly by value:
   `b3Body_SetMassData`, and must run again after every shape change or type change, before the next step. Wanted: a
   body-level override (centre at origin, inertia scale, explicit inertia) that survives
   `b3Body_ApplyMassFromShapes`.
-* **Events across steps, and impulse in hit events.** Box3D clears move, joint, hit and impulse events at the start of each
+* **Events across steps.** Box3D clears move, joint, hit and impulse events at the start of each
   `b3World_Step`, so with Substeps the solver merges them after every step (`brokenThisFrame`, `st.moves`, `hitPairs`,
   `collectImpacts` appending). Impacts come from the fork's contact impulse events (`getContactImpulseEvents`). A
   `b3ContactHitEvent` has the approach speed but no impulse, so with Impact Min Speed on a record is kept only when its
-  body pair also had a hit event (`updateHitEvents`, `hadHitEvent`). Wanted: events that accumulate until cleared, and
-  the normal impulse in the hit event, so the pair matching and the per-step merging go.
+  body pair also had a hit event (`updateHitEvents`, `hadHitEvent`). Wanted: events that accumulate until cleared, so the
+  per-step merging goes.
 * **Live contact recycling flag.** `b3Body_EnableContactRecycling` only reaches contacts made afterwards (`contact.c`
   sets the flag at creation), so `setContactRecyclingByHandle` disables and enables the body (`rebuildContacts`).
   That wakes the touching bodies and zeroes the body's velocity, which the wrapper saves and restores. Wanted: the
