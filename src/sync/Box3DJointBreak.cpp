@@ -230,12 +230,11 @@ void collectGlueHits(Box3DSharedState &st) {
   st.compoundGroup.clear();
   for (const auto &c : st.compounds)
     st.compoundGroup[c->body] = compoundGlueGroup(st, *c);
-  // A hit is a contact Box3D made a hit event for: one approaching faster than
-  // its hit threshold, with the impulse of the whole contact. A body resting on
-  // something has none, so the weight it carries is never a hit. An event with
-  // a piece of the body's own group (or the body of a compound of it) is not
-  // one either: pieces of one glued structure knock into each other when it
-  // moves (the hit on the structure itself counts).
+  // A contact with a piece of its own group (or with the body of a compound of
+  // it) is not a hit: pieces of one glued structure press on each other with
+  // its weight (and push each other along with whatever hits it, which the hit
+  // itself counts). Not bonded to each other, they do collide.
+  const bool weightPossible = !st.glueNodes.empty();
   int group = -1;
   const std::function<bool(b3dop::BodyHandle)> sameGroup =
       [&st, &group](b3dop::BodyHandle other) {
@@ -254,7 +253,10 @@ void collectGlueHits(Box3DSharedState &st) {
         !world.isAwakeByHandle(n.body))
       continue;
     group = st.glueGroup[i];
-    n.hits += world.hitImpulseByHandle(n.body, &sameGroup);
+    // A glued neighbour is not a hit (the pair never collides anyway).
+    n.hits += world.contactImpulseByHandle(
+        n.body, n.partners.data(), n.partners.size(),
+        weightPossible ? &sameGroup : nullptr);
   }
 }
 
@@ -331,12 +333,162 @@ float bondSideMass(Box3DSharedState &st, b3dop::BodyHandle start,
   return mass;
 }
 
+// A mass with the bodies that do not move counted apart (they make it
+// infinite), so a side can be taken from a total by subtraction.
+struct SideSums {
+  double mass = 0.0;
+  int fixed = 0;
+  SideSums &operator+=(const SideSums &o) {
+    mass += o.mass;
+    fixed += o.fixed;
+    return *this;
+  }
+  float value() const {
+    return fixed > 0 ? kFixedMass : static_cast<float>(mass);
+  }
+};
+
+// Every live bond's two side masses at once (what bondSideMass finds one bond
+// at a time, a walk of the whole group each): one depth-first search over the
+// glue graph finds the bonds that are the only way between their pieces
+// (bridges), and the mass on each side of one is the DFS subtree's against the
+// rest of its group. A bond with another way round (a loop, a wall) holds its
+// two pieces, as bondReducedMassOf says. Bonds the graph does not hold are
+// left to bondSideMass.
+void computeBondSides(Box3DSharedState &st) {
+  const size_t n = st.glueNodes.size();
+  std::vector<SideSums> own(n), sub(n), total;
+  for (size_t i = 0; i < n; ++i) {
+    const float m = sideBodyMass(st.world, st.glueNodes[i].body);
+    if (std::isinf(m))
+      own[i].fixed = 1;
+    else
+      own[i].mass = m;
+  }
+  std::vector<int> disc(n, -1), low(n, 0), comp(n, -1), parent(n, -1);
+  std::vector<const Box3DJointEntry *> parentEdge(n, nullptr);
+  // A bridge's far side: the node below it in the search tree.
+  std::unordered_map<const Box3DJointEntry *, int> below;
+  struct Frame {
+    int node;
+    size_t next;
+  };
+  std::vector<Frame> stack;
+  int timer = 0;
+  for (size_t root = 0; root < n; ++root) {
+    if (disc[root] >= 0)
+      continue;
+    const int id = static_cast<int>(total.size());
+    total.emplace_back();
+    const int r = static_cast<int>(root);
+    disc[root] = low[root] = timer++;
+    comp[root] = id;
+    sub[root] = own[root];
+    stack.push_back({r, 0});
+    while (!stack.empty()) {
+      const int u = stack.back().node;
+      const Box3DGlueNode &node = st.glueNodes[static_cast<size_t>(u)];
+      if (stack.back().next < node.bonds.size()) {
+        const Box3DJointEntry *b = node.bonds[stack.back().next++];
+        if (b == parentEdge[static_cast<size_t>(u)] || !b->handle || b->broken)
+          continue;
+        const b3dop::BodyHandle other =
+            b->bodyA == node.body ? b->bodyB : b->bodyA;
+        const auto it = st.glueNodeOf.find(other);
+        if (it == st.glueNodeOf.end())
+          continue;
+        const int v = it->second;
+        const size_t vi = static_cast<size_t>(v);
+        if (disc[vi] < 0) {
+          disc[vi] = low[vi] = timer++;
+          comp[vi] = id;
+          parent[vi] = u;
+          parentEdge[vi] = b;
+          sub[vi] = own[vi];
+          stack.push_back({v, 0});
+        } else
+          low[static_cast<size_t>(u)] =
+              std::min(low[static_cast<size_t>(u)], disc[vi]);
+        continue;
+      }
+      stack.pop_back();
+      const size_t ui = static_cast<size_t>(u);
+      if (stack.empty()) {
+        total[static_cast<size_t>(id)] = sub[ui];
+        continue;
+      }
+      const size_t pi = static_cast<size_t>(parent[ui]);
+      low[pi] = std::min(low[pi], low[ui]);
+      sub[pi] += sub[ui];
+      if (low[ui] > disc[pi])
+        below[parentEdge[ui]] = u;
+    }
+  }
+  for (const Box3DGlueNode &node : st.glueNodes)
+    for (Box3DJointEntry *e : node.bonds) {
+      if (!e->handle || e->broken)
+        continue;
+      Box3DJointExtra &x = e->ensureExtra();
+      if (x.bondSidesKnown && x.bondSidesSignature == st.glueSignature)
+        continue;
+      const auto na = st.glueNodeOf.find(e->bodyA);
+      const auto nb = st.glueNodeOf.find(e->bodyB);
+      const bool inA = na != st.glueNodeOf.end();
+      const bool inB = nb != st.glueNodeOf.end();
+      float a, b;
+      if (inA && inB &&
+          comp[static_cast<size_t>(na->second)] ==
+              comp[static_cast<size_t>(nb->second)]) {
+        const auto bridge = below.find(e);
+        if (bridge == below.end()) {
+          // Another way round: the two pieces are what it holds.
+          a = sideBodyMass(st.world, e->bodyA);
+          b = sideBodyMass(st.world, e->bodyB);
+        } else {
+          const size_t c =
+              static_cast<size_t>(comp[static_cast<size_t>(na->second)]);
+          const SideSums &far = sub[static_cast<size_t>(bridge->second)];
+          SideSums rest = total[c];
+          rest.mass -= far.mass;
+          rest.fixed -= far.fixed;
+          const bool aBelow = bridge->second == na->second;
+          a = (aBelow ? far : rest).value();
+          b = (aBelow ? rest : far).value();
+        }
+      } else {
+        a = inA ? total[static_cast<size_t>(
+                            comp[static_cast<size_t>(na->second)])]
+                      .value()
+                : sideBodyMass(st.world, e->bodyA);
+        b = inB ? total[static_cast<size_t>(
+                            comp[static_cast<size_t>(nb->second)])]
+                      .value()
+                : sideBodyMass(st.world, e->bodyB);
+      }
+      if (!e->bodyA)
+        a = kFixedMass;
+      x.bondSideMass[0] = a;
+      x.bondSideMass[1] = b;
+      x.bondSidesSignature = st.glueSignature;
+      x.bondSidesKnown = true;
+    }
+}
+
 // The reduced mass of the two sides the bond holds together, kept until the
 // bonds change. Cutting it separates two groups when nothing else joins them;
 // where other bonds do (a loop, a wall), tearing it frees nothing alone, and
 // the two pieces are what it holds.
 float bondReducedMassOf(Box3DSharedState &st, Box3DJointEntry &e) {
   Box3DJointExtra &x = e.ensureExtra();
+  if (!x.bondSidesKnown || x.bondSidesSignature != st.glueSignature) {
+    B3D_PROFILE(kProfileBondSideMass);
+    // All the bonds' sides in one pass (once per change of the glue graph),
+    // else this one's alone.
+    if (st.bondSidesPass != st.glueSignature) {
+      computeBondSides(st);
+      st.bondSidesPass = st.glueSignature;
+    }
+  }
   if (!x.bondSidesKnown || x.bondSidesSignature != st.glueSignature) {
     bool reached = false;
     float a = bondSideMass(st, e.bodyA, &e, e.bodyB, reached);
@@ -372,6 +524,7 @@ bool bondGeometry(Box3DSharedState &st, Box3DJointEntry &e) {
   if (x.bondReady && b3dop::sameFloat(x.bondAreaSetting, e.settings.bondArea))
     return true;
   x.bondReady = false;
+  B3D_PROFILE(kProfileBondPatch);
   b3dop::Box3DWorld &world = st.world;
   // The normal runs from A's centre to B's (from the anchor when A is the
   // world), the area is the smaller face of the two boxes across it.
@@ -472,6 +625,10 @@ void breakBonds(Box3DSharedState &st, float dt) {
   b3dop::Box3DWorld &world = st.world;
   refreshNetworkEntries(st);
   solveCompoundBonds(st, dt);
+  const struct ReportAtEnd {
+    ~ReportAtEnd() { B3D_PROFILE_REPORT("bonds"); }
+  } reportAtEnd;
+  B3D_PROFILE(kProfileBondScan);
   for (auto &network : st.networkEntries)
     for (Box3DJointEntry *e : network.second) {
       if (e->type != b3dop::JointType::Bond || !e->handle || e->broken)

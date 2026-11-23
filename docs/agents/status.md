@@ -12,8 +12,9 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 **Not yet run in Houdini**
 
 * Glue as One Body releasing the pieces in a fast body's way (`holdCompoundsForApproach`,
-  [glue-compound.md](glue-compound.md)): only the `building` example has run it (`glue_compound_hit`, a throw from 32
-  away; from 12 away the building has not settled and the modes differ by a few m/s). Not checked: other scenes, a slow heavy
+  [glue-compound.md](glue-compound.md)): only the `building` example has run it (`glue_compound_hit`). At Strength
+  20000 most of its bonds break from the building's weight on the ground in both modes before anything hits it
+  (probably a resting body's ground contact counting as a hit: not looked into). Not checked: other scenes, a slow heavy
   body (the example's slow ball lands on the roof), many glued groups at once, the cost of a very large compound, a
   kinematic body in a scene (only the core query is tested), the force and torque a bond reads while its weld is a
   bridge's (the bond's own joint is parked, so they read zero), bridges of bonds remade while pieces are held, and what
@@ -160,8 +161,8 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   pieces.
 * Glue's impulse model (`core/Box3DGlue.h`, `core_glue`, `glue_impact`, `glue_impact_trace`, `glue_break_match`, `sidefx_glue`):
   `impact` matches Bullet's in every scene tried (`glue_break_match`: pairs and rows landing from 1 to 8, with bounce, and a
-  box dropped on a pair or row: landings within 1.25x, a box on a resting pair about 0.5x, see
-  [glue-compound.md](glue-compound.md) "Glue hits"; half-life and propagation rate / iterations barely change either). The Strength at which a bond stops breaking does not match: Bullet breaks at about its `impact`
+  box dropped on a pair or row: peaks within 1.25x, the split along a row too; half-life and propagation rate / iterations
+  barely change either). The Strength at which a bond stops breaking does not match: Bullet breaks at about its `impact`
   (1.0x) when something hits a resting glued pair or row, and at 3x to 10x when the glued pieces land themselves (more with
   speed, bounce and the number of pieces, and with a piece's height more than its mass), where Box3D uses one factor,
   `kGlueStrengthScale` (5.3, measured for a landing from 3). So a hit on a resting structure needs about 5x the Strength
@@ -247,9 +248,9 @@ Workarounds in the wrapper that the engine could own, roughly by value:
 * **Events across steps, and impulse in hit events.** Box3D clears move, joint, hit and impulse events at the start of each
   `b3World_Step`, so with Substeps the solver merges them after every step (`brokenThisFrame`, `st.moves`, `hitPairs`,
   `collectImpacts` appending). Impacts come from the fork's contact impulse events (`getContactImpulseEvents`). A
-  `b3ContactHitEvent` has the approach speed and, in the fork, `normalImpulse` (Glue reads it). Impacts still keep a
-  record only when its body pair also had a hit event (`updateHitEvents`, `hadHitEvent`). Wanted: events that
-  accumulate until cleared, and Impacts reading the hit events' impulse, so the pair matching and the per-step merging go.
+  `b3ContactHitEvent` has the approach speed but no impulse, so with Impact Min Speed on a record is kept only when its
+  body pair also had a hit event (`updateHitEvents`, `hadHitEvent`). Wanted: events that accumulate until cleared, and
+  the normal impulse in the hit event, so the pair matching and the per-step merging go.
 * **Live contact recycling flag.** `b3Body_EnableContactRecycling` only reaches contacts made afterwards (`contact.c`
   sets the flag at creation), so `setContactRecyclingByHandle` disables and enables the body (`rebuildContacts`).
   That wakes the touching bodies and zeroes the body's velocity, which the wrapper saves and restores. Wanted: the

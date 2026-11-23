@@ -8,6 +8,7 @@
 #include "Box3DState.h"
 #include "core/Box3DBondNetwork.h"
 #include "core/Box3DCompound.h"
+#include "core/Box3DDebug.h"
 #include "core/Box3DMath.h"
 #include "core/Box3DShapes.h"
 
@@ -1249,8 +1250,8 @@ bool compoundGlueHits(Box3DSharedState &st, BodyHandle body, float &hits) {
           [&st, group](BodyHandle other) {
             return glueSameGroup(st, other, group);
           };
-      st.world.hitImpulsesByShape(c.body, c.shapeImpulse,
-                                  group >= 0 ? &sameGroup : nullptr);
+      st.world.contactImpulsesByShape(c.body, c.shapeImpulse,
+                                      group >= 0 ? &sameGroup : nullptr);
     }
   }
   if (!c.hitsActive)
@@ -1321,6 +1322,7 @@ struct BondJob {
 void solveCompoundBonds(Box3DSharedState &st, float dt) {
   if (!st.bondsInGraph || !(dt > 0.0f))
     return;
+  B3D_PROFILE(kProfileBondSolve);
   b3dop::Box3DWorld &w = st.world;
   // The Bonds inside each compound, and every Bond by its joint (a bridge names
   // the joint it stands in for).

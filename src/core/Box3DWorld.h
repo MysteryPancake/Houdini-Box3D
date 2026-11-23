@@ -554,9 +554,6 @@ public:
                          std::vector<Approach> &out) const;
   // A body's bounds (its shapes' boxes together). False for no shapes.
   bool boundsByHandle(BodyHandle h, double lo[3], double hi[3]) const;
-  // Whether the handle names a body that exists now (a destroyed body's handle
-  // does not).
-  bool bodyExists(BodyHandle h) const;
 
   // The total normal impulse (N*s) of the body's contacts in the last step,
   // leaving out those with the `skipCount` bodies at `skip` (a body's glued
@@ -602,19 +599,6 @@ public:
   // step, so a frame of several steps appends after each one).
   void updateHitEvents(bool append = false);
   bool hadHitEvent(BodyHandle a, BodyHandle b) const;
-  // The normal impulse (N*s) of the contacts of the body that Box3D made a hit
-  // event for in the last step updateHitEvents() read: impacts, never the
-  // weight a resting body carries (that contact approaches too slowly for an
-  // event). `ignore` (optional) is asked about the other body of each event:
-  // true leaves it out.
-  float hitImpulseByHandle(
-      BodyHandle h,
-      const std::function<bool(BodyHandle)> *ignore = nullptr) const;
-  // The same per shape of the body, in the order the shapes were created.
-  // `out` is resized to the shape count; returns it.
-  int hitImpulsesByShape(
-      BodyHandle h, std::vector<float> &out,
-      const std::function<bool(BodyHandle)> *ignore = nullptr) const;
 
   // ---- joints
   // frameA / frameB are world-space frames now (anchor P + orient); the joint

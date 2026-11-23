@@ -30,7 +30,8 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   (`createWeldJoint`, springs off). After every Box3D step `breakBonds` (`Box3DJointBreak.cpp`) reads the joint's
   constraint force and torque (`jointFeedback`: force on B, in world axes; the torque is the couple at the
   anchor; both are the weld's impulse over the whole step divided by the step, `b3Joint_GetConstraintImpulse` in the fork, because the last substep's alone read a few percent of an impact) and splits them in the bond's frame (the normal, area and moduli are the contact patch's, below,
-  found on the first step and kept in `Box3DJointExtra::bond*`). `bondRatio` combines tension, shear, bending and
+  found on the first step and kept in `Box3DJointExtra::bond*`; the two sides' masses for a fracture energy come from
+  one search over the glue graph per change of it, `computeBondSides`, bridges against loops). `bondRatio` combines tension, shear, bending and
   twisting over those (without a patch a square one, section modulus `area * sqrt(area) / 6`), crushing is its own
   strength. Past a ratio of 1 the load beyond the capacity (`bondCapacity`: tensile, else shear, over the area) pushes the
   two sides apart: the bond is torn when the energy that gives them reaches its fracture energy, an impulse of

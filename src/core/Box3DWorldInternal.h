@@ -31,13 +31,6 @@ struct SharedHull {
 };
 using HullRef = std::shared_ptr<const SharedHull>;
 
-// One body's side of a hit event (updateHitEvents).
-struct HitRecord {
-  BodyHandle self = 0, other = 0;
-  uint64_t selfShape = 0; // b3StoreShapeId of self's shape
-  float impulse = 0.0f;   // the whole contact's normal impulse
-};
-
 struct Box3DWorld::Impl {
   b3WorldId worldId = b3_nullWorldId;
   WorldSettings settings;
@@ -46,9 +39,6 @@ struct Box3DWorld::Impl {
   int liveBodies = 0; // every live body
   std::vector<std::pair<BodyHandle, BodyHandle>>
       hitPairs; // updateHitEvents(): (lower, higher) handle, sorted, unique
-  // The last updateHitEvents() call's hit events (that step only, never
-  // appended): one record for each body of each event, sorted by `self`.
-  std::vector<HitRecord> hitRecords;
 
   // Shared hulls this world found or built since the last pruneHulls()
   // (findHull may run on several threads, hence the lock; most calls only

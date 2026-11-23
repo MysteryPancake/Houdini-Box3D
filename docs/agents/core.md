@@ -126,8 +126,6 @@ Bounce iterations / propagation, isotropic inertia tolerance, warm starting, hit
 restitution mixing rules are `WorldSettings` fields, passed to `b3WorldDef` at creation and changed live in
 `applyTuning`. Isotropic tolerance only affects new bodies or bodies whose mass changes (Box3D's rule). The mixing
 callbacks get no context, so each rule is its own plain function chosen by `frictionRule` / `restitutionRule`;
-0 passes nullptr (Box3D's own rule). Shapes are always made with hit events on.
-`updateHitEvents` also keeps each hit's `normalImpulse` per body (`HitRecord`), read by `hitImpulseByHandle` and
-`hitImpulsesByShape` (Glue's hits). With `impactMinSpeed > 0`,
+0 passes nullptr (Box3D's own rule). Shapes are always made with hit events on. With `impactMinSpeed > 0`,
 `recordImpacts` keeps only contact points whose body pair appears in the step's hit events (`updateHitEvents`,
 `hadHitEvent`); 0 keeps every contact. `tests/core_physics.cpp` covers the core side.

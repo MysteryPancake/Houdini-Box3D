@@ -851,6 +851,8 @@ struct Box3DSharedState {
   size_t glueOrphans = 0; // nodes that lost every bond, kept until a rebuild
   // The hash of the bond list (computeGlueSignature), kept up to date.
   uint64_t glueSignature = 0;
+  // The signature computeBondSides last ran for (every bond's sides at once).
+  uint64_t bondSidesPass = ~0ull;
   uint64_t computeGlueSignature() const {
     uint64_t sum = static_cast<uint64_t>(glueBondNodes.size()) * kGlueCountSalt;
     for (const auto &ab : glueBondNodes)

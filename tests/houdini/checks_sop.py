@@ -106,7 +106,7 @@ def test_solver_sop_quadrics():
         ("ellipsoid", "sphere", "Primitive", {("rad",): (0.5, 0.25, 0.5)}, 0.25),
         ("sphere", "sphere", "Primitive", {("rad",): (0.5, 0.5, 0.5)}, 0.5),
         ("metaball", "metaball", None, {("rad", "radius"): (0.5, 0.5, 0.5)}, 0.25),
-        ("circle", "circle", "Polygon", {("rad", "radius"): (0.5, 0.5)}, 0.02),
+        ("circle", "circle", "Polygon", {("rad", "radius"): (0.5, 0.5), ("orient",): 2}, 0.02),
     )
     ground, _ = packed_boxes("sop_quadric_ground", [GROUND])
     rows, ok = [], True

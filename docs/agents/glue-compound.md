@@ -9,8 +9,8 @@
   piece is a plain dynamic body with the default inertia and the same body-level settings (`sameBodyLevel`) and no
   other joint touches it. After the step `expandCompoundMoves` adds a move event per piece (compound pose * offset,
   velocity `pieceVelocity` kept on the entry as `glueLin` / `glueAng`), so the write-back is the usual one, and
-  puts each parked body where its piece is. `compoundGlueHits` reads a piece's hits from `hitImpulsesByShape` of
-  its compound (see "Glue hits" below). With `gluecompoundload` above 0 a piece's hits are at least `gluecompoundload * pieceLoad`
+  puts each parked body where its piece is. `collectGlueHits` reads a piece's hits from `contactImpulsesByShape` of
+  its compound. With `gluecompoundload` above 0 a piece's hits are at least `gluecompoundload * pieceLoad`
   (`core/Box3DCompound.h`): mass times the change of the piece's velocity over the step, from the compound's motion
   before it (`stepPre`, taken by `recordCompoundMotion`) and after, so a body stopped at one point loads the pieces
   away from it too (rotation), and a steady load such as weight loads nothing. The break test is the same.
@@ -48,14 +48,6 @@
     up (`GlueHolds::expire`); the compound is then one group larger than its members and is dissolved and merged whole.
   * Contacts inside a glue group are no hits, so the weight of held pieces resting on the compound breaks nothing
     (`glueSameGroup`, `compoundGlueHits`, `collectGlueHits`).
-  * Glue hits: a hit is a Box3D hit event (`updateHitEvents` after every step, `hitImpulseByHandle` /
-    `hitImpulsesByShape`), with the fork's `normalImpulse` of the whole contact. Only contacts approaching faster than
-    the hit threshold make one, so weight and settling never count and a structure stands at any Strength. The same
-    holds in weld mode. This is a deliberate difference from Bullet, whose `impact` also counts resting load (a column
-    of glued boxes at rest breaks at a low Strength there, never here). It also leaves out the support's push-back:
-    a box dropped on a glued pair at rest reads about half of Bullet's `impact` (`glue_break_match` allows 0.4 to 2).
-    Counting the rise of the non-event contact impulse closes that gap but breaks the `building` example's bonds
-    within a few frames (the settling load rises), so it is not done.
   Bonds that break (`jointsAfterStep`) are taken out of the glue lists in place (`removeGlueBonds`: `glueRemoved`
   -> swapped out of `glueBonds`, the nodes' `partners` / `bonds` and `glueSignature`), so a frame with a few breaks costs a few
   bonds, not the scene. Nodes left without bonds stay until a quarter of them have, then the lists are rebuilt
