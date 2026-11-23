@@ -32,8 +32,6 @@ equal to what its body was built with.
   mass / volume. With computemass the mass is written to `mass` on creation, rebuild or change.
 * **CCD threshold** (`ccdthreshold`) -> `b3BodyDef::safetyFactor` (Box3D's name; negatives keep the default).
 * **Fast rotation** (`fastrotation`) -> `allowFastRotation`; without it Box3D caps spin at `B3_MAX_ROTATION` per Box3D step (the DOP step over Substeps).
-* **Motion locks** (`lock_linear`, `lock_angular`, nonzero = locked world axis) -> `motionLocks`; Box3D zeroes locked
-  velocity components every iteration.
 * **Collision filtering** (`collision_category`, `collision_mask` read as `GA_ROHandleID` so `-1` means every bit;
   `collision_group`) -> the shapes' filter. Affector bodies use the defaults. Bullet's `collisiongroup` /
   `collisionignore` names become these bits in the Box3D Solver SOP (`COLLISION_NAMES_VEX` in `b3d_prepare.py`, a

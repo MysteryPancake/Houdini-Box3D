@@ -60,7 +60,8 @@ INPUT_COLORS = {1: (1.0, 0.6, 0.8)}  # constraints pink, as the Box3D Solver SOP
 # The joint types in Box3D's order (Box3DJoints.h JointType): DOP node `box3d_<name>conrel`, label.
 JOINT_TYPES = [("weld", "Weld"), ("spherical", "Spherical"), ("revolute", "Revolute"),
                ("prismatic", "Prismatic"), ("distance", "Distance"), ("motor", "Motor"),
-               ("parallel", "Parallel"), ("wheel", "Wheel"), ("filter", "Filter"), ("bond", "Bond")]
+               ("parallel", "Parallel"), ("wheel", "Wheel"), ("filter", "Filter"), ("bond", "Bond"),
+               ("motionlock", "Motion Lock")]
 
 # Parameters of the relationship nodes that are no primitive attribute (Box3DJoints.h
 # jointNodeToggles, kAttributesReplaceName): left out.

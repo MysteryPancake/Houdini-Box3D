@@ -700,7 +700,6 @@ const TestCase kTests[] = {
     {"stored_pose", testStoredPose},
     {"handle_build", testHandleBuild},
     {"mid_sim_changes", testMidSimChanges},
-    {"motion_locks", testMotionLocks},
     {"fast_rotation", testFastRotation},
     {"body_props_equality", testBodyPropsEquality},
     {"body_props_sanitize", testBodyPropsSanitize},
@@ -717,6 +716,7 @@ const TestCase kTests[] = {
     {"estimated_bytes", testEstimatedBytes},
     {"sleep_enable", testSleepEnable},
     {"bulk_create", testBulkCreate},
+    {"step_profile", testStepProfile},
 };
 
 // Usage: b3dop_core_physics [--list | <case>...]

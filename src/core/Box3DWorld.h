@@ -192,22 +192,6 @@ struct CollisionFilter {
   bool operator!=(const CollisionFilter &o) const { return !(*this == o); }
 };
 
-// Box3D's b3MotionLocks: stop translation along / rotation about individual
-// WORLD axes (Box3D zeroes those velocity components every solver iteration).
-// Index 0 / 1 / 2 = X / Y / Z.
-struct MotionLocks {
-  bool linear[3] = {false, false, false};
-  bool angular[3] = {false, false, false};
-
-  bool operator==(const MotionLocks &o) const {
-    for (int i = 0; i < 3; ++i)
-      if (linear[i] != o.linear[i] || angular[i] != o.angular[i])
-        return false;
-    return true;
-  }
-  bool operator!=(const MotionLocks &o) const { return !(*this == o); }
-};
-
 // The settings of a body that can change while it lives: the solver compares
 // two of these and calls only the setters of Box3DWorld for what differs. Built
 // from a point's attributes, else Box3D Data's values. operator== compares
@@ -266,7 +250,6 @@ struct BodyProps {
       0.5f;
   CollisionFilter
       filter; // `collision_category` / `collision_mask` / `collision_group`
-  MotionLocks locks; // `lock_linear` / `lock_angular`
 
   // The custom inertia matches: both off, or both on with the same tensor.
   bool sameInertia(const BodyProps &o) const {
@@ -303,8 +286,7 @@ struct BodyProps {
            enableSleep == o.enableSleep && enabled == o.enabled &&
            fastObject == o.fastObject && fastRotation == o.fastRotation &&
            sameFloat(sleepThreshold, o.sleepThreshold) &&
-           sameFloat(ccdThreshold, o.ccdThreshold) && filter == o.filter &&
-           locks == o.locks;
+           sameFloat(ccdThreshold, o.ccdThreshold) && filter == o.filter;
   }
   bool operator!=(const BodyProps &o) const { return !(*this == o); }
 
@@ -473,8 +455,6 @@ public:
   // kept) so they are rebuilt with the new setting. A sleeping, static or
   // kinematic body only affects contacts made from now on.
   void setContactRecyclingByHandle(BodyHandle h, bool flag);
-  void setMotionLocksByHandle(
-      BodyHandle h, const MotionLocks &locks); // zeroes newly locked velocity
   void setEnabledByHandle(BodyHandle h,
                           bool enabled); // disabled: no motion, no collisions
   // Remove every shape (releasing its hulls, dropping its contacts) so new ones
@@ -670,6 +650,36 @@ public:
   // new world).
   void applyTuning(const WorldSettings &s);
 
+  // Box3D's own timing of the most recent step, in milliseconds (all 0 if no
+  // world). Some stages sit inside others: `step` is the whole step, and the
+  // solver's setup, constraints, transforms, events and refit are part of it,
+  // and the constraint parts are inside `constraints`.
+  struct StepProfile {
+    float step = 0.0f;
+    float pairs = 0.0f;
+    float collide = 0.0f;
+    float solverSetup = 0.0f;
+    float constraints = 0.0f;
+    // The parts of the constraint solve, summed over the sub-steps.
+    float prepareConstraints = 0.0f;
+    float integrateVelocities = 0.0f;
+    float warmStart = 0.0f;
+    float solveImpulses = 0.0f;
+    float integratePositions = 0.0f;
+    float relaxImpulses = 0.0f;
+    float restitution = 0.0f;
+    float storeImpulses = 0.0f;
+    float splitIslands = 0.0f; // runs beside the solve, not inside it
+    float transforms = 0.0f;
+    float events = 0.0f; // joint and hit events
+    float refit = 0.0f;
+    float bullets = 0.0f; // continuous collision of fast bodies
+    float sensorHits = 0.0f;
+    float sleepIslands = 0.0f;
+    float sensors = 0.0f;
+  };
+  StepProfile stepProfile() const;
+
   int recycledContactCount()
       const; // contacts recycled in the most recent step (0 if no world)
   bool isAwakeByHandle(BodyHandle h) const;
@@ -694,7 +704,6 @@ public:
   bool isSleepEnabledByHandle(BodyHandle h) const;
   bool isEnabledByHandle(BodyHandle h) const;
   bool fastRotationByHandle(BodyHandle h) const;
-  MotionLocks motionLocksByHandle(BodyHandle h) const;
   float sleepThresholdByHandle(BodyHandle h) const;
   float ccdThresholdByHandle(BodyHandle h) const;
   float massByHandle(BodyHandle h) const;

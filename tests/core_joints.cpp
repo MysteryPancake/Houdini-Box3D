@@ -280,6 +280,51 @@ int main() {
     CHECK(gap[0] < 0.1 && std::fabs(gap[1] - 2.0) < 1e-3);
   }
 
+  // ---- motion lock to the world: a locked axis holds, the others move ----
+  {
+    Box3DWorld w;
+    CHECK(w.create(ws));
+    const BodyHandle slide = box(w, 0, 5, 0);
+    JointSettings ys = Box3DWorld::defaultJointSettings(JointType::MotionLock);
+    CHECK(!ys.lockLinearX && !ys.lockLinearY && !ys.lockLinearZ &&
+          !ys.lockAngularXY);
+    ys.lockLinearY = true;
+    const JointHandle jy = w.createJoint(JointType::MotionLock, 0, slide,
+                                         frame(0, 5, 0), frame(0, 5, 0), ys);
+    CHECK(jy != 0);
+    const float vx[3] = {2, 0, 0}, none[3] = {0, 0, 0};
+    CHECK(w.setVelocityByHandle(slide, vx, none));
+
+    const BodyHandle spin = box(w, 10, 5, 0);
+    JointSettings as = Box3DWorld::defaultJointSettings(JointType::MotionLock);
+    as.lockLinearX = as.lockLinearY = as.lockLinearZ = true;
+    as.lockAngularXY = true;
+    const JointHandle j = w.createJoint(JointType::MotionLock, 0, spin,
+                                        frame(10, 5, 0), frame(10, 5, 0), as);
+    CHECK(j != 0);
+    const float turn[3] = {3, 3, 3};
+    CHECK(w.setVelocityByHandle(spin, none, turn));
+    steps(w, 60);
+
+    double p[3], q3[3];
+    pos(w, slide, p);
+    CHECK(std::fabs(p[1] - 5.0) < 1e-3 && p[0] > 1.5); // slid along x only
+    float rot[4], lin[3], ang[3];
+    CHECK(w.getVelocityByHandle(spin, lin, ang));
+    CHECK(std::fabs(ang[0]) < 0.05f && std::fabs(ang[1]) < 0.05f &&
+          std::fabs(ang[2]) > 1.0f); // only the spin about z is left
+    w.getTransformByHandle(spin, q3, rot);
+    const double at[3] = {10, 5, 0};
+    CHECK(dist(q3, at) < 0.02); // a point
+
+    // Settings change on a live joint: turn the Y lock off and it falls.
+    ys.lockLinearY = false;
+    w.updateJoint(jy, JointType::MotionLock, ys);
+    steps(w, 30);
+    pos(w, slide, p);
+    CHECK(p[1] < 4.5);
+  }
+
   // ---- weld to the world: the body hangs where it is ----
   {
     Box3DWorld w;

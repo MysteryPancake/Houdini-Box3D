@@ -152,6 +152,22 @@ def joint_parallel():
                 "would have turned 229)")
 
 
+def joint_motionlock():
+    # Both anchors at the piece's centre. Default: the three position locks, so it stays put under gravity but
+    # still spins; with Lock Tilt on, only the spin about z is left.
+    centre = (START, START)
+    dop, n = pair("motionlock", "box3d_motionlockconrel", w=(2, 0, 3), anchors=centre)
+    p, _, w = moving_state_at(dop, n[1], 48)
+    held = dist(p, START) < 0.02 and abs(w[0]) > 0.5 and abs(w[2]) > 1.0
+    dop, n = pair("motionlock_tilt", "box3d_motionlockconrel", w=(2, 0, 3), anchors=centre,
+                  parms={"lock_angular_xy": 1})
+    p2, _, w2 = moving_state_at(dop, n[1], 48)
+    tilt = dist(p2, START) < 0.02 and abs(w2[0]) < 0.1 and abs(w2[1]) < 0.1 and abs(w2[2]) > 1.0
+    return held and tilt, (f"motion lock (spun 2 rad/s about x and 3 about z): moved {dist(p, START):.3f}, w "
+                           f"({w[0]:.2f}, {w[1]:.2f}, {w[2]:.2f}) (expected held, spinning); with Lock Tilt: "
+                           f"w ({w2[0]:.2f}, {w2[1]:.2f}, {w2[2]:.2f}) (expected only z left)")
+
+
 def joint_wheel():
     rows, ok = [], True
     # Both anchors at the wheel's centre: a wheel spins about its anchor (on the face it would
@@ -206,17 +222,18 @@ def swing_track(dop, name, frame=48):
 
 
 JOINTS = (joint_weld, joint_spherical, joint_revolute, joint_prismatic, joint_distance, joint_motor,
-          joint_parallel, joint_wheel, joint_filter)
+          joint_parallel, joint_wheel, joint_filter, joint_motionlock)
 
 
 def test_joint_types():
-    """Each of the nine Box3D joint types, at its node defaults (plus the settings named in its
+    """Each of the Box3D joint types, at its node defaults (plus the settings named in its
     line), between a fixed piece and a hanging one: weld holds position and rotation; spherical
     keeps the anchor point but lets the piece swing out of plane; revolute swings only about z;
     prismatic slides only along x without turning; distance keeps the length; motor drives the
     piece at its linear velocity; parallel keeps the z axes together but not the position; wheel
     spins freely about z only, and its spin motor drives it; filter lets overlapping pieces pass
-    through each other."""
+    through each other; motion lock holds the position of its anchor, and with Lock Tilt
+    keeps only the spin about z."""
     results = []
     for check in JOINTS:
         ok, msg = check()

@@ -302,6 +302,17 @@ b3JointId createFilterJoint(const JointBuild &j) {
   return b3CreateFilterJoint(j.world, &d);
 }
 
+b3JointId createMotionLockJoint(const JointBuild &j) {
+  const JointSettings &s = j.s;
+  b3MotionLockJointDef d = b3DefaultMotionLockJointDef();
+  j.fillBase(d.base);
+  d.lockLinearX = s.lockLinearX;
+  d.lockLinearY = s.lockLinearY;
+  d.lockLinearZ = s.lockLinearZ;
+  d.lockAngularXY = s.lockAngularXY;
+  return b3CreateMotionLockJoint(j.world, &d);
+}
+
 b3JointId createJointOfType(JointType type, const JointBuild &j) {
   switch (type) {
   case JointType::Weld:
@@ -323,6 +334,8 @@ b3JointId createJointOfType(JointType type, const JointBuild &j) {
     return createWheelJoint(j);
   case JointType::Filter:
     return createFilterJoint(j);
+  case JointType::MotionLock:
+    return createMotionLockJoint(j);
   }
   return b3_nullJointId;
 }
@@ -463,6 +476,15 @@ JointSettings Box3DWorld::defaultJointSettings(JointType type) {
   case JointType::Filter: {
     static const b3FilterJointDef d = b3DefaultFilterJointDef();
     base = &d.base;
+    break;
+  }
+  case JointType::MotionLock: {
+    static const b3MotionLockJointDef d = b3DefaultMotionLockJointDef();
+    base = &d.base;
+    s.lockLinearX = d.lockLinearX;
+    s.lockLinearY = d.lockLinearY;
+    s.lockLinearZ = d.lockLinearZ;
+    s.lockAngularXY = d.lockAngularXY;
     break;
   }
   }
@@ -647,6 +669,12 @@ void Box3DWorld::updateJoint(JointHandle h, JointType type,
     b3WheelJoint_EnableSteeringLimit(id, s.enableSteeringLimit);
     b3WheelJoint_SetSteeringLimits(id, s.lowerSteeringLimit,
                                    s.upperSteeringLimit);
+    break;
+  case JointType::MotionLock:
+    b3MotionLockJoint_EnableLinearLock(id, 0, s.lockLinearX);
+    b3MotionLockJoint_EnableLinearLock(id, 1, s.lockLinearY);
+    b3MotionLockJoint_EnableLinearLock(id, 2, s.lockLinearZ);
+    b3MotionLockJoint_EnableAngularLock(id, s.lockAngularXY);
     break;
   case JointType::Filter:
     break;

@@ -29,6 +29,7 @@ void initializeSIM(void *) {
   IMPLEMENT_DATAFACTORY(SIM_Box3DConRelWheel);
   IMPLEMENT_DATAFACTORY(SIM_Box3DConRelFilter);
   IMPLEMENT_DATAFACTORY(SIM_Box3DConRelBond);
+  IMPLEMENT_DATAFACTORY(SIM_Box3DConRelMotionLock);
   IMPLEMENT_DATAFACTORY(SIM_SolverBox3D);
 
   // Box3D Data sits under an object's Geometry (kBox3DDataName), as Bullet Data

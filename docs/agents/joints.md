@@ -19,7 +19,7 @@ current are `current_*` (`current_P` / `current_orient` on network points, and t
 not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `current_*`), as the Bullet solver does.
 
 **Core** (`Box3DJoints.h`, `Box3DWorld`, tested in `tests/core_joints.cpp`):
-* `JointType` (weld, spherical, revolute, prismatic, distance, motor, parallel, wheel, filter) and `JointSettings`:
+* `JointType` (weld, spherical, revolute, prismatic, distance, motor, parallel, wheel, filter, bond, motionlock) and `JointSettings`:
   every setting of every type in Box3D units (radians, rad/s, Hz). Box3D's FLT_MAX caps are negative values here
   (unlimited): break thresholds, parallel `maxTorque`, distance `maxLength`, `maxTensionForce`,
   `maxCompressionForce` (Box3D's signed `lowerSpringForce` / `upperSpringForce`, renamed so the sign cannot be got
@@ -143,6 +143,7 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   clamped first (`sanitized`) to what Box3D asserts on: non-negative stiffness / damping / caps, ordered limits,
   cone angle 0..pi/2, revolute target -pi..pi, finite vectors, unit quaternions (the test checks
   `assertCount` does not move in a RelWithDebInfo build). Filter joints always have `collideConnected` off.
+* Motion Lock (`b3MotionLockJointDef`, settings `lockLinearX/Y/Z`, `lockAngularXY`; node parameters `lock_x`, `lock_y`, `lock_z`, `lock_angular_xy`) replaces Box3D's removed per-body motion locks, so there is no `lock_linear` / `lock_angular` point attribute. The locks are along frame A's axes; a world-anchored line (empty name on one end) with an identity `orient` locks world axes. The node defaults to the three position locks.
 * `updateJoint` pushes every setting of the type through Box3D's setters (all are live) and wakes the bodies.
   Bodies, frames and type cannot change live: the caller recreates the joint.
 * `jointFeedback`: constraint force / torque (vectors), linear / angular separation, and per-type readings named

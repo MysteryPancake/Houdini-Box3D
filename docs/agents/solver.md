@@ -78,6 +78,10 @@ Stats view nest the stage under its category, as Bullet's Pre-Solve / Stepping S
 Updating Bodies, Updating Colliders, Removing Bodies, Updating Constraints. Stepping Simulation: Applying Forces, Stepping World.
 Post-Solve: Exporting Simulation Results, Updating Constraint States, Recording Impacts, Updating Points, and Exporting
 Collision Shapes (Export Collision Shapes on). Opened only on the solve thread.
+While a profile records, `reportStepProfile` (`SIM_SolverBox3D.cpp`) adds one `Stepping Simulation/Box3D <part>` event per part of Box3D's own
+step timing (`Box3DWorld::stepProfile`, `b3World_GetProfile`: Pairs, Collide, Solver Setup, Constraints and its parts (Prepare, Integrate Velocities, Warm Start, Solve, Integrate Positions, Relax, Restitution, Store
+Impulses), Split Islands (runs beside the constraints), Transforms, Events, Refit, Fast Bodies, Sensors, Sleep Islands), each given Box3D's time with `overrideTime`. Their sum is about Stepping World's time and they sit beside it, so
+do not add them to it.
 
 **Guide geometry** (`Box3DGuide.cpp`; Guide Options: Show Collision Shapes, Shape Color). A `SIM_GuidePerObject`
 built by `buildCollisionGuide` from the live world (`bodyShapeOutlines`: hulls, spheres, capsules), each body placed at
@@ -194,7 +198,7 @@ Only dynamic bodies are written; of several points sharing an `id`, only the fir
 Box3D starts no threads of its own: every world gets a `Box3DHoudiniTasks` (`b3dop::TaskRunner` over `UT_TaskGroup`,
 each task in a `UT_TaskScope`), so all worlds share Houdini's TBB pool. Safe because tasks carry their worker index, the
 stepping thread runs solver worker 0 (which can finish alone, so a busy pool cannot deadlock), and `step` runs inside
-`tbb::this_task_arena::isolate`. Without a runner (the tests) Box3D uses its own pool.
+`tbb::this_task_arena::isolate`. Without a runner (the tests) Box3D uses its own pool. Driving the step with `b3World_BeginStep` / `ContinueStep` over the same runner gave the same step time (piles of 4000 and 30000 boxes), so the callbacks stay.
 
 Worker count: `autothreads` (off by default) = `UT_Thread::getNumProcessors()`, else `threads` (default
 `defaultWorkerCount()`, `Box3DCpu.h`: physical performance cores), never above Houdini's count; a change rebuilds the

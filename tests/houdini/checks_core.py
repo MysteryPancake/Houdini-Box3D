@@ -43,13 +43,13 @@ def test_nodes():
     """The plugin's DOP node types are registered, and each joint node's Data Name defaults to its type,
     capitalised like SideFX's relationship nodes (Weld, Revolute, ...)."""
     cat = hou.dopNodeTypeCategory()
-    joints = ["weld", "spherical", "revolute", "prismatic", "distance", "motor", "parallel", "wheel", "filter"]
+    joints = ["weld", "spherical", "revolute", "prismatic", "distance", "motor", "parallel", "wheel", "filter", "motionlock"]
     missing = [n for n in ["box3d_solver", "box3d_data"] + [f"box3d_{j}conrel" for j in joints]
                if hou.nodeType(cat, n) is None]
     if missing:
         return [Result("nodes", Result.FAIL,
                        f"node types not found: {', '.join(missing)}. Is the plugin in the dso folder?")]
-    results = [Result("nodes", Result.PASS, "Box3D Solver, Box3D Data and the nine joint nodes are registered")]
+    results = [Result("nodes", Result.PASS, "Box3D Solver, Box3D Data and the joint nodes are registered")]
     dop = new_dopnet()
     wrong = []
     for j in joints:
@@ -60,7 +60,7 @@ def test_nodes():
             names = ", ".join(sorted(pt.name() for pt in node.parmTuples() if "name" in pt.name().lower()))
             raise SetupError(f"{node.path()}: no Data Name parameter found under the names tried; "
                              f"parameters with 'name' in them: {names}")
-        if dataname != j.capitalize() or not label.startswith("Box3D "):
+        if dataname != {"motionlock": "Motion Lock"}.get(j, j.capitalize()) or not label.startswith("Box3D "):
             wrong.append(f"{j}: label '{label}', Data Name '{dataname}'")
     results.append(Result("nodes", Result.FAIL if wrong else Result.PASS,
                           "; ".join(wrong) if wrong else "joint nodes have 'Box3D ...' labels and Data Name = type, capitalised"))

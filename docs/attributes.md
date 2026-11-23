@@ -32,7 +32,6 @@ All are optional except `P`. A missing one uses the Box3D Data value. Every step
 | `fastobject` | int | Nonzero = can't pass through other moving bodies |
 | `fastrotation` | int | Nonzero = no spin speed limit (round pieces only) |
 | `contactrecycling` | int | `0` = never recycle this body's contacts |
-| `lock_linear`, `lock_angular` | vector | Per world axis, nonzero = locked |
 | `collision_category`, `collision_mask`, `collision_group` | int | Collision filtering (below) |
 | `bullet_georep` | string | Collision shape (see [Shapes](shapes.md)) |
 | `bullet_autofit`, `bullet_primS`, `bullet_radius`, `bullet_length`, `bullet_primT`, `bullet_primR` | various | Hand-set box, sphere or capsule |

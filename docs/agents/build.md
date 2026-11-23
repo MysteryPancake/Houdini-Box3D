@@ -84,7 +84,7 @@ that every module is registered and every test named and documented, lint (pyfla
 the docs name tests that exist, `baseline.json`, and that no file mixes line endings.
 
 Core tests (`ctest`; each `tests/core_<name>.cpp` is `b3dop_core_<name>`, see `CMakeLists.txt`): smoke, physics
-(handle API, shapes, mass, setters, locks, CCD, filtering, forces, ...), mesh, heightfield, ground, quadrics, joints,
+(handle API, shapes, mass, setters, CCD, filtering, forces, ...), mesh, heightfield, ground, quadrics, joints,
 sidefx, glue, rbdobject, worlds, taskrunner and threads (`[workers] ...` arguments; threads fails if 1 vs N workers
 differ by more than 1e-4). The file's header comment says what it covers. The physics cases are in `core_physics.cpp`
 (case list and `main`), `physics_shapes.cpp` and `physics_bodies.cpp`, declared in `PhysicsCases.h`.
@@ -101,7 +101,8 @@ pile, edit, collider, animated, joints, wall), each with parameters (`name:key=v
   (new objects are solved from frame 2).
 * `hou.perfMon` records the solvers' stages (`Pre-Solve/...`, `Stepping Simulation/...`, `Post-Solve/...` are nested
   under the solver node; Bullet has none, only its node time) and the time of every DOP node. What is not
-  `Stepping World` is the plugin's own code, the part to optimise. A frame's total minus its nodes is the DOP engine.
+  `Stepping World` is the plugin's own code, the part to optimise. `Stepping World` is split into `Box3D <part>` rows
+  (Box3D's own step timing, `solver.md`): they are inside it, not extra. A frame's total minus its nodes is the DOP engine.
 * Results go to `tests/houdini/out/bench/` (`latest.json` and a timestamped copy); `--compare file.json` prints the
   ratio per phase. `--repeat N` keeps the median run, `--threads N` sets `HOUDINI_MAXTHREADS`, `--budget` caps a run.
 * Copy to Points takes no point attributes onto packed copies unless `targetattribs` / `applyattribs1` are set

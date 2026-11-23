@@ -376,17 +376,6 @@ bool isIdentityRotation(const float q[4]) {
                 std::fabs(q[2]) < 1e-6f);
 }
 
-b3MotionLocks toB3Locks(const MotionLocks &l) {
-  b3MotionLocks out = {};
-  out.linearX = l.linear[0];
-  out.linearY = l.linear[1];
-  out.linearZ = l.linear[2];
-  out.angularX = l.angular[0];
-  out.angularY = l.angular[1];
-  out.angularZ = l.angular[2];
-  return out;
-}
-
 b3Filter toB3Filter(const CollisionFilter &f) {
   b3Filter out = b3DefaultFilter();
   out.categoryBits = f.category;
@@ -482,7 +471,7 @@ b3RestitutionCallback *restitutionRule(WorldSettings::RestitutionMixing mode) {
 
 // Box3D's task hooks, forwarding to the world's TaskRunner (userContext).
 void *enqueueTask(b3TaskCallback *task, void *taskContext, void *userContext,
-                  const char * /*name*/) {
+                  b3TaskType /*type*/) {
   TaskRunner *runner = static_cast<TaskRunner *>(userContext);
   // A non-null handle means "queued"; null tells Box3D the task already ran
   // inline.
@@ -631,7 +620,6 @@ BodyHandle Box3DWorld::createBody(const BodySettings &body,
   def.isBullet = p.fastObject;
   def.allowFastRotation = p.fastRotation;
   def.enableContactRecycling = p.contactRecycling;
-  def.motionLocks = toB3Locks(p.locks);
   if (p.sleepThreshold >= 0.0f && std::isfinite(p.sleepThreshold))
     def.sleepThreshold = p.sleepThreshold;
   if (p.ccdThreshold >= 0.0f &&
@@ -1509,27 +1497,6 @@ void Box3DWorld::setGravityScaleByHandle(BodyHandle h, float gravityScale) {
     b3Body_SetGravityScale(b3LoadBodyId(h), gravityScale);
 }
 
-void Box3DWorld::setMotionLocksByHandle(BodyHandle h,
-                                        const MotionLocks &locks) {
-  if (h)
-    b3Body_SetMotionLocks(b3LoadBodyId(h),
-                          toB3Locks(locks)); // no-op when unchanged
-}
-
-MotionLocks Box3DWorld::motionLocksByHandle(BodyHandle h) const {
-  MotionLocks out;
-  if (!h)
-    return out;
-  const b3MotionLocks l = b3Body_GetMotionLocks(b3LoadBodyId(h));
-  out.linear[0] = l.linearX;
-  out.linear[1] = l.linearY;
-  out.linear[2] = l.linearZ;
-  out.angular[0] = l.angularX;
-  out.angular[1] = l.angularY;
-  out.angular[2] = l.angularZ;
-  return out;
-}
-
 namespace {
 
 // Drops a body's contacts so the next step rebuilds them (disable + enable).
@@ -2358,6 +2325,35 @@ float Box3DWorld::gravityScaleByHandle(BodyHandle h) const {
 
 bool Box3DWorld::contactRecyclingByHandle(BodyHandle h) const {
   return h && b3Body_IsContactRecyclingEnabled(b3LoadBodyId(h));
+}
+
+Box3DWorld::StepProfile Box3DWorld::stepProfile() const {
+  StepProfile out;
+  if (!isValid())
+    return out;
+  const b3Profile p = b3World_GetProfile(myImpl->worldId);
+  out.step = p.step;
+  out.pairs = p.pairs;
+  out.collide = p.collide;
+  out.solverSetup = p.solverSetup;
+  out.constraints = p.constraints;
+  out.prepareConstraints = p.prepareConstraints;
+  out.integrateVelocities = p.integrateVelocities;
+  out.warmStart = p.warmStart;
+  out.solveImpulses = p.solveImpulses;
+  out.integratePositions = p.integratePositions;
+  out.relaxImpulses = p.relaxImpulses;
+  out.restitution = p.restitution;
+  out.storeImpulses = p.storeImpulses;
+  out.splitIslands = p.splitIslands;
+  out.transforms = p.transforms;
+  out.events = p.jointEvents + p.hitEvents;
+  out.refit = p.refit;
+  out.bullets = p.bullets;
+  out.sensorHits = p.sensorHits;
+  out.sleepIslands = p.sleepIslands;
+  out.sensors = p.sensors;
+  return out;
 }
 
 int Box3DWorld::recycledContactCount() const {

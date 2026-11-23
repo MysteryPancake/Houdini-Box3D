@@ -33,8 +33,11 @@ enum class JointType : int {
   // a rigid weld that breaks by stress (Box3DBond.h): strengths in Pa over the
   // contact area instead of force / torque thresholds
   Bond,
+  // restricts the motion of B in frame A to a point, line or plane (and
+  // rotation about frame A's z axis only): the way to lock body axes
+  MotionLock,
 };
-constexpr int kJointTypeCount = 10;
+constexpr int kJointTypeCount = 11;
 
 constexpr unsigned jointBit(JointType t) {
   return 1u << static_cast<unsigned>(t);
@@ -43,16 +46,16 @@ constexpr unsigned kAllJoints = (1u << kJointTypeCount) - 1u;
 
 inline const char *jointTypeName(JointType t) {
   static const char *const kNames[kJointTypeCount] = {
-      "weld",  "spherical", "revolute", "prismatic", "distance",
-      "motor", "parallel",  "wheel",    "filter",    "bond"};
+      "weld",     "spherical", "revolute", "prismatic", "distance",  "motor",
+      "parallel", "wheel",     "filter",   "bond",      "motionlock"};
   const int i = static_cast<int>(t);
   return (i >= 0 && i < kJointTypeCount) ? kNames[i] : "";
 }
 
 inline const char *jointTypeLabel(JointType t) {
   static const char *const kLabels[kJointTypeCount] = {
-      "Weld",  "Spherical", "Revolute", "Prismatic", "Distance",
-      "Motor", "Parallel",  "Wheel",    "Filter",    "Bond"};
+      "Weld",     "Spherical", "Revolute", "Prismatic", "Distance",   "Motor",
+      "Parallel", "Wheel",     "Filter",   "Bond",      "Motion Lock"};
   const int i = static_cast<int>(t);
   return (i >= 0 && i < kJointTypeCount) ? kLabels[i] : "";
 }
@@ -148,6 +151,12 @@ struct JointSettings {
   bool enableSteeringLimit = false;
   float lowerSteeringLimit = 0.0f;
   float upperSteeringLimit = 0.0f;
+
+  // Motion lock: what is restricted, along frame A's axes.
+  bool lockLinearX = false;
+  bool lockLinearY = false;
+  bool lockLinearZ = false;
+  bool lockAngularXY = false; // only rotation about frame A's z is left
 
   // Bond (Box3DBond.h).
   float bondTensile = 1.0e6f;     // Pa
@@ -269,7 +278,8 @@ inline const std::vector<JointParam> &jointParams() {
                      M = jointBit(JointType::Motor),
                      Pa = jointBit(JointType::Parallel),
                      Wh = jointBit(JointType::Wheel),
-                     B = jointBit(JointType::Bond);
+                     B = jointBit(JointType::Bond),
+                     ML = jointBit(JointType::MotionLock);
   // Every type except filter, which has no constraint to tune or break.
   constexpr unsigned C = kAllJoints & ~jointBit(JointType::Filter);
   static const std::vector<JointParam> kParams = {
@@ -290,6 +300,16 @@ inline const std::vector<JointParam> &jointParams() {
       jp("constraint_damping_ratio", "Constraint Damping Ratio", C,
          &S::constraintDampingRatio,
          "How much the joint damps that pull. 1 is critical damping."),
+
+      // ---- motion lock ----
+      jp("lock_x", "Lock X", ML, &S::lockLinearX,
+         "Stop movement along frame A's x axis."),
+      jp("lock_y", "Lock Y", ML, &S::lockLinearY,
+         "Stop movement along frame A's y axis."),
+      jp("lock_z", "Lock Z", ML, &S::lockLinearZ,
+         "Stop movement along frame A's z axis."),
+      jp("lock_angular_xy", "Lock Tilt", ML, &S::lockAngularXY,
+         "Only allow rotation about frame A's z axis."),
 
       // ---- bond ----
       jp("bond_tensile", "Tensile Strength", B, &S::bondTensile,
@@ -766,6 +786,9 @@ inline JointSettings nodeJointDefaults(JointType t, JointSettings s) {
     break;
   case JointType::Parallel:
     s.maxTorque = 1000.0f; // behind Limit Torque
+    break;
+  case JointType::MotionLock:
+    s.lockLinearX = s.lockLinearY = s.lockLinearZ = true; // a point
     break;
   case JointType::Wheel:
     s.maxSpinTorque = 100.0f;

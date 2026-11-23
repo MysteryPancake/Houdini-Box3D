@@ -12,64 +12,6 @@
 #include <limits>
 #include <vector>
 
-// Motion locks (Box3D's b3MotionLocks, world axes).
-void testMotionLocks() {
-  using namespace b3dop;
-  KeyedWorld lw;
-  CHECK(lw.create(WorldSettings()));
-  const float qid[4] = {0, 0, 0, 1};
-  ShapeSpec cube;
-  // linear Y locked: gravity doesn't move it; X still moves
-  BodySettings ly;
-  ly.props.locks.linear[1] = true;
-  const double p0[3] = {0, 5, 0};
-  const BodyHandle a = lw.createBody(ly, p0, qid);
-  CHECK(lw.createShape(a, ly, cube));
-  CHECK(lw.motionLocksByHandle(a) == ly.props.locks);
-  const float vx[3] = {2, 0, 0}, w0[3] = {0, 0, 0};
-  CHECK(lw.setVelocityByHandle(a, vx, w0));
-  // angular X and Z locked, spun about all three: only Y rotation survives
-  BodySettings az;
-  az.props.locks.angular[0] = az.props.locks.angular[2] = true;
-  az.props.gravityScale = 0.0f;
-  const double p1[3] = {10, 5, 0};
-  const BodyHandle b = lw.createBody(az, p1, qid);
-  CHECK(lw.createShape(b, az, cube));
-  const float v0[3] = {0, 0, 0}, spin[3] = {3, 3, 3};
-  CHECK(lw.setVelocityByHandle(b, v0, spin));
-  for (int i = 0; i < 60; ++i)
-    lw.step(1.0f / 60.0f);
-  double p[3];
-  float q[4], lin[3], ang[3];
-  CHECK(lw.getTransformByHandle(a, p, q) && std::fabs(p[1] - 5.0) < 1e-4 &&
-        p[0] > 1.5);
-  CHECK(lw.getVelocityByHandle(b, lin, ang) && ang[0] == 0.0f &&
-        ang[2] == 0.0f && std::fabs(ang[1]) > 1.0f);
-  CHECK(lw.getTransformByHandle(b, p, q) && std::fabs(q[0]) < 1e-4 &&
-        std::fabs(q[2]) < 1e-4); // rotated about Y only
-  // unlock mid-sim: it falls; lock again: the locked velocity is zeroed and
-  // it stops
-  lw.setMotionLocksByHandle(a, MotionLocks());
-  for (int i = 0; i < 30; ++i)
-    lw.step(1.0f / 60.0f);
-  CHECK(lw.getTransformByHandle(a, p, q) && p[1] < 4.5);
-  MotionLocks all;
-  for (int i = 0; i < 3; ++i)
-    all.linear[i] = all.angular[i] = true;
-  lw.setMotionLocksByHandle(a, all);
-  CHECK(lw.motionLocksByHandle(a) == all);
-  CHECK(lw.getVelocityByHandle(a, lin, ang) && lin[0] == 0.0f &&
-        lin[1] == 0.0f && lin[2] == 0.0f);
-  double before[3];
-  lw.getTransformByHandle(a, before, q);
-  for (int i = 0; i < 30; ++i)
-    lw.step(1.0f / 60.0f);
-  CHECK(lw.getTransformByHandle(a, p, q) &&
-        std::fabs(p[0] - before[0]) < 1e-5 &&
-        std::fabs(p[1] - before[1]) < 1e-5);
-  std::printf("motion lock checks done\n");
-}
-
 // Fast rotation (allowFastRotation: no angular speed cap).
 void testFastRotation() {
   using namespace b3dop;
@@ -188,8 +130,6 @@ void testBodyPropsEquality() {
       [](BodyProps &p) { p.filter.category = 1; },
       [](BodyProps &p) { p.filter.mask = 1; },
       [](BodyProps &p) { p.filter.group = 1; },
-      [](BodyProps &p) { p.locks.linear[2] = true; },
-      [](BodyProps &p) { p.locks.angular[1] = true; },
   };
   for (size_t i = 0; i < edits.size(); ++i) {
     BodyProps changed = base;
@@ -219,9 +159,8 @@ void testBodyPropsEquality() {
   CHECK(ca == cb);
   cb.customInertia = false;
   CHECK(cb == base); // a tensor left behind while off is no difference
-  // 26 independent edits: one per scalar, and the filter and lock members one
-  // by one
-  CHECK(edits.size() == 26);
+  // 24 independent edits: one per scalar, and the filter members one by one
+  CHECK(edits.size() == 24);
   std::printf("BodyProps comparison checks done\n");
 }
 
@@ -1234,4 +1173,43 @@ void testBulkCreate() {
   for (int i = 0; i < 10; ++i)
     e.step(1.0f / 60.0f);
   std::printf("bulk create checks done\n");
+}
+
+// Box3D's own timing of a step (stepProfile).
+void testStepProfile() {
+  using namespace b3dop;
+  KeyedWorld w;
+  CHECK(w.create(WorldSettings()));
+  const float qid[4] = {0, 0, 0, 1};
+  ShapeSpec cube;
+  BodySettings dyn;
+  for (int i = 0; i < 200; ++i) {
+    const double p[3] = {(i % 10) * 0.9, 1.0 + (i / 10) * 0.9, 0.0};
+    const BodyHandle h = w.createBody(dyn, p, qid);
+    CHECK(w.createShape(h, dyn, cube));
+  }
+  // Nothing has stepped yet.
+  CHECK(w.stepProfile().step == 0.0f);
+  for (int i = 0; i < 20; ++i)
+    w.step(1.0f / 60.0f);
+  const Box3DWorld::StepProfile p = w.stepProfile();
+  const float parts[] = {
+      p.pairs, p.collide, p.solverSetup, p.constraints,  p.transforms, p.events,
+      p.refit, p.bullets, p.sensorHits,  p.sleepIslands, p.sensors};
+  CHECK(p.step > 0.0f && p.step < 1000.0f);
+  for (const float ms : parts)
+    CHECK(ms >= 0.0f && ms <= p.step);
+  // Pairs, collide and the solver's constraints are most of a busy step.
+  CHECK(p.pairs + p.collide + p.constraints > 0.0f);
+  // The solve's parts are inside the constraints' time.
+  const float solveParts = p.prepareConstraints + p.integrateVelocities +
+                           p.warmStart + p.solveImpulses +
+                           p.integratePositions + p.relaxImpulses +
+                           p.restitution + p.storeImpulses;
+  CHECK(solveParts > 0.0f && solveParts <= p.constraints * 1.05f + 0.001f);
+  const Box3DWorld none;
+  CHECK(none.stepProfile().step == 0.0f);
+  std::printf("step profile: step %.3f ms (pairs %.3f, collide %.3f, "
+              "constraints %.3f)\n",
+              p.step, p.pairs, p.collide, p.constraints);
 }

@@ -300,10 +300,6 @@ def extra_folders():
         ("Motion", [
             (T("fastrotation", "Fast Rotation", default_value=False,
                help="No spin speed limit. For round pieces such as wheels."), "i"),
-            (I("lock_linear", "Lock Position", 3, default_value=(0, 0, 0), min=0, max=1, min_is_strict=True,
-               max_is_strict=True, help="1 stops movement along that world axis (X, Y, Z)."), "v"),
-            (I("lock_angular", "Lock Rotation", 3, default_value=(0, 0, 0), min=0, max=1, min_is_strict=True,
-               max_is_strict=True, help="1 stops rotation about that world axis (X, Y, Z)."), "v"),
         ]),
         ("Collision Filtering", [
             (b3d_hda.menu_script(

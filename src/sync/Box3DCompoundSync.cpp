@@ -101,7 +101,7 @@ bool sameBodyLevel(const b3dop::BodyProps &a, const b3dop::BodyProps &b) {
          sameFloat(a.ccdThreshold, b.ccdThreshold) &&
          a.contactRecycling == b.contactRecycling &&
          a.enableSleep == b.enableSleep && a.fastObject == b.fastObject &&
-         a.fastRotation == b.fastRotation && a.locks == b.locks;
+         a.fastRotation == b.fastRotation;
 }
 
 // The glue nodes that can be reached from `seeds` through the live bonds

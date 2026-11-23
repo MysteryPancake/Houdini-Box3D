@@ -284,16 +284,6 @@ b3dop::BodyProps readDynamicProps(const b3dop::BodySettings &node,
     p.filter.mask = static_cast<uint64_t>(a.collisionMask.get(off));
   if (a.collisionGroup.isValid())
     p.filter.group = a.collisionGroup.get(off);
-  if (a.lockLinear.isValid()) {
-    const UT_Vector3 l = a.lockLinear.get(off);
-    for (unsigned i = 0; i < 3; ++i)
-      p.locks.linear[i] = l(i) != 0.0f;
-  }
-  if (a.lockAngular.isValid()) {
-    const UT_Vector3 l = a.lockAngular.get(off);
-    for (unsigned i = 0; i < 3; ++i)
-      p.locks.angular[i] = l(i) != 0.0f;
-  }
   return p;
 }
 
@@ -860,7 +850,6 @@ unsigned applyPropChanges(b3dop::Box3DWorld &world, Box3DBodyMirror &e,
         [&] {
           world.setSurfaceByHandle(h, p.rollingResistance, p.tangentVelocity);
         });
-  apply(p.locks != o.locks, [&] { world.setMotionLocksByHandle(h, p.locks); });
   apply(p.contactRecycling != o.contactRecycling,
         [&] { world.setContactRecyclingByHandle(h, p.contactRecycling); });
   apply(p.enableSleep != o.enableSleep,

@@ -12,7 +12,7 @@ handle; the solver keeps handles in the mirror and erases entries with their bod
 `setTypeByHandle` / `typeByHandle` and the `*ByHandle` calls touch no hash map. Caller-chosen ids (`addBody`,
 `addShape`, `removeBody`, ...) live in `tests/KeyedWorld.h`, a test-only subclass built on the public handle API.
 `BodySettings` is the type, the start-awake flag and the solver-only shape options around a `BodyProps`: the settings
-that can change on a live body (material, damping, sleep, filter, locks, ...), with an exact `operator==` so a caller
+that can change on a live body (material, damping, sleep, filter, ...), with an exact `operator==` so a caller
 can compare two and call only the setters for what differs.
 
 **Mass.** A shape add recomputes the mass unless `updateMass` is false. The solver always passes false and then calls

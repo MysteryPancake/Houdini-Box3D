@@ -155,6 +155,7 @@ RELATIONSHIPS = [
     (["box3d_wheelconrel"], "wheel"),
     (["box3d_filterconrel"], "filter"),
     (["box3d_bondconrel"], "bond"),
+    (["box3d_motionlockconrel"], "motionlock"),
     (["glueconrel"], "glue"),
     (["hardconrel"], "hard"),
     (["springconrel"], "spring"),

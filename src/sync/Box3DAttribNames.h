@@ -57,8 +57,6 @@
   X(collisionGroup, "collision_group", I)                                      \
   X(dead, "dead", I)                                                           \
   X(contactRecycling, "contactrecycling", I)                                   \
-  X(lockLinear, "lock_linear", V3) /* per world axis, nonzero = locked */      \
-  X(lockAngular, "lock_angular", V3)                                           \
   X(fastRotation, "fastrotation", I)                                           \
   X(rollingResistance, "rollingresistance", F)                                 \
   X(tangentVelocity, "tangentvelocity", V3)
