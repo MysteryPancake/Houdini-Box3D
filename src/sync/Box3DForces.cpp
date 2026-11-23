@@ -415,7 +415,7 @@ ForceStats applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects,
   std::vector<SIM_Object *> cleared;
   const bool replay = carry && carry->replay;
 
-  for (exint i = 0; i < objects.entries(); ++i) {
+  for (int i = 0; i < objects.entries(); ++i) {
     SIM_Object *obj = objects(i);
     const auto osIt = st.objectSync.find(obj->getObjectId());
     if (osIt == st.objectSync.end() || osIt->second.visited != st.syncStamp ||

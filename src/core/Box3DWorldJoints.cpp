@@ -305,6 +305,7 @@ b3JointId createFilterJoint(const JointBuild &j) {
 b3JointId createJointOfType(JointType type, const JointBuild &j) {
   switch (type) {
   case JointType::Weld:
+  case JointType::Bond: // a rigid weld
     return createWeldJoint(j);
   case JointType::Spherical:
     return createSphericalJoint(j);
@@ -335,6 +336,7 @@ JointSettings Box3DWorld::defaultJointSettings(JointType type) {
   // our -1 (unlimited).
   auto unlimited = [](float v) { return v >= 0.5f * FLT_MAX ? -1.0f : v; };
   switch (type) {
+  case JointType::Bond: // made as a weld
   case JointType::Weld: {
     static const b3WeldJointDef d = b3DefaultWeldJointDef();
     base = &d.base;
@@ -548,6 +550,10 @@ void Box3DWorld::updateJoint(JointHandle h, JointType type,
   b3Joint_SetConstraintTuning(id, s.constraintStiffness,
                               s.constraintDampingRatio);
   switch (type) {
+  case JointType::Bond:
+    b3WeldJoint_SetLinearHertz(id, 0.0f);
+    b3WeldJoint_SetAngularHertz(id, 0.0f);
+    break;
   case JointType::Weld:
     b3WeldJoint_SetLinearHertz(id,
                                s.enableLinearSpring ? s.linearStiffness : 0.0f);
@@ -656,6 +662,12 @@ bool Box3DWorld::jointFeedback(JointHandle h, JointType type,
   const b3JointId id = b3LoadJointId(h);
   storeVec3(b3Joint_GetConstraintForce(id), out.force);
   storeVec3(b3Joint_GetConstraintTorque(id), out.torque);
+  {
+    b3Vec3 linear, angular;
+    b3Joint_GetConstraintImpulse(id, &linear, &angular);
+    storeVec3(linear, out.impulse);
+    storeVec3(angular, out.angularImpulse);
+  }
   out.linearSeparation = b3Joint_GetLinearSeparation(id);
   // Box3D has not implemented the wheel's angular separation yet (a todo that
   // asserts): 0.

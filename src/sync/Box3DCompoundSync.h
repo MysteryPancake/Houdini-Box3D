@@ -71,6 +71,13 @@ void recordCompoundMotion(Box3DSharedState &st);
 bool compoundGlueHits(Box3DSharedState &st, b3dop::BodyHandle body,
                       float &hits);
 
+// After a Box3D step (breakBonds calls it): the load of each Bond that has no
+// joint to read, in `extra->bondForce` / `bondTorque` at `st.hitsTick`. A Bond
+// inside an awake compound gets it from the compound's spring network
+// (core/Box3DBondNetwork.h) under what each piece needs to move as the body
+// does; a Bond held by a bridge gets the bridge's. `dt`: the step.
+void solveCompoundBonds(Box3DSharedState &st, float dt);
+
 // What a force evaluation reads of a piece of a compound (awake, mass, its
 // centre, its velocity from the compound). False if the entry is not one.
 bool compoundPieceState(Box3DSharedState &st, const Box3DBodyMirror &piece,

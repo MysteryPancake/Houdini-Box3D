@@ -1,6 +1,7 @@
 // SIM_Box3DConRel.cpp
 #include "SIM_Box3DConRel.h"
 #include "SIM_Box3DParms.h"
+#include "core/Box3DBond.h"
 #include "core/Box3DWorld.h"
 #include "sync/Box3DHoudiniUtil.h"
 
@@ -9,6 +10,7 @@
 #include <UT/UT_Vector3.h>
 #include <UT/UT_XformOrder.h>
 
+#include <cstring>
 #include <new>
 #include <string>
 #include <vector>
@@ -32,7 +34,7 @@ b3dop::JointSettings SIM_Box3DConRel::settings() const {
       v[0] = static_cast<float>(opts.getOptionF(p.name));
     else {
       const UT_Vector3D o = opts.getOptionV3(p.name);
-      for (int i = 0; i < 3; ++i)
+      for (unsigned i = 0; i < 3; ++i)
         v[i] = static_cast<float>(o(i));
     }
     b3dop::setJointParam(s, p, type, v, box3dEulerToQuat);
@@ -46,6 +48,22 @@ b3dop::JointSettings SIM_Box3DConRel::settings() const {
       continue;
     const float off[3] = {-1.0f, -1.0f, -1.0f};
     b3dop::setJointParam(s, p, type, off, box3dEulerToQuat);
+  }
+  // A Bond's material replaces its strengths (times the scale), which a
+  // primitive attribute then modifies like any setting.
+  if (type == b3dop::JointType::Bond) {
+    const auto &materials = b3dop::bondMaterials();
+    const int index = static_cast<int>(opts.getOptionI("bond_material")) - 1;
+    if (index >= 0 && index < static_cast<int>(materials.size())) {
+      const b3dop::BondMaterial &m = materials[static_cast<size_t>(index)];
+      const float scale =
+          static_cast<float>(opts.getOptionF("bond_material_scale"));
+      s.bondTensile = m.tensile * scale;
+      s.bondShear = m.shear * scale;
+      s.bondBending = m.bending * scale;
+      s.bondCompressive = m.compressive * scale;
+      s.bondFracture = m.fracture;
+    }
   }
   return s;
 }
@@ -105,8 +123,31 @@ SIM_Box3DConRel::describe(b3dop::JointType t,
     if (!ownTab && (p.types & kCommon) != kCommon) {
       st.parms.folder(b3dop::jointTypeLabel(t));
       ownTab = true;
+      if (t == b3dop::JointType::Bond) {
+        std::vector<const char *> items = {"Custom"};
+        for (const b3dop::BondMaterial &m : b3dop::bondMaterials())
+          items.push_back(m.label);
+        st.parms.menu("bond_material", "Material", 0, items,
+                      "A material's typical strengths in place of the ones "
+                      "below. Custom uses them.");
+        Box3DParms::Range scaleRange;
+        scaleRange.min = 0.001;
+        scaleRange.max = 10.0;
+        st.parms.number("bond_material_scale", "Material Strength Scale", 1.0,
+                        scaleRange,
+                        "Multiplies the material's strengths. 1 is the typical "
+                        "value.",
+                        "{ bond_material == 0 }");
+      }
     }
-    const std::string disableWhen = b3dop::jointParamDisableWhen(p, t);
+    std::string disableWhen = b3dop::jointParamDisableWhen(p, t);
+    if (t == b3dop::JointType::Bond &&
+        (std::strcmp(p.name, "bond_tensile") == 0 ||
+         std::strcmp(p.name, "bond_shear") == 0 ||
+         std::strcmp(p.name, "bond_bending") == 0 ||
+         std::strcmp(p.name, "bond_compressive") == 0 ||
+         std::strcmp(p.name, "bond_fracture_energy") == 0))
+      disableWhen = "{ bond_material != 0 }";
     if (!p.b && p.kind == JointParam::Toggle) // node toggle, not a setting
     {
       st.parms.toggle(p.name, p.label, false, p.help, disableWhen.c_str());

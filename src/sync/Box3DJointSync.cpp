@@ -103,7 +103,7 @@ b3dop::SideFXSettings readSideFXSettings(const SIM_Data &data,
     if (p.kind == SideFXParam::Vec3) {
       UT_Vector3D v;
       if (box3dDataOption(data, p.name, v))
-        for (int k = 0; k < 3; ++k)
+        for (unsigned k = 0; k < 3; ++k)
           (s.*p.v)[k] = static_cast<float>(v(k));
       continue;
     }
@@ -367,7 +367,7 @@ AnchorLookup packedAnchorWorld(const SIM_Object &obj, int64_t pointOff, int id,
   const UT_Vector3D rel(static_cast<double>(p.x()) - pv.x(),
                         static_cast<double>(p.y()) - pv.y(),
                         static_cast<double>(p.z()) - pv.z());
-  for (int k = 0; k < 3; ++k) {
+  for (unsigned k = 0; k < 3; ++k) {
     out[k] = static_cast<double>(at[k]) + rel.x() * xf(0, k) +
              rel.y() * xf(1, k) + rel.z() * xf(2, k);
     if (!std::isfinite(out[k]))
@@ -384,7 +384,7 @@ AnchorLookup packedAnchorWorld(const SIM_Object &obj, int64_t pointOff, int id,
 class Anchors {
 public:
   Anchors(const Box3DSharedState &st, SIM_ObjectArray &objects) : myState(st) {
-    for (exint i = 0; i < objects.entries(); ++i) {
+    for (int i = 0; i < objects.entries(); ++i) {
       const SIM_Object *obj = objects(i);
       const auto it = st.objectSync.find(obj->getObjectId());
       if (it == st.objectSync.end() || it->second.visited != st.syncStamp)
@@ -770,7 +770,8 @@ struct NetworkReader {
   const GA_PrimitiveGroup *broken;
   const GA_ROHandleI anchorIdH, anchorTypeI;
   const GA_ROHandleS anchorTypeS;
-  const GA_ROHandleF impact; // Glue's accumulated impact (feedback)
+  const GA_ROHandleF impact;      // Glue's accumulated impact (feedback)
+  const GA_ROHandleF bondImpulse; // a Bond's accumulated impulse (feedback)
   // The network's global Glue propagation iterations (detail attribute)
   const GA_ROHandleI globalIterations;
   const GA_ROHandleF globalIterationsF;
@@ -790,6 +791,7 @@ struct NetworkReader {
         anchorTypeI(g, GA_ATTRIB_POINT, kAnchorType),
         anchorTypeS(g, GA_ATTRIB_POINT, kAnchorType),
         impact(g, GA_ATTRIB_PRIMITIVE, kImpact),
+        bondImpulse(g, GA_ATTRIB_PRIMITIVE, kBondImpulse),
         globalIterations(g, GA_ATTRIB_GLOBAL, kPropagateIteration),
         globalIterationsF(g, GA_ATTRIB_GLOBAL, kPropagateIteration) {}
 
@@ -1322,6 +1324,19 @@ private:
     const JointSpec j = specFor(*kind, off, a, b, fa, fb);
     e.glue = j.glue;
     e.massDependent = j.massDependent;
+    if (j.type == b3dop::JointType::Bond) {
+      // In the glue graph, but never broken by the Glue's impulse.
+      b3dop::GlueParams never;
+      never.strength = -1.0f;
+      Box3DJointExtra &bx = e.ensureExtra();
+      bx.glueParams = never;
+      if (!e.made && myRd.bondImpulse.isValid()) {
+        // A world rebuilt mid-simulation: carry on from what the geometry
+        // holds.
+        const float kept = myRd.bondImpulse.get(off);
+        bx.bondImpulse = std::isfinite(kept) && kept > 0.0f ? kept : 0.0f;
+      }
+    }
     if (j.glue || j.massDependent) {
       Box3DJointExtra &x = e.ensureExtra();
       if (j.glue)
@@ -1471,7 +1486,7 @@ void removeGlueBonds(Box3DSharedState &st) {
 } // namespace
 
 bool anyJointNetwork(SIM_ObjectArray &objects) {
-  for (exint i = 0; i < objects.entries(); ++i) {
+  for (int i = 0; i < objects.entries(); ++i) {
     const SIM_Object *obj = objects(i);
     if (obj->getConstNamedSubData(kInternalGeometry))
       return true;
@@ -1489,7 +1504,7 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
   // object it constrains), and each object's internal ConstraintGeometry ----
   std::vector<NetworkRef> refs;
   std::unordered_set<std::string> seenRels;
-  for (exint i = 0; i < objects.entries(); ++i) {
+  for (int i = 0; i < objects.entries(); ++i) {
     SIM_Object *obj = objects(i);
     for (const bool inGroup : {true, false})
       for (int r = 0; r < obj->getNumRelationships(inGroup); ++r) {
@@ -1575,6 +1590,7 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
     st.glueOrphans = 0;
     st.networkEntriesDirty = true; // joints may have come or gone
     st.groupsRecheck = true;       // a piece may have gained or lost a joint
+    st.bondsInGraph = false;
     st.glueNodes.clear();
     st.glueNodeOf.clear();
     st.glueBonds.clear();
@@ -1600,8 +1616,10 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
         if (e.massDependent && !e.broken)
           ++springs;
         // Glue to the world is not a bond (Bullet does not support it either).
-        if (e.glue && e.extra && !e.broken && e.bodyA && e.bodyB &&
+        if (inGlueGraph(e) && e.extra && !e.broken && e.bodyA && e.bodyB &&
             st.world.isJointValid(e.handle)) {
+          if (e.type == b3dop::JointType::Bond)
+            st.bondsInGraph = true;
           const int a = nodeOf(e.bodyA), b = nodeOf(e.bodyB);
           st.glueNodes[static_cast<size_t>(a)].partners.push_back(e.bodyB);
           st.glueNodes[static_cast<size_t>(b)].partners.push_back(e.bodyA);

@@ -100,6 +100,11 @@ public:
   Box3DParms &menu(const char *name, const char *label, int def,
                    std::initializer_list<const char *> items,
                    const char *help) {
+    return menu(name, label, def, std::vector<const char *>(items), help);
+  }
+
+  Box3DParms &menu(const char *name, const char *label, int def,
+                   const std::vector<const char *> &items, const char *help) {
     myChoices.emplace_back();
     std::vector<PRM_Name> &choices = myChoices.back();
     int i = 0;
@@ -136,22 +141,24 @@ public:
       }
     } else {
       size_t next = 0; // first parameter not yet placed
+      const auto at = [this](size_t index) {
+        return myParms.begin() + static_cast<std::ptrdiff_t>(index);
+      };
       for (size_t i = 0; i < myGroups.size(); ++i) {
         const Group &g = myGroups[i];
         // Parameters added before the first folder stay above it.
-        myBuilt.insert(myBuilt.end(), myParms.begin() + next,
-                       myParms.begin() + g.start);
+        myBuilt.insert(myBuilt.end(), at(next), at(g.start));
         myStrings.push_back(myFolderPrefix + std::to_string(i));
         myNames.emplace_back(myStrings.back().c_str());
         myFolderDefaults.emplace_back(static_cast<fpreal>(g.count), g.label);
         myBuilt.push_back(PRM_Template(
             PRM_SWITCHER, 1, &myNames.back(), &myFolderDefaults.back(), nullptr,
             nullptr, nullptr, &PRM_SpareData::groupTypeSimple));
-        myBuilt.insert(myBuilt.end(), myParms.begin() + g.start,
-                       myParms.begin() + g.start + g.count);
+        myBuilt.insert(myBuilt.end(), at(g.start),
+                       at(g.start + static_cast<size_t>(g.count)));
         next = g.start + static_cast<size_t>(g.count);
       }
-      myBuilt.insert(myBuilt.end(), myParms.begin() + next, myParms.end());
+      myBuilt.insert(myBuilt.end(), at(next), myParms.end());
     }
     myBuilt.emplace_back();
     return myBuilt.data();

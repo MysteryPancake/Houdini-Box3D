@@ -217,7 +217,7 @@ b3dop::BodyProps readDynamicProps(const b3dop::BodySettings &node,
   if (a.tangentVelocity.isValid()) {
     const UT_Vector3 t = a.tangentVelocity.get(off);
     if (b3dop::finite3(t.data()))
-      for (int i = 0; i < 3; ++i)
+      for (unsigned i = 0; i < 3; ++i)
         p.tangentVelocity[i] = static_cast<float>(t(i));
   }
   if (a.lineardamping.isValid())
@@ -274,12 +274,12 @@ b3dop::BodyProps readDynamicProps(const b3dop::BodySettings &node,
     p.filter.group = a.collisionGroup.get(off);
   if (a.lockLinear.isValid()) {
     const UT_Vector3 l = a.lockLinear.get(off);
-    for (int i = 0; i < 3; ++i)
+    for (unsigned i = 0; i < 3; ++i)
       p.locks.linear[i] = l(i) != 0.0f;
   }
   if (a.lockAngular.isValid()) {
     const UT_Vector3 l = a.lockAngular.get(off);
-    for (int i = 0; i < 3; ++i)
+    for (unsigned i = 0; i < 3; ++i)
       p.locks.angular[i] = l(i) != 0.0f;
   }
   return p;
@@ -1376,7 +1376,7 @@ private:
     b3dop::copy4(entry.restRot, rest);
     // The packed pivot (its own space) through restxform: where the body's
     // origin was at rest.
-    for (int c = 0; c < 3; ++c)
+    for (unsigned c = 0; c < 3; ++c)
       entry.restPos[c] = pk.pivot[0] * m(0, c) + pk.pivot[1] * m(1, c) +
                          pk.pivot[2] * m(2, c) + m(3, c);
     entry.hasRest = true;

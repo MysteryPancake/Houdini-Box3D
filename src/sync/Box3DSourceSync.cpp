@@ -53,8 +53,8 @@ bool sourcePose(const GU_Detail *src, GA_Offset off, const UT_Matrix4D &xf,
   if (!pk.prim)
     return false;
   UT_Matrix4D m;
-  for (int r = 0; r < 4; ++r)
-    for (int c = 0; c < 4; ++c)
+  for (unsigned r = 0; r < 4; ++r)
+    for (unsigned c = 0; c < 4; ++c)
       m(r, c) = pk.m4[r * 4 + c];
   m *= xf;
   UT_Vector3D p(pk.P[0], pk.P[1], pk.P[2]);
@@ -63,8 +63,8 @@ bool sourcePose(const GU_Detail *src, GA_Offset off, const UT_Matrix4D &xf,
   pos[1] = p.y();
   pos[2] = p.z();
   double m3[9], scale[3];
-  for (int r = 0; r < 3; ++r)
-    for (int c = 0; c < 3; ++c)
+  for (unsigned r = 0; r < 3; ++r)
+    for (unsigned c = 0; c < 3; ++c)
       m3[r * 3 + c] = m(r, c);
   return splitPackedMatrix(m3, rot, scale);
 }
@@ -123,7 +123,7 @@ bool samePose(const Box3DSourcePose &a, const Box3DSourcePose &b) {
 
 void followSourceSops(Box3DSharedState &st, SIM_ObjectArray &objects,
                       double now, double dt) {
-  for (exint i = 0; i < objects.entries(); ++i) {
+  for (int i = 0; i < objects.entries(); ++i) {
     SIM_Object &obj = *objects(i);
     bool useTransform = false;
     SOP_Node *sop = findSourceSop(obj, useTransform);

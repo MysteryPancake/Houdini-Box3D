@@ -1676,6 +1676,14 @@ bool Box3DWorld::extentByHandle(BodyHandle h, float out[3]) const {
   return finite3(out) && out[0] >= 0.0f && out[1] >= 0.0f && out[2] >= 0.0f;
 }
 
+bool Box3DWorld::tightExtentByHandle(BodyHandle h, float out[3]) const {
+  if (!extentByHandle(h, out))
+    return false;
+  for (int i = 0; i < 3; ++i)
+    out[i] = std::max(0.0f, out[i] - 2.0f * B3_SPECULATIVE_DISTANCE);
+  return true;
+}
+
 void Box3DWorld::applyForceByHandle(BodyHandle h, const float force[3],
                                     const float torque[3], bool wake) {
   if (!h)
@@ -2012,6 +2020,116 @@ int Box3DWorld::contactImpulsesByShape(
     out[static_cast<size_t>(it->second)] += total;
   }
   return got;
+}
+
+int Box3DWorld::hullFacesByHandle(BodyHandle h,
+                                  std::vector<PatchFace> &out) const {
+  out.clear();
+  if (!h)
+    return 0;
+  const b3BodyId id = b3LoadBodyId(h);
+  const int count = b3Body_GetShapeCount(id);
+  if (count <= 0)
+    return 0;
+  thread_local std::vector<b3ShapeId> shapes;
+  shapes.resize(static_cast<size_t>(count));
+  const int got = b3Body_GetShapes(id, shapes.data(), count);
+  const b3WorldTransform t = b3Body_GetTransform(id);
+  for (int s = 0; s < got; ++s) {
+    if (b3Shape_GetType(shapes[static_cast<size_t>(s)]) != b3_hullShape)
+      continue;
+    const b3HullData *hull = b3Shape_GetHull(shapes[static_cast<size_t>(s)]);
+    if (!hull)
+      continue;
+    const b3Vec3 *points = b3GetHullPoints(hull);
+    const b3HullHalfEdge *edges = b3GetHullEdges(hull);
+    const b3HullFace *faces = b3GetHullFaces(hull);
+    const b3Plane *planes = b3GetHullPlanes(hull);
+    if (!points || !edges || !faces || !planes)
+      continue;
+    for (int f = 0; f < hull->faceCount; ++f) {
+      PatchFace face;
+      const int start = faces[f].edge;
+      int e = start;
+      int guard = 0;
+      do {
+        const b3Vec3 local = points[edges[e].origin];
+        const b3Vec3 r = b3RotateVector(t.q, local);
+        face.corners.push_back({static_cast<double>(t.p.x) + r.x,
+                                static_cast<double>(t.p.y) + r.y,
+                                static_cast<double>(t.p.z) + r.z});
+        e = edges[e].next;
+      } while (e != start && ++guard < 64);
+      const b3Vec3 n = b3RotateVector(t.q, planes[f].normal);
+      face.normal[0] = n.x;
+      face.normal[1] = n.y;
+      face.normal[2] = n.z;
+      if (face.corners.size() >= 3)
+        out.push_back(std::move(face));
+    }
+  }
+  return static_cast<int>(out.size());
+}
+
+int Box3DWorld::contactSupportsByHandle(
+    BodyHandle h, std::vector<ContactSupport> &out,
+    const std::function<bool(BodyHandle)> *ignore) const {
+  out.clear();
+  if (!h)
+    return 0;
+  const b3BodyId id = b3LoadBodyId(h);
+  const int count = b3Body_GetShapeCount(id);
+  if (count <= 0)
+    return 0;
+  thread_local std::vector<b3ShapeId> shapes;
+  shapes.resize(static_cast<size_t>(count));
+  const int got = b3Body_GetShapes(id, shapes.data(), count);
+  thread_local std::vector<b3ContactData> data;
+  const int n = fetchContacts(id, data);
+  if (n <= 0)
+    return 0;
+  thread_local std::vector<std::pair<uint64_t, int>> indexOf;
+  indexOf.clear();
+  for (int i = 0; i < got; ++i)
+    indexOf.emplace_back(b3StoreShapeId(shapes[static_cast<size_t>(i)]),
+                         got - 1 - i);
+  std::sort(indexOf.begin(), indexOf.end());
+  for (int i = 0; i < n; ++i) {
+    const b3ContactData &cd = data[static_cast<size_t>(i)];
+    const bool aIsMine = sameBody(b3Shape_GetBody(cd.shapeIdA), id);
+    const uint64_t mineKey =
+        b3StoreShapeId(aIsMine ? cd.shapeIdA : cd.shapeIdB);
+    const auto it = std::lower_bound(indexOf.begin(), indexOf.end(), mineKey,
+                                     [](const std::pair<uint64_t, int> &e,
+                                        uint64_t k) { return e.first < k; });
+    if (it == indexOf.end() || it->first != mineKey)
+      continue;
+    if (ignore && (*ignore)(b3StoreBodyId(
+                      b3Shape_GetBody(aIsMine ? cd.shapeIdB : cd.shapeIdA))))
+      continue;
+    const b3Pos centerA = b3Body_GetWorldCenter(b3Shape_GetBody(cd.shapeIdA));
+    // The manifold normal points from A to B: B is pushed along it, A against.
+    const double sign = aIsMine ? -1.0 : 1.0;
+    for (int m = 0; m < cd.manifoldCount; ++m) {
+      const b3Manifold &man = cd.manifolds[m];
+      for (int k = 0; k < man.pointCount; ++k) {
+        const b3ManifoldPoint &mp = man.points[k];
+        if (!(mp.totalNormalImpulse > 0.0f))
+          continue;
+        ContactSupport s;
+        s.shape = it->second;
+        s.pos[0] = static_cast<double>(centerA.x) + mp.anchorA.x;
+        s.pos[1] = static_cast<double>(centerA.y) + mp.anchorA.y;
+        s.pos[2] = static_cast<double>(centerA.z) + mp.anchorA.z;
+        s.push[0] = sign * man.normal.x;
+        s.push[1] = sign * man.normal.y;
+        s.push[2] = sign * man.normal.z;
+        s.impulse = mp.totalNormalImpulse;
+        out.push_back(s);
+      }
+    }
+  }
+  return static_cast<int>(out.size());
 }
 
 int Box3DWorld::getContactsByHandle(BodyHandle h,

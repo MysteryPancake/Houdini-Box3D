@@ -918,8 +918,9 @@ void testEstimatedBytes() {
   const int count = 100;
   for (int i = 0; i < count; ++i) {
     const double p[3] = {(i % 10) * 1.0, 0.5 + (i - i % 10) / 10.0, 0};
-    CHECK(w.addBody(100 + i, b3dop::BodySettings(), p, qIdentity));
-    CHECK(w.addBoxShape(100 + i, half));
+    const auto id = static_cast<uint64_t>(100 + i);
+    CHECK(w.addBody(id, b3dop::BodySettings(), p, qIdentity));
+    CHECK(w.addBoxShape(id, half));
   }
   const size_t bodies = w.estimatedBytes();
   // At least a body and a shape each (Box3D's own figure, about 900 bytes

@@ -86,3 +86,5 @@ BOX3D_DECLARE_CONREL(SIM_Box3DConRelWheel, b3dop::JointType::Wheel,
                      "Box3D Wheel Constraint Relationship");
 BOX3D_DECLARE_CONREL(SIM_Box3DConRelFilter, b3dop::JointType::Filter,
                      "Box3D Filter Constraint Relationship");
+BOX3D_DECLARE_CONREL(SIM_Box3DConRelBond, b3dop::JointType::Bond,
+                     "Box3D Bond Constraint Relationship");

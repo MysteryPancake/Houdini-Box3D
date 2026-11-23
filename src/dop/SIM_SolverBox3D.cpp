@@ -289,9 +289,9 @@ b3dop::WorldSettings SIM_SolverBox3D::currentWorldSettings() const {
   s.warmStarting = getEnableWarmStarting();
   s.impactMinSpeed = static_cast<float>(getImpactMinSpeed());
   {
-    const UT_Vector3 g = getGroundSize();
-    for (int i = 0; i < 3; ++i)
-      s.ground.size[i] = static_cast<float>(g(i));
+    const UT_Vector3 groundSize = getGroundSize();
+    for (unsigned i = 0; i < 3; ++i)
+      s.ground.size[i] = static_cast<float>(groundSize(i));
   }
   // Menu index -> rule. Both menus: Geometric Mean, Minimum, Maximum, Average,
   // Multiply. Out of range (set from a script): the menus' defaults.
@@ -325,16 +325,16 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   // step (no body, no write-back) and are solved from the next one. Works
   // whether or not `newobjects` is also part of `allObjects`.
   std::unordered_set<int> waitIds; // new, not solved on their creation frame
-  for (exint i = 0; i < newobjects.entries(); ++i)
+  for (int i = 0; i < newobjects.entries(); ++i)
     if (!newobjects(i)->getSolveFirstFrame())
       waitIds.insert(newobjects(i)->getObjectId());
   SIM_ObjectArray objects;
   std::unordered_set<int> kept;
-  for (exint i = 0; i < allObjects.entries(); ++i)
+  for (int i = 0; i < allObjects.entries(); ++i)
     if (waitIds.find(allObjects(i)->getObjectId()) == waitIds.end() &&
         kept.insert(allObjects(i)->getObjectId()).second)
       objects.add(allObjects(i));
-  for (exint i = 0; i < newobjects.entries(); ++i)
+  for (int i = 0; i < newobjects.entries(); ++i)
     if (newobjects(i)->getSolveFirstFrame() &&
         kept.insert(newobjects(i)->getObjectId()).second)
       objects.add(newobjects(i));
@@ -484,6 +484,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
       st->hitsCollected = true;
     }
     collectGlueHits(*st);
+    breakBonds(*st, subDt);
     st->world.getMoveEvents(st->moves); // read once: write-back and impacts
     // Before the step's own events: they carry the final poses.
     st->moves.insert(st->moves.begin(), left.begin(), left.end());
@@ -527,6 +528,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
         if (collectHits)
           st->world.updateHitEvents(i > 0);
         collectGlueHits(*st);
+        breakBonds(*st, subDt);
         st->world.getMoveEvents(events);
         // Before the step's own events: they carry the final poses.
         events.insert(events.begin(), left.begin(), left.end());
@@ -623,7 +625,7 @@ SIM_SolverBox3D::findOrCreateWorldData(SIM_ObjectArray &objects) {
   // The first object carrying world data (the carrier may change). Only the
   // carrier is fetched non-const, which is what copies the (cheap, sharing)
   // data.
-  for (exint i = 0; i < objects.entries(); ++i) {
+  for (int i = 0; i < objects.entries(); ++i) {
     SIM_Object *obj = objects(i);
     if (SIM_DATA_GETCONST(*obj, kBox3DWorldDataName, SIM_Box3DWorld)) {
       SIM_Box3DWorld *w =
@@ -689,7 +691,7 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
   st->writtenObjects.clear();
   {
     UT_PerfMonAutoSolveEvent perf(this, "Pre-Solve/Updating Bodies");
-    for (exint i = 0; i < objects.entries(); ++i) {
+    for (int i = 0; i < objects.entries(); ++i) {
       if (progress.check())
         return false;
       syncObject(*st, *objects(i), counts, progress);

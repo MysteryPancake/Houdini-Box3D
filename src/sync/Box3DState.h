@@ -454,6 +454,51 @@ struct Box3DJointExtra {
   // A joint that broke: its local frames at the break, so a next constraint can
   // start from them (switchFrames).
   b3dop::JointFrame brokeLocalA, brokeLocalB;
+  // Bond (core/Box3DBond.h): the normal from piece A to piece B in body A's
+  // frame and the patch area, found on the first step after it is made, the
+  // impulse its load has delivered beyond its capacity (it breaks at the tear
+  // impulse), and whether it is queued to break.
+  float bondNormalLocal[3] = {0, 0, 0};
+  float bondAreaUsed = 0.0f;
+  float bondImpulse = 0.0f;
+  // The load was over the capacity when last looked at: damage goes on while
+  // the pieces sleep, under the load they last had.
+  bool bondOverCapacity = false;
+  // The mass of what the bond holds together on each side (infinity: a fixed
+  // body), found for the glue graph `bondSidesSignature` was taken at.
+  float bondSideMass[2] = {0.0f, 0.0f};
+  uint64_t bondSidesSignature = 0;
+  bool bondSidesKnown = false;
+  bool bondReady = false;
+  // The Contact Area setting the geometry was found with: found again when it
+  // changes.
+  float bondAreaSetting = 0.0f;
+  bool bondQueued = false;
+  // A bond inside a compound has no joint to read: the load its compound's
+  // spring network gave it (the force and couple on piece B, world axes) and
+  // the `hitsTick` it was worked out at.
+  float bondForce[3] = {0, 0, 0};
+  float bondTorque[3] = {0, 0, 0};
+  uint64_t bondLoadTick = 0;
+  // Where piece A and the anchor are for a bond inside a compound, from the
+  // compound's pose after the step (the parked piece bodies are placed later,
+  // so they are a step behind), at `bondPoseTick`.
+  double bondPosA[3] = {0, 0, 0};
+  float bondRotA[4] = {0, 0, 0, 1};
+  double bondAnchor[3] = {0, 0, 0};
+  uint64_t bondPoseTick = 0;
+  // The contact patch of the two pieces (core/Box3DPatch.h), when their convex
+  // faces could be clipped: its centroid and in-plane axes in body A's frame,
+  // and its section moduli (bending about each axis, twisting about the
+  // normal). Without it the normal runs centre to centre and the patch is a
+  // square of the area.
+  bool patchOk = false;
+  float patchCentroidLocal[3] = {0, 0, 0};
+  float patchULocal[3] = {1, 0, 0};
+  float patchVLocal[3] = {0, 1, 0};
+  float modulusU = 0.0f;
+  float modulusV = 0.0f;
+  float modulusTwist = 0.0f;
 };
 
 // One joint made from a primitive of a constraint network (Box3DJointSync.cpp).
@@ -535,6 +580,13 @@ struct Box3DJointEntry {
     return *extra;
   }
 };
+
+// Whether the joint is an edge of the glue graph (the groups that run as one
+// body, the contacts inside a group that are no hits): a SideFX Glue bond, or a
+// Bond (which never breaks by the Glue's impulse: its strength there is < 0).
+inline bool inGlueGraph(const Box3DJointEntry &e) {
+  return e.glue || e.type == b3dop::JointType::Bond;
+}
 
 // A body in a Glue network this frame and the impulse its contacts put on it
 // over the frame's Box3D steps.
@@ -845,6 +897,9 @@ struct Box3DSharedState {
   // kGlueStrengthScale; infinity: none can break), worked out again once per
   // glueClock value that is asked for it: what a body has to be able to deliver
   // to be looked at at all.
+  // A Bond is among the graph's bonds (the compounds then record their motion
+  // for the bonds' loads).
+  bool bondsInGraph = false;
   float glueMinBreak = 0.0f;
   double glueMinBreakClock = -1.0;
   uint64_t glueMinBreakSignature = 0;

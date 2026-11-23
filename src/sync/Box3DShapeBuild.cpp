@@ -29,7 +29,7 @@ bool splitPackedMatrix(const double m3[9], float q[4], double scale[3]) {
   if (!std::isfinite(det) || std::fabs(det) < 1e-30)
     return false;
   if (det < 0.0) // mirrored: flip the third row
-    for (int c = 0; c < 3; ++c)
+    for (unsigned c = 0; c < 3; ++c)
       m(2, c) = -m(2, c);
   UT_Vector3D s;
   m.extractScales(s); // m is left a pure rotation
@@ -51,8 +51,8 @@ bool splitPackedMatrix(const double m3[9], float q[4], double scale[3]) {
 void composePackedMatrix(const float q[4], const double sc[3], double out[9]) {
   UT_DMatrix3 r;
   UT_QuaternionD(q[0], q[1], q[2], q[3]).getRotationMatrix(r);
-  for (int row = 0; row < 3; ++row)
-    for (int col = 0; col < 3; ++col)
+  for (unsigned row = 0; row < 3; ++row)
+    for (unsigned col = 0; col < 3; ++col)
       out[row * 3 + col] = sc[row] * r(row, col);
 }
 
@@ -61,14 +61,14 @@ void composePackedMatrix(const float q[4], const double sc[3], double out[9]) {
 // the value of a point added after the attribute) or degenerate.
 bool restRotation(const UT_Matrix4F &m, float q[4]) {
   bool any = false;
-  for (int r = 0; r < 4 && !any; ++r)
-    for (int c = 0; c < 4 && !any; ++c)
+  for (unsigned r = 0; r < 4 && !any; ++r)
+    for (unsigned c = 0; c < 4 && !any; ++c)
       any = m(r, c) != 0.0f;
   if (!any)
     return false;
   double m3[9];
-  for (int r = 0; r < 3; ++r)
-    for (int c = 0; c < 3; ++c)
+  for (unsigned r = 0; r < 3; ++r)
+    for (unsigned c = 0; c < 3; ++c)
       m3[r * 3 + c] = static_cast<double>(m(r, c));
   double scale[3];
   return splitPackedMatrix(m3, q, scale);
@@ -84,8 +84,8 @@ void fetchFull4(const GU_PrimPacked &p, double out[16]) {
 // Writes the packed primitive's local 3x3.
 void setLocal3(GU_PrimPacked &p, const double m[9]) {
   UT_Matrix3D mat;
-  for (int r = 0; r < 3; ++r)
-    for (int c = 0; c < 3; ++c)
+  for (unsigned r = 0; r < 3; ++r)
+    for (unsigned c = 0; c < 3; ++c)
       mat(r, c) = m[r * 3 + c];
   p.setLocalTransform(mat);
   // It caches bounds derived from the transform.
@@ -180,8 +180,8 @@ void appendQuadricSamples(const GU_Detail *gdp, const GA_Primitive &prim,
   // UT_Matrix3 multiplies row vectors (p' = p * m): the math matrix is its
   // transpose.
   double a[9];
-  for (int r = 0; r < 3; ++r)
-    for (int c = 0; c < 3; ++c)
+  for (unsigned r = 0; r < 3; ++r)
+    for (unsigned c = 0; c < 3; ++c)
       a[c * 3 + r] = m(r, c);
   const UT_Vector3 p = gdp->getPos3(prim.getPointOffset(0));
   const double centre[3] = {p.x(), p.y(), p.z()};

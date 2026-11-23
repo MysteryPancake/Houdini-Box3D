@@ -169,7 +169,7 @@ b3dop::RbdObjectSettings readRbdObjectSettings(const SIM_Object &obj,
     UT_Vector3D v;
     if (d.get(name, v) && std::isfinite(v.x()) && std::isfinite(v.y()) &&
         std::isfinite(v.z()))
-      for (int i = 0; i < 3; ++i)
+      for (unsigned i = 0; i < 3; ++i)
         out[i] = static_cast<float>(v(i));
   };
 

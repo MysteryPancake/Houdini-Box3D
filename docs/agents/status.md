@@ -46,6 +46,18 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * Box3D Configure's Bounds / Use Bounds and World Scale on FORCES: no test, only the builders' `check`s (Use Bounds, the
   joint scaling).
 
+**Bonds** (`core/Box3DBond.h`, `Box3DBondNetwork.h`, `Box3DPatch.h`, [joints.md](joints.md); `core_bond`, `core_patch` and the `bond_*` checks)
+* Checked against formulas (`checks_bond.py`, `checks_more.py`): hanging loads, a spinning piece's centripetal load,
+  an impact's tear impulse, rotated pieces, a Bond to the world, `bond_*` attributes, the Solver SOP's World Scale and
+  Material, Constraint Properties, scrubbing, sleeping, long runs, a wall hit as compound and as welds.
+* Not checked: compression and twisting loads, pieces of several convex shapes, the no-patch fallback, the fallback
+  mass of a loop, a compound with Force DOP forces or gravity scale, the 2600-piece `building` with Bonds.
+* A Bond sliding on the ground under friction: the compound reads about 6.4 kN and the same bond as a weld about 3.1 kN.
+  No reference says which is right.
+* Cost: the network solve, the patch on the first step, the sides' mass walk, and `breakBonds` walking every joint every
+  step are not measured.
+* Linux build and `clang-tidy` of the Bond files: not run.
+
 **Build**
 * Linux plugin build (only the core builds in CI): `build.sh`, gcc warnings in `src/dop` / `src/sync`, the dso and
   icon copies, `hython tests/houdini/run_tests.py`.
@@ -203,6 +215,11 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   Not covered: Impacts and the collision guide for pieces, pieces with another joint or a custom inertia (they stay
   on welds, as does their whole group), a group changed only by editing a piece's settings while it never merged
   (it is worked out again when the Glue graph or the bodies change).
+* Bonds: no softening curve and no stored elastic energy (a full cohesive law needs the bond to stretch: see
+  [joints.md](joints.md)), damage over time only as the kept impulse (it also builds while the pieces sleep), no rate dependence. Patches use the dominant plane
+  only, the network's rotational stiffness is not from the patch's moments, supports have no friction cone and read the last
+  step's contacts, holds count the capacity but not the tear impulse, a piece bonded to the world is not a fixed side, no
+  readout of the stress ratio, non-hull shapes use the bounding-box estimates, the materials are order-of-magnitude values.
 
 ## Box3D fork (`extern/box3d`)
 

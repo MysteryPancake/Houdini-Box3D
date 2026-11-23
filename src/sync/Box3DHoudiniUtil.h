@@ -83,7 +83,7 @@ inline SIM_GeometryCopy *box3dWritableGeometry(SIM_Object &obj,
 
 // True if `objects` is in ascending object id order (checked once per solve).
 inline bool box3dObjectsSortedById(SIM_ObjectArray &objects) {
-  for (exint i = 1; i < objects.entries(); ++i)
+  for (int i = 1; i < objects.entries(); ++i)
     if (objects(i - 1)->getObjectId() > objects(i)->getObjectId())
       return false;
   return true;
@@ -95,9 +95,9 @@ inline bool box3dObjectsSortedById(SIM_ObjectArray &objects) {
 inline SIM_Object *box3dObjectById(SIM_ObjectArray &objects, int id,
                                    bool sorted) {
   if (sorted) {
-    exint lo = 0, hi = objects.entries();
+    int lo = 0, hi = static_cast<int>(objects.entries());
     while (lo < hi) {
-      const exint mid = lo + (hi - lo) / 2;
+      const int mid = lo + (hi - lo) / 2;
       const int mid_id = objects(mid)->getObjectId();
       if (mid_id == id)
         return objects(mid);
@@ -108,7 +108,7 @@ inline SIM_Object *box3dObjectById(SIM_ObjectArray &objects, int id,
     }
     return nullptr;
   }
-  for (exint i = 0; i < objects.entries(); ++i)
+  for (int i = 0; i < objects.entries(); ++i)
     if (objects(i)->getObjectId() == id)
       return objects(i);
   return nullptr;
@@ -181,16 +181,16 @@ inline void box3dTriangulate(const GU_Detail *gdp, const GA_Range &prims,
 // A Houdini 4x4 (row-vector layout) as 16 doubles, row by row.
 template <class Matrix4>
 inline void box3dToArray(const Matrix4 &m, double out[16]) {
-  for (int r = 0; r < 4; ++r)
-    for (int c = 0; c < 4; ++c)
+  for (unsigned r = 0; r < 4; ++r)
+    for (unsigned c = 0; c < 4; ++c)
       out[4 * r + c] = static_cast<double>(m(r, c));
 }
 
 // 16 floats, row by row, as a Houdini 4x4.
 inline UT_Matrix4F box3dMatrix4F(const float in[16]) {
   UT_Matrix4F m;
-  for (int r = 0; r < 4; ++r)
-    for (int c = 0; c < 4; ++c)
+  for (unsigned r = 0; r < 4; ++r)
+    for (unsigned c = 0; c < 4; ++c)
       m(r, c) = in[4 * r + c];
   return m;
 }

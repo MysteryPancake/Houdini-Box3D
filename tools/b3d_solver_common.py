@@ -142,7 +142,7 @@ STATIC_COLLIDER_FOLDERS = ("Shape", "Contacts")
 
 # Every constraint relationship the solver supports, wired into the constraint network so any
 # constraint_name in the network finds one. (node type candidates, node name). Data Names stay at
-# their defaults: Weld, Spherical ... and SideFX's Glue, Hard, ConRelSpring, Soft, ConeTwist.
+# their defaults: Weld, Spherical ... Bond and SideFX's Glue, Hard, ConRelSpring, Soft, ConeTwist.
 RELATIONSHIPS = [
     (["box3d_weldconrel"], "weld"),
     (["box3d_sphericalconrel"], "spherical"),
@@ -153,6 +153,7 @@ RELATIONSHIPS = [
     (["box3d_parallelconrel"], "parallel"),
     (["box3d_wheelconrel"], "wheel"),
     (["box3d_filterconrel"], "filter"),
+    (["box3d_bondconrel"], "bond"),
     (["glueconrel"], "glue"),
     (["hardconrel"], "hard"),
     (["springconrel"], "spring"),

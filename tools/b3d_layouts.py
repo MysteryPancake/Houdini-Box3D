@@ -50,9 +50,9 @@ SOLVER_LAYOUT = [
                 "switchif_beforestart_ground", "merge_guide", "guide_wireframe", "GUIDE_GEO"], {"color": EXTRA})],
 ]
 
-# The DOP network inside it. The relationships are a grid: fourteen nodes, each wired only to its Enable Switch.
+# The DOP network inside it. The relationships are a grid: fifteen nodes, each wired only to its Enable Switch.
 RELATIONSHIP_NAMES = ["weld", "spherical", "revolute", "prismatic", "distance", "motor", "parallel", "wheel",
-                      "filter", "glue", "hard", "spring", "soft", "conetwist"]
+                      "filter", "bond", "glue", "hard", "spring", "soft", "conetwist"]
 DOP_LAYOUT = [
     [("Objects", ["pieces", "collision", "collision_static", "collision_static_data", "collision_source"],
       {"color": PREPARE}),

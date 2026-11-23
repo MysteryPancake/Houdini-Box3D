@@ -60,12 +60,12 @@ INPUT_COLORS = {1: (1.0, 0.6, 0.8)}  # constraints pink, as the Box3D Solver SOP
 # The joint types in Box3D's order (Box3DJoints.h JointType): DOP node `box3d_<name>conrel`, label.
 JOINT_TYPES = [("weld", "Weld"), ("spherical", "Spherical"), ("revolute", "Revolute"),
                ("prismatic", "Prismatic"), ("distance", "Distance"), ("motor", "Motor"),
-               ("parallel", "Parallel"), ("wheel", "Wheel"), ("filter", "Filter")]
+               ("parallel", "Parallel"), ("wheel", "Wheel"), ("filter", "Filter"), ("bond", "Bond")]
 
 # Parameters of the relationship nodes that are no primitive attribute (Box3DJoints.h
 # jointNodeToggles, kAttributesReplaceName): left out.
 NODE_ONLY = {"attributes_replace", "breakable", "set_rest_length", "limit_spring_force",
-             "limit_max_length", "limit_torque"}
+             "limit_max_length", "limit_torque", "bond_material", "bond_material_scale"}
 
 STATE_NAME = "box3d_constraint_properties"  # no dot: the viewer state's hotkey context is built from it
 STATE_FILE = "b3d_constraint_properties_state.py"  # the viewer state's source, beside this script

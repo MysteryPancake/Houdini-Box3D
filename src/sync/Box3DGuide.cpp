@@ -324,7 +324,7 @@ void buildCollisionGuide(const SIM_Object &obj, GU_Detail &out,
 
 void exportCollisionShapes(Box3DSharedState &st, SIM_ObjectArray &objects) {
   const UT_Vector3 white(1.0f, 1.0f, 1.0f); // the SOP tints it (Shape Color)
-  for (exint i = 0; i < objects.entries(); ++i) {
+  for (int i = 0; i < objects.entries(); ++i) {
     SIM_Object *obj = objects(i);
     if (!obj || !st.objectSync.count(obj->getObjectId()))
       continue;

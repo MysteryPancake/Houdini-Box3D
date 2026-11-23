@@ -8,8 +8,10 @@
 #include "Box3DHoudiniUtil.h"
 #include "Box3DJointNetwork.h"
 #include "Box3DJointSync.h"
+#include "core/Box3DBond.h"
 #include "core/Box3DCompound.h"
 #include "core/Box3DDebug.h"
+#include "core/Box3DPatch.h"
 #include "dop/SIM_Box3DWorld.h"
 
 #include <GA/GA_AIFStringTuple.h>
@@ -276,6 +278,303 @@ std::vector<b3dop::GlueBond> glueBondList(const Box3DSharedState &st,
   return bonds;
 }
 
+namespace {
+// How far apart two faces may be (or how far into each other) and still touch:
+// Box3D's speculative distance.
+constexpr double kPatchTolerance = 0.03;
+
+constexpr float kFixedMass = std::numeric_limits<float>::infinity();
+
+// A body's mass for a bond's side: infinity for one that does not move.
+float sideBodyMass(b3dop::Box3DWorld &world, b3dop::BodyHandle h) {
+  b3dop::BodyState s;
+  if (!h || world.typeByHandle(h) != b3dop::BodySettings::Type::Dynamic ||
+      !world.bodyStateByHandle(h, s) || !(s.mass > 0.0f))
+    return kFixedMass;
+  return s.mass;
+}
+
+// The mass of everything bonded to `start` without going through `skip`: the
+// pieces on its side of the cut. Infinite when it holds a fixed body.
+// `reached` is set when `target` is among them (the bond is not the only way).
+float bondSideMass(Box3DSharedState &st, b3dop::BodyHandle start,
+                   const Box3DJointEntry *skip, b3dop::BodyHandle target,
+                   bool &reached) {
+  reached = false;
+  const auto first = st.glueNodeOf.find(start);
+  if (first == st.glueNodeOf.end())
+    return sideBodyMass(st.world, start);
+  std::vector<char> seen(st.glueNodes.size(), 0);
+  std::vector<int> stack = {first->second};
+  seen[static_cast<size_t>(first->second)] = 1;
+  float mass = 0.0f;
+  while (!stack.empty()) {
+    const int n = stack.back();
+    stack.pop_back();
+    const Box3DGlueNode &node = st.glueNodes[static_cast<size_t>(n)];
+    if (node.body == target)
+      reached = true;
+    mass += sideBodyMass(st.world, node.body);
+    for (const Box3DJointEntry *b : node.bonds) {
+      if (b == skip || !b->handle || b->broken)
+        continue;
+      const b3dop::BodyHandle other =
+          b->bodyA == node.body ? b->bodyB : b->bodyA;
+      const auto next = st.glueNodeOf.find(other);
+      if (next == st.glueNodeOf.end() ||
+          seen[static_cast<size_t>(next->second)])
+        continue;
+      seen[static_cast<size_t>(next->second)] = 1;
+      stack.push_back(next->second);
+    }
+  }
+  return mass;
+}
+
+// The reduced mass of the two sides the bond holds together, kept until the
+// bonds change. Cutting it separates two groups when nothing else joins them;
+// where other bonds do (a loop, a wall), tearing it frees nothing alone, and
+// the two pieces are what it holds.
+float bondReducedMassOf(Box3DSharedState &st, Box3DJointEntry &e) {
+  Box3DJointExtra &x = e.ensureExtra();
+  if (!x.bondSidesKnown || x.bondSidesSignature != st.glueSignature) {
+    bool reached = false;
+    float a = bondSideMass(st, e.bodyA, &e, e.bodyB, reached);
+    float b = reached ? 0.0f : bondSideMass(st, e.bodyB, &e, e.bodyA, reached);
+    if (!e.bodyA)
+      a = kFixedMass;
+    if (reached) {
+      a = sideBodyMass(st.world, e.bodyA);
+      b = sideBodyMass(st.world, e.bodyB);
+    }
+    x.bondSideMass[0] = a;
+    x.bondSideMass[1] = b;
+    x.bondSidesSignature = st.glueSignature;
+    x.bondSidesKnown = true;
+  }
+  return b3dop::bondReducedMass(x.bondSideMass[0], x.bondSideMass[1]);
+}
+
+// The joints of each network, again when the joints changed (syncJoints erases
+// and adds entries, so the lists must not be read before this).
+void refreshNetworkEntries(Box3DSharedState &st) {
+  if (!st.networkEntriesDirty)
+    return;
+  st.networkEntriesDirty = false;
+  st.networkEntries.clear();
+  for (auto &je : st.joints)
+    st.networkEntries[je.second.network].push_back(&je.second);
+}
+} // namespace
+
+bool bondGeometry(Box3DSharedState &st, Box3DJointEntry &e) {
+  Box3DJointExtra &x = e.ensureExtra();
+  if (x.bondReady && b3dop::sameFloat(x.bondAreaSetting, e.settings.bondArea))
+    return true;
+  x.bondReady = false;
+  b3dop::Box3DWorld &world = st.world;
+  // The normal runs from A's centre to B's (from the anchor when A is the
+  // world), the area is the smaller face of the two boxes across it.
+  double posA[3] = {0, 0, 0};
+  float rotA[4] = {0, 0, 0, 1};
+  if (e.bodyA && !world.getTransformByHandle(e.bodyA, posA, rotA))
+    return false;
+  b3dop::BodyState sb;
+  b3dop::JointFrame wa, wb;
+  if (!world.bodyStateByHandle(e.bodyB, sb) ||
+      !world.jointWorldFrames(e.handle, wa, wb))
+    return false;
+  double from[3] = {wa.pos[0], wa.pos[1], wa.pos[2]};
+  b3dop::BodyState sa;
+  if (e.bodyA && world.bodyStateByHandle(e.bodyA, sa))
+    std::copy(sa.com, sa.com + 3, from);
+  float n[3];
+  float len = 0.0f;
+  for (int i = 0; i < 3; ++i) {
+    n[i] = static_cast<float>(sb.com[i] - from[i]);
+    len += n[i] * n[i];
+  }
+  len = std::sqrt(len);
+  if (!(len > 1e-6f)) {
+    n[0] = 0.0f;
+    n[1] = 1.0f;
+    n[2] = 0.0f;
+  } else
+    for (float &v : n)
+      v /= len;
+  float conj[4];
+  b3dop::quatConj(rotA, conj);
+  b3dop::quatRotate(conj, n, x.bondNormalLocal);
+  float eb[3], ea[3];
+  if (!world.tightExtentByHandle(e.bodyB, eb))
+    return false;
+  if (!e.bodyA || !world.tightExtentByHandle(e.bodyA, ea))
+    std::copy(eb, eb + 3, ea);
+  x.bondAreaUsed = e.settings.bondArea > 0.0f ? e.settings.bondArea
+                                              : b3dop::bondAreaOf(ea, eb, n);
+  // A piece thinner than Box3D's margins has no area without them: its whole
+  // box instead.
+  if (!(x.bondAreaUsed > 0.0f)) {
+    float fullB[3], fullA[3];
+    if (world.extentByHandle(e.bodyB, fullB)) {
+      if (!e.bodyA || !world.extentByHandle(e.bodyA, fullA))
+        std::copy(fullB, fullB + 3, fullA);
+      x.bondAreaUsed = b3dop::bondAreaOf(fullA, fullB, n);
+    }
+  }
+  // The real patch where the two pieces' convex faces touch: its normal, area,
+  // centroid and section moduli replace the estimates above.
+  x.patchOk = false;
+  std::vector<b3dop::PatchFace> facesA, facesB;
+  if (e.bodyA && world.hullFacesByHandle(e.bodyA, facesA) > 0 &&
+      world.hullFacesByHandle(e.bodyB, facesB) > 0) {
+    const b3dop::ContactPatch patch =
+        b3dop::contactPatchOf(facesA, facesB, kPatchTolerance);
+    if (patch.ok && patch.extentU > 0.0 && patch.extentV > 0.0 &&
+        patch.extentR > 0.0) {
+      const auto toLocal = [&](const double vec[3], float out[3]) {
+        const float v[3] = {static_cast<float>(vec[0]),
+                            static_cast<float>(vec[1]),
+                            static_cast<float>(vec[2])};
+        b3dop::quatRotate(conj, v, out);
+      };
+      const double fromA[3] = {patch.centroid[0] - posA[0],
+                               patch.centroid[1] - posA[1],
+                               patch.centroid[2] - posA[2]};
+      toLocal(fromA, x.patchCentroidLocal);
+      toLocal(patch.normal, x.bondNormalLocal);
+      toLocal(patch.u, x.patchULocal);
+      toLocal(patch.v, x.patchVLocal);
+      // A set Contact Area scales the patch (its shape kept).
+      const double scale =
+          e.settings.bondArea > 0.0f ? e.settings.bondArea / patch.area : 1.0;
+      x.bondAreaUsed = static_cast<float>(patch.area * scale);
+      const double lengthScale = std::sqrt(scale);
+      x.modulusU = static_cast<float>(patch.momentU / patch.extentV * scale *
+                                      lengthScale);
+      x.modulusV = static_cast<float>(patch.momentV / patch.extentU * scale *
+                                      lengthScale);
+      x.modulusTwist = static_cast<float>((patch.momentU + patch.momentV) /
+                                          patch.extentR * scale * lengthScale);
+      x.patchOk = true;
+    }
+  }
+  // No area to stress: not ready, so it is looked at again rather than kept
+  // as a bond that never breaks.
+  if (!(x.bondAreaUsed > 0.0f))
+    return false;
+  x.bondAreaSetting = e.settings.bondArea;
+  x.bondReady = true;
+  return true;
+}
+
+void breakBonds(Box3DSharedState &st, float dt) {
+  b3dop::Box3DWorld &world = st.world;
+  refreshNetworkEntries(st);
+  solveCompoundBonds(st, dt);
+  for (auto &network : st.networkEntries)
+    for (Box3DJointEntry *e : network.second) {
+      if (e->type != b3dop::JointType::Bond || !e->handle || e->broken)
+        continue;
+      Box3DJointExtra &x = e->ensureExtra();
+      if (x.bondQueued)
+        continue;
+      // The load of a bond in a compound, or one held by a bridge, was worked
+      // out this step (solveCompoundBonds); a compound that is asleep has none.
+      const bool worked = x.bondLoadTick == st.hitsTick;
+      // A bond over its capacity goes on taking damage while its pieces sleep,
+      // under the load it last had (a steady one): creep to failure.
+      const bool carrying = x.bondOverCapacity;
+      if (e->inCompound && !worked && !carrying)
+        continue;
+      // Nothing moves, so nothing changes, while both pieces are asleep.
+      if (!worked && !carrying && !world.isAwakeByHandle(e->bodyA) &&
+          !world.isAwakeByHandle(e->bodyB))
+        continue;
+      if (!bondGeometry(st, *e))
+        continue;
+      // A bond inside a compound is posed by the compound (the parked pieces
+      // are a step behind), the others by their bodies.
+      const bool posed = e->inCompound && x.bondPoseTick == st.hitsTick;
+      double posA[3] = {0, 0, 0};
+      float rotA[4] = {0, 0, 0, 1};
+      if (posed) {
+        std::copy(x.bondPosA, x.bondPosA + 3, posA);
+        std::copy(x.bondRotA, x.bondRotA + 4, rotA);
+      } else if (e->bodyA && !world.getTransformByHandle(e->bodyA, posA, rotA))
+        continue;
+      b3dop::JointFeedback fb;
+      if (worked || e->inCompound) {
+        std::copy(x.bondForce, x.bondForce + 3, fb.force);
+        std::copy(x.bondTorque, x.bondTorque + 3, fb.torque);
+      } else {
+        if (!world.jointFeedback(e->handle, e->type, fb))
+          continue;
+        // The load over the whole step, not the last substep's: an impact in an
+        // earlier substep is in the first and mostly gone from the second.
+        for (int i = 0; i < 3; ++i) {
+          fb.force[i] = fb.impulse[i] / dt;
+          fb.torque[i] = fb.angularImpulse[i] / dt;
+        }
+      }
+      float normal[3];
+      b3dop::quatRotate(rotA, x.bondNormalLocal, normal);
+      float patchU[3] = {1, 0, 0}, patchV[3] = {0, 1, 0};
+      if (x.patchOk) {
+        b3dop::quatRotate(rotA, x.patchULocal, patchU);
+        b3dop::quatRotate(rotA, x.patchVLocal, patchV);
+        // The load is at the weld's anchor; the stress is about the patch's
+        // centroid: the moment there is the couple plus the force's moment
+        // from the anchor to it.
+        b3dop::JointFrame wa, wb;
+        float centre[3];
+        b3dop::quatRotate(rotA, x.patchCentroidLocal, centre);
+        if (posed)
+          std::copy(x.bondAnchor, x.bondAnchor + 3, wa.pos);
+        if (posed || world.jointWorldFrames(e->handle, wa, wb)) {
+          const double r[3] = {wa.pos[0] - (posA[0] + centre[0]),
+                               wa.pos[1] - (posA[1] + centre[1]),
+                               wa.pos[2] - (posA[2] + centre[2])};
+          fb.torque[0] +=
+              static_cast<float>(r[1] * fb.force[2] - r[2] * fb.force[1]);
+          fb.torque[1] +=
+              static_cast<float>(r[2] * fb.force[0] - r[0] * fb.force[2]);
+          fb.torque[2] +=
+              static_cast<float>(r[0] * fb.force[1] - r[1] * fb.force[0]);
+        }
+      }
+      b3dop::BondParams p;
+      p.tensile = e->settings.bondTensile;
+      p.shear = e->settings.bondShear;
+      p.bending = e->settings.bondBending;
+      p.compressive = e->settings.bondCompressive;
+      p.area = x.bondAreaUsed;
+      p.fracture = e->settings.bondFracture;
+      if (x.patchOk) {
+        p.modulusU = x.modulusU;
+        p.modulusV = x.modulusV;
+        p.modulusTwist = x.modulusTwist;
+      }
+      const b3dop::BondLoad load =
+          x.patchOk ? b3dop::bondLoadInPatch(fb.force, fb.torque, normal,
+                                             patchU, patchV)
+                    : b3dop::bondLoadOf(fb.force, fb.torque, normal);
+      const float ratio = b3dop::bondRatio(p, load);
+      x.bondOverCapacity = ratio >= 1.0f;
+      // What the load beyond the capacity has to accelerate apart: the two
+      // sides the bond holds together.
+      float tear = 0.0f;
+      if (p.fracture > 0.0f)
+        tear = b3dop::bondTearImpulse(p.fracture, p.area,
+                                      bondReducedMassOf(st, *e));
+      if (b3dop::bondAdvance(x.bondImpulse, ratio, b3dop::bondCapacity(p), dt,
+                             tear)) {
+        x.bondQueued = true;
+        st.glueBroken.push_back(e);
+      }
+    }
+}
+
 void advanceGlue(Box3DSharedState &st, float dt) {
   if (st.glueBonds.empty())
     return;
@@ -324,7 +623,7 @@ int breakJoints(Box3DSharedState &st, EntriesByNetwork &brokeIn) {
     events = st.brokenThisFrame;
   else
     world.brokenJoints(events);
-  // Glue bonds over their strength (advanceGlue).
+  // Glue bonds over their strength (advanceGlue) and Bonds (breakBonds).
   events.insert(events.end(), st.glueBroken.begin(), st.glueBroken.end());
   st.glueBroken.clear();
   if (!events.empty())
@@ -337,7 +636,7 @@ int breakJoints(Box3DSharedState &st, EntriesByNetwork &brokeIn) {
     destroyBrokenJoint(world, *e);
     // A bond is taken out of the glue lists; any other joint changes what is
     // tied to what, so they are made again.
-    if (e->glue && e->glueIndex >= 0)
+    if (inGlueGraph(*e) && e->glueIndex >= 0)
       st.glueRemoved.push_back(e);
     else
       st.glueFull = true;
@@ -576,6 +875,14 @@ void writeFeedback(const b3dop::Box3DWorld &world, GU_Detail *gdp,
       continue;
     }
     e->feedbackZeroed = false;
+    if (e->type == b3dop::JointType::Bond && e->extra && primOk(e->prim) &&
+        e->extra->bondImpulse != e->impactWritten) {
+      // A Bond's damage, kept in the geometry (impactWritten is its record).
+      GA_RWHandleF &impulseH = scalar(kBondImpulse);
+      if (impulseH.isValid())
+        impulseH.set(e->prim, e->extra->bondImpulse);
+      e->impactWritten = e->extra->bondImpulse;
+    }
     if (e->glue && e->extra && primOk(e->prim)) {
       GA_RWHandleF &impactH = scalar(kImpact);
       if (impactH.isValid())
@@ -585,6 +892,12 @@ void writeFeedback(const b3dop::Box3DWorld &world, GU_Detail *gdp,
     b3dop::JointFeedback fb;
     if (!primOk(e->prim) || !world.jointFeedback(e->handle, e->type, fb))
       continue;
+    // A Bond inside a compound has a parked weld that carries nothing: its load
+    // is the compound's spring network's (the last step's).
+    if (e->type == b3dop::JointType::Bond && e->inCompound && e->extra) {
+      std::copy(e->extra->bondForce, e->extra->bondForce + 3, fb.force);
+      std::copy(e->extra->bondTorque, e->extra->bondTorque + 3, fb.torque);
+    }
     if (forceH.isValid())
       forceH.set(e->prim, length(fb.force));
     if (distH.isValid()) {
@@ -637,7 +950,10 @@ void markQuietJoints(const b3dop::Box3DWorld &world,
         !e->inCompound && !e->writeLocal && !e->switchFrames &&
         e->madeRestLength < 0.0f &&
         // a Glue's impact decays each step until it reaches zero
-        (!e->glue || (e->extra && e->extra->glueImpact == e->impactWritten));
+        (!e->glue || (e->extra && e->extra->glueImpact == e->impactWritten)) &&
+        // a Bond's damage is written when it changes
+        (e->type != b3dop::JointType::Bond ||
+         (e->extra && e->extra->bondImpulse == e->impactWritten));
     // A joint that broke has no frames or feedback left to write, only a
     // Glue's final impact.
     const bool spent = e->broken && !e->handle && nothingPending;
@@ -693,12 +1009,7 @@ int jointsAfterStep(Box3DSharedState &st, SIM_ObjectArray &objects) {
     const bool anyBroken = broken != brokeIn.end();
     if (net.visited != st.syncStamp)
       continue;
-    if (st.networkEntriesDirty) {
-      st.networkEntriesDirty = false;
-      entriesOf.clear();
-      for (auto &je : st.joints)
-        entriesOf[je.second.network].push_back(&je.second);
-    }
+    refreshNetworkEntries(st);
     const auto ents = entriesOf.find(kv.first);
     if (ents == entriesOf.end() && !anyBroken)
       continue; // no joints to keep live, nothing broke

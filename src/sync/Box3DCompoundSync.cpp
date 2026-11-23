@@ -6,6 +6,7 @@
 
 #include "Box3DJointSync.h"
 #include "Box3DState.h"
+#include "core/Box3DBondNetwork.h"
 #include "core/Box3DCompound.h"
 #include "core/Box3DMath.h"
 #include "core/Box3DShapes.h"
@@ -959,18 +960,51 @@ void releaseTowards(Box3DSharedState &st, Box3DCompound &c, BodyHandle target,
   releasePieces(st, c, cid, leaving, until, moves, nodes);
 }
 
-// The weakest break impulse (the Glue's Strength over kGlueStrengthScale) of
-// the bonds of one glue node; infinity when none can break.
+// The impulse a bond takes to break: the Glue's Strength over
+// kGlueStrengthScale, or for a Bond its weakest strength over its area, held
+// for kBondHoldSeconds (a body that cannot deliver that in about a frame cannot
+// break it). The strengths are the tensile, shear, compressive and bending ones
+// (a bending load at an arm of the piece's own size, sqrt(area), breaks it at a
+// sixth of the force over the area), so a lever or a crushing load is not
+// passed over. Infinity when it cannot break; 0 for a Bond whose area is not
+// known yet, so a body is not passed over before the first step.
+constexpr float kBondHoldSeconds = 0.02f;
+constexpr float kBondBendingArm = 1.0f / 6.0f;
+float bondBreakImpulse(const Box3DJointEntry &e) {
+  constexpr float kNever = std::numeric_limits<float>::infinity();
+  if (e.type == b3dop::JointType::Bond) {
+    float least = kNever;
+    const auto consider = [&least](float strength, float scale) {
+      if (strength > 0.0f && std::isfinite(strength))
+        least = std::min(least, strength * scale);
+    };
+    consider(e.settings.bondTensile, 1.0f);
+    consider(e.settings.bondShear, 1.0f);
+    consider(e.settings.bondCompressive, 1.0f);
+    // A bending strength of 0 is the tensile one.
+    consider(e.settings.bondBending > 0.0f ? e.settings.bondBending
+                                           : e.settings.bondTensile,
+             kBondBendingArm);
+    if (least == kNever)
+      return kNever;
+    const float area = e.extra && e.extra->bondReady ? e.extra->bondAreaUsed
+                                                     : e.settings.bondArea;
+    return area > 0.0f ? least * area * kBondHoldSeconds : 0.0f;
+  }
+  if (!e.extra)
+    return kNever;
+  const float strength = e.extra->glueParams.strength;
+  return strength >= 0.0f && std::isfinite(strength)
+             ? strength / b3dop::kGlueStrengthScale
+             : kNever;
+}
+
+// The weakest break impulse (bondBreakImpulse) of the bonds of one glue node;
+// infinity when none can break.
 float nodeWeakest(const Box3DSharedState &st, int node) {
   float least = std::numeric_limits<float>::infinity();
-  for (const Box3DJointEntry *e :
-       st.glueNodes[static_cast<size_t>(node)].bonds) {
-    if (!e->extra)
-      continue;
-    const float strength = e->extra->glueParams.strength;
-    if (strength >= 0.0f && std::isfinite(strength))
-      least = std::min(least, strength / b3dop::kGlueStrengthScale);
-  }
+  for (const Box3DJointEntry *e : st.glueNodes[static_cast<size_t>(node)].bonds)
+    least = std::min(least, bondBreakImpulse(*e));
   return least;
 }
 
@@ -993,13 +1027,8 @@ float weakestBreak(Box3DSharedState &st) {
       st.glueMinBreakSignature == st.glueSignature)
     return st.glueMinBreak;
   float least = std::numeric_limits<float>::infinity();
-  for (const Box3DJointEntry *e : st.glueBonds) {
-    if (!e->extra)
-      continue;
-    const float strength = e->extra->glueParams.strength;
-    if (strength >= 0.0f && std::isfinite(strength))
-      least = std::min(least, strength / b3dop::kGlueStrengthScale);
-  }
+  for (const Box3DJointEntry *e : st.glueBonds)
+    least = std::min(least, bondBreakImpulse(*e));
   st.glueMinBreak = least;
   st.glueMinBreakClock = st.glueClock;
   st.glueMinBreakSignature = st.glueSignature;
@@ -1146,7 +1175,7 @@ void holdCompoundsForApproach(Box3DSharedState &st,
 }
 
 void recordCompoundMotion(Box3DSharedState &st) {
-  if (st.glueCompoundLoad <= 0.0f)
+  if (st.glueCompoundLoad <= 0.0f && !st.bondsInGraph)
     return;
   for (auto &c : st.compounds) {
     b3dop::MergedBody mb;
@@ -1248,6 +1277,279 @@ bool compoundGlueHits(Box3DSharedState &st, BodyHandle body, float &hits) {
     }
   }
   return true;
+}
+
+namespace {
+// The stiffness of the contacts a compound rests on against its bonds', and of
+// what they do across their normal (friction) against their own. The bonds are
+// far stiffer, so the compound settles on its supports as the rigid body it is
+// and they share its weight the way a rigid beam on a soft bed does; the
+// stiffness across only keeps the solve well posed and shares the friction the
+// way the normal load is.
+constexpr double kSupportStiffness = 0.01;
+constexpr double kSupportTangent = 0.02;
+// A contact that carried less than this share of the mean impulse is not a
+// support (a corner just touching an edge).
+constexpr double kSupportMinShare = 0.05;
+// The conjugate gradient's iterations and tolerance for a compound's bond
+// loads.
+constexpr int kBondSolveIterations = 100;
+constexpr double kBondSolveTolerance = 1e-5;
+} // namespace
+
+void solveCompoundBonds(Box3DSharedState &st, float dt) {
+  if (!st.bondsInGraph || !(dt > 0.0f))
+    return;
+  b3dop::Box3DWorld &w = st.world;
+  // The Bonds inside each compound, and every Bond by its joint (a bridge names
+  // the joint it stands in for).
+  std::unordered_map<Box3DCompound *, std::vector<Box3DJointEntry *>>
+      byCompound;
+  std::unordered_map<b3dop::JointHandle, Box3DJointEntry *> byJoint;
+  for (Box3DJointEntry *e : st.glueBonds) {
+    if (e->type != b3dop::JointType::Bond || !e->handle || e->broken)
+      continue;
+    byJoint[e->handle] = e;
+    if (!e->inCompound)
+      continue;
+    const auto it = st.compoundOf.find(e->bodyA);
+    if (it != st.compoundOf.end())
+      byCompound[it->second.first].push_back(e);
+  }
+  if (byJoint.empty())
+    return;
+  const auto awakeCompound = [&w](const Box3DCompound &c) {
+    return w.typeByHandle(c.body) == b3dop::BodySettings::Type::Dynamic &&
+           w.isAwakeByHandle(c.body);
+  };
+  // A Bond between a piece in a compound and one held out of it: its own weld
+  // is parked, the bridge weld carries it. The load on the original's body B is
+  // the bridge's, whichever piece is the compound's.
+  for (auto &c : st.compounds) {
+    if (c->bridges.empty() || !awakeCompound(*c))
+      continue;
+    for (const Box3DBridge &b : c->bridges) {
+      const auto it = byJoint.find(b.original);
+      b3dop::JointFeedback fb;
+      if (it == byJoint.end() ||
+          !w.jointFeedback(b.handle, b3dop::JointType::Bond, fb))
+        continue;
+      Box3DJointEntry &e = *it->second;
+      Box3DJointExtra &x = e.ensureExtra();
+      // The bridge's B is the compound: the opposite of a force on the free
+      // piece, which is the original's B when the compound holds its A.
+      const float sign = e.bodyA == b.member ? -1.0f : 1.0f;
+      for (int i = 0; i < 3; ++i) {
+        x.bondForce[i] = sign * fb.force[i];
+        x.bondTorque[i] = sign * fb.torque[i];
+      }
+      x.bondLoadTick = st.hitsTick;
+    }
+  }
+  const auto cross = [](const double a[3], const double b[3], double out[3]) {
+    b3dop::compound_detail::cross(a, b, out);
+  };
+  for (auto &entry : byCompound) {
+    Box3DCompound &c = *entry.first;
+    if (!awakeCompound(c) || !c.stepPreOk || !c.stepPre.ok)
+      continue;
+    b3dop::MergedBody post;
+    bool awake = false;
+    Pose pose;
+    if (!bodyMotion(w, c.body, post, awake) || !bodyPose(w, c.body, pose))
+      continue;
+    const b3dop::MergedBody &pre = c.stepPre;
+    const double ref[3] = {post.com[0], post.com[1], post.com[2]};
+    double aCm[3], alpha[3], omega[3];
+    for (int i = 0; i < 3; ++i) {
+      aCm[i] = (static_cast<double>(post.lin[i]) - pre.lin[i]) / dt;
+      alpha[i] = (static_cast<double>(post.ang[i]) - pre.ang[i]) / dt;
+      omega[i] = 0.5 * (static_cast<double>(pre.ang[i]) + post.ang[i]);
+    }
+    // The contacts the compound rests on are elastic supports: what they push
+    // with is whatever balances the rest, spread the way springs spread it.
+    // With none (in the air) what the pieces need but the bridges do not supply
+    // is spread over them by mass. A contact with a piece of its own group
+    // (one held out of it by a bridge) is no support: the bridge's weld is
+    // already taken off the pieces.
+    std::vector<b3dop::Box3DWorld::ContactSupport> contacts;
+    const int group = compoundGlueGroup(st, c);
+    const std::function<bool(BodyHandle)> sameGroup =
+        [&st, group](BodyHandle other) {
+          return glueSameGroup(st, other, group);
+        };
+    w.contactSupportsByHandle(c.body, contacts,
+                              group >= 0 ? &sameGroup : nullptr);
+    const bool useSupports = !contacts.empty();
+    const float *g = w.settings().gravity;
+    const size_t count = c.members.size();
+    std::vector<b3dop::BondNode> nodes(count);
+    for (size_t k = 0; k < count; ++k) {
+      const Box3DCompoundMember &m = c.members[k];
+      b3dop::BondNode &node = nodes[k];
+      centreOf(placed(pose, m), m, node.pos);
+      const double r[3] = {node.pos[0] - ref[0], node.pos[1] - ref[1],
+                           node.pos[2] - ref[2]};
+      // What the piece needs to move as the body does, less gravity: its mass
+      // times its acceleration (the body's, plus the turning), and its own
+      // rotational inertia (a block of its radius) times the angular
+      // acceleration.
+      double ar[3], wr[3], wwr[3];
+      cross(alpha, r, ar);
+      cross(omega, r, wr);
+      cross(omega, wr, wwr);
+      const double inertia = 2.0 / 9.0 * m.mass * m.radius * m.radius;
+      for (int i = 0; i < 3; ++i) {
+        const double a = aCm[i] + ar[i] + wwr[i];
+        node.force[i] = m.mass * (a - g[i] * m.props.gravityScale);
+        node.torque[i] = inertia * alpha[i];
+      }
+    }
+    for (const Box3DBridge &b : c.bridges) {
+      const auto it = st.compoundOf.find(b.member);
+      b3dop::JointFeedback fb;
+      b3dop::JointFrame fa, fb2;
+      if (it == st.compoundOf.end() || it->second.first != &c ||
+          !w.jointFeedback(b.handle, b3dop::JointType::Bond, fb) ||
+          !w.jointWorldFrames(b.handle, fa, fb2))
+        continue;
+      b3dop::BondNode &node = nodes[static_cast<size_t>(it->second.second)];
+      const double r[3] = {fb2.pos[0] - node.pos[0], fb2.pos[1] - node.pos[1],
+                           fb2.pos[2] - node.pos[2]};
+      const double f[3] = {fb.force[0], fb.force[1], fb.force[2]};
+      double rxf[3];
+      cross(r, f, rxf);
+      for (int i = 0; i < 3; ++i) {
+        node.force[i] -= f[i];
+        node.torque[i] -= static_cast<double>(fb.torque[i]) + rxf[i];
+      }
+    }
+    // Without supports the pieces move as one body, so what they need adds up
+    // to nothing. What is left (forces from a Force DOP, rounding) is spread
+    // over the pieces by mass.
+    if (!useSupports) {
+      std::vector<double> weight(count);
+      double total = 0.0;
+      for (size_t k = 0; k < count; ++k) {
+        weight[k] = c.members[k].mass;
+        total += weight[k];
+      }
+      if (!(total > 0.0))
+        continue;
+      double sumF[3] = {0, 0, 0};
+      for (const b3dop::BondNode &n : nodes)
+        for (int i = 0; i < 3; ++i)
+          sumF[i] += n.force[i];
+      for (size_t k = 0; k < count; ++k)
+        for (int i = 0; i < 3; ++i)
+          nodes[k].force[i] -= sumF[i] * weight[k] / total;
+      double sumT[3] = {0, 0, 0};
+      for (const b3dop::BondNode &n : nodes) {
+        const double r[3] = {n.pos[0] - ref[0], n.pos[1] - ref[1],
+                             n.pos[2] - ref[2]};
+        double rxf[3];
+        cross(r, n.force, rxf);
+        for (int i = 0; i < 3; ++i)
+          sumT[i] += n.torque[i] + rxf[i];
+      }
+      for (size_t k = 0; k < count; ++k)
+        for (int i = 0; i < 3; ++i)
+          nodes[k].torque[i] -= sumT[i] * weight[k] / total;
+    }
+    // The bonds as springs, a stiffness per bond in proportion to its area.
+    std::vector<b3dop::BondLink> links;
+    std::vector<Box3DJointEntry *> used;
+    for (Box3DJointEntry *e : entry.second) {
+      const auto ia = st.compoundOf.find(e->bodyA);
+      const auto ib = st.compoundOf.find(e->bodyB);
+      b3dop::JointFrame la, lb;
+      if (ia == st.compoundOf.end() || ib == st.compoundOf.end() ||
+          !bondGeometry(st, *e) || !w.jointLocalFrames(e->handle, la, lb))
+        continue;
+      b3dop::BondLink l;
+      l.a = ia->second.second;
+      l.b = ib->second.second;
+      // The anchor is where piece A's frame is with the compound where it is
+      // now: the parked piece bodies are placed after this, a step behind.
+      const Pose pa = placed(pose, c.members[static_cast<size_t>(l.a)]);
+      const double local[3] = {la.pos[0], la.pos[1], la.pos[2]};
+      double turned[3];
+      b3dop::quatRotate(pa.q, local, turned);
+      for (int i = 0; i < 3; ++i)
+        l.anchor[i] = pa.p[i] + turned[i];
+      Box3DJointExtra &px = *e->extra;
+      std::copy(pa.p, pa.p + 3, px.bondPosA);
+      std::copy(pa.q, pa.q + 4, px.bondRotA);
+      std::copy(l.anchor, l.anchor + 3, px.bondAnchor);
+      px.bondPoseTick = st.hitsTick;
+      const double area = std::max<double>(e->extra->bondAreaUsed, 1e-9);
+      l.stiffness = area;
+      l.rotStiffness = area * area / 12.0;
+      links.push_back(l);
+      used.push_back(e);
+    }
+    // The contacts as supports: the stiffness of a bond is its area, so a
+    // support has the mean of them times kSupportStiffness. Every point that
+    // carried a real share is as stiff as the others (the share Box3D gave each
+    // piece of a rigid compound is arbitrary, so it is not taken as a prior).
+    std::vector<b3dop::BondSupport> supports;
+    if (useSupports && !links.empty()) {
+      double mean = 0.0;
+      for (const b3dop::BondLink &l : links)
+        mean += l.stiffness;
+      mean /= static_cast<double>(links.size());
+      std::vector<int> memberOfShape;
+      for (size_t k = 0; k < count; ++k) {
+        const Box3DCompoundMember &m = c.members[k];
+        for (int s = m.shapeFirst; s < m.shapeFirst + m.shapeCount; ++s) {
+          if (s < 0)
+            continue;
+          if (static_cast<size_t>(s) >= memberOfShape.size())
+            memberOfShape.resize(static_cast<size_t>(s) + 1, -1);
+          memberOfShape[static_cast<size_t>(s)] = static_cast<int>(k);
+        }
+      }
+      double meanImpulse = 0.0;
+      for (const auto &contact : contacts)
+        meanImpulse += contact.impulse;
+      meanImpulse /= static_cast<double>(contacts.size());
+      for (const auto &contact : contacts) {
+        if (!(meanImpulse > 0.0) ||
+            contact.impulse < kSupportMinShare * meanImpulse)
+          continue;
+        if (contact.shape < 0 ||
+            static_cast<size_t>(contact.shape) >= memberOfShape.size() ||
+            memberOfShape[static_cast<size_t>(contact.shape)] < 0)
+          continue;
+        b3dop::BondSupport s;
+        s.node = memberOfShape[static_cast<size_t>(contact.shape)];
+        std::copy(contact.pos, contact.pos + 3, s.pos);
+        std::copy(contact.push, contact.push + 3, s.normal);
+        s.normalStiffness = mean * kSupportStiffness;
+        s.tangentStiffness = kSupportTangent * s.normalStiffness;
+        supports.push_back(s);
+      }
+    }
+    // Contacts that map to no piece leave nothing to balance the rest: no load
+    // this step.
+    if (useSupports && supports.empty())
+      continue;
+    std::vector<b3dop::BondForce> out;
+    std::vector<b3dop::SupportForce> supportsOut;
+    // A solve that did not stay finite gives no load this step.
+    if (!std::isfinite(
+            b3dop::solveBondNetwork(nodes, links, supports, out, supportsOut,
+                                    kBondSolveIterations, kBondSolveTolerance)))
+      continue;
+    for (size_t k = 0; k < used.size(); ++k) {
+      Box3DJointExtra &x = *used[k]->extra;
+      for (int i = 0; i < 3; ++i) {
+        x.bondForce[i] = static_cast<float>(out[k].force[i]);
+        x.bondTorque[i] = static_cast<float>(out[k].torque[i]);
+      }
+      x.bondLoadTick = st.hitsTick;
+    }
+  }
 }
 
 bool compoundPieceState(Box3DSharedState &st, const Box3DBodyMirror &piece,

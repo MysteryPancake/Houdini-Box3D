@@ -26,6 +26,76 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   wrong). Distance `restLength < 0` (`restlength`) = the anchors' distance when the joint is made. Weld: `enableLinearSpring` /
   `enableAngularSpring` (off = rigid; Box3D's own rule is "hertz 0 = rigid", which reads backwards with the name
   stiffness). Every Box3D "hertz" is called stiffness.
+* Bond (`JointType::Bond`, `core/Box3DBond.h`, `tests/core_bond.cpp`, `bond_hang`): made as a rigid weld
+  (`createWeldJoint`, springs off). After every Box3D step `breakBonds` (`Box3DJointBreak.cpp`) reads the joint's
+  constraint force and torque (`jointFeedback`: force on B, in world axes; the torque is the couple at the
+  anchor; both are the weld's impulse over the whole step divided by the step, `b3Joint_GetConstraintImpulse` in the fork, because the last substep's alone read a few percent of an impact) and splits them in the bond's frame (the normal, area and moduli are the contact patch's, below,
+  found on the first step and kept in `Box3DJointExtra::bond*`). `bondRatio` combines tension, shear, bending and
+  twisting over those (without a patch a square one, section modulus `area * sqrt(area) / 6`), crushing is its own
+  strength. Past a ratio of 1 the load beyond the capacity (`bondCapacity`: tensile, else shear, over the area) pushes the
+  two sides apart: the bond is torn when the energy that gives them reaches its fracture energy, an impulse of
+  `bondTearImpulse` = sqrt(2 * G * A * m) with m the reduced mass of the two sides the bond holds together
+  (`bondReducedMassOf`: everything bonded to each piece without going through this bond, found in the glue graph and kept
+  for its `glueSignature`; a side with a fixed body is infinite). Where other bonds still join the two pieces (a loop, a
+  wall) cutting this one frees nothing alone and the two pieces' own masses are used. A piece bonded to the world by a
+  Bond is not in the graph, so its side does not count as fixed (the mass is then smaller, which tears sooner).
+  The load is read from the pose at the step's end, and a bond over its capacity keeps accumulating while its pieces
+  sleep (`bondOverCapacity`). `bondAdvance` adds `(ratio - 1) * capacity * dt` each Box3D step to `bondImpulse` (kept when the load drops: damage is
+  not undone) and breaks at the tear impulse, so the time to tear does not depend on the step size, and a fracture
+  energy of 0 breaks at a ratio of 1. The weld is rigid, and the Box3D spring stiffness a stiff material would need is
+  beyond what its soft constraints resolve, so the bond does not stretch: no softening curve, no stored elastic energy.
+  The damage is written onto the network as `bond_impulse` (`kBondImpulse`) and read back when the bond is made, so a
+  world rebuilt mid-simulation carries on from it. A breaking bond is queued on `glueBroken` and destroyed with the
+  other broken joints, so `broken`, `next_constraint_name` and the live frames work as for any joint. World Scale gives
+  the strengths a power of -1 and the area 2 (`JOINT_SCALE_POWERS`).
+  * Materials (`bondMaterials()` in `core/Box3DBond.h`, `SIM_Box3DConRel::settings`): the menu `bond_material` (0 is
+  Custom) and `bond_material_scale` are node-only parameters (no attribute). A chosen material replaces the four
+  strengths (times the scale) and the fracture energy in the settings, and a `bond_tensile` attribute then multiplies that
+  as for any setting. The strengths and the fracture energy are disabled while a material is chosen. The scale has World Scale power -1 like
+  them, so the material's values follow the scale (fracture energy has power 0). The values are order-of-magnitude
+  typical ones.
+  * Bonds in compounds (`Box3DCompoundSync.cpp`, `solveCompoundBonds`, called by `breakBonds` each step): a Bond is a
+  graph edge like a Glue bond (`inGlueGraph`; its Glue strength is -1, so the Glue's impulse never breaks it) and so
+  merges into compounds, takes part in holds and bridges, and its `weakestBreak` is `bondBreakImpulse` (the weakest of
+  the tensile, shear, compressive and a sixth of the bending strength, times the area, for `kBondHoldSeconds`). A bond inside an awake compound has a parked weld, so its
+  load is worked out: each piece needs the force and torque `mass * accel - mass * gravity - external`, the
+  acceleration from the compound's change of velocity over the step (`stepPre`, `recordCompoundMotion` records it
+  while Bonds are in the graph) plus its turning, the piece's own inertia taken as a block of its `radius`, and the
+  external loads from the bridges' welds. The contacts the compound rests on (`contactSupportsByHandle`: every
+  manifold point that carried impulse, except contacts with pieces of the compound's own glue group, whose weld the
+  bridges already take off the pieces) are elastic supports (`BondSupport`, `kSupportStiffness`, the same for every contact that carried at least `kSupportMinShare` of the mean impulse): what they push with
+  is whatever balances the rest, so the friction and the weight the compound's true change of velocity implies are
+  all in, and a rigid compound settles on them the way a rigid beam does on a soft bed, linearly. A support cannot pull (one whose spring ends up pulling is left out and the network solved again,
+  `kBondSupportPasses` times at most), and across its normal it is `kSupportTangent` as stiff, which shares the friction
+  like the normal load and keeps the solve well posed. Without contacts (in the air) nothing is external but the
+  bridges, and what does not add up (Force DOP forces, rounding) is spread over the pieces by mass.
+  `core/Box3DBondNetwork.h` (`solveBondNetwork`, `core_bond`) turns those into the bonds' loads: small springs (a
+  rigid-body spring network, stiffness in proportion to the bond's area), matrix-free conjugate gradient
+  (`kBondSolveIterations`, `kBondSolveTolerance`), checked against a hanging chain, two bonds side by side, a cantilever,
+  an even squeeze, an overhang on supports and a support that would pull. A solve that comes out non-finite leaves the bond's last load, and the network is regularized (`kBondRegularization`) so a
+  piece with no support still solves. A bond held by a bridge reads the bridge
+  weld's load. `bond_compound_cantilever` compares the mode with the welds.
+  * The soft bed is an assumption: how a rigid compound's support is split among its pieces is not fixed by statics, and
+  the supports' stiffness against the bonds' is not a material property. Stiffer supports make each piece rest on its
+  own corners and send an overhang's moment through the weakest links. A bond at a free overhang gets the statics' load
+  whatever the stiffness.
+  * Contact patch (`core/Box3DPatch.h`, `core_patch`, `bond_patch`; `bondGeometry`): the first step after a Bond is
+  made, `hullFacesByHandle` gives each piece's convex faces in world space and `contactPatchOf` clips the faces that
+  face each other across a plane (within `kPatchTolerance`) into the overlap polygon, adding the faces in the dominant
+  plane. Its area, normal (A to B), centroid, in-plane axes `u` / `v` and second moments replace the bounding-box
+  estimates; the section moduli are `momentU / extentV` (bending about u), `momentV / extentU` and
+  `(momentU + momentV) / extentR` (twisting, a circle's formula), all kept in body A's frame in `Box3DJointExtra`. The
+  load read at the weld's anchor is moved to the centroid (the couple plus the force's moment over the offset) and its
+  bending split about `u` and `v` (`bondLoadInPatch`); a set Contact Area scales the patch, its shape kept. Without a
+  patch (the other piece is the world, a non-hull shape, no faces within the tolerance) the old estimates stay:
+  centre-to-centre normal, the smaller bounding-box face, a square patch.
+  * Benchmarks against statics (`core_bond`, `bond_benchmarks`, `bond_invariance`): a hanging box reads its weight to
+  three digits at 24 to 240 Hz and 1 to 8 substeps; stress scales with size (a box twice as big, twice the stress); a
+  box off the side of a fixed one reads its weight in shear and weight times arm in moment at three arms; a beam of two
+  halves on narrow supports reads no shear at the middle and the formula's moment once the supports' horizontal push
+  (friction, 0.25 below the bond) is counted. By bisection the strength at which a bar lets go is 9822 Pa for the
+  formula's 9807, and a beam's bending strength is 223548 Pa as a compound for 223584, 212519 as welds (5% under:
+  friction and sag); the bar's threshold is the same at 24 to 120 fps and 1 to 4 substeps.
 * `jointParams()`: one row per setting (attribute / parameter name, label, kind, joint types using it, member
   pointer, help). The constraint relationship nodes, the primitive attribute reader and `sameJointSettings` are all driven by
   it. `angleTypes` marks a Float that is an angle for some types only (`motor_speed`: revolute deg/s, prismatic and

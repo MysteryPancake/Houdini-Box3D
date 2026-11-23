@@ -472,7 +472,7 @@ void writePointAttrs(Box3DSharedState &st, SIM_ObjectArray &objects) {
 // At Frame End, points that die are queued in st.deletions, so deleteDeadPoints
 // removes them in this same step; otherwise the next step's sync queues them.
 void ageObjects(Box3DSharedState &st, SIM_ObjectArray &objects, float dt) {
-  for (exint i = 0; i < objects.entries(); ++i) {
+  for (int i = 0; i < objects.entries(); ++i) {
     SIM_Object *obj = objects(i);
     if (!SIM_DATA_GETCONST(*obj, SIM_GEOMETRY_DATANAME, SIM_Geometry))
       continue;

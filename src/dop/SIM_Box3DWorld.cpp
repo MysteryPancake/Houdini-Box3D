@@ -54,7 +54,8 @@ void SIM_Box3DWorld::makeEqualSubclass(const SIM_Data *source) {
 }
 
 int64 SIM_Box3DWorld::getMemorySizeSubclass() const {
-  int64 bytes = SIM_Data::getMemorySizeSubclass() + sizeof(myState);
+  int64 bytes =
+      SIM_Data::getMemorySizeSubclass() + static_cast<int64>(sizeof(myState));
   if (myState && myState->memoryOwner.load() == this)
     bytes += static_cast<int64>(myState->memoryBytes.load());
   return bytes;

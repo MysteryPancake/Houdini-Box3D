@@ -10,7 +10,7 @@ struct Bounds {
   double lo[3] = {1e30, 1e30, 1e30}, hi[3] = {-1e30, -1e30, -1e30};
   explicit Bounds(const std::vector<float> &p) {
     for (size_t i = 0; i + 2 < p.size(); i += 3)
-      for (int c = 0; c < 3; ++c) {
+      for (size_t c = 0; c < 3; ++c) {
         lo[c] = std::min<double>(lo[c], p[i + c]);
         hi[c] = std::max<double>(hi[c], p[i + c]);
       }

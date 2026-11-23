@@ -135,7 +135,8 @@ bool readHeightFrame(const GEO_PrimVolume *vol, HeightFrame &f) {
 
   // Heights run along the thin axis of the volume's transform.
   const UT_Matrix3 &x = vol->getTransform();
-  f.up = UT_Vector3D(x(f.flat, 0), x(f.flat, 1), x(f.flat, 2));
+  const auto flat = static_cast<unsigned>(f.flat);
+  f.up = UT_Vector3D(x(flat, 0), x(flat, 1), x(flat, 2));
   if (!(f.up.length() > 1e-12))
     f.up = cross(f.e1, f.e2);
   const double len = f.up.length();
@@ -224,15 +225,15 @@ void destroyAffector(Box3DSharedState &st, Box3DAffectorBody &ab) {
 // ourselves ----
 std::vector<const SIM_Object *> gatherAffectors(SIM_ObjectArray &objects) {
   std::unordered_set<int> solved;
-  for (exint i = 0; i < objects.entries(); ++i)
+  for (int i = 0; i < objects.entries(); ++i)
     solved.insert(objects(i)->getObjectId());
 
   std::vector<const SIM_Object *> affectors;
   std::unordered_set<int> seen;
-  for (exint i = 0; i < objects.entries(); ++i) {
+  for (int i = 0; i < objects.entries(); ++i) {
     SIM_ConstObjectArray aff;
     objects(i)->getConstAffectors(aff, kCollideRelationship);
-    for (exint j = 0; j < aff.entries(); ++j) {
+    for (int j = 0; j < aff.entries(); ++j) {
       const SIM_Object *a = aff(j);
       if (!a)
         continue;

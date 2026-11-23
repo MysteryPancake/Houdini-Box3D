@@ -201,7 +201,7 @@ b3dop::BodySettings SIM_Box3DData::toBodySettings() const {
   p.rollingResistance = static_cast<float>(getRollingResistance());
   {
     const UT_Vector3 t = getTangentVelocity();
-    for (int i = 0; i < 3; ++i)
+    for (unsigned i = 0; i < 3; ++i)
       p.tangentVelocity[i] = static_cast<float>(t(i));
   }
   p.linearDamping = static_cast<float>(getLinearDamping());
@@ -224,12 +224,12 @@ b3dop::BodySettings SIM_Box3DData::toBodySettings() const {
   const b3dop::PrimOverrides unset;
   b3dop::PrimOverrides &o = s.prim;
   const UT_Vector3 size = getPrimSize();
-  for (int i = 0; i < 3; ++i)
+  for (unsigned i = 0; i < 3; ++i)
     o.size[i] = static_cast<float>(size(i));
   o.hasSize = o.size[0] != unset.size[0] || o.size[1] != unset.size[1] ||
               o.size[2] != unset.size[2];
   const UT_Vector3 offset = getPrimOffset();
-  for (int i = 0; i < 3; ++i)
+  for (unsigned i = 0; i < 3; ++i)
     o.pos[i] = static_cast<float>(offset(i));
   o.hasPos = o.pos[0] != unset.pos[0] || o.pos[1] != unset.pos[1] ||
              o.pos[2] != unset.pos[2];

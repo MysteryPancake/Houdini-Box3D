@@ -13,7 +13,7 @@ body engine, C17, a git submodule in `extern/box3d`). It registers these `SIM_Da
 | Box3D Solver | `SIM_SolverBox3D` | Multi-object solver: one call per timestep with all its objects |
 | Box3D Data | `SIM_Box3DData` | Per-object defaults (fallbacks for missing point attributes) |
 | (hidden) Box3D World | `SIM_Box3DWorld` | Holds the live Box3D world; not a DOP node |
-| Box3D <Type> Constraint Relationship | `SIM_Box3DConRel<Type>` | One per joint type: the joint's settings, named by `constraint_name` in a Constraint Network |
+| Box3D <Type> Constraint Relationship | `SIM_Box3DConRel<Type>` | One per joint type (Bond breaks by stress, `core/Box3DBond.h`): the joint's settings, named by `constraint_name` in a Constraint Network |
 | Box3D Packed Object | (digital asset) | RBD Packed Object for Box3D: a SOP stage writes its settings as point attributes, built by `tools/make_packed_object.py` |
 | Box3D Solver (SOP) | (digital asset) | SOP wrapping a DOP network with the nodes above, built by `tools/make_solver_sop.py` |
 | Box3D Configure (SOP) | (digital asset) | Box3D Data's settings as point attributes, built by `tools/make_configure_sop.py` |
@@ -106,6 +106,9 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DJoints.h       Header-only: joint types, JointSettings, the joint parameter table
     Box3DSideFX.h/.cpp  SideFX's Glue / Hard / Spring / Bullet Soft / Cone Twist data -> Box3D joints (mapping, frame offsets)
     Box3DGlue.h         Header-only: SideFX Glue's impulse model (spread over bonds, half-life, break on strength)
+    Box3DBond.h         Header-only: the Bond's stress ratio (force and torque over the contact area), tear impulse, area
+    Box3DBondNetwork.h  Header-only: the load of each bond in a rigid group, as a spring network (conjugate gradient)
+    Box3DPatch.h        Header-only: the contact patch of two pieces' convex faces (area, centroid, normal, moments)
     Box3DCompound.h     Header-only: glue components (union-find), merging pieces into one body and splitting its velocity
     Box3DCpu.h/.cpp     Physical performance core count (the solver's Threads default)
     Box3DRbdObject.h    Header-only: an RBD Object's own mass / friction / bounce / Bullet Data shape -> whole-object settings
@@ -165,6 +168,9 @@ tests/
   core_worlds.cpp     Threads creating, stepping and destroying their own worlds at once
   core_joints.cpp     Every joint type, world anchors, live updates, breaking, feedback, the parameter table
   core_glue.cpp       Glue's impulse model: the Glue help's example, rounds, decay, breaking
+  core_bond.cpp       Bond stress ratio, tear impulse, area, a Bond joint under a hanging weight, the spring network's loads,
+                      benchmarks against statics
+  core_patch.cpp      Contact patches: area, centroid, moments, tolerance, the faces of a box body
   core_sidefx.cpp     SideFX constraint data: option table, mapping per type / constraint_type, frame offsets, behaviour
   core_compound.cpp   A compound body as glued pieces: mass, a beam on posts against a weld chain, impulses per shape, hulls at an offset, merge maths
   core_rbdobject.cpp  RBD Object settings without Box3D Data: defaults, invalid values, Bullet Data shapes, density -> mass

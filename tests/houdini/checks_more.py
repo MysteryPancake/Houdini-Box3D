@@ -632,6 +632,371 @@ def test_glue_compound_hit():
                    "; ".join(rows) + " (expected speeds within 1.5 m/s of each other, positions within 6)")]
 
 
+def bond_run(tag, centers, fixed, tensile, frames, area=None, compound=None, ledge=None, material=None,
+             material_scale=None, substeps=None, anchor_shift=(0.0, 0.0, 0.0), fracture=None, record=None,
+             network_snippet=None, sample_extra=None):
+    """Boxes (1 m, mass 1000 kg) at `centers`, the first `fixed` of them static, each bonded to the next at the point
+    between them with a Box3D Bond. `ledge`: a static box (center, size) the boxes may rest on, not bonded.
+    `compound`: the solver's Glue as One Body (None: its default). `network_snippet`: VEX run over the network's
+    primitives. `sample_extra`: called with the simulation and the frame each frame. Returns (bonds broken, [y of each
+    box], [force of each bond]) on the last frame."""
+    dop = new_dopnet(tag)
+    pieces = [{"size": (1, 1, 1), "center": c, "attrs": {"active": 0 if i < fixed else 1}}
+              for i, c in enumerate(centers)]
+    if ledge is not None:
+        pieces.append({"size": ledge[1], "center": ledge[0], "attrs": {"active": 0}})
+    path, names = packed_boxes(tag + "_pieces", pieces)
+    obj = packed_object(dop, "pieces", path)
+    bond = create(dop, "box3d_bondconrel", "bond")
+    set_parm(bond, ["bond_tensile"], tensile)
+    set_parm(bond, ["bond_shear"], tensile)
+    if area is not None:
+        set_parm(bond, ["bond_area"], area)
+    if fracture is not None:
+        set_parm(bond, ["bond_fracture_energy"], fracture)
+    if material is not None:
+        set_parm(bond, ["bond_material"], material)
+    if material_scale is not None:
+        set_parm(bond, ["bond_material_scale"], material_scale)
+    lines = []
+    for i in range(len(centers) - 1):
+        at = tuple((a + b) / 2 + d for a, b, d in zip(centers[i], centers[i + 1], anchor_shift))
+        lines.append((names[i], at, names[i + 1], at, "Bond"))
+    net = create(dop, "constraintnetwork", "constraint_network")
+    net.setInput(0, obj)
+    network = constraint_lines(tag + "_network", lines)
+    if network_snippet is not None:
+        wr = hou.node(network).parent().createNode("attribwrangle", "bond_extra")
+        wr.setInput(0, hou.node(network))
+        set_parm(wr, ["class"], 1)
+        set_parm(wr, ["snippet"], network_snippet)
+        display(wr)
+        network = wr.path()
+    set_parm(net, ["soppath", "constraintsoppath", "geosoppath"], network)
+    net.setInput(1, bond)
+    solver = solver_for("box3d", dop, net)
+    if compound is not None:
+        set_parm(solver, ["gluecompound"], 1 if compound else 0)
+    if substeps is not None:
+        dop.parm("substep").set(substeps)
+    finish(dop, solver)
+
+    def sample(sim, f):
+        geo = find_network_geometry(sim)
+        forces = None
+        if geo is not None and geo.findPrimAttrib("force") is not None:
+            forces = [prim.attribValue("force") for prim in geo.prims()]
+        if record is not None:
+            record.append((f, broken_count(sim)))
+        if sample_extra is not None:
+            sample_extra(sim, f)
+        return packed_positions(sim, "pieces"), broken_count(sim), forces
+
+    track = step(dop, frames, sample)
+    pos, broken, forces = track[frames]
+    return broken, [pos[n][1] for n in names[:len(centers)]], forces
+
+
+def test_bond_hang():
+    """A Box3D Bond holds a hanging box by stress: a 1 m box (mass 1000 kg at the default density, about 9.8 kPa over a
+    contact area of 1 m^2) hangs from a fixed one. Tensile Strength 1e6 holds it, 500 breaks the bond and drops it, 5e4
+    holds it with the area taken from the boxes (1 m^2) and breaks with Contact Area 0.1 (98 kPa)."""
+    cases = [("holds at 1e6", 1e6, None, False), ("breaks at 500", 500.0, None, True),
+             ("holds at 5e4 over 1 m^2", 5e4, None, False), ("breaks at 5e4 over 0.1 m^2", 5e4, 0.1, True)]
+    rows, ok = [], True
+    for label, tensile, area, expect_break in cases:
+        broken, ys, _ = bond_run("bond_hang_" + str(len(rows)), [(0, 5, 0), (0, 4, 0)], 1, tensile, 36, area)
+        y = ys[1]
+        good = (broken == 1 and y < 3.0) if expect_break else (broken == 0 and abs(y - 4.0) < 0.1)
+        ok = ok and good
+        rows.append(f"{label}: {broken} broken, box at y {y:.2f} ({'ok' if good else 'wrong'})")
+    return [Result("bond_hang", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+def test_bond_material():
+    """A Bond's Material replaces its strengths with typical ones (times Material Strength Scale). The hanging box of
+    bond_hang loads its bond with 9.8 kPa: Concrete (menu item 3, tensile 3 MPa) holds it, Concrete at a scale of 0.001
+    (3 kPa) lets it go, Dried Mud (item 6, 50 kPa) holds it and at a scale of 0.1 (5 kPa) lets it go. The tensile
+    strength typed on the node is ignored while a material is chosen."""
+    cases = [("Concrete", 3, None, False), ("Concrete x0.001", 3, 0.001, True), ("Dried Mud", 6, None, False),
+             ("Dried Mud x0.1", 6, 0.1, True)]
+    rows, ok = [], True
+    for label, material, scale, expect_break in cases:
+        broken, ys, _ = bond_run("bond_material_" + str(len(rows)), [(0, 5, 0), (0, 4, 0)], 1, 1.0, 36,
+                                 material=material, material_scale=scale)
+        good = (broken == 1 and ys[1] < 3.0) if expect_break else (broken == 0 and abs(ys[1] - 4.0) < 0.1)
+        ok = ok and good
+        rows.append(f"{label}: {broken} broken, box at y {ys[1]:.2f} ({'ok' if good else 'wrong'})")
+    return [Result("bond_material", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+def bond_beam_broken(tag, bending, compound, frames=60, depth=0.5):
+    """Bonds broken after `frames` in a beam of two 2 x 0.5 x 0.5 m halves (500 kg each) bonded at the middle and resting
+    on narrow supports under their outer ends, with a Bending Strength of `bending` (everything else too strong to
+    matter)."""
+    dop = new_dopnet(tag)
+    pieces = [{"size": (2, 0.5, depth), "center": (-1, 0.25, 0), "attrs": {"active": 1}},
+              {"size": (2, 0.5, depth), "center": (1, 0.25, 0), "attrs": {"active": 1}},
+              {"size": (0.1, 0.5, depth), "center": (-1.95, -0.25, 0), "attrs": {"active": 0}},
+              {"size": (0.1, 0.5, depth), "center": (1.95, -0.25, 0), "attrs": {"active": 0}}]
+    path, names = packed_boxes(tag + "_pieces", pieces)
+    obj = packed_object(dop, "pieces", path)
+    bond = create(dop, "box3d_bondconrel", "bond")
+    for name, value in (("bond_tensile", 1e9), ("bond_shear", 1e9), ("bond_compressive", 1e10),
+                        ("bond_bending", bending)):
+        set_parm(bond, [name], value)
+    net = create(dop, "constraintnetwork", "constraint_network")
+    net.setInput(0, obj)
+    set_parm(net, ["soppath", "constraintsoppath", "geosoppath"],
+             constraint_lines(tag + "_network", [(names[0], (0.0, 0.25, 0), names[1], (0.0, 0.25, 0), "Bond")]))
+    net.setInput(1, bond)
+    solver = solver_for("box3d", dop, net)
+    set_parm(solver, ["gluecompound"], 1 if compound else 0)
+    finish(dop, solver)
+    return step(dop, frames, lambda sim, f: broken_count(sim))[frames]
+
+
+def bond_threshold(breaks, lo, hi, rounds=12):
+    """The strength at which `breaks(strength)` flips from True to False, by bisection in log space (None: it does not
+    flip between lo and hi)."""
+    if not breaks(lo) or breaks(hi):
+        return None
+    for _ in range(rounds):
+        mid = (lo * hi) ** 0.5
+        if breaks(mid):
+            lo = mid
+        else:
+            hi = mid
+    return hi
+
+
+def test_bond_benchmarks():
+    """The strength at which a Bond actually lets go, against the formulas. A 1 m box (1000 kg) hanging from a bond over
+    1 m^2: tension W/A = 9.8 kPa. A beam of two halves bonded at the middle on two narrow supports (500 kg each, a 0.5 m
+    square section, section modulus 0.0208 m^3): the middle carries a moment of 0.95 half weights, 223.6 kPa of bending
+    stress, and a little less in practice because the supports push the halves along the beam (the first core
+    benchmark's 4.62 against 4.66). Each is found by bisecting the strength; the bar must be within -10% to +15% of the
+    formula and the beam within 20%, with Glue as One Body on and off."""
+    counter = itertools.count()
+    rows, ok = [], True
+
+    def tensile_breaks(tensile):
+        broken, _ys, _f = bond_run(f"bond_bench_bar_{next(counter)}", [(0, 5, 0), (0, 4, 0)], 1, tensile, 36)
+        return broken >= 1
+
+    found = bond_threshold(tensile_breaks, 1e3, 1e7)
+    expected = 9807.0
+    good = found is not None and 0.9 * expected <= found <= 1.15 * expected
+    ok = ok and good
+    rows.append(f"bar in tension: lets go at {found and round(found)} Pa, formula {expected:.0f} "
+                f"({'ok' if good else 'wrong'})")
+    expected = 4658.0 / (0.25 * 0.5 / 6.0)
+    for compound in (True, False):
+        mode = "on" if compound else "off"
+        found = bond_threshold(lambda b: bond_beam_broken(f"bond_bench_beam_{next(counter)}", b, compound) >= 1, 2e4, 2e6)
+        good = found is not None and 0.8 * expected <= found <= 1.2 * expected
+        ok = ok and good
+        rows.append(f"beam on two supports, switch {mode}: lets go at {found and round(found)} Pa, formula "
+                    f"{expected:.0f} ({'ok' if good else 'wrong'})")
+    return [Result("bond_benchmarks", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+def test_bond_invariance():
+    """What a Bond lets go at does not depend on the frame rate or the substeps. The strength at which the hanging box's
+    bond lets go (bond_benchmarks' bar, 9.8 kPa) at 24, 60 and 120 frames per second with 1 to 4 substeps, each within 3%
+    of the formula; the scene's frame rate is put back after."""
+    counter = itertools.count()
+    original = hou.fps()
+    rows, ok = [], True
+    try:
+        for fps, substeps in ((24, 1), (24, 4), (60, 1), (60, 4), (120, 2)):
+            hou.setFps(fps)
+            frames = int(1.5 * fps)
+
+            def breaks(tensile):
+                broken, _ys, _f = bond_run(f"bond_inv_{next(counter)}", [(0, 5, 0), (0, 4, 0)], 1, tensile, frames,
+                                           substeps=substeps)
+                return broken >= 1
+
+            found = bond_threshold(breaks, 1e3, 1e6, rounds=10)
+            good = found is not None and abs(found - 9807.0) < 0.03 * 9807.0
+            ok = ok and good
+            rows.append(f"{fps} fps, {substeps} substeps: {found and round(found)} Pa ({'ok' if good else 'wrong'})")
+    finally:
+        hou.setFps(original)
+    return [Result("bond_invariance", Result.PASS if ok else Result.FAIL, "; ".join(rows) + " (formula 9807)")]
+
+
+def test_bond_patch():
+    """A Bond is loaded over the real patch where its pieces' faces touch. (1) A 1 m box hangs from a fixed one but sticks
+    out half a metre: the patch is 0.5 m^2, so the tension is 19.6 kPa, and its weight hangs 0.25 m off the patch's
+    centre, a bending stress of 58.8 kPa (the patch's modulus about the vertical axis is 0.0417 m^3). Together
+    sqrt(19.6^2 + 58.8^2) = 62.0 kPa lets it go, wherever along the patch the anchor is put (the moment is taken about
+    the patch's centre, not the anchor): within 10% at both. (2) The beam of bond_benchmarks with a section 1 m wide and
+    0.5 m high instead of a square: the modulus b*h^2/6 = 0.0417 gives the same 223.6 kPa (a square patch of the same area
+    would give 158), within 10% as a compound."""
+    counter = itertools.count()
+    rows, ok = [], True
+    expected = (19613.0 ** 2 + 58840.0 ** 2) ** 0.5
+    for shift in ((0.0, 0.0, 0.0), (0.2, 0.0, 0.0)):
+        def breaks(tensile):
+            broken, _ys, _f = bond_run(f"bond_patch_{next(counter)}", [(0, 5, 0), (0.5, 4, 0)], 1, tensile, 36,
+                                       anchor_shift=shift)
+            return broken >= 1
+
+        found = bond_threshold(breaks, 1e3, 1e7)
+        good = found is not None and abs(found - expected) < 0.1 * expected
+        ok = ok and good
+        rows.append(f"half-overlapping box, anchor shifted {shift[0]}: lets go at {found and round(found)} Pa, "
+                    f"formula {expected:.0f} ({'ok' if good else 'wrong'})")
+    expected = 9317.0 / (1.0 * 0.25 / 6.0)
+    found = bond_threshold(lambda b: bond_beam_broken(f"bond_patch_beam_{next(counter)}", b, True, depth=1.0) >= 1,
+                           2e4, 2e6)
+    good = found is not None and abs(found - expected) < 0.1 * expected
+    ok = ok and good
+    rows.append(f"beam 1 m wide, 0.5 m high: lets go at {found and round(found)} Pa, formula {expected:.0f} "
+                f"({'ok' if good else 'wrong'})")
+    return [Result("bond_patch", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+def test_bond_fracture():
+    """A Bond with a Fracture Energy takes time to tear once its load passes its strength: the load beyond the capacity
+    must deliver the impulse sqrt(2 * G * A * m) (the pair's reduced mass, a fixed side counting as infinite), whatever
+    the frame rate. The hanging 1000 kg box loads a 1 m^2 bond with 9807 N, over a tensile strength of 5 kPa (capacity
+    5000 N, 4807 N beyond it): a G of 100 J/m^2 needs 447 N*s, 93 ms; 1000 J/m^2 needs 1414 N*s, 294 ms; with none it goes
+    at once. The time to the first broken bond is that plus two frames (the load builds over the first step, and a
+    break shows at the end of its frame), within a frame and 10%, at 24 and 120 frames per second."""
+    counter = itertools.count()
+    original = hou.fps()
+    rows, ok = [], True
+    try:
+        for fps in (24, 120):
+            hou.setFps(fps)
+            times = {}
+            for fracture, predicted in ((0.0, 0.0), (100.0, 0.093), (1000.0, 0.294)):
+                record = []
+                bond_run(f"bond_fracture_{next(counter)}", [(0, 5, 0), (0, 4, 0)], 1, 5000.0, int(0.6 * fps) + 2,
+                         fracture=fracture, record=record)
+                first = next((f for f, broken in record if broken >= 1), None)
+                t = None if first is None else (first - 1) / fps
+                times[fracture] = t
+                slack = 1.01 / fps + 0.10 * predicted
+                good = t is not None and abs(t - (predicted + 2.0 / fps)) <= slack
+                ok = ok and good
+                rows.append(f"{fps} fps, G {fracture:g}: torn at {t if t is None else round(t, 3)} s, formula "
+                            f"{predicted} + 2 frames ({'ok' if good else 'wrong'})")
+            ok = ok and None not in times.values() and times[0.0] < times[100.0] < times[1000.0]
+    finally:
+        hou.setFps(original)
+    return [Result("bond_fracture", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+def test_bond_fracture_sides():
+    """The tear impulse uses the mass of what the bond holds together on each side, not just its two pieces. The top bond
+    of the hanging chain holds a fixed box and the three below it (3000 kg, 29.4 kN on a 25 kN capacity, 4421 N beyond):
+    a Fracture Energy of 100 J/m^2 takes sqrt(2 * 100 * 1 * 3000) = 775 N*s, 175 ms, where the pair of pieces alone (1000
+    kg) would take 101 ms. The first broken bond is that plus two frames, within a frame and 10%, at 60 and 120 frames
+    per second."""
+    counter = itertools.count()
+    original = hou.fps()
+    rows, ok = [], True
+    centers = [(0, 8, 0), (0, 7, 0), (0, 6, 0), (0, 5, 0)]
+    predicted = 775.0 / 4421.0
+    try:
+        for fps in (60, 120):
+            hou.setFps(fps)
+            record = []
+            bond_run(f"bond_sides_{next(counter)}", centers, 1, 2.5e4, int(0.4 * fps) + 2, fracture=100.0,
+                     record=record)
+            first = next((f for f, broken in record if broken >= 1), None)
+            t = None if first is None else (first - 1) / fps
+            good = t is not None and abs(t - (predicted + 2.0 / fps)) <= 1.01 / fps + 0.10 * predicted
+            ok = ok and good
+            rows.append(f"{fps} fps: torn at {t if t is None else round(t, 3)} s, formula {predicted:.3f} + 2 frames "
+                        f"(the pair alone: 0.101) ({'ok' if good else 'wrong'})")
+    finally:
+        hou.setFps(original)
+    return [Result("bond_fracture_sides", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+def test_bond_damage_persists():
+    """A Bond's damage is kept in the geometry (`bond_impulse`, as Glue's `impact`), so a world rebuilt mid-simulation
+    carries on from it. The hanging box (1000 kg, 1 m^2) on a bond of 5 kPa with a Fracture Energy of 1000 J/m^2 tears
+    after 1414 N*s of the 4807 N beyond its capacity, so on frame 10 at 24 fps, and the attribute holds part of that
+    (100 to 1414 N*s) on frame 7. The same bond with 1000 N*s already in the geometry's `bond_impulse` when it is made
+    (what a rebuilt world finds) goes at least 3 frames sooner."""
+    original = hou.fps()
+    hou.setFps(24)
+    try:
+        seen = {}
+
+        def look(sim, f):
+            if f == 7:
+                geo = find_network_geometry(sim)
+                if geo is not None and geo.findPrimAttrib("bond_impulse") is not None:
+                    seen["impulse"] = max(prim.attribValue("bond_impulse") for prim in geo.prims())
+
+        plain, resumed = [], []
+        bond_run("bond_persist_a", [(0, 5, 0), (0, 4, 0)], 1, 5000.0, 14, fracture=1000.0, record=plain,
+                 sample_extra=look)
+        bond_run("bond_persist_b", [(0, 5, 0), (0, 4, 0)], 1, 5000.0, 14, fracture=1000.0, record=resumed,
+                 network_snippet="f@bond_impulse = 1000.0;")
+        first = next((f for f, broken in plain if broken >= 1), None)
+        sooner = next((f for f, broken in resumed if broken >= 1), None)
+        impulse = seen.get("impulse")
+        ok = (first is not None and sooner is not None and sooner <= first - 3 and impulse is not None
+              and 100.0 < impulse < 1414.0)
+        rows = (f"broke on frame {first}, with 1000 N*s kept in the geometry on frame {sooner}; bond_impulse on frame 7: "
+                f"{impulse if impulse is None else round(impulse)} N*s (expected frame 10, 3 or more sooner, 100 to 1414)")
+    finally:
+        hou.setFps(original)
+    return [Result("bond_damage_persists", Result.PASS if ok else Result.FAIL, rows)]
+
+
+def test_bond_chain():
+    """Each bond of a hanging chain carries the weight below it: a fixed box and 3 hanging ones, the bonds carrying 3, 2
+    and 1 weights (29.4, 19.6 and 9.8 kPa over 1 m^2). A Tensile Strength of 4e4 holds all of them, 2.5e4 breaks the top
+    one only, 1.5e4 the top two, and 5e3 all three (at the first step each bond is over or under its strength, so the
+    count is what the weights give, however the chain falls after)."""
+    centers = [(0, 8, 0), (0, 7, 0), (0, 6, 0), (0, 5, 0)]
+    rows, ok = [], True
+    for tensile, expected in ((4e4, 0), (2.5e4, 1), (1.5e4, 2), (5e3, 3)):
+        broken, ys, _ = bond_run(f"bond_chain_{int(tensile)}", centers, 1, tensile, 12)
+        good = broken == expected
+        ok = ok and good
+        rows.append(f"strength {tensile:g}: {broken} broken (expected {expected})")
+    return [Result("bond_chain", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+def test_bond_compound_cantilever():
+    """A Bond inside a Glue as One Body compound has no joint to read, so its load is worked out from the compound
+    (spring network under what each piece needs): it must be the load the same Bonds carry as welds (the switch off).
+    A row of 6 boxes (1 m, 1000 kg), the first 4 on a static ledge (the row's centre is over it), the last 2 overhanging
+    it: the bond at the ledge's edge carries their weight (19.6 kN) in shear and a moment of about 19.6 kN*m, over a
+    1 m^2 patch. At a Strength of 1e6 neither mode breaks anything and the edge bond's `force` is the overhang's weight
+    (within 3% as a compound, whose contacts are elastic supports under it, and 25% as welds, which sag); at 1e5 both
+    break it, the compound no more than 2 bonds (the welds break 1: the compound is rigid, so the bond next to the edge
+    sees some of the moment too)."""
+    centers = [(i + 0.5, 0.5, 0) for i in range(6)]
+    ledge = ((2.0, -0.5, 0), (4, 1, 2))
+    rows, ok = [], True
+    forces = {}
+    for compound in (True, False):
+        mode = "on" if compound else "off"
+        broken, ys, f = bond_run(f"bond_cantilever_hold_{mode}", centers, 0, 1e6, 36, compound=compound, ledge=ledge)
+        edge = f[3] if f and len(f) > 3 else None
+        forces[compound] = edge
+        good = broken == 0 and edge is not None and abs(edge - 19620.0) < (0.03 if compound else 0.25) * 19620.0
+        ok = ok and good
+        rows.append(f"switch {mode}, 1e6: {broken} broken, edge bond force {edge if edge is None else round(edge)}"
+                    f" ({'ok' if good else 'wrong'})")
+        broken, ys, _ = bond_run(f"bond_cantilever_break_{mode}", centers, 0, 1e5, 60, compound=compound, ledge=ledge)
+        good = 1 <= broken <= (2 if compound else 3)
+        ok = ok and good
+        rows.append(f"switch {mode}, 1e5: {broken} broken ({'ok' if good else 'wrong'})")
+    return [Result("bond_compound_cantilever", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
 def test_glue_group_contacts():
     """Weight on a piece of the same glue group is no hit. A box rests on two fixed supports, bonded to the first, and the
     supports are bonded to each other (all one group), at a Strength of 100 that any hit would break: it presses on the
@@ -1403,6 +1768,16 @@ TESTS = {
     "glue_compound_vs_welds": test_glue_compound_vs_welds,
     "glue_compound_hit": test_glue_compound_hit,
     "glue_group_contacts": test_glue_group_contacts,
+    "bond_hang": test_bond_hang,
+    "bond_chain": test_bond_chain,
+    "bond_material": test_bond_material,
+    "bond_benchmarks": test_bond_benchmarks,
+    "bond_invariance": test_bond_invariance,
+    "bond_patch": test_bond_patch,
+    "bond_fracture": test_bond_fracture,
+    "bond_fracture_sides": test_bond_fracture_sides,
+    "bond_damage_persists": test_bond_damage_persists,
+    "bond_compound_cantilever": test_bond_compound_cantilever,
     "glue_compound_sleep": test_glue_compound_sleep,
     "glue_impact_scale": test_glue_impact_scale,
     "glue_global_iterations": test_glue_global_iterations,
