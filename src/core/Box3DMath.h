@@ -118,8 +118,8 @@ inline bool invertSymmetric3(const float in[6], float out[6]) {
   const double inv[6] = {(b * c - f * f) / det, (a * c - e * e) / det,
                          (a * b - d * d) / det, (e * f - d * c) / det,
                          (d * f - b * e) / det, (d * e - a * f) / det};
-  for (int i = 0; i < 6; ++i)
-    if (!std::isfinite(inv[i]))
+  for (const double v : inv)
+    if (!std::isfinite(v))
       return false;
   for (int i = 0; i < 6; ++i)
     out[i] = static_cast<float>(inv[i]);

@@ -699,6 +699,9 @@ struct Box3DCompound {
   bool stepPreOk = false;
   b3dop::BodyPose postPose;
   uint64_t loadTick = 0;
+  // The last bond network solve's displacement (6 per member), the next one's
+  // starting guess. Empty when none, or when the members changed.
+  std::vector<double> bondWarm;
 };
 
 // What one bond adds to the signature of the bond list (kGlueCountSalt for the

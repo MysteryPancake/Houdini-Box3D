@@ -23,9 +23,11 @@
 // again.
 //
 // Solved by conjugate gradient, matrix-free: the cost is a few dozen passes
-// over the bonds. Without supports the system is singular (the whole group can
-// move without loading any bond) but consistent, which conjugate gradient
-// handles.
+// over the bonds. It can start from the last solve's displacement (`warm`): a
+// large group does not converge in one step's iterations, but the loads change
+// little from step to step, so the refinement carries on across them. Without
+// supports the system is singular (the whole group can move without loading any
+// bond) but consistent, which conjugate gradient handles.
 #pragma once
 
 #include <algorithm>
@@ -199,19 +201,28 @@ inline double dot(const std::vector<double> &a, const std::vector<double> &b) {
   return s;
 }
 
-// Conjugate gradient for K x = rhs, from zero. Returns the relative residual.
+// Conjugate gradient for K x = rhs, from the guess in x (zero, or the last
+// solve's). Returns the relative residual.
 inline double conjugateGradient(
     const std::vector<BondNode> &nodes, const std::vector<BondLink> &links,
     const std::vector<BondSupport> &supports, const std::vector<char> &used,
     const BondRegularization &reg, const std::vector<double> &rhs,
     std::vector<double> &x, int maxIterations, double tolerance) {
   const double rhsNorm = std::sqrt(dot(rhs, rhs));
-  std::fill(x.begin(), x.end(), 0.0);
-  if (!(rhsNorm > 0.0))
+  if (!(rhsNorm > 0.0)) {
+    std::fill(x.begin(), x.end(), 0.0);
     return 0.0;
-  std::vector<double> r = rhs, p = rhs, kp(rhs.size());
+  }
+  // r = rhs - K x
+  std::vector<double> r(rhs.size()), kp(rhs.size());
+  applyNetwork(nodes, links, supports, used, reg, x, kp);
+  for (size_t i = 0; i < r.size(); ++i)
+    r[i] = rhs[i] - kp[i];
   double rr = dot(r, r);
-  double residual = 1.0;
+  double residual = std::sqrt(rr) / rhsNorm;
+  if (!(residual >= tolerance))
+    return residual;
+  std::vector<double> p = r;
   for (int it = 0; it < maxIterations; ++it) {
     applyNetwork(nodes, links, supports, used, reg, p, kp);
     const double pkp = dot(p, kp);
@@ -250,7 +261,8 @@ inline double solveBondNetwork(const std::vector<BondNode> &nodes,
                                std::vector<BondForce> &out,
                                std::vector<SupportForce> &supportOut,
                                int maxIterations = 200, double tolerance = 1e-9,
-                               int passes = kBondSupportPasses) {
+                               int passes = kBondSupportPasses,
+                               std::vector<double> *warm = nullptr) {
   out.assign(links.size(), BondForce());
   supportOut.assign(supports.size(), SupportForce());
   const size_t n = nodes.size();
@@ -280,8 +292,17 @@ inline double solveBondNetwork(const std::vector<BondNode> &nodes,
       rhs[6 * i + 3 + static_cast<size_t>(k)] = -nodes[i].torque[k];
     }
   if (!(std::sqrt(detail::dot(rhs, rhs)) > 0.0) ||
-      (valid.empty() && sup.empty()))
+      (valid.empty() && sup.empty())) {
+    if (warm)
+      warm->clear();
     return 0.0;
+  }
+  // The guess: the last solve's displacement, when it is for as many nodes and
+  // finite. Any guess reaches the same answer; a good one takes few iterations.
+  if (warm && warm->size() == x.size() &&
+      std::all_of(warm->begin(), warm->end(),
+                  [](double v) { return std::isfinite(v); }))
+    x = *warm;
   std::vector<char> used(sup.size(), 1);
   std::vector<double> push(sup.size(), 0.0);
   detail::BondRegularization reg;
@@ -326,8 +347,13 @@ inline double solveBondNetwork(const std::vector<BondNode> &nodes,
   }
   // A solve that did not stay finite gives nothing (infinity as the residual).
   for (const double v : x)
-    if (!std::isfinite(v))
+    if (!std::isfinite(v)) {
+      if (warm)
+        warm->clear();
       return std::numeric_limits<double>::infinity();
+    }
+  if (warm)
+    *warm = x;
   for (size_t k = 0; k < valid.size(); ++k) {
     const detail::LinkResponse resp = detail::linkResponse(valid[k], nodes, x);
     BondForce &o = out[index[k]];

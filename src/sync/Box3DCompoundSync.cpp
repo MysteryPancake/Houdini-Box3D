@@ -11,6 +11,8 @@
 #include "core/Box3DMath.h"
 #include "core/Box3DShapes.h"
 
+#include <UT/UT_ParallelUtil.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -462,6 +464,7 @@ bool shrink(Box3DSharedState &st, Box3DCompound &c, const std::vector<int> &cid,
     st.compoundOf[kept[k].body] = {&c, static_cast<int>(k)};
   }
   c.members = std::move(kept);
+  c.bondWarm.clear();
   w.applyMassFromShapes(c.body);
 
   // The pieces that stay move as a rigid body with the old motion: its
@@ -1295,6 +1298,24 @@ constexpr double kSupportMinShare = 0.05;
 // loads.
 constexpr int kBondSolveIterations = 100;
 constexpr double kBondSolveTolerance = 1e-5;
+// Compounds with a network to solve before the solves run in parallel.
+constexpr size_t kMinParallelBondSolves = 4;
+
+// One compound's bond network: gathered from the world in a serial pass, solved
+// in parallel (the solve touches only this), written to the joints in a serial
+// pass.
+struct BondJob {
+  std::vector<b3dop::BondNode> nodes;
+  std::vector<b3dop::BondLink> links;
+  std::vector<b3dop::BondSupport> supports;
+  std::vector<Box3DJointEntry *> used;
+  std::vector<b3dop::BondForce> out;
+  std::vector<b3dop::SupportForce> supportsOut;
+  // The compound's last displacement in, this one's out.
+  std::vector<double> warm;
+  Box3DCompound *compound = nullptr;
+  double residual = 0.0;
+};
 } // namespace
 
 void solveCompoundBonds(Box3DSharedState &st, float dt) {
@@ -1349,6 +1370,7 @@ void solveCompoundBonds(Box3DSharedState &st, float dt) {
   const auto cross = [](const double a[3], const double b[3], double out[3]) {
     b3dop::compound_detail::cross(a, b, out);
   };
+  std::vector<BondJob> jobs;
   for (auto &entry : byCompound) {
     Box3DCompound &c = *entry.first;
     if (!awakeCompound(c) || !c.stepPreOk || !c.stepPre.ok)
@@ -1534,18 +1556,43 @@ void solveCompoundBonds(Box3DSharedState &st, float dt) {
     // this step.
     if (useSupports && supports.empty())
       continue;
-    std::vector<b3dop::BondForce> out;
-    std::vector<b3dop::SupportForce> supportsOut;
+    BondJob job;
+    job.nodes = std::move(nodes);
+    job.links = std::move(links);
+    job.supports = std::move(supports);
+    job.used = std::move(used);
+    job.warm = std::move(c.bondWarm);
+    job.compound = &c;
+    jobs.push_back(std::move(job));
+  }
+  // The solves are independent: each reads and writes only its own job.
+  const auto solve = [&jobs](size_t i) {
+    BondJob &j = jobs[i];
+    j.residual = b3dop::solveBondNetwork(j.nodes, j.links, j.supports, j.out,
+                                         j.supportsOut, kBondSolveIterations,
+                                         kBondSolveTolerance,
+                                         b3dop::kBondSupportPasses, &j.warm);
+  };
+  if (jobs.size() < kMinParallelBondSolves) {
+    for (size_t i = 0; i < jobs.size(); ++i)
+      solve(i);
+  } else {
+    UTparallelFor(UT_BlockedRange<size_t>(0, jobs.size()),
+                  [&solve](const UT_BlockedRange<size_t> &r) {
+                    for (size_t i = r.begin(); i != r.end(); ++i)
+                      solve(i);
+                  });
+  }
+  for (BondJob &j : jobs) {
+    j.compound->bondWarm = std::move(j.warm);
     // A solve that did not stay finite gives no load this step.
-    if (!std::isfinite(
-            b3dop::solveBondNetwork(nodes, links, supports, out, supportsOut,
-                                    kBondSolveIterations, kBondSolveTolerance)))
+    if (!std::isfinite(j.residual))
       continue;
-    for (size_t k = 0; k < used.size(); ++k) {
-      Box3DJointExtra &x = *used[k]->extra;
+    for (size_t k = 0; k < j.used.size(); ++k) {
+      Box3DJointExtra &x = *j.used[k]->extra;
       for (int i = 0; i < 3; ++i) {
-        x.bondForce[i] = static_cast<float>(out[k].force[i]);
-        x.bondTorque[i] = static_cast<float>(out[k].torque[i]);
+        x.bondForce[i] = static_cast<float>(j.out[k].force[i]);
+        x.bondTorque[i] = static_cast<float>(j.out[k].torque[i]);
       }
       x.bondLoadTick = st.hitsTick;
     }

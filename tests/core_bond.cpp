@@ -444,6 +444,60 @@ int main() {
     CHECK(!sup[0].active && sup[1].active && sup[2].active);
     CHECK(near(sup[2].push, 9.8, 1e-3) && std::fabs(sup[1].push) < 1e-3);
   }
+  {
+    // A column of 40 pieces standing on a support under the lowest, as a chain
+    // of bonds: too long for 10 iterations from zero. Carrying the displacement
+    // over (`warm`) refines it across solves, a guess that is not usable (the
+    // wrong size, not finite) is ignored, and a solve already converged takes
+    // no iterations.
+    const size_t n = 40;
+    std::vector<BondNode> nodes(n);
+    std::vector<BondLink> links(n - 1);
+    for (size_t i = 0; i < n; ++i) {
+      nodes[i].pos[1] = -static_cast<double>(i);
+      nodes[i].force[1] = 9.8;
+    }
+    for (size_t i = 0; i + 1 < n; ++i) {
+      links[i].a = static_cast<int>(i);
+      links[i].b = static_cast<int>(i) + 1;
+      links[i].anchor[1] = -static_cast<double>(i) - 0.5;
+    }
+    std::vector<BondSupport> supports(1);
+    supports[0].node = static_cast<int>(n) - 1;
+    supports[0].pos[1] = -static_cast<double>(n) + 0.5;
+    supports[0].normalStiffness = 1.0;
+    supports[0].tangentStiffness = 0.02;
+    std::vector<BondForce> cold, out;
+    std::vector<SupportForce> sup;
+    CHECK(solveBondNetwork(nodes, links, supports, cold, sup, 2000, 1e-10) <
+          1e-6);
+    std::vector<double> warm;
+    double first = 0.0, last = 0.0;
+    for (int step = 0; step < 300; ++step) {
+      last = solveBondNetwork(nodes, links, supports, out, sup, 10, 1e-10,
+                              kBondSupportPasses, &warm);
+      if (step == 0)
+        first = last;
+    }
+    std::printf("column of 40: residual %.3g after one solve of 10 iterations, "
+                "%.3g after 30\n",
+                first, last);
+    CHECK(first > 1e-3 && last < 1e-6 && warm.size() == 6 * n);
+    // At the converged answer, no iterations are needed.
+    CHECK(solveBondNetwork(nodes, links, supports, out, sup, 0, 1e-6,
+                           kBondSupportPasses, &warm) < 1e-6);
+    // An unusable guess changes nothing.
+    for (const int bad : {0, 1}) {
+      std::vector<double> guess =
+          bad ? std::vector<double>(6 * n, 0.0) : std::vector<double>(5, 1.0);
+      if (bad)
+        guess[7] = std::nan("");
+      CHECK(solveBondNetwork(nodes, links, supports, out, sup, 2000, 1e-10,
+                             kBondSupportPasses, &guess) < 1e-6);
+      for (size_t i = 0; i + 1 < n; ++i)
+        CHECK(near(out[i].force[1], cold[i].force[1], 1e-6));
+    }
+  }
 
   // ---- benchmarks: the loads a Bond reads against statics ----
   {

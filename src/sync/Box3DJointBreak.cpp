@@ -825,6 +825,15 @@ float angleSinceRest(const b3dop::Box3DWorld &world, const Box3DJointEntry &e,
   return 2.0f * std::acos(w);
 }
 
+// One joint's readings, worked out before they are written.
+struct FeedbackItem {
+  Box3DJointEntry *e;
+  b3dop::JointFeedback fb;
+  float distance;
+  float angle;
+  bool ok;
+};
+
 // Feedback, under the Constraint Network DOP's names: force / distance for the
 // linear part, torque / angle (radians) for the angular part, plus the per-type
 // readings.
@@ -852,6 +861,9 @@ void writeFeedback(const b3dop::Box3DWorld &world, GU_Detail *gdp,
   GA_RWHandleF &distH = scalar("distance");
   GA_RWHandleF &torqueH = scalar("torque");
   GA_RWHandleF &angleH = scalar("angle");
+  // The joints that carry readings this step.
+  std::vector<FeedbackItem> items;
+  items.reserve(entries.size());
   for (Box3DJointEntry *e : entries) {
     if (e->quiet)
       continue;
@@ -889,42 +901,81 @@ void writeFeedback(const b3dop::Box3DWorld &world, GU_Detail *gdp,
         impactH.set(e->prim, e->extra->glueImpact);
       e->impactWritten = e->extra->glueImpact;
     }
-    b3dop::JointFeedback fb;
-    if (!primOk(e->prim) || !world.jointFeedback(e->handle, e->type, fb))
-      continue;
+    if (primOk(e->prim))
+      items.push_back({e, {}, 0.0f, 0.0f, false});
+  }
+
+  // The readings of every joint (read-only calls on the world and the entry,
+  // one item each) are worked out in parallel; the attributes the per-type
+  // readings need are made serially; the values are then written in parallel,
+  // each joint to its own primitive, once the pages are hardened.
+  constexpr size_t kMinParallelFeedback = 4096;
+  const auto forEach = [&items](const auto &f) {
+    if (items.size() < kMinParallelFeedback) {
+      for (size_t i = 0; i < items.size(); ++i)
+        f(i);
+      return;
+    }
+    UTparallelFor(UT_BlockedRange<size_t>(0, items.size()),
+                  [&f](const UT_BlockedRange<size_t> &r) {
+                    for (size_t i = r.begin(); i != r.end(); ++i)
+                      f(i);
+                  });
+  };
+  forEach([&](size_t i) {
+    FeedbackItem &it = items[i];
+    const Box3DJointEntry *e = it.e;
+    it.ok = world.jointFeedback(e->handle, e->type, it.fb);
+    if (!it.ok)
+      return;
     // A Bond inside a compound has a parked weld that carries nothing: its load
     // is the compound's spring network's (the last step's).
     if (e->type == b3dop::JointType::Bond && e->inCompound && e->extra) {
-      std::copy(e->extra->bondForce, e->extra->bondForce + 3, fb.force);
-      std::copy(e->extra->bondTorque, e->extra->bondTorque + 3, fb.torque);
+      std::copy(e->extra->bondForce, e->extra->bondForce + 3, it.fb.force);
+      std::copy(e->extra->bondTorque, e->extra->bondTorque + 3, it.fb.torque);
     }
+    // As RBD Bullet Solver: how far apart the two anchors are now (the ones
+    // written to current_P), not how far the joint is from satisfied.
+    // (writeLiveFrames, just before, stored this step's anchors.)
+    it.distance = it.fb.linearSeparation;
+    if (e->wrote) {
+      const double d[3] = {e->wroteA.pos[0] - e->wroteB.pos[0],
+                           e->wroteA.pos[1] - e->wroteB.pos[1],
+                           e->wroteA.pos[2] - e->wroteB.pos[2]};
+      it.distance = static_cast<float>(
+          std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]));
+    }
+    it.angle = angleSinceRest(world, *e, it.fb.angularSeparation);
+  });
+  for (const FeedbackItem &it : items)
+    if (it.ok)
+      for (int k = 0; k < it.fb.extraCount; ++k)
+        scalar(it.fb.extraName[k]);
+  if (items.size() >= kMinParallelFeedback)
+    for (auto &sc : scalars)
+      if (sc.second.isValid())
+        sc.second.getAttribute()->hardenAllPages();
+  forEach([&](size_t i) {
+    const FeedbackItem &it = items[i];
+    if (!it.ok)
+      return;
+    const GA_Offset prim = it.e->prim;
     if (forceH.isValid())
-      forceH.set(e->prim, length(fb.force));
-    if (distH.isValid()) {
-      // As RBD Bullet Solver: how far apart the two anchors are now (the ones
-      // written to current_P), not how far the joint is from satisfied.
-      // (writeLiveFrames, just before, stored this step's anchors.)
-      float distance = fb.linearSeparation;
-      if (e->wrote) {
-        const double d[3] = {e->wroteA.pos[0] - e->wroteB.pos[0],
-                             e->wroteA.pos[1] - e->wroteB.pos[1],
-                             e->wroteA.pos[2] - e->wroteB.pos[2]};
-        distance = static_cast<float>(
-            std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]));
-      }
-      distH.set(e->prim, distance);
-    }
+      forceH.set(prim, length(it.fb.force));
+    if (distH.isValid())
+      distH.set(prim, it.distance);
     if (torqueH.isValid())
-      torqueH.set(e->prim, length(fb.torque));
+      torqueH.set(prim, length(it.fb.torque));
     if (angleH.isValid())
-      angleH.set(e->prim, angleSinceRest(world, *e, fb.angularSeparation));
-    for (int k = 0; k < fb.extraCount; ++k) {
-      GA_RWHandleF &h = scalar(fb.extraName[k]);
+      angleH.set(prim, it.angle);
+    for (int k = 0; k < it.fb.extraCount; ++k) {
+      // Made above: only found here.
+      GA_RWHandleF &h = scalar(it.fb.extraName[k]);
       if (h.isValid())
-        h.set(e->prim, fb.extraIsAngle[k] ? fb.extra[k] * b3dop::kRadToDeg
-                                          : fb.extra[k]);
+        h.set(prim, it.fb.extraIsAngle[k] ? it.fb.extra[k] * b3dop::kRadToDeg
+                                          : it.fb.extra[k]);
     }
-  }
+  });
   for (auto &sc : scalars)
     if (sc.second.isValid())
       sc.second.getAttribute()->bumpDataId();

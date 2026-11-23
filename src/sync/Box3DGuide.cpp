@@ -21,6 +21,7 @@
 #include <SIM/SIM_Object.h>
 #include <SIM/SIM_ObjectArray.h>
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <mutex>
@@ -34,6 +35,8 @@ namespace {
 constexpr int kCircleSegments = 32;
 constexpr float kAsleepShade = 0.55f; // sleeping dynamic bodies
 constexpr float kStaticShade = 0.35f; // static and kinematic bodies
+// Chunks of bodies (of 256) before the drawing runs in parallel (untuned).
+constexpr size_t kMinParallelGuideChunks = 4;
 
 // The shared state of the Box3D world that has this object's bodies: the world
 // data sits on one object of its solver, so look through the engine's objects.
@@ -94,6 +97,17 @@ public:
       myPoints.push_back(c + r * (std::cos(a) * u + std::sin(a) * v));
     }
     endLine();
+  }
+
+  // The lines of `other`, after this one's (the colours go with them).
+  void append(const Lines &other) {
+    const size_t base = myPoints.size();
+    myPoints.insert(myPoints.end(), other.myPoints.begin(),
+                    other.myPoints.end());
+    for (const size_t end : other.myEnds)
+      myEnds.push_back(base + end);
+    myColors.insert(myColors.end(), other.myColors.begin(),
+                    other.myColors.end());
   }
 
   // Every line is an open polygon, built in one block: the points are made
@@ -276,6 +290,14 @@ void drawObjectShapes(Lines &lines, Box3DSharedState &st, const SIM_Object &obj,
   const GA_ROHandleI id(gdp, GA_ATTRIB_POINT, "id");
   const GA_ROHandleQ orient(gdp, GA_ATTRIB_POINT, "orient");
   const bool anyPrims = gdp->getNumPrimitives() > 0;
+  // The bodies and their poses are gathered first (the geometry and the mirror
+  // are read here), then drawn in chunks in parallel, each into its own Lines,
+  // and joined in order.
+  struct Placed {
+    const Box3DBodyMirror *e;
+    Pose p;
+  };
+  std::vector<Placed> placed;
   int64_t n = 0;
   for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it, ++n) {
     const GA_Offset off = *it;
@@ -303,8 +325,21 @@ void drawObjectShapes(Lines &lines, Box3DSharedState &st, const SIM_Object &obj,
         b3dop::sanitizeQuat(p.rot);
       }
     }
-    drawBody(lines, st.world, *e, p, color);
+    placed.push_back({e, p});
   }
+  constexpr size_t kChunk = 256;
+  const size_t chunks = (placed.size() + kChunk - 1) / kChunk;
+  std::vector<Lines> parts(chunks);
+  parallelForEach(
+      chunks,
+      [&](size_t c) {
+        const size_t end = std::min(placed.size(), (c + 1) * kChunk);
+        for (size_t i = c * kChunk; i < end; ++i)
+          drawBody(parts[c], st.world, *placed[i].e, placed[i].p, color);
+      },
+      kMinParallelGuideChunks);
+  for (const Lines &part : parts)
+    lines.append(part);
 }
 
 } // namespace

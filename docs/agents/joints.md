@@ -71,7 +71,11 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   bridges, and what does not add up (Force DOP forces, rounding) is spread over the pieces by mass.
   `core/Box3DBondNetwork.h` (`solveBondNetwork`, `core_bond`) turns those into the bonds' loads: small springs (a
   rigid-body spring network, stiffness in proportion to the bond's area), matrix-free conjugate gradient
-  (`kBondSolveIterations`, `kBondSolveTolerance`), checked against a hanging chain, two bonds side by side, a cantilever,
+  (`kBondSolveIterations`, `kBondSolveTolerance`), started from the compound's last displacement
+  (`Box3DCompound::bondWarm`): a large compound does not converge in one step's iterations, but the loads change little
+  between steps, so the residual keeps falling across them. Compounds are solved in parallel, one task each
+  (`solveCompoundBonds`; `kMinParallelBondSolves`). A diagonal preconditioner did not help (the springs are uniform).
+  Checked against a hanging chain, two bonds side by side, a cantilever,
   an even squeeze, an overhang on supports and a support that would pull. A solve that comes out non-finite leaves the bond's last load, and the network is regularized (`kBondRegularization`) so a
   piece with no support still solves. A bond held by a bridge reads the bridge
   weld's load. `bond_compound_cantilever` compares the mode with the welds.
