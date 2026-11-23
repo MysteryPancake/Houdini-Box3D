@@ -408,9 +408,20 @@ public:
   // Null when none was recorded. The summary is shared, not copied, and looked
   // up under a shared lock: every point of a fresh world asks.
   std::shared_ptr<const SourceSummary> find(uint64_t key) {
+    // The thread's last hit first. A key is made of the source's identity, so
+    // its summary never changes, and the lock below is a cache line every
+    // thread of a parallel scan would fight over for every point.
+    thread_local uint64_t memoKey = 0;
+    thread_local std::shared_ptr<const SourceSummary> memo;
+    if (memo && memoKey == key)
+      return memo;
     std::shared_lock<std::shared_mutex> lock(myMutex);
     const auto it = myMap.find(key);
-    return it == myMap.end() ? nullptr : it->second;
+    if (it == myMap.end())
+      return nullptr;
+    memoKey = key;
+    memo = it->second;
+    return memo;
   }
   void insert(uint64_t key, const PieceGroup &g) {
     auto sum = std::make_shared<SourceSummary>();

@@ -665,6 +665,7 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
 
   ++st->syncStamp;
   st->stampedCount = 0;
+  st->fullScans = 0;
   st->wantNames = anyJointNetwork(objects);
   st->reapDead = getReapDead();
   st->reapAtFrameEnd = getReapAtFrameEnd();

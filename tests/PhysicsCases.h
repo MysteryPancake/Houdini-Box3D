@@ -33,3 +33,4 @@ void testContactRecycling();
 void testSurfaceMaterial();
 void testWorldSettings();
 void testSleepEnable();
+void testBulkCreate();

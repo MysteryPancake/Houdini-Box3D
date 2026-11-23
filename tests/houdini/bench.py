@@ -11,7 +11,7 @@ Run from the repository root, with the plugin built:
     hython tests/houdini/bench.py pile --compare tests/houdini/out/bench/before.json
 
 Each run is its own hython process (a fresh hip file, a cold start). It plays frames 1..N, timing every frame
-(setFrame and the DOP cook, as a user waits for it), then resets the simulation and times frame 1 again (the world
+(setFrame and the DOP cook, as a user waits for it), then resets the simulation and times frame 2 again (the world
 rebuild). Frames are grouped into the scene's phases and reported as median, 95th percentile and maximum per frame.
 Houdini's Performance Monitor records the solvers' stages (Box3D's are Pre-Solve / Stepping Simulation /
 Post-Solve, so what is not Stepping World is the plugin's own code) and each DOP node's time.
@@ -139,14 +139,17 @@ def run_child(spec, result_file):
         if profile is not None:
             profile.stop()
             record["stages"] = stage_times(profile.stats(), dop.path())
-        if not spec.get("no_rewind") and not record.get("truncated"):
-            # Reset Simulation on frame 1, then cook it again: the world is rebuilt (the SOPs stay cached, so
-            # this is the rebuild, not the first frame's own cooking). Without the forced cook nothing re-solves.
+        if not spec.get("no_rewind") and not record.get("truncated") and scene.frames >= 2:
+            # Reset Simulation, then frame 1 and frame 2 again: new objects are only solved from frame 2, so that is
+            # where the world is rebuilt (the SOPs stay cached). rewind_ms is that frame 2.
             hou.setFrame(1)
             dop.simulation().objects()
             dop.parm("resimulate").pressButton()
-            t0 = time.perf_counter()
             dop.cook(force=True)
+            hou.setFrame(1)
+            dop.simulation().objects()
+            t0 = time.perf_counter()
+            hou.setFrame(2)
             dop.simulation().objects()
             record["rewind_ms"] = (time.perf_counter() - t0) * 1000.0
         record["phases"] = [list(p) for p in scene.phases]

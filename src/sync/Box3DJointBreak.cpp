@@ -1159,7 +1159,7 @@ bool bodyMoves(const b3dop::Box3DWorld &world, b3dop::BodyHandle h) {
 // Joints whose bodies are both at rest and were already written that way, and
 // joints that broke and had their last values written: their frames and
 // feedback cannot have changed, so this step does not write them.
-void markQuietJoints(const b3dop::Box3DWorld &world,
+void markQuietJoints(const b3dop::Box3DWorld &world, const Box3DSharedState &st,
                      const std::vector<Box3DJointEntry *> &entries,
                      bool bondReadouts) {
   // One entry per iteration: the world is only read (as in writeFeedback's
@@ -1169,13 +1169,19 @@ void markQuietJoints(const b3dop::Box3DWorld &world,
       entries.size(),
       [&](size_t i) {
         Box3DJointEntry *e = entries[i];
-        const bool asleep = e->handle && !bodyMoves(world, e->bodyA) &&
+        // A bond inside a compound joins parked bodies (never awake) that move
+        // with their compound: it is at rest when the compound's body is.
+        bool compoundAwake = false;
+        if (e->inCompound) {
+          const auto c = st.compoundOf.find(e->bodyA);
+          compoundAwake = c == st.compoundOf.end() ||
+                          world.isAwakeByHandle(c->second.first->body);
+        }
+        const bool asleep = e->handle && !compoundAwake &&
+                            !bodyMoves(world, e->bodyA) &&
                             !bodyMoves(world, e->bodyB);
-        // A bond inside a compound joins parked (never awake) bodies that move
-        // with their compound: never quiet.
         const bool nothingPending =
-            !e->inCompound && !e->writeLocal && !e->switchFrames &&
-            e->madeRestLength < 0.0f &&
+            !e->writeLocal && !e->switchFrames && e->madeRestLength < 0.0f &&
             // a Glue's impact decays each step until it reaches zero
             (!e->glue ||
              (e->extra && e->extra->glueImpact == e->impactWritten)) &&
@@ -1250,7 +1256,7 @@ int jointsAfterStep(Box3DSharedState &st, SIM_ObjectArray &objects) {
     // Nothing broke, no age to add and every joint is as it was last written
     // (both bodies at rest): the geometry is left alone, with no write lock,
     // no new data ids and no fingerprint to take again.
-    markQuietJoints(world, entries, st.bondReadouts);
+    markQuietJoints(world, st, entries, st.bondReadouts);
     if (!anyBroken && st.constraintAgeDt <= 0.0f && allQuiet(entries))
       continue;
     SIM_Object *obj = box3dObjectById(objects, net.objectId, st.objectsSorted);

@@ -96,7 +96,7 @@ part of `run_tests.py` and nothing in it passes or fails. `--list` names the sce
 pile, edit, collider, animated, joints, wall), each with parameters (`name:key=value,...`) and a default sweep.
 
 * Each run is its own hython process: frames 1..N timed as `setFrame` plus the DOP cook, grouped into the scene's
-  phases (median, p95, max per frame), then Reset Simulation and frame 1 again (the world rebuild; the forced `cook` is
+  phases (median, p95, max per frame), then Reset Simulation and frame 2 again (`rewind`: the world rebuild; the forced `cook` is
   what makes it re-solve). Frame 1 is its own `first` phase: the scene's SOPs cook there and Box3D builds nothing yet
   (new objects are solved from frame 2).
 * `hou.perfMon` records the solvers' stages (`Pre-Solve/...`, `Stepping Simulation/...`, `Post-Solve/...` are nested

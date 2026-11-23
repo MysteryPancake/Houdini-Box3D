@@ -1156,3 +1156,82 @@ void testSleepEnable() {
   (void)ang;
   std::printf("sleep / enable state checks done\n");
 }
+
+// Bodies made between beginBulkCreate and endBulkCreate (their broad-phase
+// proxies built into the tree together) behave as bodies made one by one: the
+// same 1500 boxes dropped on a ground end in the same places, a body destroyed
+// while the bulk is open leaves no proxy behind, and a bulk with nothing made
+// in it is harmless.
+void testBulkCreate() {
+  using namespace b3dop;
+  const float qid[4] = {0, 0, 0, 1};
+  constexpr int kBoxes = 1500;
+  std::vector<double> end[2];
+  for (int bulk = 0; bulk < 2; ++bulk) {
+    KeyedWorld w;
+    CHECK(w.create(WorldSettings()));
+    BodySettings ground;
+    ground.type = BodySettings::Type::Static;
+    const double gp[3] = {0, -0.5, 0};
+    const BodyHandle g = w.createBody(ground, gp, qid);
+    ShapeSpec slab;
+    slab.halfExtents[0] = slab.halfExtents[2] = 20.0f;
+    slab.halfExtents[1] = 0.5f;
+    CHECK(w.createShape(g, ground, slab));
+    if (bulk)
+      w.beginBulkCreate();
+    std::vector<BodyHandle> boxes;
+    BodySettings dyn;
+    ShapeSpec cube;
+    cube.halfExtents[0] = cube.halfExtents[1] = cube.halfExtents[2] = 0.25f;
+    for (int i = 0; i < kBoxes; ++i) {
+      const double p[3] = {(i % 15) * 0.7 - 5.0, 0.4 + (i / 225) * 0.6,
+                           ((i / 15) % 15) * 0.7 - 5.0};
+      const BodyHandle h = w.createBody(dyn, p, qid);
+      CHECK(h && w.createShape(h, dyn, cube));
+      boxes.push_back(h);
+      if (bulk && i == 700) { // made, then destroyed while the bulk is open
+        w.destroyBody(h);
+        boxes.pop_back();
+      }
+    }
+    if (bulk)
+      w.endBulkCreate();
+    else {
+      const BodyHandle h = boxes[700];
+      w.destroyBody(h);
+      boxes.erase(boxes.begin() + 700);
+    }
+    for (int i = 0; i < 90; ++i)
+      w.step(1.0f / 60.0f);
+    for (const BodyHandle h : boxes) {
+      double p[3];
+      float q[4];
+      CHECK(w.getTransformByHandle(h, p, q));
+      end[bulk].insert(end[bulk].end(), p, p + 3);
+    }
+  }
+  CHECK(end[0].size() == end[1].size());
+  double worst = 0.0;
+  for (size_t i = 0; i < end[0].size() && i < end[1].size(); ++i)
+    worst = std::fmax(worst, std::fabs(end[0][i] - end[1][i]));
+  std::printf("bulk create: %zu boxes, largest position difference %.2e\n",
+              end[0].size() / 3, worst);
+  CHECK(worst < 1e-3);
+
+  // Nothing made in the bulk, and a bulk opened twice in a row.
+  KeyedWorld e;
+  CHECK(e.create(WorldSettings()));
+  e.beginBulkCreate();
+  e.endBulkCreate();
+  e.beginBulkCreate();
+  const double p[3] = {0, 1, 0};
+  BodySettings dyn;
+  const BodyHandle h = e.createBody(dyn, p, qid);
+  ShapeSpec cube;
+  CHECK(h && e.createShape(h, dyn, cube));
+  e.endBulkCreate();
+  for (int i = 0; i < 10; ++i)
+    e.step(1.0f / 60.0f);
+  std::printf("bulk create checks done\n");
+}

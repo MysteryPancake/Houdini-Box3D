@@ -843,6 +843,9 @@ struct Box3DSharedState {
   // this solve's objects are in id order (box3dObjectById may binary search)
   bool objectsSorted = false;
   uint64_t bodyVersion = 0; // bumped whenever bodies are added or removed
+  // Objects the sync scanned in full this step (an object whose markers are
+  // unchanged is skipped, and none of its bodies can differ from the mirror).
+  uint32_t fullScans = 0;
   // This sync's changes of the body set, for the constraint networks: handles
   // of the bodies removed, whether any was added, whether an affector came or
   // went (every network is read again), and a counter of renamed pieces.

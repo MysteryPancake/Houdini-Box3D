@@ -105,6 +105,18 @@ bool poseDiffers(const Box3DBodyPose &a, const Box3DBodyPose &b) {
   return false;
 }
 
+// Position or orientation differ (as poseDiffers, without the velocities): a
+// body whose velocity alone was edited is not moved.
+bool placeDiffers(const Box3DBodyPose &a, const Box3DBodyPose &b) {
+  const double eps = 1e-5;
+  if (b3dop::quatsDiffer(a.rot, b.rot, eps))
+    return true;
+  for (int i = 0; i < 3; ++i)
+    if (std::fabs(a.pos[i] - b.pos[i]) > eps)
+      return true;
+  return false;
+}
+
 // The object's change markers (Box3DSyncFingerprint). `a` must be bound on
 // `gdp`.
 Box3DSyncFingerprint makeFingerprint(const GU_Detail *gdp, const PointAttrs &a,
@@ -533,14 +545,67 @@ ShapePlan planShapes(ScanContext &ctx, GA_Offset off, int64_t bodyId,
   const bool autofit =
       a.autofit.isValid() ? (a.autofit.get(off) != 0) : ctx.node.autoFit;
   plan.plannedStatic = staticBody;
-  plan.shapes = buildShapes(ctx.world, ctx.sources, plan.type,
-                            ctx.node.hullPerConnectedSet, ps, sc, pk, autofit,
-                            readPrimOverrides(a, off, ctx.node.prim),
-                            staticBody, ctx.world.settings().ground);
+  const b3dop::PrimOverrides ov = readPrimOverrides(a, off, ctx.node.prim);
+
+  // Instances of one packed source with the same scale, pivot, shape type and
+  // overrides get the same shapes (the build reads the packed transform only
+  // through its scale), and a scan's points are mostly such runs: the last
+  // build is kept per thread and reused while the key matches, so the source
+  // lookups (a lock on its geometry, its identity, the caches) are made once
+  // for the run. Valid for one scan only (the epoch): the geometry cannot
+  // change inside it.
+  struct ShapeMemo {
+    uint64_t epoch = 0;
+    uint64_t key = 0;
+    bool valid = false;
+    BuiltShapes shapes;
+    uint64_t sig = 0;
+  };
+  thread_local ShapeMemo memo;
+  double S[3];
+  const bool memoable = pk.prim && b3dop::packedScale(pk.m4, S);
+  uint64_t key = 0;
+  if (memoable) {
+    key = b3dop::mixHash(
+        0x51ed270b1b4d3a5full,
+        reinterpret_cast<uintptr_t>(pk.prim->sharedImplementation()));
+    key =
+        b3dop::mixHash(key, static_cast<uint64_t>(static_cast<int>(plan.type)));
+    key = b3dop::hashBytes(key, S, sizeof(S));
+    key = b3dop::hashBytes(key, pk.pivot, sizeof(pk.pivot));
+    key = b3dop::hashBytes(key, &ps, sizeof(ps));
+    key = b3dop::hashBytes(key, sc, sizeof(sc));
+    key = b3dop::mixHash(
+        key, (autofit ? 1u : 0u) | (staticBody ? 2u : 0u) |
+                 (ov.hasSize ? 4u : 0u) | (ov.hasRot ? 8u : 0u) |
+                 (ov.hasPos ? 16u : 0u) | (ov.hasRadius ? 32u : 0u) |
+                 (ov.hasLength ? 64u : 0u));
+    key = b3dop::hashBytes(key, ov.size, sizeof(ov.size));
+    key = b3dop::hashBytes(key, ov.rot, sizeof(ov.rot));
+    key = b3dop::hashBytes(key, ov.pos, sizeof(ov.pos));
+    key = b3dop::hashBytes(key, &ov.radius, sizeof(ov.radius));
+    key = b3dop::hashBytes(key, &ov.length, sizeof(ov.length));
+  }
+  if (memoable && memo.valid && memo.epoch == ctx.georep.generation &&
+      memo.key == key) {
+    plan.shapes = memo.shapes;
+    plan.sig = memo.sig;
+  } else {
+    plan.shapes = buildShapes(ctx.world, ctx.sources, plan.type,
+                              ctx.node.hullPerConnectedSet, ps, sc, pk, autofit,
+                              ov, staticBody, ctx.world.settings().ground);
+    plan.sig = shapeSignature(plan.type, plan.shapes);
+    if (memoable) {
+      memo.epoch = ctx.georep.generation;
+      memo.key = key;
+      memo.valid = true;
+      memo.shapes = plan.shapes;
+      memo.sig = plan.sig;
+    }
+  }
   if (plan.shapes.note)
     B3D_LOG("  body id=%lld: %s", static_cast<long long>(bodyId),
             plan.shapes.note);
-  plan.sig = shapeSignature(plan.type, plan.shapes);
 
   // Convex / concave follow scale changes (as in Houdini); primitives do not.
   plan.autoScale = (plan.type == b3dop::ShapeType::Convex ||
@@ -922,7 +987,10 @@ void updateExistingBody(ScanContext &ctx, Box3DSharedState &st,
   }
   // Did something else edit P / orient / v / w since we wrote it?
   else if (poseDiffers(cur, entry)) {
-    world.setTransformByHandle(entry.handle, cur.pos, cur.rot);
+    // Moving a body updates its shapes' bounds in the broad phase: only when
+    // its place changed, not for an edit of v or w alone.
+    if (placeDiffers(cur, entry))
+      world.setTransformByHandle(entry.handle, cur.pos, cur.rot);
     world.setVelocityByHandle(entry.handle, cur.lin, cur.ang);
     entry.setPose(cur);
     // A glued piece: its compound is dissolved before the step, the piece
@@ -1489,6 +1557,9 @@ private:
 // Sync one object's points into the world: collect slots, read, plan shapes,
 // apply. Returns early (object half synced) if the user cancels: the caller
 // then discards the world (see solveObjectsSubclass).
+// Bodies in one scan before a world that is mostly new is built in bulk.
+constexpr size_t kMinBulkCreate = 1024;
+
 void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
                 StepProgress &progress) {
   const SIM_Geometry *geo =
@@ -1536,6 +1607,7 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
                     describeFingerprintDifference(os.fp, fpNow).c_str());
 #endif
   os.canSkip = false;
+  ++st.fullScans;
   os.liveStamp = st.syncStamp;
   const int problems0 = problemCount(c);
   if (dataNode)
@@ -1588,6 +1660,19 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
   reserveMirror(st, snaps);
   stampQuietSlots(ctx, os, objectId, snaps, plans, checkProps);
   ApplyPass apply(ctx, os, c, plans, names, objectId, checkProps);
+  // Most of the world is new (a first frame, a rebuild): the bodies'
+  // broad-phase proxies are put in the tree together at the end of the pass.
+  struct BulkCreate {
+    b3dop::Box3DWorld *world = nullptr;
+    ~BulkCreate() {
+      if (world)
+        world->endBulkCreate();
+    }
+  } bulk;
+  if (snaps.size() >= kMinBulkCreate && st.mirror.size() <= snaps.size() / 4) {
+    bulk.world = &st.world;
+    bulk.world->beginBulkCreate();
+  }
   if (!apply.run(snaps, progress))
     return;
   names.finish(st, os);

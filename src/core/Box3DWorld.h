@@ -542,6 +542,13 @@ public:
   // default.
   void enableContactImpulseEvents(bool on);
 
+  // Bodies created between these calls get their broad-phase proxies in one
+  // tree build at the end instead of one insertion each (Box3D's
+  // b3World_BeginBulkCreate). For making many bodies at once: nothing may query
+  // the world meanwhile.
+  void beginBulkCreate();
+  void endBulkCreate();
+
   // Every such point of the last step, one record each (what
   // getContactsByHandle gives for all awake bodies at once, seen once per
   // contact). `out` is cleared first. Valid until the next step.

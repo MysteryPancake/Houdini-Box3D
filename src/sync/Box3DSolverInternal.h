@@ -406,10 +406,13 @@ struct GeorepLookup {
   };
   std::shared_mutex mutex; // get() runs in the parallel shape pre-pass
   std::unordered_map<int64_t, Parsed> byHandle;
+  uint64_t generation = 0; // which scan's handles the thread memos hold
 
   void bind(const PointAttrs &a) {
     attr = a.georep.isValid() ? a.georep.getAttribute() : nullptr;
     aif = attr ? attr->getAIFSharedStringTuple() : nullptr;
+    static std::atomic<uint64_t> next{1};
+    generation = next.fetch_add(1);
   }
 
   // False (out untouched) when missing, empty or unknown.
@@ -422,11 +425,26 @@ struct GeorepLookup {
     if (handle == GA_INVALID_STRING_INDEX)
       return false;
     const int64_t key = static_cast<int64_t>(handle);
+    // The thread's last answer first: the points of a scan mostly share one
+    // handle, and a shared lock taken by every thread for every point is a
+    // contended cache line.
+    struct Memo {
+      uint64_t generation = 0;
+      int64_t key = 0;
+      Parsed parsed;
+    };
+    thread_local Memo memo;
+    if (memo.generation == generation && memo.key == key) {
+      if (memo.parsed.ok)
+        out = memo.parsed.type;
+      return memo.parsed.ok;
+    }
     {
       // Nearly every call finds its handle: read under a shared lock.
       std::shared_lock<std::shared_mutex> lock(mutex);
       const auto it = byHandle.find(key);
       if (it != byHandle.end()) {
+        memo = {generation, key, it->second};
         if (it->second.ok)
           out = it->second.type;
         return it->second.ok;
@@ -438,6 +456,7 @@ struct GeorepLookup {
       std::unique_lock<std::shared_mutex> lock(mutex);
       byHandle.emplace(key, p); // another thread may have added it: same value
     }
+    memo = {generation, key, p};
     if (p.ok)
       out = p.type;
     return p.ok;

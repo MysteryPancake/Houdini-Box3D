@@ -716,6 +716,7 @@ const TestCase kTests[] = {
     {"mirrored_packed", testMirroredPacked},
     {"estimated_bytes", testEstimatedBytes},
     {"sleep_enable", testSleepEnable},
+    {"bulk_create", testBulkCreate},
 };
 
 // Usage: b3dop_core_physics [--list | <case>...]

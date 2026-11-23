@@ -306,6 +306,63 @@ def test_mirrored_piece():
 # ---------------------------------------------------------------------------
 
 
+def test_instances_differ():
+    """Instances of one packed source keep their own shapes. 60 boxes made from one source (one Copy to Points) at
+    scales 1, 2 and 3 in turn, an `active` ground, 90 frames: each rests with its centre at half its scale (0.5, 1.0,
+    1.5, within 0.06). Instances share their source, so a shape built for one and reused for another would put the
+    three sizes at the same height."""
+    from bench_scenes import copy_packed
+
+    geo = new_geo("instances_differ_geo")
+    pts = create(geo, "attribwrangle", "points")
+    set_parm(pts, ["class"], 0)
+    set_parm(pts, ["snippet"], (
+        'addpointattrib(0, "name", ""); addpointattrib(0, "active", 1); addpointattrib(0, "scale", {1, 1, 1});\n'
+        "for (int i = 0; i < 60; i++) {\n"
+        "  float s = 1 + i % 3;\n"
+        "  int pt = addpoint(0, set((i % 10) * 4.0 - 18.0, 2.0 + s, (i / 10) * 4.0 - 10.0));\n"
+        '  setpointattrib(0, "name", pt, sprintf("p%d", i));\n'
+        '  setpointattrib(0, "scale", pt, set(s, s, s));\n'
+        "}"))
+    box = create(geo, "box")
+    set_parm(box, ["size"], (1.0, 1.0, 1.0))
+    copy = copy_packed(geo, box, pts)
+    dop = new_dopnet("instances_differ")
+    ground_path, _ = packed_boxes("instances_differ_ground", [dict(GROUND, size=(60, 1, 60))])
+    objs = [packed_object(dop, "pieces", copy.path()), packed_object(dop, "ground", ground_path)]
+    finish(dop, box3d_solver(dop, merge(dop, objs)))
+    final = step(dop, 90, lambda sim, f: packed_positions(sim, "pieces") if f == 90 else None)[90]
+    worst = 0.0
+    for i in range(60):
+        want = 0.5 * (1 + i % 3)
+        got = final[f"p{i}"][1]
+        worst = max(worst, abs(got - want))
+    heights = sorted({round(final[f"p{i}"][1], 1) for i in range(60)})
+    ok = worst < 0.06 and len(heights) >= 3
+    return [Result("instances_differ", Result.PASS if ok else Result.FAIL,
+                   f"60 instances at scales 1, 2, 3: largest difference from the rest height {worst:.3f} (expected "
+                   f"under 0.06), distinct rest heights {heights} (expected about 0.5, 1.0 and 1.5)")]
+
+
+def test_velocity_edit():
+    """A SOP Solver that sets only `v` on a floating box (no gravity) on frame 10 changes its velocity and leaves it
+    where it is: x stays 0 until the edit, then moves at 2 m/s (about 0.92 by frame 20: 11 steps at 24 fps), y stays
+    5 throughout. An edit of v alone does not move the body (it is not set to a new transform)."""
+    path, names = packed_boxes("velocity_edit_pieces", [
+        {"size": (1, 1, 1), "center": (0, 5, 0), "attrs": {"active": 1, "v": (0.0, 0.0, 0.0)}}])
+    dop = new_dopnet("velocity_edit")
+    obj = packed_object(dop, "pieces", path, keep_velocity=True)
+    edit = sop_solver(dop, "if (@Frame == 10) v@v = {2, 0, 0};")
+    solver = box3d_solver(dop, None, gravity=(0, 0, 0))
+    finish(dop, multisolver(dop, obj, [edit, solver]))
+    track = step(dop, 24, lambda sim, f: tuple(packed_positions(sim, "pieces")[names[0]]))
+    x9, x20, y_all = track[9][0], track[20][0], [t[1] for t in track.values()]
+    ok = abs(x9) < 1e-3 and close(x20, 2.0 * 11 / hou.fps(), 0.1) and all(close(y, 5.0, 1e-3) for y in y_all)
+    return [Result("velocity_edit", Result.PASS if ok else Result.FAIL,
+                   f"x on frame 9 {x9:.4f} (expected 0), on frame 20 {x20:.3f} (expected {2.0 * 11 / hou.fps():.3f}); "
+                   f"y from {min(y_all):.4f} to {max(y_all):.4f} (expected 5)")]
+
+
 def test_written_velocity():
     """The solver writes v and w on the points: a falling box has v.y = -g t after one second, and
     a spinning box (no gravity) keeps w = 1 rad/s and turns 1 radian in a second."""
@@ -1522,6 +1579,8 @@ TESTS = {
     "packed_tube_taper": test_packed_tube_taper,
     "mirrored_piece": test_mirrored_piece,
     "written_velocity": test_written_velocity,
+    "velocity_edit": test_velocity_edit,
+    "instances_differ": test_instances_differ,
     "impacts": test_impacts,
     "impacts_substeps": test_impacts_substeps,
     "mass_written": test_mass_written,

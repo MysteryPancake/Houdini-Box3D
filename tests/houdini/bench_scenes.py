@@ -430,9 +430,9 @@ def scene_joints(kind, p):
 
 
 @scenario("wall", "A brick wall (W x H bricks) glued to each neighbour, a heavy box thrown at it: at rest, the hit, the "
-          "debris. Options: w, h, strength (Glue), group (bricks per glued block; 0 = one block), compound 0|1 (Box3D's "
+          "debris. Options: w, h, strength (Glue; the default holds the wall intact, a low one makes it fall apart by itself), group (bricks per glued block; 0 = one block), compound 0|1 (Box3D's "
           "Glue as One Body).",
-          {"w": 40, "h": 20, "strength": 2e4, "group": 0, "frames": 120},
+          {"w": 40, "h": 20, "strength": 1e8, "group": 0, "frames": 120},
           sweep=[{"compound": 1}, {"compound": 0}, {"w": 20, "h": 10, "compound": 1},
                  {"group": 5, "compound": 1}])
 def scene_wall(kind, p):

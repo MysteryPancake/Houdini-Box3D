@@ -125,6 +125,47 @@ bool heldNode(const Box3DSharedState &st, int node) {
          st.glueHold.held(st.glueNodes[static_cast<size_t>(node)].body);
 }
 
+// Whether glue nodes `a` and `b` are still joined through live bonds, found by
+// searching from both at once, a node at a time, until the searches meet. In a
+// mesh of bonds (a wall) the neighbours of a broken bond are joined by a short
+// way round and the searches meet within a few nodes; when one side is used up
+// without meeting, or the search grows past `kMaxNodes`, the answer is false
+// (the caller works the components out the full way). Held pieces are left out
+// as reachFrom leaves them.
+bool stillJoined(const Box3DSharedState &st, int a, int b) {
+  constexpr size_t kMaxNodes = 512;
+  if (a == b)
+    return true;
+  if (heldNode(st, a) || heldNode(st, b))
+    return false;
+  std::unordered_map<int, char> mark; // 1: reached from a, 2: from b
+  std::vector<int> queue[2] = {{a}, {b}};
+  size_t head[2] = {0, 0};
+  mark[a] = 1;
+  mark[b] = 2;
+  for (int side = 0;; side ^= 1) {
+    if (head[side] >= queue[side].size()) {
+      // This side is used up. Without meeting the other, they are apart.
+      return false;
+    }
+    const int n = queue[side][head[side]++];
+    for (const BodyHandle h : st.glueNodes[static_cast<size_t>(n)].partners) {
+      const auto it = st.glueNodeOf.find(h);
+      if (it == st.glueNodeOf.end() || heldNode(st, it->second))
+        continue;
+      const auto ins = mark.emplace(it->second, static_cast<char>(side + 1));
+      if (!ins.second) {
+        if (ins.first->second != side + 1)
+          return true; // reached by the other search
+        continue;
+      }
+      queue[side].push_back(it->second);
+    }
+    if (mark.size() > kMaxNodes)
+      return false;
+  }
+}
+
 Reach reachFrom(const Box3DSharedState &st, const std::vector<int> &seeds) {
   Reach r;
   std::vector<int> stack;
@@ -648,10 +689,17 @@ void syncCompounds(Box3DSharedState &st) {
         bridgeBoundaries(st, *c);
   };
 
-  // 1. Compounds whose pieces changed since they were merged.
+  // 1. Compounds whose pieces changed since they were merged. Only a full
+  // scan of an object (or a body added or removed) can change a piece's entry,
+  // settings or shapes; a step with none leaves them as merged, and checking
+  // every piece of every compound each frame was most of what a held compound
+  // cost.
   bool dissolved = false;
   bool membership = false; // a compound was dissolved or made
-  for (size_t i = 0; i < st.compounds.size();) {
+  const bool piecesMayDiffer = st.fullScans > 0 ||
+                               st.bodyVersion != st.groupsBodyVersion ||
+                               st.groupsRecheck;
+  for (size_t i = 0; piecesMayDiffer && i < st.compounds.size();) {
     Box3DCompound &c = *st.compounds[i];
     if (resolveMembers(st, c)) {
       dissolve(st, c);
@@ -672,6 +720,30 @@ void syncCompounds(Box3DSharedState &st) {
     st.glueTouched.clear();
     rebuildBridges();
     return;
+  }
+  // Only bonds broke (their two nodes are in glueTouched, a pair each), and
+  // each broke inside one compound whose pieces are still joined some other
+  // way: the components are as they were, so the compounds and the groups need
+  // no work. (A bond that cuts a group in two, or one between pieces that are
+  // not in a compound, takes the full way below.)
+  if (!dissolved && !st.groupsRecheck && bodiesSame && st.tiedKnown &&
+      !st.glueTouched.empty() && st.glueTouched.size() % 2 == 0) {
+    bool unchanged = true;
+    for (size_t k = 0; unchanged && k + 1 < st.glueTouched.size(); k += 2) {
+      const int a = st.glueTouched[k], b = st.glueTouched[k + 1];
+      const auto ca =
+          st.compoundOf.find(st.glueNodes[static_cast<size_t>(a)].body);
+      const auto cb =
+          st.compoundOf.find(st.glueNodes[static_cast<size_t>(b)].body);
+      unchanged = ca != st.compoundOf.end() && cb != st.compoundOf.end() &&
+                  ca->second.first == cb->second.first && stillJoined(st, a, b);
+    }
+    if (unchanged) {
+      st.groupsSignature = st.glueSignature;
+      st.glueTouched.clear();
+      rebuildBridges();
+      return;
+    }
   }
   const bool partial = !dissolved && !st.groupsRecheck && bodiesSame &&
                        !st.glueTouched.empty() && st.tiedKnown;

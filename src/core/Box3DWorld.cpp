@@ -190,10 +190,20 @@ public:
   // Under a shared lock: every packed instance of a fresh scan asks, from
   // several threads, and a lookup changes nothing.
   bool find(uint64_t key, ShapeSpec &out) {
+    // The thread's last hit first (a fit is a function of its key, so it never
+    // changes), skipping the shared lock every thread would take per point.
+    thread_local uint64_t memoKey = 0;
+    thread_local ShapeSpec memo;
+    if (memoKey == key && key != 0) {
+      out = memo;
+      return true;
+    }
     std::shared_lock<std::shared_mutex> lock(myMutex);
     const auto it = myEntries.find(key);
     if (it == myEntries.end())
       return false;
+    memoKey = key;
+    memo = it->second;
     out = it->second;
     return true;
   }
@@ -2170,6 +2180,16 @@ int Box3DWorld::getContactsByHandle(BodyHandle h,
     }
   }
   return static_cast<int>(out.size());
+}
+
+void Box3DWorld::beginBulkCreate() {
+  if (isValid())
+    b3World_BeginBulkCreate(myImpl->worldId);
+}
+
+void Box3DWorld::endBulkCreate() {
+  if (isValid())
+    b3World_EndBulkCreate(myImpl->worldId);
 }
 
 void Box3DWorld::enableContactImpulseEvents(bool on) {
