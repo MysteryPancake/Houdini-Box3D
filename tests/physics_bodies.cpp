@@ -1124,8 +1124,9 @@ void testBulkCreate() {
     ShapeSpec cube;
     cube.halfExtents[0] = cube.halfExtents[1] = cube.halfExtents[2] = 0.25f;
     for (int i = 0; i < kBoxes; ++i) {
-      const double p[3] = {(i % 15) * 0.7 - 5.0, 0.4 + (i / 225) * 0.6,
-                           ((i / 15) % 15) * 0.7 - 5.0};
+      const int layer = i / 225, row = (i / 15) % 15;
+      const double p[3] = {(i % 15) * 0.7 - 5.0, 0.4 + layer * 0.6,
+                           row * 0.7 - 5.0};
       const BodyHandle h = w.createBody(dyn, p, qid);
       CHECK(h && w.createShape(h, dyn, cube));
       boxes.push_back(h);
@@ -1184,7 +1185,8 @@ void testStepProfile() {
   ShapeSpec cube;
   BodySettings dyn;
   for (int i = 0; i < 200; ++i) {
-    const double p[3] = {(i % 10) * 0.9, 1.0 + (i / 10) * 0.9, 0.0};
+    const int row = i / 10;
+    const double p[3] = {(i % 10) * 0.9, 1.0 + row * 0.9, 0.0};
     const BodyHandle h = w.createBody(dyn, p, qid);
     CHECK(w.createShape(h, dyn, cube));
   }
