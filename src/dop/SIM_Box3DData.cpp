@@ -244,5 +244,6 @@ b3dop::BodySettings SIM_Box3DData::toBodySettings() const {
   o.hasRadius = o.radius != unset.radius;
   o.length = static_cast<float>(getPrimLength());
   o.hasLength = o.length != unset.length;
+  p.sanitize();
   return s;
 }

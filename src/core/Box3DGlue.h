@@ -59,6 +59,14 @@ struct GlueParams {
   int iterations = 1;        // rounds of propagation; < 1 counts as 1
 };
 
+// A propagation rate kept to 0..1. A non-finite one (std::clamp would pass a
+// NaN on, and every share it touches would become NaN) takes the default.
+inline float glueRate(float rate) {
+  if (!std::isfinite(rate))
+    return GlueParams().rate;
+  return std::clamp(rate, 0.0f, 1.0f);
+}
+
 // One bond between two nodes (bodies). `impact` is the Glue's `impact`
 // attribute: it persists from step to step.
 struct GlueBond {
@@ -88,7 +96,7 @@ inline void glueSpread(const std::vector<GlueBond> &bonds,
     for (const GlueBond &bond : bonds) {
       if (bond.params.iterations <= round)
         continue;
-      const float r = std::clamp(bond.params.rate, 0.0f, 1.0f);
+      const float r = glueRate(bond.params.rate);
       weight[static_cast<size_t>(bond.a)] += r;
       weight[static_cast<size_t>(bond.b)] += r;
     }
@@ -97,7 +105,7 @@ inline void glueSpread(const std::vector<GlueBond> &bonds,
     for (const GlueBond &bond : bonds) {
       if (bond.params.iterations <= round)
         continue;
-      const float r = std::clamp(bond.params.rate, 0.0f, 1.0f);
+      const float r = glueRate(bond.params.rate);
       const size_t a = static_cast<size_t>(bond.a),
                    b = static_cast<size_t>(bond.b);
       next[b] += hits[a] * r / weight[a];

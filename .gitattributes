@@ -1,5 +1,5 @@
-# Normalize line endings: LF in the repo, native in the working tree.
-* text=auto
+# LF everywhere, in the repo and in the working tree, whatever core.autocrlf says.
+* text=auto eol=lf
 
 # Houdini hip files must never be touched by line-ending conversion.
 *.hiplc binary

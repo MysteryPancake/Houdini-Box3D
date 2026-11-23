@@ -245,11 +245,11 @@ inline double conjugateGradient(
 // The loads of `links` under the nodes' net loads, in `out` (one per link),
 // with `supports` as elastic supports (`supportOut`, one per support, says what
 // each did). Supports that would pull are left out and the network solved
-// again, up to `passes` times. Returns the relative residual reached, |K x -
-// rhs| / |rhs| (0 when there is nothing to carry), within `maxIterations` per
-// solve, or infinity when the solve did not stay finite (the loads are then
-// zero). Links and supports to a node out of range are skipped (their load is
-// zero).
+// again, up to `passes` times (and once more if the last pass dropped one).
+// Returns the relative residual reached, |K x - rhs| / |rhs| (0 when there is
+// nothing to carry), within `maxIterations` per solve, or infinity when the
+// solve did not stay finite (the loads are then zero). Links and supports to a
+// node out of range are skipped (their load is zero).
 inline double solveBondNetwork(const std::vector<BondNode> &nodes,
                                const std::vector<BondLink> &links,
                                const std::vector<BondSupport> &supports,
@@ -318,11 +318,12 @@ inline double solveBondNetwork(const std::vector<BondNode> &nodes,
         (valid.empty() ? 1.0 : rotation / static_cast<double>(valid.size()));
   }
   double residual = 0.0;
-  for (int pass = 0; pass < std::max(passes, 1); ++pass) {
+  // Solves with the supports in use and reads what each pushes with.
+  double biggest = 0.0;
+  const auto solve = [&] {
     residual = detail::conjugateGradient(nodes, valid, sup, used, reg, rhs, x,
                                          maxIterations, tolerance);
-    // What each support in use pushes with; one that pulls is dropped.
-    double biggest = 0.0;
+    biggest = 0.0;
     for (size_t k = 0; k < sup.size(); ++k) {
       double f[3];
       detail::supportForce(sup[k], nodes, x, f);
@@ -331,7 +332,12 @@ inline double solveBondNetwork(const std::vector<BondNode> &nodes,
         push[k] += f[i] * sup[k].normal[i];
       biggest = std::max(biggest, std::fabs(push[k]));
     }
-    bool dropped = false;
+  };
+  bool dropped = false;
+  for (int pass = 0; pass < std::max(passes, 1); ++pass) {
+    solve();
+    // A support that pulls is dropped.
+    dropped = false;
     for (size_t k = 0; k < sup.size(); ++k)
       if (used[k] && push[k] < -1e-9 * std::max(biggest, 1.0)) {
         used[k] = 0;
@@ -340,6 +346,12 @@ inline double solveBondNetwork(const std::vector<BondNode> &nodes,
     if (!dropped)
       break;
   }
+  // Out of passes with supports just dropped: the loads are still those of a
+  // solve that had them. Solve once more with the ones left, so the loads, the
+  // pushes and the supports reported as in use agree (one of those may pull
+  // still).
+  if (dropped)
+    solve();
   // A solve that did not stay finite gives nothing (infinity as the residual).
   for (const double v : x)
     if (!std::isfinite(v)) {

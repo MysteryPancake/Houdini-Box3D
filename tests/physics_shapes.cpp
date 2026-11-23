@@ -6,9 +6,11 @@
 #include "PhysicsCases.h"
 #include "TestUtil.h"
 #include "core/Box3DShapes.h"
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 // Row-vector rotation matrix for unit quaternion q (x, y, z, w); builds test
@@ -669,6 +671,51 @@ void testPrimitiveOverrides() {
     CHECK(rw.getTransform(3, p, q));
     std::printf("rotated box     rest y=%.4f\n", p[1]);
     CHECK(std::fabs(p[1] - 2.0) < 0.08);
+  }
+
+  // A rotation that is not a valid quaternion (NaN, infinity) on a box, capsule
+  // or cylinder is taken as no rotation: no Box3D assert, and a normal body.
+  {
+    const int before = Box3DWorld::assertCount();
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    const float badRots[3][4] = {{nan, 0.0f, 0.0f, 1.0f},
+                                 {0.0f, 0.0f, 0.0f, nan},
+                                 {inf, 0.0f, 0.0f, 0.0f}};
+    for (const ShapeType type :
+         {ShapeType::Box, ShapeType::Capsule, ShapeType::Cylinder})
+      for (const auto &rot : badRots) {
+        KeyedWorld bw;
+        CHECK(bw.create(WorldSettings()));
+        BodySettings bs;
+        ShapeSpec spec;
+        spec.type = type;
+        spec.radius = 0.25f;
+        spec.halfLength = 0.25f;
+        std::copy(rot, rot + 4, spec.rot);
+        const float qid[4] = {0, 0, 0, 1};
+        // A static slab under it, top at y = 0.
+        BodySettings ground;
+        ground.type = BodySettings::Type::Static;
+        ShapeSpec slab;
+        slab.halfExtents[0] = slab.halfExtents[2] = 10.0f;
+        slab.halfExtents[1] = 0.5f;
+        const double gat[3] = {0, -0.5, 0};
+        const BodyHandle g = bw.createBody(ground, gat, qid);
+        CHECK(g != 0 && bw.createShape(g, ground, slab));
+        const double at[3] = {0, 1, 0};
+        const BodyHandle h = bw.createBody(bs, at, qid);
+        CHECK(h != 0 && bw.createShape(h, bs, spec));
+        for (int i = 0; i < 120; ++i)
+          bw.step(1.0f / 60.0f);
+        double p[3];
+        float q[4];
+        CHECK(bw.getTransformByHandle(h, p, q));
+        CHECK(std::isfinite(bw.massByHandle(h)) && bw.massByHandle(h) > 0.0f);
+        // It lands on the slab instead of falling through or vanishing.
+        CHECK(std::isfinite(p[1]) && p[1] > 0.2 && p[1] < 0.8);
+      }
+    CHECK(Box3DWorld::assertCount() == before);
   }
   std::printf("primitive-override checks done\n");
 }

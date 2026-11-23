@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 // Motion locks (Box3D's b3MotionLocks, world axes).
@@ -111,6 +112,52 @@ void testFastRotation() {
 // BodyProps::operator==. The solver detects changes with it, so a field it
 // forgets would never be noticed: change each one alone and expect a
 // difference.
+// Settings from a parameter that Box3D would assert on are made safe.
+void testBodyPropsSanitize() {
+  using namespace b3dop;
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  const float inf = std::numeric_limits<float>::infinity();
+  const BodyProps d;
+
+  BodyProps ok;
+  ok.friction = 0.3f;
+  ok.density = 500.0f;
+  ok.gravityScale = -1.0f; // negative is allowed: it falls upward
+  BodyProps same = ok;
+  same.sanitize();
+  CHECK(same == ok);
+
+  BodyProps bad;
+  bad.mass = -1.0f;
+  bad.density = nan;
+  bad.friction = -0.5f;
+  bad.restitution = nan;
+  bad.rollingResistance = inf;
+  bad.linearDamping = -2.0f;
+  bad.angularDamping = nan;
+  bad.gravityScale = inf;
+  bad.sanitize();
+  CHECK(bad.mass == d.mass && bad.density == d.density);
+  CHECK(bad.friction == 0.0f && bad.restitution == d.restitution);
+  CHECK(bad.rollingResistance == d.rollingResistance);
+  CHECK(bad.linearDamping == 0.0f && bad.angularDamping == d.angularDamping);
+  CHECK(bad.gravityScale == d.gravityScale);
+
+  // A body made from the sanitized values has no assert (the handler counts
+  // them).
+  const int before = Box3DWorld::assertCount();
+  KeyedWorld w;
+  CHECK(w.create(WorldSettings()));
+  BodySettings s;
+  s.props = bad;
+  const double at[3] = {0, 1, 0};
+  const BodyHandle h = w.createBody(s, at, qIdentity);
+  CHECK(h != 0 && w.createShape(h, s, ShapeSpec()));
+  for (int i = 0; i < 10; ++i)
+    w.step(1.0f / 60.0f);
+  CHECK(Box3DWorld::assertCount() == before);
+}
+
 void testBodyPropsEquality() {
   using namespace b3dop;
   const BodyProps base;

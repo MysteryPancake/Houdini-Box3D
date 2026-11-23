@@ -23,6 +23,7 @@ void testEstimatedBytes();
 void testMotionLocks();
 void testFastRotation();
 void testBodyPropsEquality();
+void testBodyPropsSanitize();
 void testCcdThreshold();
 void testCollisionFiltering();
 void testMassSleepKinematic();

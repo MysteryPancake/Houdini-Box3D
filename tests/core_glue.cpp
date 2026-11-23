@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <limits>
 
 using namespace b3dop;
 
@@ -52,6 +53,22 @@ int main() {
     hits = {900.0f, 0.0f, 0.0f};
     glueSpread(chain, hits);
     CHECK(hits[2] > 0.0f);
+  }
+
+  // ---- a rate that is not a number or is out of range: the default, 0 or 1,
+  // and no NaN reaches the shares, so the bond still sees the hit and breaks
+  {
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    CHECK(glueRate(nan) == GlueParams().rate &&
+          glueRate(inf) == GlueParams().rate);
+    CHECK(glueRate(-inf) == GlueParams().rate && glueRate(-0.5f) == 0.0f);
+    CHECK(glueRate(2.0f) == 1.0f && glueRate(0.25f) == 0.25f);
+    std::vector<GlueBond> bonds = {bond(0, 1, nan, 100.0f)};
+    std::vector<int> broken;
+    glueAdvance(bonds, {1000.0f, 0.0f}, 1.0f / 24.0f, broken);
+    CHECK(std::isfinite(bonds[0].impact) && bonds[0].impact > 0.0f);
+    CHECK(broken.size() == 1);
   }
 
   // ---- rate 0: nothing leaves the body; the bond only sees its own ends

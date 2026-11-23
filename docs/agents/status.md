@@ -62,8 +62,8 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   bond's load is the statics' at every value, and the next bond's couple is the same within 0.2% from 1e-4 to 1e-2 and
   10% lower at 10. The ledge scene's 2 broken bonds against 1 for welds (`bond_compound_cantilever`) is therefore
   the rigid compound against sagging welds, not the choice of stiffness.
-* Cost: the network solve, the patch on the first step, the sides' mass walk, and `breakBonds` walking every joint every
-  step are not measured.
+* Cost: the network solve, the patch on the first step, the sides' mass walk, and `breakBonds` walking every Bond every
+  step (`bondEntries`) are not measured.
 * A box held by a Bond under a point `force` fell asleep and did not wake when the force was removed, so damage stopped
   building (`bond_damage_kept_unloaded` keeps it awake with `enablesleep` 0). Not looked into.
 * Linux build and `clang-tidy` of the Bond files: not run.

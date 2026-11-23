@@ -179,7 +179,7 @@ inline ContactPatch contactPatchOf(const std::vector<PatchFace> &a,
   double m[5] = {0, 0, 0, 0, 0};
   std::vector<std::vector<Pt2>> pieces;
   for (const PatchFace &fa : a) {
-    if (dot3(fa.normal, dom.normal) < 0.985)
+    if (fa.corners.size() < 3 || dot3(fa.normal, dom.normal) < 0.985)
       continue;
     const double da[3] = {fa.corners[0][0] - origin[0],
                           fa.corners[0][1] - origin[1],
@@ -187,7 +187,7 @@ inline ContactPatch contactPatchOf(const std::vector<PatchFace> &a,
     if (std::fabs(dot3(da, dom.normal)) > tolerance)
       continue;
     for (const PatchFace &fb : b) {
-      if (dot3(fb.normal, dom.normal) > -0.985)
+      if (fb.corners.size() < 3 || dot3(fb.normal, dom.normal) > -0.985)
         continue;
       const double db[3] = {fb.corners[0][0] - origin[0],
                             fb.corners[0][1] - origin[1],

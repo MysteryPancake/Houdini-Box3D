@@ -907,6 +907,9 @@ struct Box3DSharedState {
   // rebuilt only after syncJoints changed the joints.
   std::unordered_map<uint64_t, std::vector<Box3DJointEntry *>> networkEntries;
   bool networkEntriesDirty = true;
+  // The Bonds among them, in the same order, so breakBonds does not walk the
+  // other joints every step. Rebuilt with networkEntries.
+  std::vector<Box3DJointEntry *> bondEntries;
   // Glued groups as compound bodies (syncCompounds): the solver's switch, the
   // live compounds, each piece's own body -> its compound and index, and what
   // the groups were last worked out from (the graph and body versions), so an

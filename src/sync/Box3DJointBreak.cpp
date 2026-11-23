@@ -515,6 +515,11 @@ void refreshNetworkEntries(Box3DSharedState &st) {
   st.networkEntries.clear();
   for (auto &je : st.joints)
     st.networkEntries[je.second.network].push_back(&je.second);
+  st.bondEntries.clear();
+  for (const auto &network : st.networkEntries)
+    for (Box3DJointEntry *e : network.second)
+      if (e->type == b3dop::JointType::Bond)
+        st.bondEntries.push_back(e);
 }
 } // namespace
 
@@ -628,116 +633,115 @@ void breakBonds(Box3DSharedState &st, float dt) {
     ~ReportAtEnd() { B3D_PROFILE_REPORT("bonds"); }
   } reportAtEnd;
   B3D_PROFILE(kProfileBondScan);
-  for (auto &network : st.networkEntries)
-    for (Box3DJointEntry *e : network.second) {
-      if (e->type != b3dop::JointType::Bond || !e->handle || e->broken)
+  for (Box3DJointEntry *e : st.bondEntries) {
+    if (!e->handle || e->broken)
+      continue;
+    Box3DJointExtra &x = e->ensureExtra();
+    if (x.bondQueued)
+      continue;
+    // The load of a bond in a compound, or one held by a bridge, was worked
+    // out this step (solveCompoundBonds); a compound that is asleep has none.
+    const bool worked = x.bondLoadTick == st.hitsTick;
+    // A bond over its capacity goes on taking damage while its pieces sleep,
+    // under the load it last had (a steady one): creep to failure.
+    const bool carrying = x.bondOverCapacity;
+    if (e->inCompound && !worked && !carrying)
+      continue;
+    // Nothing moves, so nothing changes, while both pieces are asleep.
+    if (!worked && !carrying && !world.isAwakeByHandle(e->bodyA) &&
+        !world.isAwakeByHandle(e->bodyB))
+      continue;
+    if (!bondGeometry(st, *e))
+      continue;
+    // A bond inside a compound is posed by the compound (the parked pieces
+    // are a step behind), the others by their bodies.
+    const bool posed = e->inCompound && x.bondPoseTick == st.hitsTick;
+    double posA[3] = {0, 0, 0};
+    float rotA[4] = {0, 0, 0, 1};
+    if (posed) {
+      std::copy(x.bondPosA, x.bondPosA + 3, posA);
+      std::copy(x.bondRotA, x.bondRotA + 4, rotA);
+    } else if (e->bodyA && !world.getTransformByHandle(e->bodyA, posA, rotA))
+      continue;
+    b3dop::JointFeedback fb;
+    if (worked || e->inCompound) {
+      std::copy(x.bondForce, x.bondForce + 3, fb.force);
+      std::copy(x.bondTorque, x.bondTorque + 3, fb.torque);
+    } else {
+      if (!world.jointFeedback(e->handle, e->type, fb))
         continue;
-      Box3DJointExtra &x = e->ensureExtra();
-      if (x.bondQueued)
-        continue;
-      // The load of a bond in a compound, or one held by a bridge, was worked
-      // out this step (solveCompoundBonds); a compound that is asleep has none.
-      const bool worked = x.bondLoadTick == st.hitsTick;
-      // A bond over its capacity goes on taking damage while its pieces sleep,
-      // under the load it last had (a steady one): creep to failure.
-      const bool carrying = x.bondOverCapacity;
-      if (e->inCompound && !worked && !carrying)
-        continue;
-      // Nothing moves, so nothing changes, while both pieces are asleep.
-      if (!worked && !carrying && !world.isAwakeByHandle(e->bodyA) &&
-          !world.isAwakeByHandle(e->bodyB))
-        continue;
-      if (!bondGeometry(st, *e))
-        continue;
-      // A bond inside a compound is posed by the compound (the parked pieces
-      // are a step behind), the others by their bodies.
-      const bool posed = e->inCompound && x.bondPoseTick == st.hitsTick;
-      double posA[3] = {0, 0, 0};
-      float rotA[4] = {0, 0, 0, 1};
-      if (posed) {
-        std::copy(x.bondPosA, x.bondPosA + 3, posA);
-        std::copy(x.bondRotA, x.bondRotA + 4, rotA);
-      } else if (e->bodyA && !world.getTransformByHandle(e->bodyA, posA, rotA))
-        continue;
-      b3dop::JointFeedback fb;
-      if (worked || e->inCompound) {
-        std::copy(x.bondForce, x.bondForce + 3, fb.force);
-        std::copy(x.bondTorque, x.bondTorque + 3, fb.torque);
-      } else {
-        if (!world.jointFeedback(e->handle, e->type, fb))
-          continue;
-        // The load over the whole step, not the last substep's: an impact in an
-        // earlier substep is in the first and mostly gone from the second.
-        for (int i = 0; i < 3; ++i) {
-          fb.force[i] = fb.impulse[i] / dt;
-          fb.torque[i] = fb.angularImpulse[i] / dt;
-        }
-      }
-      float normal[3];
-      b3dop::quatRotate(rotA, x.bondNormalLocal, normal);
-      float patchU[3] = {1, 0, 0}, patchV[3] = {0, 1, 0};
-      if (x.patchOk) {
-        b3dop::quatRotate(rotA, x.patchULocal, patchU);
-        b3dop::quatRotate(rotA, x.patchVLocal, patchV);
-        // The load is at the weld's anchor; the stress is about the patch's
-        // centroid: the moment there is the couple plus the force's moment
-        // from the anchor to it.
-        b3dop::JointFrame wa, wb;
-        float centre[3];
-        b3dop::quatRotate(rotA, x.patchCentroidLocal, centre);
-        if (posed)
-          std::copy(x.bondAnchor, x.bondAnchor + 3, wa.pos);
-        if (posed || world.jointWorldFrames(e->handle, wa, wb)) {
-          const double r[3] = {wa.pos[0] - (posA[0] + centre[0]),
-                               wa.pos[1] - (posA[1] + centre[1]),
-                               wa.pos[2] - (posA[2] + centre[2])};
-          fb.torque[0] +=
-              static_cast<float>(r[1] * fb.force[2] - r[2] * fb.force[1]);
-          fb.torque[1] +=
-              static_cast<float>(r[2] * fb.force[0] - r[0] * fb.force[2]);
-          fb.torque[2] +=
-              static_cast<float>(r[0] * fb.force[1] - r[1] * fb.force[0]);
-        }
-      }
-      b3dop::BondParams p;
-      p.tensile = e->settings.bondTensile;
-      p.shear = e->settings.bondShear;
-      p.bending = e->settings.bondBending;
-      p.compressive = e->settings.bondCompressive;
-      p.area = x.bondAreaUsed;
-      p.fracture = e->settings.bondFracture;
-      if (x.patchOk) {
-        p.modulusU = x.modulusU;
-        p.modulusV = x.modulusV;
-        p.modulusTwist = x.modulusTwist;
-      }
-      const b3dop::BondLoad load =
-          x.patchOk ? b3dop::bondLoadInPatch(fb.force, fb.torque, normal,
-                                             patchU, patchV)
-                    : b3dop::bondLoadOf(fb.force, fb.torque, normal);
-      const float ratio = b3dop::bondRatio(p, load);
-      x.bondOverCapacity = ratio >= 1.0f;
-      x.bondReadouts.value[kReadoutRatio] = std::isfinite(ratio) ? ratio : 0.0f;
-      x.bondReadouts.value[kReadoutTension] = load.tension;
-      x.bondReadouts.value[kReadoutShear] = load.shear;
-      x.bondReadouts.value[kReadoutBending] = load.bending;
-      x.bondReadouts.value[kReadoutTwist] = load.twisting;
-      x.bondReadouts.value[kReadoutArea] = x.bondAreaUsed;
-      // What the load beyond the capacity has to accelerate apart: the two
-      // sides the bond holds together.
-      float tear = 0.0f;
-      if (p.fracture > 0.0f)
-        tear = b3dop::bondTearImpulse(p.fracture, p.area,
-                                      bondReducedMassOf(st, *e));
-      const bool torn = b3dop::bondAdvance(x.bondImpulse, ratio,
-                                           b3dop::bondCapacity(p), dt, tear);
-      x.bondReadouts.value[kReadoutDamage] =
-          tear > 0.0f ? std::min(1.0f, x.bondImpulse / tear) : 0.0f;
-      if (torn) {
-        x.bondQueued = true;
-        st.glueBroken.push_back(e);
+      // The load over the whole step, not the last substep's: an impact in an
+      // earlier substep is in the first and mostly gone from the second.
+      for (int i = 0; i < 3; ++i) {
+        fb.force[i] = fb.impulse[i] / dt;
+        fb.torque[i] = fb.angularImpulse[i] / dt;
       }
     }
+    float normal[3];
+    b3dop::quatRotate(rotA, x.bondNormalLocal, normal);
+    float patchU[3] = {1, 0, 0}, patchV[3] = {0, 1, 0};
+    if (x.patchOk) {
+      b3dop::quatRotate(rotA, x.patchULocal, patchU);
+      b3dop::quatRotate(rotA, x.patchVLocal, patchV);
+      // The load is at the weld's anchor; the stress is about the patch's
+      // centroid: the moment there is the couple plus the force's moment
+      // from the anchor to it.
+      b3dop::JointFrame wa, wb;
+      float centre[3];
+      b3dop::quatRotate(rotA, x.patchCentroidLocal, centre);
+      if (posed)
+        std::copy(x.bondAnchor, x.bondAnchor + 3, wa.pos);
+      if (posed || world.jointWorldFrames(e->handle, wa, wb)) {
+        const double r[3] = {wa.pos[0] - (posA[0] + centre[0]),
+                             wa.pos[1] - (posA[1] + centre[1]),
+                             wa.pos[2] - (posA[2] + centre[2])};
+        fb.torque[0] +=
+            static_cast<float>(r[1] * fb.force[2] - r[2] * fb.force[1]);
+        fb.torque[1] +=
+            static_cast<float>(r[2] * fb.force[0] - r[0] * fb.force[2]);
+        fb.torque[2] +=
+            static_cast<float>(r[0] * fb.force[1] - r[1] * fb.force[0]);
+      }
+    }
+    b3dop::BondParams p;
+    p.tensile = e->settings.bondTensile;
+    p.shear = e->settings.bondShear;
+    p.bending = e->settings.bondBending;
+    p.compressive = e->settings.bondCompressive;
+    p.area = x.bondAreaUsed;
+    p.fracture = e->settings.bondFracture;
+    if (x.patchOk) {
+      p.modulusU = x.modulusU;
+      p.modulusV = x.modulusV;
+      p.modulusTwist = x.modulusTwist;
+    }
+    const b3dop::BondLoad load =
+        x.patchOk ? b3dop::bondLoadInPatch(fb.force, fb.torque, normal, patchU,
+                                           patchV)
+                  : b3dop::bondLoadOf(fb.force, fb.torque, normal);
+    const float ratio = b3dop::bondRatio(p, load);
+    x.bondOverCapacity = ratio >= 1.0f;
+    x.bondReadouts.value[kReadoutRatio] = std::isfinite(ratio) ? ratio : 0.0f;
+    x.bondReadouts.value[kReadoutTension] = load.tension;
+    x.bondReadouts.value[kReadoutShear] = load.shear;
+    x.bondReadouts.value[kReadoutBending] = load.bending;
+    x.bondReadouts.value[kReadoutTwist] = load.twisting;
+    x.bondReadouts.value[kReadoutArea] = x.bondAreaUsed;
+    // What the load beyond the capacity has to accelerate apart: the two
+    // sides the bond holds together.
+    float tear = 0.0f;
+    if (p.fracture > 0.0f)
+      tear =
+          b3dop::bondTearImpulse(p.fracture, p.area, bondReducedMassOf(st, *e));
+    const bool torn = b3dop::bondAdvance(x.bondImpulse, ratio,
+                                         b3dop::bondCapacity(p), dt, tear);
+    x.bondReadouts.value[kReadoutDamage] =
+        tear > 0.0f ? std::min(1.0f, x.bondImpulse / tear) : 0.0f;
+    if (torn) {
+      x.bondQueued = true;
+      st.glueBroken.push_back(e);
+    }
+  }
 }
 
 void advanceGlue(Box3DSharedState &st, float dt) {

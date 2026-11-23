@@ -703,6 +703,7 @@ const TestCase kTests[] = {
     {"motion_locks", testMotionLocks},
     {"fast_rotation", testFastRotation},
     {"body_props_equality", testBodyPropsEquality},
+    {"body_props_sanitize", testBodyPropsSanitize},
     {"ccd_threshold", testCcdThreshold},
     {"collision_filtering", testCollisionFiltering},
     {"mass_sleep_kinematic", testMassSleepKinematic},

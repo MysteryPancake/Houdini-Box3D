@@ -140,6 +140,26 @@ int main() {
     CHECK(!contactPatchOf(boxFaces(a, unit), boxFaces(far, unit), 0.02).ok);
     CHECK(!contactPatchOf({}, boxFaces(a, unit), 0.02).ok);
   }
+  // Faces with fewer than 3 corners are skipped, whatever their normal.
+  {
+    const double a[3] = {0, 0, 0}, b[3] = {0, 1, 0};
+    std::vector<PatchFace> fa = boxFaces(a, unit), fb = boxFaces(b, unit);
+    for (const PatchFace &f : std::vector<PatchFace>(fa)) {
+      PatchFace empty, line;
+      std::copy(f.normal, f.normal + 3, empty.normal);
+      std::copy(f.normal, f.normal + 3, line.normal);
+      line.corners = {f.corners[0], f.corners[1]};
+      fa.push_back(empty);
+      fa.push_back(line);
+    }
+    for (const PatchFace &f : std::vector<PatchFace>(fb)) {
+      PatchFace empty;
+      std::copy(f.normal, f.normal + 3, empty.normal);
+      fb.push_back(empty);
+    }
+    const ContactPatch p = contactPatchOf(fa, fb, 0.02);
+    CHECK(p.ok && near(p.area, 1.0, 1e-9));
+  }
 
   // The patch's moduli against a beam's: a section 1 (z) wide and 0.5 (y) high
   // is stronger across its width than a square of the same area would be, and

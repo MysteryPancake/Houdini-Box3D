@@ -495,6 +495,17 @@ int main() {
     CHECK(solveBondNetwork(nodes, {}, supports, out, sup, 400, 1e-10) < 1e-5);
     CHECK(!sup[0].active && sup[1].active && sup[2].active);
     CHECK(near(sup[2].push, 9.8, 1e-3) && std::fabs(sup[1].push) < 1e-3);
+    // Out of passes right after the drop (one pass): the loads still follow the
+    // supports reported in use, not the solve that had the dropped one.
+    CHECK(solveBondNetwork(nodes, {}, supports, out, sup, 400, 1e-10, 1) <
+          1e-5);
+    CHECK(!sup[0].active && sup[1].active && sup[2].active);
+    CHECK(near(sup[2].push, 9.8, 1e-3) && std::fabs(sup[1].push) < 1e-3);
+    double total = 0.0;
+    for (const SupportForce &s : sup)
+      if (s.active)
+        total += s.force[1];
+    CHECK(near(total, 9.8, 1e-3)); // the supports carry the weight
   }
   {
     // A column of 40 pieces standing on a support under the lowest, as a chain

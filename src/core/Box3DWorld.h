@@ -307,6 +307,24 @@ struct BodyProps {
            locks == o.locks;
   }
   bool operator!=(const BodyProps &o) const { return !(*this == o); }
+
+  // Values from a parameter (a script or an expression can set one past its
+  // range) made safe for Box3D, which asserts on them. A non-finite value
+  // takes the default. A negative friction, bounce, rolling resistance or
+  // damping becomes 0, as from a point attribute, and a negative mass or
+  // density takes the default.
+  void sanitize() {
+    const BodyProps d;
+    mass = nonNegOr(mass, d.mass);
+    density = nonNegOr(density, d.density);
+    friction = clampNonNegOr(friction, d.friction);
+    restitution = clampNonNegOr(restitution, d.restitution);
+    rollingResistance = clampNonNegOr(rollingResistance, d.rollingResistance);
+    linearDamping = clampNonNegOr(linearDamping, d.linearDamping);
+    angularDamping = clampNonNegOr(angularDamping, d.angularDamping);
+    if (!std::isfinite(gravityScale))
+      gravityScale = d.gravityScale;
+  }
 };
 
 struct BodySettings {

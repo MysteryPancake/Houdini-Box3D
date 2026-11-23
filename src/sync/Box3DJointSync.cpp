@@ -1154,6 +1154,8 @@ private:
                  uint64_t sig, bool edited, bool fromLive) {
     const b3dop::BodyHandle a = ab.handle, b = bb.handle;
     dropJoint(e);
+    if (e.type != j.type)
+      mySt.networkEntriesDirty = true; // the Bond list follows the types
     e.type = j.type;
     e.bodyA = a;
     e.bodyB = b;

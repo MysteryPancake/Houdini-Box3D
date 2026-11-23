@@ -872,9 +872,10 @@ bool Box3DWorld::createHeightFieldShape(BodyHandle h, const BodySettings &body,
       if (holes[i])
         material[i] = B3_HEIGHT_FIELD_HOLE;
 
-  std::vector<float> hs(heights, heights + count); // Box3D takes float*
   b3HeightFieldDef def = {};
-  def.heights = hs.data();
+  // Box3D takes float* but only reads the heights (it quantises them into its
+  // own data): no copy of a field that can be a gigabyte.
+  def.heights = const_cast<float *>(heights);
   def.materialIndices = material.data();
   def.scale = makeVec3(scale);
   def.countX = countX;
@@ -914,7 +915,7 @@ bool Box3DWorld::boxShape(BodyHandle h, const BodySettings &b,
   if (!isIdentityRotation(rotationXYZW)) {
     b3Transform local;
     local.p = makeVec3(center);
-    local.q = b3NormalizeQuat(makeQuat(rotationXYZW));
+    local.q = cleanQuat(rotationXYZW);
     hull = b3MakeTransformedBoxHull(halfExtents[0], halfExtents[1],
                                     halfExtents[2], local);
   } else if (offset) {
@@ -984,8 +985,7 @@ bool Box3DWorld::cylinderShape(BodyHandle h, const BodySettings &b,
   const float c[3] = {center ? center[0] : 0.0f, center ? center[1] : 0.0f,
                       center ? center[2] : 0.0f};
   const bool turned = !isIdentityRotation(rotationXYZW);
-  const b3Quat q =
-      turned ? b3NormalizeQuat(makeQuat(rotationXYZW)) : b3Quat_identity;
+  const b3Quat q = turned ? cleanQuat(rotationXYZW) : b3Quat_identity;
 
   // One key per size and pose, so instances share the hull.
   const float keyData[] = {
