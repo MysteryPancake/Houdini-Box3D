@@ -70,84 +70,6 @@ Box3DSharedState *findState(const SIM_Object &obj,
   return nullptr;
 }
 
-// Polylines with one colour each, written out at the end. All points live in
-// one array; a line is a range of it.
-class Lines {
-public:
-  void begin(const UT_Vector3 &color) { myColor = color; }
-
-  void add(const std::vector<UT_Vector3> &pts) {
-    if (pts.size() < 2)
-      return;
-    myPoints.insert(myPoints.end(), pts.begin(), pts.end());
-    endLine();
-  }
-
-  // A full circle (closed: the first point repeated).
-  void circle(const UT_Vector3 &c, const UT_Vector3 &u, const UT_Vector3 &v,
-              float r) {
-    arc(c, u, v, r, 0.0f, 2.0f * b3dop::kPi, kCircleSegments);
-  }
-
-  void arc(const UT_Vector3 &c, const UT_Vector3 &u, const UT_Vector3 &v,
-           float r, float a0, float a1, int segments) {
-    for (int k = 0; k <= segments; ++k) {
-      const float a =
-          a0 + (a1 - a0) * static_cast<float>(k) / static_cast<float>(segments);
-      myPoints.push_back(c + r * (std::cos(a) * u + std::sin(a) * v));
-    }
-    endLine();
-  }
-
-  // The lines of `other`, after this one's (the colours go with them).
-  void append(const Lines &other) {
-    const size_t base = myPoints.size();
-    myPoints.insert(myPoints.end(), other.myPoints.begin(),
-                    other.myPoints.end());
-    for (const size_t end : other.myEnds)
-      myEnds.push_back(base + end);
-    myColors.insert(myColors.end(), other.myColors.begin(),
-                    other.myColors.end());
-  }
-
-  // Every line is an open polygon, built in one block: the points are made
-  // with the polygons, which take them in order, and the polygons are at
-  // consecutive offsets.
-  void write(GU_Detail &gdp) const {
-    if (myEnds.empty())
-      return;
-    GA_RWHandleV3 cd(gdp.addFloatTuple(GA_ATTRIB_PRIMITIVE, "Cd", 3));
-    if (cd.isValid())
-      cd.getAttribute()->setTypeInfo(GA_TYPE_COLOR);
-    GA_PolyCounts sizes;
-    size_t begin = 0;
-    for (const size_t end : myEnds) {
-      sizes.append(static_cast<GA_Size>(end - begin));
-      begin = end;
-    }
-    std::vector<int> pointNumbers(myPoints.size());
-    std::iota(pointNumbers.begin(), pointNumbers.end(), 0);
-    const GA_Offset first = GEO_PrimPoly::buildBlock(
-        &gdp, myPoints.data(), static_cast<GA_Size>(myPoints.size()), sizes,
-        pointNumbers.data(), /*closed=*/false);
-    if (cd.isValid() && GAisValid(first))
-      for (size_t i = 0; i < myColors.size(); ++i)
-        cd.set(first + static_cast<GA_Offset>(i), myColors[i]);
-  }
-
-private:
-  // The points added since the last line become a line of the current colour.
-  void endLine() {
-    myEnds.push_back(myPoints.size());
-    myColors.push_back(myColor);
-  }
-
-  UT_Vector3 myColor{1.0f, 1.0f, 1.0f};
-  std::vector<UT_Vector3> myPoints;
-  std::vector<size_t> myEnds; // one past each line's last point
-  std::vector<UT_Vector3> myColors;
-};
-
 // Body space -> world space for one body.
 struct Pose {
   double pos[3] = {0, 0, 0};
@@ -165,6 +87,111 @@ struct Pose {
     b3dop::quatRotate(rot, d, r);
     return UT_Vector3(r[0], r[1], r[2]);
   }
+};
+
+// Polylines with one colour each, written out at the end. The points live in
+// one array and a line is a range of the index list, so lines can share points
+// (a hull's faces share its vertices).
+class Lines {
+public:
+  void begin(const UT_Vector3 &color) { myColor = color; }
+
+  // Points that lines refer to by index; returns the index of the first.
+  int addPoints(const UT_Vector3 *pts, size_t n) {
+    const int base = static_cast<int>(myPoints.size());
+    myPoints.insert(myPoints.end(), pts, pts + n);
+    return base;
+  }
+
+  // A line through the points `base + idx[k]`.
+  void addIndexed(int base, const int *idx, size_t n) {
+    if (n < 2)
+      return;
+    for (size_t k = 0; k < n; ++k)
+      myIndices.push_back(base + idx[k]);
+    endLine();
+  }
+
+  // A line through new points.
+  void add(const std::vector<UT_Vector3> &pts) {
+    if (pts.size() < 2)
+      return;
+    const int base = addPoints(pts.data(), pts.size());
+    for (size_t k = 0; k < pts.size(); ++k)
+      myIndices.push_back(base + static_cast<int>(k));
+    endLine();
+  }
+
+  const std::vector<UT_Vector3> &points() const { return myPoints; }
+  const std::vector<int> &indices() const { return myIndices; }
+  const std::vector<size_t> &ends() const { return myEnds; }
+
+  // A full circle (closed: the first point repeated).
+  void circle(const UT_Vector3 &c, const UT_Vector3 &u, const UT_Vector3 &v,
+              float r) {
+    arc(c, u, v, r, 0.0f, 2.0f * b3dop::kPi, kCircleSegments);
+  }
+
+  void arc(const UT_Vector3 &c, const UT_Vector3 &u, const UT_Vector3 &v,
+           float r, float a0, float a1, int segments) {
+    for (int k = 0; k <= segments; ++k) {
+      const float a =
+          a0 + (a1 - a0) * static_cast<float>(k) / static_cast<float>(segments);
+      myIndices.push_back(static_cast<int>(myPoints.size()));
+      myPoints.push_back(c + r * (std::cos(a) * u + std::sin(a) * v));
+    }
+    endLine();
+  }
+
+  // The lines of `other`, after this one's (the colours go with them).
+  void append(const Lines &other) {
+    const int pointBase = static_cast<int>(myPoints.size());
+    const size_t indexBase = myIndices.size();
+    myPoints.insert(myPoints.end(), other.myPoints.begin(),
+                    other.myPoints.end());
+    for (const int i : other.myIndices)
+      myIndices.push_back(pointBase + i);
+    for (const size_t end : other.myEnds)
+      myEnds.push_back(indexBase + end);
+    myColors.insert(myColors.end(), other.myColors.begin(),
+                    other.myColors.end());
+  }
+
+  // Every line is an open polygon, built in one block: the points are made
+  // with the polygons, and the polygons are at consecutive offsets.
+  void write(GU_Detail &gdp) const {
+    if (myEnds.empty())
+      return;
+    GA_RWHandleV3 cd(gdp.addFloatTuple(GA_ATTRIB_PRIMITIVE, "Cd", 3));
+    if (cd.isValid())
+      cd.getAttribute()->setTypeInfo(GA_TYPE_COLOR);
+    GA_PolyCounts sizes;
+    size_t begin = 0;
+    for (const size_t end : myEnds) {
+      sizes.append(static_cast<GA_Size>(end - begin));
+      begin = end;
+    }
+    const GA_Offset first = GEO_PrimPoly::buildBlock(
+        &gdp, myPoints.data(), static_cast<GA_Size>(myPoints.size()), sizes,
+        myIndices.data(), /*closed=*/false);
+    if (cd.isValid() && GAisValid(first))
+      for (size_t i = 0; i < myColors.size(); ++i)
+        cd.set(first + static_cast<GA_Offset>(i), myColors[i]);
+  }
+
+private:
+  // The indices added since the last line become a line of the current colour.
+  void endLine() {
+    myEnds.push_back(myIndices.size());
+    myColors.push_back(myColor);
+  }
+
+  UT_Vector3 myColor{1.0f, 1.0f, 1.0f};
+  std::vector<UT_Vector3> myPoints;
+  std::vector<int>
+      myIndices; // the points of every line, one line after another
+  std::vector<size_t> myEnds; // one past each line's last index
+  std::vector<UT_Vector3> myColors;
 };
 
 // Two unit vectors perpendicular to unit `a` and to each other.
@@ -206,18 +233,32 @@ void drawCapsule(Lines &out, const UT_Vector3 &c1, const UT_Vector3 &c2,
   }
 }
 
-void drawBody(Lines &out, const b3dop::Box3DWorld &world,
-              const Box3DBodyMirror &e, const Pose &pose,
-              const UT_Vector3 &color) {
+// How much a body's lines are dimmed: static and kinematic bodies, and sleeping
+// dynamic ones.
+float shadeOf(const b3dop::Box3DWorld &world, const Box3DBodyMirror &e) {
+  if (!e.dynamic())
+    return kStaticShade;
+  if (!world.isAwakeByHandle(e.handle))
+    return kAsleepShade;
+  return 1.0f;
+}
+
+// A hull's or mesh's vertices, placed by `pose`, as points the lines refer to;
+// the index of the first.
+int placeVertices(Lines &out, const b3dop::Box3DWorld::ShapeOutline &s,
+                  const Pose &pose) {
+  std::vector<UT_Vector3> pts(s.verts.size() / 3);
+  for (size_t k = 0; k < pts.size(); ++k)
+    pts[k] = pose.point(&s.verts[3 * k]);
+  return out.addPoints(pts.data(), pts.size());
+}
+
+// A body's shape lines in the current colour, placed by `pose`.
+void drawBodyShapes(Lines &out, const b3dop::Box3DWorld &world,
+                    const Box3DBodyMirror &e, const Pose &pose) {
   std::vector<b3dop::Box3DWorld::ShapeOutline> shapes;
   if (!world.bodyShapeOutlines(e.handle, shapes) || shapes.empty())
     return;
-  float shade = 1.0f;
-  if (!e.dynamic())
-    shade = kStaticShade;
-  else if (!world.isAwakeByHandle(e.handle))
-    shade = kAsleepShade;
-  out.begin(color * shade);
   for (const b3dop::Box3DWorld::ShapeOutline &s : shapes) {
     switch (s.kind) {
     case b3dop::Box3DWorld::ShapeOutline::Sphere:
@@ -226,29 +267,33 @@ void drawBody(Lines &out, const b3dop::Box3DWorld &world,
     case b3dop::Box3DWorld::ShapeOutline::Capsule:
       drawCapsule(out, pose.point(s.c1), pose.point(s.c2), s.radius);
       break;
-    case b3dop::Box3DWorld::ShapeOutline::Mesh:
+    case b3dop::Box3DWorld::ShapeOutline::Mesh: {
+      const int base = placeVertices(out, s, pose);
+      const size_t count = s.verts.size() / 3;
       for (size_t k = 0; k + 1 < s.loops.size(); k += 2) {
-        const size_t a = static_cast<size_t>(s.loops[k]) * 3;
-        const size_t b = static_cast<size_t>(s.loops[k + 1]) * 3;
-        if (a + 2 < s.verts.size() && b + 2 < s.verts.size())
-          out.add({pose.point(&s.verts[a]), pose.point(&s.verts[b])});
+        const int pair[2] = {s.loops[k], s.loops[k + 1]};
+        if (pair[0] >= 0 && pair[1] >= 0 &&
+            static_cast<size_t>(pair[0]) < count &&
+            static_cast<size_t>(pair[1]) < count)
+          out.addIndexed(base, pair, 2);
       }
       break;
+    }
     case b3dop::Box3DWorld::ShapeOutline::Hull: {
-      // Each face as a closed loop (shared edges are drawn twice).
-      std::vector<UT_Vector3> loop; // one buffer for every face
+      // Each face as a closed loop over the hull's own vertices (shared edges
+      // are drawn twice).
+      const int base = placeVertices(out, s, pose);
+      const size_t count = s.verts.size() / 3;
+      std::vector<int> loop; // one buffer for every face
       for (size_t k = 0; k < s.loops.size();) {
         const int n = s.loops[k++];
         loop.clear();
-        loop.reserve(static_cast<size_t>(n) + 1);
-        for (int j = 0; j < n && k < s.loops.size(); ++j, ++k) {
-          const size_t v = static_cast<size_t>(s.loops[k]) * 3;
-          if (v + 2 < s.verts.size())
-            loop.push_back(pose.point(&s.verts[v]));
-        }
+        for (int j = 0; j < n && k < s.loops.size(); ++j, ++k)
+          if (s.loops[k] >= 0 && static_cast<size_t>(s.loops[k]) < count)
+            loop.push_back(s.loops[k]);
         if (!loop.empty())
           loop.push_back(loop.front());
-        out.add(loop);
+        out.addIndexed(base, loop.data(), loop.size());
       }
       break;
     }
@@ -256,30 +301,44 @@ void drawBody(Lines &out, const b3dop::Box3DWorld &world,
   }
 }
 
-// One object's bodies drawn into `lines`. The caller holds st.mutex.
-void drawObjectShapes(Lines &lines, Box3DSharedState &st, const SIM_Object &obj,
-                      const UT_Vector3 &color) {
+void drawBody(Lines &out, const b3dop::Box3DWorld &world,
+              const Box3DBodyMirror &e, const Pose &pose,
+              const UT_Vector3 &color) {
+  out.begin(color * shadeOf(world, e));
+  drawBodyShapes(out, world, e, pose);
+}
+
+// A body and where it is.
+struct Placed {
+  const Box3DBodyMirror *e;
+  Pose p;
+};
+
+// An object's bodies and the poses its geometry shows: one body per point,
+// keyed as the sync keys it (`id`, else the point number), posed by the point's
+// P and its packed rotation (else orient); or the one body of a whole object,
+// posed by its Position data. The caller holds st.mutex.
+void placeBodies(const Box3DSharedState &st, const SIM_Object &obj,
+                 std::vector<Placed> &placed) {
+  placed.clear();
   const int objectId = obj.getObjectId();
   const auto sync = st.objectSync.find(objectId);
   if (sync == st.objectSync.end())
     return;
 
   if (sync->second.wholeObject) {
-    // One body: posed by the object's Position data.
     const Box3DBodyMirror *body =
         st.mirror.find(b3dop::makeBodyKey(objectId, kWholeObjectId));
     double pivot[3];
     Box3DBodyPose pose;
     if (body && readWholePose(obj, pivot, pose)) {
-      Pose p;
-      b3dop::copy3(p.pos, pose.pos);
-      b3dop::copy4(p.rot, pose.rot);
-      drawBody(lines, st.world, *body, p, color);
+      Placed pl{body, Pose()};
+      b3dop::copy3(pl.p.pos, pose.pos);
+      b3dop::copy4(pl.p.rot, pose.rot);
+      placed.push_back(pl);
     }
     return;
   }
-  // One body per point, keyed as the sync keys it: `id`, else the point
-  // number; posed by the point's P and its packed rotation (else orient).
   const SIM_Geometry *geo = obj.getGeometry();
   if (!geo)
     return;
@@ -290,43 +349,60 @@ void drawObjectShapes(Lines &lines, Box3DSharedState &st, const SIM_Object &obj,
   const GA_ROHandleI id(gdp, GA_ATTRIB_POINT, "id");
   const GA_ROHandleQ orient(gdp, GA_ATTRIB_POINT, "orient");
   const bool anyPrims = gdp->getNumPrimitives() > 0;
-  // The bodies and their poses are gathered first (the geometry and the mirror
-  // are read here), then drawn in chunks in parallel, each into its own Lines,
-  // and joined in order.
-  struct Placed {
-    const Box3DBodyMirror *e;
-    Pose p;
-  };
+  // Read in chunks in parallel (the geometry and the mirror are only read).
+  const GA_Size count = gdp->getNumPoints();
+  std::vector<Placed> slots(static_cast<size_t>(count),
+                            Placed{nullptr, Pose()});
+  constexpr size_t kChunk = 256;
+  parallelForEach((slots.size() + kChunk - 1) / kChunk,
+                  [&](size_t c) {
+                    const size_t end = std::min(slots.size(), (c + 1) * kChunk);
+                    for (size_t i = c * kChunk; i < end; ++i) {
+                      const GA_Offset off =
+                          gdp->pointOffset(GA_Index(static_cast<GA_Size>(i)));
+                      const int64_t bid =
+                          id.isValid() ? static_cast<int64_t>(id.get(off))
+                                       : static_cast<int64_t>(i);
+                      const Box3DBodyMirror *e =
+                          st.mirror.find(b3dop::makeBodyKey(objectId, bid));
+                      if (!e)
+                        continue;
+                      Pose p;
+                      const PackedInfo pk =
+                          anyPrims ? getPackedInfo(gdp, off) : PackedInfo();
+                      if (pk.prim) {
+                        b3dop::copy3(p.pos, pk.P);
+                        b3dop::copy4(p.rot, pk.rot);
+                      } else {
+                        const UT_Vector3 P = gdp->getPos3(off);
+                        p.pos[0] = P.x();
+                        p.pos[1] = P.y();
+                        p.pos[2] = P.z();
+                        if (orient.isValid()) {
+                          const UT_QuaternionF q = orient.get(off);
+                          p.rot[0] = q.x();
+                          p.rot[1] = q.y();
+                          p.rot[2] = q.z();
+                          p.rot[3] = q.w();
+                          b3dop::sanitizeQuat(p.rot);
+                        }
+                      }
+                      slots[i] = {e, p};
+                    }
+                  },
+                  kMinParallelGuideChunks);
+  for (const Placed &pl : slots)
+    if (pl.e)
+      placed.push_back(pl);
+}
+
+// One object's bodies drawn into `lines`. The caller holds st.mutex. The
+// bodies are drawn in chunks in parallel, each into its own Lines, and joined
+// in order.
+void drawObjectShapes(Lines &lines, Box3DSharedState &st, const SIM_Object &obj,
+                      const UT_Vector3 &color) {
   std::vector<Placed> placed;
-  int64_t n = 0;
-  for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it, ++n) {
-    const GA_Offset off = *it;
-    const int64_t bid = id.isValid() ? static_cast<int64_t>(id.get(off)) : n;
-    const Box3DBodyMirror *e =
-        st.mirror.find(b3dop::makeBodyKey(objectId, bid));
-    if (!e)
-      continue;
-    Pose p;
-    const PackedInfo pk = anyPrims ? getPackedInfo(gdp, off) : PackedInfo();
-    if (pk.prim) {
-      b3dop::copy3(p.pos, pk.P);
-      b3dop::copy4(p.rot, pk.rot);
-    } else {
-      const UT_Vector3 P = gdp->getPos3(off);
-      p.pos[0] = P.x();
-      p.pos[1] = P.y();
-      p.pos[2] = P.z();
-      if (orient.isValid()) {
-        const UT_QuaternionF q = orient.get(off);
-        p.rot[0] = q.x();
-        p.rot[1] = q.y();
-        p.rot[2] = q.z();
-        p.rot[3] = q.w();
-        b3dop::sanitizeQuat(p.rot);
-      }
-    }
-    placed.push_back({e, p});
-  }
+  placeBodies(st, obj, placed);
   constexpr size_t kChunk = 256;
   const size_t chunks = (placed.size() + kChunk - 1) / kChunk;
   std::vector<Lines> parts(chunks);
@@ -340,6 +416,159 @@ void drawObjectShapes(Lines &lines, Box3DSharedState &st, const SIM_Object &obj,
       kMinParallelGuideChunks);
   for (const Lines &part : parts)
     lines.append(part);
+}
+
+// ---- Export Collision Shapes: the lines are kept between steps ------------
+//
+// A step that only moves bodies moves the exported points: the outlines are
+// kept in body space (Box3DShapeExport) and each body's points are placed again
+// only when its pose differs from what the geometry holds. The geometry carries
+// the signature of the bodies and shapes it was built for; any change in them
+// (a body added or removed, new shapes) or a geometry that does not match
+// (another timeline, a discarded step) builds the lines again from scratch.
+
+constexpr const char *kShapesSigName = "b3d_shapes_sig";
+
+// Which bodies and shapes the lines are for: each body's handle, shape
+// signature, shape count, body type and scale.
+uint64_t shapesSignature(const b3dop::Box3DWorld &world,
+                         const std::vector<Placed> &placed) {
+  uint64_t h = b3dop::mixHash(0x9e3779b97f4a7c15ull, placed.size());
+  for (const Placed &pl : placed) {
+    const Box3DBodyMirror &e = *pl.e;
+    h = b3dop::mixHash(h, static_cast<uint64_t>(e.handle));
+    h = b3dop::mixHash(h, e.shapeSig);
+    h = b3dop::mixHash(
+        h, static_cast<uint64_t>(world.shapeCountByHandle(e.handle)));
+    h = b3dop::mixHash(h, e.dynamic() ? 1u : 0u);
+    h = b3dop::hashBytes(h, e.sizeKey, sizeof(e.sizeKey));
+  }
+  return h;
+}
+
+// Moves the exported points to the bodies' poses, and re-colours a body whose
+// shade changed. False when the geometry is not the one `cache` describes.
+bool updateShapes(GU_Detail &gdp, const Box3DSharedState &st,
+                  const std::vector<Placed> &placed, uint64_t sig,
+                  const Box3DShapeExport &cache, const UT_Vector3 &color) {
+  if (cache.sig != sig || cache.bodies.size() != placed.size())
+    return false;
+  const GA_ROHandleI marker(&gdp, GA_ATTRIB_DETAIL, kShapesSigName);
+  if (!marker.isValid() || marker.getAttribute()->getTupleSize() < 2 ||
+      static_cast<uint32_t>(marker.get(GA_Offset(0), 0)) !=
+          static_cast<uint32_t>(sig & 0xffffffffu) ||
+      static_cast<uint32_t>(marker.get(GA_Offset(0), 1)) !=
+          static_cast<uint32_t>(sig >> 32))
+    return false;
+  if (gdp.getNumPoints() != static_cast<GA_Size>(cache.points) ||
+      gdp.getNumPrimitives() != static_cast<GA_Size>(cache.lines))
+    return false;
+  if (cache.points == 0)
+    return true; // nothing is drawn
+  // The points and polylines are the consecutive offsets they were built as.
+  const GA_Offset p0 = gdp.pointOffset(GA_Index(0));
+  const GA_Offset q0 = gdp.primitiveOffset(GA_Index(0));
+  if (gdp.pointOffset(GA_Index(cache.points - 1)) !=
+          p0 + static_cast<GA_Offset>(cache.points - 1) ||
+      gdp.primitiveOffset(GA_Index(cache.lines - 1)) !=
+          q0 + static_cast<GA_Offset>(cache.lines - 1))
+    return false;
+  GA_RWHandleV3 P(gdp.getP());
+  GA_RWHandleV3 cd(&gdp, GA_ATTRIB_PRIMITIVE, "Cd");
+  if (!P.isValid() || !cd.isValid())
+    return false;
+  bool movedP = false, movedCd = false;
+  for (size_t i = 0; i < placed.size(); ++i) {
+    const Box3DShapeExportBody &b = cache.bodies[i];
+    const size_t n = b.pts.size() / 3;
+    if (n == 0)
+      continue;
+    const Pose &pose = placed[i].p;
+    // A body that has not moved has the same points: three of them say so.
+    const size_t probes[3] = {0, n / 2, n - 1};
+    bool same = true;
+    for (const size_t k : probes)
+      if (!(P.get(p0 + static_cast<GA_Offset>(b.pointStart + k)) ==
+            pose.point(&b.pts[3 * k])))
+        same = false;
+    if (!same) {
+      for (size_t k = 0; k < n; ++k)
+        P.set(p0 + static_cast<GA_Offset>(b.pointStart + k),
+              pose.point(&b.pts[3 * k]));
+      movedP = true;
+    }
+    const UT_Vector3 want = color * shadeOf(st.world, *placed[i].e);
+    const GA_Offset first = q0 + static_cast<GA_Offset>(b.lineStart);
+    if (!(cd.get(first) == want)) {
+      for (size_t k = 0; k < b.ends.size(); ++k)
+        cd.set(first + static_cast<GA_Offset>(k), want);
+      movedCd = true;
+    }
+  }
+  if (movedP)
+    P.getAttribute()->bumpDataId();
+  if (movedCd)
+    cd.getAttribute()->bumpDataId();
+  return true;
+}
+
+// Builds the lines from scratch and remembers the outlines.
+void rebuildShapes(GU_Detail &gdp, const Box3DSharedState &st,
+                   const std::vector<Placed> &placed, uint64_t sig,
+                   Box3DShapeExport &cache, const UT_Vector3 &color) {
+  cache.sig = sig;
+  cache.bodies.assign(placed.size(), Box3DShapeExportBody());
+  constexpr size_t kChunk = 256;
+  const size_t chunks = (placed.size() + kChunk - 1) / kChunk;
+  parallelForEach(
+      chunks,
+      [&](size_t c) {
+        const size_t end = std::min(placed.size(), (c + 1) * kChunk);
+        for (size_t i = c * kChunk; i < end; ++i) {
+          Lines local;
+          drawBodyShapes(local, st.world, *placed[i].e, Pose());
+          Box3DShapeExportBody &b = cache.bodies[i];
+          b.pts.reserve(local.points().size() * 3);
+          for (const UT_Vector3 &v : local.points()) {
+            b.pts.push_back(v.x());
+            b.pts.push_back(v.y());
+            b.pts.push_back(v.z());
+          }
+          b.idx = local.indices();
+          for (const size_t e : local.ends())
+            b.ends.push_back(static_cast<uint32_t>(e));
+        }
+      },
+      kMinParallelGuideChunks);
+  Lines world;
+  uint32_t points = 0, lines = 0;
+  for (size_t i = 0; i < placed.size(); ++i) {
+    Box3DShapeExportBody &b = cache.bodies[i];
+    b.pointStart = points;
+    b.lineStart = lines;
+    world.begin(color * shadeOf(st.world, *placed[i].e));
+    const size_t n = b.pts.size() / 3;
+    std::vector<UT_Vector3> pts(n);
+    for (size_t k = 0; k < n; ++k)
+      pts[k] = placed[i].p.point(&b.pts[3 * k]);
+    const int base = world.addPoints(pts.data(), n);
+    uint32_t from = 0;
+    for (const uint32_t end : b.ends) {
+      world.addIndexed(base, &b.idx[from], end - from);
+      from = end;
+    }
+    points += static_cast<uint32_t>(n);
+    lines += static_cast<uint32_t>(b.ends.size());
+  }
+  cache.points = points;
+  cache.lines = lines;
+  gdp.clearAndDestroy();
+  world.write(gdp);
+  GA_RWHandleI marker(gdp.addIntTuple(GA_ATTRIB_DETAIL, kShapesSigName, 2));
+  if (marker.isValid()) {
+    marker.set(GA_Offset(0), 0, static_cast<int>(sig & 0xffffffffu));
+    marker.set(GA_Offset(0), 1, static_cast<int>(sig >> 32));
+  }
 }
 
 } // namespace
@@ -359,20 +588,22 @@ void buildCollisionGuide(const SIM_Object &obj, GU_Detail &out,
 
 void exportCollisionShapes(Box3DSharedState &st, SIM_ObjectArray &objects) {
   const UT_Vector3 white(1.0f, 1.0f, 1.0f); // the SOP tints it (Shape Color)
+  std::vector<Placed> placed;
   for (int i = 0; i < objects.entries(); ++i) {
     SIM_Object *obj = objects(i);
     if (!obj || !st.objectSync.count(obj->getObjectId()))
       continue;
-    Lines lines;
-    drawObjectShapes(lines, st, *obj, white);
+    placeBodies(st, *obj, placed);
+    const uint64_t sig = shapesSignature(st.world, placed);
     SIM_GeometryCopy *data = SIM_DATA_CREATE(
         *obj, kShapesDataName, SIM_GeometryCopy, SIM_DATA_RETURN_EXISTING);
     if (!data)
       continue;
     SIM_GeometryAutoWriteLock lock(data);
     GU_Detail &gdp = lock.getGdp();
-    gdp.clearAndDestroy();
-    lines.write(gdp);
+    Box3DShapeExport &cache = st.shapeExports[obj->getObjectId()];
+    if (!updateShapes(gdp, st, placed, sig, cache, white))
+      rebuildShapes(gdp, st, placed, sig, cache, white);
   }
 }
 

@@ -147,7 +147,7 @@ examples/            make_examples.py: builds demo scenes into examples/scenes (
 package/             Box3D.json.in: the Houdini package file the build configures
 tools/               make_assets.py (runs the four asset builders in one hython, as the build does),
                      make_packed_object.py, make_configure_sop.py, make_constraint_properties_sop.py, make_solver_sop.py (the assets; the Solver SOP's inner builders are in b3d_solver_common.py, b3d_solver_network.py, b3d_solver_dops.py, b3d_solver_ground.py, b3d_solver_constraints.py, b3d_solver_breaks.py, b3d_solver_activeage.py, b3d_solver_updates.py and b3d_solver_help.py; b3d_solver_state.py, b3d_configure_state.py and b3d_constraint_properties_state.py are the SOPs' viewer states, read as text by the builders; b3d_layouts.py places both SOP assets' nodes),
-                     b3d.py (finds Houdini; runs the checks, examples or ctest on any OS), b3d_hda.py (warn, create, set_operations and the parameter-template helpers the asset builders share), b3d_prepare.py (the input packing both SOP assets share), b3d_materials.py (Configure's material presets), find_houdini.bat (finds HFS for test.bat, make_examples.bat and build.bat), b3d_settings.py (Box3D Data's
+                     b3d.py (finds Houdini; runs the checks, examples, benchmarks or ctest on any OS), b3d_hda.py (warn, create, set_operations and the parameter-template helpers the asset builders share), b3d_prepare.py (the input packing both SOP assets share), b3d_materials.py (Configure's material presets), find_houdini.bat (finds HFS for test.bat, make_examples.bat and build.bat), b3d_settings.py (Box3D Data's
                      settings as point attributes and the creation-frame rest, for Configure and the Packed Object),
                      check_docs.py,
                      houdini_network_dump.py (dumps a node's networks to text, for reading SideFX assets)
@@ -176,7 +176,8 @@ tests/
   core_compound.cpp   A compound body as glued pieces: mass, a beam on posts against a weld chain, impulses per shape, hulls at an offset, merge maths
   core_rbdobject.cpp  RBD Object settings without Box3D Data: defaults, invalid values, Bullet Data shapes, density -> mass
   houdini/            Houdini checks: run_tests.py (runner), checks_*.py (tests by area), b3dtest.py (helpers),
-                      review.py (tidies saved scenes), baseline.json; out/ holds each test's scene (git-ignored)
+                      review.py (tidies saved scenes), baseline.json; out/ holds each test's scene (git-ignored).
+                      bench.py + bench_scenes.py: timing runs of Box3D against Bullet, outside run_tests.py (build.md)
   python/             test_harness.py: checks on the Houdini scripts that need no Houdini (stand-in `hou`)
 ```
 

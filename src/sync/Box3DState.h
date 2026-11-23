@@ -686,6 +686,26 @@ struct Box3DImpactGroup {
   std::vector<Box3DImpactHit> hits;
 };
 
+// Export Collision Shapes: one body's outline in body space (xyz per point;
+// `idx` the points of every polyline, `ends` the cumulative count of it after
+// each) and where its points and polylines sit in the object's exported
+// geometry.
+struct Box3DShapeExportBody {
+  std::vector<float> pts;
+  std::vector<int> idx;
+  std::vector<uint32_t> ends;
+  uint32_t pointStart = 0, lineStart = 0;
+};
+
+// What the last full export of one object wrote. `sig` says which bodies and
+// shapes it was made for (also stored in the geometry, which is what decides
+// whether the lines can be moved instead of rebuilt).
+struct Box3DShapeExport {
+  uint64_t sig = 0;
+  uint32_t points = 0, lines = 0;
+  std::vector<Box3DShapeExportBody> bodies;
+};
+
 // One piece of a compound: its own body (disabled while merged) and where it
 // sits in the compound body's space. `entry` is refreshed by every
 // syncCompounds before use; key / body / props / shapeSig are what the piece
@@ -840,6 +860,9 @@ struct Box3DSharedState {
   // step. Entries (and their hit vectors) are kept so capacity is reused.
   std::vector<Box3DImpactGroup> impactGroups;
   size_t impactGroupCount = 0;
+  // Export Collision Shapes: the outlines of each object's bodies, by object
+  // id (exportCollisionShapes).
+  std::unordered_map<int, Box3DShapeExport> shapeExports;
   // Filled by the sync (in object order), used after the step:
   std::vector<Box3DPointWrite> pointWrites;
   std::vector<Box3DDeletion> deletions;

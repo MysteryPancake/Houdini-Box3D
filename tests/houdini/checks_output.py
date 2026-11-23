@@ -25,6 +25,7 @@ from b3dtest import (
     finish,
     ground_object,
     merge,
+    multisolver,
     new_dopnet,
     new_geo,
     node_messages,
@@ -36,6 +37,7 @@ from b3dtest import (
     point_attributes,
     set_parm,
     single_object_geo,
+    sop_solver,
     step,
     set_menu_token,
 )
@@ -1287,6 +1289,111 @@ def test_collision_shapes_mesh():
                    f"static convex piece {hull} (expected 6 + 6 = 12)")]
 
 
+def test_collision_shapes_follow():
+    """Export Collision Shapes keeps its lines between steps and only moves them: three spinning boxes dropped on a
+    ground, read back through a DOP Import of `Box3DShapes` every frame for 160 frames. The lines' bounding box is
+    each body's own (its box corners turned by the packed rotation about its point, within 1e-3) on every frame, the polygon count never changes, the dynamic boxes are drawn at
+    full brightness while they fall and every line is dimmed once they sleep."""
+    pieces = [dict(GROUND, attrs={"active": 0})] + [
+        {"size": (1, 1, 1), "center": (1.5 * i - 1.5, 2.0 + i, 0),
+         "attrs": {"active": 1, "w": (1.0 + i, 2.0, 0.5), "v": (0.0, 0.0, 0.0)}} for i in range(3)]
+    path, _ = packed_boxes("shapes_follow_pieces", pieces)
+    dop = new_dopnet("shapes_follow")
+    finish(dop, box3d_solver(dop, packed_object(dop, "pieces", path, keep_velocity=True)))
+    set_parm(dop.node("box3d_solver"), ["exportshapes"], 1)
+    geo = new_geo("shapes_follow_read")
+    imp = create(geo, "dopimport", "import_shapes")
+    set_parm(imp, ["doppath"], dop.path())
+    set_parm(imp, ["objpattern"], "pieces")
+    set_parm(imp, ["geodatapath"], "Box3DShapes")
+    worst, counts, bright, dim_end = 0.0, set(), None, None
+    corners = [(x, y, z) for x in (-0.5, 0.5) for y in (-0.5, 0.5) for z in (-0.5, 0.5)]
+    for f in range(1, 161):
+        hou.setFrame(f)
+        lines = imp.geometry()
+        body = dop.simulation().findObject("pieces").geometry()
+        if f < 3 or not lines.prims():
+            continue
+        # Each body is 6 polygons; the exact bounds of every 1 m box (its corners through the packed transform)
+        # must be the bounds of one of the groups.
+        prims = list(lines.prims())
+        groups = []
+        for g in range(0, len(prims), 6):
+            pts = [v.point().position() for pr in prims[g:g + 6] for v in pr.vertices()]
+            groups.append([min(p[k] for p in pts) for k in range(3)] + [max(p[k] for p in pts) for k in range(3)])
+        for pr in body.prims():
+            m = pr.intrinsicValue("packedfulltransform")
+            bounds = pr.intrinsicValue("bounds")
+            if bounds[1] - bounds[0] > 5.0:  # the 20 m ground
+                continue
+            centre = pr.points()[0].position()
+            world = [[sum(c[r] * m[4 * r + k] for r in range(3)) + centre[k] for k in range(3)] for c in corners]
+            want = [min(p[k] for p in world) for k in range(3)] + [max(p[k] for p in world) for k in range(3)]
+            worst = max(worst, min(max(abs(a - b) for a, b in zip(want, grp)) for grp in groups))
+        counts.add(len(lines.prims()))
+        shades = [p.attribValue("Cd")[0] for p in lines.prims()]
+        if f == 3:
+            bright = max(shades)
+        dim_end = max(shades)
+    ok = worst < 1e-3 and len(counts) == 1 and bright is not None and bright > 0.99 and dim_end is not None \
+        and dim_end < 0.6
+    return [Result("collision_shapes_follow", Result.PASS if ok else Result.FAIL,
+                   f"largest bounding box difference from the bodies' own {worst:.2e} (expected under 1e-3), polygon "
+                   f"counts {sorted(counts)} (expected one), brightest line {bright} on frame 3 (expected 1) and "
+                   f"{dim_end} on frame 160 (expected under 0.6: every body asleep or static)")]
+
+
+def test_collision_shapes_remove():
+    """Export Collision Shapes after a body is deleted: a SOP Solver marks one of three falling boxes `dead` on frame
+    20. The exported lines have 24 polygons (4 bodies) before it and 18 after, the remaining boxes' lines are
+    where the boxes are (the corners of each, turned by its packed rotation, within 1e-3), and the dead one's lines
+    are gone."""
+    pieces = [dict(GROUND, attrs={"active": 0})] + [
+        {"size": (1, 1, 1), "center": (1.5 * i - 1.5, 2.0 + i, 0), "attrs": {"active": 1, "w": (1.0, 2.0, 0.5)}}
+        for i in range(3)]
+    path, names = packed_boxes("shapes_remove_pieces", pieces)
+    dop = new_dopnet("shapes_remove")
+    objs = packed_object(dop, "pieces", path, keep_velocity=True)
+    solver = box3d_solver(dop, None)
+    set_parm(solver, ["exportshapes"], 1)
+    kill = sop_solver(dop, f'if (@Frame >= 20 && s@name == "{names[2]}") i@dead = 1;')
+    finish(dop, multisolver(dop, objs, [kill, solver]))
+    geo = new_geo("shapes_remove_read")
+    imp = create(geo, "dopimport", "import_shapes")
+    set_parm(imp, ["doppath"], dop.path())
+    set_parm(imp, ["objpattern"], "pieces")
+    set_parm(imp, ["geodatapath"], "Box3DShapes")
+    corners = [(x, y, z) for x in (-0.5, 0.5) for y in (-0.5, 0.5) for z in (-0.5, 0.5)]
+    counts, worst = {}, 0.0
+    for f in range(1, 41):
+        hou.setFrame(f)
+        lines = imp.geometry()
+        body = dop.simulation().findObject("pieces").geometry()
+        if f < 3 or not lines.prims():
+            continue
+        counts[f] = len(lines.prims())
+        if 18 <= f <= 22:  # the frames where the body goes: the geometry and the lines are a step apart
+            continue
+        prims = list(lines.prims())
+        groups = []
+        for g in range(0, len(prims), 6):
+            pts = [v.point().position() for pr in prims[g:g + 6] for v in pr.vertices()]
+            groups.append([min(p[k] for p in pts) for k in range(3)] + [max(p[k] for p in pts) for k in range(3)])
+        for pr in body.prims():
+            if pr.intrinsicValue("bounds")[1] - pr.intrinsicValue("bounds")[0] > 5.0:
+                continue
+            m = pr.intrinsicValue("packedfulltransform")
+            centre = pr.points()[0].position()
+            world = [[sum(c[r] * m[4 * r + k] for r in range(3)) + centre[k] for k in range(3)] for c in corners]
+            want = [min(p[k] for p in world) for k in range(3)] + [max(p[k] for p in world) for k in range(3)]
+            worst = max(worst, min(max(abs(a - b) for a, b in zip(want, grp)) for grp in groups))
+    before, after = counts.get(10), counts.get(40)
+    ok = before == 24 and after == 18 and worst < 1e-3
+    return [Result("collision_shapes_remove", Result.PASS if ok else Result.FAIL,
+                   f"polygons on frame 10 {before} (expected 24) and frame 40 {after} (expected 18), largest "
+                   f"difference between the remaining boxes' lines and their corners {worst:.2e} (expected under 1e-3)")]
+
+
 def static_tray_rest(shape_index, static=True, body_type_expression=None):
     """The lowest point (y) of a sphere RBD Object dropped from y 3 into a static RBD Object tray: an open 4 x 2 x 4
     box (double sided, so its winding does not matter), its floor at y 0. `shape_index`: the tray's Box3D Data
@@ -1390,6 +1497,8 @@ TESTS = {
     "mass_written": test_mass_written,
     "aging": test_aging,
     "collision_shapes_mesh": test_collision_shapes_mesh,
+    "collision_shapes_follow": test_collision_shapes_follow,
+    "collision_shapes_remove": test_collision_shapes_remove,
     "static_rbd_object_mesh": test_static_rbd_object_mesh,
     "static_rbd_object_retype": test_static_rbd_object_retype,
     "point_force": test_point_force,

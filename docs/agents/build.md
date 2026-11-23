@@ -89,6 +89,27 @@ sidefx, glue, rbdobject, worlds, taskrunner and threads (`[workers] ...` argumen
 differ by more than 1e-4). The file's header comment says what it covers. The physics cases are in `core_physics.cpp`
 (case list and `main`), `physics_shapes.cpp` and `physics_bodies.cpp`, declared in `PhysicsCases.h`.
 
+## Benchmarks
+
+`hython tests/houdini/bench.py` (or `python tools/b3d.py bench`) times scenes in Box3D and RBD Bullet Solver; it is not
+part of `run_tests.py` and nothing in it passes or fails. `--list` names the scenarios (`bench_scenes.py`:
+pile, edit, collider, animated, joints, wall), each with parameters (`name:key=value,...`) and a default sweep.
+
+* Each run is its own hython process: frames 1..N timed as `setFrame` plus the DOP cook, grouped into the scene's
+  phases (median, p95, max per frame), then Reset Simulation and frame 1 again (the world rebuild; the forced `cook` is
+  what makes it re-solve). Frame 1 is its own `first` phase: the scene's SOPs cook there and Box3D builds nothing yet
+  (new objects are solved from frame 2).
+* `hou.perfMon` records the solvers' stages (`Pre-Solve/...`, `Stepping Simulation/...`, `Post-Solve/...` are nested
+  under the solver node; Bullet has none, only its node time) and the time of every DOP node. What is not
+  `Stepping World` is the plugin's own code, the part to optimise. A frame's total minus its nodes is the DOP engine.
+* Results go to `tests/houdini/out/bench/` (`latest.json` and a timestamped copy); `--compare file.json` prints the
+  ratio per phase. `--repeat N` keeps the median run, `--threads N` sets `HOUDINI_MAXTHREADS`, `--budget` caps a run.
+* Copy to Points takes no point attributes onto packed copies unless `targetattribs` / `applyattribs1` are set
+  (`copy_packed`): without it every body is named by number and dynamic, and a constraint network matches nothing.
+* A SideFX Hard / Soft / Spring node's Rest Length defaults to 1: anchors that start closer are pulled to it, which
+  whips a chain of 0.5 m links across the scene in both solvers (Box3D harder). The `joints` scenes set it to 0.
+* A scratch file named like a standard module (`types.py`) next to a hython script crashes hython at startup.
+
 ## Debug logging (`Box3DDebug.h`)
 
 `B3D_LOG` for one-off events (rebuilds, bodies added / removed, fallbacks); `B3D_LOG_VERBOSE` per step, printed only

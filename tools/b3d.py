@@ -4,6 +4,7 @@
     python tools/b3d.py hfs                    print the Houdini install used
     python tools/b3d.py test [args]            hython tests/houdini/run_tests.py [args]   (test.bat on Windows)
     python tools/b3d.py examples [args]        hython examples/make_examples.py [args]    (make_examples.bat)
+    python tools/b3d.py bench [args]           hython tests/houdini/bench.py [args]       (timings, Box3D vs Bullet)
     python tools/b3d.py ctest [args]           ctest --test-dir build [args] (-C Release is added on Visual Studio)
 
 Houdini is found as build.sh / build.bat do: $HFS if it has the HDK (toolkit/cmake), else the registry's
@@ -90,7 +91,7 @@ def run(cmd):
 
 
 def main(argv):
-    if not argv or argv[0] not in ("hfs", "test", "examples", "ctest"):
+    if not argv or argv[0] not in ("hfs", "test", "examples", "bench", "ctest"):
         print(__doc__)
         return 0 if not argv else 2
     cmd, rest = argv[0], argv[1:]
@@ -109,7 +110,8 @@ def main(argv):
     if not exe:
         print(f"ERROR: hython not found in {hfs}/bin", file=sys.stderr)
         return 1
-    script = "tests/houdini/run_tests.py" if cmd == "test" else "examples/make_examples.py"
+    script = {"test": "tests/houdini/run_tests.py", "bench": "tests/houdini/bench.py"}.get(
+        cmd, "examples/make_examples.py")
     return run([exe, script, *rest])
 
 
