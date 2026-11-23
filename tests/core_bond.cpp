@@ -309,6 +309,39 @@ int main() {
     CHECK(near(out[0].force[1], 4.9, 1e-3) && near(out[1].force[1], 4.9, 1e-3));
   }
   {
+    // The couple two bonds at one anchor share follows their rotational
+    // stiffness. The solver sets it from the area (area^2 / 12: the same for
+    // a 1 x 1 patch and a 0.1 x 10 one), which splits a couple evenly; the
+    // patches' second moments (1/12 and 8.33 m^4 about the same axis) would
+    // put nearly all of it on the thin one. This is the size of that choice.
+    std::vector<BondNode> nodes(2);
+    nodes[1].pos[1] = -1.0;
+    nodes[1].torque[2] = 1.0;
+    nodes[0].torque[2] = -1.0;
+    const double areaBased[2] = {1.0 / 12.0, 1.0 / 12.0};
+    const double momentBased[2] = {1.0 / 12.0, 10.0 * 10.0 * 10.0 * 0.1 / 12.0};
+    double thinShare[2];
+    for (int variant = 0; variant < 2; ++variant) {
+      const double *rot = variant == 0 ? areaBased : momentBased;
+      std::vector<BondLink> links(2);
+      for (int i = 0; i < 2; ++i) {
+        links[static_cast<size_t>(i)].a = 0;
+        links[static_cast<size_t>(i)].b = 1;
+        links[static_cast<size_t>(i)].anchor[1] = -0.5;
+        links[static_cast<size_t>(i)].rotStiffness = rot[i];
+      }
+      std::vector<BondForce> out;
+      CHECK(solveBondNetwork(nodes, links, out) < 1e-6);
+      const double total = out[0].torque[2] + out[1].torque[2];
+      CHECK(near(total, 1.0, 1e-3));
+      thinShare[variant] = out[1].torque[2] / total;
+    }
+    std::printf("couple on the thin bond: %.3f by area, %.3f by moment\n",
+                thinShare[0], thinShare[1]);
+    CHECK(near(thinShare[0], 0.5, 1e-3));
+    CHECK(thinShare[1] > 0.98);
+  }
+  {
     // A cantilever: a piece hangs off the side of a held one. The bond carries
     // its weight in shear and a moment of weight times the arm (0.5) at the
     // anchor, the couple on the piece.
@@ -421,6 +454,48 @@ int main() {
           near(out[2].torque[2], 4.9, 1e-3));
     CHECK(near(sup[0].push, 3.27, 0.06) && near(sup[1].push, 13.07, 0.06) &&
           near(sup[2].push, 22.87, 0.06));
+  }
+  {
+    // The supports' stiffness against the bonds' (1) is an assumption of the
+    // model (kSupportStiffness is 0.01). The same overhang over a sweep of it:
+    // the edge bond's load is the statics' whatever the stiffness, and how much
+    // of the moment the bonds nearer the ledge carry is what changes.
+    const double stiffnesses[] = {1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0};
+    double inner[6];
+    for (size_t k = 0; k < 6; ++k) {
+      std::vector<BondNode> nodes(4);
+      std::vector<BondSupport> supports(3);
+      std::vector<BondLink> links(3);
+      for (size_t i = 0; i < 4; ++i) {
+        nodes[i].pos[0] = 0.5 + static_cast<double>(i);
+        nodes[i].force[1] = 9.8;
+      }
+      for (size_t i = 0; i < 3; ++i) {
+        supports[i].node = static_cast<int>(i);
+        supports[i].pos[0] = nodes[i].pos[0];
+        supports[i].pos[1] = -0.5;
+        supports[i].normalStiffness = stiffnesses[k];
+        supports[i].tangentStiffness = 0.02 * stiffnesses[k];
+        links[i].a = static_cast<int>(i);
+        links[i].b = static_cast<int>(i) + 1;
+        links[i].anchor[0] = 1.0 + static_cast<double>(i);
+      }
+      std::vector<BondForce> out;
+      std::vector<SupportForce> sup;
+      CHECK(solveBondNetwork(nodes, links, supports, out, sup, 2000, 1e-11) <
+            1e-4);
+      CHECK(near(out[2].force[1], 9.8, 1e-3) &&
+            near(out[2].torque[2], 4.9, 1e-3));
+      inner[k] = std::fabs(out[1].torque[2]);
+      std::printf("support stiffness %g: next bond couple %.3f, shear %.3f\n",
+                  stiffnesses[k], inner[k], std::fabs(out[1].force[1]));
+    }
+    // Softer than the bonds by 100 or more the loads are those of the soft
+    // bed limit (the next bond's couple within 0.2% of the softest bed's).
+    // Supports as stiff as the bonds or stiffer move it by over 10%.
+    CHECK(near(inner[2], inner[0], 0.002 * inner[0]));
+    CHECK(near(inner[1], inner[0], 0.002 * inner[0]));
+    CHECK(std::fabs(inner[5] - inner[0]) > 0.1 * inner[0]);
   }
   {
     // One piece on three supports under an eccentric weight: the elastic split

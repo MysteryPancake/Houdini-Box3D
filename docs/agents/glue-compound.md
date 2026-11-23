@@ -58,3 +58,6 @@
   the compound (`compoundPieceState`). A bond inside a compound (`Box3DJointEntry::inCompound`, set by `markCompoundBonds`) writes
   force, torque, distance and angle as zero once and `impact` when it changed. Live frames are written in parallel
   (`writeLiveFrames`, above `kMinParallelFrames` bonds). Impacts data and the collision guide are not made for pieces.
+* `compound_id` (`queueCompoundIds`, with the solver's Write Bond Attributes on): each member's point shows the lowest point id in
+  its compound, queued as a point write before `writePointAttrs` (`Box3DPointWrite::kCompound`; the attribute defaults to -1)
+  and set back to -1 when the piece leaves (`compoundShown` on the entry, `compoundIdKeys` the pieces showing one).

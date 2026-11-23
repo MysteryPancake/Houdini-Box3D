@@ -413,6 +413,9 @@ void writePointAttrs(Box3DSharedState &st, SIM_ObjectArray &objects) {
       GU_Detail *gdp = &lock.getGdp();
       if (want & Box3DPointWrite::kMass)
         addPointAttribIfMissing(gdp, "mass", 1);
+      if ((want & Box3DPointWrite::kCompound) &&
+          !gdp->findPointAttribute(kCompoundIdName))
+        gdp->addIntTuple(GA_ATTRIB_POINT, kCompoundIdName, 1, GA_Defaults(-1));
       if (want & Box3DPointWrite::kRest) {
         // A new restxform is all zero (unset) on the other points.
         addPointAttribIfMissing(gdp, "restxform", 16, GA_TYPE_TRANSFORM);
@@ -422,6 +425,7 @@ void writePointAttrs(Box3DSharedState &st, SIM_ObjectArray &objects) {
       }
       GA_RWHandleI valid(gdp, GA_ATTRIB_POINT, "bullet_autofit_valid");
       GA_RWHandleF mass(gdp, GA_ATTRIB_POINT, "mass");
+      GA_RWHandleI compound(gdp, GA_ATTRIB_POINT, kCompoundIdName);
       GA_RWHandleM4 restxform(gdp, GA_ATTRIB_POINT, "restxform");
       GA_RWHandleV3 pivot(gdp, GA_ATTRIB_POINT, "pivot");
       GA_RWHandleQ orient(gdp, GA_ATTRIB_POINT, "orient");
@@ -441,6 +445,10 @@ void writePointAttrs(Box3DSharedState &st, SIM_ObjectArray &objects) {
           mass.set(w.off, w.mass);
           wrote |= Box3DPointWrite::kMass;
         }
+        if ((w.flags & Box3DPointWrite::kCompound) && compound.isValid()) {
+          compound.set(w.off, w.compoundId);
+          wrote |= Box3DPointWrite::kCompound;
+        }
         if ((w.flags & Box3DPointWrite::kRest) && restOk) {
           restxform.set(w.off, box3dMatrix4F(w.restxform));
           pivot.set(w.off, UT_Vector3F(w.pivot[0], w.pivot[1], w.pivot[2]));
@@ -454,6 +462,8 @@ void writePointAttrs(Box3DSharedState &st, SIM_ObjectArray &objects) {
         valid.getAttribute()->bumpDataId();
       if (wrote & Box3DPointWrite::kMass)
         mass.getAttribute()->bumpDataId();
+      if (wrote & Box3DPointWrite::kCompound)
+        compound.getAttribute()->bumpDataId();
       if (wrote & Box3DPointWrite::kRest) {
         restxform.getAttribute()->bumpDataId();
         pivot.getAttribute()->bumpDataId();

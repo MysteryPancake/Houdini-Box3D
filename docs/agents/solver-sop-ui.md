@@ -59,7 +59,7 @@ The Solver SOP's parameter tabs, joint settings, Break Thresholds, constraint at
   and regrouped by `TAB_GROUPS`, and DOP tabs left empty (Visualization, Output) are dropped. Solver: a General folder (World Scale, Time Scale), a Simulation folder
   (the solver's own settings, Solve on Creation Frame, Cache Simulation with its label hidden, joined to Cache Memory (MB), which it disables when off), then Contacts
   and Sleeping. Cache Memory is the inner DOP network's value with the parameters on its row (`row_of`,
-  `CACHE_MEMORY`). Advanced is Stability (warm starting, continuous, speed limit, inertia), Performance (threads), Collision (the collider's Solve on Creation Frame) and Constraints (a closed folder per joint type). Collision: one Collision Geometry folder whose header checkbox is Use External
+  `CACHE_MEMORY`). Advanced is Stability (warm starting, continuous, speed limit, inertia), Performance (threads), Bonds (Write Bond Attributes), Collision (the collider's Solve on Creation Frame) and Constraints (a closed folder per joint type). Collision: one Collision Geometry folder whose header checkbox is Use External
   Collisions (`usecollisions`, placed just before the folder, as RBD Bullet Solver's), holding Collision Type and the collision object's Shape, Material and CCD &
   Contacts folders (`COLLIDER_FOLDERS`, all named `collision_*`), the last cut to Contact Recycling as Contacts
   (`COLLIDER_DROPPED`: the rest does nothing for a Static / Kinematic body). Pieces: the pieces' Box3D Data folders

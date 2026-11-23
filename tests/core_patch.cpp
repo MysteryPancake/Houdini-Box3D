@@ -110,6 +110,30 @@ int main() {
     // The faces are 2 (y) x 0.5 (z) and 1 (y) x 2 (z): they overlap in 1 x 0.5.
     CHECK(p.ok && near(p.area, 0.5, 1e-9) && near(p.normal[0], 1.0, 1e-9));
   }
+  // A cube in the corner of an L: it touches the floor over 1 and a wall over
+  // 0.5, and the patch is the floor's alone (the dominant plane), 2/3 of the
+  // 1.5 of the contact. Pieces of several shapes give one patch only when the
+  // faces are in one plane.
+  {
+    const double fc[3] = {0.5, -0.5, 0.5}, fh[3] = {1.5, 0.5, 0.5};
+    const double wc[3] = {-0.5, 0.25, 0.5}, wh[3] = {0.5, 0.25, 0.5};
+    const double bc[3] = {0.5, 0.5, 0.5};
+    std::vector<PatchFace> l = boxFaces(fc, fh);
+    const std::vector<PatchFace> wall = boxFaces(wc, wh);
+    l.insert(l.end(), wall.begin(), wall.end());
+    const ContactPatch p = contactPatchOf(l, boxFaces(bc, unit), 0.02);
+    std::printf("L contact: patch area %.3f of 1.5\n", p.area);
+    CHECK(p.ok && near(p.area, 1.0, 1e-9) && near(p.normal[1], 1.0, 1e-9));
+    CHECK(near(p.centroid[0], 0.5, 1e-9) && near(p.centroid[1], 0.0, 1e-9));
+    // Two shapes in one plane do add: a floor of two boxes side by side.
+    const double f1[3] = {-0.25, -0.5, 0.5}, f2[3] = {0.75, -0.5, 0.5};
+    const double h1[3] = {0.75, 0.5, 0.5}, h2[3] = {0.25, 0.5, 0.5};
+    std::vector<PatchFace> two = boxFaces(f1, h1);
+    const std::vector<PatchFace> second = boxFaces(f2, h2);
+    two.insert(two.end(), second.begin(), second.end());
+    const ContactPatch q = contactPatchOf(two, boxFaces(bc, unit), 0.02);
+    CHECK(q.ok && near(q.area, 1.0, 1e-9));
+  }
   // Nothing touching, and faces that do not face each other.
   {
     const double a[3] = {0, 0.5, 0}, far[3] = {5, 1.5, 0};

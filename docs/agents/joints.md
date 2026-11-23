@@ -37,16 +37,20 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   two sides apart: the bond is torn when the energy that gives them reaches its fracture energy, an impulse of
   `bondTearImpulse` = sqrt(2 * G * A * m) with m the reduced mass of the two sides the bond holds together
   (`bondReducedMassOf`: everything bonded to each piece without going through this bond, found in the glue graph and kept
-  for its `glueSignature`; a side with a fixed body is infinite). Where other bonds still join the two pieces (a loop, a
-  wall) cutting this one frees nothing alone and the two pieces' own masses are used. A piece bonded to the world by a
-  Bond is not in the graph, so its side does not count as fixed (the mass is then smaller, which tears sooner).
+  for its `glueSignature`; a side with a fixed body is infinite, as is one holding a piece another Bond ties to the world:
+  those are not in the graph, so `glueAnchored` lists them and is part of the signature). Where other bonds still join the two pieces (a loop, a
+  wall) cutting this one frees nothing alone and the two pieces' own masses are used.
   The load is read from the pose at the step's end, and a bond over its capacity keeps accumulating while its pieces
   sleep (`bondOverCapacity`). `bondAdvance` adds `(ratio - 1) * capacity * dt` each Box3D step to `bondImpulse` (kept when the load drops: damage is
   not undone) and breaks at the tear impulse, so the time to tear does not depend on the step size, and a fracture
   energy of 0 breaks at a ratio of 1. The weld is rigid, and the Box3D spring stiffness a stiff material would need is
   beyond what its soft constraints resolve, so the bond does not stretch: no softening curve, no stored elastic energy.
   The damage is written onto the network as `bond_impulse` (`kBondImpulse`) and read back when the bond is made, so a
-  world rebuilt mid-simulation carries on from it. A breaking bond is queued on `glueBroken` and destroyed with the
+  world rebuilt mid-simulation carries on from it. `bond_ratio`, `bond_damage` (`bondImpulse` over the tear impulse, 0 without a
+  fracture energy), the load's `bond_tension` / `bond_shear` / `bond_bending` / `bond_twist` (`BondLoad`) and `bond_area`
+  (`bondAreaUsed`: the patch's, or the bounding-box fallback's), the `BondReadout` table in `Box3DState.h`, are only displayed (nothing reads them back) and written only with the
+  solver's `bondreadouts` on (Advanced > Bonds, off by default), when they change; with it off they do not keep a quiet
+  joint awake. A breaking bond is queued on `glueBroken` and destroyed with the
   other broken joints, so `broken`, `next_constraint_name` and the live frames work as for any joint. World Scale gives
   the strengths a power of -1 and the area 2 (`JOINT_SCALE_POWERS`).
   * Materials (`bondMaterials()` in `core/Box3DBond.h`, `SIM_Box3DConRel::settings`): the menu `bond_material` (0 is
@@ -92,7 +96,7 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   `(momentU + momentV) / extentR` (twisting, a circle's formula), all kept in body A's frame in `Box3DJointExtra`. The
   load read at the weld's anchor is moved to the centroid (the couple plus the force's moment over the offset) and its
   bending split about `u` and `v` (`bondLoadInPatch`); a set Contact Area scales the patch, its shape kept. Without a
-  patch (the other piece is the world, a non-hull shape, no faces within the tolerance) the old estimates stay:
+  patch (the other piece is the world, a non-hull shape, no faces within the tolerance) the bounding-box estimates are used:
   centre-to-centre normal, the smaller bounding-box face, a square patch.
   * Benchmarks against statics (`core_bond`, `bond_benchmarks`, `bond_invariance`): a hanging box reads its weight to
   three digits at 24 to 240 Hz and 1 to 8 substeps; stress scales with size (a box twice as big, twice the stress); a

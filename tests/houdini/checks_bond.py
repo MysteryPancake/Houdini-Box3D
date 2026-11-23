@@ -14,6 +14,7 @@ from b3dtest import (
     finish,
     find_network_geometry,
     merge,
+    multisolver,
     new_dopnet,
     packed_boxes,
     packed_object,
@@ -21,6 +22,7 @@ from b3dtest import (
     Result,
     set_parm,
     solver_for,
+    sop_solver,
     step,
 )
 from checks_constraints import broken_count
@@ -266,6 +268,383 @@ def test_bond_impact():
 
 
 TESTS["bond_impact"] = test_bond_impact
+
+
+def test_bond_world_anchor():
+    """A piece bonded to the world does not move, so the side of a Bond that holds it has infinite mass. A 1000 kg box
+    hangs from a free box that a strong Bond ties to the world (no static piece), on a bond of 5 kPa with a Fracture
+    Energy of 1000 J/m^2 over 1 m^2: it holds one free box, so its reduced mass is 1000 kg and it tears after 1414 N*s
+    of the 4807 N beyond its capacity, on frame 10 at 24 fps (frame 7 when the anchor was not counted, as 500 kg)."""
+    original = hou.fps()
+    hou.setFps(24)
+    try:
+        pieces = [{"size": (1, 1, 1), "center": (0, 5, 0), "attrs": {"active": 1}},
+                  {"size": (1, 1, 1), "center": (0, 4, 0), "attrs": {"active": 1}}]
+        # The attributes multiply the node's values; once a line has one, every line does (0 where absent).
+        names = ("bond_tensile", "bond_shear", "bond_fracture_energy")
+        weak = {name: 1.0 for name in names}
+        strong = {name: 1e4 for name in names}
+        dop, _names = bond_scene(tag("bond_anchor"), pieces,
+                                 [(0, AT, 1, AT, weak), (None, (0.0, 5.5, 0.0), 0, (0.0, 5.5, 0.0), strong)],
+                                 bond={"bond_tensile": 5000.0, "bond_shear": 5000.0, "bond_fracture_energy": 1000.0})
+        first = first_broken(dop, 14)
+    finally:
+        hou.setFps(original)
+    ok = first is not None and 9 <= first <= 11
+    return [Result("bond_world_anchor", Result.PASS if ok else Result.FAIL,
+                   f"broke on frame {first} (expected 10, within 9 to 11)")]
+
+
+TESTS["bond_world_anchor"] = test_bond_world_anchor
+
+
+def test_bond_gravity_and_forces():
+    """A compound's Bond load follows the gravity scale and Force DOP forces, which reach it through the compound's
+    change of velocity. The hanging 1000 kg box (9.8 kPa) on a bond of 15 kPa holds; with Gravity Scale 2 (19.6 kPa)
+    or an extra Gravity DOP of the same size it breaks. On a bond of 6 kPa it breaks, and with Gravity Scale 0.5
+    (4.9 kPa) it holds."""
+    def broken(strength, scale=None, extra_gravity=False):
+        # Every piece needs the attribute, so the first one carries it too.
+        pieces = [dict(p, attrs=dict(p["attrs"], gravityscale=1.0 if scale is None else scale)) for p in HANG]
+        dop, _names = bond_scene(tag("bond_gravity"), pieces, [LINE], compound=True, bond={"bond_tensile": strength,
+                                                                          "bond_shear": strength})
+        if extra_gravity:
+            out = dop.node("output")
+            grav = create(dop, "gravity", "extra_gravity")
+            grav.setInput(0, out.inputs()[0])
+            set_parm(grav, ["force"], (0.0, -9.80665, 0.0))
+            out.setInput(0, grav)
+        return first_broken(dop, 24) is not None
+
+    cases = [("15 kPa, scale 1", dict(strength=15000.0), False),
+             ("15 kPa, scale 2", dict(strength=15000.0, scale=2.0), True),
+             ("15 kPa, Force DOP", dict(strength=15000.0, extra_gravity=True), True),
+             ("6 kPa, scale 1", dict(strength=6000.0), True),
+             ("6 kPa, scale 0.5", dict(strength=6000.0, scale=0.5), False)]
+    rows, ok = [], True
+    for label, kwargs, expect in cases:
+        got = broken(**kwargs)
+        ok = ok and got == expect
+        rows.append(f"{label}: {'breaks' if got else 'holds'}{'' if got == expect else ' (WRONG)'}")
+    return [Result("bond_gravity_and_forces", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+TESTS["bond_gravity_and_forces"] = test_bond_gravity_and_forces
+
+
+def test_bond_tear_mass_compound():
+    """The mass a Bond tears with is the graph sides' mass, the same as a compound and as welds. As in bond_impact's
+    pair, a 1000 kg ball hits two bonded free boxes at 4 m/s in zero gravity (reduced mass 500 kg), and in
+    bond_world_anchor's scene a free box bonded to the world holds a hanging one (1000 kg). The Fracture Energy at which
+    the pair lets go is within 15% of the hand value (J = M v / 3, as bond_impact) in both modes, and the anchored
+    scene breaks on frame 9 to 11 at 24 fps in both."""
+    original = hou.fps()
+    hou.setFps(24)
+    rows, ok = [], True
+    try:
+        v = 4.0
+        pair = [{"size": (1, 1, 1), "center": (0.5, 5.0, 0), "attrs": {"active": 1}},
+                {"size": (1, 1, 1), "center": (1.5, 5.0, 0), "attrs": {"active": 1}},
+                {"size": (1, 1, 1), "center": (-1.5, 5.0, 0), "attrs": {"v": (v, 0.0, 0.0)}}]
+        hand = (1000.0 * v / 3.0) ** 2 / (2.0 * 500.0)
+        for compound in (True, False):
+            def breaks(energy, compound=compound):
+                dop, _names = bond_scene(tag("bond_tearmass"), pair, [(0, (1.0, 5.0, 0.0), 1, (1.0, 5.0, 0.0))],
+                                         bond={"bond_tensile": 1e3, "bond_shear": 1e3, "bond_compressive": 1e3,
+                                               "bond_fracture_energy": energy},
+                                         keep_velocity=True, gravity=(0.0, 0.0, 0.0), packed_parms={"bounce": 0.0},
+                                         compound=compound)
+                return first_broken(dop, 24) is not None
+
+            found = threshold(breaks, 0.1, 1e6, rounds=10)
+            good = found is not None and hand * 0.95 <= found <= hand * 1.45
+            ok = ok and good
+            rows.append(f"pair, {'compound' if compound else 'welds'}: G* {found and round(found)}, hand {hand:.0f} "
+                        f"({'ok' if good else 'wrong'})")
+        hang = [{"size": (1, 1, 1), "center": (0, 5, 0), "attrs": {"active": 1}},
+                {"size": (1, 1, 1), "center": (0, 4, 0), "attrs": {"active": 1}}]
+        names = ("bond_tensile", "bond_shear", "bond_fracture_energy")
+        weak = {name: 1.0 for name in names}
+        strong = {name: 1e4 for name in names}
+        for compound in (True, False):
+            dop, _names = bond_scene(tag("bond_tearmass"), hang,
+                                     [(0, AT, 1, AT, weak), (None, (0.0, 5.5, 0.0), 0, (0.0, 5.5, 0.0), strong)],
+                                     bond={"bond_tensile": 5000.0, "bond_shear": 5000.0,
+                                           "bond_fracture_energy": 1000.0}, compound=compound)
+            first = first_broken(dop, 14)
+            good = first is not None and 9 <= first <= 11
+            ok = ok and good
+            rows.append(f"anchored, {'compound' if compound else 'welds'}: broke on frame {first} "
+                        f"({'ok' if good else 'wrong'})")
+    finally:
+        hou.setFps(original)
+    return [Result("bond_tear_mass_compound", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+TESTS["bond_tear_mass_compound"] = test_bond_tear_mass_compound
+
+
+def test_bond_hit_below_tear_impulse():
+    """A hit that passes a Bond's capacity but not its tear impulse leaves it whole. As bond_impact's wall case, a
+    1000 kg ball hits a block held to a static wall at 4 m/s in zero gravity, on a weak bond (1 kN over 1 m^2). The
+    impulse (about 4.4 kN*s) is far over what the bond holds for a fraction of a second (20 N*s), so the hit is
+    looked at, but with a Fracture Energy of 30000 J/m^2 the tear impulse is about 7.7 kN*s and it holds, as a
+    compound and as welds. With 100 J/m^2 (tear impulse 450 N*s) it breaks in both."""
+    pieces = [{"size": (1, 1, 1), "center": (1.5, 5.0, 0), "attrs": {"active": 0}},
+              {"size": (1, 1, 1), "center": (0.5, 5.0, 0), "attrs": {"active": 1}},
+              {"size": (1, 1, 1), "center": (-1.5, 5.0, 0), "attrs": {"v": (4.0, 0.0, 0.0)}}]
+    rows, ok = [], True
+    for compound in (True, False):
+        for energy, expect in ((30000.0, False), (100.0, True)):
+            dop, _names = bond_scene(tag("bond_below"), pieces, [(0, (1.0, 5.0, 0.0), 1, (1.0, 5.0, 0.0))],
+                                     bond={"bond_tensile": 1e3, "bond_shear": 1e3, "bond_compressive": 1e3,
+                                           "bond_fracture_energy": energy},
+                                     keep_velocity=True, gravity=(0.0, 0.0, 0.0), packed_parms={"bounce": 0.0},
+                                     compound=compound)
+            got = first_broken(dop, 24) is not None
+            ok = ok and got == expect
+            rows.append(f"{'compound' if compound else 'welds'}, {energy:g} J/m^2: {'breaks' if got else 'holds'}"
+                        f"{'' if got == expect else ' (WRONG)'}")
+    return [Result("bond_hit_below_tear_impulse", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+TESTS["bond_hit_below_tear_impulse"] = test_bond_hit_below_tear_impulse
+
+
+def test_bond_sliding_friction():
+    """The load of a Bond on pieces sliding on the ground, as a compound and as welds. Two 1000 kg boxes bonded side by
+    side slide along the ground at 3 m/s, the rear one with a friction of 0.5 and the ground too, the front one with
+    none. Only the rear one is slowed, so the pair slows at a (read off its speed over 8 frames) and the bond pulls
+    the front box with m * a, whatever the friction coefficient the contact ends up with: 1000 * a Pa over 1 m^2. The
+    strength at which the bond lets go within 12 frames is found by bisection in each mode and must be within -15% to
+    +25% of that."""
+    pieces = [{"size": (1, 1, 1), "center": (0.5, 0.5, 0), "attrs": {"v": (3.0, 0.0, 0.0), "friction": 0.5}},
+              {"size": (1, 1, 1), "center": (1.5, 0.5, 0), "attrs": {"v": (3.0, 0.0, 0.0), "friction": 0.0}},
+              dict(GROUND, attrs={"active": 0, "friction": 0.5})]
+    for pc in pieces[:2]:
+        pc["attrs"]["active"] = 1
+
+    def scene(strength, compound):
+        return bond_scene(tag("bond_slide"), pieces, [(0, (1.0, 0.5, 0.0), 1, (1.0, 0.5, 0.0))],
+                          bond={"bond_tensile": strength, "bond_shear": 1e9, "bond_compressive": 1e9,
+                                "bond_bending": 1e9},
+                          keep_velocity=True, compound=compound)[0]
+
+    original = hou.fps()
+    hou.setFps(24)
+    rows, ok = [], True
+    try:
+        for compound in (True, False):
+            track = step(scene(1e9, compound), 9,
+                         lambda sim, f: list(sim.findObject("pieces").geometry().points())[1].attribValue("v")[0])
+            decel = (track[1] - track[9]) / (8.0 / 24.0)
+            hand = 1000.0 * decel
+
+            def breaks(strength, compound=compound):
+                return first_broken(scene(strength, compound), 12) is not None
+
+            found = threshold(breaks, 3e2, 1e5, rounds=10)
+            good = found is not None and hand * 0.85 <= found <= hand * 1.25
+            ok = ok and good
+            rows.append(f"{'compound' if compound else 'welds'}: the pair slows at {decel:.2f} m/s^2, the bond lets go "
+                        f"at {found and round(found)} Pa (m * a {hand:.0f}, {'ok' if good else 'wrong'})")
+    finally:
+        hou.setFps(original)
+    return [Result("bond_sliding_friction", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+TESTS["bond_sliding_friction"] = test_bond_sliding_friction
+
+
+def test_bond_sphere_fallback():
+    """A Bond between shapes with no convex faces (spheres) has no contact patch, so its area is the smaller
+    bounding-box face of the two across the normal: a sphere of radius 0.25 gives 0.25 m^2 (a point contact has none
+    to give). A 1000 kg sphere (its mass set) hangs from a static one, so the bond lets go at its weight over that
+    area, 9807 / 0.25 = 39226 Pa, within -10% to +15%, as a compound and as welds."""
+    def sphere(center, active):
+        return {"size": (0.5, 0.5, 0.5), "center": center,
+                "attrs": {"bullet_georep": "sphere", "bullet_autofit": 0, "bullet_autofit_valid": 1,
+                          "bullet_primS": (0.5, 0.5, 0.5), "bullet_radius": 0.25, "bullet_length": 1.0,
+                          "bullet_primT": (0.0, 0.0, 0.0), "bullet_primR": (0.0, 0.0, 0.0), "bounce": 0.0,
+                          "active": active}}
+
+    pieces = [sphere((0, 5.0, 0), 0), sphere((0, 4.5, 0), 1)]
+    hand = WEIGHT / 0.25
+    rows, ok = [], True
+    for compound in (True, False):
+        def breaks(strength, compound=compound):
+            dop, _names = bond_scene(tag("bond_sphere"), pieces, [(0, (0.0, 4.75, 0.0), 1, (0.0, 4.75, 0.0))],
+                                     bond={"bond_tensile": strength, "bond_shear": 1e9, "bond_compressive": 1e9,
+                                           "bond_bending": 1e9},
+                                     compound=compound, packed_parms={"mass": 1000.0, "computemass": 0})
+            return first_broken(dop, 24) is not None
+
+        found = threshold(breaks, 3e3, 3e5, rounds=10)
+        good = found is not None and hand * 0.9 <= found <= hand * 1.15
+        ok = ok and good
+        rows.append(f"{'compound' if compound else 'welds'}: lets go at {found and round(found)} Pa "
+                    f"(weight over the box area {hand:.0f}, {'ok' if good else 'wrong'})")
+    return [Result("bond_sphere_fallback", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+TESTS["bond_sphere_fallback"] = test_bond_sphere_fallback
+
+
+def test_bond_damage_kept_unloaded():
+    """The damage a Bond has taken stays when its load drops, and builds on from there. The hanging box (1000 kg, 1 m^2)
+    on a bond of 8 kPa (a ratio of 1.23) with a Fracture Energy of 500 J/m^2 (a tear impulse of 1000 N*s) takes about
+    1.8 kN*s per second over its capacity, so alone it goes on frame 14 or so at 24 fps. Here a force of 5 kN up on the
+    box holds its load at 4.8 kN, under the capacity, from frame 10 to 31: the bond then keeps `bond_impulse` as it was
+    (within 1 N*s) and does not break, and once the force is gone it breaks within 8 frames, where from nothing it would
+    take about 13."""
+    original = hou.fps()
+    hou.setFps(24)
+    try:
+        # Awake throughout: a box held by the bond under a force would otherwise fall asleep and not feel it go.
+        pieces = [dict(p, attrs=dict(p["attrs"], enablesleep=0)) for p in HANG]
+        dop, _names = bond_scene(tag("bond_kept"), pieces, [LINE],
+                                 bond={"bond_tensile": 8000.0, "bond_shear": 8000.0, "bond_fracture_energy": 500.0})
+        out = dop.node("output")
+        solver = out.inputs()[0]
+        upstream = solver.inputs()[0]
+        solver.setInput(0, None)
+        lift = sop_solver(dop, "v@force = (@Frame >= 10 && @Frame < 32 && i@active == 1) ? {0, 5000, 0} : {0, 0, 0};")
+        out.setInput(0, multisolver(dop, upstream, [solver, lift]))
+        impulses, first = {}, None
+        for f in range(1, 49):
+            hou.setFrame(f)
+            sim = dop.simulation()
+            sim.objects()
+            geo = find_network_geometry(sim)
+            if geo is not None and geo.findPrimAttrib("bond_impulse") is not None:
+                impulses[f] = max(prim.attribValue("bond_impulse") for prim in geo.prims())
+            if (broken_count(sim) or 0) >= 1:
+                first = f
+                break
+    finally:
+        hou.setFps(original)
+    before = impulses.get(12)
+    held = [impulses.get(f) for f in range(13, 32)]
+    flat = None not in held and before is not None and max(held) - before < 1.0
+    ok = flat and before > 50.0 and first is not None and 32 <= first <= 40
+    return [Result("bond_damage_kept_unloaded", Result.PASS if ok else Result.FAIL,
+                   f"bond_impulse {before and round(before)} N*s on frame 12, "
+                   f"{held[0] and round(held[0])} to {held[-1] and round(held[-1])} on frames 13 to 31 (flat: {flat}); "
+                   f"broke on frame {first} (expected 32 to 40)")]
+
+
+TESTS["bond_damage_kept_unloaded"] = test_bond_damage_kept_unloaded
+
+
+def test_bond_readouts():
+    """The Bond's readouts on its line (`bond_ratio`, `bond_damage`, `bond_tension`, `bond_shear`, `bond_bending`,
+    `bond_twist`, `bond_area`), with Write Bond Attributes on (off, none exists).
+    The hanging 1000 kg box (9.8 kPa over 1 m^2): a Tensile
+    Strength of 20 kPa reads a ratio of 0.49 (within 5%) and no damage, as a compound and as welds. At 8 kPa (1.23) with
+    a Fracture Energy of 500 J/m^2 (a tear impulse of 1000 N*s) the ratio reads 1.23 (within 5%) and the damage rises
+    from 0 towards 1 while it holds, a share of `bond_impulse` over the tear impulse (within 2%). The load is the box's
+    weight, 9807 N of tension (within 5%) over an area of 1 m^2, with shear, bending and twist under 5% of it (N*m)."""
+    original = hou.fps()
+    hou.setFps(24)
+    rows, ok = [], True
+    try:
+        for compound in (True, False):
+            mode = "compound" if compound else "welds"
+            seen = {}
+
+            def look(sim, f, seen=seen):
+                geo = find_network_geometry(sim)
+                if geo is None:
+                    return
+                for name in ("bond_ratio", "bond_damage", "bond_impulse", "bond_tension", "bond_shear", "bond_bending",
+                             "bond_twist", "bond_area"):
+                    if geo.findPrimAttrib(name) is not None:
+                        seen.setdefault(name, {})[f] = max(prim.attribValue(name) for prim in geo.prims())
+
+            dop, _names = bond_scene(tag("bond_readout"), HANG, [LINE], compound=compound,
+                                     bond={"bond_tensile": 20000.0, "bond_shear": 20000.0})
+            set_parm(dop.node("box3d_solver"), ["bondreadouts"], 1)
+            step(dop, 8, look)
+            ratio = seen.get("bond_ratio", {}).get(8)
+            damage = seen.get("bond_damage", {}).get(8)
+            good = ratio is not None and abs(ratio - 0.49) < 0.05 * 0.49 and damage == 0.0
+            ok = ok and good
+            rows.append(f"{mode}, 20 kPa: ratio {ratio and round(ratio, 3)}, damage {damage} ({'ok' if good else 'wrong'})")
+            seen.clear()
+            dop, _names = bond_scene(tag("bond_readout"), HANG, [LINE], compound=compound,
+                                     bond={"bond_tensile": 8000.0, "bond_shear": 8000.0,
+                                           "bond_fracture_energy": 500.0})
+            set_parm(dop.node("box3d_solver"), ["bondreadouts"], 1)
+            step(dop, 8, look)
+            ratio = seen.get("bond_ratio", {}).get(8)
+            damage = seen.get("bond_damage", {}).get(8)
+            impulse = seen.get("bond_impulse", {}).get(8)
+            load = {n: seen.get(n, {}).get(8) for n in ("bond_tension", "bond_shear", "bond_bending", "bond_twist",
+                                                         "bond_area")}
+            loads_ok = (None not in load.values() and abs(load["bond_tension"] - WEIGHT) < 0.05 * WEIGHT
+                        and abs(load["bond_area"] - 1.0) < 0.01
+                        and all(abs(load[n]) < 0.05 * WEIGHT for n in ("bond_shear", "bond_bending", "bond_twist")))
+            good = (loads_ok and ratio is not None and abs(ratio - 1.226) < 0.05 * 1.226 and damage is not None
+                    and 0.0 < damage < 1.0 and impulse is not None and abs(damage - impulse / 1000.0) < 0.02)
+            ok = ok and good
+            rows.append(f"{mode}, 8 kPa: ratio {ratio and round(ratio, 3)}, damage {damage and round(damage, 3)} with "
+                        f"{impulse and round(impulse)} N*s, load {({n[5:]: v and round(v, 2) for n, v in load.items()})} "
+                        f"({'ok' if good else 'wrong'})")
+        seen.clear()
+        dop, _names = bond_scene(tag("bond_readout"), HANG, [LINE], bond={"bond_tensile": 8000.0, "bond_shear": 8000.0})
+        step(dop, 8, look)
+        good = not seen.get("bond_ratio") and not seen.get("bond_damage")
+        ok = ok and good
+        rows.append(f"switched off: no attributes ({'ok' if good else 'wrong'})")
+    finally:
+        hou.setFps(original)
+    return [Result("bond_readouts", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+TESTS["bond_readouts"] = test_bond_readouts
+
+
+def test_bond_compound_id():
+    """`compound_id` on the points of pieces glued into a compound, with Write Bond Attributes on: the lowest point
+    number in the compound for each piece of it (a row of 3 boxes bonded together reads 0, 0, 0) and -1 for a loose one
+    (a fourth box). Off, the attribute does not exist. A 1000 kg box thrown into a row of 2 bonded boxes at 10 m/s
+    (a Strength of 2e4: the bond goes, as in bond_wall) leaves them -1 once the bond is broken (it starts 6 m away: the ids show first)."""
+    def ids(sim, f):
+        geo = sim.findObject("pieces").geometry()
+        if geo.findPointAttrib("compound_id") is None:
+            return None
+        return [p.attribValue("compound_id") for p in geo.points()]
+
+    rows, ok = [], True
+    row = [{"size": (1, 1, 1), "center": (0.5 + i, 0.5, 0), "attrs": {"active": 1}} for i in range(3)]
+    loose = {"size": (1, 1, 1), "center": (8.5, 0.5, 0), "attrs": {"active": 1}}
+    bonds = [(0, (1.0, 0.5, 0.0), 1, (1.0, 0.5, 0.0)), (1, (2.0, 0.5, 0.0), 2, (2.0, 0.5, 0.0))]
+    strong = {"bond_tensile": 1e9, "bond_shear": 1e9, "bond_compressive": 1e10, "bond_bending": 1e9}
+    for on in (True, False):
+        dop, _names = bond_scene(tag("bond_cid"), row + [loose, GROUND], bonds, bond=strong, compound=True)
+        if on:
+            set_parm(dop.node("box3d_solver"), ["bondreadouts"], 1)
+        got = step(dop, 6, ids)[6]
+        good = got is None if not on else got is not None and got[:4] == [0, 0, 0, -1]
+        ok = ok and good
+        rows.append(f"{'on' if on else 'off'}: {got} ({'ok' if good else 'wrong'})")
+    pieces = [{"size": (1, 1, 1), "center": (1.5, 0.5, 0), "attrs": {"active": 1}},
+              {"size": (1, 1, 1), "center": (2.5, 0.5, 0), "attrs": {"active": 1}},
+              {"size": (1, 1, 1), "center": (-4.5, 0.5, 0), "attrs": {"v": (10.0, 0.0, 0.0)}}, GROUND]
+    dop, _names = bond_scene(tag("bond_cid"), pieces, [(0, (2.0, 0.5, 0.0), 1, (2.0, 0.5, 0.0))],
+                             bond={"bond_tensile": 2e4, "bond_shear": 2e4, "bond_compressive": 2e5}, compound=True,
+                             keep_velocity=True)
+    set_parm(dop.node("box3d_solver"), ["bondreadouts"], 1)
+    track = step(dop, 24, ids)
+    before = track[4][:2] if track[4] else None
+    after = track[24][:2] if track[24] else None
+    good = before == [0, 0] and after == [-1, -1]
+    ok = ok and good
+    rows.append(f"hit pair: {before} on frame 4, {after} on frame 24 ({'ok' if good else 'wrong'})")
+    return [Result("bond_compound_id", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+TESTS["bond_compound_id"] = test_bond_compound_id
 
 
 # ---------------------------------------------------------------------------
@@ -524,7 +903,7 @@ def test_bond_mixed_glue():
     row = [{"size": (1, 1, 1), "center": (0.5 + i, 0.5, 0), "attrs": {"awake": 1}} for i in range(3)]
     lines = [(0, (1.0, 0.5, 0.0), 1, (1.0, 0.5, 0.0), None, "Glue"),
              (1, (2.0, 0.5, 0.0), 2, (2.0, 0.5, 0.0))]
-    glue = ("glueconrel", {"strength": 1e12})
+    glue = ("glueconrel", {"strength": 1e7})
     rows, ok = [], True
 
     dop, names = bond_scene(tag("bond_mixed"), row + [ground], lines,
@@ -659,3 +1038,4 @@ def test_bond_constraint_properties():
 
 
 TESTS["bond_constraint_properties"] = test_bond_constraint_properties
+

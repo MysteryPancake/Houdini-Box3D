@@ -49,14 +49,23 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 
 **Bonds** (`core/Box3DBond.h`, `Box3DBondNetwork.h`, `Box3DPatch.h`, [joints.md](joints.md); `core_bond`, `core_patch` and the `bond_*` checks)
 * Checked against formulas (`checks_bond.py`, `checks_more.py`): hanging loads, a spinning piece's centripetal load,
-  an impact's tear impulse, rotated pieces, a Bond to the world, `bond_*` attributes, the Solver SOP's World Scale and
-  Material, Constraint Properties, scrubbing, sleeping, long runs, a wall hit as compound and as welds.
-* Not checked: compression and twisting loads, pieces of several convex shapes, the no-patch fallback, the fallback
-  mass of a loop, a compound with Force DOP forces or gravity scale, the 2600-piece `building` with Bonds.
+  gravity scale and a Force DOP on a compound, an impact's tear impulse (the tear mass as compound and as welds, a hit
+  below it leaves the bond whole), rotated pieces, a Bond to the world, spheres' bounding-box area (`bond_sphere_fallback`), `bond_*` attributes, the Solver SOP's World
+  Scale and Material, Constraint Properties, scrubbing, sleeping, long runs, a wall hit as compound and as welds, damage kept while
+  the load is below the capacity (`bond_damage_kept_unloaded`), `compound_id` (`bond_compound_id`), the Bond readouts (`bond_readouts`: ratio, damage, tension, area; shear, bending and twist only at 0 in the hang).
+* Not checked: compression and twisting loads, pieces of several convex shapes, the no-patch fallback for
+  meshes and a Bond to the world, the fallback mass of a loop, the 2600-piece `building` with Bonds.
 * A Bond sliding on the ground under friction: the compound reads about 6.4 kN and the same bond as a weld about 3.1 kN.
-  No reference says which is right.
+  No reference says which is right. With friction on one box of a pair only, both modes let the bond go at m * a of the
+  pair's slowing (`bond_sliding_friction`).
+* Support stiffness (`kSupportStiffness`, 0.01 of the bonds') is an assumption. `core_bond` sweeps it on an overhang: the edge
+  bond's load is the statics' at every value, and the next bond's couple is the same within 0.2% from 1e-4 to 1e-2 and
+  10% lower at 10. The ledge scene's 2 broken bonds against 1 for welds (`bond_compound_cantilever`) is therefore
+  the rigid compound against sagging welds, not the choice of stiffness.
 * Cost: the network solve, the patch on the first step, the sides' mass walk, and `breakBonds` walking every joint every
   step are not measured.
+* A box held by a Bond under a point `force` fell asleep and did not wake when the force was removed, so damage stopped
+  building (`bond_damage_kept_unloaded` keeps it awake with `enablesleep` 0). Not looked into.
 * Linux build and `clang-tidy` of the Bond files: not run.
 
 **Build**
@@ -218,9 +227,10 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   (it is worked out again when the Glue graph or the bodies change).
 * Bonds: no softening curve and no stored elastic energy (a full cohesive law needs the bond to stretch: see
   [joints.md](joints.md)), damage over time only as the kept impulse (it also builds while the pieces sleep), no rate dependence. Patches use the dominant plane
-  only, the network's rotational stiffness is not from the patch's moments, supports have no friction cone and read the last
-  step's contacts, holds count the capacity but not the tear impulse, a piece bonded to the world is not a fixed side, no
-  readout of the stress ratio, non-hull shapes use the bounding-box estimates, the materials are order-of-magnitude values.
+  only (an L contact gives 1 of 1.5 m^2, `core_patch`), the network's rotational stiffness is not from the patch's
+  moments (a couple between two bonds of a square and a 0.1 x 10 m patch splits 50:50 where the moments give 1:99,
+  `core_bond`), supports have no friction cone and read the last step's contacts, holds count the capacity but not the tear impulse, no
+  guide or viewer state shows `bond_ratio` / `bond_damage`, non-hull shapes use the bounding-box estimates, the materials are order-of-magnitude values.
 
 ## Box3D fork (`extern/box3d`)
 

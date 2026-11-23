@@ -194,6 +194,7 @@ def test_ui():
     expect("Visualization tab folders", tab_folders("Visualization"), [("Geometry", True, ["exportshapes"])])
     expect("Advanced tab folders", tab_folders("Advanced"),
            [("Stability", True, ["enablecontinuous", "enablewarmstarting", "isotropicinertia", "maxlinearspeed"]),
+            ("Bonds", True, ["bondreadouts"]),
             ("Ground Box", True, ["groundsize"]),
             ("Performance", True, ["autothreads", "threads"])])
     expect("Output tab folders", tab_folders("Output"), [("Impact Data", True, ["impactminspeed"])])

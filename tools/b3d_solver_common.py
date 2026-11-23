@@ -43,7 +43,8 @@ TAB_GROUPS = {
     "Advanced": [("Stability", ["enablewarmstarting", "enablecontinuous", "maxlinearspeed",
                                 "isotropicinertia"]),
                  # Cache Simulation / Cache Memory (MB) join this folder first (make_solver_sop.py).
-                 ("Performance", ["autothreads", "threads"])],
+                 ("Performance", ["autothreads", "threads"]),
+                 ("Bonds", ["bondreadouts"])],
 }
 # The Pieces tab is the pieces' Box3D Data folders (Shape, Body, Material, CCD & Contacts, Sleep).
 # The solver's settings the SOP regroups by name, wherever the DOP has them: (folder label, names, open) on the

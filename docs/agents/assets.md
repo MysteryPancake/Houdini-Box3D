@@ -57,7 +57,7 @@ references to the asset's parameters are set once the asset exists (`wire_stage`
 * Initial Object Type (`initialstate`: Create Active / Static / Animated Static / Deforming Static / Deforming Active Objects, as RBD Packed Object, plus Custom): Body
   Type and Deforming follow it, through two hidden parameters the stage reads (`effectivebodytype`, `effectivedeforming`, expressions of the menu; Custom takes the
   visible `bodytype` / `deforming`, which are greyed out otherwise). A point's own `active`, `animated` or `deforming` still wins. The Solver SOP's collision object sets it to Custom
-  and drives Body Type by Collision Type as before; the Pieces tab has the menu first in Body.
+  and drives Body Type by Collision Type; the Pieces tab has the menu first in Body.
 * Parameters: an Object tab (Object Name `$OS`, Creation Frame (default: the network's Start Frame), Creation Frame Specifies Simulation Frame, Solve on Creation Frame, Geometry Source (`GEO_SOURCE`, greys out SOP Path unless SOP), SOP Path, Use Object
   Transform, Overwrite Attributes from SOP (toggle and attribute list, default `OVERWRITE_DEFAULT`), a hidden Read SOP Every Step (`REIMPORT_SOP`), Deforming, Display Geometry), Initial State (Position, Rotation, Inherit Pivot from Point Position, Pivot, Velocity, Angular Velocity, Inherit Velocity), then each Box3D Data folder as a tab (`pull` moves Add Impact Data from CCD & Contacts
   to Shape, as RBD Packed Object has it with its shape settings; Start Asleep stays in Sleep), read by the stage. Only the object-level settings

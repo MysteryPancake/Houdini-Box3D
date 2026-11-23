@@ -1631,7 +1631,7 @@ def test_solver_sop_layout():
     expect("Add Impact Data on Output", sop.parm("addimpact") is not None, True)
     advanced = by_path.get(("Advanced",))
     expect("Advanced tab folders", [pt.label() for pt in advanced.parmTemplates()] if advanced else None,
-           ["Stability", "Performance", "Collision", "Constraints"])
+           ["Stability", "Performance", "Bonds", "Collision", "Constraints"])
     advanced_collision = by_path.get(("Advanced", "Collision"))
     expect("Advanced / Collision", [pt.name() for pt in advanced_collision.parmTemplates()] if advanced_collision
            else None, ["collision_solvefirstframe"])

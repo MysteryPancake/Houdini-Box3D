@@ -164,6 +164,12 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                   R{0, 1, true},
                   "Treats nearly spherical bodies as spheres for spin. Applies "
                   "to new bodies and mass changes.")
+          .subfolder("Bonds")
+          .toggle(
+              "bondreadouts", "Write Bond Attributes", false,
+              "Write each Bond's stress ratio, damage, load and area on its "
+              "line (bond_ratio, bond_damage, bond_tension, ...) and each "
+              "glued piece's compound_id on its point. Off keeps them quiet.")
           .subfolder("Ground Box")
           .vector("groundsize", "Ground Box Size", {1000, 10, 1000},
                   "The box a Ground Plane DOP or a static plane piece makes: "
@@ -599,6 +605,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   }
   {
     UT_PerfMonAutoSolveEvent perf(this, "Post-Solve/Updating Points");
+    queueCompoundIds(*st);
     writePointAttrs(*st, objects);
     if (getEnableAging())
       ageObjects(*st, objects, static_cast<float>(dt));
@@ -681,6 +688,7 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
   st->reapDead = getReapDead();
   st->reapAtFrameEnd = getReapAtFrameEnd();
   st->glueCompounds = getGlueCompound();
+  st->bondReadouts = getBondReadouts();
   st->glueCompoundLoad =
       std::max(0.0f, static_cast<float>(getGlueCompoundLoad()));
   st->removedBodies.clear();

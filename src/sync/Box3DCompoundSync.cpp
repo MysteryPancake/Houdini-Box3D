@@ -15,6 +15,7 @@
 #include <UT/UT_ParallelUtil.h>
 
 #include <algorithm>
+#include <limits>
 #include <cmath>
 #include <cstddef>
 #include <functional>
@@ -583,6 +584,46 @@ bool merge(Box3DSharedState &st, const std::vector<Box3DBodyMirror *> &group) {
 }
 
 } // namespace
+
+void queueCompoundIds(Box3DSharedState &st) {
+  if (!st.bondReadouts || (st.compounds.empty() && st.compoundIdKeys.empty()))
+    return;
+  const auto queue = [&st](Box3DBodyMirror &entry, int id) {
+    Box3DPointWrite w;
+    w.entry = &entry;
+    w.objectId = entry.objectId;
+    w.flags = Box3DPointWrite::kCompound;
+    w.compoundId = id;
+    st.pointWrites.push_back(w);
+    entry.compoundShown = id;
+  };
+  for (const std::unique_ptr<Box3DCompound> &c : st.compounds) {
+    int64_t lowest = std::numeric_limits<int64_t>::max();
+    for (const Box3DCompoundMember &m : c->members)
+      if (m.entry)
+        lowest = std::min(lowest, m.entry->pointId);
+    const int id = static_cast<int>(lowest);
+    for (const Box3DCompoundMember &m : c->members) {
+      if (!m.entry || m.entry->compoundShown == id)
+        continue;
+      if (m.entry->compoundShown < 0)
+        st.compoundIdKeys.push_back(m.key);
+      queue(*m.entry, id);
+    }
+  }
+  // Pieces that left their compound show -1 again.
+  size_t kept = 0;
+  for (const uint64_t key : st.compoundIdKeys) {
+    Box3DBodyMirror *entry = st.mirror.find(key);
+    if (!entry || entry->compoundShown < 0)
+      continue;
+    if (!entry->inCompound)
+      queue(*entry, -1);
+    else
+      st.compoundIdKeys[kept++] = key;
+  }
+  st.compoundIdKeys.resize(kept);
+}
 
 void syncCompounds(Box3DSharedState &st) {
   if (!st.glueCompounds) {

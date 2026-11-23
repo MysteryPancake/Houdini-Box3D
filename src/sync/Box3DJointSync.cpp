@@ -1595,6 +1595,7 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
     st.glueNodeOf.clear();
     st.glueBonds.clear();
     st.glueBondNodes.clear();
+    st.glueAnchored.clear();
     auto nodeOf = [&st](b3dop::BodyHandle h) {
       const auto ins =
           st.glueNodeOf.try_emplace(h, static_cast<int>(st.glueNodes.size()));
@@ -1615,6 +1616,9 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
       if (live) {
         if (e.massDependent && !e.broken)
           ++springs;
+        if (e.type == b3dop::JointType::Bond && e.extra && !e.broken &&
+            (!e.bodyA != !e.bodyB) && st.world.isJointValid(e.handle))
+          st.glueAnchored.insert(e.bodyA ? e.bodyA : e.bodyB);
         // Glue to the world is not a bond (Bullet does not support it either).
         if (inGlueGraph(e) && e.extra && !e.broken && e.bodyA && e.bodyB &&
             st.world.isJointValid(e.handle)) {

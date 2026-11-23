@@ -24,6 +24,11 @@ struct Box3DSharedState;
 // (Box3DSharedState::glueCompounds) off, dissolves every compound.
 void syncCompounds(Box3DSharedState &st);
 
+// With the solver's Write Bond Attributes on, queues each compound piece's
+// `compound_id` (the lowest point id in its compound; -1 once it is out of one)
+// as a point write, for the write-back.
+void queueCompoundIds(Box3DSharedState &st);
+
 // After the step, before the write-back: every moved compound adds a move
 // event for each of its pieces (pose = the compound's pose * the piece's
 // offset), with the piece's velocity kept on its mirror entry (glueLin /

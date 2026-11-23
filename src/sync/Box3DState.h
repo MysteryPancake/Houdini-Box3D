@@ -11,6 +11,7 @@
 
 #include <GA/GA_Types.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -90,6 +91,8 @@ struct Box3DBodyMirror : Box3DBodyPose {
   // the point's pose, so the compound is dissolved before the next step.
   bool inCompound = false;
   bool glueEdited = false;
+  // The `compound_id` last queued for the point (-1: none shown).
+  int compoundShown = -1;
   bool animated = false;  // inactive + `animated`: kinematic, follows its point
   bool driven = false;    // given a target last step (velocity to clear)
   bool shapeless = false; // `none`, or a rebuild left no shape: always static
@@ -297,12 +300,13 @@ struct Box3DWriteItem {
 
 // A point attribute written after the step, for any body (not only awake ones).
 struct Box3DPointWrite {
-  enum : unsigned { kAutofitValid = 1, kMass = 2, kRest = 4 };
+  enum : unsigned { kAutofitValid = 1, kMass = 2, kRest = 4, kCompound = 8 };
   GA_Offset off = GA_INVALID_OFFSET;
   Box3DBodyMirror *entry = nullptr;
   int objectId = 0;
   unsigned flags = 0;
-  float mass = 0.0f; // kMass: computed mass (computemass)
+  float mass = 0.0f;   // kMass: computed mass (computemass)
+  int compoundId = -1; // kCompound: the piece's `compound_id`
   // kRest: a new packed body's `restxform` (its packed transform when it was
   // made, row-major) and `pivot` (its P then), as Bullet initializes them.
   float restxform[16] = {};
@@ -436,6 +440,35 @@ struct Box3DAffectorBody {
   bool heightsKnown = false;
 };
 
+// What a Bond shows on its line, when the solver's Write Bond Attributes
+// is on: the attribute for each, in this order.
+enum BondReadout {
+  kReadoutRatio,   // the stress ratio: 1 is at its capacity
+  kReadoutDamage,  // the impulse taken as a share of the tear impulse (0 to 1)
+  kReadoutTension, // N along the normal (negative: pushed together)
+  kReadoutShear,   // N across it
+  kReadoutBending, // N*m about axes across the normal
+  kReadoutTwist,   // N*m about the normal
+  kReadoutArea,    // m^2 of the patch
+  kReadoutCount
+};
+inline constexpr const char *kBondReadoutNames[kReadoutCount] = {
+    "bond_ratio",   "bond_damage", "bond_tension", "bond_shear",
+    "bond_bending", "bond_twist",  "bond_area"};
+
+// The point attribute of a glued piece: its compound (Write Bond Attributes).
+inline constexpr const char *kCompoundIdName = "compound_id";
+
+struct BondReadouts {
+  float value[kReadoutCount] = {};
+  float written[kReadoutCount];
+  BondReadouts() { std::fill(std::begin(written), std::end(written), -1.0f); }
+  // Something to write: a value differs from the one on the line.
+  bool pending() const {
+    return !std::equal(std::begin(value), std::end(value), std::begin(written));
+  }
+};
+
 // The parts of a joint entry that few joints use (Box3DJointEntry::extra).
 struct Box3DJointExtra {
   // A point / vertex anchor (anchor_id) on a whole object or packed piece:
@@ -464,6 +497,9 @@ struct Box3DJointExtra {
   // The load was over the capacity when last looked at: damage goes on while
   // the pieces sleep, under the load they last had.
   bool bondOverCapacity = false;
+  // The readouts of the last load (BondReadout), and what was last written to
+  // each attribute (-1: nothing yet).
+  BondReadouts bondReadouts;
   // The mass of what the bond holds together on each side (infinity: a fixed
   // body), found for the glue graph `bondSidesSignature` was taken at.
   float bondSideMass[2] = {0.0f, 0.0f};
@@ -851,6 +887,9 @@ struct Box3DSharedState {
   size_t glueOrphans = 0; // nodes that lost every bond, kept until a rebuild
   // The hash of the bond list (computeGlueSignature), kept up to date.
   uint64_t glueSignature = 0;
+  // The bodies a live Bond ties to the world (such a Bond is not in the graph):
+  // a side holding one does not move.
+  std::unordered_set<b3dop::BodyHandle> glueAnchored;
   // The signature computeBondSides last ran for (every bond's sides at once).
   uint64_t bondSidesPass = ~0ull;
   uint64_t computeGlueSignature() const {
@@ -858,6 +897,8 @@ struct Box3DSharedState {
     for (const auto &ab : glueBondNodes)
       sum += glueBondHash(glueNodes[static_cast<size_t>(ab.first)].body,
                           glueNodes[static_cast<size_t>(ab.second)].body);
+    for (const b3dop::BodyHandle h : glueAnchored)
+      sum += glueBondHash(h, 0);
     return sum;
   }
   std::vector<void *> glueBroken;
@@ -875,6 +916,11 @@ struct Box3DSharedState {
   std::unordered_set<b3dop::BodyHandle> tiedBodies;
   bool tiedKnown = false;
   bool glueCompounds = false;
+  // Write each Bond's attributes onto its line, and `compound_id` onto the
+  // points of glued pieces.
+  bool bondReadouts = false;
+  // The pieces whose point shows a `compound_id` (keys into `mirror`).
+  std::vector<uint64_t> compoundIdKeys;
   // Glued compounds: scales the load slowing the whole body puts on each
   // piece's bonds (0: off). See compoundGlueHits.
   float glueCompoundLoad = 0.0f;
