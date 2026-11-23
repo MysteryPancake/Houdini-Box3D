@@ -246,6 +246,38 @@ def test_feedback():
                    f"line attributes on frame 24: {vals} (expected force about 9.8 N for 1 kg, distance near 0)")]
 
 
+def test_feedback_many():
+    """Feedback and live anchors on a network of 400 Hard lines (many joints are written in parallel): 400 boxes
+    hanging each from a fixed one carry the same weight, so every line's `force` is within 2% of the others', its
+    `distance` is near 0 and every point has a current_orient (not the unwritten 0 0 0 0)."""
+    from bench_scenes import SCENARIOS
+
+    scenario = SCENARIOS["joints"]
+    scene = scenario.build("box3d", dict(scenario.defaults, type="weld", layout="pairs", n=800, frames=30))
+    prims = []
+
+    def sample(sim, f):
+        nonlocal prims
+        geo = find_network_geometry(sim)
+        if geo is None or f != 30:
+            return None
+        prims = [(pr.attribValue("force"), pr.attribValue("distance")) for pr in geo.prims()]
+        unwritten = sum(1 for pt in geo.points() if pt.attribValue("current_orient") == (0.0, 0.0, 0.0, 0.0))
+        return unwritten
+
+    unwritten = step(scene.dop, 30, sample)[30]
+    if not prims:
+        raise SetupError("could not find the constraint network geometry in the simulation")
+    forces = [f for f, _ in prims]
+    mean = sum(forces) / len(forces)
+    ok = (len(prims) == 400 and mean > 100.0 and max(forces) - min(forces) < 0.02 * mean
+          and max(abs(d) for _, d in prims) < 0.01 and unwritten == 0)
+    return [Result("feedback_many", Result.PASS if ok else Result.FAIL,
+                   f"{len(prims)} lines (expected 400): force {min(forces):.1f} to {max(forces):.1f} N (mean {mean:.1f}, "
+                   f"expected all within 2%), largest distance {max(abs(d) for _, d in prims):.4f} (expected under 0.01), "
+                   f"{unwritten} points without current_orient (expected 0)")]
+
+
 def test_anchor_id():
     """anchor_id on a whole object: a Weld between a world anchor at (0, 4, 0) and point 0 (or vertex 0) of an RBD
     Object box, whose anchor's own P is far away (50, 50, 50), pulls that point of the box to the world anchor, so
@@ -805,6 +837,7 @@ TESTS = {
     "next_settings": test_next_settings,
     "unset_attributes": test_unset_attributes,
     "feedback": test_feedback,
+    "feedback_many": test_feedback_many,
     "constraint_type_ignored_warning": test_constraint_type_ignored_warning,
     "sidefx_hard": test_sidefx_hard,
     "sidefx_hard_all": test_sidefx_hard_all,

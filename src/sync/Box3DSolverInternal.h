@@ -96,12 +96,12 @@ struct StepProgress {
 namespace box3dsolver {
 
 // Below these counts a pass runs serially (untuned starting points).
-constexpr size_t kMinParallelPoints = 2048; // default
+constexpr size_t kMinParallelPoints = 512; // default
 constexpr size_t kMinParallelReadPlain =
-    8192; // sync read, no primitives in the geometry
+    1024; // sync read, no primitives in the geometry
 constexpr size_t kMinParallelReadPacked =
-    2048;                                  // sync read, geometry has primitives
-constexpr size_t kMinParallelWrite = 1024; // write-back
+    512;                                  // sync read, geometry has primitives
+constexpr size_t kMinParallelWrite = 256; // write-back
 // Bodies of one object before its Force DOPs are evaluated in parallel.
 constexpr size_t kMinParallelForces = 256;
 
@@ -593,6 +593,11 @@ bool wantsImpacts(const Box3DSharedState &st);
 // step's contacts are impacts, so the frame's impulses add up). Sets
 // st.impactsCollected.
 void collectImpacts(Box3DSharedState &st, bool append);
+// Merges one Box3D step's move events into st.moves (the frame's, by body).
+void mergeMoveEvents(Box3DSharedState &st,
+                     const std::vector<b3dop::BodyMove> &events,
+                     std::unordered_map<b3dop::BodyHandle, size_t> &slot,
+                     bool mayRepeat);
 void recordImpacts(Box3DSharedState &st, SIM_ObjectArray &objects,
                    const SIM_Time &now);
 void writePointAttrs(Box3DSharedState &st, SIM_ObjectArray &objects);

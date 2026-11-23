@@ -422,6 +422,35 @@ def test_impacts():
     return results
 
 
+def test_impacts_substeps():
+    """With Substeps 1, 2 and 4 a box dropped on the ground records one impact per contact point of the frame, not
+    one per step: at most 6 records on any frame (a landing face has 4 points) for each, and the impulses of the
+    landing frames add up to about the same (within 40% of Substeps 1, which a frame's steps share out differently)."""
+    results, sums = [], {}
+    for substeps in (1, 2, 4):
+        tag = f"impacts_sub{substeps}"
+        path, _ = packed_boxes(tag + "_piece", [{"size": (1, 1, 1), "center": (0, 1.5, 0)}])
+        dop = new_dopnet(tag)
+        obj = packed_object(dop, "piece", path, computemass=0, mass=1.0, bounce=0.0)
+        data = box3d_data(dop, obj, "data", addimpact=1)
+        solver = box3d_solver(dop, merge(dop, [ground_object(dop, tag + "_ground", bounce=0.0), data]))
+        set_parm(solver, ["substeps"], substeps)
+        finish(dop, solver)
+        track = step(dop, 30, lambda sim, f: impact_records(sim, "piece"))
+        fields = next((list(r[0]) for r in track.values() if r), [])
+        imp = next((n for n in fields if "impulse" in n.lower()), None)
+        if imp is None:
+            raise SetupError(f"Impacts records have no impulse field; fields: {fields}")
+        most = max(len(r) for r in track.values())
+        sums[substeps] = sum(abs(rec[imp]) for r in track.values() for rec in r)
+        results.append((substeps, most))
+    ok = all(most <= 6 for _, most in results) and all(
+        0.6 * sums[1] <= sums[s] <= 1.4 * sums[1] for s in (2, 4))
+    return [Result("impacts_substeps", Result.PASS if ok else Result.FAIL,
+                   "; ".join(f"Substeps {s}: at most {m} records a frame, impulses sum to {sums[s]:.2f}"
+                             for s, m in results) + " (expected at most 6 records, sums within 40%)")]
+
+
 # ---------------------------------------------------------------------------
 # mass written only with computemass (status: mass is written only with computemass)
 # ---------------------------------------------------------------------------
@@ -1494,6 +1523,7 @@ TESTS = {
     "mirrored_piece": test_mirrored_piece,
     "written_velocity": test_written_velocity,
     "impacts": test_impacts,
+    "impacts_substeps": test_impacts_substeps,
     "mass_written": test_mass_written,
     "aging": test_aging,
     "collision_shapes_mesh": test_collision_shapes_mesh,

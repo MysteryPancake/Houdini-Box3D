@@ -47,7 +47,7 @@ Substeps. Box3D clears its move, joint and hit events at the start of every step
 moves by body, joints over their force / torque threshold into `brokenThisFrame` (broken once, in Updating Constraint
 States), and hit pairs into `hitPairs` when Impact Min Speed is on (`hitsCollected`). Impacts read Box3D's contact impulse events
 after every Box3D step (`collectImpacts`, `impactsCollected`, appended; the world makes them only while some object has
-Add Impact Data), so a frame's impulses add up over its steps; with one step they are read after it. Point `force` / `torque` are read and cleared by
+Add Impact Data), so a frame's impulses add up over its steps: a contact an earlier step already recorded (same bodies and side, position to about 1 cm; looked up in `impactSlots`) takes the impulse instead of a new record, so Substeps do not multiply the records (test `impacts_substeps`); with one step they are read after it. Point `force` / `torque` are read and cleared by
 the first step and applied again from `PointForceCarry` in the others.
 
 ```
@@ -87,7 +87,8 @@ dimmed for sleeping and static / kinematic bodies. The mutex is only tried: a gu
 **Export Collision Shapes** (`exportshapes`, Visualization tab; `exportCollisionShapes` in `Box3DGuide.cpp`). The same
 lines (`drawObjectShapes`, shared with the guide) as world-space open polylines in a `SIM_GeometryCopy` named
 `kShapesDataName` (`Box3DShapes`) on every object with bodies, updated each step after the point writes (the solver
-holds the mutex; poses are the written-back ones). A hull's or mesh's lines share its vertices as points. The outlines are kept in body
+holds the mutex; poses are the mirror's, from the object's `bodies` list, so no geometry is read; a whole object is read from its
+Position data). A hull's or mesh's lines share its vertices as points. The outlines are kept in body
 space (`Box3DShapeExport`, `shapeExports`); a step only moves the points of bodies whose pose changed and recolours those whose shade
 did. The geometry stores the signature of the bodies and shapes it was built for (`kShapesSigName` detail attribute: handle, `shapeSig`,
 shape count, body type, scale of each); a different signature or a geometry that does not match (another timeline) builds it again. `Cd` is white times the dimming; the SOP tints it. The Box3D Solver
@@ -198,7 +199,7 @@ Worker count: `autothreads` (off by default) = `UT_Thread::getNumProcessors()`, 
 `defaultWorkerCount()`, `Box3DCpu.h`: physical performance cores), never above Houdini's count; a change rebuilds the
 world.
 
-The plugin's loops use `UTparallelFor` past thresholds (`kMinParallelPoints` and neighbours, `kMinParallelForces` for Force DOPs, in
+The step's own per-body passes run in parallel too: `mergeMoveEvents` (events sorted into overwrite / new slot / no entry, slots numbered by a serial pass), `collectMovedBodies` (kinds, a serial numbering pass, then the items) and `resolvePointOffsets` (stored offsets checked in parallel, only the moved points looked up serially), with `kCheapGrain` tasks. A `thread_local` scratch vector must be bound to a reference before a lambda uses it: each worker thread has its own copy. Test `parallel_matches_serial` compares one thread with all. The plugin's loops use `UTparallelFor` past thresholds (`kMinParallelPoints` and neighbours, `kMinParallelForces` for Force DOPs, in
 `Box3DSolverInternal.h`; overridable from the environment in debug builds); parallel lambdas only read shared data or
 write their own element. The world and mirror are touched in serial passes; the shared-state mutex is held for the
 whole step.

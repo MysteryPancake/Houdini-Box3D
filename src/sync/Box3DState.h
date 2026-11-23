@@ -680,6 +680,14 @@ struct Box3DImpactHit {
   bool fromOther;
 };
 
+// One slot of the table collectImpacts uses to find, in a later substep, the
+// hit an earlier one already made for the same contact (open addressing; key 0
+// is an empty slot).
+struct Box3DImpactSlot {
+  uint64_t key = 0;
+  uint32_t group = 0, hit = 0;
+};
+
 // The impact hits of one object this step (see recordImpacts).
 struct Box3DImpactGroup {
   int objectId = 0;
@@ -860,6 +868,7 @@ struct Box3DSharedState {
   // step. Entries (and their hit vectors) are kept so capacity is reused.
   std::vector<Box3DImpactGroup> impactGroups;
   size_t impactGroupCount = 0;
+  std::vector<Box3DImpactSlot> impactSlots; // see Box3DImpactSlot
   // Export Collision Shapes: the outlines of each object's bodies, by object
   // id (exportCollisionShapes).
   std::unordered_map<int, Box3DShapeExport> shapeExports;

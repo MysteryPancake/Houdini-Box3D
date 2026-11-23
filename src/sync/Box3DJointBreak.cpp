@@ -165,7 +165,7 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp,
     }
     wroteFrames.store(true, std::memory_order_relaxed);
   };
-  constexpr size_t kMinParallelFrames = 4096;
+  constexpr size_t kMinParallelFrames = 256;
   if (work.size() >= kMinParallelFrames) {
     pH.getAttribute()->hardenAllPages();
     orientH.getAttribute()->hardenAllPages();
@@ -1088,7 +1088,7 @@ void writeFeedback(const b3dop::Box3DWorld &world, GU_Detail *gdp,
   // one item each) are worked out in parallel; the attributes the per-type
   // readings need are made serially; the values are then written in parallel,
   // each joint to its own primitive, once the pages are hardened.
-  constexpr size_t kMinParallelFeedback = 4096;
+  constexpr size_t kMinParallelFeedback = 256;
   const auto forEach = [&items](const auto &f) {
     box3dParallelFor(items.size(), f, kMinParallelFeedback);
   };
@@ -1162,28 +1162,36 @@ bool bodyMoves(const b3dop::Box3DWorld &world, b3dop::BodyHandle h) {
 void markQuietJoints(const b3dop::Box3DWorld &world,
                      const std::vector<Box3DJointEntry *> &entries,
                      bool bondReadouts) {
-  for (Box3DJointEntry *e : entries) {
-    const bool asleep =
-        e->handle && !bodyMoves(world, e->bodyA) && !bodyMoves(world, e->bodyB);
-    // A bond inside a compound joins parked (never awake) bodies that move with
-    // their compound: never quiet.
-    const bool nothingPending =
-        !e->inCompound && !e->writeLocal && !e->switchFrames &&
-        e->madeRestLength < 0.0f &&
-        // a Glue's impact decays each step until it reaches zero
-        (!e->glue || (e->extra && e->extra->glueImpact == e->impactWritten)) &&
-        // a Bond's damage, ratio and share of the tear are written when they
-        // change
-        (e->type != b3dop::JointType::Bond ||
-         (e->extra && e->extra->bondImpulse == e->impactWritten &&
-          (!bondReadouts || !e->extra->bondReadouts.pending())));
-    // A joint that broke has no frames or feedback left to write, only a
-    // Glue's final impact.
-    const bool spent = e->broken && !e->handle && nothingPending;
-    e->quiet =
-        spent || (asleep && e->asleepWritten && e->wrote && nothingPending);
-    e->asleepWritten = asleep;
-  }
+  // One entry per iteration: the world is only read (as in writeFeedback's
+  // parallel pass) and each iteration writes its own entry.
+  constexpr size_t kMinParallelQuiet = 512;
+  box3dParallelFor(
+      entries.size(),
+      [&](size_t i) {
+        Box3DJointEntry *e = entries[i];
+        const bool asleep = e->handle && !bodyMoves(world, e->bodyA) &&
+                            !bodyMoves(world, e->bodyB);
+        // A bond inside a compound joins parked (never awake) bodies that move
+        // with their compound: never quiet.
+        const bool nothingPending =
+            !e->inCompound && !e->writeLocal && !e->switchFrames &&
+            e->madeRestLength < 0.0f &&
+            // a Glue's impact decays each step until it reaches zero
+            (!e->glue ||
+             (e->extra && e->extra->glueImpact == e->impactWritten)) &&
+            // a Bond's damage, ratio and share of the tear are written when
+            // they change
+            (e->type != b3dop::JointType::Bond ||
+             (e->extra && e->extra->bondImpulse == e->impactWritten &&
+              (!bondReadouts || !e->extra->bondReadouts.pending())));
+        // A joint that broke has no frames or feedback left to write, only a
+        // Glue's final impact.
+        const bool spent = e->broken && !e->handle && nothingPending;
+        e->quiet =
+            spent || (asleep && e->asleepWritten && e->wrote && nothingPending);
+        e->asleepWritten = asleep;
+      },
+      kMinParallelQuiet);
 }
 
 // Enable Aging, as RBD Bullet Solver: every constraint primitive's `age` (made

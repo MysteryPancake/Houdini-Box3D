@@ -396,6 +396,29 @@ void placeBodies(const Box3DSharedState &st, const SIM_Object &obj,
       placed.push_back(pl);
 }
 
+// The same bodies as the solver holds them right after a step: the object's
+// body list, each at the pose the write-back stored in the mirror (what its
+// point holds now), so no geometry is read. A whole object is placed by its
+// Position data as placeBodies does.
+void placeBodiesFromMirror(const Box3DSharedState &st, const SIM_Object &obj,
+                           std::vector<Placed> &placed) {
+  const auto sync = st.objectSync.find(obj.getObjectId());
+  if (sync == st.objectSync.end() || sync->second.wholeObject) {
+    placeBodies(st, obj, placed);
+    return;
+  }
+  placed.clear();
+  placed.reserve(sync->second.bodies.size());
+  for (const Box3DBodyMirror *e : sync->second.bodies) {
+    if (!e || !e->handle || !st.isLive(*e))
+      continue;
+    Placed pl{e, Pose()};
+    b3dop::copy3(pl.p.pos, e->pos);
+    b3dop::copy4(pl.p.rot, e->rot);
+    placed.push_back(pl);
+  }
+}
+
 // One object's bodies drawn into `lines`. The caller holds st.mutex. The
 // bodies are drawn in chunks in parallel, each into its own Lines, and joined
 // in order.
@@ -593,7 +616,7 @@ void exportCollisionShapes(Box3DSharedState &st, SIM_ObjectArray &objects) {
     SIM_Object *obj = objects(i);
     if (!obj || !st.objectSync.count(obj->getObjectId()))
       continue;
-    placeBodies(st, *obj, placed);
+    placeBodiesFromMirror(st, *obj, placed);
     const uint64_t sig = shapesSignature(st.world, placed);
     SIM_GeometryCopy *data = SIM_DATA_CREATE(
         *obj, kShapesDataName, SIM_GeometryCopy, SIM_DATA_RETURN_EXISTING);

@@ -132,8 +132,10 @@ def run_child(spec, result_file):
             geo = obj.geometry()
             if geo is not None and geo.points():
                 box = geo.boundingBox()
+                positions = [pt.position() for pt in geo.points()]
                 record["end"][obj.name()] = {"points": len(geo.points()), "min": list(box.minvec()),
-                                             "max": list(box.maxvec())}
+                                             "max": list(box.maxvec()),
+                                             "sum": [sum(p[k] for p in positions) for k in range(3)]}
         if profile is not None:
             profile.stop()
             record["stages"] = stage_times(profile.stats(), dop.path())

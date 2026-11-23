@@ -266,7 +266,31 @@ def test_joint_keyed_midsim():
                    f"after scrubbing back to 12, y={back:.2f} (expected held)")]
 
 
+def test_parallel_matches_serial():
+    """The plugin's parallel passes give the same simulation as one thread. The 3000-box pile of the benchmark is
+    played for 40 frames in a fresh hython with HOUDINI_MAXTHREADS=1 (every parallel pass runs on one thread) and
+    in another with all threads: the sum of the boxes' positions and their bounds agree within 1e-3."""
+    from bench import run_isolated
+    from bench_scenes import SCENARIOS
+
+    params = dict(SCENARIOS["pile"].defaults, n=3000, frames=40)
+    got = {}
+    for threads in (1, None):
+        record = run_isolated({"scenario": "pile", "kind": "box3d", "params": params, "threads": threads,
+                               "budget": 600, "no_perfmon": True, "no_rewind": True})
+        if "error" in record:
+            raise SetupError(f"benchmark run with threads={threads} failed: {record['error'][-300:]}")
+        got[threads] = record["end"]["pieces"]
+    one, many = got[1], got[None]
+    diffs = [abs(a - b) for key in ("sum", "min", "max") for a, b in zip(one[key], many[key])]
+    ok = one["points"] == many["points"] == 3072 and max(diffs) < 1e-3
+    return [Result("parallel_matches_serial", Result.PASS if ok else Result.FAIL,
+                   f"{one['points']} / {many['points']} boxes (expected 3072), largest difference in the position sums "
+                   f"and bounds between 1 thread and all threads {max(diffs):.2e} (expected under 1e-3)")]
+
+
 TESTS = {
+    "parallel_matches_serial": test_parallel_matches_serial,
     "bad_input": test_bad_input,
     "rewire_midsim": test_rewire_midsim,
     "large_scene": test_large_scene,

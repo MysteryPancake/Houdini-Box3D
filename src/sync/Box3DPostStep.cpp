@@ -12,6 +12,10 @@
 
 namespace box3dsolver {
 
+// Elements per task for the loops whose work per element is a few memory
+// reads and writes.
+constexpr size_t kCheapGrain = 256;
+
 namespace {
 
 // Adds the float point attribute `name` with the given type info unless it
@@ -113,24 +117,33 @@ bool samePointAt(const GU_Detail *gdp, const GA_ROHandleI &id, GA_Offset off,
 
 // Each item's point offset in the geometry about to be written: the entry's
 // stored offset if it still names the point (in range, same id / number), else
-// looked up by id; GA_INVALID_OFFSET if not found.
+// looked up by id; GA_INVALID_OFFSET if not found. The stored offsets are
+// checked in parallel (read-only); only the points that moved are looked up.
 template <class Item> // needs .entry and .off
 void resolvePointOffsets(const GU_Detail *gdp, const PointAttrs &a,
                          std::vector<Item> &items, size_t begin, size_t end) {
+  // A first lookup by the serial code, in case the point map builds anything
+  // on first use, before threads read it.
+  if (end > begin)
+    (void)gdp->pointIndex(static_cast<GA_Offset>(items[begin].entry->pointOff));
+  box3dParallelFor(
+      end - begin,
+      [&](size_t j) {
+        Item &w = items[begin + j];
+        const Box3DBodyMirror &m = *w.entry;
+        const GA_Offset stored = static_cast<GA_Offset>(m.pointOff);
+        w.off = samePointAt(gdp, a.id, stored, m.pointId) ? stored
+                                                          : GA_INVALID_OFFSET;
+      },
+      minParallelWrite(), kCheapGrain);
+
   std::unordered_map<int64_t, GA_Offset> byId; // built only when needed
   bool builtById = false;
-
   for (size_t k = begin; k < end; ++k) {
     Item &w = items[k];
-    const Box3DBodyMirror &m = *w.entry;
-    const GA_Offset stored = static_cast<GA_Offset>(m.pointOff);
-
-    if (samePointAt(gdp, a.id, stored, m.pointId)) {
-      w.off = stored;
+    if (w.off != GA_INVALID_OFFSET)
       continue;
-    }
-
-    w.off = GA_INVALID_OFFSET;
+    const Box3DBodyMirror &m = *w.entry;
     if (!a.id.isValid()) {
       if (m.pointId >= 0 &&
           m.pointId < static_cast<int64_t>(gdp->getNumPoints()))
@@ -290,6 +303,31 @@ bool wantsImpacts(const Box3DSharedState &st) {
   return false;
 }
 
+// Which contact a hit is: its two bodies, its side and its position to about
+// a centimetre. Never 0 (an empty slot).
+uint64_t impactKey(const Box3DImpactHit &h) {
+  uint64_t k =
+      b3dop::mixHash(b3dop::mixHash(0x9e3779b97f4a7c15ull,
+                                    reinterpret_cast<uintptr_t>(h.self)),
+                     reinterpret_cast<uintptr_t>(h.other));
+  k = b3dop::mixHash(k, static_cast<uint64_t>(h.cp.other));
+  k = b3dop::mixHash(k, h.fromOther ? 1u : 0u);
+  for (int c = 0; c < 3; ++c)
+    k = b3dop::mixHash(k, static_cast<uint64_t>(static_cast<int64_t>(
+                              std::floor(h.cp.pos[c] * 100.0))));
+  return k | 1u;
+}
+
+// Slot of `key` in the open-addressing table (a power of two long): its own if
+// present, else the empty one it would go in.
+size_t impactSlot(const std::vector<Box3DImpactSlot> &table, uint64_t key) {
+  const size_t mask = table.size() - 1;
+  size_t i = static_cast<size_t>(key) & mask;
+  while (table[i].key && table[i].key != key)
+    i = (i + 1) & mask;
+  return i;
+}
+
 void collectImpacts(Box3DSharedState &st, bool append) {
   using Hit = Box3DImpactHit;
   st.impactsCollected = true;
@@ -297,16 +335,53 @@ void collectImpacts(Box3DSharedState &st, bool append) {
   // reused, not freed, so the hit vectors keep their capacity.
   if (!append)
     st.impactGroupCount = 0;
-  auto hitsFor = [&st](int objectId) -> std::vector<Hit> & {
+  auto groupFor = [&st](int objectId) -> size_t {
     for (size_t i = 0; i < st.impactGroupCount; ++i)
       if (st.impactGroups[i].objectId == objectId)
-        return st.impactGroups[i].hits;
+        return i;
     if (st.impactGroupCount == st.impactGroups.size())
       st.impactGroups.emplace_back();
-    Box3DImpactGroup &g = st.impactGroups[st.impactGroupCount++];
+    Box3DImpactGroup &g = st.impactGroups[st.impactGroupCount];
     g.objectId = objectId;
     g.hits.clear();
-    return g.hits;
+    return st.impactGroupCount++;
+  };
+
+  // Substeps: a contact an earlier step of the frame already recorded (the same
+  // bodies, side and spot) takes this step's impulse instead of a record of its
+  // own, so the frame's impulses still add up with one record per contact
+  // point, not one per step. Only the hits of the earlier steps are looked up
+  // (the table is built here, before this step adds its own), so two points of
+  // one step stay two records.
+  std::vector<Box3DImpactSlot> &table = st.impactSlots;
+  const bool merge = append && st.impactGroupCount > 0;
+  if (merge) {
+    size_t total = 0;
+    for (size_t g = 0; g < st.impactGroupCount; ++g)
+      total += st.impactGroups[g].hits.size();
+    size_t size = 16;
+    while (size < 2 * total)
+      size *= 2;
+    table.assign(size, Box3DImpactSlot());
+    for (size_t g = 0; g < st.impactGroupCount; ++g) {
+      const std::vector<Hit> &hits = st.impactGroups[g].hits;
+      for (size_t k = 0; k < hits.size(); ++k) {
+        const uint64_t key = impactKey(hits[k]);
+        Box3DImpactSlot &s = table[impactSlot(table, key)];
+        if (!s.key) // the first of equal keys keeps the slot
+          s = {key, static_cast<uint32_t>(g), static_cast<uint32_t>(k)};
+      }
+    }
+  }
+  auto add = [&](size_t group, const Hit &h) {
+    if (merge) {
+      const Box3DImpactSlot &s = table[impactSlot(table, impactKey(h))];
+      if (s.key && s.group == group) {
+        st.impactGroups[group].hits[s.hit].cp.impulse += h.cp.impulse;
+        return;
+      }
+    }
+    st.impactGroups[group].hits.push_back(h);
   };
 
   if (wantsImpacts(st)) {
@@ -346,9 +421,9 @@ void collectImpacts(Box3DSharedState &st, bool append) {
           cp.normal[k] = sgn * ev.normal[k];
         cp.impulse = ev.impulse;
         if (selfWants)
-          hitsFor(e->objectId).push_back({e, o, cp, false});
+          add(groupFor(e->objectId), {e, o, cp, false});
         if (otherWants)
-          hitsFor(o->objectId).push_back({o, e, cp, true});
+          add(groupFor(o->objectId), {o, e, cp, true});
       }
     }
   }
@@ -615,6 +690,86 @@ void deleteDeadPoints(Box3DSharedState &st, SIM_ObjectArray &objects) {
   items.clear();
 }
 
+// Box3D clears its move events every step, so a frame's steps are merged: the
+// last event of a body is its final pose (and its fell-asleep flag). A body
+// with an entry keeps its slot on the entry (moveStamp / moveSlot); the others
+// (a compound's body) go through `slot`.
+//
+// Many events: sorted in parallel into those that overwrite a slot already
+// taken, those that take a new one (their slots numbered by a serial pass over
+// the kinds) and those without an entry (serial, last). Each body is in the
+// events once unless `mayRepeat` (a compound taken apart reports its pieces
+// again), which merges serially.
+void mergeMoveEvents(Box3DSharedState &st,
+                     const std::vector<b3dop::BodyMove> &events,
+                     std::unordered_map<b3dop::BodyHandle, size_t> &slot,
+                     bool mayRepeat) {
+  const auto serialOne = [&](const b3dop::BodyMove &mv) {
+    Box3DBodyMirror *e = static_cast<Box3DBodyMirror *>(mv.userData);
+    if (e) {
+      if (e->moveStamp == st.syncStamp) {
+        st.moves[e->moveSlot] = mv;
+      } else {
+        e->moveStamp = st.syncStamp;
+        e->moveSlot = st.moves.size();
+        st.moves.push_back(mv);
+      }
+      return;
+    }
+    const auto ins = slot.try_emplace(mv.handle, st.moves.size());
+    if (ins.second)
+      st.moves.push_back(mv);
+    else
+      st.moves[ins.first->second] = mv;
+  };
+  const size_t n = events.size();
+  if (mayRepeat || n < minParallelWrite()) {
+    for (const b3dop::BodyMove &mv : events)
+      serialOne(mv);
+    return;
+  }
+
+  enum : uint8_t { kOverwrite, kNew, kNoEntry };
+  // Kept between steps (no allocation). References: a thread_local named in
+  // a lambda would be each worker thread's own, empty one.
+  thread_local std::vector<uint8_t> kindStore;
+  thread_local std::vector<size_t> slotStore;
+  std::vector<uint8_t> &kind = kindStore;
+  std::vector<size_t> &slotOf = slotStore;
+  kind.resize(n);
+  slotOf.resize(n);
+  const uint64_t stamp = st.syncStamp;
+  box3dParallelFor(
+      n,
+      [&](size_t k) {
+        const Box3DBodyMirror *e =
+            static_cast<const Box3DBodyMirror *>(events[k].userData);
+        kind[k] = !e ? kNoEntry : (e->moveStamp == stamp ? kOverwrite : kNew);
+      },
+      0, kCheapGrain);
+  size_t next = st.moves.size();
+  for (size_t k = 0; k < n; ++k)
+    if (kind[k] == kNew)
+      slotOf[k] = next++;
+  st.moves.resize(next);
+  box3dParallelFor(
+      n,
+      [&](size_t k) {
+        if (kind[k] == kNoEntry)
+          return;
+        Box3DBodyMirror *e = static_cast<Box3DBodyMirror *>(events[k].userData);
+        if (kind[k] == kNew) {
+          e->moveStamp = stamp;
+          e->moveSlot = slotOf[k];
+        }
+        st.moves[e->moveSlot] = events[k];
+      },
+      0, kCheapGrain);
+  for (size_t k = 0; k < n; ++k)
+    if (kind[k] == kNoEntry)
+      serialOne(events[k]);
+}
+
 namespace {
 
 // ---- writeResultsBack, step 0 (serial): the bodies that moved
@@ -626,51 +781,87 @@ struct MovedBodies {
   int missing = 0;             // moved bodies without a handle
 };
 
-// Fills st.writeItems and st.packedWrites with the point bodies to write.
+// Fills st.writeItems and st.packedWrites with the point bodies to write. The
+// moves are sorted into kinds in parallel, the items numbered by a serial pass
+// over the kinds, and the items filled in parallel.
 MovedBodies collectMovedBodies(Box3DSharedState &st) {
   MovedBodies out;
-  const int moveCount = static_cast<int>(st.moves.size());
-  std::vector<Box3DWriteItem> &items = st.writeItems;
-  items.clear();
-  items.reserve(static_cast<size_t>(moveCount));
-  st.packedWrites.clear();
-  for (int mi = 0; mi < moveCount; ++mi) {
-    const b3dop::BodyMove &mv = st.moves[static_cast<size_t>(mi)];
-    if (!mv.userData)
-      continue;
-    Box3DBodyMirror *entry = static_cast<Box3DBodyMirror *>(mv.userData);
-    if (!entry->dynamic() || !st.isLive(*entry))
-      continue; // only dynamic bodies seen by this step's sync are written
-    if (!entry->handle) {
+  const size_t moveCount = st.moves.size();
+  enum : uint8_t { kSkip, kMissing, kWhole, kPoint, kPacked };
+  // Kept between steps (no allocation). References: a thread_local named in
+  // a lambda would be each worker thread's own, empty one.
+  thread_local std::vector<uint8_t> kindStore;
+  thread_local std::vector<uint32_t> itemStore, packedStore;
+  std::vector<uint8_t> &kind = kindStore;
+  std::vector<uint32_t> &itemAt = itemStore;
+  std::vector<uint32_t> &packedAt = packedStore;
+  kind.resize(moveCount);
+  itemAt.resize(moveCount);
+  packedAt.resize(moveCount);
+  box3dParallelFor(
+      moveCount,
+      [&](size_t mi) {
+        const b3dop::BodyMove &mv = st.moves[mi];
+        const Box3DBodyMirror *entry =
+            static_cast<const Box3DBodyMirror *>(mv.userData);
+        if (!entry || !entry->dynamic() || !st.isLive(*entry))
+          kind[mi] = kSkip; // only dynamic bodies seen by this step's sync
+        else if (!entry->handle)
+          kind[mi] = kMissing;
+        else if (entry->wholeObject)
+          kind[mi] = kWhole; // written to the object's Position data
+        else
+          kind[mi] = entry->packed ? kPacked : kPoint;
+      },
+      minParallelWrite(), kCheapGrain);
+  uint32_t items = 0, packed = 0;
+  for (size_t mi = 0; mi < moveCount; ++mi) {
+    switch (kind[mi]) {
+    case kMissing:
       ++out.missing;
-      continue;
+      break;
+    case kWhole:
+      out.wholeMoves.push_back(static_cast<int>(mi));
+      break;
+    case kPacked:
+      packedAt[mi] = packed++;
+      [[fallthrough]];
+    case kPoint:
+      itemAt[mi] = items++;
+      break;
+    default:
+      break;
     }
-    if (entry->wholeObject) {
-      out.wholeMoves.push_back(mi); // written to the object's Position data
-      continue;
-    }
-    items.emplace_back();
-    Box3DWriteItem &w = items.back();
-    // The velocities of the move event (a piece of a compound: its compound's,
-    // its own parked body has none).
-    const float *lin = entry->inCompound ? entry->glueLin : mv.lin;
-    const float *ang = entry->inCompound ? entry->glueAng : mv.ang;
-    std::copy(lin, lin + 3, w.lin);
-    std::copy(ang, ang + 3, w.ang);
-    w.entry = entry;
-    w.move = mi;
-    w.objectId = entry->objectId;
-    if (entry->packed) {
-      w.packedIdx = static_cast<int>(st.packedWrites.size());
-      st.packedWrites.emplace_back();
-    }
-    // `awake`: only changes are written (and only if the attribute exists).
-    // entry->awake is updated where the write happens, so an unresolved point
-    // is retried next step.
-    const bool nowAwake = !mv.fellAsleep;
-    if (nowAwake != entry->awake)
-      w.awakeState = nowAwake ? 1 : 0;
   }
+  st.writeItems.assign(items, Box3DWriteItem());
+  st.packedWrites.assign(packed, Box3DPackedWrite());
+  box3dParallelFor(
+      moveCount,
+      [&](size_t mi) {
+        if (kind[mi] != kPoint && kind[mi] != kPacked)
+          return;
+        const b3dop::BodyMove &mv = st.moves[mi];
+        Box3DBodyMirror *entry = static_cast<Box3DBodyMirror *>(mv.userData);
+        Box3DWriteItem &w = st.writeItems[itemAt[mi]];
+        // The velocities of the move event (a piece of a compound: its
+        // compound's, its own parked body has none).
+        const float *lin = entry->inCompound ? entry->glueLin : mv.lin;
+        const float *ang = entry->inCompound ? entry->glueAng : mv.ang;
+        std::copy(lin, lin + 3, w.lin);
+        std::copy(ang, ang + 3, w.ang);
+        w.entry = entry;
+        w.move = static_cast<int>(mi);
+        w.objectId = entry->objectId;
+        if (kind[mi] == kPacked)
+          w.packedIdx = static_cast<int>(packedAt[mi]);
+        // `awake`: only changes are written (and only if the attribute
+        // exists). entry->awake is updated where the write happens, so an
+        // unresolved point is retried next step.
+        const bool nowAwake = !mv.fellAsleep;
+        if (nowAwake != entry->awake)
+          w.awakeState = nowAwake ? 1 : 0;
+      },
+      minParallelWrite(), kCheapGrain);
   return out;
 }
 

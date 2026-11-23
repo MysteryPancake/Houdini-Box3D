@@ -521,12 +521,14 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
             applyExternalForces(*st, objects, getForcesWake(), &carry);
         forceStats.nonFinite = std::max(forceStats.nonFinite, fs.nonFinite);
       }
+      bool mayRepeat = false; // a body may be in `events` twice
       {
         UT_PerfMonAutoSolveEvent perf(this,
                                       "Stepping Simulation/Stepping World");
         recordCompoundMotion(*st);
         std::vector<b3dop::BodyMove> left; // pieces of a compound taken apart
         holdCompoundsForApproach(*st, i == 0 ? lastFrame : events, left);
+        mayRepeat = !left.empty();
         st->world.step(subDt);
         // Before the glue reads them; appended across the frame's steps.
         if (collectHits)
@@ -549,26 +551,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
       }
       // Box3D clears its move events every step, so merge them: the last
       // event of a body is its final pose (and its fell-asleep flag).
-      // A body with an entry keeps its slot on the entry; the others (a
-      // compound's body) go through the map.
-      for (const b3dop::BodyMove &mv : events) {
-        Box3DBodyMirror *e = static_cast<Box3DBodyMirror *>(mv.userData);
-        if (e) {
-          if (e->moveStamp == st->syncStamp) {
-            st->moves[e->moveSlot] = mv;
-          } else {
-            e->moveStamp = st->syncStamp;
-            e->moveSlot = st->moves.size();
-            st->moves.push_back(mv);
-          }
-          continue;
-        }
-        const auto ins = slot.try_emplace(mv.handle, st->moves.size());
-        if (ins.second)
-          st->moves.push_back(mv);
-        else
-          st->moves[ins.first->second] = mv;
-      }
+      mergeMoveEvents(*st, events, slot, mayRepeat);
     }
     // Once each, in the order Box3D gave them.
     {

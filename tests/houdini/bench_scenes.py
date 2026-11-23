@@ -148,6 +148,9 @@ def ground_for(tag, nx, nz, **attrs):
 
 
 def phases_for(frames):
+    """A lattice pile is still creeping at frame 121 and mostly asleep by 240: `asleep` is the frames after that."""
+    if frames > 260:
+        return [("fall", 2, 48), ("pile", 49, 120), ("settling", 121, 240), ("asleep", 241, frames)]
     return [("fall", 2, 48), ("pile", 49, 120), ("settled", 121, frames)]
 
 
