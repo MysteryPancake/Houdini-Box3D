@@ -174,4 +174,32 @@ private:
   std::unordered_map<uint64_t, Entry> myBodies;
 };
 
+// A ground box (body 1) with a side x side x side grid of unit boxes on it
+// (bodies 100 up), a little jittered so they topple. Returns the id after the
+// last box.
+inline uint64_t addToppleGrid(KeyedWorld &w, int side) {
+  const float qid[4] = {0, 0, 0, 1};
+  BodySettings ground;
+  ground.type = BodySettings::Type::Static;
+  const double gp[3] = {0, -0.5, 0};
+  const float gh[3] = {60, 0.5f, 60};
+  w.addBody(1, ground, gp, qid);
+  w.addBoxShape(1, gh);
+  const float bh[3] = {0.5f, 0.5f, 0.5f};
+  uint64_t id = 100;
+  TestRng rng(1);
+  const int centre = side / 2; // whole cells: the grid sits on integers
+  for (int y = 0; y < side; ++y)
+    for (int x = 0; x < side; ++x)
+      for (int z = 0; z < side; ++z) {
+        const double p[3] = {(x - centre) * 1.05 + rng.below(100) * 0.0004,
+                             0.5 + y * 1.02,
+                             (z - centre) * 1.05 + rng.below(100) * 0.0004};
+        w.addBody(id, BodySettings(), p, qid);
+        w.addBoxShape(id, bh);
+        ++id;
+      }
+  return id;
+}
+
 } // namespace b3dop

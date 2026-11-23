@@ -44,6 +44,7 @@ from b3dtest import (
     sop_solver_contents,
     step,
     set_menu_token,
+    threshold,
 )
 from checks_constraints import broken_count, hanging_pair, sidefx_compare
 from checks_solver import max_difference, stack_scene
@@ -756,20 +757,6 @@ def bond_beam_broken(tag, bending, compound, frames=60, depth=0.5):
     return step(dop, frames, lambda sim, f: broken_count(sim))[frames]
 
 
-def bond_threshold(breaks, lo, hi, rounds=12):
-    """The strength at which `breaks(strength)` flips from True to False, by bisection in log space (None: it does not
-    flip between lo and hi)."""
-    if not breaks(lo) or breaks(hi):
-        return None
-    for _ in range(rounds):
-        mid = (lo * hi) ** 0.5
-        if breaks(mid):
-            lo = mid
-        else:
-            hi = mid
-    return hi
-
-
 def test_bond_benchmarks():
     """The strength at which a Bond actually lets go, against the formulas. A 1 m box (1000 kg) hanging from a bond over
     1 m^2: tension W/A = 9.8 kPa. A beam of two halves bonded at the middle on two narrow supports (500 kg each, a 0.5 m
@@ -784,7 +771,7 @@ def test_bond_benchmarks():
         broken, _ys, _f = bond_run(f"bond_bench_bar_{next(counter)}", [(0, 5, 0), (0, 4, 0)], 1, tensile, 36)
         return broken >= 1
 
-    found = bond_threshold(tensile_breaks, 1e3, 1e7)
+    found = threshold(tensile_breaks, 1e3, 1e7)
     expected = 9807.0
     good = found is not None and 0.9 * expected <= found <= 1.15 * expected
     ok = ok and good
@@ -793,7 +780,7 @@ def test_bond_benchmarks():
     expected = 4658.0 / (0.25 * 0.5 / 6.0)
     for compound in (True, False):
         mode = "on" if compound else "off"
-        found = bond_threshold(lambda b: bond_beam_broken(f"bond_bench_beam_{next(counter)}", b, compound) >= 1, 2e4, 2e6)
+        found = threshold(lambda b: bond_beam_broken(f"bond_bench_beam_{next(counter)}", b, compound) >= 1, 2e4, 2e6)
         good = found is not None and 0.8 * expected <= found <= 1.2 * expected
         ok = ok and good
         rows.append(f"beam on two supports, switch {mode}: lets go at {found and round(found)} Pa, formula "
@@ -818,7 +805,7 @@ def test_bond_invariance():
                                            substeps=substeps)
                 return broken >= 1
 
-            found = bond_threshold(breaks, 1e3, 1e6, rounds=10)
+            found = threshold(breaks, 1e3, 1e6, rounds=10)
             good = found is not None and abs(found - 9807.0) < 0.03 * 9807.0
             ok = ok and good
             rows.append(f"{fps} fps, {substeps} substeps: {found and round(found)} Pa ({'ok' if good else 'wrong'})")
@@ -844,13 +831,13 @@ def test_bond_patch():
                                        anchor_shift=shift)
             return broken >= 1
 
-        found = bond_threshold(breaks, 1e3, 1e7)
+        found = threshold(breaks, 1e3, 1e7)
         good = found is not None and abs(found - expected) < 0.1 * expected
         ok = ok and good
         rows.append(f"half-overlapping box, anchor shifted {shift[0]}: lets go at {found and round(found)} Pa, "
                     f"formula {expected:.0f} ({'ok' if good else 'wrong'})")
     expected = 9317.0 / (1.0 * 0.25 / 6.0)
-    found = bond_threshold(lambda b: bond_beam_broken(f"bond_patch_beam_{next(counter)}", b, True, depth=1.0) >= 1,
+    found = threshold(lambda b: bond_beam_broken(f"bond_patch_beam_{next(counter)}", b, True, depth=1.0) >= 1,
                            2e4, 2e6)
     good = found is not None and abs(found - expected) < 0.1 * expected
     ok = ok and good
@@ -1090,15 +1077,7 @@ def glue_threshold(kind, height, lo=500.0, hi=1e7, rounds=7):
         broke = glue_pair_run(kind, strength, height)[0]
         return broke is not None and broke >= 1
 
-    if not breaks(lo) or breaks(hi):
-        return None
-    for _ in range(rounds):
-        mid = (lo * hi) ** 0.5
-        if breaks(mid):
-            lo = mid
-        else:
-            hi = mid
-    return hi
+    return threshold(breaks, lo, hi, rounds)
 
 
 def test_glue_impact_scale():
@@ -1375,15 +1354,7 @@ def glue_row_threshold(kind, frames, lo=20.0, hi=1e9, rounds=8, **scene):
         broke = glue_row_run(kind, strength, frames, **scene)[0]
         return broke is not None and broke >= 1
 
-    if not breaks(lo) or breaks(hi):
-        return None
-    for _ in range(rounds):
-        mid = (lo * hi) ** 0.5
-        if breaks(mid):
-            lo = mid
-        else:
-            hi = mid
-    return hi
+    return threshold(breaks, lo, hi, rounds)
 
 
 GLUE_MATCH_SCENES = [

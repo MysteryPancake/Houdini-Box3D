@@ -1,6 +1,7 @@
 // Box3D joints through Box3DWorld: every type, world anchors, live updates,
 // breaking, feedback, and the parameter table the Houdini side is built from.
 #include "TestUtil.h"
+#include "WorldTestUtil.h"
 #include "core/Box3DSideFX.h" // frame offsets, as the sync applies them
 #include "core/Box3DWorld.h"
 
@@ -10,47 +11,6 @@
 #include <string>
 
 using namespace b3dop;
-
-namespace {
-
-const float kQid[4] = {0, 0, 0, 1};
-const float kDt = 1.0f / 60.0f;
-
-BodyHandle box(Box3DWorld &w, double x, double y, double z,
-               BodySettings::Type type = BodySettings::Type::Dynamic,
-               float half = 0.25f) {
-  BodySettings b;
-  b.type = type;
-  const double p[3] = {x, y, z};
-  const BodyHandle h = w.createBody(b, p, kQid);
-  ShapeSpec s;
-  s.type = ShapeType::Box;
-  s.halfExtents[0] = s.halfExtents[1] = s.halfExtents[2] = half;
-  w.createShape(h, b, s);
-  return h;
-}
-
-JointFrame frame(double x, double y, double z, const float q[4] = kQid) {
-  JointFrame f;
-  f.pos[0] = x;
-  f.pos[1] = y;
-  f.pos[2] = z;
-  for (int i = 0; i < 4; ++i)
-    f.rot[i] = q[i];
-  return f;
-}
-
-void pos(Box3DWorld &w, BodyHandle h, double out[3]) {
-  float q[4];
-  w.getTransformByHandle(h, out, q);
-}
-
-void steps(Box3DWorld &w, int n) {
-  for (int i = 0; i < n; ++i)
-    w.step(kDt);
-}
-
-} // namespace
 
 int main() {
   const int assertsBefore = Box3DWorld::assertCount();

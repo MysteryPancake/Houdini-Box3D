@@ -32,6 +32,22 @@ inline float clampNonNegOr(float v, float fallback) {
 // change.
 inline bool sameFloat(float a, float b) { return a == b || (a != a && b != b); }
 
+// Dot product, cross product (out must not alias an input) and length of
+// 3-vectors (float or double).
+template <class T> inline T dot3(const T *a, const T *b) {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+template <class T> inline void cross3(const T *a, const T *b, T *out) {
+  out[0] = a[1] * b[2] - a[2] * b[1];
+  out[1] = a[2] * b[0] - a[0] * b[2];
+  out[2] = a[0] * b[1] - a[1] * b[0];
+}
+
+template <class T> inline T length3(const T *v) {
+  return std::sqrt(dot3(v, v));
+}
+
 // dst[0..2] = src[0..2] / dst[0..3] = src[0..3]. The element types may differ
 // (double -> float).
 template <class D, class S> inline void copy3(D *dst, const S *src) {

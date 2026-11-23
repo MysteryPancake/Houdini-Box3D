@@ -553,16 +553,7 @@ def build(out_path, packed_hda=None):
         group.append(hou.FolderParmTemplate(f"b3dsop_tab{i}", TAB_LABELS.get(label, label), contents,
                                             folder_type=hou.folderType.Tabs))
 
-    if os.path.exists(out_path):
-        try:
-            hou.hda.uninstallFile(out_path)
-        except hou.OperationFailed:
-            pass
-        os.remove(out_path)
-    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
-
-    asset = sub.createDigitalAsset(name=TYPE_NAME, hda_file_name=out_path, description=LABEL,
-                                   min_num_inputs=1, max_num_inputs=4)
+    asset = b3d_hda.create_asset(sub, out_path, TYPE_NAME, LABEL, 1, 4)
     definition = asset.type().definition()
     seen, clashes = set(), set()
     for pt in group.entriesWithoutFolders():

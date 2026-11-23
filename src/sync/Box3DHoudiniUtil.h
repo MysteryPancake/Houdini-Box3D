@@ -21,6 +21,7 @@
 #include <SIM/SIM_Query.h>
 #include <UT/UT_Matrix3.h>
 #include <UT/UT_Matrix4.h>
+#include <UT/UT_ParallelUtil.h>
 #include <UT/UT_Quaternion.h>
 #include <UT/UT_StringHolder.h>
 #include <UT/UT_Vector3.h>
@@ -35,6 +36,23 @@
 // Houdini's quaternion product composes in the order of the row-vector
 // matrices: M(a * b) = M(b) * M(a). So Bullet's packed convention, absolute =
 // rest * since as matrices, is the product `since * rest` here.
+// f(i) for i in [0, n), on Houdini's TBB pool when n >= minParallel. f may only
+// read shared data and write element i of its own output.
+template <class F>
+void box3dParallelFor(size_t n, const F &f, size_t minParallel,
+                      size_t grain = 1) {
+  if (n < minParallel) {
+    for (size_t i = 0; i < n; ++i)
+      f(i);
+    return;
+  }
+  UTparallelFor(UT_BlockedRange<size_t>(0, n, grain),
+                [&f](const UT_BlockedRange<size_t> &r) {
+                  for (size_t i = r.begin(); i != r.end(); ++i)
+                    f(i);
+                });
+}
+
 inline UT_QuaternionD box3dQuatD(const float q[4]) {
   return UT_QuaternionD(q[0], q[1], q[2], q[3]);
 }

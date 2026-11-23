@@ -13,6 +13,7 @@
 // patch.
 #pragma once
 
+#include "core/Box3DMath.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -44,10 +45,6 @@ struct ContactPatch {
 namespace patch_detail {
 
 using Vec = std::array<double, 3>;
-
-inline double dot(const double a[3], const double b[3]) {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
 
 struct Pt2 {
   double x, y;
@@ -128,7 +125,7 @@ inline ContactPatch contactPatchOf(const std::vector<PatchFace> &a,
     const Vec ref = std::fabs(n[0]) < 0.9 ? Vec{1, 0, 0} : Vec{0, 1, 0};
     u = {ref[1] * n[2] - ref[2] * n[1], ref[2] * n[0] - ref[0] * n[2],
          ref[0] * n[1] - ref[1] * n[0]};
-    const double l = std::sqrt(dot(u.data(), u.data()));
+    const double l = length3(u.data());
     for (double &x : u)
       x /= l;
     v = {n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2],
@@ -139,7 +136,7 @@ inline ContactPatch contactPatchOf(const std::vector<PatchFace> &a,
     std::vector<Pt2> pts;
     for (const auto &c : f.corners) {
       const double d[3] = {c[0] - o[0], c[1] - o[1], c[2] - o[2]};
-      pts.push_back({dot(d, u.data()), dot(d, v.data())});
+      pts.push_back({dot3(d, u.data()), dot3(d, v.data())});
     }
     if (signedArea(pts) < 0.0)
       std::reverse(pts.begin(), pts.end());
@@ -150,7 +147,7 @@ inline ContactPatch contactPatchOf(const std::vector<PatchFace> &a,
   const PatchFace *bestA = nullptr;
   for (const PatchFace &fa : a)
     for (const PatchFace &fb : b) {
-      if (dot(fa.normal, fb.normal) > -0.985 || fa.corners.size() < 3 ||
+      if (dot3(fa.normal, fb.normal) > -0.985 || fa.corners.size() < 3 ||
           fb.corners.size() < 3)
         continue;
       // Across a plane: fb's corners within `tolerance` of fa's plane.
@@ -158,7 +155,7 @@ inline ContactPatch contactPatchOf(const std::vector<PatchFace> &a,
       bool near = true;
       for (const auto &c : fb.corners) {
         const double d[3] = {c[0] - p0[0], c[1] - p0[1], c[2] - p0[2]};
-        if (std::fabs(dot(d, fa.normal)) > tolerance)
+        if (std::fabs(dot3(d, fa.normal)) > tolerance)
           near = false;
       }
       if (!near)
@@ -182,20 +179,20 @@ inline ContactPatch contactPatchOf(const std::vector<PatchFace> &a,
   double m[5] = {0, 0, 0, 0, 0};
   std::vector<std::vector<Pt2>> pieces;
   for (const PatchFace &fa : a) {
-    if (dot(fa.normal, dom.normal) < 0.985)
+    if (dot3(fa.normal, dom.normal) < 0.985)
       continue;
     const double da[3] = {fa.corners[0][0] - origin[0],
                           fa.corners[0][1] - origin[1],
                           fa.corners[0][2] - origin[2]};
-    if (std::fabs(dot(da, dom.normal)) > tolerance)
+    if (std::fabs(dot3(da, dom.normal)) > tolerance)
       continue;
     for (const PatchFace &fb : b) {
-      if (dot(fb.normal, dom.normal) > -0.985)
+      if (dot3(fb.normal, dom.normal) > -0.985)
         continue;
       const double db[3] = {fb.corners[0][0] - origin[0],
                             fb.corners[0][1] - origin[1],
                             fb.corners[0][2] - origin[2]};
-      if (std::fabs(dot(db, dom.normal)) > tolerance)
+      if (std::fabs(dot3(db, dom.normal)) > tolerance)
         continue;
       const auto clipped =
           clipPolygon(project(fa, origin, u, v), project(fb, origin, u, v));

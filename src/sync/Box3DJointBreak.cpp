@@ -25,7 +25,6 @@
 #include <SIM/SIM_GeometryCopy.h>
 #include <SIM/SIM_Object.h>
 #include <SIM/SIM_ObjectArray.h>
-#include <UT/UT_ParallelUtil.h>
 #include <UT/UT_Quaternion.h>
 #include <UT/UT_StringHolder.h>
 #include <UT/UT_Vector3.h>
@@ -170,15 +169,8 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp,
   if (work.size() >= kMinParallelFrames) {
     pH.getAttribute()->hardenAllPages();
     orientH.getAttribute()->hardenAllPages();
-    UTparallelFor(UT_BlockedRange<size_t>(0, work.size()),
-                  [&writeOne](const UT_BlockedRange<size_t> &r) {
-                    for (size_t i = r.begin(); i != r.end(); ++i)
-                      writeOne(i);
-                  });
-  } else {
-    for (size_t i = 0; i < work.size(); ++i)
-      writeOne(i);
   }
+  box3dParallelFor(work.size(), writeOne, kMinParallelFrames);
   // Only what was written changes its data id (anything watching these
   // attributes sees a change only when there is one).
   if (wroteFrames.load()) {
@@ -1028,9 +1020,6 @@ void writeFeedback(const b3dop::Box3DWorld &world, GU_Detail *gdp,
     scalars.emplace_back(name, GA_RWHandleF(gdp, GA_ATTRIB_PRIMITIVE, name));
     return scalars.back().second;
   };
-  auto length = [](const float *v) {
-    return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-  };
   GA_RWHandleF &forceH = scalar("force");
   GA_RWHandleF &distH = scalar("distance");
   GA_RWHandleF &torqueH = scalar("torque");
@@ -1097,16 +1086,7 @@ void writeFeedback(const b3dop::Box3DWorld &world, GU_Detail *gdp,
   // each joint to its own primitive, once the pages are hardened.
   constexpr size_t kMinParallelFeedback = 4096;
   const auto forEach = [&items](const auto &f) {
-    if (items.size() < kMinParallelFeedback) {
-      for (size_t i = 0; i < items.size(); ++i)
-        f(i);
-      return;
-    }
-    UTparallelFor(UT_BlockedRange<size_t>(0, items.size()),
-                  [&f](const UT_BlockedRange<size_t> &r) {
-                    for (size_t i = r.begin(); i != r.end(); ++i)
-                      f(i);
-                  });
+    box3dParallelFor(items.size(), f, kMinParallelFeedback);
   };
   forEach([&](size_t i) {
     FeedbackItem &it = items[i];
@@ -1128,8 +1108,7 @@ void writeFeedback(const b3dop::Box3DWorld &world, GU_Detail *gdp,
       const double d[3] = {e->wroteA.pos[0] - e->wroteB.pos[0],
                            e->wroteA.pos[1] - e->wroteB.pos[1],
                            e->wroteA.pos[2] - e->wroteB.pos[2]};
-      it.distance = static_cast<float>(
-          std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]));
+      it.distance = static_cast<float>(b3dop::length3(d));
     }
     it.angle = angleSinceRest(world, *e, it.fb.angularSeparation);
   });
@@ -1147,11 +1126,11 @@ void writeFeedback(const b3dop::Box3DWorld &world, GU_Detail *gdp,
       return;
     const GA_Offset prim = it.e->prim;
     if (forceH.isValid())
-      forceH.set(prim, length(it.fb.force));
+      forceH.set(prim, b3dop::length3(it.fb.force));
     if (distH.isValid())
       distH.set(prim, it.distance);
     if (torqueH.isValid())
-      torqueH.set(prim, length(it.fb.torque));
+      torqueH.set(prim, b3dop::length3(it.fb.torque));
     if (angleH.isValid())
       angleH.set(prim, it.angle);
     for (int k = 0; k < it.fb.extraCount; ++k) {

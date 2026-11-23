@@ -295,6 +295,20 @@ def packed_object(dop, name, sop_path, keep_velocity=False, **parms):
     return obj
 
 
+def four_points_at_height(geo, y=3):
+    """A 2 x 2 grid of points, 10 apart, at height `y` (an RBD Point Object's source; the wrangle runs over
+    points so it has an input: a detail wrangle with no input made no objects). Returns the last node."""
+    grid = create(geo, "grid")
+    set_parm(grid, ["size"], (10, 10))
+    set_parm(grid, ["rows"], 2)
+    set_parm(grid, ["cols"], 2)
+    wr = create(geo, "attribwrangle")
+    wr.setInput(0, grid)
+    set_parm(wr, ["class"], 2)
+    set_parm(wr, ["snippet"], f"@P.y = {y};")
+    return wr
+
+
 def box_sop(name, center, size=(1, 1, 1)):
     """A SOP object holding one box of `size` moved to `center`; returns its path."""
 
@@ -441,6 +455,20 @@ def finish(dop, last):
     out.setInput(0, last)
     display(out)
     return out
+
+
+def threshold(breaks, lo, hi, rounds=12):
+    """The strength at which `breaks(strength)` flips from True to False, by bisection in log space (None: it does
+    not flip between lo and hi)."""
+    if not breaks(lo) or breaks(hi):
+        return None
+    for _ in range(rounds):
+        mid = (lo * hi) ** 0.5
+        if breaks(mid):
+            lo = mid
+        else:
+            hi = mid
+    return hi
 
 
 def step(dop, frames, sample):

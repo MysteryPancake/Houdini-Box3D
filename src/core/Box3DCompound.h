@@ -95,12 +95,6 @@ struct MergedBody {
 
 namespace compound_detail {
 
-inline void cross(const double a[3], const double b[3], double out[3]) {
-  out[0] = a[1] * b[2] - a[2] * b[1];
-  out[1] = a[2] * b[0] - a[0] * b[2];
-  out[2] = a[0] * b[1] - a[1] * b[0];
-}
-
 // out = m^-1 * v for a row-major 3x3; false if it is singular.
 inline bool solve3(const double m[9], const double v[3], double out[3]) {
   const double c0 = m[4] * m[8] - m[5] * m[7];
@@ -177,7 +171,7 @@ inline MergedBody mergePieces(const std::vector<RigidPiece> &pieces) {
           for (int s = 0; s < 3; ++s)
             iw[3 * r + s] += local[3 * k + l] * axes[k][r] * axes[l][s];
     const double r[3] = {q.pos[0] - c[0], q.pos[1] - c[1], q.pos[2] - c[2]};
-    const double rr = r[0] * r[0] + r[1] * r[1] + r[2] * r[2];
+    const double rr = dot3(r, r);
     for (int a = 0; a < 3; ++a)
       for (int b = 0; b < 3; ++b)
         inertia[3 * a + b] +=
@@ -185,7 +179,7 @@ inline MergedBody mergePieces(const std::vector<RigidPiece> &pieces) {
     const double w[3] = {q.ang[0], q.ang[1], q.ang[2]};
     const double v[3] = {q.lin[0], q.lin[1], q.lin[2]};
     double rxv[3];
-    cross(r, v, rxv);
+    cross3(r, v, rxv);
     for (int a = 0; a < 3; ++a)
       angular[a] += iw[3 * a] * w[0] + iw[3 * a + 1] * w[1] +
                     iw[3 * a + 2] * w[2] + q.mass * rxv[a];
@@ -210,7 +204,7 @@ inline void pieceVelocity(const MergedBody &body, const double pos[3],
                        pos[2] - body.com[2]};
   const double w[3] = {body.ang[0], body.ang[1], body.ang[2]};
   double wxr[3];
-  cross(w, r, wxr);
+  cross3(w, r, wxr);
   for (int i = 0; i < 3; ++i) {
     lin[i] = static_cast<float>(static_cast<double>(body.lin[i]) + wxr[i]);
     ang[i] = body.ang[i];
@@ -230,8 +224,7 @@ inline float pieceLoad(const MergedBody &before, const MergedBody &after,
   const double d[3] = {static_cast<double>(lin1[0]) - lin0[0],
                        static_cast<double>(lin1[1]) - lin0[1],
                        static_cast<double>(lin1[2]) - lin0[2]};
-  return mass *
-         static_cast<float>(std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]));
+  return mass * static_cast<float>(length3(d));
 }
 
 // The box a body covers going through a compound: its own bounds (half size

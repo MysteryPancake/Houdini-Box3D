@@ -551,6 +551,19 @@ ShapePlan planShapes(ScanContext &ctx, GA_Offset off, int64_t bodyId,
 
 } // namespace
 
+bool retypeBody(b3dop::Box3DWorld &world, Box3DBodyMirror &entry,
+                b3dop::BodySettings::Type want) {
+  if (entry.type == want)
+    return false;
+  world.setTypeByHandle(entry.handle, want);
+  entry.type = want;
+  entry.driven = false;
+  // The mass comes back from the shapes: centre back to the point.
+  if (entry.dynamic())
+    applyBodyMass(world, entry.handle, entry.props, entry.volume);
+  return true;
+}
+
 // Adds the pieces without mass updates (the caller calls applyBodyMass).
 // Returns the count.
 int addShapes(b3dop::Box3DWorld &world, b3dop::BodyHandle h,
@@ -835,12 +848,8 @@ void updateExistingBody(ScanContext &ctx, Box3DSharedState &st,
   // Becoming static: retype before the rebuild, which may make a `concave`
   // mesh (Box3D meshes only go on static bodies).
   if (s.rebuild && s.staticBody &&
-      entry.type != b3dop::BodySettings::Type::Static) {
-    world.setTypeByHandle(entry.handle, b3dop::BodySettings::Type::Static);
-    entry.type = b3dop::BodySettings::Type::Static;
-    entry.driven = false;
+      retypeBody(world, entry, b3dop::BodySettings::Type::Static))
     ++c.retyped;
-  }
 
   // Shape first (a shapeless body is static); pass 1 decided whether to
   // rebuild.
@@ -890,16 +899,8 @@ void updateExistingBody(ScanContext &ctx, Box3DSharedState &st,
       entry.meshShapes
           ? b3dop::BodySettings::Type::Static
           : wantedType(ctx.node, s.active, animated, entry.shapeless);
-  if (entry.type != wantType) {
-    world.setTypeByHandle(entry.handle, wantType);
-    entry.type = wantType;
-    entry.driven = false;
-    // A type change recomputes the mass from the shapes: centre back to the
-    // point.
-    if (entry.dynamic())
-      applyBodyMass(world, entry.handle, entry.props, entry.volume);
+  if (retypeBody(world, entry, wantType))
     ++c.retyped;
-  }
   entry.animated = animated;
 
   const Box3DBodyPose &cur = s.cur;

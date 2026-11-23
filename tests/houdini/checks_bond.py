@@ -24,6 +24,7 @@ from b3dtest import (
     solver_for,
     sop_solver,
     step,
+    threshold,
 )
 from checks_constraints import broken_count
 
@@ -77,20 +78,6 @@ def first_broken(dop, frames):
         if (broken_count(sim) or 0) >= 1:
             return f
     return None
-
-
-def threshold(breaks, lo, hi, rounds=12):
-    """The strength at which `breaks(strength)` flips from True to False, by bisection in log space (None: it does
-    not flip between lo and hi)."""
-    if not breaks(lo) or breaks(hi):
-        return None
-    for _ in range(rounds):
-        mid = (lo * hi) ** 0.5
-        if breaks(mid):
-            lo = mid
-        else:
-            hi = mid
-    return hi
 
 
 def tag(prefix):

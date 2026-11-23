@@ -100,7 +100,7 @@ extern/box3d/         Box3D submodule, the author's fork (MysteryPancake/Box3D-F
 icons/box3d.svg     Node icon; the build copies it to config/Icons as DOP_<node name>.svg for every node
 src/                  The include root: includes are written "core/Box3DWorld.h" (bare name within a folder)
   core/               Houdini-free; built as b3dop_core and covered by the tests
-    Box3DMath.h         Header-only: unit constants, finite checks, small copies, quaternion helpers, xformPoint
+    Box3DMath.h         Header-only: unit constants, finite checks, small copies, dot / cross / length of 3-vectors, quaternion helpers, xformPoint
     Box3DShapes.h       Header-only: shape math, packed-prim matrices, hashing
     Box3DQuadrics.h     Header-only: surface points for Houdini's quadric primitives (Sphere, Tube, Circle, Metaball)
     Box3DJoints.h       Header-only: joint types, JointSettings, the joint parameter table
@@ -141,7 +141,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DJointNetwork.h What those two share: attribute names, network geometry and fingerprint helpers
     Box3DAffectors.*    Affector objects (Static Object DOP etc.) -> static colliders
     Box3DHoudiniUtil.h  Shared Houdini helpers: writable geometry, object by id, 4x4 to array, Euler to quaternion,
-                        options of SIM data by name (box3dDataOption)
+                        options of SIM data by name (box3dDataOption), the threaded loop (box3dParallelFor)
     Box3DHoudiniTasks.h TaskRunner on Houdini's TBB pool (UT_TaskGroup). Only SIM_Box3DWorld.cpp includes it
 examples/            make_examples.py: builds demo scenes into examples/scenes (git-ignored)
 package/             Box3D.json.in: the Houdini package file the build configures
@@ -154,7 +154,8 @@ tools/               make_assets.py (runs the four asset builders in one hython,
 docs/agents/         Technical notes by area; CLAUDE.md is the index ("Where to look")
 tests/
   TestUtil.h          CHECK macro and failure counter shared by the core tests
-  KeyedWorld.h        Test-only Box3DWorld subclass: bodies by caller-chosen id, over the handle API
+  WorldTestUtil.h     Box body, joint frame, position and step helpers for the tests that build a Box3DWorld
+  KeyedWorld.h        Test-only Box3DWorld subclass: bodies by caller-chosen id, over the handle API (and the toppling box grid the thread tests share)
   core_smoke.cpp      Version print + world create/destroy
   core_physics.cpp    Unit + physics checks: the case list, main and the basic body cases (CHECK macro, nonzero exit on failure)
   physics_shapes.cpp  Physics cases for shapes, hulls, primitive overrides and extents (declared in PhysicsCases.h)

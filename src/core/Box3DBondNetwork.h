@@ -30,6 +30,7 @@
 // bond) but consistent, which conjugate gradient handles.
 #pragma once
 
+#include "core/Box3DMath.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -92,12 +93,6 @@ struct BondRegularization {
   double rotation = 0.0;
 };
 
-inline void cross(const double a[3], const double b[3], double out[3]) {
-  out[0] = a[1] * b[2] - a[2] * b[1];
-  out[1] = a[2] * b[0] - a[0] * b[2];
-  out[2] = a[0] * b[1] - a[1] * b[0];
-}
-
 // What one link does to the generalized displacement x (u, theta per node):
 // the force and couple on node b (everything on node a is the opposite, with
 // the moment about its own centre).
@@ -116,8 +111,8 @@ inline LinkResponse linkResponse(const BondLink &l,
     rb[i] = l.anchor[i] - nodes[static_cast<size_t>(l.b)].pos[i];
   }
   double tb[3], ta[3];
-  cross(xb + 3, rb, tb);
-  cross(xa + 3, ra, ta);
+  cross3(xb + 3, rb, tb);
+  cross3(xa + 3, ra, ta);
   LinkResponse r;
   for (int i = 0; i < 3; ++i) {
     const double d = xb[i] + tb[i] - xa[i] - ta[i];
@@ -136,7 +131,7 @@ inline void supportForce(const BondSupport &s,
   double r[3], t[3];
   for (int i = 0; i < 3; ++i)
     r[i] = s.pos[i] - nodes[static_cast<size_t>(s.node)].pos[i];
-  cross(xn + 3, r, t);
+  cross3(xn + 3, r, t);
   double d[3];
   double dn = 0.0;
   for (int i = 0; i < 3; ++i) {
@@ -166,8 +161,8 @@ inline void applyNetwork(const std::vector<BondNode> &nodes,
       rb[i] = l.anchor[i] - nodes[static_cast<size_t>(l.b)].pos[i];
       negF[i] = -r.f[i];
     }
-    cross(rb, r.f, tauB);
-    cross(ra, negF, tauA);
+    cross3(rb, r.f, tauB);
+    cross3(ra, negF, tauA);
     double *ya = &y[6 * static_cast<size_t>(l.a)];
     double *yb = &y[6 * static_cast<size_t>(l.b)];
     for (int i = 0; i < 3; ++i) {
@@ -185,7 +180,7 @@ inline void applyNetwork(const std::vector<BondNode> &nodes,
     supportForce(s, nodes, x, f);
     for (int i = 0; i < 3; ++i)
       r[i] = s.pos[i] - nodes[static_cast<size_t>(s.node)].pos[i];
-    cross(r, f, tau);
+    cross3(r, f, tau);
     double *yn = &y[6 * static_cast<size_t>(s.node)];
     for (int i = 0; i < 3; ++i) {
       yn[i] -= f[i];

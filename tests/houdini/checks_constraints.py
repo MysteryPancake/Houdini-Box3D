@@ -10,6 +10,7 @@ import hou
 
 from b3dtest import (
     box_sop,
+    four_points_at_height,
     GROUND,
     box3d_data,
     box3d_solver,
@@ -445,18 +446,7 @@ def test_other_rbd_objects():
     for type_name, label in (("rbdpointobject", "RBD Point Object"), ("rbdfracturedobject", "RBD Fractured Object")):
         dop = new_dopnet(type_name)
         if type_name == "rbdpointobject":
-            def build(geo):
-                # Four points (a 2 x 2 grid, 10 apart) at y = 3, run over points so the wrangle
-                # has an input (a detail wrangle with no input made no objects).
-                grid = create(geo, "grid")
-                set_parm(grid, ["size"], (10, 10))
-                set_parm(grid, ["rows"], 2)
-                set_parm(grid, ["cols"], 2)
-                wr = create(geo, "attribwrangle")
-                wr.setInput(0, grid)
-                set_parm(wr, ["class"], 2)
-                set_parm(wr, ["snippet"], "@P.y = 3;")
-                return wr
+            build = four_points_at_height
         else:
             def build(geo):
                 a = create(geo, "box")

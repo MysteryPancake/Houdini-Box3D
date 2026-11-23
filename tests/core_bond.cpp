@@ -1,6 +1,7 @@
 // Bonds (core/Box3DBond.h): the stress ratio of a load, the tear impulse, the
 // bond's area, and a Bond joint under a hanging weight read as tension.
 #include "TestUtil.h"
+#include "WorldTestUtil.h"
 #include "core/Box3DBond.h"
 #include "core/Box3DBondNetwork.h"
 #include "core/Box3DWorld.h"
@@ -12,30 +13,6 @@
 using namespace b3dop;
 
 namespace {
-
-const float kQid[4] = {0, 0, 0, 1};
-const float kDt = 1.0f / 60.0f;
-
-BodyHandle box(Box3DWorld &w, double x, double y, double z,
-               BodySettings::Type type, float half) {
-  BodySettings b;
-  b.type = type;
-  const double p[3] = {x, y, z};
-  const BodyHandle h = w.createBody(b, p, kQid);
-  ShapeSpec s;
-  s.type = ShapeType::Box;
-  s.halfExtents[0] = s.halfExtents[1] = s.halfExtents[2] = half;
-  w.createShape(h, b, s);
-  return h;
-}
-
-JointFrame frameAt(double x, double y, double z) {
-  JointFrame f;
-  f.pos[0] = x;
-  f.pos[1] = y;
-  f.pos[2] = z;
-  return f;
-}
 
 // A box of the given half sizes at (x, y, z).
 BodyHandle boxOf(Box3DWorld &w, double x, double y, double z, float hx,
@@ -231,9 +208,9 @@ int main() {
     CHECK(w.create(ws));
     const BodyHandle a = box(w, 0, 5, 0, BodySettings::Type::Static, 0.5f);
     const BodyHandle b = box(w, 0, 4, 0, BodySettings::Type::Dynamic, 0.5f);
-    const JointHandle j = w.createJoint(
-        JointType::Bond, a, b, frameAt(0, 4.5, 0), frameAt(0, 4.5, 0),
-        Box3DWorld::defaultJointSettings(JointType::Bond));
+    const JointHandle j =
+        w.createJoint(JointType::Bond, a, b, frame(0, 4.5, 0), frame(0, 4.5, 0),
+                      Box3DWorld::defaultJointSettings(JointType::Bond));
     CHECK(j != 0 && w.isJointValid(j));
     for (int i = 0; i < 120; ++i)
       w.step(kDt);

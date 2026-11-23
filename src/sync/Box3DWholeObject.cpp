@@ -112,21 +112,31 @@ void readInertiaType(const SIM_Data *state, b3dop::RbdObjectSettings &r) {
   }
 }
 
-// Full side lengths of the geometry's bounding box in object space.
-void objectBoundsExtents(const GU_Detail *gdp, const double m[16],
-                         float extents[3]) {
+// The points of the geometry's pieces in object space (`m` applied), as xyz
+// triples.
+std::vector<double> objectPoints(const GU_Detail *gdp, const double m[16]) {
   PieceGroup g;
   collectPieces(gdp, g);
-  double lo[3] = {1e300, 1e300, 1e300}, hi[3] = {-1e300, -1e300, -1e300};
+  std::vector<double> out;
   for (const NamedPiece &np : g.pieces)
     for (size_t k = 0; k + 2 < np.xyz.size(); k += 3) {
       const double p[3] = {np.xyz[k], np.xyz[k + 1], np.xyz[k + 2]};
       double o[3];
       b3dop::xformPoint(m, p, o);
-      for (int c = 0; c < 3; ++c) {
-        lo[c] = std::min(lo[c], o[c]);
-        hi[c] = std::max(hi[c], o[c]);
-      }
+      out.insert(out.end(), o, o + 3);
+    }
+  return out;
+}
+
+// Full side lengths of the geometry's bounding box in object space.
+void objectBoundsExtents(const GU_Detail *gdp, const double m[16],
+                         float extents[3]) {
+  double lo[3] = {1e300, 1e300, 1e300}, hi[3] = {-1e300, -1e300, -1e300};
+  const std::vector<double> pts = objectPoints(gdp, m);
+  for (size_t k = 0; k + 2 < pts.size(); k += 3)
+    for (int c = 0; c < 3; ++c) {
+      lo[c] = std::min(lo[c], pts[k + static_cast<size_t>(c)]);
+      hi[c] = std::max(hi[c], pts[k + static_cast<size_t>(c)]);
     }
   for (int c = 0; c < 3; ++c)
     extents[c] = hi[c] >= lo[c] ? static_cast<float>(hi[c] - lo[c]) : 0.0f;
@@ -298,17 +308,11 @@ void boundsCentre(const GU_Detail *gdp, const double m[16], double centre[3]) {
 // centre when no hull can be made (flat or fewer than four points).
 void objectCentreOfMass(const GU_Detail *gdp, const double m[16],
                         double centre[3]) {
-  PieceGroup g;
-  collectPieces(gdp, g);
+  const std::vector<double> all = objectPoints(gdp, m);
   std::vector<float> pts;
-  for (const NamedPiece &np : g.pieces)
-    for (size_t k = 0; k + 2 < np.xyz.size(); k += 3) {
-      const double p[3] = {np.xyz[k], np.xyz[k + 1], np.xyz[k + 2]};
-      double o[3];
-      b3dop::xformPoint(m, p, o);
-      for (double d : o)
-        pts.push_back(static_cast<float>(d));
-    }
+  pts.reserve(all.size());
+  for (const double d : all)
+    pts.push_back(static_cast<float>(d));
   if (!b3dop::Box3DWorld::hullCentroid(
           pts.data(), static_cast<int>(pts.size() / 3), centre))
     boundsCentre(gdp, m, centre);
@@ -449,14 +453,8 @@ void updateWholeObjectBody(Box3DBodyMirror &entry, const WholeObjectScan &s) {
 
   const b3dop::BodySettings::Type wantType =
       entry.shapeless ? b3dop::BodySettings::Type::Static : node.type;
-  if (entry.type != wantType) {
-    world.setTypeByHandle(entry.handle, wantType);
-    entry.type = wantType;
-    entry.driven = false;
-    if (entry.dynamic())
-      applyBodyMass(world, entry.handle, entry.props, entry.volume);
+  if (retypeBody(world, entry, wantType))
     ++s.c.retyped;
-  }
 
   // Position data edited by another node (keyframes, a Position DOP set to Set
   // Always). A kinematic body drives to the new pose in this step, pushing what

@@ -25,6 +25,36 @@ static_assert(
 
 namespace {
 
+// Every shape of a body (newest first), into a reused scratch vector.
+int bodyShapes(b3BodyId id, std::vector<b3ShapeId> &out) {
+  const int n = b3Body_GetShapeCount(id);
+  out.resize(static_cast<size_t>(n > 0 ? n : 0));
+  return n > 0 ? b3Body_GetShapes(id, out.data(), n) : 0;
+}
+
+// Shape id -> creation index of the first `got` of `shapes` (newest first),
+// sorted by id and searched with findShapeIndex. (A hash map cleared for every
+// call costs its bucket count, which a large compound left behind.)
+using ShapeIndex = std::vector<std::pair<uint64_t, int>>;
+
+void indexShapes(const std::vector<b3ShapeId> &shapes, int got,
+                 ShapeIndex &out) {
+  out.clear();
+  for (int i = 0; i < got; ++i)
+    out.emplace_back(b3StoreShapeId(shapes[static_cast<size_t>(i)]),
+                     got - 1 - i);
+  std::sort(out.begin(), out.end());
+}
+
+// The entry of `key` in `index`, or null.
+const std::pair<uint64_t, int> *findShapeIndex(const ShapeIndex &index,
+                                               uint64_t key) {
+  const auto it = std::lower_bound(index.begin(), index.end(), key,
+                                   [](const std::pair<uint64_t, int> &e,
+                                      uint64_t k) { return e.first < k; });
+  return it == index.end() || it->first != key ? nullptr : &*it;
+}
+
 // ---- the process-wide hull cache
 // Box3D adds a hull to the world's own database when a shape is made (identical
 // hulls share one clone), so entries here are only needed until then: they can
@@ -662,9 +692,8 @@ int Box3DWorld::copyShapesByHandle(BodyHandle src, BodyHandle dst,
       !finite3(rotXYZW))
     return -1;
   const b3BodyId from = b3LoadBodyId(src), to = b3LoadBodyId(dst);
-  const int count = b3Body_GetShapeCount(from);
-  std::vector<b3ShapeId> shapes(static_cast<size_t>(count));
-  const int got = count > 0 ? b3Body_GetShapes(from, shapes.data(), count) : 0;
+  std::vector<b3ShapeId> shapes;
+  const int got = bodyShapes(from, shapes);
   // Box3D lists shapes newest first: copy in creation order.
   std::reverse(shapes.begin(), shapes.begin() + got);
   for (int i = 0; i < got; ++i) {
@@ -1159,9 +1188,8 @@ bool Box3DWorld::bodyShapeOutlines(BodyHandle h,
   const b3BodyId body = b3LoadBodyId(h);
   if (!b3Body_IsValid(body))
     return false;
-  const int n = b3Body_GetShapeCount(body);
-  std::vector<b3ShapeId> shapes(static_cast<size_t>(std::max(n, 0)));
-  const int got = n > 0 ? b3Body_GetShapes(body, shapes.data(), n) : 0;
+  std::vector<b3ShapeId> shapes;
+  const int got = bodyShapes(body, shapes);
   auto put3 = [](float *dst, b3Vec3 v) {
     dst[0] = static_cast<float>(v.x);
     dst[1] = static_cast<float>(v.y);
@@ -1302,7 +1330,7 @@ bool fitOrientedUncached(ShapeType type, const float *xyz, int count,
         u[0] -= dn * n.x;
         u[1] -= dn * n.y;
         u[2] -= dn * n.z;
-        const float len = std::sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+        const float len = length3(u);
         if (len > 1e-6f) {
           float axes[3][3] = {
               {u[0] / len, u[1] / len, u[2] / len}, {n.x, n.y, n.z}, {0, 0, 0}};
@@ -1425,13 +1453,6 @@ BodySettings::Type Box3DWorld::typeByHandle(BodyHandle h) const {
 // ---- changes to existing bodies -------------------------------------------
 
 namespace {
-
-// Every shape of a body, into a reused scratch vector.
-int bodyShapes(b3BodyId id, std::vector<b3ShapeId> &out) {
-  const int n = b3Body_GetShapeCount(id);
-  out.resize(static_cast<size_t>(n > 0 ? n : 0));
-  return n > 0 ? b3Body_GetShapes(id, out.data(), n) : 0;
-}
 
 thread_local std::vector<b3ShapeId> tShapes;
 
@@ -1742,7 +1763,7 @@ bool Box3DWorld::applyMassByHandle(BodyHandle h, float density,
     // Parallel axis: I_o = I_c + m (|d|^2 E - d d^T). b3Matrix3 is three
     // columns.
     const float d[3] = {md.center.x, md.center.y, md.center.z};
-    const float dd = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+    const float dd = dot3(d, d);
     b3Vec3 *col[3] = {&md.inertia.cx, &md.inertia.cy, &md.inertia.cz};
     for (int c = 0; c < 3; ++c) {
       auto shift = [&](int r) {
@@ -1973,35 +1994,24 @@ int Box3DWorld::contactImpulsesByShape(
   if (!h)
     return 0;
   const b3BodyId id = b3LoadBodyId(h);
-  const int count = b3Body_GetShapeCount(id);
-  if (count <= 0)
-    return 0;
-  // Box3D lists a body's shapes newest first: reverse that into creation order.
   thread_local std::vector<b3ShapeId> shapes;
-  shapes.resize(static_cast<size_t>(count));
-  const int got = b3Body_GetShapes(id, shapes.data(), count);
+  const int got = bodyShapes(id, shapes);
+  if (got <= 0)
+    return 0;
   out.assign(static_cast<size_t>(got), 0.0f);
   thread_local std::vector<b3ContactData> data;
   const int n = fetchContacts(id, data);
   if (n <= 0)
     return got; // no contacts: no need to index the shapes
-  // Shape id -> creation index: sorted by id and searched. (A hash map cleared
-  // for every call costs its bucket count, which a large compound left behind.)
-  thread_local std::vector<std::pair<uint64_t, int>> indexOf;
-  indexOf.clear();
-  for (int i = 0; i < got; ++i)
-    indexOf.emplace_back(b3StoreShapeId(shapes[static_cast<size_t>(i)]),
-                         got - 1 - i);
-  std::sort(indexOf.begin(), indexOf.end());
+  thread_local ShapeIndex indexOf;
+  indexShapes(shapes, got, indexOf);
   for (int i = 0; i < n; ++i) {
     const b3ContactData &cd = data[static_cast<size_t>(i)];
     const bool aIsMine = sameBody(b3Shape_GetBody(cd.shapeIdA), id);
     const b3ShapeId mine = aIsMine ? cd.shapeIdA : cd.shapeIdB;
     const uint64_t mineKey = b3StoreShapeId(mine);
-    const auto it = std::lower_bound(indexOf.begin(), indexOf.end(), mineKey,
-                                     [](const std::pair<uint64_t, int> &e,
-                                        uint64_t k) { return e.first < k; });
-    if (it == indexOf.end() || it->first != mineKey)
+    const auto *it = findShapeIndex(indexOf, mineKey);
+    if (!it)
       continue;
     if (ignore && (*ignore)(b3StoreBodyId(
                       b3Shape_GetBody(aIsMine ? cd.shapeIdB : cd.shapeIdA))))
@@ -2024,12 +2034,10 @@ int Box3DWorld::hullFacesByHandle(BodyHandle h,
   if (!h)
     return 0;
   const b3BodyId id = b3LoadBodyId(h);
-  const int count = b3Body_GetShapeCount(id);
-  if (count <= 0)
-    return 0;
   thread_local std::vector<b3ShapeId> shapes;
-  shapes.resize(static_cast<size_t>(count));
-  const int got = b3Body_GetShapes(id, shapes.data(), count);
+  const int got = bodyShapes(id, shapes);
+  if (got <= 0)
+    return 0;
   const b3WorldTransform t = b3Body_GetTransform(id);
   for (int s = 0; s < got; ++s) {
     if (b3Shape_GetType(shapes[static_cast<size_t>(s)]) != b3_hullShape)
@@ -2074,31 +2082,23 @@ int Box3DWorld::contactSupportsByHandle(
   if (!h)
     return 0;
   const b3BodyId id = b3LoadBodyId(h);
-  const int count = b3Body_GetShapeCount(id);
-  if (count <= 0)
-    return 0;
   thread_local std::vector<b3ShapeId> shapes;
-  shapes.resize(static_cast<size_t>(count));
-  const int got = b3Body_GetShapes(id, shapes.data(), count);
+  const int got = bodyShapes(id, shapes);
+  if (got <= 0)
+    return 0;
   thread_local std::vector<b3ContactData> data;
   const int n = fetchContacts(id, data);
   if (n <= 0)
     return 0;
-  thread_local std::vector<std::pair<uint64_t, int>> indexOf;
-  indexOf.clear();
-  for (int i = 0; i < got; ++i)
-    indexOf.emplace_back(b3StoreShapeId(shapes[static_cast<size_t>(i)]),
-                         got - 1 - i);
-  std::sort(indexOf.begin(), indexOf.end());
+  thread_local ShapeIndex indexOf;
+  indexShapes(shapes, got, indexOf);
   for (int i = 0; i < n; ++i) {
     const b3ContactData &cd = data[static_cast<size_t>(i)];
     const bool aIsMine = sameBody(b3Shape_GetBody(cd.shapeIdA), id);
     const uint64_t mineKey =
         b3StoreShapeId(aIsMine ? cd.shapeIdA : cd.shapeIdB);
-    const auto it = std::lower_bound(indexOf.begin(), indexOf.end(), mineKey,
-                                     [](const std::pair<uint64_t, int> &e,
-                                        uint64_t k) { return e.first < k; });
-    if (it == indexOf.end() || it->first != mineKey)
+    const auto *it = findShapeIndex(indexOf, mineKey);
+    if (!it)
       continue;
     if (ignore && (*ignore)(b3StoreBodyId(
                       b3Shape_GetBody(aIsMine ? cd.shapeIdB : cd.shapeIdA))))

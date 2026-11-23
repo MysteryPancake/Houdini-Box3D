@@ -3,6 +3,7 @@
 // Glued groups as compound bodies: see Box3DCompoundSync.h. The maths is in
 // core/Box3DCompound.h; this file keeps the groups in step with the bodies.
 #include "Box3DCompoundSync.h"
+#include "Box3DHoudiniUtil.h"
 
 #include "Box3DJointSync.h"
 #include "Box3DState.h"
@@ -12,13 +13,11 @@
 #include "core/Box3DMath.h"
 #include "core/Box3DShapes.h"
 
-#include <UT/UT_ParallelUtil.h>
-
 #include <algorithm>
-#include <limits>
 #include <cmath>
 #include <cstddef>
 #include <functional>
+#include <limits>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -852,6 +851,41 @@ void releasePieces(Box3DSharedState &st, Box3DCompound &c,
                    std::vector<b3dop::BodyMove> &moves,
                    std::vector<int> &nodes);
 
+// Takes the pieces of `c` out of it (releasePieces) that reach the box
+// [lo, hi] grown by `halo`: a piece counts when its centre of mass is within
+// its full bounds diagonal of the box (the centre can be at a corner).
+void releaseWithin(Box3DSharedState &st, Box3DCompound &c, const double lo[3],
+                   const double hi[3], double halo, double until,
+                   std::vector<b3dop::BodyMove> &moves,
+                   std::vector<int> &nodes) {
+  // A piece gone or edited: syncCompounds dissolves the compound.
+  if (resolveMembers(st, c))
+    return;
+  Pose cp;
+  if (!bodyPose(st.world, c.body, cp))
+    return;
+  std::vector<int> cid(c.members.size(), 0); // 0: stays, 1: leaves
+  size_t leaving = 0;
+  for (size_t k = 0; k < c.members.size(); ++k) {
+    const Box3DCompoundMember &m = c.members[k];
+    if (!m.entry)
+      continue;
+    double com[3];
+    centreOf(placed(cp, m), m, com);
+    const double reach = halo + 2.0 * static_cast<double>(m.radius);
+    bool inside = true;
+    for (int i = 0; i < 3; ++i)
+      inside = inside && com[i] >= lo[i] - reach && com[i] <= hi[i] + reach;
+    if (inside) {
+      cid[k] = 1;
+      ++leaving;
+    }
+  }
+  if (leaving == 0)
+    return;
+  releasePieces(st, c, cid, leaving, until, moves, nodes);
+}
+
 // Takes the pieces of `c` that a body is about to plow through out of it and
 // holds them until `until`: the body's bounds swept along its velocity relative
 // to the compound until its centre leaves the compound's bounds
@@ -881,35 +915,7 @@ void releaseNear(Box3DSharedState &st, Box3DCompound &c,
   for (int i = 0; i < 3; ++i)
     if (pathHi[i] + halo < lo[i] || pathLo[i] - halo > hi[i])
       return;
-  // A piece gone or edited: syncCompounds dissolves the compound.
-  if (resolveMembers(st, c))
-    return;
-  Pose cp;
-  if (!bodyPose(st.world, c.body, cp))
-    return;
-  std::vector<int> cid(c.members.size(), 0); // 0: stays, 1: leaves
-  size_t leaving = 0;
-  for (size_t k = 0; k < c.members.size(); ++k) {
-    const Box3DCompoundMember &m = c.members[k];
-    if (!m.entry)
-      continue;
-    // A piece counts when any of its bounds reach the box: its centre of mass
-    // within its full bounds diagonal of it (the centre can be at a corner).
-    double com[3];
-    centreOf(placed(cp, m), m, com);
-    const double reach = halo + 2.0 * static_cast<double>(m.radius);
-    bool inside = true;
-    for (int i = 0; i < 3; ++i)
-      inside =
-          inside && com[i] >= pathLo[i] - reach && com[i] <= pathHi[i] + reach;
-    if (inside) {
-      cid[k] = 1;
-      ++leaving;
-    }
-  }
-  if (leaving == 0)
-    return;
-  releasePieces(st, c, cid, leaving, until, moves, nodes);
+  releaseWithin(st, c, pathLo, pathHi, halo, until, moves, nodes);
 }
 
 // Takes the pieces of `c` marked 1 in `cid` out of it and holds them until
@@ -977,32 +983,7 @@ void releaseTowards(Box3DSharedState &st, Box3DCompound &c, BodyHandle target,
     if (overLo[i] > overHi[i])
       return;
   }
-  if (resolveMembers(st, c))
-    return;
-  Pose cp;
-  if (!bodyPose(st.world, c.body, cp))
-    return;
-  std::vector<int> cid(c.members.size(), 0); // 0: stays, 1: leaves
-  size_t leaving = 0;
-  for (size_t k = 0; k < c.members.size(); ++k) {
-    const Box3DCompoundMember &m = c.members[k];
-    if (!m.entry)
-      continue;
-    double com[3];
-    centreOf(placed(cp, m), m, com);
-    const double reach = 2.0 * static_cast<double>(m.radius);
-    bool inside = true;
-    for (int i = 0; i < 3; ++i)
-      inside =
-          inside && com[i] >= overLo[i] - reach && com[i] <= overHi[i] + reach;
-    if (inside) {
-      cid[k] = 1;
-      ++leaving;
-    }
-  }
-  if (leaving == 0)
-    return;
-  releasePieces(st, c, cid, leaving, until, moves, nodes);
+  releaseWithin(st, c, overLo, overHi, 0.0, until, moves, nodes);
 }
 
 // The impulse a bond takes to break: the Glue's Strength over
@@ -1410,9 +1391,6 @@ void solveCompoundBonds(Box3DSharedState &st, float dt) {
       x.bondLoadTick = st.hitsTick;
     }
   }
-  const auto cross = [](const double a[3], const double b[3], double out[3]) {
-    b3dop::compound_detail::cross(a, b, out);
-  };
   std::vector<BondJob> jobs;
   for (auto &entry : byCompound) {
     Box3DCompound &c = *entry.first;
@@ -1460,9 +1438,9 @@ void solveCompoundBonds(Box3DSharedState &st, float dt) {
       // rotational inertia (a block of its radius) times the angular
       // acceleration.
       double ar[3], wr[3], wwr[3];
-      cross(alpha, r, ar);
-      cross(omega, r, wr);
-      cross(omega, wr, wwr);
+      b3dop::cross3(alpha, r, ar);
+      b3dop::cross3(omega, r, wr);
+      b3dop::cross3(omega, wr, wwr);
       const double inertia = 2.0 / 9.0 * m.mass * m.radius * m.radius;
       for (int i = 0; i < 3; ++i) {
         const double a = aCm[i] + ar[i] + wwr[i];
@@ -1483,7 +1461,7 @@ void solveCompoundBonds(Box3DSharedState &st, float dt) {
                            fb2.pos[2] - node.pos[2]};
       const double f[3] = {fb.force[0], fb.force[1], fb.force[2]};
       double rxf[3];
-      cross(r, f, rxf);
+      b3dop::cross3(r, f, rxf);
       for (int i = 0; i < 3; ++i) {
         node.force[i] -= f[i];
         node.torque[i] -= static_cast<double>(fb.torque[i]) + rxf[i];
@@ -1513,7 +1491,7 @@ void solveCompoundBonds(Box3DSharedState &st, float dt) {
         const double r[3] = {n.pos[0] - ref[0], n.pos[1] - ref[1],
                              n.pos[2] - ref[2]};
         double rxf[3];
-        cross(r, n.force, rxf);
+        b3dop::cross3(r, n.force, rxf);
         for (int i = 0; i < 3; ++i)
           sumT[i] += n.torque[i] + rxf[i];
       }
@@ -1616,16 +1594,7 @@ void solveCompoundBonds(Box3DSharedState &st, float dt) {
                                          kBondSolveTolerance,
                                          b3dop::kBondSupportPasses, &j.warm);
   };
-  if (jobs.size() < kMinParallelBondSolves) {
-    for (size_t i = 0; i < jobs.size(); ++i)
-      solve(i);
-  } else {
-    UTparallelFor(UT_BlockedRange<size_t>(0, jobs.size()),
-                  [&solve](const UT_BlockedRange<size_t> &r) {
-                    for (size_t i = r.begin(); i != r.end(); ++i)
-                      solve(i);
-                  });
-  }
+  box3dParallelFor(jobs.size(), solve, kMinParallelBondSolves);
   for (BondJob &j : jobs) {
     j.compound->bondWarm = std::move(j.warm);
     // A solve that did not stay finite gives no load this step.
@@ -1692,9 +1661,10 @@ bool compoundPieceForce(Box3DSharedState &st, const Box3DBodyMirror &piece,
   centreOf(pp, m, at);
   const double r[3] = {at[0] - cs.com[0], at[1] - cs.com[1], at[2] - cs.com[2]};
   const double f[3] = {force[0], force[1], force[2]};
-  torque[0] += static_cast<float>(r[1] * f[2] - r[2] * f[1]);
-  torque[1] += static_cast<float>(r[2] * f[0] - r[0] * f[2]);
-  torque[2] += static_cast<float>(r[0] * f[1] - r[1] * f[0]);
+  double rxf[3];
+  b3dop::cross3(r, f, rxf);
+  for (int i = 0; i < 3; ++i)
+    torque[i] += static_cast<float>(rxf[i]);
   target = c.body;
   return true;
 }

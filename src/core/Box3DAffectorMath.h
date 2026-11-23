@@ -5,6 +5,7 @@
 // translation in the last row).
 #pragma once
 
+#include "core/Box3DMath.h"
 #include <cmath>
 
 namespace b3dop {
@@ -22,14 +23,12 @@ inline bool decomposeRigid(const double m[16], double pos[3], float quat[4],
   // Rows of the upper 3x3 are the images of the axes: they must be unit length
   // and orthogonal.
   const double *r0 = m, *r1 = m + 4, *r2 = m + 8;
-  auto dot = [](const double *a, const double *b) {
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-  };
-  if (std::fabs(dot(r0, r0) - 1.0) > tol ||
-      std::fabs(dot(r1, r1) - 1.0) > tol || std::fabs(dot(r2, r2) - 1.0) > tol)
+  if (std::fabs(dot3(r0, r0) - 1.0) > tol ||
+      std::fabs(dot3(r1, r1) - 1.0) > tol ||
+      std::fabs(dot3(r2, r2) - 1.0) > tol)
     return false;
-  if (std::fabs(dot(r0, r1)) > tol || std::fabs(dot(r0, r2)) > tol ||
-      std::fabs(dot(r1, r2)) > tol)
+  if (std::fabs(dot3(r0, r1)) > tol || std::fabs(dot3(r0, r2)) > tol ||
+      std::fabs(dot3(r1, r2)) > tol)
     return false;
   // Right-handed (a mirror cannot be a body rotation).
   const double det = r0[0] * (r1[1] * r2[2] - r1[2] * r2[1]) -
@@ -94,8 +93,7 @@ inline bool decomposeScaledRigid(const double m[16], double pos[3],
     n[i] = m[i];
   for (int r = 0; r < 3; ++r) {
     double *row = n + 4 * r;
-    const double len =
-        std::sqrt(row[0] * row[0] + row[1] * row[1] + row[2] * row[2]);
+    const double len = length3(row);
     if (!(len > 1e-6) || !std::isfinite(len))
       return false;
     for (int c = 0; c < 3; ++c)

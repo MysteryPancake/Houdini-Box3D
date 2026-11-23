@@ -91,26 +91,7 @@ static bool run(int workers, Pool *pool, std::vector<double> &out) {
   b3dop::KeyedWorld w;
   if (!w.create(ws, pool ? std::make_shared<PoolRunner>(*pool) : nullptr))
     return false;
-  const float qid[4] = {0, 0, 0, 1};
-  b3dop::BodySettings ground;
-  ground.type = b3dop::BodySettings::Type::Static;
-  const double gp[3] = {0, -0.5, 0};
-  const float gh[3] = {60, 0.5f, 60};
-  w.addBody(1, ground, gp, qid);
-  w.addBoxShape(1, gh);
-  const float bh[3] = {0.5f, 0.5f, 0.5f};
-  uint64_t id = 100;
-  b3dop::TestRng rng(1);
-  for (int y = 0; y < 8; ++y)
-    for (int x = 0; x < 8; ++x)
-      for (int z = 0; z < 8; ++z) {
-        const double p[3] = {(x - 4) * 1.05 + rng.below(100) * 0.0004,
-                             0.5 + y * 1.02,
-                             (z - 4) * 1.05 + rng.below(100) * 0.0004};
-        w.addBody(id, b3dop::BodySettings(), p, qid);
-        w.addBoxShape(id, bh);
-        ++id;
-      }
+  const uint64_t id = b3dop::addToppleGrid(w, 8);
   for (int i = 0; i < 90; ++i)
     w.step(1.0f / 60.0f);
   for (uint64_t b = 100; b < id; ++b) {

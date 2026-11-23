@@ -85,11 +85,6 @@ warn = b3d_hda.warner("make_constraint_properties_sop")
 MESSAGE_NODES = ["warn_if_no_constraints"]
 
 
-def first_sentence(text):
-    m = re.match(r"(.+?[.;])(\s|$)", text or "")
-    return m.group(1) if m else (text or "")
-
-
 def collect(dopnet):
     """The settings, from the relationship nodes: (common, per_type). Each is a list of (template, kind),
     kind f / i / v (the attribute's type; the attribute is named like the template). `common` is the
@@ -218,7 +213,7 @@ def setting_templates(rows, prefix, names, scalable=True, gate=""):
         pname = prefix + pt.name()
         value = pt.clone()
         value.setName(pname)
-        value.setHelp(f"{first_sentence(pt.help())} Writes the {pt.name()} primitive attribute.")
+        value.setHelp(f"{b3d_hda.first_sentence(pt.help())} Writes the {pt.name()} primitive attribute.")
         box = hou.ToggleParmTemplate(f"add{pname}", value.label(), default_value=False, join_with_next=True,
                                      help="Write this setting onto the constraints.")
         box.hideLabel(True)
@@ -843,16 +838,7 @@ def build(out_path):
     sub.setParmTemplateGroup(ui(common, per_type))
     build_network(sub, rows)
 
-    if os.path.exists(out_path):
-        try:
-            hou.hda.uninstallFile(out_path)
-        except hou.OperationFailed:
-            pass
-        os.remove(out_path)
-    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
-
-    asset = sub.createDigitalAsset(name=TYPE_NAME, hda_file_name=out_path, description=LABEL,
-                                   min_num_inputs=0, max_num_inputs=len(LABELS))
+    asset = b3d_hda.create_asset(sub, out_path, TYPE_NAME, LABEL, 0, len(LABELS))
     definition = asset.type().definition()
     definition.setParmTemplateGroup(ui(common, per_type))
     definition.setMaxNumOutputs(len(LABELS))

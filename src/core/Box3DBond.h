@@ -14,6 +14,7 @@
 // / 6.
 #pragma once
 
+#include "core/Box3DMath.h"
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -75,18 +76,16 @@ struct BondLoad {
 inline BondLoad bondLoadOf(const float force[3], const float torque[3],
                            const float normal[3]) {
   BondLoad l;
-  const float fn =
-      force[0] * normal[0] + force[1] * normal[1] + force[2] * normal[2];
-  const float tn =
-      torque[0] * normal[0] + torque[1] * normal[1] + torque[2] * normal[2];
+  const float fn = dot3(force, normal);
+  const float tn = dot3(torque, normal);
   float fs[3], ts[3];
   for (int i = 0; i < 3; ++i) {
     fs[i] = force[i] - fn * normal[i];
     ts[i] = torque[i] - tn * normal[i];
   }
   l.tension = -fn;
-  l.shear = std::sqrt(fs[0] * fs[0] + fs[1] * fs[1] + fs[2] * fs[2]);
-  l.bending = std::sqrt(ts[0] * ts[0] + ts[1] * ts[1] + ts[2] * ts[2]);
+  l.shear = length3(fs);
+  l.bending = length3(ts);
   l.twisting = std::fabs(tn);
   return l;
 }
@@ -97,10 +96,8 @@ inline BondLoad bondLoadInPatch(const float force[3], const float torque[3],
                                 const float normal[3], const float u[3],
                                 const float v[3]) {
   BondLoad l = bondLoadOf(force, torque, normal);
-  l.bendingU =
-      std::fabs(torque[0] * u[0] + torque[1] * u[1] + torque[2] * u[2]);
-  l.bendingV =
-      std::fabs(torque[0] * v[0] + torque[1] * v[1] + torque[2] * v[2]);
+  l.bendingU = std::fabs(dot3(torque, u));
+  l.bendingV = std::fabs(dot3(torque, v));
   return l;
 }
 

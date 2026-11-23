@@ -21,29 +21,7 @@ static bool run(int workers, int side, int steps, Result &r) {
   if (!w.create(ws))
     return false;
 
-  const float qid[4] = {0, 0, 0, 1};
-  b3dop::BodySettings ground;
-  ground.type = b3dop::BodySettings::Type::Static;
-  const double gp[3] = {0, -0.5, 0};
-  const float gh[3] = {60, 0.5f, 60};
-  w.addBody(1, ground, gp, qid);
-  w.addBoxShape(1, gh);
-
-  // side x side x side grid of boxes, with a little jitter so they topple
-  const float bh[3] = {0.5f, 0.5f, 0.5f};
-  uint64_t id = 100;
-  b3dop::TestRng rng(1);
-  for (int y = 0; y < side; ++y)
-    for (int x = 0; x < side; ++x)
-      for (int z = 0; z < side; ++z) {
-        const int centre = side / 2; // whole cells: the grid sits on integers
-        const double p[3] = {(x - centre) * 1.05 + rng.below(100) * 0.0004,
-                             0.5 + y * 1.02,
-                             (z - centre) * 1.05 + rng.below(100) * 0.0004};
-        w.addBody(id, b3dop::BodySettings(), p, qid);
-        w.addBoxShape(id, bh);
-        ++id;
-      }
+  const uint64_t id = b3dop::addToppleGrid(w, side);
   r.bodies = static_cast<int>(id - 100);
 
   const auto t0 = std::chrono::steady_clock::now();

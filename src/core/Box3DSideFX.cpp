@@ -90,10 +90,6 @@ void mapSprings(SideFXJoint &j, ConstraintMode mode, float restLength,
   }
 }
 
-float length3(const float v[3]) {
-  return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-}
-
 // Quaternions here are x, y, z, w arrays; Box3D's b3Quat is (v = xyz, s = w).
 b3Quat toB3(const float q[4]) { return b3Quat{{q[0], q[1], q[2]}, q[3]}; }
 
@@ -119,7 +115,7 @@ void twistFrame(const float twistIn[3], const float upIn[3], float q[4]) {
   for (float &c : z)
     c /= lz;
   float x[3] = {upIn[0], upIn[1], upIn[2]};
-  float d = x[0] * z[0] + x[1] * z[1] + x[2] * z[2];
+  float d = dot3(x, z);
   for (int k = 0; k < 3; ++k)
     x[k] -= d * z[k];
   float lx = length3(x);
@@ -127,7 +123,7 @@ void twistFrame(const float twistIn[3], const float upIn[3], float q[4]) {
     // Up parallel to the twist axis (or missing): any perpendicular.
     const float ref[3] = {std::fabs(z[1]) < 0.9f ? 0.0f : 1.0f,
                           std::fabs(z[1]) < 0.9f ? 1.0f : 0.0f, 0.0f};
-    d = ref[0] * z[0] + ref[1] * z[1] + ref[2] * z[2];
+    d = dot3(ref, z);
     for (int k = 0; k < 3; ++k)
       x[k] = ref[k] - d * z[k];
     lx = length3(x);
@@ -258,7 +254,7 @@ void sideFXFrameOffsets(const SideFXJoint &j, const JointFrame &anchorA,
   const double d[3] = {anchorB.pos[0] - anchorA.pos[0],
                        anchorB.pos[1] - anchorA.pos[1],
                        anchorB.pos[2] - anchorA.pos[2]};
-  const double dist = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+  const double dist = length3(d);
   const double sep =
       j.holdSeparation ? dist : static_cast<double>(j.separation);
   if (!(sep > 0.0) || !std::isfinite(sep))

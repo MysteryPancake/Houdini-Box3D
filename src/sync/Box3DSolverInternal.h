@@ -156,16 +156,7 @@ template <class F>
 void parallelForEach(size_t n, const F &f,
                      size_t minParallel = minParallelPoints(),
                      size_t grain = 1) {
-  if (n < minParallel) {
-    for (size_t i = 0; i < n; ++i)
-      f(i);
-    return;
-  }
-  UTparallelFor(UT_BlockedRange<size_t>(0, n, grain),
-                [&f](const UT_BlockedRange<size_t> &r) {
-                  for (size_t i = r.begin(); i != r.end(); ++i)
-                    f(i);
-                });
+  box3dParallelFor(n, f, minParallel, grain);
 }
 
 // Point attributes the solver reads (Houdini RBD names). All optional: invalid
@@ -474,6 +465,10 @@ b3dop::BodySettings::Type wantedType(const b3dop::BodySettings &node,
 void applyBodyMass(b3dop::Box3DWorld &world, b3dop::BodyHandle h,
                    const b3dop::BodyProps &p, float volume,
                    bool setShapeDensity = true);
+// Sets the body's type to `want` if it differs (a dynamic body gets its mass
+// back: a type change recomputes it from the shapes). True if it changed.
+bool retypeBody(b3dop::Box3DWorld &world, Box3DBodyMirror &entry,
+                b3dop::BodySettings::Type want);
 bool startAwakeFor(const b3dop::BodySettings &node, const PointAttrs &a,
                    GA_Offset off);
 

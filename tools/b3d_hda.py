@@ -72,6 +72,26 @@ def warner(tool):
     return warn
 
 
+def create_asset(sub, out_path, type_name, label, min_inputs, max_inputs):
+    """Makes the subnet `sub` the digital asset `type_name` in the file `out_path`, replacing that file (and
+    uninstalling it first when it is loaded). Returns the asset node."""
+    if os.path.exists(out_path):
+        try:
+            hou.hda.uninstallFile(out_path)
+        except hou.OperationFailed:
+            pass
+        os.remove(out_path)
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+    return sub.createDigitalAsset(name=type_name, hda_file_name=out_path, description=label,
+                                  min_num_inputs=min_inputs, max_num_inputs=max_inputs)
+
+
+def first_sentence(text):
+    """The first sentence of a help text (up to a full stop or semicolon), else all of it."""
+    m = re.match(r"(.+?[.;])(\s|$)", text or "")
+    return m.group(1) if m else (text or "")
+
+
 def create(parent, type_names, name):
     """Creates a node of the first of `type_names` (one name, or a list to try in order: the node
     type differs between Houdini versions) that exists in `parent`."""

@@ -195,6 +195,14 @@ void forceScan(Box3DSharedState &st, int objectId) {
 
 namespace {
 
+// The writable Geometry of an object, and the object itself in `obj` (null
+// when it is gone, or its Geometry cannot be written).
+SIM_GeometryCopy *runGeometry(Box3DSharedState &st, SIM_ObjectArray &objects,
+                              int objectId, SIM_Object *&obj) {
+  obj = box3dObjectById(objects, objectId, st.objectsSorted);
+  return obj ? box3dWritableGeometry(*obj, SIM_GEOMETRY_DATANAME) : nullptr;
+}
+
 // f(begin, end) per run of items with the same objectId. Items are first
 // grouped by object, in O(n): a stable bucket pass (items of one object keep
 // their relative order), not a sort, since objects are few and the order of the
@@ -397,13 +405,11 @@ void writePointAttrs(Box3DSharedState &st, SIM_ObjectArray &objects) {
   if (items.empty())
     return;
   forEachObjectRun(items, [&](size_t begin, size_t end) {
-    SIM_Object *obj =
-        box3dObjectById(objects, items[begin].objectId, st.objectsSorted);
-    if (!obj)
-      return;
-    SIM_GeometryCopy *geo = box3dWritableGeometry(*obj, SIM_GEOMETRY_DATANAME);
+    SIM_Object *obj = nullptr;
+    SIM_GeometryCopy *geo =
+        runGeometry(st, objects, items[begin].objectId, obj);
     if (!geo)
-      return; // writeResultsBack warned already
+      return; // the object is gone, or writeResultsBack warned already
     unsigned want = 0;
     for (size_t k = begin; k < end; ++k)
       want |= items[k].flags;
@@ -571,11 +577,9 @@ void deleteDeadPoints(Box3DSharedState &st, SIM_ObjectArray &objects) {
   if (items.empty())
     return;
   forEachObjectRun(items, [&](size_t begin, size_t end) {
-    SIM_Object *obj =
-        box3dObjectById(objects, items[begin].objectId, st.objectsSorted);
-    if (!obj)
-      return;
-    SIM_GeometryCopy *geo = box3dWritableGeometry(*obj, SIM_GEOMETRY_DATANAME);
+    SIM_Object *obj = nullptr;
+    SIM_GeometryCopy *geo =
+        runGeometry(st, objects, items[begin].objectId, obj);
     if (!geo)
       return;
     bool deleted = false;

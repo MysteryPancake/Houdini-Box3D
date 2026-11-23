@@ -365,11 +365,6 @@ def toggle_name(name):
     return f"add{name}"
 
 
-def first_sentence(text):
-    m = re.match(r"(.+?[.;])(\s|$)", text or "")
-    return m.group(1) if m else (text or "")
-
-
 def rewrite_condition(cond, names):
     """Box3D Data's disable-when for one multiparm entry: every name gets the entry's #, and in
     each `{ x == v }` group `addx# == 1` is added for every x that has a checkbox here, so it only
@@ -521,7 +516,7 @@ def ui(folders):
             attr = n if kind in ("f", "i", "v", "w", "s") else kind
             if has_bounds(pt, kind) and value.type() == hou.parmTemplateType.Toggle:
                 value = on_off_slider(value)
-            value.setHelp(help_text or f"{first_sentence(pt.help())} Writes the {attr} point attribute.")
+            value.setHelp(help_text or f"{b3d_hda.first_sentence(pt.help())} Writes the {attr} point attribute.")
             # The checkbox has a real label, hidden (an empty label shows the name instead).
             box = hou.ToggleParmTemplate(f"{toggle_name(n)}#", value.label(), default_value=n in ON_BY_DEFAULT,
                                          join_with_next=True, help="Write this setting onto the pieces.")
@@ -894,16 +889,7 @@ def build(out_path):
     sub.setParmTemplateGroup(spare)
     build_network(sub, rows)
 
-    if os.path.exists(out_path):
-        try:
-            hou.hda.uninstallFile(out_path)
-        except hou.OperationFailed:
-            pass
-        os.remove(out_path)
-    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
-
-    asset = sub.createDigitalAsset(name=TYPE_NAME, hda_file_name=out_path, description=LABEL,
-                                   min_num_inputs=1, max_num_inputs=len(INPUT_LABELS))
+    asset = b3d_hda.create_asset(sub, out_path, TYPE_NAME, LABEL, 1, len(INPUT_LABELS))
     definition = asset.type().definition()
     definition.setParmTemplateGroup(ui(folders))
     definition.setMaxNumOutputs(len(LABELS))

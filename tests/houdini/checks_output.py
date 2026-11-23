@@ -10,6 +10,7 @@ import hou
 
 from b3dtest import (
     GROUND,
+    four_points_at_height,
     Result,
     SetupError,
     box3d_data,
@@ -1202,19 +1203,8 @@ def _point_object_run(tag, bullet):
     data, the solver's and object's messages including inside the asset)."""
     dop = new_dopnet(f"pointobj_{tag}")
 
-    def build(geo):
-        grid = create(geo, "grid")
-        set_parm(grid, ["size"], (10, 10))
-        set_parm(grid, ["rows"], 2)
-        set_parm(grid, ["cols"], 2)
-        wr = create(geo, "attribwrangle")
-        wr.setInput(0, grid)
-        set_parm(wr, ["class"], 2)
-        set_parm(wr, ["snippet"], "@P.y = 3;")
-        return wr
-
     obj = create(dop, "rbdpointobject", "objects")
-    set_parm(obj, ["soppath"], single_object_geo(f"pointobj_{tag}_geo", build))
+    set_parm(obj, ["soppath"], single_object_geo(f"pointobj_{tag}_geo", four_points_at_height))
     # Geometry Path is disabled (and ignored) while the Use / Override menu next to it is 0.
     set_parm(obj, ["usegeo"], 1)
     set_parm(obj, ["geopath", "instancepath", "geometrypath", "instance"],

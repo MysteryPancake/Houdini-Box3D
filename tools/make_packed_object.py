@@ -575,16 +575,7 @@ def build(out_path):
     promoted = [(node, pt) for node, pt in promoted if pt.name() not in (SOP_PATH, transform_parm)]
     b3d_hda.tidy(sub)
 
-    if os.path.exists(out_path):
-        try:
-            hou.hda.uninstallFile(out_path)
-        except hou.OperationFailed:
-            pass
-        os.remove(out_path)
-    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
-
-    asset = sub.createDigitalAsset(name=TYPE_NAME, hda_file_name=out_path, description=LABEL,
-                                   min_num_inputs=0, max_num_inputs=0)
+    asset = b3d_hda.create_asset(sub, out_path, TYPE_NAME, LABEL, 0, 0)
     definition = asset.type().definition()
     definition.setParmTemplateGroup(group)
     definition.setIcon(ICON)
