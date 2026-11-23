@@ -397,9 +397,8 @@ def wire_overwrite(asset):
     ops = [p for p in geo.parms() if p.name().startswith("parmop") or p.name() == "defaultparmop"]
     if not ops:
         warn(f"{geo.path()} has no Parameter Operation menus: Overwrite Attributes from SOP does nothing")
-    driven = [p.name() for p in ops
-              if b3d_hda.menu_token_expr(p, REIMPORT, "always", "initial", warn)]
-    print(f"make_packed_object: Overwrite Attributes from SOP / Deforming drive {geo.path()}: {', '.join(driven) or 'nothing'}")
+    for p in ops:
+        b3d_hda.menu_token_expr(p, REIMPORT, "always", "initial", warn)
 
 
 def add_display(sub, geo, data):

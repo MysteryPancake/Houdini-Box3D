@@ -40,9 +40,9 @@ namespace b3dop {
 inline constexpr int kBondSupportPasses = 6;
 
 // A little of the mean stiffness added to every degree of freedom, so a group
-// that its supports leave free to move (a compound tipping on its front edge, the
-// back ones lifted off) gives a finite answer: it only acts on motions of the
-// whole group, which strain no bond.
+// that its supports leave free to move (a compound tipping on its front edge,
+// the back ones lifted off) gives a finite answer: it only acts on motions of
+// the whole group, which strain no bond.
 inline constexpr double kBondRegularization = 1e-9;
 
 struct BondNode {
@@ -200,14 +200,11 @@ inline double dot(const std::vector<double> &a, const std::vector<double> &b) {
 }
 
 // Conjugate gradient for K x = rhs, from zero. Returns the relative residual.
-inline double conjugateGradient(const std::vector<BondNode> &nodes,
-                                const std::vector<BondLink> &links,
-                                const std::vector<BondSupport> &supports,
-                                const std::vector<char> &used,
-                                const BondRegularization &reg,
-                                const std::vector<double> &rhs,
-                                std::vector<double> &x, int maxIterations,
-                                double tolerance) {
+inline double conjugateGradient(
+    const std::vector<BondNode> &nodes, const std::vector<BondLink> &links,
+    const std::vector<BondSupport> &supports, const std::vector<char> &used,
+    const BondRegularization &reg, const std::vector<double> &rhs,
+    std::vector<double> &x, int maxIterations, double tolerance) {
   const double rhsNorm = std::sqrt(dot(rhs, rhs));
   std::fill(x.begin(), x.end(), 0.0);
   if (!(rhsNorm > 0.0))

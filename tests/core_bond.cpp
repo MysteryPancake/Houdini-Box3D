@@ -548,10 +548,10 @@ int main() {
   }
 
   {
-    // An impact: in zero gravity a ball (restitution about 0) hits a block that a
-    // Bond welds to a static wall, so the block cannot move and everything the ball
-    // gives up goes through the bond. Box3D's constraint force is the last
-    // substep's alone and misses most of it; the impulse over the step
+    // An impact: in zero gravity a ball (restitution about 0) hits a block that
+    // a Bond welds to a static wall, so the block cannot move and everything
+    // the ball gives up goes through the bond. Box3D's constraint force is the
+    // last substep's alone and misses most of it; the impulse over the step
     // (JointFeedback::impulse) adds up to the ball's change of momentum, at any
     // step size.
     for (const double dt : {1.0 / 24.0, 1.0 / 60.0, 1.0 / 240.0}) {
@@ -569,9 +569,9 @@ int main() {
       JointFrame f;
       f.pos[0] = 1.0;
       f.pos[1] = 5.0;
-      const JointHandle j = w.createJoint(
-          JointType::Bond, wall, block, f, f,
-          Box3DWorld::defaultJointSettings(JointType::Bond));
+      const JointHandle j =
+          w.createJoint(JointType::Bond, wall, block, f, f,
+                        Box3DWorld::defaultJointSettings(JointType::Bond));
       const float v = 4.0f, still[3] = {0, 0, 0}, thrown[3] = {v, 0, 0};
       CHECK(w.setVelocityByHandle(ball, thrown, still));
       double total = 0.0, lastOnly = 0.0;
@@ -588,9 +588,10 @@ int main() {
       CHECK(w.getVelocityByHandle(ball, after, spin));
       const double momentum = static_cast<double>(w.massByHandle(ball)) *
                               (static_cast<double>(v) - after[0]);
-      std::printf("impact at dt 1/%.0f: bond impulse %.3f, last substeps' force * "
-                  "dt %.3f, ball's change of momentum %.3f\n",
-                  1.0 / dt, std::fabs(total), std::fabs(lastOnly), momentum);
+      std::printf(
+          "impact at dt 1/%.0f: bond impulse %.3f, last substeps' force * "
+          "dt %.3f, ball's change of momentum %.3f\n",
+          1.0 / dt, std::fabs(total), std::fabs(lastOnly), momentum);
       CHECK(near(std::fabs(total), momentum, 0.03));
     }
   }

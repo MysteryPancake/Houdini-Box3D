@@ -833,7 +833,6 @@ def build(out_path):
     dopnet = hou.node("/obj").createNode("dopnet", "templates")
     common, per_type = collect(dopnet)
     rows = attribute_rows(common, per_type)
-    print("make_constraint_properties_sop: settings: " + ", ".join(sorted({r[0] for r in rows if not r[6]})))
 
     geo = hou.node("/obj").createNode("geo", "build")
     for child in geo.children():

@@ -880,7 +880,6 @@ def build(out_path):
         raise RuntimeError("the box3d_data DOP is not installed: build the plugin first")
     folders = settings(data) + extra_folders()
     rows = [r for _, rs in folders for r in rs]
-    print("make_configure_sop: settings: " + ", ".join(pt.name() for pt, _ in rows))
 
     geo = hou.node("/obj").createNode("geo", "build")
     for child in geo.children():

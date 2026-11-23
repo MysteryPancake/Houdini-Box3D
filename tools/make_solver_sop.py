@@ -484,7 +484,6 @@ def build(out_path, packed_hda=None):
         ordered.append(("Forces", forces_items))
     ordered.append(("Constraints", break_items() + [update_folder(), keep_broken]))
     ordered += list(by_label.items()) + [("Visualization", None)] + last + [("Output", None)]  # filled below
-    print("make_solver_sop: solver tabs: " + ", ".join(t.label() for t in solver_tabs))
 
     data_tabs = drop_templates(data_folders(pieces), PIECES_DROPPED)
     # Start Asleep (the Packed Object's Initial State) leads the Sleep folder; Add Impact Data (its Object tab)
@@ -506,7 +505,6 @@ def build(out_path, packed_hda=None):
         warn("no Sleep folder on the pieces: Start Asleep is not on the Pieces tab")
     if IMPACT_TOGGLE in moved:
         data_tabs.append(hou.FolderParmTemplate("b3dsop_impact_tmp", "Impact", [moved[IMPACT_TOGGLE]]))
-    print("make_solver_sop: Pieces folders: " + ", ".join(t.label() for t in data_tabs))
     renames = {pt.name(): f"piece_{pt.name()}" for pt in value_templates(data_tabs) if pt.name() in taken}
     if renames:
         print(f"make_solver_sop: Pieces parameters renamed (the solver has the same names): {renames}")
