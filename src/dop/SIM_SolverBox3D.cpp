@@ -651,6 +651,8 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
     UT_PerfMonAutoSolveEvent perf(this,
                                   "Post-Solve/Exporting Collision Shapes");
     exportCollisionShapes(*st, objects);
+  } else {
+    st->shapesFresh = false; // the geometry is left as it was: out of date
   }
   // Every write lock is released: our own writes are not external edits.
   recordFingerprintsAfterWrites(*st, objects);

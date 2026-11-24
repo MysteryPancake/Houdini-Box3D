@@ -33,4 +33,5 @@ void testSurfaceMaterial();
 void testWorldSettings();
 void testSleepEnable();
 void testBulkCreate();
+void testLazyPose();
 void testStepProfile();

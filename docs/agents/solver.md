@@ -98,7 +98,8 @@ lines (`drawObjectShapes`, shared with the guide) as world-space open polylines 
 holds the mutex; poses are the mirror's, from the object's `bodies` list, so no geometry is read; a whole object is read from its
 Position data). A hull's or mesh's lines share its vertices as points. The outlines are kept in body
 space (`Box3DShapeExport`, `shapeExports`); a step only moves the points of bodies whose pose changed and recolours those whose shade
-did. The geometry stores the signature of the bodies and shapes it was built for (`kShapesSigName` detail attribute: handle, `shapeSig`,
+did (found in parallel, written in parallel once `kMinParallelMovers` bodies changed, after the attributes' pages are hardened). A step with no move event,
+no scanned object and the same `bodyVersion` as the last export (`shapesFresh`) writes nothing: the geometry the object carries over is right. The geometry stores the signature of the bodies and shapes it was built for (`kShapesSigName` detail attribute: handle, `shapeSig`,
 shape count, body type, scale of each); a different signature or a geometry that does not match (another timeline) builds it again. `Cd` is white times the dimming; the SOP tints it. The Box3D Solver
 SOP's `GUIDE_GEO` imports it (see [solver-sop.md](solver-sop.md)); turning the toggle off stops writing but leaves the last data
 in the cache. A static concave piece's mesh is drawn as its boundary and creased edges (`meshOutline` in `Box3DWorld.cpp`, thinned past `kMaxMeshOutlineEdges`; test `collision_shapes_mesh`). Not drawn: affector colliders, and anything on an object's creation frame without Solve On Creation Frame (no

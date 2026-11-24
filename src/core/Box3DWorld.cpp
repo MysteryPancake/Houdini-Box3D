@@ -638,6 +638,7 @@ void Box3DWorld::destroyBody(BodyHandle h) {
   if (!h)
     return;
   const b3BodyId id = b3LoadBodyId(h);
+  setLazyPose(h, false);
   if (b3Body_IsValid(id)) {
     b3DestroyBody(id);
     --myImpl->liveBodies;
@@ -1588,10 +1589,14 @@ void Box3DWorld::setEnabledByHandle(BodyHandle h, bool enabled) {
   const b3BodyId id = b3LoadBodyId(h);
   if (b3Body_IsEnabled(id) == enabled)
     return;
-  if (enabled)
+  if (enabled) {
+    // A body that leaves its compound is put where it is first.
+    freshenPose(h);
+    setLazyPose(h, false);
     b3Body_Enable(id);
-  else
+  } else {
     b3Body_Disable(id);
+  }
 }
 
 bool Box3DWorld::isEnabledByHandle(BodyHandle h) const {
@@ -1654,6 +1659,7 @@ void Box3DWorld::sleepByHandle(BodyHandle h) {
 bool Box3DWorld::bodyStateByHandle(BodyHandle h, BodyState &out) const {
   if (!h)
     return false;
+  freshenPose(h);
   const b3BodyId id = b3LoadBodyId(h);
   out.awake = b3Body_IsAwake(id);
   out.mass = b3Body_GetMass(id);
@@ -1666,6 +1672,7 @@ bool Box3DWorld::bodyStateByHandle(BodyHandle h, BodyState &out) const {
 bool Box3DWorld::extentByHandle(BodyHandle h, float out[3]) const {
   if (!h || b3Body_GetShapeCount(b3LoadBodyId(h)) == 0)
     return false;
+  freshenPose(h);
   const b3AABB box = b3Body_ComputeAABB(b3LoadBodyId(h));
   const b3Vec3 e = b3Sub(box.upperBound, box.lowerBound);
   out[0] = e.x;
@@ -2010,6 +2017,7 @@ int Box3DWorld::hullFacesByHandle(BodyHandle h,
   out.clear();
   if (!h)
     return 0;
+  freshenPose(h);
   const b3BodyId id = b3LoadBodyId(h);
   thread_local std::vector<b3ShapeId> shapes;
   const int got = bodyShapes(id, shapes);
@@ -2384,6 +2392,7 @@ bool Box3DWorld::getTransformByHandle(BodyHandle h, double outPos[3],
                                       float outRotXYZW[4]) const {
   if (!h)
     return false;
+  freshenPose(h);
   const b3BodyId id = b3LoadBodyId(h);
   storePos(b3Body_GetPosition(id), outPos); // body origin
   storeQuat(b3Body_GetRotation(id), outRotXYZW);
@@ -2439,7 +2448,60 @@ bool Box3DWorld::setTransformByHandle(BodyHandle h, const double pos[3],
   if (!h)
     return false;
   b3Body_SetTransform(b3LoadBodyId(h), makePos(pos), cleanQuat(rotXYZW));
+  if (myImpl->lazyCount.load(std::memory_order_relaxed) != 0) {
+    const auto it = myImpl->lazyPose.find(h);
+    if (it != myImpl->lazyPose.end())
+      it->second.store(myImpl->lazyEpoch.load(std::memory_order_acquire),
+                       std::memory_order_release);
+  }
   return true;
+}
+
+void Box3DWorld::setLazyPose(BodyHandle h, bool lazy) {
+  if (!h)
+    return;
+  Impl &d = *myImpl;
+  if (lazy) {
+    const auto ins = d.lazyPose.try_emplace(h, 0);
+    ins.first->second.store(d.lazyEpoch.load(), std::memory_order_release);
+    if (ins.second)
+      d.lazyCount.store(d.lazyPose.size(), std::memory_order_release);
+  } else if (d.lazyPose.erase(h) != 0) {
+    d.lazyCount.store(d.lazyPose.size(), std::memory_order_release);
+  }
+}
+
+void Box3DWorld::invalidateLazyPoses() {
+  myImpl->lazyEpoch.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void Box3DWorld::setPoseRefresher(std::function<void(BodyHandle)> refresh) {
+  myImpl->poseRefresher = std::move(refresh);
+}
+
+bool Box3DWorld::hasPoseRefresher() const {
+  return static_cast<bool>(myImpl->poseRefresher);
+}
+
+void Box3DWorld::freshenPose(BodyHandle h) const {
+  Impl &d = *myImpl;
+  if (!h || d.lazyCount.load(std::memory_order_acquire) == 0)
+    return;
+  const auto it = d.lazyPose.find(h);
+  if (it == d.lazyPose.end())
+    return;
+  const uint64_t epoch = d.lazyEpoch.load(std::memory_order_acquire);
+  if (it->second.load(std::memory_order_acquire) == epoch)
+    return;
+  const std::lock_guard<std::mutex> lock(d.lazyMutex);
+  if (it->second.load(std::memory_order_acquire) == epoch)
+    return;
+  // Another thread reading the body meanwhile must wait for the lock: the
+  // epoch is stored once the transform is set (setTransformByHandle), not
+  // before.
+  if (d.poseRefresher)
+    d.poseRefresher(h);
+  it->second.store(epoch, std::memory_order_release);
 }
 
 void Box3DWorld::version(int &major, int &minor, int &revision) {

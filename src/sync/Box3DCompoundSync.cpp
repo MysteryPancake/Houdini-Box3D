@@ -205,6 +205,26 @@ uint64_t keyOf(const Box3DBodyMirror &e) {
   return b3dop::makeBodyKey(e.objectId, e.pointId);
 }
 
+// A parked piece's transform is not set every step (expandCompoundMoves):
+// the world brings it up to date from here when something reads it.
+void installPoseRefresher(Box3DSharedState &st) {
+  if (st.world.hasPoseRefresher())
+    return;
+  Box3DSharedState *const sp = &st;
+  st.world.setPoseRefresher([sp](BodyHandle h) {
+    const auto it = sp->compoundOf.find(h);
+    if (it == sp->compoundOf.end())
+      return;
+    const Box3DCompound &c = *it->second.first;
+    Pose cp;
+    if (!bodyPose(sp->world, c.body, cp))
+      return;
+    const Pose pp =
+        placed(cp, c.members[static_cast<size_t>(it->second.second)]);
+    sp->world.setTransformByHandle(h, pp.p, pp.q);
+  });
+}
+
 // A move event for a piece of `entry` put at `pp`.
 b3dop::BodyMove moveAt(Box3DBodyMirror &entry, BodyHandle body, const Pose &pp,
                        bool asleep, const float lin[3] = nullptr,
@@ -614,9 +634,12 @@ bool merge(Box3DSharedState &st, const std::vector<Box3DBodyMirror *> &group) {
     w.setVelocityByHandle(body, mb.lin, mb.ang);
 
   Box3DCompound *raw = c.get();
+  installPoseRefresher(st);
   for (size_t i = 0; i < raw->members.size(); ++i) {
     Box3DCompoundMember &m = raw->members[i];
     w.setEnabledByHandle(m.body, false);
+    // Parked where it is: from now on it is brought up to date only when read.
+    w.setLazyPose(m.body, true);
     m.entry->inCompound = true;
     m.entry->glueEdited = false;
     st.compoundOf[m.body] = {raw, static_cast<int>(i)};
@@ -1557,10 +1580,12 @@ void expandCompoundMoves(Box3DSharedState &st) {
   for (auto &c : st.compounds)
     byBody[c->body] = c.get();
   const size_t original = st.moves.size();
+  bool moved = false;
   for (size_t i = 0; i < original; ++i) {
     const auto it = byBody.find(st.moves[i].handle);
     if (it == byBody.end())
       continue;
+    moved = true;
     const b3dop::BodyMove ev = st.moves[i]; // push_back may move the vector
     Box3DCompound &c = *it->second;
     Pose cp;
@@ -1579,10 +1604,32 @@ void expandCompoundMoves(Box3DSharedState &st) {
       b3dop::pieceVelocity(mb, com, m.entry->glueLin, m.entry->glueAng);
       st.moves.push_back(moveAt(*m.entry, m.body, pp, ev.fellAsleep,
                                 m.entry->glueLin, m.entry->glueAng));
-      // The parked body stays where the piece is: joint frames read it.
-      w.setTransformByHandle(m.body, pp.p, pp.q);
     }
   }
+  // The parked bodies are where the pieces were: whatever reads one first
+  // puts it where the piece is now (Box3DWorld::setLazyPose).
+  if (moved)
+    w.invalidateLazyPoses();
+}
+
+void refreshLivePoses(Box3DSharedState &st) {
+  for (auto &c : st.compounds)
+    c->livePoseOk = bodyPose(st.world, c->body, c->livePose);
+}
+
+bool compoundJointPoses(const Box3DSharedState &st, const Box3DJointEntry &e,
+                        b3dop::BodyPose &poseA, b3dop::BodyPose &poseB) {
+  const auto a = st.compoundOf.find(e.bodyA);
+  const auto b = st.compoundOf.find(e.bodyB);
+  if (a == st.compoundOf.end() || b == st.compoundOf.end() ||
+      a->second.first != b->second.first)
+    return false;
+  const Box3DCompound &c = *a->second.first;
+  if (!c.livePoseOk)
+    return false;
+  poseA = placed(c.livePose, c.members[static_cast<size_t>(a->second.second)]);
+  poseB = placed(c.livePose, c.members[static_cast<size_t>(b->second.second)]);
+  return true;
 }
 
 bool compoundGlueHits(Box3DSharedState &st, BodyHandle body, float &hits) {

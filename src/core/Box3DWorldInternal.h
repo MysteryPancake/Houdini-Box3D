@@ -10,7 +10,9 @@
 
 #include <box3d/box3d.h>
 
+#include <atomic>
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
@@ -55,6 +57,15 @@ struct Box3DWorld::Impl {
     std::unique_lock<std::shared_mutex> lock(held_mutex);
     held.emplace(id, ref);
   }
+
+  // Bodies whose transform is brought up to date only when read
+  // (Box3DWorld::setLazyPose): the epoch each was last made current at. The map
+  // changes only in serial code, the values in reads from any thread.
+  std::unordered_map<BodyHandle, std::atomic<uint64_t>> lazyPose;
+  std::atomic<uint64_t> lazyEpoch{1};
+  std::atomic<size_t> lazyCount{0};
+  std::mutex lazyMutex; // refreshes one at a time
+  std::function<void(BodyHandle)> poseRefresher;
 
   // The world end of joints with a null BodyHandle: a shapeless static body at
   // the origin, made on first use and not counted in liveBodies.

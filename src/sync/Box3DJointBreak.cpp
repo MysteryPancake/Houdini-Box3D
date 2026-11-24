@@ -51,7 +51,8 @@ namespace {
 // `restlength`, which multiplies the node's value), so a world rebuilt
 // mid-simulation keeps it.
 template <class PrimOk>
-void writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp,
+void writeLiveFrames(const b3dop::Box3DWorld &world, const Box3DSharedState &st,
+                     GU_Detail *gdp,
                      const std::vector<Box3DJointEntry *> &entries,
                      const PrimOk &primOk) {
   if (entries.empty())
@@ -147,7 +148,15 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp,
       return;
     const GA_Offset pts[2] = {prim->getPointOffset(0), prim->getPointOffset(1)};
     b3dop::JointFrame fa, fb;
-    if (world.jointWorldFrames(e->handle, fa, fb)) {
+    // A bond inside a compound joins two parked bodies, which are not kept
+    // where their pieces are: the frames come from the compound's pose.
+    b3dop::BodyPose poseA, poseB;
+    const bool found =
+        e->inCompound && compoundJointPoses(st, *e, poseA, poseB)
+            ? world.jointWorldFramesAt(e->handle, poseA.p, poseA.q, poseB.p,
+                                       poseB.q, fa, fb)
+            : world.jointWorldFrames(e->handle, fa, fb);
+    if (found) {
       // The anchors, not the frames (SideFX data may offset the frames from
       // them).
       e->wroteA = asStored(anchorFrameOf(fa, e->adjA));
@@ -1237,14 +1246,15 @@ void ageConstraints(GU_Detail *gdp, float dt) {
 
 // One network's results into its (locked, writable) geometry. True if a
 // constraint_name switched.
-bool writeNetworkResults(const b3dop::Box3DWorld &world, GU_Detail *gdp,
+bool writeNetworkResults(const b3dop::Box3DWorld &world,
+                         const Box3DSharedState &st, GU_Detail *gdp,
                          const std::vector<Box3DJointEntry *> &entries,
                          const std::vector<Box3DJointEntry *> *broken,
                          float ageDt, bool bondReadouts) {
   const PrimExists primOk{gdp};
   const bool switched =
       broken && writeBrokenJoints(world, gdp, primOk, *broken);
-  writeLiveFrames(world, gdp, entries, primOk);
+  writeLiveFrames(world, st, gdp, entries, primOk);
   writeFeedback(world, gdp, primOk, entries, bondReadouts);
   if (ageDt > 0.0f)
     ageConstraints(gdp, ageDt);
@@ -1258,6 +1268,7 @@ int jointsAfterStep(Box3DSharedState &st, SIM_ObjectArray &objects) {
 
   EntriesByNetwork brokeIn; // network -> joints that broke
   const int broke = breakJoints(st, brokeIn);
+  refreshLivePoses(st);
 
   // ---- write-back: broken group / next_constraint_name, live frames, feedback
   // ----
@@ -1293,7 +1304,7 @@ int jointsAfterStep(Box3DSharedState &st, SIM_ObjectArray &objects) {
     {
       SIM_GeometryAutoWriteLock lock(geo);
       GU_Detail *gdp = &lock.getGdp();
-      switched = writeNetworkResults(world, gdp, entries,
+      switched = writeNetworkResults(world, st, gdp, entries,
                                      anyBroken ? &broken->second : nullptr,
                                      st.constraintAgeDt, st.bondReadouts);
     }

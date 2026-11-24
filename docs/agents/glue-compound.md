@@ -8,8 +8,11 @@
   so the welds sleep and the per-point sync, mirror and joints stay as they are. A group merges only when every
   piece is a plain dynamic body with the default inertia and the same body-level settings (`sameBodyLevel`) and no
   other joint touches it. After the step `expandCompoundMoves` adds a move event per piece (compound pose * offset,
-  velocity `pieceVelocity` kept on the entry as `glueLin` / `glueAng`), so the write-back is the usual one, and
-  puts each parked body where its piece is. `collectGlueHits` reads a piece's hits from `contactImpulsesByShape` of
+  velocity `pieceVelocity` kept on the entry as `glueLin` / `glueAng`), so the write-back is the usual one. The parked
+  bodies are lazy (`setLazyPose`, see core.md): their transforms are not set each step, and whatever reads one through the world API
+  (`installPoseRefresher`: compound pose * the piece's offset) or enables it finds it where its piece is. A bond inside a compound
+  writes its live frames from the compound's pose (`compoundJointPoses`, `jointWorldFramesAt`) and never reads the parked bodies.
+  `collectGlueHits` reads a piece's hits from `contactImpulsesByShape` of
   its compound. With `gluecompoundload` above 0 a piece's hits are at least `gluecompoundload * pieceLoad`
   (`core/Box3DCompound.h`): mass times the change of the piece's velocity over the step, from the compound's motion
   before it (`stepPre`, taken by `recordCompoundMotion`) and after, so a body stopped at one point loads the pieces

@@ -870,6 +870,10 @@ struct Box3DCompound {
   // (contactImpulsesByShape), the collectGlueHits call it belongs to, and
   // whether the body was awake and dynamic then (a sleeping one has no hits).
   std::vector<float> shapeImpulse;
+  // Where its body is after the last step, read once before the live frames
+  // are written (refreshLivePoses).
+  b3dop::BodyPose livePose;
+  bool livePoseOk = false;
   uint64_t hitsTick = 0;
   bool hitsActive = false;
   // For the inertial load (glueCompoundLoad): its motion before and after the
@@ -1000,6 +1004,11 @@ struct Box3DSharedState {
   // Export Collision Shapes: the outlines of each object's bodies, by object
   // id (exportCollisionShapes).
   std::unordered_map<int, Box3DShapeExport> shapeExports;
+  // The last step wrote the exported shapes, for the bodies of bodyVersion
+  // `shapesVersion`: a step with no move, no scan and the same bodies leaves
+  // them as they are.
+  bool shapesFresh = false;
+  uint64_t shapesVersion = 0;
   // Filled by the sync (in object order), used after the step:
   std::vector<Box3DPointWrite> pointWrites;
   std::vector<Box3DDeletion> deletions;

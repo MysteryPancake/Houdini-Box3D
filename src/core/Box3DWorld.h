@@ -629,6 +629,13 @@ public:
   // these on bodies at the same poses gives the same joint, so a world rebuilt
   // mid-simulation can remake its joints from them.
   bool jointWorldFrames(JointHandle h, JointFrame &a, JointFrame &b) const;
+  // The same with the two bodies' poses given (the joint's own local frames
+  // are all it reads), so a joint on bodies whose transform is not kept
+  // current (setLazyPose) can be asked without making it current.
+  bool jointWorldFramesAt(JointHandle h, const double posA[3],
+                          const float rotA[4], const double posB[3],
+                          const float rotB[4], JointFrame &a,
+                          JointFrame &b) const;
   // The joint's frames relative to its bodies, exactly as Box3D keeps them.
   bool jointLocalFrames(JointHandle h, JointFrame &a, JointFrame &b) const;
   // A body-relative frame in world space with the body's current pose (null
@@ -812,6 +819,21 @@ public:
   bool setTransformByHandle(BodyHandle h, const double pos[3],
                             const float rotXYZW[4]);
 
+  // ---- bodies whose transform follows another body -------------------------
+  // A body parked in a compound (a disabled copy of a piece) is placed by its
+  // compound, so setting every one's transform each step costs a Box3D call
+  // each for something almost nothing reads. A lazy body's transform is only
+  // brought up to date when something reads it through this API (poses,
+  // states, joint frames, making a joint, enabling it): `refresh(h)` is then
+  // called, once per invalidateLazyPoses(), and should set the body's
+  // transform (setTransformByHandle). Reads may come from several threads:
+  // refreshes are serialized. A body is made lazy at its current pose.
+  void setLazyPose(BodyHandle h, bool lazy);
+  // Every lazy body's transform may have changed (O(1)).
+  void invalidateLazyPoses();
+  void setPoseRefresher(std::function<void(BodyHandle)> refresh);
+  bool hasPoseRefresher() const;
+
   // ---- move events (valid until the next step or a body is removed) --------
   int getMoveEvents(
       std::vector<BodyMove> &out) const; // resizes `out`; returns the count
@@ -830,6 +852,9 @@ public:
   static int maxWorldCount();
 
 private:
+  // Brings a lazy body's transform up to date (see setLazyPose).
+  void freshenPose(BodyHandle h) const;
+
   // The shape builders behind createShape.
   bool boxShape(BodyHandle h, const BodySettings &b, const float halfExtents[3],
                 const float center[3], const float rotationXYZW[4],

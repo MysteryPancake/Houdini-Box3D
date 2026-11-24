@@ -1061,6 +1061,10 @@ public:
 
   void run() {
     myNet.needsBodies = false;
+    // A network made all at once (a first frame, a rebuilt world) would
+    // otherwise rehash the entry map every time it doubles.
+    mySt.joints.reserve(mySt.joints.size() +
+                        static_cast<size_t>(myGdp->getNumPrimitives()));
     for (GA_Iterator it(myGdp->getPrimitiveRange()); !it.atEnd(); ++it) {
       const GA_Offset off = *it;
       const GA_Primitive *prim = myGdp->getPrimitive(off);

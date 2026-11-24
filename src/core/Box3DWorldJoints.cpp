@@ -520,6 +520,8 @@ JointHandle Box3DWorld::createJoint(JointType type, BodyHandle a, BodyHandle b,
   const b3BodyId ida = bodyOf(a), idb = bodyOf(b);
   if (!b3Body_IsValid(ida) || !b3Body_IsValid(idb))
     return 0;
+  freshenPose(a);
+  freshenPose(b);
 
   const JointSettings s = sanitized(in);
   const b3Transform fa =
@@ -688,6 +690,9 @@ bool Box3DWorld::jointFeedback(JointHandle h, JointType type,
   if (!isJointValid(h))
     return false;
   const b3JointId id = b3LoadJointId(h);
+  // Its separations are read from the bodies' transforms.
+  freshenPose(b3StoreBodyId(b3Joint_GetBodyA(id)));
+  freshenPose(b3StoreBodyId(b3Joint_GetBodyB(id)));
   storeVec3(b3Joint_GetConstraintForce(id), out.force);
   storeVec3(b3Joint_GetConstraintTorque(id), out.torque);
   {
@@ -745,10 +750,34 @@ bool Box3DWorld::jointWorldFrames(JointHandle h, JointFrame &a,
   if (!isJointValid(h))
     return false;
   const b3JointId id = b3LoadJointId(h);
+  freshenPose(b3StoreBodyId(b3Joint_GetBodyA(id)));
+  freshenPose(b3StoreBodyId(b3Joint_GetBodyB(id)));
   frameToWorld(b3Body_GetTransform(b3Joint_GetBodyA(id)),
                b3Joint_GetLocalFrameA(id), a);
   frameToWorld(b3Body_GetTransform(b3Joint_GetBodyB(id)),
                b3Joint_GetLocalFrameB(id), b);
+  return true;
+}
+
+bool Box3DWorld::jointWorldFramesAt(JointHandle h, const double posA[3],
+                                    const float rotA[4], const double posB[3],
+                                    const float rotB[4], JointFrame &a,
+                                    JointFrame &b) const {
+  if (!isJointValid(h))
+    return false;
+  const b3JointId id = b3LoadJointId(h);
+  const auto at = [](const double p[3], const float q[4]) {
+    b3WorldTransform t;
+    t.p.x = static_cast<decltype(t.p.x)>(p[0]);
+    t.p.y = static_cast<decltype(t.p.y)>(p[1]);
+    t.p.z = static_cast<decltype(t.p.z)>(p[2]);
+    float c[4] = {q[0], q[1], q[2], q[3]};
+    sanitizeQuat(c);
+    t.q = makeQuat(c);
+    return t;
+  };
+  frameToWorld(at(posA, rotA), b3Joint_GetLocalFrameA(id), a);
+  frameToWorld(at(posB, rotB), b3Joint_GetLocalFrameB(id), b);
   return true;
 }
 
@@ -779,6 +808,7 @@ bool Box3DWorld::localToWorld(BodyHandle h, const JointFrame &local,
   const b3BodyId id = b3LoadBodyId(h);
   if (!b3Body_IsValid(id))
     return false;
+  freshenPose(h);
   float q[4] = {local.rot[0], local.rot[1], local.rot[2], local.rot[3]};
   sanitizeQuat(q);
   b3Transform lt;

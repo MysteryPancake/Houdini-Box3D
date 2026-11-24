@@ -5,6 +5,7 @@
 #include "KeyedWorld.h"
 #include "PhysicsCases.h"
 #include "TestUtil.h"
+#include "WorldTestUtil.h"
 #include "core/Box3DShapes.h"
 #include <cmath>
 #include <cstdio>
@@ -1214,4 +1215,81 @@ void testStepProfile() {
   std::printf("step profile: step %.3f ms (pairs %.3f, collide %.3f, "
               "constraints %.3f)\n",
               p.step, p.pairs, p.collide, p.constraints);
+}
+
+// Lazy poses (setLazyPose, the transform of a body parked in a compound): a
+// read through the handle API brings the transform up to date once per
+// invalidateLazyPoses(), a joint's frames can be asked for given the poses, and
+// enabling a lazy body first puts it where it is.
+void testLazyPose() {
+  using namespace b3dop;
+  Box3DWorld w;
+  CHECK(w.create(WorldSettings()));
+  const BodyHandle carrier = box(w, 0, 5, 0);
+  const BodyHandle parked = box(w, 1, 5, 0);
+  const JointHandle joint = w.createJoint(
+      JointType::Weld, carrier, parked, frame(0.5, 5, 0), frame(0.5, 5, 0),
+      Box3DWorld::defaultJointSettings(JointType::Weld));
+  CHECK(joint);
+  w.setEnabledByHandle(parked, false);
+  w.setLazyPose(parked, true);
+
+  int refreshed = 0;
+  w.setPoseRefresher([&](BodyHandle h) {
+    ++refreshed;
+    double c[3];
+    pos(w, carrier, c);
+    const double p[3] = {c[0] + 1.0, c[1], c[2]};
+    w.setTransformByHandle(h, p, kQid);
+  });
+  CHECK(w.hasPoseRefresher());
+
+  // Not invalidated: the parked body is left where it was, nothing refreshes.
+  steps(w, 10);
+  double c[3], p[3];
+  pos(w, carrier, c);
+  CHECK(c[1] < 4.99); // it fell
+  pos(w, parked, p);
+  CHECK(refreshed == 0 && near(p[1], 5.0));
+
+  // Invalidated: the first read brings it up to date, the second does not.
+  w.invalidateLazyPoses();
+  pos(w, parked, p);
+  CHECK(refreshed == 1);
+  CHECK(near(p[0], c[0] + 1.0) && near(p[1], c[1]));
+  pos(w, parked, p);
+  CHECK(refreshed == 1);
+
+  // The joint's frames from given poses are what reading the bodies gives.
+  steps(w, 5);
+  w.invalidateLazyPoses();
+  double cc[3];
+  float cq[4];
+  w.getTransformByHandle(carrier, cc, cq);
+  const double pp[3] = {cc[0] + 1.0, cc[1], cc[2]};
+  JointFrame at0, at1, read0, read1;
+  CHECK(w.jointWorldFramesAt(joint, cc, cq, pp, kQid, at0, at1));
+  CHECK(refreshed == 1); // given poses: nothing was read
+  CHECK(w.jointWorldFrames(joint, read0, read1));
+  CHECK(refreshed == 2);
+  for (int k = 0; k < 3; ++k)
+    CHECK(near(at0.pos[k], read0.pos[k], 1e-6) &&
+          near(at1.pos[k], read1.pos[k], 1e-6));
+
+  // Enabling a lazy body puts it where it is, and it is no longer lazy.
+  w.invalidateLazyPoses();
+  w.setEnabledByHandle(parked, true);
+  CHECK(refreshed == 3);
+  w.invalidateLazyPoses();
+  pos(w, parked, p);
+  CHECK(refreshed == 3);
+
+  // A destroyed lazy body leaves nothing behind.
+  const BodyHandle extra = box(w, 3, 5, 0);
+  w.setEnabledByHandle(extra, false);
+  w.setLazyPose(extra, true);
+  w.destroyBody(extra);
+  w.invalidateLazyPoses();
+  steps(w, 2);
+  w.destroy();
 }

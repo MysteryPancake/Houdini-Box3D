@@ -716,6 +716,7 @@ const TestCase kTests[] = {
     {"estimated_bytes", testEstimatedBytes},
     {"sleep_enable", testSleepEnable},
     {"bulk_create", testBulkCreate},
+    {"lazy_pose", testLazyPose},
     {"step_profile", testStepProfile},
 };
 

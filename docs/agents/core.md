@@ -24,6 +24,13 @@ scale; `invertSymmetric3` (`Box3DMath.h`) refuses a tensor that is not positive 
 false and the computed inertia stays. `getMassDataByHandle` can return the off-diagonal terms too. `setTypeByHandle`
 recomputes from the shapes, so the caller re-applies after a type change.
 
+**Lazy poses.** A body parked in a compound (disabled, placed by its compound) is made lazy with `setLazyPose`:
+`invalidateLazyPoses` (O(1), once a step) makes every one stale, and the first read of a stale body through the API
+(`getTransformByHandle`, `bodyStateByHandle`, `extentByHandle`, `hullFacesByHandle`, `localToWorld`, `jointWorldFrames`,
+`jointFeedback`, `createJoint`, enabling it) calls the refresher the host set (`setPoseRefresher`), which sets the transform. A refresh is
+serialized and stores its epoch only once the transform is set, since several threads can read one body (test `lazy_pose`).
+`jointWorldFramesAt` gives a joint's frames from poses the caller already has.
+
 **Changes to existing bodies.** `setMaterialByHandle` (every shape; Box3D re-mixes contact friction / restitution every
 step, so touching contacts follow), `setDampingByHandle`, `setGravityScaleByHandle`, `setSleepEnabledByHandle` (the
 world switch applies on top; disabling wakes the body), `bodyStateByHandle` (awake, mass, centre of mass and velocities in one call) / `applyForceByHandle` (external forces, per step, see below), `setSleepThresholdByHandle` (Box3D's single threshold on

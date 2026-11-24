@@ -17,6 +17,7 @@
 
 struct Box3DBodyMirror;
 struct Box3DCompound;
+struct Box3DJointEntry;
 struct Box3DSharedState;
 
 // Merges the groups that qualify and dissolves the ones that changed (a bond
@@ -32,8 +33,17 @@ void queueCompoundIds(Box3DSharedState &st);
 // After the step, before the write-back: every moved compound adds a move
 // event for each of its pieces (pose = the compound's pose * the piece's
 // offset), with the piece's velocity kept on its mirror entry (glueLin /
-// glueAng), and the parked bodies are put where the pieces are.
+// glueAng). The parked bodies are not set to where the pieces are: they are
+// lazy (Box3DWorld::setLazyPose) and put there when something reads one.
 void expandCompoundMoves(Box3DSharedState &st);
+// Reads each compound's body pose into `livePose`, for compoundJointPoses.
+void refreshLivePoses(Box3DSharedState &st);
+// Where the two pieces of a bond inside one compound are (the pose of the body
+// parked for each), from the compound's `livePose`: false if the bond is not
+// between two pieces of one compound. The parked bodies' own transforms are not
+// kept current, so this is how their frames are found without making them so.
+bool compoundJointPoses(const Box3DSharedState &st, const Box3DJointEntry &e,
+                        b3dop::BodyPose &poseA, b3dop::BodyPose &poseB);
 
 // The glue group (st.glueGroup: the pieces joined by bonds) of a compound's
 // pieces, -1 if none of them is a glue node.

@@ -456,16 +456,30 @@ constexpr const char *kShapesSigName = "b3d_shapes_sig";
 // signature, shape count, body type and scale.
 uint64_t shapesSignature(const b3dop::Box3DWorld &world,
                          const std::vector<Placed> &placed) {
+  // Each body's own hash in parallel, then combined in order.
+  thread_local std::vector<uint64_t> partStore; // kept between steps
+  std::vector<uint64_t> &part = partStore;
+  part.resize(placed.size());
+  constexpr size_t kChunk = 256;
+  parallelForEach(
+      (placed.size() + kChunk - 1) / kChunk,
+      [&](size_t c) {
+        const size_t end = std::min(placed.size(), (c + 1) * kChunk);
+        for (size_t i = c * kChunk; i < end; ++i) {
+          const Box3DBodyMirror &e = *placed[i].e;
+          uint64_t h = b3dop::mixHash(0x51ed270b1b4d3a5full,
+                                      static_cast<uint64_t>(e.handle));
+          h = b3dop::mixHash(h, e.shapeSig);
+          h = b3dop::mixHash(
+              h, static_cast<uint64_t>(world.shapeCountByHandle(e.handle)));
+          h = b3dop::mixHash(h, e.dynamic() ? 1u : 0u);
+          part[i] = b3dop::hashBytes(h, e.sizeKey, sizeof(e.sizeKey));
+        }
+      },
+      kMinParallelGuideChunks);
   uint64_t h = b3dop::mixHash(0x9e3779b97f4a7c15ull, placed.size());
-  for (const Placed &pl : placed) {
-    const Box3DBodyMirror &e = *pl.e;
-    h = b3dop::mixHash(h, static_cast<uint64_t>(e.handle));
-    h = b3dop::mixHash(h, e.shapeSig);
-    h = b3dop::mixHash(
-        h, static_cast<uint64_t>(world.shapeCountByHandle(e.handle)));
-    h = b3dop::mixHash(h, e.dynamic() ? 1u : 0u);
-    h = b3dop::hashBytes(h, e.sizeKey, sizeof(e.sizeKey));
-  }
+  for (const uint64_t v : part)
+    h = b3dop::mixHash(h, v);
   return h;
 }
 
@@ -500,34 +514,84 @@ bool updateShapes(GU_Detail &gdp, const Box3DSharedState &st,
   GA_RWHandleV3 cd(&gdp, GA_ATTRIB_PRIMITIVE, "Cd");
   if (!P.isValid() || !cd.isValid())
     return false;
-  bool movedP = false, movedCd = false;
-  for (size_t i = 0; i < placed.size(); ++i) {
-    const Box3DShapeExportBody &b = cache.bodies[i];
-    const size_t n = b.pts.size() / 3;
-    if (n == 0)
-      continue;
-    const Pose &pose = placed[i].p;
-    // A body that has not moved has the same points: three of them say so.
-    const size_t probes[3] = {0, n / 2, n - 1};
-    bool same = true;
-    for (const size_t k : probes)
-      if (!(P.get(p0 + static_cast<GA_Offset>(b.pointStart + k)) ==
-            pose.point(&b.pts[3 * k])))
-        same = false;
-    if (!same) {
-      for (size_t k = 0; k < n; ++k)
-        P.set(p0 + static_cast<GA_Offset>(b.pointStart + k),
-              pose.point(&b.pts[3 * k]));
-      movedP = true;
-    }
-    const UT_Vector3 want = color * shadeOf(st.world, *placed[i].e);
-    const GA_Offset first = q0 + static_cast<GA_Offset>(b.lineStart);
-    if (!(cd.get(first) == want)) {
-      for (size_t k = 0; k < b.ends.size(); ++k)
-        cd.set(first + static_cast<GA_Offset>(k), want);
-      movedCd = true;
-    }
+  // Which bodies moved or changed shade is found read-only in parallel; only
+  // those are written (in parallel too once many are: the pages the writes go
+  // to are then made the geometry's own first).
+  constexpr size_t kChunk = 256;
+  constexpr size_t kMinParallelMovers = 256;
+  thread_local std::vector<uint8_t> changeStore; // kept between steps
+  thread_local std::vector<float> shadeStore;
+  std::vector<uint8_t> &change = changeStore;
+  std::vector<float> &shade = shadeStore;
+  change.assign(placed.size(), 0);
+  shade.resize(placed.size());
+  const size_t chunks = (placed.size() + kChunk - 1) / kChunk;
+  std::atomic<size_t> movers{0};
+  parallelForEach(
+      chunks,
+      [&](size_t c) {
+        size_t count = 0;
+        const size_t end = std::min(placed.size(), (c + 1) * kChunk);
+        for (size_t i = c * kChunk; i < end; ++i) {
+          const Box3DShapeExportBody &b = cache.bodies[i];
+          const size_t n = b.pts.size() / 3;
+          if (n == 0)
+            continue;
+          const Pose &pose = placed[i].p;
+          // A body that has not moved has the same points: three of them say
+          // so.
+          const size_t probes[3] = {0, n / 2, n - 1};
+          uint8_t flags = 0;
+          for (const size_t k : probes)
+            if (!(P.get(p0 + static_cast<GA_Offset>(b.pointStart + k)) ==
+                  pose.point(&b.pts[3 * k])))
+              flags = 1;
+          shade[i] = shadeOf(st.world, *placed[i].e);
+          if (!(cd.get(q0 + static_cast<GA_Offset>(b.lineStart)) ==
+                color * shade[i]))
+            flags |= 2;
+          change[i] = flags;
+          count += flags ? 1 : 0;
+        }
+        movers.fetch_add(count, std::memory_order_relaxed);
+      },
+      kMinParallelGuideChunks);
+  if (movers.load() == 0)
+    return true;
+  const bool parallel = movers.load() >= kMinParallelMovers;
+  if (parallel) {
+    P.getAttribute()->hardenAllPages();
+    cd.getAttribute()->hardenAllPages();
   }
+  bool movedP = false, movedCd = false;
+  for (size_t i = 0; i < placed.size() && !(movedP && movedCd); ++i) {
+    movedP = movedP || (change[i] & 1);
+    movedCd = movedCd || (change[i] & 2);
+  }
+  parallelForEach(
+      chunks,
+      [&](size_t c) {
+        const size_t end = std::min(placed.size(), (c + 1) * kChunk);
+        for (size_t i = c * kChunk; i < end; ++i) {
+          if (!change[i])
+            continue;
+          const Box3DShapeExportBody &b = cache.bodies[i];
+          if (change[i] & 1) {
+            const Pose &pose = placed[i].p;
+            const size_t n = b.pts.size() / 3;
+            for (size_t k = 0; k < n; ++k)
+              P.set(p0 + static_cast<GA_Offset>(b.pointStart + k),
+                    pose.point(&b.pts[3 * k]));
+          }
+          if (change[i] & 2) {
+            const UT_Vector3 want = color * shade[i];
+            const GA_Offset first = q0 + static_cast<GA_Offset>(b.lineStart);
+            for (size_t k = 0; k < b.ends.size(); ++k)
+              cd.set(first + static_cast<GA_Offset>(k), want);
+          }
+        }
+      },
+      parallel ? kMinParallelGuideChunks : chunks + 1);
   if (movedP)
     P.getAttribute()->bumpDataId();
   if (movedCd)
@@ -610,6 +674,13 @@ void buildCollisionGuide(const SIM_Object &obj, GU_Detail &out,
 }
 
 void exportCollisionShapes(Box3DSharedState &st, SIM_ObjectArray &objects) {
+  // Nothing moved, no body was scanned or came or went (a sleeping scene): the
+  // geometry the object carries over from the last step is still right.
+  if (st.shapesFresh && st.moves.empty() && st.fullScans == 0 &&
+      st.bodyVersion == st.shapesVersion)
+    return;
+  st.shapesFresh = true;
+  st.shapesVersion = st.bodyVersion;
   const UT_Vector3 white(1.0f, 1.0f, 1.0f); // the SOP tints it (Shape Color)
   std::vector<Placed> placed;
   for (int i = 0; i < objects.entries(); ++i) {
