@@ -781,23 +781,21 @@ struct MovedBodies {
   int missing = 0;             // moved bodies without a handle
 };
 
-// Fills st.writeItems and st.packedWrites with the point bodies to write. The
-// moves are sorted into kinds in parallel, the items numbered by a serial pass
-// over the kinds, and the items filled in parallel.
+// Fills st.writeItems with the point bodies to write. The moves are sorted into
+// kinds in parallel, the items numbered by a serial pass over the kinds, and
+// the items filled in parallel.
 MovedBodies collectMovedBodies(Box3DSharedState &st) {
   MovedBodies out;
   const size_t moveCount = st.moves.size();
-  enum : uint8_t { kSkip, kMissing, kWhole, kPoint, kPacked };
+  enum : uint8_t { kSkip, kMissing, kWhole, kPoint };
   // Kept between steps (no allocation). References: a thread_local named in
   // a lambda would be each worker thread's own, empty one.
   thread_local std::vector<uint8_t> kindStore;
-  thread_local std::vector<uint32_t> itemStore, packedStore;
+  thread_local std::vector<uint32_t> itemStore;
   std::vector<uint8_t> &kind = kindStore;
   std::vector<uint32_t> &itemAt = itemStore;
-  std::vector<uint32_t> &packedAt = packedStore;
   kind.resize(moveCount);
   itemAt.resize(moveCount);
-  packedAt.resize(moveCount);
   box3dParallelFor(
       moveCount,
       [&](size_t mi) {
@@ -811,10 +809,10 @@ MovedBodies collectMovedBodies(Box3DSharedState &st) {
         else if (entry->wholeObject)
           kind[mi] = kWhole; // written to the object's Position data
         else
-          kind[mi] = entry->packed ? kPacked : kPoint;
+          kind[mi] = kPoint;
       },
       minParallelWrite(), kCheapGrain);
-  uint32_t items = 0, packed = 0;
+  uint32_t items = 0;
   for (size_t mi = 0; mi < moveCount; ++mi) {
     switch (kind[mi]) {
     case kMissing:
@@ -823,9 +821,6 @@ MovedBodies collectMovedBodies(Box3DSharedState &st) {
     case kWhole:
       out.wholeMoves.push_back(static_cast<int>(mi));
       break;
-    case kPacked:
-      packedAt[mi] = packed++;
-      [[fallthrough]];
     case kPoint:
       itemAt[mi] = items++;
       break;
@@ -833,16 +828,19 @@ MovedBodies collectMovedBodies(Box3DSharedState &st) {
       break;
     }
   }
-  st.writeItems.assign(items, Box3DWriteItem());
-  st.packedWrites.assign(packed, Box3DPackedWrite());
+  // Only a growing vector constructs elements (serially); the parallel pass
+  // below resets each one it uses, so a step does not rewrite them all in one
+  // thread.
+  st.writeItems.resize(items);
   box3dParallelFor(
       moveCount,
       [&](size_t mi) {
-        if (kind[mi] != kPoint && kind[mi] != kPacked)
+        if (kind[mi] != kPoint)
           return;
         const b3dop::BodyMove &mv = st.moves[mi];
         Box3DBodyMirror *entry = static_cast<Box3DBodyMirror *>(mv.userData);
         Box3DWriteItem &w = st.writeItems[itemAt[mi]];
+        w = Box3DWriteItem();
         // The velocities of the move event (a piece of a compound: its
         // compound's, its own parked body has none).
         const float *lin = entry->inCompound ? entry->glueLin : mv.lin;
@@ -852,8 +850,6 @@ MovedBodies collectMovedBodies(Box3DSharedState &st) {
         w.entry = entry;
         w.move = static_cast<int>(mi);
         w.objectId = entry->objectId;
-        if (kind[mi] == kPacked)
-          w.packedIdx = static_cast<int>(packedAt[mi]);
         // `awake`: only changes are written (and only if the attribute
         // exists). entry->awake is updated where the write happens, so an
         // unresolved point is retried next step.
@@ -894,7 +890,7 @@ public:
   // resolved.
   BodyWriter(Box3DSharedState &st, GU_Detail *gdp, const PointAttrs &a,
              size_t begin, size_t end)
-      : myMoves(st.moves), myPackedWrites(st.packedWrites), myGdp(gdp), myA(a),
+      : myMoves(st.moves), myGdp(gdp), myA(a),
         myAnyPrims(gdp->getNumPrimitives() > 0), myP(gdp, GA_ATTRIB_POINT, "P"),
         myV(gdp, GA_ATTRIB_POINT, "v"), myW(gdp, GA_ATTRIB_POINT, "w"),
         myQ(gdp, GA_ATTRIB_POINT, "orient"),
@@ -908,6 +904,10 @@ public:
     myVerifyReadback = B3D_ENV_INT("BOX3DDOP_VERIFY_READBACK", 0) != 0;
 #endif
   }
+
+  // Bodies whose primitive is gone (the topology changed without a new id).
+  int missingPrimitives() const { return myMissingPrims.load(); }
+  bool wrotePacked() const { return myWrotePacked.load(); }
 
   // The attributes write() writes (null: not written).
   std::array<GA_Attribute *, 5> writtenAttributes() const {
@@ -923,11 +923,14 @@ public:
       return;
     const b3dop::BodyMove &mv = myMoves[static_cast<size_t>(w.move)];
     writeAttributes(w, mv);
-    Box3DPackedWrite *pw = composePacked(w, mv);
-    updateMirror(w, mv, pw != nullptr);
+    PackedNew pw;
+    const bool packed = composePacked(w, mv, pw);
+    if (packed)
+      writePrimitive(pw);
+    updateMirror(w, mv, packed);
 #ifdef BOX3DDOP_DEBUG
     if (myVerifyReadback)
-      verifyReadback(w, pw);
+      verifyReadback(w, packed ? &pw : nullptr);
 #endif
   }
 
@@ -955,24 +958,41 @@ private:
     }
   }
 
-  // Packed: the new 3x3 (the scale the sync read, the new rotation) is computed
-  // here and written in step 3, to the primitive the last sync stored. Null if
-  // the body is not packed.
-  Box3DPackedWrite *composePacked(const Box3DWriteItem &w,
-                                  const b3dop::BodyMove &mv) const {
+  // A packed body's new 3x3 (the scale the sync read, the new rotation) and the
+  // primitive the last sync stored for it.
+  struct PackedNew {
+    double newM3[9];
+    GA_Offset primOff;
+  };
+
+  // Packed: composes the new 3x3 into `pw`. False if the body is not packed.
+  bool composePacked(const Box3DWriteItem &w, const b3dop::BodyMove &mv,
+                     PackedNew &pw) const {
     Box3DBodyMirror &me = *w.entry;
-    Box3DPackedWrite *pw =
-        w.packedIdx >= 0 ? &myPackedWrites[static_cast<size_t>(w.packedIdx)]
-                         : nullptr;
-    if (!(myAnyPrims && me.packed && pw))
-      return nullptr;
-    composePackedMatrix(mv.rot, me.rowScale, pw->newM3);
-    b3dop::keepMirror(me.m3, pw->newM3); // a mirrored piece stays mirrored
-    pw->primOff = static_cast<GA_Offset>(me.primOff);
-    pw->has = true;
-    std::copy(pw->newM3, pw->newM3 + 9,
+    if (!(myAnyPrims && me.packed))
+      return false;
+    composePackedMatrix(mv.rot, me.rowScale, pw.newM3);
+    b3dop::keepMirror(me.m3, pw.newM3); // a mirrored piece stays mirrored
+    pw.primOff = static_cast<GA_Offset>(me.primOff);
+    std::copy(pw.newM3, pw.newM3 + 9,
               me.m3); // a skipped sync does not refresh it
-    return pw;
+    return true;
+  }
+
+  // Each body has its own primitive, so these writes are to distinct ones.
+  // setLocalTransform does not mark the primitive list dirty: the caller bumps
+  // it once (wrotePacked), as the HDK leaves that to us.
+  void writePrimitive(const PackedNew &pw) const {
+    GA_Primitive *raw =
+        (pw.primOff >= 0 && pw.primOff < myGdp->getNumPrimitiveOffsets())
+            ? myGdp->getPrimitive(pw.primOff)
+            : nullptr;
+    if (!raw || !GU_PrimPacked::isPackedPrimitive(*raw)) {
+      myMissingPrims.fetch_add(1, std::memory_order_relaxed);
+      return;
+    }
+    setLocal3(*static_cast<GU_PrimPacked *>(raw), pw.newM3);
+    myWrotePacked.store(true, std::memory_order_relaxed);
   }
 
   // What the read path will see, so our own write does not look like an
@@ -999,8 +1019,7 @@ private:
 #ifdef BOX3DDOP_DEBUG
   // BOX3DDOP_VERIFY_READBACK=1: read back; a difference poseDiffers sees would
   // make the next scan treat our own write as an external edit.
-  void verifyReadback(const Box3DWriteItem &w,
-                      const Box3DPackedWrite *pw) const {
+  void verifyReadback(const Box3DWriteItem &w, const PackedNew *pw) const {
     const Box3DBodyPose &mirror = *w.entry;
     Box3DBodyPose stored;
     PackedInfo pk;
@@ -1025,56 +1044,20 @@ private:
 #endif
 
   const std::vector<b3dop::BodyMove> &myMoves;
-  std::vector<Box3DPackedWrite> &myPackedWrites;
-  [[maybe_unused]] GU_Detail *myGdp; // read back only by the debug check
+  GU_Detail *myGdp;
   [[maybe_unused]] const PointAttrs &myA;
   const bool myAnyPrims;
   mutable GA_RWHandleV3 myP, myV, myW;
   mutable GA_RWHandleQ myQ;
   mutable GA_RWHandleI myAwake;
   bool myAnyAwakeWrite = false;
+  // Set by writePrimitive from the parallel pass.
+  mutable std::atomic<int> myMissingPrims{0};
+  mutable std::atomic<bool> myWrotePacked{false};
 #ifdef BOX3DDOP_DEBUG
   bool myVerifyReadback = false;
 #endif
 };
-
-// ---- step 3 (parallel): packed primitive rotations
-// Parallel: setLocalTransform is thread-safe on distinct primitives. Returns
-// the bodies whose primitive is gone (the topology changed without a new id).
-int writePackedRotations(GU_Detail *gdp,
-                         const std::vector<Box3DWriteItem> &items, size_t begin,
-                         size_t end,
-                         const std::vector<Box3DPackedWrite> &packedWrites) {
-  std::atomic<int> missing{0};
-  std::atomic<bool> wrotePacked{false};
-  // Each body has its own primitive, so the writes are to distinct primitives.
-  parallelForEach(
-      end - begin,
-      [&](size_t j) {
-        const Box3DWriteItem &w = items[begin + j];
-        if (w.packedIdx < 0 ||
-            !packedWrites[static_cast<size_t>(w.packedIdx)].has)
-          return;
-        const Box3DPackedWrite &pw =
-            packedWrites[static_cast<size_t>(w.packedIdx)];
-        GA_Primitive *raw =
-            (pw.primOff >= 0 && pw.primOff < gdp->getNumPrimitiveOffsets())
-                ? gdp->getPrimitive(pw.primOff)
-                : nullptr;
-        if (!raw || !GU_PrimPacked::isPackedPrimitive(*raw)) {
-          missing.fetch_add(1, std::memory_order_relaxed);
-          return;
-        }
-        setLocal3(*static_cast<GU_PrimPacked *>(raw), pw.newM3);
-        wrotePacked.store(true, std::memory_order_relaxed);
-      },
-      minParallelWrite());
-  // setLocalTransform does not mark the primitive list dirty; the HDK leaves
-  // that to us.
-  if (wrotePacked.load())
-    gdp->getPrimitiveList().bumpDataId();
-  return missing.load();
-}
 
 // One object's results, st.writeItems[begin, end), into its (locked, writable)
 // geometry. Returns how many bodies could not be matched to a point or
@@ -1094,7 +1077,8 @@ int writeObjectResults(Box3DSharedState &st, GU_Detail *gdp, size_t begin,
     if (items[k].off == GA_INVALID_OFFSET)
       ++missing;
 
-  // ---- step 2 (parallel): write attributes, one task per body ----
+  // ---- step 2 (parallel): write attributes and packed transforms, one task
+  // per body ----
   const BodyWriter writer(st, gdp, a, begin, end);
   const std::array<GA_Attribute *, 5> written = writer.writtenAttributes();
   // Shared copy-on-write pages would race: a parallel pass hardens what it
@@ -1107,9 +1091,11 @@ int writeObjectResults(Box3DSharedState &st, GU_Detail *gdp, size_t begin,
   for (GA_Attribute *attr : written)
     if (attr)
       attr->bumpDataId();
-
-  return missing +
-         writePackedRotations(gdp, items, begin, end, st.packedWrites);
+  // setLocalTransform does not mark the primitive list dirty; the HDK leaves
+  // that to us.
+  if (writer.wrotePacked())
+    gdp->getPrimitiveList().bumpDataId();
+  return missing + writer.missingPrimitives();
 }
 
 } // namespace

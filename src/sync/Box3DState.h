@@ -286,8 +286,7 @@ struct Box3DPointSlot {
 };
 
 // One awake body's result on its way to the geometry. Its pose is the move
-// event (Box3DSharedState::moves[move]); packed matrices live in a side array
-// (Box3DPackedWrite).
+// event (Box3DSharedState::moves[move]).
 struct Box3DWriteItem {
   GA_Offset off = GA_INVALID_OFFSET;
   Box3DBodyMirror *entry = nullptr;
@@ -295,7 +294,6 @@ struct Box3DWriteItem {
   float lin[3] = {0, 0, 0}; // velocities (not in move events)
   float ang[3] = {0, 0, 0};
   int objectId = 0;
-  int packedIdx = -1;     // index into Box3DSharedState::packedWrites, or -1
   int8_t awakeState = -1; // `awake` to write: -1 none, 0 asleep, 1 awake
 };
 
@@ -319,14 +317,6 @@ struct Box3DDeletion {
   int objectId = 0;
   GA_Offset off = GA_INVALID_OFFSET;
   int64_t pointId = 0;
-};
-
-// A packed rotation computed in the write-back's parallel pass, written in its
-// serial pass.
-struct Box3DPackedWrite {
-  bool has = false; // newM3 / primOff were filled in
-  GA_Offset primOff = GA_INVALID_OFFSET;
-  double newM3[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
 };
 
 // Change markers of an object's geometry when the solver last finished with it
@@ -868,7 +858,6 @@ struct Box3DSharedState {
   // Scratch reused every step.
   std::unordered_map<int, std::vector<Box3DPointSlot>> slots; // key: object id
   std::vector<Box3DWriteItem> writeItems;
-  std::vector<Box3DPackedWrite> packedWrites;
   std::vector<b3dop::BodyMove>
       moves; // this step's move events (read once after the step)
   // Substeps: one step's events and broken joints, and each body's slot in
@@ -1044,7 +1033,6 @@ struct Box3DSharedState {
     for (const auto &kv : slots)
       n += kv.second.capacity() * sizeof(Box3DPointSlot);
     return n + writeItems.capacity() * sizeof(Box3DWriteItem) +
-           packedWrites.capacity() * sizeof(Box3DPackedWrite) +
            moves.capacity() * sizeof(b3dop::BodyMove) +
            stepEvents.capacity() * sizeof(b3dop::BodyMove) +
            impulseEvents.capacity() * sizeof(b3dop::ContactImpulse) +

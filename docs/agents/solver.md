@@ -31,7 +31,7 @@ quiet-point check read per body), then the settings it was built from; keep new 
 Scratch reused every step: `slots` (per object: offset, key, cached entry, freshly read state and this scan's shape
 decisions per point; a cached entry is trusted while offset and key match; when entries are erased, only the slots of the
 objects that lost them forget their cached entries), `writeItems`,
-`packedWrites`, `moves`, `contacts`. `syncStamp` / `stampedCount`: equal counts mean nothing to remove.
+`moves`, `contacts`. `syncStamp` / `stampedCount`: equal counts mean nothing to remove.
 `isLive(entry)` = its object was visited by this sync and the entry carries the object's `liveStamp`; the entry keeps a
 pointer to its object's record (`sync`), valid because records are erased only after their unvisited bodies are removed.
 
@@ -172,7 +172,7 @@ skip.
 
 `SIM_SolverBox3D::writeResultsBack` is the driver (it owns the node messages); the work is in `Box3DPostStep.cpp`:
 `collectMovedBodies`, `writeWholeObjects`, then per object `writeObjectResults` (`BodyWriter` for one
-body's attributes, `writePackedRotations` for step 5).
+body's attributes and packed transform).
 
 0. Move events (read once into `st.moves` right after the step; impacts use them too): every awake body, its
    transform and its velocities (a body falling asleep appears once more, with zero velocity). Only live dynamic entries become items, which point at their
@@ -183,15 +183,20 @@ body's attributes, `writePackedRotations` for step 5).
 2. `ensureResultAttribs` creates `v`, `w`, `orient` (a new `orient` is set to identity).
 3. `resolvePointOffsets`: the stored offset if it still names the point (in range, same id / number), else by id.
 4. Parallel pass: `hardenWrittenPages` first when parallel (offsets bucketed per page, see `hardenWrittenPages`; one full call when nearly all
-   buckets are hit), then write, compute the new packed 3x3 (the row scale the sync stored, the new rotation: no matrix
-   decomposition), and store in the mirror what the geometry now holds without reading it back (`storedPosition`,
+   buckets are hit), then write each body's attributes, compute the new packed 3x3 (the row scale the sync stored, the new rotation: no matrix
+   decomposition), set it on the body's own primitive (`setLocalTransform` + `transformDirty`), and store in the mirror what the geometry now holds without reading it back (`storedPosition`,
    `sanitizeQuat` of the written rotation). It must agree with `readPointState` within `poseDiffers`' tolerances (1e-5;
    q and -q equal), or our write looks like an external edit; a packed transform's float round trip stays well inside
    them. `BOX3DDOP_VERIFY_READBACK=1` re-reads and logs `READBACK MISMATCH` when `poseDiffers` would see a difference.
-5. Parallel pass (distinct primitives): `setLocalTransform` + `transformDirty`, then one `getPrimitiveList().bumpDataId()` (the HDK leaves
-   marking intrinsics dirty to the caller). A point no longer on a packed primitive is counted as unmatched.
+   Afterwards one `getPrimitiveList().bumpDataId()` (the HDK leaves marking intrinsics dirty to the caller). A point no longer on a packed
+   primitive is counted as unmatched.
+5. The items are reset in `collectMovedBodies`' parallel pass (`writeItems` is only resized), so a step does not rewrite them all on one thread.
 
 Only dynamic bodies are written; of several points sharing an `id`, only the first.
+
+**Cost.** With the simulation cache on, the first writable access to an object's Geometry makes Houdini copy the previous frame's
+geometry (about 2.4 ms for 30000 packed bodies, in `box3dWritableGeometry`); it is Houdini's, and gone with Cache Simulation off.
+Running it on a pool task while `b3World_Step` runs made the step slower than the copy took (Box3D's workers wait on each other at every stage).
 
 ### Threading
 
