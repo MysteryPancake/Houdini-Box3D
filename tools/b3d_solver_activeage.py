@@ -53,7 +53,7 @@ SOP_VEX = f"""\
 {ACTIVE_VEX}
 string grp = chs("../{JUST_ACTIVATED}");
 float age = act == 1 ? @TimeInc : 0.0;
-setpointattrib(0, "{ACTIVE_AGE_ATTRIB}", @ptnum, age);
+f@{ACTIVE_AGE_ATTRIB} = age;
 if (grp != "")
 {{
     if (chi("../{JUST_ACTIVATED_TYPE}"))
