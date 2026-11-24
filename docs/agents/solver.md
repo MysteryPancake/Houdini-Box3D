@@ -77,11 +77,15 @@ deleteDeadPoints   `dead` points
 stamp = now
 ```
 
-**Performance Monitor.** Each stage is a `UT_PerfMonAutoSolveEvent(this, "<category>/<stage>")`: the `/` makes the
-Stats view nest the stage under its category, as Bullet's Pre-Solve / Stepping Simulation / Post-Solve. Pre-Solve: Rebuilding World,
+**Performance Monitor.** Each stage is a `UT_PerfMonAutoSolveEvent(this, "<category>}/{<stage>")` (names written out in `SIM_SolverBox3D.cpp`; Houdini wraps a name in braces and nests at a `/` outside them).
+The Stats view then shows `{Category}` > `{Stage}`, as Bullet's Pre-Solve / Stepping Simulation / Post-Solve. A plain `A/B` or `A/{B}` gives unbalanced braces. Pre-Solve: Rebuilding World,
 Updating Bodies, Updating Colliders, Removing Bodies, Updating Constraints. Stepping Simulation: Applying Forces, Stepping World.
 Post-Solve: Exporting Simulation Results, Updating Constraint States, Recording Impacts, Updating Points, and Exporting
-Collision Shapes (Export Collision Shapes on). Opened only on the solve thread.
+Collision Shapes (Export Collision Shapes on). Sub-stages nest one level deeper, written out the same way (opening an event inside another does not nest them):
+Stepping World has Compound Motion, Glue Hits, Breaking Bonds, Compound Bridges and Collecting Impacts; Updating Bodies has Checking Changes,
+Reading Points, Planning Shapes, Checking Unchanged Points and Applying to Box3D (`syncObject`, which gets the solver from `StepProgress::solver`);
+Exporting Simulation Results has Compound Pieces and Writing Back; Updating Points has Writing Attributes, Aging and Deleting Dead Points.
+Opened only on the solve thread.
 While a profile records, `reportStepProfile` (`SIM_SolverBox3D.cpp`) adds one `Stepping Simulation/Box3D <part>` event per part of Box3D's own
 step timing (`Box3DWorld::stepProfile`, `b3World_GetProfile`: Pairs, Collide, Solver Setup, Constraints and its parts (Prepare, Integrate Velocities, Warm Start, Solve, Integrate Positions, Relax, Restitution, Store
 Impulses), Split Islands (runs beside the constraints), Transforms, Events, Refit, Fast Bodies, Sensors, Sleep Islands), each given Box3D's time with `overrideTime`. Their sum is about Stepping World's time and they sit beside it, so

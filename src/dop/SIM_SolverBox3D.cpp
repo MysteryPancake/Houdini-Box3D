@@ -32,39 +32,47 @@ using namespace box3dsolver;
 
 namespace {
 
+// Event names are written "Category}/{Stage": Houdini wraps a name in braces
+// and nests the event under its parent at each "/" outside them, so the
+// Performance Monitor shows {Category} with {Stage} below it, as the Bullet
+// solver's tree does. A plain "A/B" or "A/{B}" gives unbalanced braces.
+
 // Box3D times the parts of its own step. Each part becomes an event under
 // "Stepping Simulation" in Houdini's Performance Monitor, with Box3D's time, so
 // the profile shows where "Stepping World" went. Only while a profile records.
 void reportStepProfile(const SIM_Solver *solver,
-                       const b3dop::Box3DWorld::StepProfile &p) {
+                       const b3dop::Box3DWorld &world) {
   UT_Performance *perf = UTgetPerformance();
-  if (!perf->isRecording())
+  if (!perf->isRecordingSolveStats())
     return;
+  const b3dop::Box3DWorld::StepProfile p = world.stepProfile();
   const struct {
     const char *name;
     float ms;
   } parts[] = {
-      {"Stepping Simulation/Box3D Pairs", p.pairs},
-      {"Stepping Simulation/Box3D Collide", p.collide},
-      {"Stepping Simulation/Box3D Solver Setup", p.solverSetup},
-      {"Stepping Simulation/Box3D Constraints", p.constraints},
-      {"Stepping Simulation/Box3D Constraints/Prepare", p.prepareConstraints},
-      {"Stepping Simulation/Box3D Constraints/Integrate Velocities",
+      {"Stepping Simulation}/{Box3D Pairs", p.pairs},
+      {"Stepping Simulation}/{Box3D Collide", p.collide},
+      {"Stepping Simulation}/{Box3D Solver Setup", p.solverSetup},
+      {"Stepping Simulation}/{Box3D Constraints", p.constraints},
+      {"Stepping Simulation}/{Box3D Constraints}/{Prepare",
+       p.prepareConstraints},
+      {"Stepping Simulation}/{Box3D Constraints}/{Integrate Velocities",
        p.integrateVelocities},
-      {"Stepping Simulation/Box3D Constraints/Warm Start", p.warmStart},
-      {"Stepping Simulation/Box3D Constraints/Solve", p.solveImpulses},
-      {"Stepping Simulation/Box3D Constraints/Integrate Positions",
+      {"Stepping Simulation}/{Box3D Constraints}/{Warm Start", p.warmStart},
+      {"Stepping Simulation}/{Box3D Constraints}/{Solve", p.solveImpulses},
+      {"Stepping Simulation}/{Box3D Constraints}/{Integrate Positions",
        p.integratePositions},
-      {"Stepping Simulation/Box3D Constraints/Relax", p.relaxImpulses},
-      {"Stepping Simulation/Box3D Constraints/Restitution", p.restitution},
-      {"Stepping Simulation/Box3D Constraints/Store Impulses", p.storeImpulses},
-      {"Stepping Simulation/Box3D Split Islands", p.splitIslands},
-      {"Stepping Simulation/Box3D Transforms", p.transforms},
-      {"Stepping Simulation/Box3D Events", p.events},
-      {"Stepping Simulation/Box3D Refit", p.refit},
-      {"Stepping Simulation/Box3D Fast Bodies", p.bullets},
-      {"Stepping Simulation/Box3D Sensors", p.sensorHits + p.sensors},
-      {"Stepping Simulation/Box3D Sleep Islands", p.sleepIslands},
+      {"Stepping Simulation}/{Box3D Constraints}/{Relax", p.relaxImpulses},
+      {"Stepping Simulation}/{Box3D Constraints}/{Restitution", p.restitution},
+      {"Stepping Simulation}/{Box3D Constraints}/{Store Impulses",
+       p.storeImpulses},
+      {"Stepping Simulation}/{Box3D Split Islands", p.splitIslands},
+      {"Stepping Simulation}/{Box3D Transforms", p.transforms},
+      {"Stepping Simulation}/{Box3D Events", p.events},
+      {"Stepping Simulation}/{Box3D Refit", p.refit},
+      {"Stepping Simulation}/{Box3D Fast Bodies", p.bullets},
+      {"Stepping Simulation}/{Box3D Sensors", p.sensorHits + p.sensors},
+      {"Stepping Simulation}/{Box3D Sleep Islands", p.sleepIslands},
   };
   for (const auto &part : parts) {
     const int id = perf->startTimedSolveEvent(solver, part.name);
@@ -417,6 +425,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
 
   // Escape (see StepProgress).
   StepProgress progress;
+  progress.solver = this;
   progress.boss = UTgetInterrupt();
   if (progress.check())
     return SIM_SOLVER_FAIL; // cancelled before anything changed
@@ -462,7 +471,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   // A failed rebuild leaves the old state in place, valid but from another
   // time: never continue it.
   if (reason) {
-    UT_PerfMonAutoSolveEvent perf(this, "Pre-Solve/Rebuilding World");
+    UT_PerfMonAutoSolveEvent perf(this, "Pre-Solve}/{Rebuilding World");
     if (!createFreshWorld(*worldData, tuning, reason)) {
       reportWorldCreationFailure(objects);
       return SIM_SOLVER_FAIL;
@@ -527,26 +536,42 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   if (n == 1) { // one step, nothing to merge
     if (getUseForces()) {
       UT_PerfMonAutoSolveEvent perf(this,
-                                    "Stepping Simulation/Applying Forces");
+                                    "Stepping Simulation}/{Applying Forces");
       const ForceStats fs = applyExternalForces(*st, objects, getForcesWake());
       warnCount(objects, fs.nonFinite, kNonFiniteForce);
     }
-    UT_PerfMonAutoSolveEvent perf(this, "Stepping Simulation/Stepping World");
-    recordCompoundMotion(*st);
+    UT_PerfMonAutoSolveEvent perf(this, "Stepping Simulation}/{Stepping World");
     std::vector<b3dop::BodyMove> left; // pieces of a compound taken apart
-    holdCompoundsForApproach(*st, st->moves, left);
+    {
+      UT_PerfMonAutoSolveEvent e(
+          this, "Stepping Simulation}/{Stepping World}/{Compound Motion");
+      recordCompoundMotion(*st);
+      holdCompoundsForApproach(*st, st->moves, left);
+    }
     st->world.step(subDt);
-    reportStepProfile(this, st->world.stepProfile());
+    reportStepProfile(this, st->world);
     if (wantHits) {
       st->world.updateHitEvents();
       st->hitsCollected = true;
     }
-    collectGlueHits(*st);
-    breakBonds(*st, subDt);
+    {
+      UT_PerfMonAutoSolveEvent e(
+          this, "Stepping Simulation}/{Stepping World}/{Glue Hits");
+      collectGlueHits(*st);
+    }
+    {
+      UT_PerfMonAutoSolveEvent e(
+          this, "Stepping Simulation}/{Stepping World}/{Breaking Bonds");
+      breakBonds(*st, subDt);
+    }
     st->world.getMoveEvents(st->moves); // read once: write-back and impacts
     // Before the step's own events: they carry the final poses.
     st->moves.insert(st->moves.begin(), left.begin(), left.end());
-    pruneCompoundBridges(*st);
+    {
+      UT_PerfMonAutoSolveEvent e(
+          this, "Stepping Simulation}/{Stepping World}/{Compound Bridges");
+      pruneCompoundBridges(*st);
+    }
   } else {
     // The last frame's events: the bodies to look at before the first step.
     const std::vector<b3dop::BodyMove> lastFrame = std::move(st->moves);
@@ -569,7 +594,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
       // and cleared by the first) from `carry`.
       if (getUseForces()) {
         UT_PerfMonAutoSolveEvent perf(this,
-                                      "Stepping Simulation/Applying Forces");
+                                      "Stepping Simulation}/{Applying Forces");
         carry.replay = i > 0;
         const ForceStats fs =
             applyExternalForces(*st, objects, getForcesWake(), &carry);
@@ -578,22 +603,38 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
       bool mayRepeat = false; // a body may be in `events` twice
       {
         UT_PerfMonAutoSolveEvent perf(this,
-                                      "Stepping Simulation/Stepping World");
-        recordCompoundMotion(*st);
+                                      "Stepping Simulation}/{Stepping World");
         std::vector<b3dop::BodyMove> left; // pieces of a compound taken apart
-        holdCompoundsForApproach(*st, i == 0 ? lastFrame : events, left);
+        {
+          UT_PerfMonAutoSolveEvent e(
+              this, "Stepping Simulation}/{Stepping World}/{Compound Motion");
+          recordCompoundMotion(*st);
+          holdCompoundsForApproach(*st, i == 0 ? lastFrame : events, left);
+        }
         mayRepeat = !left.empty();
         st->world.step(subDt);
-        reportStepProfile(this, st->world.stepProfile());
+        reportStepProfile(this, st->world);
         // Before the glue reads them; appended across the frame's steps.
         if (collectHits)
           st->world.updateHitEvents(i > 0);
-        collectGlueHits(*st);
-        breakBonds(*st, subDt);
+        {
+          UT_PerfMonAutoSolveEvent e(
+              this, "Stepping Simulation}/{Stepping World}/{Glue Hits");
+          collectGlueHits(*st);
+        }
+        {
+          UT_PerfMonAutoSolveEvent e(
+              this, "Stepping Simulation}/{Stepping World}/{Breaking Bonds");
+          breakBonds(*st, subDt);
+        }
         st->world.getMoveEvents(events);
         // Before the step's own events: they carry the final poses.
         events.insert(events.begin(), left.begin(), left.end());
-        pruneCompoundBridges(*st);
+        {
+          UT_PerfMonAutoSolveEvent e(
+              this, "Stepping Simulation}/{Stepping World}/{Compound Bridges");
+          pruneCompoundBridges(*st);
+        }
         // Joint events are cleared by the next step too: keep every joint that
         // went over its threshold (once each).
         st->world.brokenJoints(broken);
@@ -601,8 +642,12 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
                                    broken.end());
         // This step's contacts are impacts too (their impulses add up over
         // the frame).
-        if (collectImpactHits)
+        if (collectImpactHits) {
+          UT_PerfMonAutoSolveEvent e(
+              this,
+              "Stepping Simulation}/{Stepping World}/{Collecting Impacts");
           collectImpacts(*st, i > 0);
+        }
       }
       // Box3D clears its move events every step, so merge them: the last
       // event of a body is its final pose (and its fell-asleep flag).
@@ -622,13 +667,21 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
                   st->world.recycledContactCount());
   {
     UT_PerfMonAutoSolveEvent perf(this,
-                                  "Post-Solve/Exporting Simulation Results");
-    expandCompoundMoves(*st); // the pieces of moved compounds
-    writeResultsBack(*worldData, objects);
+                                  "Post-Solve}/{Exporting Simulation Results");
+    {
+      UT_PerfMonAutoSolveEvent e(
+          this, "Post-Solve}/{Exporting Simulation Results}/{Compound Pieces");
+      expandCompoundMoves(*st); // the pieces of moved compounds
+    }
+    {
+      UT_PerfMonAutoSolveEvent e(
+          this, "Post-Solve}/{Exporting Simulation Results}/{Writing Back");
+      writeResultsBack(*worldData, objects);
+    }
   }
   {
     UT_PerfMonAutoSolveEvent perf(this,
-                                  "Post-Solve/Updating Constraint States");
+                                  "Post-Solve}/{Updating Constraint States");
     advanceGlue(*st, st->stepDt);
     st->constraintAgeDt = getEnableAging() ? static_cast<float>(dt) : 0.0f;
     if (const int broke = jointsAfterStep(*st, objects))
@@ -636,20 +689,30 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   }
   // Contacts are read before the queued point writes, aging and deletions.
   {
-    UT_PerfMonAutoSolveEvent perf(this, "Post-Solve/Recording Impacts");
+    UT_PerfMonAutoSolveEvent perf(this, "Post-Solve}/{Recording Impacts");
     recordImpacts(*st, objects, engine.getSimulationTime());
   }
   {
-    UT_PerfMonAutoSolveEvent perf(this, "Post-Solve/Updating Points");
-    queueCompoundIds(*st);
-    writePointAttrs(*st, objects);
-    if (getEnableAging())
+    UT_PerfMonAutoSolveEvent perf(this, "Post-Solve}/{Updating Points");
+    {
+      UT_PerfMonAutoSolveEvent e(
+          this, "Post-Solve}/{Updating Points}/{Writing Attributes");
+      queueCompoundIds(*st);
+      writePointAttrs(*st, objects);
+    }
+    if (getEnableAging()) {
+      UT_PerfMonAutoSolveEvent e(this, "Post-Solve}/{Updating Points}/{Aging");
       ageObjects(*st, objects, static_cast<float>(dt));
-    deleteDeadPoints(*st, objects);
+    }
+    {
+      UT_PerfMonAutoSolveEvent e(
+          this, "Post-Solve}/{Updating Points}/{Deleting Dead Points");
+      deleteDeadPoints(*st, objects);
+    }
   }
   if (getExportShapes()) {
     UT_PerfMonAutoSolveEvent perf(this,
-                                  "Post-Solve/Exporting Collision Shapes");
+                                  "Post-Solve}/{Exporting Collision Shapes");
     exportCollisionShapes(*st, objects);
   } else {
     st->shapesFresh = false; // the geometry is left as it was: out of date
@@ -737,7 +800,7 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
   st->deletions.clear();
   st->writtenObjects.clear();
   {
-    UT_PerfMonAutoSolveEvent perf(this, "Pre-Solve/Updating Bodies");
+    UT_PerfMonAutoSolveEvent perf(this, "Pre-Solve}/{Updating Bodies");
     for (int i = 0; i < objects.entries(); ++i) {
       if (progress.check())
         return false;
@@ -751,7 +814,7 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
   // collision relationship).
   Box3DAffectorCounts affectorCounts;
   {
-    UT_PerfMonAutoSolveEvent perf(this, "Pre-Solve/Updating Colliders");
+    UT_PerfMonAutoSolveEvent perf(this, "Pre-Solve}/{Updating Colliders");
     syncAffectorBodies(*st, objects, affectorCounts);
   }
   warnCount(objects, affectorCounts.failed + affectorCounts.noGeo,
@@ -767,7 +830,7 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
   // Remove bodies whose point (or object) is gone: the unstamped entries.
   int removed = 0;
   if (st->stampedCount != st->mirror.size()) {
-    UT_PerfMonAutoSolveEvent perf(this, "Pre-Solve/Removing Bodies");
+    UT_PerfMonAutoSolveEvent perf(this, "Pre-Solve}/{Removing Bodies");
     std::unordered_set<int> touched; // objects that lost bodies
     removed = static_cast<int>(st->mirror.eraseIf([&](Box3DBodyMirror &e) {
       if (st->isLive(e))
@@ -807,7 +870,7 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
     ++st->bodyVersion;
   Box3DJointCounts jointCounts;
   {
-    UT_PerfMonAutoSolveEvent perf(this, "Pre-Solve/Updating Constraints");
+    UT_PerfMonAutoSolveEvent perf(this, "Pre-Solve}/{Updating Constraints");
     syncJoints(*st, objects, jointCounts);
     releaseExpiredHolds(*st, st->stepDt);
     syncCompounds(*st); // glued groups as one body (off by default)

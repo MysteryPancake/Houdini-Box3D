@@ -46,12 +46,14 @@
 #include <SIM/SIM_ObjectArray.h>
 #include <SIM/SIM_Position.h>
 #include <SIM/SIM_PositionSimple.h>
+#include <SIM/SIM_Solver.h>
 #include <SIM/SIM_Time.h>
 #include <SIM/SIM_Utils.h>
 #include <UT/UT_Interrupt.h>
 #include <UT/UT_Matrix3.h>
 #include <UT/UT_Matrix4.h>
 #include <UT/UT_ParallelUtil.h>
+#include <UT/UT_PerfMonAutoEvent.h>
 #include <UT/UT_Quaternion.h>
 #include <UT/UT_Vector3.h>
 #include <UT/UT_XformOrder.h>
@@ -84,7 +86,8 @@
 // Box3D call).
 struct StepProgress {
   UT_Interrupt *boss = nullptr;
-  bool cancelled = false; // latched: once true, every check says so
+  const SIM_Solver *solver = nullptr; // for Performance Monitor events
+  bool cancelled = false;             // latched: once true, every check says so
 
   bool check() {
     if (!cancelled && boss)

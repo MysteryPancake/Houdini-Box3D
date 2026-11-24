@@ -78,7 +78,8 @@ def label_of(name, params, shown):
 
 def stage_times(stats, dop_path):
     """{stage or node name: {frame: ms}} from a Performance Monitor stats tree: the solver's stages (nodes named
-    {Category/Stage}) and the time of each node directly in the DOP network (as node:<name>, children included)."""
+    {Category}/{Stage}, nested as the Bullet solver's are, keyed here as Category/Stage; Category alone is left out)
+    and the time of each node directly in the DOP network (as node:<name>, children included)."""
     out = {}
 
     def add(name, frames):
@@ -86,18 +87,25 @@ def stage_times(stats, dop_path):
         for frame, values in frames.items():
             per[int(frame)] = per.get(int(frame), 0.0) + float(values.get("Time", 0.0))
 
-    def walk(node):
+    def walk(node, chain):
         name = node.get("name", "")
         frames = node.get("stats", {}).get("0", {})
         path = node.get("path", "")
-        if name.startswith("{") and "/" in name:
-            add(name.strip("{}"), frames)
+        braced = name.startswith("{") and name.endswith("}")
+        if braced and name[1:].startswith("SIM_"):
+            chain = []  # a solver's own node: its stages are below
+        elif braced:
+            chain = chain + [name[1:-1]]
+            if "/" in name:  # a flat name {Category/Stage} (others' solvers)
+                add(name.strip("{}"), frames)
+            elif len(chain) >= 2:
+                add("/".join(chain), frames)
         elif path.startswith(dop_path + "/") and "/" not in path[len(dop_path) + 1:]:
             add("node:" + name, frames)
         for child in node.get("children", []):
-            walk(child)
+            walk(child, chain)
 
-    walk(stats)
+    walk(stats, [])
     return out
 
 

@@ -1639,8 +1639,12 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
   os.visited = st.syncStamp;
   os.addImpact = addImpact;
   os.wholeObject = false;
-  const Box3DSyncFingerprint fpNow = makeFingerprint(
-      gdp, a, static_cast<int>(node.type), node.props, addImpact);
+  const Box3DSyncFingerprint fpNow = [&] {
+    UT_PerfMonAutoSolveEvent perf(
+        progress.solver, "Pre-Solve}/{Updating Bodies}/{Checking Changes");
+    return makeFingerprint(gdp, a, static_cast<int>(node.type), node.props,
+                           addImpact);
+  }();
   if (os.canSkip && fpNow == os.fp && (!st.wantNames || os.namesKnown)) {
     ++c.skipped;
     st.stampedCount += os.entryCount;
@@ -1678,8 +1682,12 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
   const NameIndex names(st, os, gdp);
 
   SlotList &snaps = st.slots[objectId];
-  collectSlots(gdp, snaps);
-  readSlots(ctx, objectId, snaps);
+  {
+    UT_PerfMonAutoSolveEvent perf(
+        progress.solver, "Pre-Solve}/{Updating Bodies}/{Reading Points");
+    collectSlots(gdp, snaps);
+    readSlots(ctx, objectId, snaps);
+  }
   // Unpacked primitives: their points get no body. With no packed point at all
   // the object is not simulated (a warning, as with RBD Bullet Solver): nothing
   // is stamped, so bodies it had are removed, and canSkip stays false, so it is
@@ -1700,10 +1708,21 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
     c.unpackedPrimPoints += unpacked;
   }
   SlotPlans plans;
-  if (!planSlots(ctx, snaps, plans, progress))
+  bool planned = false;
+  {
+    UT_PerfMonAutoSolveEvent perf(
+        progress.solver, "Pre-Solve}/{Updating Bodies}/{Planning Shapes");
+    planned = planSlots(ctx, snaps, plans, progress);
+  }
+  if (!planned)
     return;
   reserveMirror(st, snaps);
-  stampQuietSlots(ctx, os, objectId, snaps, plans, checkProps);
+  {
+    UT_PerfMonAutoSolveEvent perf(
+        progress.solver,
+        "Pre-Solve}/{Updating Bodies}/{Checking Unchanged Points");
+    stampQuietSlots(ctx, os, objectId, snaps, plans, checkProps);
+  }
   ApplyPass apply(ctx, os, c, plans, names, objectId, checkProps);
   // Most of the world is new (a first frame, a rebuild): the bodies'
   // broad-phase proxies are put in the tree together at the end of the pass.
@@ -1718,7 +1737,13 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
     bulk.world = &st.world;
     bulk.world->beginBulkCreate();
   }
-  if (!apply.run(snaps, progress))
+  bool applied = false;
+  {
+    UT_PerfMonAutoSolveEvent perf(
+        progress.solver, "Pre-Solve}/{Updating Bodies}/{Applying to Box3D");
+    applied = apply.run(snaps, progress);
+  }
+  if (!applied)
     return;
   names.finish(st, os);
   os.restCacheId = restId; // every slot read split (or reused) at this id
