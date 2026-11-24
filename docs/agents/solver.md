@@ -23,8 +23,12 @@ authoritative. Snapshotting the world into the DOP cache is too slow, so don't.
 `Box3DBodyMirror` (per body): the last pose / velocity given to or read from Box3D (to detect edits by other nodes),
 `type` (`dynamic()` derives from it), `handle`, the point (`pointOff`, `pointId`, `pointIndex`, `objectId`), `stamp`, the packed primitive
 and its 3x3, and what the body was built from (`props`, `volume`, `shapeSig`, `shapeless`, `autoScale`, `sizeKey`,
-`animated`, `driven`, `sleeping`). Box3D's body user data points at the entry, so entries live in an `unordered_map`
-(stable nodes) and are erased only with their body.
+`animated`, `driven`, `sleeping`). Box3D's body user data points at the entry, so entries live in `Box3DMirrorMap`'s
+slab of fixed-size chunks (never moved; a `std::deque` would give each of these 500-byte entries its own heap block), found
+through a flat key table, and are erased only with their body. A fresh world's `reserveMirror` allocates the chunks on the TBB
+pool, which touches their pages there, and `collectSlots` does the same for the slot list. Entries are made when handed out, so
+they are in the cache when used; making one is memory bound (about 100 ns of cold writes), so a smaller `Box3DBodyMirror` is what
+would cut the rest.
 The entry's fields are ordered hot first (pose, handle, type, stamp, point, packed data: what the write-back, forces and the
 quiet-point check read per body), then the settings it was built from; keep new per-step fields in the first part.
 

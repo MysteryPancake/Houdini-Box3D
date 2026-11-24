@@ -147,11 +147,13 @@ struct Box3DBodyMirror : Box3DBodyPose {
   } // written back
 };
 
-// The body mirror: entries in a slab (a deque: entries never move, which the
-// cached Box3DPointSlot::entry pointers and Box3D's body user data rely on)
-// with a free list, so live entries stay together in memory and iteration walks
-// the slab. A key -> slot index map serves the lookups that miss the cache.
-// An entry lives until erase(); its slot is then reset and reused.
+// The body mirror: entries in a slab of fixed-size chunks (entries never move,
+// which the cached Box3DPointSlot::entry pointers and Box3D's body user data
+// rely on; a std::deque would put each of these large entries in a block of its
+// own) with a free list, so live entries stay together in memory and iteration
+// walks the slab. A key -> slot index table (open addressing, linear probing,
+// no allocation per entry) serves the lookups that miss the cache. An entry
+// lives until erase(); its slot is then reset and reused.
 class Box3DMirrorMap {
 public:
   struct Ref {
@@ -160,45 +162,88 @@ public:
     bool inserted = false; // new, default-constructed
   };
 
-  size_t size() const { return index_.size(); }
-
-  // A rough heap size: the entries, the free list and the hash index.
-  size_t bytes() const {
-    return slots_.size() * sizeof(Slot) + free_.capacity() * sizeof(uint32_t) +
-           index_.size() * (sizeof(std::pair<const uint64_t, uint32_t>) +
-                            2 * sizeof(void *)) +
-           index_.bucket_count() * sizeof(void *);
+  Box3DMirrorMap() = default;
+  Box3DMirrorMap(const Box3DMirrorMap &) = delete;
+  Box3DMirrorMap &operator=(const Box3DMirrorMap &) = delete;
+  ~Box3DMirrorMap() {
+    for (size_t i = 0; i < used_; ++i)
+      at(i).~Slot();
+    for (Slot *chunk : chunks_)
+      std::allocator<Slot>().deallocate(chunk, kChunk);
   }
 
-  void reserve(size_t n) { index_.reserve(n); }
+  size_t size() const { return count_; }
+
+  // A rough heap size: the entries, the free list and the key table.
+  size_t bytes() const {
+    return chunks_.size() * kChunk * sizeof(Slot) +
+           free_.capacity() * sizeof(uint32_t) +
+           table_.capacity() * sizeof(Bucket);
+  }
+
+  // Room for `n` entries without growing the table or the slab. A big slab is
+  // memory nothing has touched yet, so `parallel(count, f)`, which runs f(i)
+  // for every i < count (on several threads if it likes), allocates its chunks
+  // and touches their pages: the first touch is then not one thread's. The
+  // entries are made when they are handed out, so they are in the cache then.
+  template <class P> void reserve(size_t n, const P &parallel) {
+    growFor(n);
+    const size_t want = (n + kChunk - 1) / kChunk;
+    if (want <= chunks_.size())
+      return;
+    const size_t first = chunks_.size();
+    chunks_.resize(want, nullptr);
+    parallel(want - first, [&](size_t i) {
+      Slot *chunk = std::allocator<Slot>().allocate(kChunk);
+      char *bytes = reinterpret_cast<char *>(chunk);
+      for (size_t off = 0; off < kChunk * sizeof(Slot); off += 4096)
+        bytes[off] = 0;
+      chunks_[first + i] = chunk;
+    });
+  }
+  void reserve(size_t n) {
+    reserve(n, [](size_t count, const auto &f) {
+      for (size_t i = 0; i < count; ++i)
+        f(i);
+    });
+  }
 
   Box3DBodyMirror *find(uint64_t key) {
-    const auto it = index_.find(key);
-    return it == index_.end() ? nullptr : &slots_[it->second].entry;
+    const uint32_t s = lookup(key);
+    return s == kEmpty ? nullptr : &at(s).entry;
   }
   const Box3DBodyMirror *find(uint64_t key) const {
-    const auto it = index_.find(key);
-    return it == index_.end() ? nullptr : &slots_[it->second].entry;
+    const uint32_t s = lookup(key);
+    return s == kEmpty ? nullptr : &at(s).entry;
   }
 
   // The entry for `key`, inserted (default-constructed) if missing.
   Ref tryEmplace(uint64_t key) {
-    const auto ins = index_.try_emplace(key, 0u);
+    growFor(count_ + 1);
+    const size_t mask = table_.size() - 1;
+    size_t b = hashOf(key) & mask;
     Ref r;
-    if (!ins.second) {
-      r.index = ins.first->second;
-      r.entry = &slots_[r.index].entry;
-      return r;
+    while (table_[b].slot != kEmpty) {
+      if (table_[b].key == key) {
+        r.index = table_[b].slot;
+        r.entry = &at(r.index).entry;
+        return r;
+      }
+      b = (b + 1) & mask;
     }
     if (!free_.empty()) {
       r.index = free_.back();
       free_.pop_back();
     } else {
-      r.index = static_cast<uint32_t>(slots_.size());
-      slots_.emplace_back();
+      r.index = static_cast<uint32_t>(used_);
+      if (used_ == chunks_.size() * kChunk)
+        chunks_.push_back(std::allocator<Slot>().allocate(kChunk));
+      new (&chunks_[used_ / kChunk][used_ % kChunk]) Slot();
+      ++used_;
     }
-    ins.first->second = r.index;
-    Slot &s = slots_[r.index];
+    table_[b] = {key, r.index};
+    ++count_;
+    Slot &s = at(r.index);
     s.key = key;
     s.live = true;
     r.entry = &s.entry;
@@ -207,8 +252,8 @@ public:
   }
 
   void erase(uint32_t index) {
-    Slot &s = slots_[index];
-    index_.erase(s.key);
+    Slot &s = at(index);
+    removeKey(s.key);
     s.entry = Box3DBodyMirror(); // so a reused slot starts clean
     s.live = false;
     free_.push_back(index);
@@ -217,8 +262,8 @@ public:
   // Erases every entry for which f(entry) is true; returns how many.
   template <class F> size_t eraseIf(F &&f) {
     size_t n = 0;
-    for (size_t i = 0; i < slots_.size(); ++i)
-      if (slots_[i].live && f(slots_[i].entry)) {
+    for (size_t i = 0; i < used_; ++i)
+      if (at(i).live && f(at(i).entry)) {
         erase(static_cast<uint32_t>(i));
         ++n;
       }
@@ -231,9 +276,88 @@ private:
     uint64_t key = 0;
     bool live = false;
   };
-  std::deque<Slot> slots_;
+  static constexpr size_t kChunk = 1024;  // entries per chunk
+  static constexpr uint32_t kEmpty = ~0u; // an unused bucket
+  struct Bucket {
+    uint64_t key = 0;
+    uint32_t slot = kEmpty;
+  };
+
+  static size_t hashOf(uint64_t key) {
+    return static_cast<size_t>(b3dop::mixHash(b3dop::kHashSeed, key));
+  }
+
+  uint32_t lookup(uint64_t key) const {
+    if (table_.empty())
+      return kEmpty;
+    const size_t mask = table_.size() - 1;
+    for (size_t b = hashOf(key) & mask; table_[b].slot != kEmpty;
+         b = (b + 1) & mask)
+      if (table_[b].key == key)
+        return table_[b].slot;
+    return kEmpty;
+  }
+
+  // The table holds at most 70% full buckets: grown (to a power of two) when
+  // `n` entries would pass that.
+  void growFor(size_t n) {
+    if (!table_.empty() && n * 10 <= table_.size() * 7)
+      return;
+    size_t cap = 16;
+    while (n * 10 > cap * 7)
+      cap *= 2;
+    if (cap <= table_.size())
+      return;
+    std::vector<Bucket> old;
+    old.swap(table_);
+    table_.assign(cap, Bucket());
+    const size_t mask = cap - 1;
+    for (const Bucket &o : old) {
+      if (o.slot == kEmpty)
+        continue;
+      size_t b = hashOf(o.key) & mask;
+      while (table_[b].slot != kEmpty)
+        b = (b + 1) & mask;
+      table_[b] = o;
+    }
+  }
+
+  // Takes `key` out and shifts the entries after it back, so no probe run is
+  // broken and no tombstone is left.
+  void removeKey(uint64_t key) {
+    if (table_.empty())
+      return;
+    const size_t mask = table_.size() - 1;
+    size_t i = hashOf(key) & mask;
+    while (table_[i].slot != kEmpty && table_[i].key != key)
+      i = (i + 1) & mask;
+    if (table_[i].slot == kEmpty)
+      return;
+    for (size_t j = i;;) {
+      j = (j + 1) & mask;
+      if (table_[j].slot == kEmpty)
+        break;
+      const size_t home = hashOf(table_[j].key) & mask;
+      // An entry whose home lies cyclically in (i, j] stays where it is.
+      const bool stays =
+          i <= j ? (i < home && home <= j) : (i < home || home <= j);
+      if (stays)
+        continue;
+      table_[i] = table_[j];
+      i = j;
+    }
+    table_[i] = Bucket();
+    --count_;
+  }
+
+  Slot &at(size_t i) { return chunks_[i / kChunk][i % kChunk]; }
+  const Slot &at(size_t i) const { return chunks_[i / kChunk][i % kChunk]; }
+
+  std::vector<Slot *> chunks_; // raw storage; the first used_ slots are made
+  size_t used_ = 0;            // slots handed out (live or on the free list)
   std::vector<uint32_t> free_;
-  std::unordered_map<uint64_t, uint32_t> index_;
+  std::vector<Bucket> table_;
+  size_t count_ = 0;
 };
 
 // A point's `restxform` split into its rotation (restRotation), kept on its

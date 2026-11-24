@@ -997,6 +997,20 @@ using SlotList = std::vector<Box3DPointSlot>;
 // forgets its cached entry when its offset changed. Without `id` the body id is
 // the point number, i.e. the position in this walk.
 void collectSlots(const GU_Detail *gdp, SlotList &snaps) {
+  // A big first scan (a fresh world) fills memory nothing has touched yet:
+  // its pages are touched on several threads before the serial loop below
+  // constructs the slots in them (a zero byte written to the unconstructed
+  // capacity, which the slot then overwrites).
+  constexpr size_t kPage = 4096;
+  const size_t points = static_cast<size_t>(gdp->getNumPoints());
+  if (points > snaps.capacity() && points >= 8192) {
+    snaps.reserve(points);
+    char *base = reinterpret_cast<char *>(snaps.data()) +
+                 snaps.size() * sizeof(Box3DPointSlot);
+    const size_t bytes = (points - snaps.size()) * sizeof(Box3DPointSlot);
+    parallelForEach((bytes + kPage - 1) / kPage,
+                    [base](size_t i) { base[i * kPage] = 0; }, 64, 16);
+  }
   size_t n = 0;
   for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it, ++n) {
     if (n == snaps.size())
@@ -1135,7 +1149,9 @@ void reserveMirror(Box3DSharedState &st, const SlotList &snaps) {
   for (const Box3DPointSlot &s : snaps)
     fresh += s.entry ? 0 : 1;
   if (fresh >= 64)
-    st.mirror.reserve(st.mirror.size() + fresh);
+    st.mirror.reserve(
+        st.mirror.size() + fresh,
+        [](size_t count, const auto &f) { box3dParallelFor(count, f, 4); });
 }
 
 // ---- step 3b (parallel): settings, and the points with nothing to do
