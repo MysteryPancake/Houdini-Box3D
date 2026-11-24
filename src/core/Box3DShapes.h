@@ -268,11 +268,14 @@ inline double matrixDeterminant(const double m[9]) {
 // M = diag(1, 1, -1) * S * R. This negates `m`'s third row when `before`
 // (the 3x3 the last sync read) mirrored, so a 3x3 composed from a new rotation
 // keeps the mirror.
-inline void keepMirror(const double before[9], double m[9]) {
-  if (!(matrixDeterminant(before) < 0.0))
+inline void keepMirror(bool mirrored, double m[9]) {
+  if (!mirrored)
     return;
   for (int c = 0; c < 3; ++c)
     m[6 + c] = -m[6 + c];
+}
+inline void keepMirror(const double before[9], double m[9]) {
+  keepMirror(matrixDeterminant(before) < 0.0, m);
 }
 
 // The scale packedPointsToBodyLocal bakes in: m4's row lengths, rounded to 5

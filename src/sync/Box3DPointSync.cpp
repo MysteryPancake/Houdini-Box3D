@@ -921,7 +921,7 @@ void storePacked(Box3DBodyMirror &m, const Box3DPointSlot &s) {
   m.packed = s.packed;
   m.primOff = s.primOff;
   if (s.packed) {
-    std::copy(s.m3, s.m3 + 9, m.m3);
+    m.mirrored = b3dop::matrixDeterminant(s.m3) < 0.0;
     std::copy(s.rowScale, s.rowScale + 3, m.rowScale);
   }
 }

@@ -1097,10 +1097,8 @@ private:
     if (!(myAnyPrims && me.packed))
       return false;
     composePackedMatrix(mv.rot, me.rowScale, pw.newM3);
-    b3dop::keepMirror(me.m3, pw.newM3); // a mirrored piece stays mirrored
+    b3dop::keepMirror(me.mirrored, pw.newM3); // a mirrored piece stays mirrored
     pw.primOff = static_cast<GA_Offset>(me.primOff);
-    std::copy(pw.newM3, pw.newM3 + 9,
-              me.m3); // a skipped sync does not refresh it
     return true;
   }
 

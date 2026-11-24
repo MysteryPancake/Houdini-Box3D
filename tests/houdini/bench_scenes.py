@@ -75,7 +75,7 @@ def copy_packed(geo, shape, points):
     copy.setInput(1, points)
     set_parm(copy, ["pack", "packgeo"], 1)
     set_parm(copy, ["targetattribs"], 1)
-    set_parm(copy, ["applyattribs1"], "name active animated v w orient pscale life age")
+    set_parm(copy, ["applyattribs1"], "name active animated v w orient pscale life age id")
     display(copy)
     return copy
 
@@ -612,8 +612,10 @@ def scene_churn(kind, p):
     dop = new_dopnet("churn")
     # piece number i dies on frame 2 + i // rate: its life, at 24 frames a second (a rate of 0 kills none)
     life_of = f"(2.0 + floor(n / {rate}.0)) / 24.0" if rate else "1.0e6"
-    life = ('addpointattrib(0, "life", 1.0e6); addpointattrib(0, "age", 0.0); '
-            f'setpointattrib(0, "life", pt, {life_of});')
+    # An `id` keeps a body its own when the points around it die (without one the point number is the body, and every
+    # death renumbers the points after it).
+    life = ('addpointattrib(0, "life", 1.0e6); addpointattrib(0, "age", 0.0); addpointattrib(0, "id", 0); '
+            f'setpointattrib(0, "life", pt, {life_of}); setpointattrib(0, "id", pt, n);')
     path, _ = lattice_geo("churn_pieces", nx, ny, nz, extra=life)
     pieces = packed_object(dop, "pieces", path)
     ground = packed_object(dop, "ground", ground_for("churn_ground", nx, nz, life=1.0e6, age=0.0))
@@ -628,12 +630,13 @@ def scene_churn(kind, p):
         set_parm(src, ["class"], 0)
         set_parm(src, ["snippet"], (
             'addpointattrib(0, "name", ""); addpointattrib(0, "active", 1); addpointattrib(0, "life", 1.0e6); '
-            'addpointattrib(0, "age", 0.0);\n'
+            'addpointattrib(0, "age", 0.0); addpointattrib(0, "id", 0);\n'
             'if (npoints("op:../dop_geometry") > 50) '
             f"for (int i = 0; i < {rate}; i++) {{ "
             f"int pt = addpoint(0, set(({nx} - 2) * (rand(set(@Frame, i, 1)) - 0.5), {ny} + 6.0, "
             f"({nz} - 2) * (rand(set(@Frame, i, 2)) - 0.5))); "
             'setpointattrib(0, "name", pt, sprintf("n%d_%d", int(@Frame), i)); '
+            f'setpointattrib(0, "id", pt, 1000000 + int(@Frame) * {max(rate, 1)} + i); '
             f'setpointattrib(0, "life", pt, {max(1, n // max(rate, 1))} / 24.0); }}'))
         box = ss.createNode("box", "new_box")
         set_parm(box, ["size"], (0.8, 0.8, 0.8))
@@ -642,7 +645,7 @@ def scene_churn(kind, p):
         copy.setInput(1, src)
         set_parm(copy, ["pack", "packgeo"], 1)
         set_parm(copy, ["targetattribs"], 1)
-        set_parm(copy, ["applyattribs1"], "name active life age")
+        set_parm(copy, ["applyattribs1"], "name active life age id")
         mrg = ss.createNode("merge", "with_new")
         mrg.setInput(0, out.input(0))
         mrg.setInput(1, copy)

@@ -106,7 +106,9 @@ struct Box3DBodyMirror : Box3DBodyPose {
   // The point's packed primitive's 3x3 as the last sync read it (reused by the
   // write-back), with the 3x3's per-row scale, which the write-back keeps.
   double rowScale[3] = {1, 1, 1};
-  double m3[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+  // Whether that 3x3 mirrors (its determinant is negative): composing a new one
+  // keeps it. The write-back never changes it, and every scan sets it again.
+  bool mirrored = false;
   // This step's velocity of the piece, from its compound (the write-back reads
   // it in place of its own, parked body's).
   float glueLin[3] = {0, 0, 0};

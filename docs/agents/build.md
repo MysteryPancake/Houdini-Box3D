@@ -108,7 +108,7 @@ pile, edit, collider, animated, joints, wall, bondwall, objects, static, churn, 
 * `bondwall` is the wall on Box3D Bonds (Box3D only; `wait=60,sleep=0` stands it awake for 60 frames before the ball). The Bond load solve and patch work run inside `Stepping World`: the
   plugin's share is that row minus the `Box3D <part>` rows.
 * `objects` is the whole-object path (RBD Objects from an RBD Point Object), `static` a pile on a Static Object (`motion`
-  none / move / deform), `churn` bodies dying (Enable Aging) and, with `births 1`, appearing each frame (a SOP Solver; Box3D
+  none / move / deform), `churn` bodies dying (Enable Aging, every piece carrying an `id`: without one the point number is the body, and each death renumbers and teleports the bodies after it) and, with `births 1`, appearing each frame (a SOP Solver; Box3D
   only), and `solversop` the Box3D Solver SOP asset: its frame is the SOP cook (`Scene.sop`), with the inner DOP network
   as `dop`, so the asset's own SOP nodes are in the frame but not in the stage list.
 * Copy to Points takes no point attributes onto packed copies unless `targetattribs` / `applyattribs1` are set

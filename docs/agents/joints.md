@@ -79,7 +79,7 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   (`kBondSolveIterations`, `kBondSolveTolerance`), started from the compound's last displacement
   (`Box3DCompound::bondWarm`): a large compound does not converge in one step's iterations, but the loads change little
   between steps, so the residual keeps falling across them. Compounds are solved in parallel, one task each
-  (`solveCompoundBonds`; `kMinParallelBondSolves`). A diagonal preconditioner did not help (the springs are uniform).
+  (`solveCompoundBonds`; `kMinParallelBondSolves`). A diagonal preconditioner did not help (the springs are uniform). A 6x6 block preconditioner per piece did not either (more iterations in all, more support passes). The solve does not converge on a large compound (about two thirds of its conjugate-gradient calls reach `kBondSolveIterations` with a residual near 0.5), so a wall's breaking depends on how many iterations it gets: more makes it break less. Solving only on a frame's first step, or capping the iterations, was faster and made it break more.
   A compound keeps what its last solve was given and found (`Box3DCompound::bondMemo`), and a step that asks for nearly the
   same reuses the loads and skips the solve (`bondProblemAlike`: the same pieces and bonds, pieces' loads within
   `kBondReuseLoad`, nothing moved by more than `kBondReuseMove`, and no more than `kBondReuseSupports` of the contacts new
