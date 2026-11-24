@@ -713,6 +713,80 @@ int main() {
     }
   }
 
+  // ---- reusing a solve: when a problem is alike enough to the last one ----
+  {
+    // A row of 40 pieces on a support under each, bonds between.
+    std::vector<BondNode> nodes(40);
+    std::vector<BondLink> links(39);
+    std::vector<BondSupport> supports(40);
+    for (size_t i = 0; i < 40; ++i) {
+      nodes[i].pos[0] = static_cast<double>(i);
+      nodes[i].force[1] = 9.8;
+      supports[i].node = static_cast<int>(i);
+      supports[i].pos[0] = nodes[i].pos[0];
+      supports[i].pos[1] = -0.5;
+      supports[i].normalStiffness = 0.01;
+      supports[i].tangentStiffness = 0.0002;
+      if (i + 1 < 40) {
+        links[i].a = static_cast<int>(i);
+        links[i].b = static_cast<int>(i) + 1;
+        links[i].anchor[0] = static_cast<double>(i) + 0.5;
+      }
+    }
+    const auto alike = [&](const std::vector<BondNode> &n,
+                           const std::vector<BondLink> &l,
+                           const std::vector<BondSupport> &s) {
+      return bondProblemAlike(nodes, links, supports, n, l, s);
+    };
+    CHECK(alike(nodes, links, supports));
+
+    // The loads a little different (1e-4 of them), and a lot (1e-2).
+    auto n = nodes;
+    for (BondNode &x : n)
+      x.force[1] *= 1.0 + 1e-4;
+    CHECK(alike(n, links, supports));
+    for (BondNode &x : n)
+      x.force[1] = 9.8 * 1.01;
+    CHECK(!alike(n, links, supports));
+
+    // A piece moved, a bond gone, a bond with another area.
+    n = nodes;
+    n[7].pos[1] += 0.01;
+    CHECK(!alike(n, links, supports));
+    auto l = links;
+    l.pop_back();
+    CHECK(!alike(nodes, l, supports));
+    l = links;
+    l[3].stiffness *= 2.0;
+    CHECK(!alike(nodes, l, supports));
+
+    // One contact of 40 gone is 1 of 40 (2.5%): alike. Two moved (each is one
+    // gone and one new: 4 of 40) and four gone are not.
+    auto s = supports;
+    s.pop_back();
+    CHECK(alike(nodes, links, s));
+    s = supports;
+    s.erase(s.begin() + 3);
+    CHECK(alike(nodes, links, s));
+    s = supports;
+    s[5].pos[0] += 0.5;
+    s[6].pos[0] += 0.5;
+    CHECK(!alike(nodes, links, s));
+    s = supports;
+    for (const size_t at : {size_t{30}, size_t{20}, size_t{10}, size_t{3}})
+      s.erase(s.begin() + static_cast<long>(at));
+    CHECK(!alike(nodes, links, s));
+
+    // A contact that turned over is a different one (two of them: 4 of 40).
+    s = supports;
+    s[5].normal[1] = -1.0;
+    s[6].normal[1] = -1.0;
+    CHECK(!alike(nodes, links, s));
+
+    // Nothing to compare: alike only if there is nothing different.
+    CHECK(bondProblemAlike({}, {}, {}, {}, {}, {}));
+  }
+
   CHECK(Box3DWorld::assertCount() == assertsBefore);
   if (!fails)
     std::printf("OK\n");

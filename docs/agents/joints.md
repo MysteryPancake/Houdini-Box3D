@@ -80,6 +80,11 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   (`Box3DCompound::bondWarm`): a large compound does not converge in one step's iterations, but the loads change little
   between steps, so the residual keeps falling across them. Compounds are solved in parallel, one task each
   (`solveCompoundBonds`; `kMinParallelBondSolves`). A diagonal preconditioner did not help (the springs are uniform).
+  A compound keeps what its last solve was given and found (`Box3DCompound::bondMemo`), and a step that asks for nearly the
+  same reuses the loads and skips the solve (`bondProblemAlike`: the same pieces and bonds, pieces' loads within
+  `kBondReuseLoad`, nothing moved by more than `kBondReuseMove`, and no more than `kBondReuseSupports` of the contacts new
+  or gone, since a marginal contact comes and goes). It compares with the last solve, not the last step, so the loads stay
+  within those tolerances of a solve. A compound that is asleep is not solved at all, so this helps one kept awake.
   Checked against a hanging chain, two bonds side by side, a cantilever,
   an even squeeze, an overhang on supports and a support that would pull. A solve that comes out non-finite leaves the bond's last load, and the network is regularized (`kBondRegularization`) so a
   piece with no support still solves. A bond held by a bridge reads the bridge

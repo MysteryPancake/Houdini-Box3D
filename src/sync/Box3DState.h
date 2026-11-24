@@ -26,6 +26,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/Box3DBondNetwork.h"
 #include "core/Box3DCompound.h"
 #include "core/Box3DGlue.h"
 #include "core/Box3DShapes.h"
@@ -766,6 +767,16 @@ struct Box3DCompound {
   // The last bond network solve's displacement (6 per member), the next one's
   // starting guess. Empty when none, or when the members changed.
   std::vector<double> bondWarm;
+  // What the last bond network solve was given and found, kept while the next
+  // asks for nearly the same (b3dop::bondProblemAlike): then its loads stand.
+  struct BondMemo {
+    bool valid = false;
+    std::vector<b3dop::BondNode> nodes;
+    std::vector<b3dop::BondLink> links;
+    std::vector<b3dop::BondSupport> supports;
+    std::vector<Box3DJointEntry *> used; // the bond of each link
+    std::vector<b3dop::BondForce> out;
+  } bondMemo;
 };
 
 // What one bond adds to the signature of the bond list (kGlueCountSalt for the

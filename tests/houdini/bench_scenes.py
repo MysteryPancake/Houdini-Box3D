@@ -82,7 +82,7 @@ def solver_opts(kind, dop, solver, p):
     if kind == "box3d":
         for key, names in (("substeps", ["substeps"]), ("passes", ["solverpasses"]), ("sleep", ["enablesleep"]),
                            ("exportshapes", ["exportshapes"]), ("compound", ["gluecompound"]),
-                           ("impacts_guide", ["showshapes"])):
+                           ("readouts", ["bondreadouts"]), ("impacts_guide", ["showshapes"])):
             if p.get(key) is not None:
                 set_parm(solver, names, p[key])
     else:
@@ -436,6 +436,11 @@ def scene_joints(kind, p):
           sweep=[{"compound": 1}, {"compound": 0}, {"w": 20, "h": 10, "compound": 1},
                  {"group": 5, "compound": 1}])
 def scene_wall(kind, p):
+    return build_wall(kind, p, "glue")
+
+
+def build_wall(kind, p, joint):
+    """The brick wall of `wall` (joint "glue": SideFX Glue) and `bondwall` (joint "bond": Box3D Bond)."""
     w, h, group = int(p["w"]), int(p["h"]), int(p["group"])
     dop = new_dopnet("wall")
     geo = new_geo("wall_bricks")
@@ -449,14 +454,21 @@ def scene_wall(kind, p):
     box = create(geo, "box")
     set_parm(box, ["size"], (1.0, 0.5, 0.5))
     copy = copy_packed(geo, box, pts)
-    glue = create(dop, "glueconrel", "glue")
-    set_parm(glue, ["strength"], float(p["strength"]))
+    if joint == "bond":
+        glue = create(dop, "box3d_bondconrel", "bond")
+        strength = float(p["strength"])
+        for parm, value in (("bond_tensile", strength), ("bond_shear", strength), ("bond_bending", strength),
+                            ("bond_compressive", strength * 10)):
+            set_parm(glue, [parm], value)
+    else:
+        glue = create(dop, "glueconrel", "glue")
+        set_parm(glue, ["strength"], float(p["strength"]))
     net_geo = new_geo("wall_network")
     net = create(net_geo, "attribwrangle", "network")
     set_parm(net, ["class"], 0)
     skip_h = f"&& (a + 1) % {group} != 0" if group else ""
     skip_v = f"&& (b + 1) % {group} != 0" if group else ""
-    cname = parm_value(glue, ["dataname", "data_name", "DataName"], "Glue")
+    cname = parm_value(glue, ["dataname", "data_name", "DataName"], "Bond" if joint == "bond" else "Glue")
     set_parm(net, ["snippet"], (
         'addpointattrib(0, "name", ""); addprimattrib(0, "constraint_name", "");\n'
         "void link(int i; int j; vector pos) {\n"
@@ -468,8 +480,11 @@ def scene_wall(kind, p):
         f"  if (b + 1 < {h} {skip_v}) link(a * {h} + b, a * {h} + b + 1, set(a * 1.0 - {w} * 0.5, 0.5 + b * 0.5, 0));\n}}"))
     display(net)
     bricks = packed_object(dop, "bricks", copy.path())
+    # `wait` frames of the wall standing before the ball arrives (30 m/s is 1.25 m a frame)
+    wait = int(p.get("wait", 0))
     ball_path, _ = packed_boxes("wall_ball", [
-        {"size": (2, 2, 2), "center": (0, h * 0.25, 25), "attrs": {"active": 1, "v": (0.0, 0.0, -30.0)}}])
+        {"size": (2, 2, 2), "center": (0, h * 0.25, 25 + 1.25 * wait),
+         "attrs": {"active": 1, "v": (0.0, 0.0, -30.0)}}])
     ball = packed_object(dop, "ball", ball_path, keep_velocity=True)
     ground = packed_object(dop, "ground", ground_for("wall_ground", w, w))
     cnet = create(dop, "constraintnetwork", "constraint_network")
@@ -479,7 +494,23 @@ def scene_wall(kind, p):
     last, _ = make_solver(kind, dop, cnet, p)
     finish(dop, last)
     frames = int(p["frames"])
+    if wait:
+        return Scene(dop, frames, [("rest", 2, 15), ("stand", 16, 15 + wait), ("hit", 16 + wait, 40 + wait),
+                                   ("debris", 41 + wait, frames)])
     return Scene(dop, frames, [("rest", 2, 15), ("hit", 16, 40), ("debris", 41, frames)])
+
+
+@scenario("bondwall", "The wall with a Box3D Bond between neighbouring bricks instead of Glue: the cost of reading each "
+          "bond's load every step (as one compound, a spring network solved for every awake compound) and of its patch "
+          "and tear impulse. Options: w, h, strength (Pa; tensile, shear and bending, compressive is 10 times it; the "
+          "default holds the wall intact until the hit), group, compound 0|1, readouts 0|1 (Write Bond Attributes), "
+          "wait (frames the wall stands before the ball arrives, a `stand` phase). Box3D only.",
+          {"w": 40, "h": 20, "strength": 1e7, "group": 0, "frames": 120},
+          sweep=[{"compound": 1}, {"compound": 0}, {"compound": 1, "readouts": 1}, {"w": 20, "h": 10, "compound": 1},
+                 {"compound": 1, "wait": 60, "frames": 200}],
+          kinds=("box3d",))
+def scene_bondwall(kind, p):
+    return build_wall(kind, p, "bond")
 
 
 # ---------------------------------------------------------------------------

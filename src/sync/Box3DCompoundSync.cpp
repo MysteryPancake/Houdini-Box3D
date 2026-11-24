@@ -508,6 +508,7 @@ bool shrink(Box3DSharedState &st, Box3DCompound &c, const std::vector<int> &cid,
   }
   c.members = std::move(kept);
   c.bondWarm.clear();
+  c.bondMemo.valid = false;
   w.applyMassFromShapes(c.body);
 
   // The pieces that stay move as a rigid body with the old motion: its
@@ -1912,6 +1913,21 @@ void solveCompoundBonds(Box3DSharedState &st, float dt) {
     // this step.
     if (useSupports && supports.empty())
       continue;
+    // Asked for nearly what the last solve was: its loads stand (and so does
+    // the displacement kept for the next solve to start from).
+    if (c.bondMemo.valid && c.bondMemo.used == used &&
+        b3dop::bondProblemAlike(c.bondMemo.nodes, c.bondMemo.links,
+                                c.bondMemo.supports, nodes, links, supports)) {
+      for (size_t k = 0; k < used.size(); ++k) {
+        Box3DJointExtra &x = *used[k]->extra;
+        for (int i = 0; i < 3; ++i) {
+          x.bondForce[i] = static_cast<float>(c.bondMemo.out[k].force[i]);
+          x.bondTorque[i] = static_cast<float>(c.bondMemo.out[k].torque[i]);
+        }
+        x.bondLoadTick = st.hitsTick;
+      }
+      continue;
+    }
     BondJob job;
     job.nodes = std::move(nodes);
     job.links = std::move(links);
@@ -1933,8 +1949,18 @@ void solveCompoundBonds(Box3DSharedState &st, float dt) {
   for (BondJob &j : jobs) {
     j.compound->bondWarm = std::move(j.warm);
     // A solve that did not stay finite gives no load this step.
-    if (!std::isfinite(j.residual))
+    if (!std::isfinite(j.residual)) {
+      j.compound->bondMemo.valid = false;
       continue;
+    }
+    // What it was given and found, for the next step to compare with.
+    Box3DCompound::BondMemo &memo = j.compound->bondMemo;
+    memo.nodes = j.nodes;
+    memo.links = j.links;
+    memo.supports = j.supports;
+    memo.used = j.used;
+    memo.out = j.out;
+    memo.valid = true;
     for (size_t k = 0; k < j.used.size(); ++k) {
       Box3DJointExtra &x = *j.used[k]->extra;
       for (int i = 0; i < 3; ++i) {

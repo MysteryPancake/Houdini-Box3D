@@ -34,6 +34,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <utility>
 #include <vector>
 
 namespace b3dop {
@@ -378,6 +379,96 @@ inline double solveBondNetwork(const std::vector<BondNode> &nodes,
     o.push = push[k];
   }
   return residual;
+}
+
+// ---- reusing a solve
+// ---------------------------------------------------------
+//
+// A compound at rest is given nearly the same problem every step, and its
+// solve is the most it costs. Its loads are kept with what they were solved
+// for, and the next step reuses them while it asks for nearly the same: the
+// same pieces and bonds, the loads on the pieces within a small share of what
+// they were, nothing moved, and almost the same contacts (a contact on the edge
+// of being one comes and goes). It is always the last solve that is compared
+// with, not the last step, so the loads cannot drift further than the
+// tolerances away from what was solved.
+
+// How much the pieces' loads (the force and torque each needs, taken together)
+// may differ, as a share of their size.
+inline constexpr double kBondReuseLoad = 1e-3;
+// How far a piece, a bond's anchor or a contact point may have moved (m).
+inline constexpr double kBondReuseMove = 1e-3;
+// The share of the contacts that may be new or gone.
+inline constexpr double kBondReuseSupports = 0.05;
+// Past this many contacts the comparison is not made (it is quadratic).
+inline constexpr size_t kBondReuseMaxSupports = 2000;
+
+// Whether a solve for (nodes, links, supports) would give the loads of one made
+// for the `then` ones.
+inline bool bondProblemAlike(const std::vector<BondNode> &thenNodes,
+                             const std::vector<BondLink> &thenLinks,
+                             const std::vector<BondSupport> &thenSupports,
+                             const std::vector<BondNode> &nodes,
+                             const std::vector<BondLink> &links,
+                             const std::vector<BondSupport> &supports) {
+  if (nodes.size() != thenNodes.size() || links.size() != thenLinks.size())
+    return false;
+  const auto same = [](double a, double b) {
+    return std::fabs(a - b) <= 1e-6 * std::max(std::fabs(a), std::fabs(b));
+  };
+  double change = 0.0, size = 0.0;
+  for (size_t i = 0; i < nodes.size(); ++i)
+    for (size_t k = 0; k < 3; ++k) {
+      if (std::fabs(nodes[i].pos[k] - thenNodes[i].pos[k]) > kBondReuseMove)
+        return false;
+      const double df = nodes[i].force[k] - thenNodes[i].force[k];
+      const double dt = nodes[i].torque[k] - thenNodes[i].torque[k];
+      change += df * df + dt * dt;
+      size += thenNodes[i].force[k] * thenNodes[i].force[k] +
+              thenNodes[i].torque[k] * thenNodes[i].torque[k];
+    }
+  if (!(change <= kBondReuseLoad * kBondReuseLoad * size))
+    return false;
+  for (size_t i = 0; i < links.size(); ++i) {
+    if (links[i].a != thenLinks[i].a || links[i].b != thenLinks[i].b ||
+        !same(links[i].stiffness, thenLinks[i].stiffness) ||
+        !same(links[i].rotStiffness, thenLinks[i].rotStiffness))
+      return false;
+    for (size_t k = 0; k < 3; ++k)
+      if (std::fabs(links[i].anchor[k] - thenLinks[i].anchor[k]) >
+          kBondReuseMove)
+        return false;
+  }
+  if (supports.size() > kBondReuseMaxSupports ||
+      thenSupports.size() > kBondReuseMaxSupports)
+    return false;
+  std::vector<char> taken(thenSupports.size(), 0);
+  size_t differ = 0;
+  for (const BondSupport &s : supports) {
+    bool found = false;
+    for (size_t j = 0; j < thenSupports.size() && !found; ++j) {
+      const BondSupport &t = thenSupports[j];
+      if (taken[j] || s.node != t.node ||
+          !same(s.normalStiffness, t.normalStiffness) ||
+          !same(s.tangentStiffness, t.tangentStiffness))
+        continue;
+      double moved = 0.0, along = 0.0;
+      for (size_t k = 0; k < 3; ++k) {
+        moved = std::max(moved, std::fabs(s.pos[k] - t.pos[k]));
+        along += s.normal[k] * t.normal[k];
+      }
+      if (moved <= kBondReuseMove && along >= 1.0 - 1e-3) {
+        taken[j] = 1;
+        found = true;
+      }
+    }
+    differ += found ? 0 : 1;
+  }
+  for (const char t : taken)
+    differ += t ? 0 : 1;
+  const size_t most = std::max(supports.size(), thenSupports.size());
+  return static_cast<double>(differ) <=
+         kBondReuseSupports * static_cast<double>(most);
 }
 
 // The same without supports.
