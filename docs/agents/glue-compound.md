@@ -54,10 +54,16 @@
   (`glueFull`, also set when a joint that is not a bond breaks). `syncCompounds` then works out again only the components the
   broken bonds were in (`reachFrom` over the nodes' partners, from `glueTouched`), using `tiedBodies` and the body's user data
   in place of the whole-scene tables; a rebuilt graph, a changed body set or a dissolved compound regroups everything.
+  Bonds broken inside a compound take `splitOffSmallPieces` first: searches from the broken bonds' nodes run in turn
+  (`planSmallSplit`) until one is left growing, so the cost follows the pieces that came loose, not the compound's size.
+  They leave through `shrink` and groups of two or more merge. It gives the nodes back to the way above when a search
+  leaves the compound, the part that stays is not the biggest or is under two pieces, or the body cannot be read.
   A piece's force and torque go to the compound about its centre of mass (`compoundPieceForce`); a Force DOP reads its state from
   the compound (`compoundPieceState`). A bond inside a compound (`Box3DJointEntry::inCompound`, set by `markCompoundBonds`) writes
   force, torque, distance and angle as zero once and `impact` when it changed. Live frames are written in parallel
-  (`writeLiveFrames`, above `kMinParallelFrames` bonds). Impacts data and the collision guide are not made for pieces.
+  (`writeLiveFrames`, above `kMinParallelFrames` bonds; each joint looks up its own primitive, only a joint with a rest
+  length or local frames to write is looked at serially). `writeFeedback` takes its readings and writes a Glue's `impact` in
+  parallel too, and `advanceGlue` builds the bond list and writes impacts back in parallel. Impacts data and the collision guide are not made for pieces.
 * `compound_id` (`queueCompoundIds`, with the solver's Write Bond Attributes on): each member's point shows the lowest point id in
   its compound, queued as a point write before `writePointAttrs` (`Box3DPointWrite::kCompound`; the attribute defaults to -1)
   and set back to -1 when the piece leaves (`compoundShown` on the entry, `compoundIdKeys` the pieces showing one).

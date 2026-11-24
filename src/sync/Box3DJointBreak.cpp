@@ -80,18 +80,17 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp,
   GA_RWHandleV3 localPH;
   GA_RWHandleQ localQH;
 
-  // The rare per-joint work (rest length, local frames) is serial; the live
-  // frames, one write per bond every step, go in parallel afterwards.
-  struct Work {
-    Box3DJointEntry *e;
-    GA_Offset pts[2];
-  };
-  // Kept between steps: no allocation.
-  thread_local std::vector<Work> work;
-  work.clear();
-  work.reserve(entries.size());
+  // The rare per-joint work (rest length, local frames) is serial, and only
+  // looks at the joints that have some; the live frames, one write per bond
+  // every step, go in parallel afterwards, each looking up its own primitive.
+  size_t active = 0;
   for (Box3DJointEntry *e : entries) {
-    if (e->quiet || !primOk(e->prim))
+    if (e->quiet)
+      continue;
+    ++active;
+    if (e->madeRestLength < 0.0f && !e->writeLocal)
+      continue;
+    if (!primOk(e->prim))
       continue;
     const GA_Primitive *prim = gdp->getPrimitive(e->prim);
     if (!prim || prim->getVertexCount() != 2)
@@ -133,19 +132,20 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp,
       }
       e->writeLocal = false;
     }
-
-    work.push_back({e, {pts[0], pts[1]}});
   }
 
-  // Each item reads the world (read-only calls may run in parallel) and writes
-  // its own entry and its own two points, whose pages are hardened first.
-  // A reference: `work` is thread_local, so naming it inside the lambda would
-  // find each worker thread's own (empty) copy.
-  const std::vector<Work> &items = work;
+  // Each joint reads the world and the geometry (read-only calls may run in
+  // parallel) and writes its own entry and its own two points, whose pages are
+  // hardened first.
   std::atomic<bool> wroteFrames{false};
   auto writeOne = [&](size_t i) {
-    Box3DJointEntry *e = items[i].e;
-    const GA_Offset *pts = items[i].pts;
+    Box3DJointEntry *e = entries[i];
+    if (e->quiet || !primOk(e->prim))
+      return;
+    const GA_Primitive *prim = gdp->getPrimitive(e->prim);
+    if (!prim || prim->getVertexCount() != 2)
+      return;
+    const GA_Offset pts[2] = {prim->getPointOffset(0), prim->getPointOffset(1)};
     b3dop::JointFrame fa, fb;
     if (world.jointWorldFrames(e->handle, fa, fb)) {
       // The anchors, not the frames (SideFX data may offset the frames from
@@ -166,11 +166,14 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, GU_Detail *gdp,
     wroteFrames.store(true, std::memory_order_relaxed);
   };
   constexpr size_t kMinParallelFrames = 256;
-  if (work.size() >= kMinParallelFrames) {
+  if (active >= kMinParallelFrames) {
     pH.getAttribute()->hardenAllPages();
     orientH.getAttribute()->hardenAllPages();
   }
-  box3dParallelFor(work.size(), writeOne, kMinParallelFrames);
+  // (parallel only with the pages hardened, which is when this many are live)
+  if (active > 0)
+    box3dParallelFor(entries.size(), writeOne,
+                     active >= kMinParallelFrames ? 0 : entries.size() + 1, 64);
   // Only what was written changes its data id (anything watching these
   // attributes sees a change only when there is one).
   if (wroteFrames.load()) {
@@ -254,21 +257,25 @@ void collectGlueHits(Box3DSharedState &st) {
 
 std::vector<b3dop::GlueBond> glueBondList(const Box3DSharedState &st,
                                           bool withParams, bool blankBroken) {
-  std::vector<b3dop::GlueBond> bonds;
-  bonds.reserve(st.glueBonds.size());
-  for (size_t i = 0; i < st.glueBonds.size(); ++i) {
-    const Box3DJointEntry *e = st.glueBonds[i];
-    b3dop::GlueBond g;
-    g.a = st.glueBondNodes[i].first;
-    g.b = st.glueBondNodes[i].second;
-    if (withParams) {
-      g.params = e->extra->glueParams;
-      g.impact = e->extra->glueImpact;
-    }
-    if (blankBroken && e->broken)
-      g.a = g.b = -1;
-    bonds.push_back(g);
-  }
+  // One bond per iteration, each reading its own entry: the pointer chasing is
+  // what takes the time with thousands of bonds.
+  constexpr size_t kMinParallelBonds = 2048;
+  std::vector<b3dop::GlueBond> bonds(st.glueBonds.size());
+  box3dParallelFor(
+      bonds.size(),
+      [&](size_t i) {
+        const Box3DJointEntry *e = st.glueBonds[i];
+        b3dop::GlueBond &g = bonds[i];
+        g.a = st.glueBondNodes[i].first;
+        g.b = st.glueBondNodes[i].second;
+        if (withParams) {
+          g.params = e->extra->glueParams;
+          g.impact = e->extra->glueImpact;
+        }
+        if (blankBroken && e->broken)
+          g.a = g.b = -1;
+      },
+      kMinParallelBonds, 256);
   return bonds;
 }
 
@@ -769,8 +776,10 @@ void advanceGlue(Box3DSharedState &st, float dt) {
   std::vector<b3dop::GlueBond> bonds = glueBondList(st, true, true);
   std::vector<int> broken;
   b3dop::glueAdvance(bonds, std::move(hits), dt, broken);
-  for (size_t i = 0; i < bonds.size(); ++i)
-    st.glueBonds[i]->extra->glueImpact = bonds[i].impact;
+  box3dParallelFor(
+      bonds.size(),
+      [&](size_t i) { st.glueBonds[i]->extra->glueImpact = bonds[i].impact; },
+      2048, 256);
   for (const int i : broken)
     st.glueBroken.push_back(st.glueBonds[static_cast<size_t>(i)]);
   for (Box3DGlueNode &n : st.glueNodes)
@@ -1000,7 +1009,8 @@ struct FeedbackItem {
   b3dop::JointFeedback fb;
   float distance;
   float angle;
-  bool ok;
+  bool ok;        // the readings were taken
+  bool primValid; // the joint's primitive is in the geometry
 };
 
 // Feedback, under the Constraint Network DOP's names: force / distance for the
@@ -1029,8 +1039,14 @@ void writeFeedback(const b3dop::Box3DWorld &world, GU_Detail *gdp,
   GA_RWHandleF &torqueH = scalar("torque");
   GA_RWHandleF &angleH = scalar("angle");
   // The joints that carry readings this step.
-  std::vector<FeedbackItem> items;
+  // Kept between steps (a reference: the lambdas below run on other threads,
+  // which would each find their own empty copy of a thread_local): no
+  // allocation, and no fresh pages to touch for thousands of joints.
+  thread_local std::vector<FeedbackItem> itemStore;
+  itemStore.clear();
+  std::vector<FeedbackItem> &items = itemStore;
   items.reserve(entries.size());
+  bool glueImpactNeeded = false;
   for (Box3DJointEntry *e : entries) {
     if (e->quiet)
       continue;
@@ -1074,15 +1090,12 @@ void writeFeedback(const b3dop::Box3DWorld &world, GU_Detail *gdp,
           bx.bondReadouts.written[k] = bx.bondReadouts.value[k];
         }
     }
-    if (e->glue && e->extra && primOk(e->prim)) {
-      GA_RWHandleF &impactH = scalar(kImpact);
-      if (impactH.isValid())
-        impactH.set(e->prim, e->extra->glueImpact);
-      e->impactWritten = e->extra->glueImpact;
-    }
-    if (primOk(e->prim))
-      items.push_back({e, {}, 0.0f, 0.0f, false});
+    // (a Glue's impact is written with the readings below; its primitive is
+    // looked up there too)
+    glueImpactNeeded = glueImpactNeeded || (e->glue && e->extra);
+    items.push_back({e, {}, 0.0f, 0.0f, false, false});
   }
+  GA_RWHandleF *impactH = glueImpactNeeded ? &scalar(kImpact) : nullptr;
 
   // The readings of every joint (read-only calls on the world and the entry,
   // one item each) are worked out in parallel; the attributes the per-type
@@ -1090,11 +1103,14 @@ void writeFeedback(const b3dop::Box3DWorld &world, GU_Detail *gdp,
   // each joint to its own primitive, once the pages are hardened.
   constexpr size_t kMinParallelFeedback = 256;
   const auto forEach = [&items](const auto &f) {
-    box3dParallelFor(items.size(), f, kMinParallelFeedback);
+    box3dParallelFor(items.size(), f, kMinParallelFeedback, 64);
   };
   forEach([&](size_t i) {
     FeedbackItem &it = items[i];
     const Box3DJointEntry *e = it.e;
+    it.primValid = primOk(e->prim);
+    if (!it.primValid)
+      return;
     it.ok = world.jointFeedback(e->handle, e->type, it.fb);
     if (!it.ok)
       return;
@@ -1126,9 +1142,15 @@ void writeFeedback(const b3dop::Box3DWorld &world, GU_Detail *gdp,
         sc.second.getAttribute()->hardenAllPages();
   forEach([&](size_t i) {
     const FeedbackItem &it = items[i];
-    if (!it.ok)
+    if (!it.primValid)
       return;
     const GA_Offset prim = it.e->prim;
+    if (impactH && impactH->isValid() && it.e->glue && it.e->extra) {
+      impactH->set(prim, it.e->extra->glueImpact);
+      it.e->impactWritten = it.e->extra->glueImpact;
+    }
+    if (!it.ok)
+      return;
     if (forceH.isValid())
       forceH.set(prim, b3dop::length3(it.fb.force));
     if (distH.isValid())

@@ -123,33 +123,48 @@ inline void glueAdvance(std::vector<GlueBond> &bonds, std::vector<float> hits,
                         float dt, std::vector<int> &broken) {
   broken.clear();
   // Node counts in `bonds` must fit `hits`.
-  // Kept between calls: no allocation.
+  const auto usable = [&hits](const GlueBond &bond) {
+    return bond.a >= 0 && bond.b >= 0 &&
+           static_cast<size_t>(bond.a) < hits.size() &&
+           static_cast<size_t>(bond.b) < hits.size();
+  };
+  // Kept between calls: no allocation. Only filled when some bond is ignored;
+  // otherwise `bonds` is spread as it is.
   thread_local std::vector<GlueBond> live;
   thread_local std::vector<int> index;
   live.clear();
   index.clear();
-  live.reserve(bonds.size());
-  index.reserve(bonds.size());
-  for (size_t i = 0; i < bonds.size(); ++i) {
-    const GlueBond &bond = bonds[i];
-    if (bond.a < 0 || bond.b < 0 ||
-        static_cast<size_t>(bond.a) >= hits.size() ||
-        static_cast<size_t>(bond.b) >= hits.size())
-      continue;
-    live.push_back(bond);
-    index.push_back(static_cast<int>(i));
+  const bool all = std::all_of(bonds.begin(), bonds.end(), usable);
+  if (!all) {
+    live.reserve(bonds.size());
+    index.reserve(bonds.size());
+    for (size_t i = 0; i < bonds.size(); ++i) {
+      if (!usable(bonds[i]))
+        continue;
+      live.push_back(bonds[i]);
+      index.push_back(static_cast<int>(i));
+    }
   }
-  glueSpread(live, hits);
-  for (size_t k = 0; k < live.size(); ++k) {
-    GlueBond &bond = bonds[static_cast<size_t>(index[k])];
+  const std::vector<GlueBond> &spread = all ? bonds : live;
+  glueSpread(spread, hits);
+  // Most bonds share a half-life: the decay is worked out once per value.
+  float lastHalfLife = 0.0f, lastDecay = 0.0f;
+  bool haveDecay = false;
+  for (size_t k = 0; k < spread.size(); ++k) {
+    const size_t at = all ? k : static_cast<size_t>(index[k]);
+    GlueBond &bond = bonds[at];
     const float hl = bond.params.halfLife;
-    const float decay = hl > 0.0f && dt > 0.0f ? std::exp2(-dt / hl)
-                                               : (hl > 0.0f ? 1.0f : 0.0f);
-    bond.impact = bond.impact * decay + hits[static_cast<size_t>(bond.a)] +
+    if (!haveDecay || !(hl == lastHalfLife)) {
+      lastDecay = hl > 0.0f && dt > 0.0f ? std::exp2(-dt / hl)
+                                         : (hl > 0.0f ? 1.0f : 0.0f);
+      lastHalfLife = hl;
+      haveDecay = true;
+    }
+    bond.impact = bond.impact * lastDecay + hits[static_cast<size_t>(bond.a)] +
                   hits[static_cast<size_t>(bond.b)];
     if (bond.params.strength >= 0.0f && std::isfinite(bond.params.strength) &&
         bond.impact > bond.params.strength / kGlueStrengthScale)
-      broken.push_back(index[k]);
+      broken.push_back(static_cast<int>(at));
   }
 }
 
