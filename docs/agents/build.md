@@ -100,13 +100,12 @@ pile, edit, collider, animated, joints, wall, bondwall, objects, static, churn, 
   what makes it re-solve). Frame 1 is its own `first` phase: the scene's SOPs cook there and Box3D builds nothing yet
   (new objects are solved from frame 2).
 * `hou.perfMon` records the solvers' stages (`Pre-Solve/...`, `Stepping Simulation/...`, `Post-Solve/...` are nested
-  under the solver node; Bullet has none, only its node time) and the time of every DOP node. What is not
-  `Stepping World` is the plugin's own code, the part to optimise. `Stepping World` is split into `Box3D <part>` rows
-  (Box3D's own step timing, `solver.md`): they are inside it, not extra. A frame's total minus its nodes is the DOP engine.
+  under the solver node; Bullet has none, only its node time) and the time of every DOP node. The `Box3D <part>` rows under
+  Stepping Simulation are Box3D's own step timing (`solver.md`); the rest of the solver's stages are the plugin's own code, the part to optimise. A frame's total minus its nodes is the DOP engine.
 * Results go to `tests/houdini/out/bench/` (`latest.json` and a timestamped copy); `--compare file.json` prints the
   ratio per phase. `--repeat N` keeps the median run, `--threads N` sets `HOUDINI_MAXTHREADS`, `--budget` caps a run.
-* `bondwall` is the wall on Box3D Bonds (Box3D only; `wait=60,sleep=0` stands it awake for 60 frames before the ball). The Bond load solve and patch work run inside `Stepping World`: the
-  plugin's share is that row minus the `Box3D <part>` rows.
+* `bondwall` is the wall on Box3D Bonds (Box3D only; `wait=60,sleep=0` stands it awake for 60 frames before the ball). The Bond load solve and patch work run in Stepping Simulation: the
+  plugin's share is `Breaking Bonds` and `Glue Hits`.
 * `objects` is the whole-object path (RBD Objects from an RBD Point Object), `static` a pile on a Static Object (`motion`
   none / move / deform), `churn` bodies dying (Enable Aging, every piece carrying an `id`: without one the point number is the body, and each death renumbers and teleports the bodies after it) and, with `births 1`, appearing each frame (a SOP Solver; Box3D
   only), and `solversop` the Box3D Solver SOP asset: its frame is the SOP cook (`Scene.sop`), with the inner DOP network
