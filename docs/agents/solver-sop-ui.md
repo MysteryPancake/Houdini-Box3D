@@ -18,7 +18,7 @@ The Solver SOP's parameter tabs, joint settings, Break Thresholds, constraint at
   so the same scene breaks at the same impulse (`glue_fracture_vs_bullet`). Cone Twist keeps the node's defaults: Bullet's own do not hold a
   piece (`bullet_cone_twist_goal`), so there is nothing to match.
 * Break Thresholds (`b3d_solver_breaks.py`, first on the Constraints tab, then Export Broken Constraints): RBD Bullet Solver's `Constraint_Solver` for the Angle, Distance, Impact and Torque Thresholds and At Frame. A SOP Solver DOP (`constraint_breaks`, Data Defaults are RBD Bullet Solver's (enabled, Constraint Names `Soft Hard`, only the Distance Threshold on at 1, no Scale Attribute), so a Soft or Hard constraint stretched past its Rest Length by 1 breaks in both.
-  Name `ConstraintGeometry`) with a wrangle (`BREAK_VEX`, over primitives) between its geometry import and its output deletes the
+  Name `ConstraintGeometry`) with a wrangle (`BREAK_VEX`, over the detail: the entries are read once, then only the constraints whose name an entry lists are looked at (`uniquevals`, `findattribval`), changed after the lookups; a wrangle over primitives read every entry's channels and every name for every constraint, 38 of 50 ms a frame on a fractured cube of 13,000 pieces) between its geometry import and its output deletes the
   primitives whose `impact` passes a break entry's threshold, or switches them to `next_constraint_name`. The parameters are
   Bullet's names (`enable_constraintbreaks`, the `breaks` multiparm, `constraint_names#`, `constraint_mode#`,
   `constraint_usefromframe#`, `constraint_useatframe#`, and per key in `THRESHOLDS` `constraint_use<key>#`,

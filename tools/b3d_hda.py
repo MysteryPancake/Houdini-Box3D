@@ -120,6 +120,29 @@ def set_token(p, token, warn):
     return False
 
 
+def attribute_create(parent, name, entries, warn, cls="point", write=True):
+    """An Attribute Create SOP in `parent` making `cls` attributes: entries are (name, "int" | "float" | "vector" |
+    "string", value expressions, one per component, or None for the default 0). A string's value is one Python
+    expression. With `write` every element gets the value (an existing attribute is replaced); without it the
+    attribute is only made where it is missing and an existing one keeps its values (a string's value is not applied
+    that way: use `write` and a Switch that skips the node when the attribute exists)."""
+    node = parent.createNode("attribcreate::2.0", name)
+    node.parm("numattr").set(len(entries))
+    for i, (attr, kind, values) in enumerate(entries, 1):
+        node.parm(f"name{i}").set(attr)
+        set_token(node.parm(f"class{i}"), cls, warn)
+        set_token(node.parm(f"type{i}"), "index" if kind == "string" else kind, warn)
+        set_token(node.parm(f"existing{i}"), "replace" if write else "better", warn)
+        node.parm(f"writevalues{i}").set(1 if write else 0)
+        if kind == "string":
+            if values:
+                node.parm(f"string{i}").setExpression(values[0], hou.exprLanguage.Python)
+            continue
+        for c, expr in enumerate(values or [], 1):
+            node.parm(f"value{i}v{c}").setExpression(expr, hou.exprLanguage.Hscript)
+    return node
+
+
 def set_operation(node, name, token, warn):
     """Sets the Parameter Operation menu of `node`'s parameter `name` (parmop_<name>) to `token`, as
     set_operations does for all of them. False (with a warning) when it cannot."""

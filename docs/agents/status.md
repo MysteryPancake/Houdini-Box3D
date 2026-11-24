@@ -78,7 +78,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * Glue Inertial Load (`gluecompoundload`, `pieceLoad`): the maths is checked in `core_compound` and `glue_compound_load` shows
   the load reaching the bonds of a column landing on its end. Not checked: that a cube dropped on a corner collapses, nor how its
   break values compare with Bullet's impacts.
-* Collision group names (`COLLISION_NAMES_VEX`, test `solver_sop_collision_group_names`): unchecked are whether the collision
+* Collision group names (`collision_names`, test `solver_sop_collision_group_names`): unchecked are whether the collision
   input's pieces honour category / mask, and whether Bullet also lets either side's ignore pattern be enough.
 * A packed piece that turns mirrored mid-simulation: the shape rebuild is keyed on the row lengths, not the sign
   (`mirrored_piece` covers a piece that starts mirrored).

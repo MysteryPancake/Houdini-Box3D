@@ -605,6 +605,24 @@ def build_network(sub, rows):
     pins.setInput(1, setter)
     pins.parm("class").set("detail")
     pins.parm("snippet").set(PIN_VEX)
+    # The wrangle only runs while a piece is pinned: the largest pin marker (0 where there is none) is promoted to the
+    # detail first, and a Switch passes the constraints straight through when it is 0.
+    pin_marker = b3d_hda.attribute_create(sub, "pin_marker", [(PIN_ATTRIB, "int", None)], warn, write=False)
+    pin_marker.setInput(0, setter)
+    pin_any = sub.createNode("attribpromote", "pin_any")
+    pin_any.setInput(0, pin_marker)
+    b3d_hda.set_token(pin_any.parm("inclass"), "point", warn)
+    b3d_hda.set_token(pin_any.parm("outclass"), "detail", warn)
+    b3d_hda.set_token(pin_any.parm("method"), "max", warn)
+    pin_any.parm("inname").set(PIN_ATTRIB)
+    pin_any.parm("useoutname").set(1)
+    pin_any.parm("outname").set("__pin_any")
+    pin_any.parm("deletein").set(0)
+    pins_on = sub.createNode("switch", "switch_pins")
+    pins_on.setInput(0, con_in)
+    pins_on.setInput(1, pins)
+    pins_on.parm("input").setExpression(
+        'int(hou.pwd().parent().node("pin_any").geometry().attribValue("__pin_any") > 0)', hou.exprLanguage.Python)
     strip = sub.createNode("attribdelete", "strip_pin_marker")
     strip.setInput(0, setter)
     strip.parm("ptdel").set(PIN_ATTRIB)
@@ -617,7 +635,7 @@ def build_network(sub, rows):
                               extra=geo_packed)
     proxy_out = switch_on_proxy(sub, "proxy_result", proxy_packed, configured, proxy_packed)
 
-    for idx, src in enumerate([geo_out, pins, proxy_out]):
+    for idx, src in enumerate([geo_out, pins_on, proxy_out]):
         out = sub.createNode("output", f"OUT_{['geometry', 'constraints', 'proxy'][idx]}")
         out.setInput(0, src)
         out.parm("outputidx").set(idx)
@@ -642,23 +660,15 @@ def visualize_vex(defaults):
              "    if (haspointattrib(0, name)) v = point(0, name, pt);\n"
              "    return v;\n"
              "}")
+    # The value of the setting on every point (0 when no setting is ramped), for Attribute Promote to find the range.
     rng = "\n".join([
-        "// Range of the setting being visualized, for the colour ramp.",
+        "// The setting being visualized, on every point: its range sets the colour ramp.",
         value,
         'int mode = chi("../visualize");',
         'string attrib = "";',
         "float dflt = 0.0;",
         pick,
-        "float vmin = 0.0, vmax = 0.0;",
-        'if (attrib != "") {',
-        "    for (int i = 0; i < npoints(0); i++) {",
-        "        float v = value(attrib, i, dflt);",
-        "        if (i == 0 || v < vmin) vmin = v;",
-        "        if (i == 0 || v > vmax) vmax = v;",
-        "    }",
-        "}",
-        "f@__vmin = vmin;",
-        "f@__vmax = vmax;",
+        'f@__vis = attrib != "" ? value(attrib, @ptnum, dflt) : 0.0;',
     ])
     colour = "\n".join([
         "// Colours each piece by the chosen value. A missing attribute is Box3D Data's default.",
@@ -675,7 +685,7 @@ def visualize_vex(defaults):
         'else if (mode == 3) c = value("deforming", pt, 0.0) > 0.0 ? lit : dim;',
         'else if (mode == 4) c = value("awake", pt, 1.0) > 0.0 ? dim : lit;',
         "else if (mode >= 5 && mode <= 8) {",
-        "    float v = value(attrib, pt, dflt);",
+        '    float v = point(0, "__vis", pt);',
         '    float lo = detail(0, "__vmin"), hi = detail(0, "__vmax");',
         "    float t = hi > lo ? clamp((v - lo) / (hi - lo), 0.0, 1.0) : 0.5;",
         f"    i@val = int(t * {HIST_BINS});",
@@ -697,12 +707,24 @@ def visualize_network(sub, source, rows):
         if pt.name() in defaults and kind == "f":
             defaults[pt.name()] = float(pt.defaultValue()[0])
     range_vex, colour_vex = visualize_vex(defaults)
-    ranged = sub.createNode("attribwrangle", "vis_range")
+    ranged = sub.createNode("attribwrangle", "vis_value")
     ranged.setInput(0, source)
-    ranged.parm("class").set("detail")
+    ranged.parm("class").set("point")
     ranged.parm("snippet").set(range_vex)
+    upstream = ranged
+    for method, name in (("min", "vis_min"), ("max", "vis_max")):
+        promote = b3d_hda.create(sub, "attribpromote", name)
+        promote.setInput(0, upstream)
+        b3d_hda.set_token(promote.parm("inclass"), "point", warn)
+        b3d_hda.set_token(promote.parm("outclass"), "detail", warn)
+        b3d_hda.set_token(promote.parm("method"), method, warn)
+        promote.parm("inname").set("__vis")
+        promote.parm("useoutname").set(1)
+        promote.parm("outname").set("__vmin" if method == "min" else "__vmax")
+        promote.parm("deletein").set(0)
+        upstream = promote
     coloured = sub.createNode("attribwrangle", "vis_color")
-    coloured.setInput(0, ranged)
+    coloured.setInput(0, upstream)
     coloured.parm("class").set("primitive")
     coloured.parm("snippet").set(colour_vex)
 

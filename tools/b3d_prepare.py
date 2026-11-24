@@ -17,6 +17,8 @@ Not a build script: imported by the two builders (run with hython, so this folde
 """
 
 import hou
+
+import b3d_hda
 from b3d_hda import tidy
 
 PACKED_GROUP = "__packed"
@@ -78,46 +80,43 @@ COLLISION_PREFIX = "static"  # Bullet's Output Prefix for assembled colliders
 # its name (space separated, `^` takes names out again, as Houdini patterns). Box3D collides two
 # bodies only when each one's mask has the other's category, so either side ignoring is enough.
 # Points with neither attribute keep whatever they had (the solver's defaults when missing).
+# The group names of both geometries, once, sorted, without the empty one: a detail attribute `__used` (Attribute
+# Promote finds each geometry's unique names, as `__groups`).
+COLLISION_USED_VEX = """\
+string used[], first[] = detail(0, "__groups"), second[] = detail(1, "__groups");
+foreach (string n; first)
+    if (n != "" && find(used, n) < 0) append(used, n);
+foreach (string n; second)
+    if (n != "" && find(used, n) < 0) append(used, n);
+s[]@__used = sort(used);
+"""
+# Per point (the node is skipped when the pieces have neither attribute; collision_category / collision_mask are
+# there, 1 and -1 where they were missing, so a point with neither attribute keeps what it had).
 COLLISION_NAMES_VEX = """\
 int bit(int k) { return (int)pow(2.0, (float)k); }
 int hasGroup = haspointattrib(0, "collisiongroup");
 int hasIgnore = haspointattrib(0, "collisionignore");
-if (!hasGroup && !hasIgnore) return;
-string names[];
-if (hasGroup) names = uniquevals(0, "point", "collisiongroup");
-if (haspointattrib(1, "collisiongroup")) {
-    string other[] = uniquevals(1, "point", "collisiongroup");
-    foreach (string n; other)
-        if (find(names, n) < 0) append(names, n);
-}
-string used[];
-foreach (string n; names)
-    if (n != "") append(used, n);
-used = sort(used);
-if (!haspointattrib(0, "collision_category")) addpointattrib(0, "collision_category", 1);
-if (!haspointattrib(0, "collision_mask")) addpointattrib(0, "collision_mask", -1);
-for (int pt = 0; pt < npoints(0); pt++) {
-    string group = hasGroup ? point(0, "collisiongroup", pt) : "";
-    string ignore = hasIgnore ? point(0, "collisionignore", pt) : "";
-    if (group == "" && ignore == "") continue;
-    int index = find(used, group);
-    int category = (group != "" && index >= 0) ? bit(min(index + 1, 30)) : 1;
-    string patterns[] = split(ignore);
-    int ignored = 0;
-    for (int i = 0; i < len(used); i++) {
-        int hit = 0;
-        foreach (string p; patterns) {
-            if (startswith(p, "^")) {
-                if (match(p[1:], used[i])) hit = 0;
-            } else if (match(p, used[i])) {
-                hit = 1;
-            }
+string group = hasGroup ? point(0, "collisiongroup", @ptnum) : "";
+string ignore = hasIgnore ? point(0, "collisionignore", @ptnum) : "";
+if (group == "" && ignore == "") return;
+string used[] = detail(1, "__used");
+int index = find(used, group);
+int category = (group != "" && index >= 0) ? bit(min(index + 1, 30)) : 1;
+string patterns[] = split(ignore);
+int ignored = 0;
+for (int i = 0; i < len(used); i++) {
+    int hit = 0;
+    foreach (string p; patterns) {
+        if (startswith(p, "^")) {
+            if (match(p[1:], used[i])) hit = 0;
+        } else if (match(p, used[i])) {
+            hit = 1;
         }
-        if (hit) ignored |= bit(min(i + 1, 30));
     }
-    setpointattrib(0, "collision_category", pt, category);
-    setpointattrib(0, "collision_mask", pt, ~ignored);
+    if (hit) ignored |= bit(min(i + 1, 30));
 }
+setpointattrib(0, "collision_category", @ptnum, category);
+setpointattrib(0, "collision_mask", @ptnum, ~ignored);
 """
 # Bullet's Path Attribute on its Assembles.
 PACK_PATH = "op:`opfullpath('.')`/pack"
@@ -142,16 +141,62 @@ def _set(node, warn, parms=None, exprs=None):
         p.setExpression(v, hou.exprLanguage.Hscript)
 
 
-def collision_names(parent, name, src, other):
-    """A wrangle `name` in `parent` that maps `src`'s collisiongroup / collisionignore onto
-    collision_category / collision_mask (COLLISION_NAMES_VEX); `other` is the simulation's other
-    geometry. Returns it."""
-    n = parent.createNode("attribwrangle", name)
-    n.setInput(0, src)
-    n.setInput(1, other)
-    n.parm("class").set("detail")
-    n.parm("snippet").set(COLLISION_NAMES_VEX)
-    return n
+def collision_names(parent, name, src, other, warn):
+    """A subnet `name` in `parent` that maps `src`'s collisiongroup / collisionignore onto collision_category /
+    collision_mask (COLLISION_NAMES_VEX); `other` is the simulation's other geometry. Each geometry's group names
+    come from an Attribute Promote (unique), `__used` joins them once, and a point wrangle works out each point's
+    bits. The subnet passes `src` through when it has neither attribute. Returns it."""
+    net = parent.createNode("subnet", name)
+    net.setInput(0, src)
+    net.setInput(1, other)
+    for child in net.children():
+        child.destroy()
+    inputs = net.indirectInputs()
+
+    def groups(source, label):
+        """`source`'s unique collisiongroup names as the detail attribute `__groups` (an empty one where the
+        attribute is missing)."""
+        have = b3d_hda.attribute_create(net, f"has_group_{label}", [("collisiongroup", "string", None)], warn,
+                                        write=False)
+        have.setInput(0, source)
+        promote = net.createNode("attribpromote", f"unique_groups_{label}")
+        promote.setInput(0, have)
+        b3d_hda.set_token(promote.parm("inclass"), "point", warn)
+        b3d_hda.set_token(promote.parm("outclass"), "detail", warn)
+        b3d_hda.set_token(promote.parm("method"), "unique", warn)
+        promote.parm("inname").set("collisiongroup")
+        promote.parm("useoutname").set(1)
+        promote.parm("outname").set("__groups")
+        promote.parm("deletein").set(0)
+        return promote
+
+    used = net.createNode("attribwrangle", "used_groups")
+    used.setInput(0, groups(inputs[0], "source"))
+    used.setInput(1, groups(inputs[1], "other"))
+    used.parm("class").set("detail")
+    used.parm("snippet").set(COLLISION_USED_VEX)
+    bits = b3d_hda.attribute_create(net, "make_bits", [("collision_category", "int", None),
+                                                       ("collision_mask", "int", None)], warn, write=False)
+    bits.setInput(0, inputs[0])
+    for k, default in (("1", 1), ("2", -1)):
+        bits.parm(f"default{k}v1").set(default)
+    names = net.createNode("attribwrangle", "set_bits")
+    names.setInput(0, bits)
+    names.setInput(1, used)
+    names.parm("class").set("point")
+    names.parm("snippet").set(COLLISION_NAMES_VEX)
+    switch = net.createNode("switch", "switch_names")
+    switch.setInput(0, inputs[0])
+    switch.setInput(1, names)
+    switch.parm("input").setExpression(
+        'int(any(hou.pwd().input(0).geometry().findPointAttrib(a) is not None '
+        'for a in ("collisiongroup", "collisionignore")))', hou.exprLanguage.Python)
+    out = net.createNode("output", "output0")
+    out.setInput(0, switch)
+    out.setDisplayFlag(True)
+    out.setRenderFlag(True)
+    tidy(net)
+    return net
 
 
 def prepare_input(parent, src, name, pack, warn, prefix=DEFAULT_PREFIX, prefix_expr=None,

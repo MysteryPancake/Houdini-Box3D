@@ -38,7 +38,7 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
 * Collision: Default Shape Convex Hull. Collision Type (Static, Animated default, Deforming) drives Body Type (Kinematic
   unless Static) and the collision Packed Object's Overwrite Attributes from SOP (on unless Static), so the SOP is
   re-imported each step and the solver turns pose changes into kinematic targets; Deforming also sets `deforming` on
-  the colliders (`collision_deforming`). Both are the Packed Object's own parameters, so the nested asset stays locked.
+  the colliders (`collision_deforming`, an Attribute Create). Both are the Packed Object's own parameters, so the nested asset stays locked.
   A point with `active = 0` and no `animated` stays static.
 * Collide As (`collisionsource`: Packed Pieces, Static Object): a `switch` (`collision_source`) between the `collision`
   Packed Object and a Static Object (`collision_static`, SOP Path the `COLLISION_STATIC` null) through a Box3D Data
@@ -117,8 +117,8 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
 * Collision shapes (the asset's Guide Geometry, node `GUIDE_GEO`, set as `guide=GUIDE_GEO` in the definition's extra info): DOP Import (`import_shapes`, the pieces object, Geometry Data Path `SHAPES_DATA`, `POINTS_TOGGLES`)
   -> `tint_shapes` (`SHAPES_TINT_VEX`, Shape Color) -> `unscale_shapes` -> `switch_show_shapes` (the solver's `exportshapes`, promoted
   to Output > Visualization as Show Collision Shapes; empty input when off, so nothing cooks) -> `switchif_beforestart_shapes` -> `merge_guide`.
-  The constraint lines (`constraint_guide_radius` (point `guide_radius` = `GUIDE_RADIUS` x the type's `<name>_guidescale`, by `constraint_name` against `<name>_dataname`) -> `false_color_constraints`, `FALSE_COLOR_VEX`: the chosen float attribute over its largest value, blue to red) and the
-  impact points (`color_impacts`, the `IMPACTS` records) are two more guide inputs behind `SHOW_CONSTRAINTS` / `SHOW_IMPACTS` switches.
+  The constraint lines (`constraint_guide_radius` (point `guide_radius` = `GUIDE_RADIUS` x the type's `<name>_guidescale`, by `constraint_name` against `<name>_dataname`) -> `false_color_value` (the chosen float's absolute value as `__fc`, read through a Bindings-tab variable named by `FALSE_COLOR_BOUND`; Attributes to Create is `__fc`, as a bound attribute that is missing would be created otherwise) -> `false_color_top` (Attribute Promote, max) -> `false_color_constraints` (`FALSE_COLOR_VEX`, blue to red) -> `false_color_drop`, behind `switch_false_color`) and the
+  impact points (`color_impacts`, a Color SOP, the `IMPACTS` records) are two more guide inputs behind `SHOW_CONSTRAINTS` / `SHOW_IMPACTS` switches.
   The collider's shapes are a second import (`import_collision_shapes`, `tint_collision_shapes` with `COLLISION_COLOR`, `SHOW_COLLISION_SHAPES`
   behind `usecollisions`), also merged; the inner solver's `exportshapes` is an expression on either toggle.
   The external collision geometry joins it as in RBD Bullet Solver's guide: DOP Import of the `collision` object (`import_collision_geo`) -> `dim_collision_geo` (`COLLISION_GUIDE_VEX`) -> `unscale_collision_geo` -> `switch_show_collision_geo` (`usecollisions` && Show Geometry, `SHOW_COLLISION`, on) -> `switchif_beforestart_collision_geo`. `merge_guide` -> `guide_wireframe` (`gl_wireframe`) -> `GUIDE_GEO`.

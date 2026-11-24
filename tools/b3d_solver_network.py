@@ -2,6 +2,7 @@
 
 import hou
 
+import b3d_hda
 import b3d_prepare
 from b3d_hda import layout, set_operation
 from b3d_layouts import DOP_LAYOUT, SOLVER_LAYOUT
@@ -115,11 +116,6 @@ SOLVE_FIRST_PARM = "solvefirstframe"  # the Box3D Packed Object's Solve on Creat
 # removed from the constraints output.
 KEEP_BROKEN = "constraint_keepbroken"
 
-# Collision Type Deforming: the colliders' `deforming`, so the solver rebuilds their shapes every step.
-COLLISION_DEFORMING_VEX = f'''\
-i@deforming = chi("../{COLLISION_TYPE}") == 2;
-'''
-
 # Constraint points anchored to the world (no piece name) keep their imported position.
 RESET_ANCHORS_VEX = "@P = point(1, \"P\", @ptnum);"
 
@@ -215,8 +211,9 @@ foreach (string n; {"bullet_primS", "bullet_primT", "bullet_radius", "bullet_len
 UNSCALE_POINTS_VEX = """\
 float s = chf("scale");
 v@P *= s;
-if (haspointattrib(0, "pivot")) v@pivot *= s;
-if (haspointattrib(0, "v")) v@v *= s;
+// Not v@pivot / v@v: a binding creates its attribute even where it is never reached.
+if (haspointattrib(0, "pivot")) setpointattrib(0, "pivot", @ptnum, s, "mult");
+if (haspointattrib(0, "v")) setpointattrib(0, "v", @ptnum, s, "mult");
 """
 UNSCALE_CONSTRAINTS_VEX = """\
 float s = chf("scale");
@@ -243,18 +240,20 @@ v@Cd *= set(ch("../{SHAPES_COLOR}r"), ch("../{SHAPES_COLOR}g"), ch("../{SHAPES_C
 '''
 
 # False colour on the constraint lines in the guide, as RBD Bullet Solver's False Color Mode: the chosen attribute
-# (a float on the primitives) scaled by its largest value, blue to red.
-FALSE_COLOR_VEX = f'''\
-int mode = chi("../{FALSE_COLOR_MODE}");
-string names[] = {{"", "angle", "distance", "force", "impact", "torque"}};
-string attr = mode == 6 ? chs("../{FALSE_COLOR_ATTRIB}") : (mode < len(names) ? names[mode] : "");
-if (attr == "" || !hasprimattrib(0, attr)) return;
-float top = 0;
-for (int i = 0; i < nprimitives(0); i++) top = max(top, abs(prim(0, attr, i)));
-if (top <= 0) return;
-if (!hasprimattrib(0, "Cd")) addprimattrib(0, "Cd", {{1, 1, 1}});
-for (int i = 0; i < nprimitives(0); i++)
-    setprimattrib(0, "Cd", i, lerp({{0, 0.4, 1}}, {{1, 0.1, 0}}, abs(prim(0, attr, i)) / top));
+# (a float on the primitives) scaled by its largest absolute value, blue to red. The value is copied to `__fc`, an
+# Attribute Promote finds the largest into the detail `__fc_top`, then the colour is set. `f@fcvalue` is bound (the
+# wrangle's Bindings tab) to the attribute the mode picks, FALSE_COLOR_BOUND: a missing one reads 0.
+FALSE_COLOR_VALUE_VEX = "f@__fc = abs(f@fcvalue);\n"
+FALSE_COLOR_BOUND = (  # Hscript, relative to the wrangle
+    f'ifs(ch("../{FALSE_COLOR_MODE}") == 6, chs("../{FALSE_COLOR_ATTRIB}"), '
+    f'ifs(ch("../{FALSE_COLOR_MODE}") == 1, "angle", ifs(ch("../{FALSE_COLOR_MODE}") == 2, "distance", '
+    f'ifs(ch("../{FALSE_COLOR_MODE}") == 3, "force", ifs(ch("../{FALSE_COLOR_MODE}") == 4, "impact", '
+    f'ifs(ch("../{FALSE_COLOR_MODE}") == 5, "torque", "__none"))))))')
+FALSE_COLOR_VEX = '''\
+float top = detail(0, "__fc_top");
+vector colour = hasprimattrib(0, "Cd") ? prim(0, "Cd", @primnum) : {1, 1, 1};
+if (top > 0) colour = lerp({0, 0.4, 1}, {1, 0.1, 0}, f@__fc / top);
+v@Cd = colour;
 '''
 
 # The constraint lines' radius in the guide: Guide Radius times the Guide Scale of the line's type (its
@@ -270,11 +269,6 @@ def guide_radius_vex():
     lines.append(f'f@guide_radius = max(ch("../{GUIDE_RADIUS}") * scale, 0.0001);')
     return "\n".join(lines) + "\n"
 
-
-# The impact points in the guide: red.
-IMPACT_GUIDE_VEX = """\
-v@Cd = {1, 0.2, 0};
-"""
 
 # The collider's shapes: the same polylines tinted by the collision Color instead.
 COLLISION_SHAPES_TINT_VEX = f'''v@Cd *= set(ch("../{COLLISION_COLOR}r"), ch("../{COLLISION_COLOR}g"), ch("../{COLLISION_COLOR}b"));
@@ -499,6 +493,15 @@ def scale_wrangle(sub, name, src, snippet, inverse, run_over="point"):
     return sw
 
 
+def finish_false_color(asset):
+    """False Color Mode's bound attribute (the asset's parameters must exist for the expression)."""
+    node = asset.node("false_color_value")
+    if node is None:
+        warn("no false_color_value: False Color Mode does nothing")
+        return
+    node.parm("bindname1").setExpression(FALSE_COLOR_BOUND, hou.exprLanguage.Hscript)
+
+
 def scale_settings(asset):
     """SCALED_SETTINGS: each inner channel reference times the World Scale to its power."""
     for inner_path, name, power in SCALED_SETTINGS:
@@ -638,9 +641,9 @@ def build_network(sub):
     # Collision: packed and named, rest from the start frame.
     collision_prepared = prepare_input(sub, scaled[COLLISION], "prepare_collision", pack=True, collision=True)
     # Bullet's collisiongroup / collisionignore names as collision bits, numbered over both.
-    sim_pieces = b3d_prepare.collision_names(sub, "collision_names_pieces", sim_prepared, collision_prepared)
+    sim_pieces = b3d_prepare.collision_names(sub, "collision_names_pieces", sim_prepared, collision_prepared, warn)
     collision_pieces = b3d_prepare.collision_names(sub, "collision_names_collision", collision_prepared,
-                                                   sim_prepared)
+                                                   sim_prepared, warn)
     sim_scaled = scale_wrangle(sub, "scale_attributes", sim_pieces, SCALE_ATTRIBS_VEX, inverse=False)
 
     # Ground Collision: the Height Field chain (the DOP network reads its end).
@@ -652,10 +655,10 @@ def build_network(sub):
     dopnet.setInput(DOP_CONSTRAINTS, build_constraint_age_sop(sub, scale_wrangle(
         sub, "scale_constraint_attribs", scaled[CONSTRAINTS], SCALE_CONSTRAINTS_VEX, inverse=False,
         run_over="primitive")))
-    deforming = create(sub, "attribwrangle", "collision_deforming")
+    # Collision Type Deforming: the colliders' `deforming`, so the solver rebuilds their shapes every step.
+    deforming = b3d_hda.attribute_create(sub, "collision_deforming", [
+        ("deforming", "int", [f'ch("../{COLLISION_TYPE}") == 2'])], warn)
     deforming.setInput(0, collision_rest(sub, dopnet, collision_pieces))
-    deforming.parm("class").set("point")
-    deforming.parm("snippet").set(COLLISION_DEFORMING_VEX)
     dopnet.setInput(DOP_COLLISION, deforming)
     # Collide As Static Object: the same input unpacked, for the Static Object to read by path.
     unpacked = create(sub, "unpack", "collision_unpack")
@@ -804,10 +807,36 @@ def build_network(sub):
     guide_radius.setInput(0, con_unscaled)
     guide_radius.parm("class").set("point")
     guide_radius.parm("snippet").set(guide_radius_vex())
-    false_color = create(sub, "attribwrangle", "false_color_constraints")
+    fc_value = create(sub, "attribwrangle", "false_color_value")
+    fc_value.setInput(0, guide_radius)
+    fc_value.parm("class").set("primitive")
+    fc_value.parm("snippet").set(FALSE_COLOR_VALUE_VEX)
+    fc_value.parm("bindings").set(1)
+    fc_value.parm("bindparm1").set("fcvalue")
+    # Only the copy is made: a bound attribute that is missing is not created.
+    fc_value.parm("exportlist").set("__fc")
+    fc_top = create(sub, "attribpromote", "false_color_top")
+    fc_top.setInput(0, fc_value)
+    set_menu(fc_top, "inclass", "primitive")
+    set_menu(fc_top, "outclass", "detail")
+    set_menu(fc_top, "method", "max")
+    set_named(fc_top, "inname", "__fc")
+    set_named(fc_top, "useoutname", 1)
+    set_named(fc_top, "outname", "__fc_top")
+    set_named(fc_top, "deletein", 0)
+    fc_color = create(sub, "attribwrangle", "false_color_constraints")
+    fc_color.setInput(0, fc_top)
+    fc_color.parm("class").set("primitive")
+    fc_color.parm("snippet").set(FALSE_COLOR_VEX)
+    fc_drop = create(sub, "attribdelete", "false_color_drop")
+    fc_drop.setInput(0, fc_color)
+    set_named(fc_drop, "primdel", "__fc")
+    set_named(fc_drop, "dtldel", "__fc_top")
+    # Off (False Color Mode None) the lines keep the colour they came with.
+    false_color = create(sub, "switch", "switch_false_color")
     false_color.setInput(0, guide_radius)
-    false_color.parm("class").set("detail")
-    false_color.parm("snippet").set(FALSE_COLOR_VEX)
+    false_color.setInput(1, fc_drop)
+    false_color.parm("input").setExpression(f'ch("../{FALSE_COLOR_MODE}") > 0', hou.exprLanguage.Hscript)
     show_con = create(sub, "switch", "switch_show_constraints")
     show_con.setInput(0, no_shapes)
     guide_wire = create(sub, "polywire", "constraint_guide_wire")  # thick lines, by each line's radius
@@ -818,10 +847,11 @@ def build_network(sub):
     show_con.setInput(1, guide_wire)
     show_con.parm("input").setExpression(f'ch("../{VISUALIZE}") && ch("../{SHOW_CONSTRAINTS}")', hou.exprLanguage.Hscript)
     con_guide_out = before_start(sub, dopnet, "switchif_beforestart_constraint_guide", show_con, no_shapes)
-    impact_color = create(sub, "attribwrangle", "color_impacts")
+    # The impact points in the guide: red.
+    impact_color = create(sub, "color", "color_impacts")
     impact_color.setInput(0, impacts_unscaled)
-    impact_color.parm("class").set("point")
-    impact_color.parm("snippet").set(IMPACT_GUIDE_VEX)
+    set_menu(impact_color, "class", "point")
+    set_named(impact_color, "color", (1.0, 0.2, 0.0))
     show_impacts = create(sub, "switch", "switch_show_impacts")
     show_impacts.setInput(0, no_shapes)
     show_impacts.setInput(1, impact_color)

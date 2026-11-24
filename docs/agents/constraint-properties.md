@@ -11,7 +11,7 @@ through. No Bullet settings, no Proxy attribute transfer.
   (Breakable, Set Rest Length, the Limit toggles, Attributes Replace Values). Names: `<type>_<attribute>` in a type's
   folder (the same attribute is shared by several types, with different defaults and ranges), `add...` its checkbox.
   Constraint Type (`constrainttype`) hides all but one type's folder.
-* One detail wrangle (`set_properties`, `wrangle_vex`) loops the constraints in the group (empty: all; Filter by
+* A detail wrangle (`create_settings`) makes the attributes and a primitive wrangle (`set_properties`, `wrangle_vex`, its group the constraint group, in parallel) writes the values to the constraints in the group (empty: all; Filter by
   Pieces: SideFX's `rbdgroupconstraints` node with its group `__tmpconpropgrp`, output 1; removed by `strip_group`).
   Each ticked setting creates its attribute with the "not set" value first (`kUnsetFloat` / -1), then sets the group's
   lines: lines outside the group keep the relationship node's value (`applyOverrides` skips unset values). Also
@@ -36,7 +36,7 @@ through. No Bullet settings, no Proxy attribute transfer.
   them. The edits live in the `stash` parameter (Geometry Stash) (a Geometry data parameter, shared with the inner Stash SOP):
   one point per edited line with `__idx` and the fields `orient_a` / `orient_b`, `enable_motor`, `motor_velocity`, each
   with a "not edited" value the network skips (`FIELDS`). `index_lines` numbers the lines (`__idx`, removed again by `strip_index`),
-  `apply_edits` writes the stash on top of the settings.
+  `apply_edits`, a primitive wrangle as RBD Constraint Properties' `copy_motors`, writes the stash on top of the settings (the attributes first, by `edit_point_attribs` and `edit_line_attribs`, all behind `switch_edits`, which skips them while the stash is empty).
   Box3D constraint types only: SideFX's (Glue, Hard, Soft, Spring, Cone Twist) are deliberately not on this node, so it stays separate from RBD Constraint Properties. A line can still carry their attributes written by hand or by SideFX's node. Use VEXpressions (`vex_templates`: `<type>_uselocalproperties`, `<type>_localexpression`, a VEX code editor with a snippet menu) ends each type's
   folder, as RBD Constraint Properties' types do: `run_vexpressions`, a primitive wrangle over the group (Constraint Geometry, Geometry and Proxy
   Geometry as inputs 0 to 2, the snippet of the type in Constraint Type), sits behind `switch_vexpressions` after `set_properties` and runs when that
@@ -65,7 +65,7 @@ through. No Bullet settings, no Proxy attribute transfer.
   not negative, the seed from the setting's name so the settings differ (RBD Constraint Properties has it for Glue's Strength only). `__idx` / `__sel` (Index, Selection, not saved with the scene) hold the selection. All three are visible in a HandleParms folder, as RBD Constraint Properties'. Edit Parms
   makes the handle edit Anchor Rotation, for every line in the group, instead. Clear Edits, Import Edits and Edit Parms
   are in the viewport toolbar (`show_in_toolbar`). Guide Scale (default 0: hidden, range 0 to 1, as RBD Constraint Properties') draws the anchor frames of the lines in the group
-  (`build_guides` -> `GUIDES`). The state reads `CONSTRAINT`, `HANDLE`, `GUIDES`, `GLOW` and `widgets` (the layout's
+  (`guide_size` writes `pscale` per line, `guide_pscale` promotes it to the points, and `guide_frames` copies the red / green / blue frame onto them by `orient` and `pscale`, behind `switch_guides` -> `GUIDES`; `glow_lines` is a primitive wrangle). The state reads `CONSTRAINT`, `HANDLE`, `GUIDES`, `GLOW` and `widgets` (the layout's
   Viewer box); its helpers (`set_edits`, `selected_ids`, ...) are plain functions, so a check calls them without a
   viewport.
 * The build probes the asset (`probe`); the tests are `constraint_properties` and `constraint_properties_edit`.

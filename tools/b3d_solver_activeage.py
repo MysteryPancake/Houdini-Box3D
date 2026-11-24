@@ -15,6 +15,7 @@ every step.
 
 import hou
 
+import b3d_hda
 from b3d_solver_common import (
     ADD_ACTIVE_AGE,
     create,
@@ -23,6 +24,7 @@ from b3d_solver_common import (
     JUST_ACTIVATED_TYPE,
     set_menu,
     set_named,
+    warn,
 )
 
 ACTIVE_AGE_ATTRIB = "active_age"
@@ -113,10 +115,8 @@ def active_age_templates():
 def build_age_sop(sub, upstream):
     """The pieces with an `age` of 0 where they have none (a Switch, used while Enable Aging is on). Returns the
     Switch."""
-    create_age = create(sub, "attribwrangle", AGE_SOP)
+    create_age = b3d_hda.attribute_create(sub, AGE_SOP, [("age", "float", None)], warn, write=False)
     create_age.setInput(0, upstream)
-    create_age.parm("class").set("detail")
-    create_age.parm("snippet").set('if (!haspointattrib(0, "age")) addpointattrib(0, "age", 0.0);')
     switch = create(sub, "switch", AGE_SWITCH)
     switch.setInput(0, upstream)
     switch.setInput(1, create_age)
@@ -127,10 +127,9 @@ def build_age_sop(sub, upstream):
 def build_constraint_age_sop(sub, upstream):
     """The constraints with an `age` of 0 where they have none, as RBD Bullet Solver's second Attribute Create (a
     Switch, used while Enable Aging is on). Returns the Switch."""
-    create_age = create(sub, "attribwrangle", CONSTRAINT_AGE_SOP)
+    create_age = b3d_hda.attribute_create(sub, CONSTRAINT_AGE_SOP, [("age", "float", None)], warn, cls="primitive",
+                                          write=False)
     create_age.setInput(0, upstream)
-    create_age.parm("class").set("detail")
-    create_age.parm("snippet").set('if (!hasprimattrib(0, "age")) addprimattrib(0, "age", 0.0);')
     switch = create(sub, "switch", CONSTRAINT_AGE_SWITCH)
     switch.setInput(0, upstream)
     switch.setInput(1, create_age)

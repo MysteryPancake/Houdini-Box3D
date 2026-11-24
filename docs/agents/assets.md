@@ -23,8 +23,8 @@ Packed Object (read from `houdini_network_dump.py` dumps of RBD Bullet Solver an
 Geometry (data name `Geometry`) -> Box3D Data -> `visualize_hires` -> Collider Label, the output (no input); SOP Geometry reads a SOP stage inside the asset (`STAGE`,
 RBD Packed Object's `create_or_overwrite_attributes`): Object Merge of the asset's effective SOP path (`EFFECTIVE_SOP`, hidden: SOP Path, or `dopcontextgeo(".", n)` for Geometry Source First to Fourth Context Geometry; Use Object Transform drives
 its Transform, Into This Object: the DOP network's space; SOP Geometry's own stays off, as 22.0's has no OBJ Path to
-point at an object) -> `setup_defaults` -> `create_name` -> `set_rest`, `initial_transform` and `setup_velocities` on the creation frame
-only -> `setup_deforming` -> `OUT`. The stage's
+point at an object) -> `setup_defaults` -> `create_name` -> `set_rest`, `initial_transform` and `setup_velocities` (+ `switch_velocities`) on the creation frame
+only -> `setup_deforming` (+ `switch_deforming`) -> `OUT`. The stage's
 references to the asset's parameters are set once the asset exists (`wire_stage`).
 * `save_source_geo` (Link to Source Object) and `applydata1` (on the creation frame) attach the SOP Path as the object's
   `SourceObject` data (`objpath`, and `usetransform` from `source_transform`, a Modify Data), as RBD Packed Object does. The solver
@@ -38,7 +38,7 @@ references to the asset's parameters are set once the asset exists (`wire_stage`
   pivot (the point's `pivot`, else P while Inherit Pivot is on, else Pivot), applied by `apply_initial_xform` (Transform by
   Attribute) after `set_rest`, so the rest stays at the SOP's pose, as RBD Packed Object's `set_rest_and_initial_xform`. The solver
   does not read a `pivot` attribute: it only decides where the initial rotation is about.
-* `setup_defaults` (detail wrangle, `b3d_settings.packed_defaults_vex`): each per-body setting whose value differs from
+* `setup_defaults` (detail wrangle, `b3d_settings.packed_defaults_vex`; Default Shape is `setup_shape`, an Attribute Create with Write Values on behind `switch_shape`, which skips it when the points have `bullet_georep`, as a string's default is not applied): each per-body setting whose value differs from
   Box3D Data's default becomes a point attribute holding it, unless the points already have it (RBD Packed Object's
   Attribute Creates with Write Values off), so a point attribute wins and untouched settings write nothing. Names map as
   Box3D Configure's (`b3d_settings.MAPPING`).
@@ -48,11 +48,11 @@ references to the asset's parameters are set once the asset exists (`wire_stage`
   Object's `set_rest_and_initial_xform`, with `orient` kept as the rotation since rest (see its comment). Switched in
   only on the creation frame: SOP Geometry stamps `$SF` and `$OBJCF`, which a `STAMPS` null reads, so a re-import
   (Overwrite Attributes from SOP, which the Solver SOP's Collision Type turns on) keeps the rest it was given.
-* `setup_velocities` (`VELOCITY_VEX`): RBD Packed Object's Initial State tab (`vel`, `angvel` in degrees per second
+* `setup_velocities` (an Attribute Create behind `switch_velocities`, skipped while Inherit Velocity is on): RBD Packed Object's Initial State tab (`vel`, `angvel` in degrees per second
   written as radians, `inheritvelocity`). Inherit defaults off, as RBD's; the Solver SOP turns it on for its
   pieces (`packed_object` in `b3d_solver_dops.py`), as RBD Bullet Solver reads the points' `v` / `w`, so Box3D Configure's Initial State
   reaches the simulation there and needs the toggle in a DOP network.
-* `setup_deforming` (`DEFORMING_VEX`): the Deforming toggle writes `deforming` 1 on every import and, with Overwrite
+* `setup_deforming` (an Attribute Create behind `switch_deforming`, skipped while Deforming is off): the Deforming toggle writes `deforming` 1 on every import and, with Overwrite
   Attributes from SOP, sets the SOP Geometry to Set Always (`REIMPORT`), as RBD's Create Deforming Objects.
 * Initial Object Type (`initialstate`: Create Active / Static / Animated Static / Deforming Static / Deforming Active Objects, as RBD Packed Object, plus Custom): Body
   Type and Deforming follow it, through two hidden parameters the stage reads (`effectivebodytype`, `effectivedeforming`, expressions of the menu; Custom takes the

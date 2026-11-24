@@ -160,6 +160,7 @@ from b3d_solver_ground import (  # noqa: E402
 )
 from b3d_solver_network import (  # noqa: E402
     build_network,
+    finish_false_color,
     KEEP_BROKEN,
     scale_joint_settings,
     scale_settings,
@@ -593,6 +594,7 @@ def build(out_path, packed_hda=None):
                              hou.exprLanguage.Hscript)
     finish_ground(asset)
     finish_constraints(asset, constraint_links)
+    finish_false_color(asset)
     scale_settings(asset)
     scale_joint_settings(asset)
     add_gravity_switch(asset)

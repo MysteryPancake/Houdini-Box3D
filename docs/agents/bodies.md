@@ -34,8 +34,8 @@ equal to what its body was built with.
 * **Fast rotation** (`fastrotation`) -> `allowFastRotation`; without it Box3D caps spin at `B3_MAX_ROTATION` per Box3D step (the DOP step over Substeps).
 * **Collision filtering** (`collision_category`, `collision_mask` read as `GA_ROHandleID` so `-1` means every bit;
   `collision_group`) -> the shapes' filter. Affector bodies use the defaults. Bullet's `collisiongroup` /
-  `collisionignore` names become these bits in the Box3D Solver SOP (`COLLISION_NAMES_VEX` in `b3d_prepare.py`, a
-  detail wrangle on the pieces and on the colliders, each reading the other's group names so both number them alike):
+  `collisionignore` names become these bits in the Box3D Solver SOP (`collision_names` in `b3d_prepare.py`, a
+  subnet on the pieces and on the colliders: an Attribute Promote (unique) per geometry, `used_groups` joins the names once, and the point wrangle `COLLISION_NAMES_VEX` sets each point's bits, so both sides number the groups alike):
   bit 0 is no group, groups take bits 1 to 30 in sorted order, a piece's mask lacks the groups its pattern matches.
   Ignoring one piece by name (rather than a group) and ignoring the ground are not representable.
 * **Animated** (`animated` with `active = 0`): kinematic; a pose edit becomes `setTargetTransformByHandle(cur, stepDt)`
@@ -75,7 +75,7 @@ equal to what its body was built with.
   Frame), and with a `life` attribute `dead = 1` once `age > life`, a life of 0 or less included (no `life` never
   dies), as RBD Bullet Solver (`solver_sop_aging_bullet`) and, for a positive life, POP (`aging_vs_pop*`). Reap Dead
   Points is on by default, as Bullet always deletes dead points. Reap At Frame End deletes it in the same step, else
-  the next sync does. The Solver SOP's `create_age` stage gives the pieces `age` 0 before the first step, as Bullet's
+  the next sync does. The Solver SOP's age stage (an Attribute Create with Write Values off) gives the pieces `age` 0 before the first step, as Bullet's
   Age Attribute. Constraint primitives age too, as Bullet's (`ageConstraints` in `Box3DJointBreak.cpp` adds the time step to their `age`,
   `create_constraint_age` makes it 0 on the first frame, `life` is ignored: `solver_sop_constraint_aging_bullet`).
   Parallel past `kMinParallelPoints`.

@@ -93,7 +93,7 @@ differ by more than 1e-4). The file's header comment says what it covers. The ph
 
 `hython tests/houdini/bench.py` (or `python tools/b3d.py bench`) times scenes in Box3D and RBD Bullet Solver; it is not
 part of `run_tests.py` and nothing in it passes or fails. `--list` names the scenarios (`bench_scenes.py`:
-pile, edit, collider, animated, joints, wall, bondwall, objects, static, churn, solversop), each with parameters (`name:key=value,...`) and a default sweep.
+pile, edit, collider, animated, joints, wall, fracture, bondwall, objects, static, churn, solversop), each with parameters (`name:key=value,...`) and a default sweep.
 
 * Each run is its own hython process: frames 1..N timed as `setFrame` plus the DOP cook, grouped into the scene's
   phases (median, p95, max per frame), then Reset Simulation and frame 2 again (`rewind`: the world rebuild; the forced `cook` is
@@ -104,6 +104,7 @@ pile, edit, collider, animated, joints, wall, bondwall, objects, static, churn, 
   Stepping Simulation are Box3D's own step timing (`solver.md`); the rest of the solver's stages are the plugin's own code, the part to optimise. A frame's total minus its nodes is the DOP engine.
 * Results go to `tests/houdini/out/bench/` (`latest.json` and a timestamped copy); `--compare file.json` prints the
   ratio per phase. `--repeat N` keeps the median run, `--threads N` sets `HOUDINI_MAXTHREADS`, `--budget` caps a run.
+* `fracture` is a Voronoi-fractured cube (Points from Volume) glued by the fracture's own constraints, dropped on the ground, through the Box3D Solver SOP or the RBD Bullet Solver SOP (`sep`: smaller is more pieces). Its frame time includes the SOP's Break Thresholds.
 * `bondwall` is the wall on Box3D Bonds (Box3D only; `wait=60,sleep=0` stands it awake for 60 frames before the ball). The Bond load solve and patch work run in Stepping Simulation: the
   plugin's share is `Breaking Bonds` and `Glue Hits`.
 * `objects` is the whole-object path (RBD Objects from an RBD Point Object), `static` a pile on a Static Object (`motion`

@@ -102,21 +102,6 @@ POS, ROT = "t", "r"
 INHERIT_PIVOT, PIVOT = "inheritpivot", "p"
 VEL, ANGVEL, INHERIT_VEL = "vel", "angvel", "inheritvelocity"
 
-# setup_velocities, on the creation frame: Velocity and Angular Velocity (degrees per second, written
-# as radians) as v and w, unless the points' own are inherited.
-VELOCITY_VEX = """// The starting velocity, unless the points' own v / w are kept. Detail wrangle: an @-binding
-// would add v and w to the points even when nothing is written.
-if (!chi("../../%s")) {
-    vector v = chv("../../%s");
-    vector w = radians(chv("../../%s"));
-    if (!haspointattrib(0, "v")) addpointattrib(0, "v", {0, 0, 0});
-    if (!haspointattrib(0, "w")) addpointattrib(0, "w", {0, 0, 0});
-    for (int pt = 0; pt < npoints(0); pt++) {
-        setpointattrib(0, "v", pt, v);
-        setpointattrib(0, "w", pt, w);
-    }
-}""" % (INHERIT_VEL, VEL, ANGVEL)
-
 # initial_transform, on the creation frame after set_rest: Position and Rotation as a transform about the piece's
 # pivot, for the Transform by Attribute after it (as RBD Packed Object's set_rest_and_initial_xform). The pivot is the
 # point's own, else its position while Inherit Pivot is on, else Pivot.
@@ -126,13 +111,6 @@ vector pivot = haspointattrib(0, "pivot") ? point(0, "pivot", pts[0])
              : (chi("../../%s") ? point(0, "P", pts[0]) : chv("../../%s"));
 4@__initialxform = maketransform(XFORM_SRT, XFORM_XYZ, chv("../../%s"), chv("../../%s"), {1, 1, 1}, pivot);
 """ % (INHERIT_PIVOT, PIVOT, POS, ROT)
-
-# setup_deforming, on every import: the deforming attribute, so the solver rebuilds the shapes.
-DEFORMING_VEX = """if (chi("../../%s")) {
-    if (!haspointattrib(0, "deforming")) addpointattrib(0, "deforming", 0);
-    for (int pt = 0; pt < npoints(0); pt++)
-        setpointattrib(0, "deforming", pt, 1);
-}""" % EFFECTIVE_DEFORM
 
 STAGE = "create_attributes"  # the SOP stage (a DOP SOP network), as RBD Packed Object's
 HIRES = "visualize_hires"  # the SOP Guide drawing the render geometry, as RBD Packed Object's
@@ -290,8 +268,21 @@ def build_stage(sub, rows):
     Returns OUT."""
     net = sub.createNode("sopnet", STAGE)
     merge = net.createNode("object_merge", "object_merge")
+    # Default Shape as bullet_georep, where it is not Box3D Data's own default and the points have none. (A string's
+    # default is not applied to existing points, so the value is written, by a node the Switch skips otherwise.)
+    shapes = ", ".join(f'"{v}"' for v in b3d_settings.GEOREP_VALUES)
+    shape = b3d_hda.attribute_create(net, "setup_shape", [
+        ("bullet_georep", "string", [f'[{shapes}][int(ch("../../defaultshape"))]'])], warn)
+    shape.setInput(0, merge)
+    shape_on = net.createNode("switch", "switch_shape")
+    shape_on.setInput(0, merge)
+    shape_on.setInput(1, shape)
+    default_shape = next(b3d_settings.literal(pt, "i") for pt, kind in rows if kind == "bullet_georep")
+    shape_on.parm("input").setExpression(
+        f'int(hou.evalParm("../../defaultshape") != {default_shape} and '
+        'hou.pwd().input(0).geometry().findPointAttrib("bullet_georep") is None)', hou.exprLanguage.Python)
     defaults = net.createNode("attribwrangle", "setup_defaults")
-    defaults.setInput(0, merge)
+    defaults.setInput(0, shape_on)
     defaults.parm("class").set("detail")
     defaults.parm("snippet").set(b3d_settings.packed_defaults_vex(rows, "../..", {"bodytype": EFFECTIVE_BODY}))
     name = net.createNode("attribwrangle", "create_name")
@@ -309,10 +300,16 @@ def build_stage(sub, rows):
     apply = net.createNode("xformbyattrib", "apply_initial_xform")
     apply.setInput(0, place)
     apply.parm("xformattrib").set("__initialxform")
-    velocities = net.createNode("attribwrangle", "setup_velocities")
+    # Velocity and Angular Velocity (degrees per second, written as radians) as v and w on the creation frame, unless
+    # the points' own v / w are inherited (then the node is skipped, so nothing is added).
+    velocities = b3d_hda.attribute_create(net, "setup_velocities", [
+        ("v", "vector", [f'ch("../../{VEL}x")', f'ch("../../{VEL}y")', f'ch("../../{VEL}z")']),
+        ("w", "vector", [f'rad(ch("../../{ANGVEL}x"))', f'rad(ch("../../{ANGVEL}y"))', f'rad(ch("../../{ANGVEL}z"))'])], warn)
     velocities.setInput(0, apply)
-    velocities.parm("class").set("detail")
-    velocities.parm("snippet").set(VELOCITY_VEX)
+    start_velocity = net.createNode("switch", "switch_velocities")
+    start_velocity.setInput(0, apply)
+    start_velocity.setInput(1, velocities)
+    start_velocity.parm("input").setExpression(f'!ch("../../{INHERIT_VEL}")', hou.exprLanguage.Hscript)
     stamps = net.createNode("null", "STAMPS")
     for parm, key in (("frame", "SF"), ("objcf", "OBJCF"), ("objid", "OBJID")):
         stamps.addSpareParmTuple(hou.FloatParmTemplate(parm, key, 1))
@@ -332,15 +329,18 @@ def build_stage(sub, rows):
     later.setInput(1, name)
     first = net.createNode("switch", "switch_first_frame")
     first.setInput(0, later)
-    first.setInput(1, velocities)
+    first.setInput(1, start_velocity)
     first.parm("input").setExpression('ch("../STAMPS/frame") == ch("../STAMPS/objcf")',
                                       hou.exprLanguage.Hscript)
-    deforming = net.createNode("attribwrangle", "setup_deforming")
+    # On every import: the deforming attribute, so the solver rebuilds the shapes (skipped when it is off).
+    deforming = b3d_hda.attribute_create(net, "setup_deforming", [("deforming", "int", ["1"])], warn)
     deforming.setInput(0, first)
-    deforming.parm("class").set("detail")
-    deforming.parm("snippet").set(DEFORMING_VEX)
+    deform_on = net.createNode("switch", "switch_deforming")
+    deform_on.setInput(0, first)
+    deform_on.setInput(1, deforming)
+    deform_on.parm("input").setExpression(f'ch("../../{EFFECTIVE_DEFORM}")', hou.exprLanguage.Hscript)
     out = net.createNode("null", "OUT")
-    out.setInput(0, deforming)
+    out.setInput(0, deform_on)
     out.setDisplayFlag(True)
     out.setRenderFlag(True)
     b3d_hda.tidy(net)

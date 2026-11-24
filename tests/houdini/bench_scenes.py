@@ -503,6 +503,45 @@ def build_wall(kind, p, joint):
     return Scene(dop, frames, [("rest", 2, 15), ("hit", 16, 40), ("debris", 41, frames)])
 
 
+@scenario("fracture", "A cube fractured by Voronoi Fracture (Points from Volume, Particle Separation `sep`), every piece glued to "
+          "its neighbours by the fracture's own constraints, dropped on the ground: the pieces and constraints go "
+          "through the Solver SOP (Box3D Solver or RBD Bullet Solver). Options: sep (smaller = more pieces), strength "
+          "(Glue; the default holds the cube whole), compound 0|1 (Box3D's Glue as One Body).",
+          {"sep": 0.15, "strength": 1e9, "compound": 1, "frames": 60},
+          sweep=[{"compound": 1}, {"compound": 0}, {"sep": 0.1, "compound": 1}])
+def scene_fracture(kind, p):
+    geo = new_geo("fracture")
+    box = create(geo, "box", "box")
+    xf = create(geo, "xform", "xf")
+    xf.setInput(0, box)
+    set_parm(xf, ["rx"], 45)
+    set_parm(xf, ["ty"], 3)
+    pfv = create(geo, "pointsfromvolume", "pfv")
+    pfv.setInput(0, xf)
+    set_parm(pfv, ["jitterscale"], 1.0)
+    set_parm(pfv, ["particlesep"], float(p["sep"]))
+    fracture = create(geo, "voronoifracture", "fracture")
+    fracture.setInput(0, xf)
+    fracture.setInput(1, pfv)
+    # Voronoi's constraints have no constraint_name or strength: both solvers get the same.
+    glue = create(geo, "attribwrangle", "glue_name")
+    glue.setInput(0, fracture, 1)
+    set_parm(glue, ["class"], "primitive")
+    set_parm(glue, ["snippet"], 's@constraint_name = "Glue"; f@strength = %r;' % float(p["strength"]))
+    solver = create(geo, "box3d_solver" if kind == "box3d" else "rbdbulletsolver", "solver")
+    solver.setInput(0, fracture, 0)
+    solver.setInput(1, glue)
+    display(solver)
+    set_parm(solver, ["useground"], 1)
+    if kind == "box3d" and p.get("compound") is not None:
+        set_parm(solver, ["gluecompound"], p["compound"])
+    inner = [c for c in solver.allSubChildren() if c.type().name() == "dopnet"]
+    if not inner:
+        raise SetupError("the solver SOP has no DOP network inside")
+    frames = int(p["frames"])
+    return Scene(inner[0], frames, [("fall", 2, 18), ("land", 19, 40), ("settled", 41, frames)], sop=solver)
+
+
 @scenario("bondwall", "The wall with a Box3D Bond between neighbouring bricks instead of Glue: the cost of reading each "
           "bond's load every step (as one compound, a spring network solved for every awake compound) and of its patch "
           "and tear impulse. Options: w, h, strength (Pa; tensile, shear and bending, compressive is 10 times it; the "

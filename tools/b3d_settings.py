@@ -84,15 +84,7 @@ def packed_defaults_vex(rows, parm_path, driven=None):
         n = pt.name()
         ch = f'"{parm_path}/{driven.get(n, n)}"'
         if kind == "bullet_georep":
-            shapes = ", ".join(f'"{v}"' for v in GEOREP_VALUES)
-            # A string attribute's default is not applied to the points (Houdini keeps "" for every
-            # point), so the value is set on each point.
-            lines.append(
-                f"{{ int v = chi({ch}); "
-                f'if (v != {literal(pt, "i")} && !haspointattrib(0, "bullet_georep")) {{ '
-                f"string s[] = {{{shapes}}}; string shape = s[clamp(v, 0, len(s) - 1)]; "
-                'addpointattrib(0, "bullet_georep", ""); '
-                'for (int pt = 0; pt < npoints(0); pt++) setpointattrib(0, "bullet_georep", pt, shape); } }')
+            continue  # an Attribute Create node of its own (make_packed_object.py)
         elif kind == "bullet_autofit":
             lines.append(f"{{ int v = chi({ch}); if (v != {literal(pt, 'i')}) " + add("bullet_autofit", "v") + " }")
         elif kind == "active/animated":

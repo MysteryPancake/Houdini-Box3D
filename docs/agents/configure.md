@@ -32,15 +32,15 @@ setting ticked (`rewrite_condition`). Bounds and Attributes are simple folders (
   picks primitives in the viewport (RBD Configure's `selectGroupParm` call).
 * Settings Box3D Data has no parameter for (`extra_folders`): Initial State (`v`, `w` in degrees per second written as
   radians, `enabled`, `deforming`), Motion (`fastrotation`), Collision Filtering (`collision_category` / `collision_mask` / `collision_group`, and the string
-  `collisiongroup` / `collisionignore`, kind `s`, which the Solver SOP's `COLLISION_NAMES_VEX` turns into the integers).
+  `collisiongroup` / `collisionignore`, kind `s`, which the Solver SOP's `collision_names` subnet turns into the integers).
   The hand-set shape and Rotational Stiffness are Box3D Data's own (its Shape and Body folders).
   Defaults are the solver's when the attribute is missing.
 * Visualization folder (`visualization_folder`, `visualization_templates`), as RBD Configure's (read from a dump): a
   first-level simple folder, which makes the viewer show its parameters in a bar along the top of the viewport (its two parameters also carry
   export level 3, `export all`, as RBD's, and Visualize is an integer with a menu, not an ordinal one). Visualize (`VISUALIZE`)
   and Exploded Scale (`scale`). A viewer-only **Visualize output** (`OUT_visualize`, Output
-  Index -1, not a real output) holds the target stream coloured by Visualize (`vis_range` finds the min / max of a ramped
-  setting, `vis_color` sets `Cd` per primitive from its point; a missing attribute is Box3D Data's default),
+  Index -1, not a real output) holds the target stream coloured by Visualize (`vis_value` writes a ramped setting to `__vis` per point, two Attribute Promotes (`vis_min`, `vis_max`) give
+  the range, `vis_color` sets `Cd` per primitive from its point; a missing attribute is Box3D Data's default),
   moved apart by an Exploded View node. RBD
   shows it from a viewer state that sets the node's output-for-view flag to -1; here each of the two parameters'
   callback (`VIEW_CALLBACK`) sets the flag to -1 while either is on, else 0. Nothing downstream sees the colours. RBD's
@@ -62,7 +62,7 @@ setting ticked (`rewrite_condition`). Bounds and Attributes are simple folders (
   fourth input (Static Bounds Geometry) put the pieces inside into the point group `INSIDE_GROUP` (`inside_bounds`;
   no bounds geometry: none). Use Bounds (`use<name>bounds#`, on Body Type and every toggle, `has_bounds`) gives the
   value inside and the opposite outside (Body Type: Dynamic). Pin (`pin_templates`) marks pieces (`PIN_ATTRIB`) and
-  `add_pin_constraints` (`PIN_VEX`) appends one line per pinned piece from the world to its point, `constraint_name`
+  `add_pin_constraints` (`PIN_VEX`, behind `switch_pins`, which skips it while no piece is pinned: `pin_marker` and `pin_any` promote the largest `__pin`) appends one line per pinned piece from the world to its point, `constraint_name`
   from `PIN_TYPES` (Weld, Soft: the Solver SOP's relationship Data Names; the lines carry no `constraint_type`, so a Soft pin holds position only, as in Bullet). The marker and group are stripped.
 * It uses `setpointattrib`, never `@` bindings: a binding creates its attribute on every point at compile time, even
   inside an `if` that never runs.

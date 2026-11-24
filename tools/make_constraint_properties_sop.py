@@ -520,40 +520,18 @@ def attribute_rows(common, per_type):
 
 
 def wrangle_vex(rows):
-    """The whole wrangle: one detail pass over the constraints in the group. Each setting that applies (ticked in
-    Edit; every one of the type in Constraint Type in Set) creates its attribute first (the "not set" value, so the
-    other lines keep the node's value), then sets the lines."""
+    """The two wranglers that write the settings: (creating, setting). Each setting that applies (ticked in Edit; every
+    one of the type in Constraint Type in Set) gets its attribute first, at the "not set" value so the other lines
+    keep the node's value (`creating`, a detail wrangle that only makes the attributes), then the constraints in the
+    group get the values (`setting`, over the constraints in the group, in parallel)."""
     unset = {"i": UNSET_INT, "f": UNSET_FLOAT, "v": "{" + UNSET_FLOAT + ", 0.0, 0.0}"}
     read = {"i": "chi", "f": "chf", "v": "chv"}
-
-    def put(attr, default, value):
-        return (f'if (!hasprimattrib(0, "{attr}")) addprimattrib(0, "{attr}", {default}); '
-                f'foreach (int pr; prims) setprimattrib(0, "{attr}", pr, {value});')
-
-    lines = [
-        SCALE_VEX,
-        "// Box3D Constraint Properties: each setting that applies is written onto the constraints in the group.",
-        f'string group = chi("../groupfromgeo") ? "{GROUP_ATTRIB}" : chs("../constraintgroup");',
-        "int prims[];",
-        'if (group == "") { for (int i = 0; i < nprimitives(0); i++) append(prims, i); }',
-        "else prims = expandprimgroup(0, group);",
-        'int setmode = chi("../action");',
-        'int constrainttype = chi("../constrainttype");',
-        'int usenext = chi("../usenextconstraint") && (setmode || chi("../dousenextconstraint"));',
-        'int nexttype = chi("../next_constrainttype");',
-        'string clusterattr = chs("../clusterattrib");',
-        'int transfermode = chi("../transfermode");',
-        "",
-        'if (chi("../enablecolor")) { ' + put("Cd", "{1.0, 1.0, 1.0}", 'chv("../constraintcolor")') + " }",
-        'if (setmode || chi("../doconstraintname")) { ' + put("constraint_name", '""', 'chs("../constraintname")') + " }",
-        'if (usenext && (setmode || chi("../donext_constraintname"))) { '
-        + put("next_constraint_name", '""', 'chs("../next_constraintname")') + " }",
-        # The frame of both anchors, from Anchor Rotation (degrees).
-        f'if (chi("../{ROTATE_BOX}")) {{',
-        f'    vector4 q = eulertoquaternion(radians(chv("../{ROTATE}")), 0);',
-        '    if (!haspointattrib(0, "orient")) addpointattrib(0, "orient", {0.0, 0.0, 0.0, 1.0});',
-        '    foreach (int pr; prims) foreach (int pt; primpoints(0, pr)) setpointattrib(0, "orient", pt, q);',
-        "}",
+    # (condition, attribute, "not set" value, value expression) of every primitive attribute that can be written
+    items = [
+        ('chi("../enablecolor")', "Cd", "{1.0, 1.0, 1.0}", 'chv("../constraintcolor")'),
+        ('setmode || chi("../doconstraintname")', "constraint_name", '""', 'chs("../constraintname")'),
+        ('usenext && (setmode || chi("../donext_constraintname"))', "next_constraint_name", '""',
+         'chs("../next_constraintname")'),
     ]
     for attr, kind, value, box, joint, dflt, following in rows:
         # Set writes the settings of the type that differ from the node's default; the rest stay "not set".
@@ -563,7 +541,7 @@ def wrangle_vex(rows):
             differs = f'({differs} || chi("../{value}scaling") != 0 || chi("../{value}randomize") != 0)'
             seed = zlib.crc32(value.encode()) % 10007  # each setting its own random numbers
             expression = (f'scaled(chf("../{value}"), chi("../{value}scaling"), "{attr}", chs("../{value}attribute"), '
-                          f'pr, clusterattr, transfermode, chi("../{value}randomize"), chf("../{value}variance"), '
+                          f'@primnum, clusterattr, transfermode, chi("../{value}randomize"), chf("../{value}variance"), '
                           f"{seed}.0)")
         which = "nexttype" if following else "constrainttype"
         if joint < 0:
@@ -573,41 +551,55 @@ def wrangle_vex(rows):
             applies = f'(setmode && {which} == {joint} && {differs}) || (!setmode && chi("../{tick}") && chi("../{box}"))'
         if following:  # a next setting is only written while the constraint switches when broken
             applies = f"usenext && ({applies})"
-        lines.append(f"if ({applies}) {{ " + put(attr, unset[kind], expression) + " }")
+        items.append((applies, attr, unset[kind], expression))
     # Disable Collisions: Disable 0, Enable 1. Set writes it only when it is Enable (Disable is the joint nodes' default).
-    lines.append('if (chi("../docollisions") || (setmode && chi("../collisions") != 0)) { '
-                 + put("collide_connected", UNSET_INT, 'chi("../collisions")') + " }")
-    return "\n".join(lines)
+    items.append(('chi("../docollisions") || (setmode && chi("../collisions") != 0)', "collide_connected", UNSET_INT,
+                  'chi("../collisions")'))
+
+    header = [
+        'int setmode = chi("../action");',
+        'int constrainttype = chi("../constrainttype");',
+        'int usenext = chi("../usenextconstraint") && (setmode || chi("../dousenextconstraint"));',
+        'int nexttype = chi("../next_constrainttype");',
+        'string clusterattr = chs("../clusterattrib");',
+        'int transfermode = chi("../transfermode");',
+        "",
+    ]
+    # The frame of both anchors, from Anchor Rotation (degrees): a point attribute on the anchors.
+    rotate = f'chi("../{ROTATE_BOX}")'
+    creating = ["// Box3D Constraint Properties: the attributes of each setting that applies, \"not set\" until written."] + header
+    creating.append(f'if ({rotate}) {{ if (!haspointattrib(0, "orient")) addpointattrib(0, "orient", {{0.0, 0.0, 0.0, 1.0}}); }}')
+    for condition, attr, default, _ in items:
+        creating.append(f'if ({condition}) {{ if (!hasprimattrib(0, "{attr}")) addprimattrib(0, "{attr}", {default}); }}')
+    setting = [SCALE_VEX,
+               "// Box3D Constraint Properties: each setting that applies is written onto a constraint of the group."] + header
+    setting.append(f'if ({rotate}) {{')
+    setting.append(f'    vector4 q = eulertoquaternion(radians(chv("../{ROTATE}")), 0);')
+    setting.append('    foreach (int pt; primpoints(0, @primnum)) setpointattrib(0, "orient", pt, q);')
+    setting.append("}")
+    for condition, attr, _, value in items:
+        setting.append(f'if ({condition}) setprimattrib(0, "{attr}", @primnum, {value});')
+    return "\n".join(creating), "\n".join(setting)
 
 
 APPLY_EDITS_VEX = """\
-// The viewport edits: each stash point holds a line's number and what was edited on it. An orient of all zeros, an
-// enable_motor below 0 and a motor_velocity below -1e30 are "not edited".
-if (npoints(1) == 0) return;
-for (int pr = 0; pr < nprimitives(0); pr++) {
-    int idx = prim(0, "%(idx)s", pr);  // typed: prim() alone is ambiguous for findattribval
-    int p = findattribval(1, "point", "%(idx)s", idx);
-    int pts[] = primpoints(0, pr);
-    if (p < 0 || len(pts) < 2) continue;
-    vector4 qa = point(1, "orient_a", p);
-    vector4 qb = point(1, "orient_b", p);
-    if (dot(qa, qa) > 0 && dot(qb, qb) > 0) {
-        if (!haspointattrib(0, "orient")) addpointattrib(0, "orient", {0.0, 0.0, 0.0, 1.0});
-        setpointattrib(0, "orient", pts[0], qa);
-        setpointattrib(0, "orient", pts[1], qb);
-    }
-    int motor = point(1, "enable_motor", p);
-    if (motor >= 0) {
-        if (!hasprimattrib(0, "enable_motor")) addprimattrib(0, "enable_motor", -1);
-        setprimattrib(0, "enable_motor", pr, motor);
-    }
-    vector velocity = point(1, "motor_velocity", p);
-    if (velocity.x > -1e30) {
-        if (!hasprimattrib(0, "motor_velocity")) addprimattrib(0, "motor_velocity", {%(unset)s, 0.0, 0.0});
-        setprimattrib(0, "motor_velocity", pr, velocity);
-    }
+// The viewport edits, over each line: each stash point holds a line's number and what was edited on it. An orient of all
+// zeros, an enable_motor below 0 and a motor_velocity below -1e30 are "not edited". The attributes are there already.
+int idx = prim(0, "%(idx)s", @primnum);  // typed: prim() alone is ambiguous for findattribval
+int p = findattribval(1, "point", "%(idx)s", idx);
+int pts[] = primpoints(0, @primnum);
+if (p < 0 || len(pts) < 2) return;
+vector4 qa = point(1, "orient_a", p);
+vector4 qb = point(1, "orient_b", p);
+if (dot(qa, qa) > 0 && dot(qb, qb) > 0) {
+    setpointattrib(0, "orient", pts[0], qa);
+    setpointattrib(0, "orient", pts[1], qb);
 }
-""" % {"idx": INDEX_ATTRIB, "unset": UNSET_FLOAT}
+int motor = point(1, "enable_motor", p);
+if (motor >= 0) setprimattrib(0, "enable_motor", @primnum, motor);
+vector velocity = point(1, "motor_velocity", p);
+if (velocity.x > -1e30) setprimattrib(0, "motor_velocity", @primnum, velocity);
+""" % {"idx": INDEX_ATTRIB}
 
 # The first selected line's handle: at the middle of its two anchors, in the frame of the first (or Anchor Rotation).
 HANDLE_VEX = """\
@@ -628,41 +620,23 @@ setcomp(m, P.z, 3, 2);
 4@xform = m;
 """ % {"rot": ROTATE}
 
-# The frames of both anchors of every line in the group, as three coloured lines each.
-GUIDES_VEX = """\
-float scale = chf("../guidescale");
-int n = nprimitives(0);
-if (scale <= 0) { for (int i = n - 1; i >= 0; i--) removeprim(0, i, 1); return; }
-if (!hasprimattrib(0, "Cd")) addprimattrib(0, "Cd", {1.0, 1.0, 1.0});
-for (int pr = 0; pr < n; pr++) {
-    int pts[] = primpoints(0, pr);
-    if (len(pts) < 2) continue;
-    vector a = point(0, "P", pts[0]);
-    vector b = point(0, "P", pts[1]);
-    float size = scale * 0.25 * distance(a, b);
-    foreach (int pt; pts) {
-        vector P = point(0, "P", pt);
-        vector4 q = {0.0, 0.0, 0.0, 1.0};
-        if (haspointattrib(0, "orient")) q = point(0, "orient", pt);
-        for (int ax = 0; ax < 3; ax++) {
-            vector d = {0.0, 0.0, 0.0};
-            d[ax] = 1.0;
-            vector c = {0.0, 0.0, 0.0};
-            c[ax] = 1.0;
-            int line = addprim(0, "polyline", addpoint(0, P), addpoint(0, P + qrotate(q, d) * size));
-            setprimattrib(0, "Cd", line, c);
-        }
-    }
+# The frames of both anchors of every line in the group, as three coloured lines each: a Copy to Points of a frame
+# (three lines, red, green, blue) onto the lines' points, turned by their `orient` and sized by `pscale`, which is a
+# quarter of the line's length times Guide Scale (as RBD Constraint Properties' guides are copied onto the points).
+GUIDE_SIZE_VEX = """\
+int pts[] = primpoints(0, @primnum);
+vector a = {0, 0, 0}, b = {0, 0, 0};
+if (len(pts) > 1) {
+    a = point(0, "P", pts[0]);
+    b = point(0, "P", pts[1]);
 }
-for (int i = n - 1; i >= 0; i--) removeprim(0, i, 1);
+f@pscale = len(pts) < 2 ? 0.0 : chf("../guidescale") * 0.25 * distance(a, b);
 """
 
 # Only the lines that have an edit in the stash.
 GLOW_VEX = """\
-for (int pr = nprimitives(0) - 1; pr >= 0; pr--) {
-    int idx = prim(0, "%(idx)s", pr);
-    if (findattribval(1, "point", "%(idx)s", idx) < 0) removeprim(0, pr, 1);
-}
+int idx = prim(0, "%(idx)s", @primnum);
+if (findattribval(1, "point", "%(idx)s", idx) < 0) removeprim(0, @primnum, 1);
 """ % {"idx": INDEX_ATTRIB}
 
 
@@ -691,16 +665,41 @@ def viewer_network(sub, edited, stash):
     xform.parm("snippet").set(HANDLE_VEX)
     sub.createNode("null", "HANDLE").setInput(0, xform)
 
-    guides = sub.createNode("attribwrangle", "build_guides")
-    guides.setInput(0, lines)
-    guides.parm("class").set("detail")
-    guides.parm("snippet").set(GUIDES_VEX)
+    size = sub.createNode("attribwrangle", "guide_size")
+    size.setInput(0, lines)
+    size.parm("class").set("primitive")
+    size.parm("snippet").set(GUIDE_SIZE_VEX)
+    to_points = sub.createNode("attribpromote", "guide_pscale")
+    to_points.setInput(0, size)
+    b3d_hda.set_token(to_points.parm("inclass"), "primitive", warn)
+    b3d_hda.set_token(to_points.parm("outclass"), "point", warn)
+    b3d_hda.set_token(to_points.parm("method"), "max", warn)
+    to_points.parm("inname").set("pscale")
+    frame = sub.createNode("merge", "guide_frame")
+    for axis, (name, colour) in enumerate((("x", (1.0, 0.0, 0.0)), ("y", (0.0, 1.0, 0.0)), ("z", (0.0, 0.0, 1.0)))):
+        line = sub.createNode("line", f"guide_axis_{name}")
+        line.parmTuple("dir").set(tuple(1.0 if k == axis else 0.0 for k in range(3)))
+        line.parm("dist").set(1.0)
+        line.parm("points").set(2)
+        tint = sub.createNode("color", f"guide_color_{name}")
+        tint.setInput(0, line)
+        b3d_hda.set_token(tint.parm("class"), "primitive", warn)
+        tint.parmTuple("color").set(colour)
+        frame.setInput(axis, tint)
+    copies = sub.createNode("copytopoints::2.0", "guide_frames")
+    copies.setInput(0, frame)
+    copies.setInput(1, to_points)
+    nothing = sub.createNode("null", "no_guides")
+    guides = sub.createNode("switch", "switch_guides")  # Guide Scale 0 draws nothing
+    guides.setInput(0, nothing)
+    guides.setInput(1, copies)
+    guides.parm("input").setExpression('ch("../guidescale") > 0', hou.exprLanguage.Hscript)
     sub.createNode("null", "GUIDES").setInput(0, guides)
 
     glow = sub.createNode("attribwrangle", "glow_lines")
     glow.setInput(0, lines)
     glow.setInput(1, stash)
-    glow.parm("class").set("detail")
+    glow.parm("class").set("primitive")
     glow.parm("snippet").set(GLOW_VEX)
     sub.createNode("null", "GLOW").setInput(0, glow)
 
@@ -765,12 +764,20 @@ def build_network(sub, rows):
         picked.setInput(1, grouper, 1)
         picked.parm("input").setExpression('ch("../groupfromgeo")', hou.exprLanguage.Hscript)
 
+    creating_vex, setting_vex = wrangle_vex(rows)
+    creator = sub.createNode("attribwrangle", "create_settings")
+    creator.setInput(0, picked)
+    creator.parm("class").set("detail")
+    creator.parm("snippet").set(creating_vex)
     setter = sub.createNode("attribwrangle", "set_properties")
-    setter.setInput(0, picked)
+    setter.setInput(0, creator)
     setter.setInput(1, geo_in)  # the pieces a scaling attribute can come from
     setter.setInput(2, proxy_in)
-    setter.parm("class").set("detail")
-    setter.parm("snippet").set(wrangle_vex(rows))
+    setter.parm("class").set("primitive")
+    setter.parm("group").setExpression(f'ifs(ch("../groupfromgeo"), "{GROUP_ATTRIB}", chs("../constraintgroup"))',
+                                       hou.exprLanguage.Hscript)
+    b3d_hda.set_token(setter.parm("grouptype"), "prims", warn)
+    setter.parm("snippet").set(setting_vex)
     # Use VEXpressions: the snippet of the type in Constraint Type, run over the constraints in the group after the
     # settings, when that type's toggle is on (a Switch passes the settings straight through otherwise).
     vexer = sub.createNode("attribwrangle", "run_vexpressions")
@@ -797,11 +804,31 @@ def build_network(sub, rows):
     # The viewport edits (the node's stash: one point per edited line) go on top of what the settings write.
     stash = sub.createNode("stash", "stash")
     stash.parm("stash").set(sub.parm("stash"))
-    edits = sub.createNode("attribwrangle", "apply_edits")
+    # Only while something is edited (the stash has points): the attributes the edits write, then the wrangle over the
+    # lines, as RBD Constraint Properties' copy_motors, then the lines without any of it otherwise.
+    point_attribs = b3d_hda.attribute_create(sub, "edit_point_attribs", [("orient", "float", None)], warn, write=False)
+    point_attribs.setInput(0, use_vex)
+    point_attribs.parm("size1").set(4)
+    for c, value in enumerate((0.0, 0.0, 0.0, 1.0), 1):
+        point_attribs.parm(f"default1v{c}").set(value)
+    b3d_hda.set_token(point_attribs.parm("typeinfo1"), "quaternion", warn)
+    line_attribs = b3d_hda.attribute_create(sub, "edit_line_attribs", [("enable_motor", "int", None),
+                                                                      ("motor_velocity", "vector", None)],
+                                            warn, cls="primitive", write=False)
+    line_attribs.setInput(0, point_attribs)
+    line_attribs.parm("default1v1").set(-1)
+    for c, value in enumerate((float(UNSET_FLOAT), 0.0, 0.0), 1):
+        line_attribs.parm(f"default2v{c}").set(value)
+    apply_edits = sub.createNode("attribwrangle", "apply_edits")
+    apply_edits.setInput(0, line_attribs)
+    apply_edits.setInput(1, stash)
+    apply_edits.parm("class").set("primitive")
+    apply_edits.parm("snippet").set(APPLY_EDITS_VEX)
+    edits = sub.createNode("switch", "switch_edits")
     edits.setInput(0, use_vex)
-    edits.setInput(1, stash)
-    edits.parm("class").set("detail")
-    edits.parm("snippet").set(APPLY_EDITS_VEX)
+    edits.setInput(1, apply_edits)
+    edits.parm("input").setExpression(
+        'int(hou.pwd().parent().node("stash").geometry().intrinsicValue("pointcount") > 0)', hou.exprLanguage.Python)
     # A wrangle, not a Group Delete: that warns on every cook while the group does not exist (Filter by Pieces off).
     strip = sub.createNode("attribwrangle", "strip_group")
     strip.setInput(0, edits)

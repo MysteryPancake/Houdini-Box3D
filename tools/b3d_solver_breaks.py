@@ -50,7 +50,7 @@ BREAK_PARMS = [BREAKS_TOGGLE, BREAKS] + [
               f"constraint_use{key}var#", f"constraint_{key}var#", f"constraint_{key}attrib#",
               f"constraint_{key}attribupdate#")]
 
-# The wrangle (Run Over Primitives) in the SOP Solver. REL is the path from the wrangle to the asset.
+# The wrangle (Run Over Detail: the entries are read once, not for every constraint) in the SOP Solver. REL is the path from the wrangle to the asset.
 BREAK_VEX = '''// Breaks the constraints the Break Thresholds name, as RBD Bullet Solver's break_constraints (Force excepted).
 #define UNSETF -3.4028235e38
 // A constraint that switches takes its next settings: each next_<setting> that is set becomes <setting> and is cleared
@@ -113,33 +113,26 @@ void switchnext(int primnum)
     else removeprim(0, primnum, 1);
 }
 
-// Does the primitive's `key` attribute pass entry n's threshold? The threshold is the entry's, times scale, times the
-// variance, times the Scale by Attribute attribute.
-int passes(string key, n; float scale; int primnum, id; float rest)
+// Does the primitive's `key` attribute pass an entry's threshold? Everything but the primitive is read once, before the
+// loop over the constraints (see below): `use` is the entry's toggle (and the attribute existing), `threshold` the
+// entry's, times scale, `var` its variance (below 0: none), `attrib` the Scale by Attribute attribute ("" for none).
+int passes(string key; int use; float threshold, var; string attrib; int update; float rest; int primnum, id)
 {
-    if (!chi("REL/constraint_use" + key + n) || !hasprimattrib(0, key))
+    if (!use)
         return 0;
-    float threshold = chf("REL/constraint_" + key + "threshold" + n) * scale;
-    if (chi("REL/constraint_use" + key + "var" + n))
-    {
-        float var = chf("REL/constraint_" + key + "var" + n);
+    if (var >= 0)
         threshold *= fit01(rand(id), 1 - var, 1 + var);
-    }
-    if (chi("REL/constraint_scale" + key + n))
+    if (attrib != "")
     {
-        string attrib = chs("REL/constraint_" + key + "attrib" + n);
-        if (attrib != "" && hasprimattrib(0, attrib))
+        float value = prim(0, attrib, primnum);
+        // Update from Input, as RBD Bullet Solver: the same constraint's value in the live input, found by __primid
+        if (update)
         {
-            float value = prim(0, attrib, primnum);
-            // Update from Input, as RBD Bullet Solver: the same constraint's value in the live input, found by __primid
-            if (chi("REL/constraint_" + key + "attribupdate" + n) && hasprimattrib(1, attrib))
-            {
-                int live = findattribval(1, "prim", "__primid", id);
-                if (live >= 0)
-                    value = prim(1, attrib, live);
-            }
-            threshold *= value;
+            int live = findattribval(1, "prim", "__primid", id);
+            if (live >= 0)
+                value = prim(1, attrib, live);
         }
+        threshold *= value;
     }
     return float(prim(0, key, primnum)) > threshold + rest;
 }
@@ -147,42 +140,80 @@ int passes(string key, n; float scale; int primnum, id; float rest)
 if (!chi("REL/enable_constraintbreaks") || !hasprimattrib(0, "constraint_name"))
     return;
 int count = chi("REL/breaks");
-string cname = prim(0, "constraint_name", @primnum);
 float scale = chi("REL/WORLD_SCALE_TOGGLE") ? chf("REL/WORLD_SCALE") : 1.0;
-int id = hasprimattrib(0, "__primid") ? prim(0, "__primid", @primnum) : @primnum;
-float rest = hasprimattrib(0, "restlength") ? prim(0, "restlength", @primnum) : 0.0;
 float window = 0.5 / max(chi("REL/GLOBAL_SUBSTEPS"), 1);
+int hasid = hasprimattrib(0, "__primid");
+int hasrest = hasprimattrib(0, "restlength");
 
-for (int i = 1; i <= count; ++i)
+// What the entries say, read once: a channel read per constraint would cost more than everything else here.
+string e_names[];
+int e_mode[], e_athit[], e_started[];
+KEY_ARRAYS
+for (int i = 0; i < count; ++i)
 {
-    string n = itoa(i);
+    string n = itoa(i + 1);
     // Names match ignoring case, as the solver finds a constraint's data by `constraint_name`.
-    string names[] = split(tolower(chs("REL/constraint_names" + n)), " ");
-    if (find(names, tolower(cname)) < 0)
-        continue;
-    int mode = chi("REL/constraint_mode" + n);
+    append(e_names, " " + join(split(tolower(chs("REL/constraint_names" + n)), " "), " ") + " ");
+    append(e_mode, chi("REL/constraint_mode" + n));
     int hit = 0;
     if (chi("REL/constraint_useatframe" + n))
     {
         float at = chf("REL/constraint_atframe" + n) + chi("REL/constraint_relatframe" + n) * chf("REL/START_FRAME");
         hit = @Frame > at - window && @Frame < at + window;
     }
+    append(e_athit, hit);
     int started = 1;
     if (chi("REL/constraint_usefromframe" + n))
     {
         float from = chf("REL/constraint_fromframe" + n) + chi("REL/constraint_relfromframe" + n) * chf("REL/START_FRAME");
         started = from <= @Frame;
     }
-    if (!hit && started)
+    append(e_started, started);
+    KEY_APPENDS
+}
+
+// The constraints each entry applies to, found by name instead of looking at every constraint: a constraint's name is
+// compared with the entries once per distinct name. Looked up first and changed after, as changing the names would
+// move the lookup.
+string present[] = uniquevals(0, "prim", "constraint_name");
+int done[];
+resize(done, nprimitives(0));
+int todo[], todomode[];
+for (int i = 0; i < count; ++i)
+{
+    int atframe = e_athit[i];
+    if (!atframe && !e_started[i])
+        continue;
+    foreach (string s; present)
     {
-        hit = PASSES;
+        if (find(e_names[i], " " + tolower(s) + " ") < 0)
+            continue;
+        int found = findattribvalcount(0, "prim", "constraint_name", s);
+        for (int k = 0; k < found; ++k)
+        {
+            int pr = findattribval(0, "prim", "constraint_name", s, k);
+            if (done[pr])
+                continue;
+            int id = hasid ? prim(0, "__primid", pr) : pr;
+            float rest = hasrest ? prim(0, "restlength", pr) : 0.0;
+            int hit = atframe;
+            if (!hit)
+            {
+                hit = PASSES;
+            }
+            if (hit)
+            {
+                done[pr] = 1;
+                append(todo, pr);
+                append(todomode, e_mode[i]);
+            }
+        }
     }
-    if (hit)
-    {
-        if (mode) switchnext(@primnum);
-        else removeprim(0, @primnum, 1);
-        return;
-    }
+}
+for (int j = 0; j < len(todo); ++j)
+{
+    if (todomode[j]) switchnext(todo[j]);
+    else removeprim(0, todo[j], 1);
 }
 '''
 
@@ -301,7 +332,7 @@ def build_breaks(dopnet):
     live.parm("enable1").setExpression(f'ch("{live.relativePathTo(dopnet.parent())}/{BREAKS_TOGGLE}")',
                                        hou.exprLanguage.Hscript)
     wrangle.setInput(1, live)
-    set_named(wrangle, "class", 1)  # primitives
+    set_named(wrangle, "class", 0)  # detail
     floats, ints, vectors = next_setting_names(dopnet)
 
     def names(values):
@@ -311,11 +342,24 @@ def build_breaks(dopnet):
     vex = vex.replace("NEXT_VECTORS", names(vectors))
     vex = vex.replace("REL", wrangle.relativePathTo(dopnet.parent()))
     vex = vex.replace("WORLD_SCALE_TOGGLE", WORLD_SCALE_TOGGLE).replace("WORLD_SCALE", WORLD_SCALE)
-    # The checks, in THRESHOLDS' order: scaled ones multiply by World Scale, Distance adds the Rest Length.
-    passes = "\n            || ".join(
-        f'passes("{key}", n, {"scale" if scaled else "1.0"}, @primnum, id, {"rest" if key == "distance" else "0.0"})'
-        for key, _label, _default, _on, scaled, _help in THRESHOLDS)
-    vex = vex.replace("PASSES", passes)
+    # The checks, in THRESHOLDS' order: scaled ones multiply by World Scale, Distance adds the Rest Length. Each one's
+    # entry values are read once, into arrays, before the loop over the constraints.
+    arrays, appends, checks = [], [], []
+    for key, _label, _default, _on, scaled, _help in THRESHOLDS:
+        arrays.append(f"int use_{key}[], upd_{key}[]; float thr_{key}[], var_{key}[]; string attr_{key}[];")
+        appends.append(
+            f'append(use_{key}, chi("REL/constraint_use{key}" + n) && hasprimattrib(0, "{key}"));\n'
+            f'    append(thr_{key}, chf("REL/constraint_{key}threshold" + n) * {"scale" if scaled else "1.0"});\n'
+            f'    append(var_{key}, chi("REL/constraint_use{key}var" + n) ? chf("REL/constraint_{key}var" + n) : -1.0);\n'
+            f'    string a_{key} = chi("REL/constraint_scale{key}" + n) ? chs("REL/constraint_{key}attrib" + n) : "";\n'
+            f'    if (!hasprimattrib(0, a_{key})) a_{key} = "";\n'
+            f'    append(attr_{key}, a_{key});\n'
+            f'    append(upd_{key}, a_{key} != "" && chi("REL/constraint_{key}attribupdate" + n) && hasprimattrib(1, a_{key}));')
+        checks.append(f'passes("{key}", use_{key}[i], thr_{key}[i], var_{key}[i], attr_{key}[i], upd_{key}[i], '
+                      f'{"rest" if key == "distance" else "0.0"}, pr, id)')
+    vex = vex.replace("KEY_ARRAYS", "\n".join(arrays)).replace("KEY_APPENDS", "\n    ".join(appends))
+    vex = vex.replace("PASSES", "\n            || ".join(checks))
+    vex = vex.replace("REL", wrangle.relativePathTo(dopnet.parent()))  # the paths the lines above added
     vex = vex.replace("GLOBAL_SUBSTEPS", GLOBAL_SUBSTEPS).replace("START_FRAME", START_FRAME)
     wrangle.parm("snippet").set(vex)
     wrangle.moveToGoodPosition()
