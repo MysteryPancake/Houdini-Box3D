@@ -526,7 +526,7 @@ ShapePlan planShapes(ScanContext &ctx, GA_Offset off, int64_t bodyId,
   // `none`: a static, shapeless body (like Bullet, it still exists for
   // constraints).
   if (plan.type == b3dop::ShapeType::None) {
-    plan.sig = shapeSignature(plan.type, plan.shapes);
+    plan.sig = shapeSignature(plan.type, plan.shapes());
     return plan;
   }
 
@@ -548,7 +548,7 @@ ShapePlan planShapes(ScanContext &ctx, GA_Offset off, int64_t bodyId,
     uint64_t epoch = 0;
     uint64_t key = 0;
     bool valid = false;
-    BuiltShapes shapes;
+    std::shared_ptr<const BuiltShapes> built;
     uint64_t sig = 0;
   };
   thread_local ShapeMemo memo;
@@ -578,24 +578,24 @@ ShapePlan planShapes(ScanContext &ctx, GA_Offset off, int64_t bodyId,
   }
   if (memoable && memo.valid && memo.epoch == ctx.georep.generation &&
       memo.key == key) {
-    plan.shapes = memo.shapes;
+    plan.built = memo.built;
     plan.sig = memo.sig;
   } else {
-    plan.shapes = buildShapes(ctx.world, ctx.sources, plan.type,
-                              ctx.node.hullPerConnectedSet, ps, sc, pk, autofit,
-                              ov, staticBody, ctx.world.settings().ground);
-    plan.sig = shapeSignature(plan.type, plan.shapes);
+    plan.built = std::make_shared<const BuiltShapes>(buildShapes(
+        ctx.world, ctx.sources, plan.type, ctx.node.hullPerConnectedSet, ps, sc,
+        pk, autofit, ov, staticBody, ctx.world.settings().ground));
+    plan.sig = shapeSignature(plan.type, plan.shapes());
     if (memoable) {
       memo.epoch = ctx.georep.generation;
       memo.key = key;
       memo.valid = true;
-      memo.shapes = plan.shapes;
+      memo.built = plan.built;
       memo.sig = plan.sig;
     }
   }
-  if (plan.shapes.note)
+  if (plan.shapes().note)
     B3D_LOG("  body id=%lld: %s", static_cast<long long>(bodyId),
-            plan.shapes.note);
+            plan.shapes().note);
 
   // Convex / concave follow scale changes (as in Houdini); primitives do not.
   plan.autoScale = (plan.type == b3dop::ShapeType::Convex ||
@@ -687,34 +687,74 @@ namespace {
 // What the body was built from, into its mirror entry.
 void storePlan(Box3DBodyMirror &m, const ShapePlan &plan) {
   m.shapeSig = plan.sig;
-  m.volume = plan.shapes.totalVolume;
+  m.volume = plan.shapes().totalVolume;
   // Shapes that depend on the body being static (mesh, plane) rebuild when it
   // changes.
   m.concave = plan.type == b3dop::ShapeType::Concave ||
               plan.type == b3dop::ShapeType::Plane;
   m.plannedStatic = plan.plannedStatic;
-  m.meshShapes = plan.shapes.mesh;
+  m.meshShapes = plan.shapes().mesh;
   m.autoScale = plan.autoScale;
   b3dop::copy3(m.sizeKey, plan.sizeKey);
 }
 
-// This scan's shape plans for new and rebuilt bodies, and the packed
-// primitive (with its pivot) each was planned from, by Box3DPointSlot::plan.
+// A new packed body's rest (docs/agents/bodies.md, "Rest transform"): the
+// point's `restxform` if set; else its transform now, which the solver then
+// writes as `restxform` with `pivot` = P (writeRest, kRest). Plain data with no
+// initializers, made in the parallel plan pass (the array of them is not
+// cleared first, so its pages are first touched by the threads that fill it).
+struct RestInit {
+  bool hasRest;
+  bool writeRest;
+  float restRot[4];
+  double restPos[3];
+  float restxform[16];
+  float pivot[3];
+};
+
+// This scan's shape plans and rest data for new and rebuilt bodies, by
+// Box3DPointSlot::plan.
 struct SlotPlans {
   std::vector<ShapePlan> shapes;
-  std::vector<PackedInfo> packed;
+  std::unique_ptr<RestInit[]> rest;
   std::vector<b3dop::BodyProps> props; // by Box3DPointSlot::props
 };
 
-// The slot's packed primitive with its pivot: the one planning read, else read
-// now into `scratch`.
-const PackedInfo &slotPackedInfo(const ScanContext &ctx,
-                                 const Box3DPointSlot &s,
-                                 const SlotPlans &plans, PackedInfo &scratch) {
-  if (s.plan >= 0)
-    return plans.packed[static_cast<size_t>(s.plan)];
-  scratch = ctx.packedInfo(s.off);
-  return scratch;
+// Works out the rest of the new packed body of slot `s`, whose primitive (with
+// its pivot) is `pk`.
+void computeRestInit(const ScanContext &ctx, const Box3DPointSlot &s,
+                     const PackedInfo &pk, RestInit &r) {
+  r.hasRest = false;
+  r.writeRest = false;
+  if (!s.packed || !pk.prim)
+    return;
+  const PointAttrs &a = ctx.a;
+  float rest[4];
+  UT_Matrix4F m;
+  bool set = false;
+  if (a.restxform.isValid()) {
+    m = a.restxform.get(s.off);
+    set = restRotation(m, rest);
+  }
+  if (!set) {
+    // As the attribute will store it, so the read path splits the same
+    // matrix.
+    for (int i = 0; i < 16; ++i)
+      r.restxform[i] = static_cast<float>(pk.m4[i]);
+    m = box3dMatrix4F(r.restxform);
+    if (!restRotation(m, rest))
+      return;
+    for (int i = 0; i < 3; ++i)
+      r.pivot[i] = static_cast<float>(s.cur.pos[i]);
+    r.writeRest = true;
+  }
+  b3dop::copy4(r.restRot, rest);
+  // The packed pivot (its own space) through restxform: where the body's
+  // origin was at rest.
+  for (unsigned c = 0; c < 3; ++c)
+    r.restPos[c] = pk.pivot[0] * m(0, c) + pk.pivot[1] * m(1, c) +
+                   pk.pivot[2] * m(2, c) + m(3, c);
+  r.hasRest = true;
 }
 
 // The slot's plan from the parallel pre-pass (moved out), else made now.
@@ -722,9 +762,8 @@ ShapePlan takePlan(ScanContext &ctx, const Box3DPointSlot &s,
                    SlotPlans &plans) {
   if (s.plan >= 0)
     return std::move(plans.shapes[static_cast<size_t>(s.plan)]);
-  PackedInfo scratch;
-  return planShapes(ctx, s.off, s.bid, slotPackedInfo(ctx, s, plans, scratch),
-                    s.staticBody);
+  const PackedInfo pk = ctx.packedInfo(s.off);
+  return planShapes(ctx, s.off, s.bid, pk, s.staticBody);
 }
 
 // Create the body for slot `s` (settings `p`), its shapes and initial velocity.
@@ -737,8 +776,8 @@ b3dop::BodyHandle addPointBody(ScanContext &ctx, const Box3DPointSlot &s,
                                std::string &fallbackNote) {
   b3dop::Box3DWorld &world = ctx.world;
   const Box3DBodyPose &st = s.cur;
-  if (plan.shapes.note)
-    fallbackNote = plan.shapes.note;
+  if (plan.shapes().note)
+    fallbackNote = plan.shapes().note;
   entry.props = p;
   entry.shapeless = (plan.type == b3dop::ShapeType::None);
   entry.animated = animated;
@@ -747,12 +786,12 @@ b3dop::BodyHandle addPointBody(ScanContext &ctx, const Box3DPointSlot &s,
   b3dop::BodySettings b = ctx.node;
   b.type = wantedType(ctx.node, s.active, animated, entry.shapeless);
   b.props = p;
-  b.props.density = boxDensity(p, plan.shapes.totalVolume);
+  b.props.density = boxDensity(p, plan.shapes().totalVolume);
   b.startAwake = startAwakeFor(ctx.node, ctx.a, s.off);
   entry.awake = b.startAwake;
 
   // Animated bodies follow their point instead of starting with its velocity.
-  return createBodyWithShapes(world, b, st, plan.shapes, entry.shapeless, p,
+  return createBodyWithShapes(world, b, st, plan.shapes(), entry.shapeless, p,
                               !animated, entry);
 }
 
@@ -766,8 +805,8 @@ bool rebuildPointShapes(ScanContext &ctx, const Box3DPointSlot &s,
                         bool &noShape) {
   b3dop::Box3DWorld &world = ctx.world;
   noShape = false;
-  if (plan.shapes.note)
-    note = plan.shapes.note;
+  if (plan.shapes().note)
+    note = plan.shapes().note;
   if (plan.sig == entry.shapeSig) {
     storePlan(entry, plan); // same shapes; refresh the size key
     return false;
@@ -781,13 +820,13 @@ bool rebuildPointShapes(ScanContext &ctx, const Box3DPointSlot &s,
     b3dop::BodySettings b = ctx.node;
     b.type = entry.type;
     b.props = p;
-    b.props.density = boxDensity(p, plan.shapes.totalVolume);
-    if (addAllShapes(world, h, b, plan.shapes))
+    b.props.density = boxDensity(p, plan.shapes().totalVolume);
+    if (addAllShapes(world, h, b, plan.shapes()))
       entry.shapeless = false;
     else
       noShape = true;
   }
-  applyBodyMass(world, h, p, plan.shapes.totalVolume,
+  applyBodyMass(world, h, p, plan.shapes().totalVolume,
                 false);  // even with no shapes: clears Box3D's dirty mass
   world.wakeByHandle(h); // let it re-settle
   B3D_LOG_VERBOSE("  body id=%lld: collision shape rebuilt",
@@ -1109,10 +1148,22 @@ void readSlots(const ScanContext &ctx, int objectId, SlotList &snaps) {
 // The slots that need a plan: new bodies (unless `dead`) and existing ones
 // being rebuilt.
 std::vector<size_t> slotsNeedingPlans(const SlotList &snaps) {
+  // Looking at every slot is a pass over memory the size of the slot list: done
+  // in parallel into flags, then listed.
+  constexpr size_t kMinParallelFlags = 8192;
+  thread_local std::vector<uint8_t> flagStore; // kept between scans
+  std::vector<uint8_t> &flag = flagStore;
+  flag.resize(snaps.size());
+  box3dParallelFor(
+      snaps.size(),
+      [&](size_t i) {
+        const Box3DPointSlot &s = snaps[i];
+        flag[i] = s.ok && !s.unpackedPrim && (!s.entry ? !s.dead : s.rebuild);
+      },
+      kMinParallelFlags, 1024);
   std::vector<size_t> want;
-  for (size_t i = 0; i < snaps.size(); ++i)
-    if (snaps[i].ok && !snaps[i].unpackedPrim &&
-        (!snaps[i].entry ? !snaps[i].dead : snaps[i].rebuild))
+  for (size_t i = 0; i < flag.size(); ++i)
+    if (flag[i])
       want.push_back(i);
   return want;
 }
@@ -1122,7 +1173,7 @@ bool planSlots(ScanContext &ctx, SlotList &snaps, SlotPlans &plans,
                StepProgress &progress) {
   const std::vector<size_t> want = slotsNeedingPlans(snaps);
   plans.shapes.resize(want.size());
-  plans.packed.resize(want.size());
+  plans.rest.reset(new RestInit[want.size()]);
   for (size_t c0 = 0; c0 < want.size(); c0 += kPlanChunk) {
     if (progress.check())
       return false;
@@ -1131,11 +1182,16 @@ bool planSlots(ScanContext &ctx, SlotList &snaps, SlotPlans &plans,
         c1 - c0,
         [&](size_t j) {
           Box3DPointSlot &s = snaps[want[c0 + j]];
-          PackedInfo &pk = plans.packed[c0 + j];
+          PackedInfo pk;
           if (s.packed)
             pk = ctx.packedInfo(s.off);
           plans.shapes[c0 + j] =
               planShapes(ctx, s.off, s.bid, pk, s.staticBody);
+          // Only a new body takes its rest from it.
+          if (s.entry)
+            plans.rest[c0 + j].hasRest = plans.rest[c0 + j].writeRest = false;
+          else
+            computeRestInit(ctx, s, pk, plans.rest[c0 + j]);
           s.plan = static_cast<int32_t>(c0 + j);
         },
         2);
@@ -1414,46 +1470,30 @@ private:
     return true;
   }
 
-  // A new packed body's rest (docs/agents/bodies.md, "Rest transform"): the
-  // point's `restxform` if set; else its transform now, which the solver then
-  // writes as `restxform` with `pivot` = P (kRest, filled into `pending`).
+  // A new packed body's rest, worked out by the plan pass (computeRestInit)
+  // or, for a point without a plan, now. A written rest (kRest) is filled into
+  // `pending`.
   void initRest(const Box3DPointSlot &s, Box3DBodyMirror &entry,
                 unsigned &writes, Box3DPointWrite &pending) {
-    entry.hasRest = false;
-    if (!s.packed)
-      return;
-    PackedInfo scratch;
-    const PackedInfo &pk =
-        slotPackedInfo(myCtx, s, myPlans, scratch); // with the pivot
-    if (!pk.prim)
-      return;
-    const PointAttrs &a = myCtx.a;
-    float rest[4];
-    UT_Matrix4F m;
-    bool set = false;
-    if (a.restxform.isValid()) {
-      m = a.restxform.get(s.off);
-      set = restRotation(m, rest);
+    RestInit local;
+    const RestInit *r = &local;
+    if (s.plan >= 0) {
+      r = &myPlans.rest[static_cast<size_t>(s.plan)];
+    } else {
+      const PackedInfo pk = s.packed ? myCtx.packedInfo(s.off) : PackedInfo();
+      computeRestInit(myCtx, s, pk, local);
     }
-    if (!set) {
-      // As the attribute will store it, so the read path splits the same
-      // matrix.
-      for (int i = 0; i < 16; ++i)
-        pending.restxform[i] = static_cast<float>(pk.m4[i]);
-      m = box3dMatrix4F(pending.restxform);
-      if (!restRotation(m, rest))
-        return;
-      for (int i = 0; i < 3; ++i)
-        pending.pivot[i] = static_cast<float>(s.cur.pos[i]);
+    entry.hasRest = r->hasRest;
+    if (r->writeRest) {
+      std::copy(r->restxform, r->restxform + 16, pending.restxform);
+      std::copy(r->pivot, r->pivot + 3, pending.pivot);
       writes |= Box3DPointWrite::kRest;
     }
-    b3dop::copy4(entry.restRot, rest);
-    // The packed pivot (its own space) through restxform: where the body's
-    // origin was at rest.
-    for (unsigned c = 0; c < 3; ++c)
-      entry.restPos[c] = pk.pivot[0] * m(0, c) + pk.pivot[1] * m(1, c) +
-                         pk.pivot[2] * m(2, c) + m(3, c);
-    entry.hasRest = true;
+    if (r->hasRest) {
+      b3dop::copy4(entry.restRot, r->restRot);
+      for (unsigned c = 0; c < 3; ++c)
+        entry.restPos[c] = r->restPos[c];
+    }
   }
 
   // Every body this scan keeps: its point as read now, for the write-back and

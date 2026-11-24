@@ -790,45 +790,103 @@ void mergeMoveEvents(Box3DSharedState &st,
       st.moves[ins.first->second] = mv;
   };
   const size_t n = events.size();
+  const uint64_t stamp = st.syncStamp;
+  // Every body notes the slot of its move (where the events were taken as the
+  // moves without that).
+  const auto stampPending = [&]() {
+    if (!st.moveSlotsPending)
+      return;
+    st.moveSlotsPending = false;
+    box3dParallelFor(
+        st.moves.size(),
+        [&](size_t k) {
+          Box3DBodyMirror *e =
+              static_cast<Box3DBodyMirror *>(st.moves[k].userData);
+          if (e) {
+            e->moveStamp = stamp;
+            e->moveSlot = k;
+          }
+        },
+        0, kCheapGrain);
+  };
   if (mayRepeat || n < minParallelWrite()) {
+    stampPending();
     for (const b3dop::BodyMove &mv : events)
       serialOne(mv);
     return;
   }
 
+  // The frame's first step: every event is new (one per body), so the events
+  // are the moves.
+  if (st.moves.empty()) {
+    st.moves.assign(events.begin(), events.end());
+    st.moveSlotsPending = true;
+    for (size_t k = 0; k < n; ++k)
+      if (!events[k].userData)
+        slot[events[k].handle] = k;
+    return;
+  }
+
+  // The same bodies in the same order as the moves so far (usual while nothing
+  // falls asleep between the steps): the events replace them, and no body is
+  // touched.
+  if (n == st.moves.size()) {
+    std::atomic<bool> same{true};
+    box3dParallelFor(
+        n,
+        [&](size_t k) {
+          if (events[k].handle != st.moves[k].handle)
+            same.store(false, std::memory_order_relaxed);
+        },
+        0, kCheapGrain);
+    if (same.load()) {
+      std::copy(events.begin(), events.end(), st.moves.begin());
+      return;
+    }
+  }
+  stampPending();
+
   enum : uint8_t { kOverwrite, kNew, kNoEntry };
   // Kept between steps (no allocation). References: a thread_local named in
   // a lambda would be each worker thread's own, empty one.
   thread_local std::vector<uint8_t> kindStore;
-  thread_local std::vector<size_t> slotStore;
+  thread_local std::vector<size_t> slotStore, newStore;
   std::vector<uint8_t> &kind = kindStore;
   std::vector<size_t> &slotOf = slotStore;
+  std::vector<size_t> &fresh = newStore;
   kind.resize(n);
   slotOf.resize(n);
-  const uint64_t stamp = st.syncStamp;
+  // A body already in the moves takes its new event at once; the others are
+  // sorted out below.
   box3dParallelFor(
       n,
       [&](size_t k) {
-        const Box3DBodyMirror *e =
-            static_cast<const Box3DBodyMirror *>(events[k].userData);
-        kind[k] = !e ? kNoEntry : (e->moveStamp == stamp ? kOverwrite : kNew);
+        Box3DBodyMirror *e = static_cast<Box3DBodyMirror *>(events[k].userData);
+        if (!e) {
+          kind[k] = kNoEntry;
+        } else if (e->moveStamp == stamp) {
+          kind[k] = kOverwrite;
+          st.moves[e->moveSlot] = events[k];
+        } else {
+          kind[k] = kNew;
+        }
       },
       0, kCheapGrain);
   size_t next = st.moves.size();
+  fresh.clear();
   for (size_t k = 0; k < n; ++k)
-    if (kind[k] == kNew)
+    if (kind[k] == kNew) {
       slotOf[k] = next++;
+      fresh.push_back(k);
+    }
   st.moves.resize(next);
   box3dParallelFor(
-      n,
-      [&](size_t k) {
-        if (kind[k] == kNoEntry)
-          return;
+      fresh.size(),
+      [&](size_t f) {
+        const size_t k = fresh[f];
         Box3DBodyMirror *e = static_cast<Box3DBodyMirror *>(events[k].userData);
-        if (kind[k] == kNew) {
-          e->moveStamp = stamp;
-          e->moveSlot = slotOf[k];
-        }
+        e->moveStamp = stamp;
+        e->moveSlot = slotOf[k];
         st.moves[e->moveSlot] = events[k];
       },
       0, kCheapGrain);

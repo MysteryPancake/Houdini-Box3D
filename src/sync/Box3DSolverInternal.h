@@ -527,7 +527,14 @@ struct ScanContext {
 // A point's shapes, plus their signature and scale key.
 struct ShapePlan {
   b3dop::ShapeType type = b3dop::ShapeType::Box;
-  BuiltShapes shapes;         // no pieces for `none`
+  // Bodies planned from one source (an instance run) share it: a copy is a
+  // reference count, not a heap allocation of its own.
+  std::shared_ptr<const BuiltShapes> built;
+  // No pieces for `none` (or before it is set).
+  const BuiltShapes &shapes() const {
+    static const BuiltShapes kNone;
+    return built ? *built : kNone;
+  }
   bool plannedStatic = false; // planned for a static body (concave: a mesh)
   uint64_t sig = 0;
   bool autoScale = false;

@@ -995,6 +995,9 @@ struct Box3DSharedState {
   std::vector<b3dop::BodyMove> stepEvents;
   std::vector<void *> stepBroken;
   std::unordered_map<b3dop::BodyHandle, size_t> moveSlots;
+  // The frame's moves came from one step's events as they are (mergeMoveEvents)
+  // and their bodies have not noted their slot yet.
+  bool moveSlotsPending = false;
   std::vector<b3dop::ContactImpulse> impulseEvents; // this step's, for Impacts
   // recordImpacts scratch: the first `impactGroupCount` entries are in use this
   // step. Entries (and their hit vectors) are kept so capacity is reused.
