@@ -84,6 +84,14 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   (on a one-vertex primitive's point it would use the packed transform instead). Before it, `remove_deleted_*`
   (`REMOVE_DELETED_VEX`, Bullet's `remove_deleted`) drops pieces the solver deleted: no simulation point of their
   name, and for Geometry, one in what was simulated.
+  Transform Pieces is the asset's largest cost (about 2.4 microseconds a piece, with everything asleep), nearly all in
+  its name matching, so the Geometry output has a faster path beside it (`fast_transform`, `switch_fast_transform`):
+  `match_pieces_geometry` finds each point's simulation point once and writes its motion matrix, Transform by Attribute
+  (the node Transform Pieces ends in) applies it, `motion_attribs_geometry` writes `w` and `v` as Transform Pieces does,
+  and the temporary attributes go. The result equals Transform Pieces' (checked: transform, `P`, `w` and `v` differ by 0).
+  Only attribute bindings are written, never `setpointattrib` and the like, whose queue stops a wrangle running in
+  parallel. The Switch takes it only when the pieces carry `name` on their points, neither they nor the simulation points
+  carry `age`, and the attributes to copy are no more than `age` and `w` (`FAST_TRANSFORM_EXPR`); else Transform Pieces.
 * World Scale (`WORLD_SCALE_TOGGLE` / `WORLD_SCALE`, first on the Solver tab; Bullet's usescale / Bullet World Scale):
   Transform SOPs scale every input (`world_scale_*`; the before-start outputs pass the unscaled inputs);
   `scale_attributes` (`SCALE_ATTRIBS_VEX`) then divides `density` by the cube and `w` back, and scales the hand-set

@@ -403,6 +403,73 @@ def build_ground_guide(sub, dopnet, empty):
     return before_start(sub, dopnet, "switchif_beforestart_ground", choose, empty)
 
 
+# Transform Pieces is the largest cost of the asset's frame (about 2.4 microseconds a piece, even with everything asleep),
+# almost all of it in the nodes that match the pieces to the points by name. For the usual case (the pieces carry a
+# `name` on their points, and the only attributes to copy are `w`) the same result takes a wrangle that finds each
+# piece's point once, writes its motion matrix, Transform by Attribute (the node Transform Pieces uses for this) and a
+# wrangle for `w` and `v`. Only attribute bindings are written (no setpointattrib), so the wrangles run in parallel.
+# Anything else, such as an `age` to copy or other Transfer Attributes, keeps Transform Pieces.
+MATCH_PIECES_VEX = """\
+int pt = findattribval(1, "point", "name", s@name);
+i@__pt = pt;
+4@__xform = ident();
+v@__wp = {0, 0, 0};
+if (pt < 0)
+    return;
+matrix xf = pointtransform(1, pt);
+4@__xform = xf;
+v@__wp = point(1, "pivot", pt) * xf;
+"""
+MOTION_ATTRIBS_VEX = """\
+if (i@__pt < 0)
+    return;
+vector w = point(1, "w", i@__pt);
+v@w = w;
+v@v = cross(w, @P - v@__wp) + point(1, "v", i@__pt);
+"""
+FAST_ATTRIBS = ("__pt", "__wp", "__xform")
+# Whether the fast path does what Transform Pieces would: the pieces carry `name` on their points and no age, the
+# simulation points carry no age, and the attributes to copy are no more than age and w.
+FAST_TRANSFORM_EXPR = (
+    '(lambda n, g, s: int(g is not None and s is not None and g.findPointAttrib("name") is not None '
+    'and g.findPointAttrib("age") is None and s.findPointAttrib("age") is None '
+    'and set(n.parm("{attribs}").eval().split()) <= {{"age", "w"}}))'
+    '(hou.pwd().parent(), hou.pwd().parent().node("{removed}").geometry(), '
+    'hou.pwd().parent().node("{points}").geometry())')
+
+
+def fast_transform(sub, removed, sim_points, xform):
+    """The Geometry output's Transform Pieces with the faster path beside it: a Switch picking one of the two (the other
+    does not cook). Returns the Switch."""
+    match = create(sub, "attribwrangle", "match_pieces_geometry")
+    match.setInput(0, removed)
+    match.setInput(1, sim_points)
+    match.parm("class").set("point")
+    match.parm("snippet").set(MATCH_PIECES_VEX)
+    apply_xform = create(sub, "xformbyattrib", "apply_motion_geometry")
+    apply_xform.setInput(0, match)
+    set_named(apply_xform, "xformattrib", "__xform")
+    set_named(apply_xform, "attribs", "*")
+    set_named(apply_xform, "updateaffectednmls", 0)
+    set_named(apply_xform, "grouptype", 3)  # Points
+    motion = create(sub, "attribwrangle", "motion_attribs_geometry")
+    motion.setInput(0, apply_xform)
+    motion.setInput(1, sim_points)
+    motion.parm("class").set("point")
+    motion.parm("snippet").set(MOTION_ATTRIBS_VEX)
+    drop = create(sub, "attribdelete", "drop_match_geometry")
+    drop.setInput(0, motion)
+    drop.parm("ptdel").set(" ".join(FAST_ATTRIBS))
+    pick = create(sub, "switch", "switch_fast_transform")
+    pick.setInput(0, xform)
+    pick.setInput(1, drop)
+    pick.parm("input").setExpression(
+        FAST_TRANSFORM_EXPR.format(attribs=TRANSFER_ATTRIBUTES, removed=removed.name(), points=sim_points.name()),
+        hou.exprLanguage.Python)
+    return pick
+
+
+
 def scale_xform(sub, name, src, inverse=False):
     """A Transform SOP scaling `src` uniformly by the World Scale (or its inverse)."""
     xf = create(sub, "xform", name)
@@ -642,7 +709,8 @@ def build_network(sub):
         xform.setInput(0, removed)
         xform.setInput(1, sim_points)
         copy_attributes(xform, TRANSFER_TO[name][0])
-        pieces_out.append(scale_xform(sub, f"unscale_{name[len('transform_'):]}", xform, inverse=True))
+        moved = fast_transform(sub, removed, sim_points, xform) if name == "transform_geometry" else xform
+        pieces_out.append(scale_xform(sub, f"unscale_{name[len('transform_'):]}", moved, inverse=True))
     geo_out, proxy_out = pieces_out
 
     # Constraints as the solver left them: the network is attached to the pieces object
