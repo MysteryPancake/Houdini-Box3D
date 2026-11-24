@@ -11,8 +11,6 @@ I made design decisions based on the RBD Bullet Solver where possible, so it sho
 > [!CAUTION]
 > Most code here is AI generated, as it was made for fun! For my own work, see [Houdini VBD](https://github.com/MysteryPancake/Houdini-VBD).
 >
-> Note I've tested all the features, optimized and cleaned up as much as possible.
->
 > This isn't normally how I develop software, I just wanted to give it a try.
 
 ## Installing
