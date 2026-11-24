@@ -65,6 +65,10 @@ equal to what its body was built with.
 * **Impacts** (Box3D Data Add Impact Data): `recordImpacts` records Box3D's contact impulse events of the step (one per
   manifold point, in the awake set) for both bodies whose object asks (the sleeping side too, unless it is an asleep dynamic body). A fresh
   `SIM_Impacts` each step (`addPointImpact`, normal pointing at the body that gets the impact); no Feedback data.
+  `collectImpacts` decides each event's records in a parallel pass (up to four per event: each awake side, itself and the other
+  body), including the merge key and the earlier step's hit it joins (Substeps), then appends them in event order in a serial pass,
+  so the records do not depend on the threads. `addPointImpact` is most of the cost (about 110 ns a record, with the arrays
+  pre-sized or not), so a frame's time grows with the number of manifold points in contact.
 * **Dead** (`dead`): never stamped, so the body goes. With Reap Dead Points the point is queued as a `Box3DDeletion`;
   `deleteDeadPoints` resolves all queued points before deleting any, then bumps data ids and forces a scan.
 * **Aging** (solver Enable Aging): `age += dt` on every point (not on the creation frame without Solve On Creation

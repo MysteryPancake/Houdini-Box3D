@@ -518,6 +518,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   st->brokenCollected = false;
   st->hitsCollected = false;
   st->impactsCollected = false;
+  st->impactKeys = n > 1;
   const char *const kNonFiniteForce =
       "body(ies) got a non-finite force or torque from a Force DOP; it was "
       "ignored";

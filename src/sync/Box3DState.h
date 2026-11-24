@@ -669,6 +669,7 @@ struct Box3DImpactHit {
   const Box3DBodyMirror *self, *other;
   b3dop::ContactPoint cp;
   bool fromOther;
+  uint64_t key; // impactKey, set only while the frame's steps are merged
 };
 
 // One slot of the table collectImpacts uses to find, in a later substep, the
@@ -1003,6 +1004,9 @@ struct Box3DSharedState {
   // (Substeps > 1; collectImpacts): the impulses of every step add up, where
   // reading the contacts after the last alone found a resting body's.
   bool impactsCollected = false;
+  // The frame has more than one Box3D step: the hits carry their `key`, so a
+  // later step can find them.
+  bool impactKeys = false;
 
   double stampTime = 0.0; // SIM_Engine::getSimulationTime() at the last solve
   bool stamped = false;

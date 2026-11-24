@@ -2166,10 +2166,13 @@ void Box3DWorld::enableContactImpulseEvents(bool on) {
 
 int Box3DWorld::getContactImpulseEvents(
     std::vector<ContactImpulse> &out) const {
-  out.clear();
-  if (!isValid())
+  if (!isValid()) {
+    out.clear();
     return 0;
+  }
   const b3ContactEvents ev = b3World_GetContactEvents(myImpl->worldId);
+  // Every element is overwritten below, so a vector of the right size is not
+  // cleared first (it would be written twice).
   out.resize(static_cast<size_t>(ev.impulseCount));
   for (int i = 0; i < ev.impulseCount; ++i) {
     const b3ContactImpulseEvent &e = ev.impulseEvents[i];
