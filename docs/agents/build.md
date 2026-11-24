@@ -93,7 +93,7 @@ differ by more than 1e-4). The file's header comment says what it covers. The ph
 
 `hython tests/houdini/bench.py` (or `python tools/b3d.py bench`) times scenes in Box3D and RBD Bullet Solver; it is not
 part of `run_tests.py` and nothing in it passes or fails. `--list` names the scenarios (`bench_scenes.py`:
-pile, edit, collider, animated, joints, wall, bondwall), each with parameters (`name:key=value,...`) and a default sweep.
+pile, edit, collider, animated, joints, wall, bondwall, objects, static, churn, solversop), each with parameters (`name:key=value,...`) and a default sweep.
 
 * Each run is its own hython process: frames 1..N timed as `setFrame` plus the DOP cook, grouped into the scene's
   phases (median, p95, max per frame), then Reset Simulation and frame 2 again (`rewind`: the world rebuild; the forced `cook` is
@@ -107,6 +107,10 @@ pile, edit, collider, animated, joints, wall, bondwall), each with parameters (`
   ratio per phase. `--repeat N` keeps the median run, `--threads N` sets `HOUDINI_MAXTHREADS`, `--budget` caps a run.
 * `bondwall` is the wall on Box3D Bonds (Box3D only; `wait=60,sleep=0` stands it awake for 60 frames before the ball). The Bond load solve and patch work run inside `Stepping World`: the
   plugin's share is that row minus the `Box3D <part>` rows.
+* `objects` is the whole-object path (RBD Objects from an RBD Point Object), `static` a pile on a Static Object (`motion`
+  none / move / deform), `churn` bodies dying (Enable Aging) and, with `births 1`, appearing each frame (a SOP Solver; Box3D
+  only), and `solversop` the Box3D Solver SOP asset: its frame is the SOP cook (`Scene.sop`), with the inner DOP network
+  as `dop`, so the asset's own SOP nodes are in the frame but not in the stage list.
 * Copy to Points takes no point attributes onto packed copies unless `targetattribs` / `applyattribs1` are set
   (`copy_packed`): without it every body is named by number and dynamic, and a constraint network matches nothing.
 * A SideFX Hard / Soft / Spring node's Rest Length defaults to 1: anchors that start closer are pulled to it, which

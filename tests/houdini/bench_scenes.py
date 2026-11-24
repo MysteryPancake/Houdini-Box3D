@@ -24,6 +24,7 @@ from b3dtest import (
     packed_boxes,
     packed_object,
     parm_value,
+    set_expression,
     set_menu_token,
     set_parm,
     SetupError,
@@ -32,10 +33,12 @@ from b3dtest import (
 
 
 class Scene:
-    def __init__(self, dop, frames, phases):
+    def __init__(self, dop, frames, phases, sop=None):
         self.dop = dop
         self.frames = frames
         self.phases = phases  # [(label, first frame, last frame)]
+        # A SOP to cook each frame instead of the DOP network (the Box3D Solver SOP, whose inner DOP network is `dop`)
+        self.sop = sop
 
 
 class Scenario:
@@ -72,7 +75,7 @@ def copy_packed(geo, shape, points):
     copy.setInput(1, points)
     set_parm(copy, ["pack", "packgeo"], 1)
     set_parm(copy, ["targetattribs"], 1)
-    set_parm(copy, ["applyattribs1"], "name active animated v w orient pscale")
+    set_parm(copy, ["applyattribs1"], "name active animated v w orient pscale life age")
     display(copy)
     return copy
 
@@ -511,6 +514,173 @@ def build_wall(kind, p, joint):
           kinds=("box3d",))
 def scene_bondwall(kind, p):
     return build_wall(kind, p, "bond")
+
+
+# ---------------------------------------------------------------------------
+# Paths the pile scenes do not take
+# ---------------------------------------------------------------------------
+
+
+def ground_grid(tag, size, res=2):
+    """A SOP grid (size x size, res x res points), as a static collider's geometry: its path."""
+    geo = new_geo(tag)
+    grid = create(geo, "grid")
+    set_parm(grid, ["size"], (size, size))
+    set_parm(grid, ["rows"], res)
+    set_parm(grid, ["cols"], res)
+    display(grid)
+    return grid.path()
+
+
+@scenario("objects", "N RBD Objects, one DOP object each (an RBD Point Object instancing a box on every point of a "
+          "lattice), dropped onto a Static Object grid: the whole-object path, which the packed-point scenes never "
+          "take. Per-object overhead shows here, not in the pile.",
+          {"n": 500, "frames": 120},
+          sweep=[{"n": 100}, {"n": 500}, {"n": 2000}])
+def scene_objects(kind, p):
+    n = int(p["n"])
+    nx, ny, nz = pile_dims(n, ny=6)
+    dop = new_dopnet("objects")
+    geo = new_geo("objects_points")
+    pts = create(geo, "attribwrangle", "lattice")
+    set_parm(pts, ["class"], 0)
+    set_parm(pts, ["snippet"], (
+        f"for (int k = 0; k < {ny}; k++) for (int j = 0; j < {nz}; j++) for (int i = 0; i < {nx}; i++)\n"
+        f"  addpoint(0, set(i - {nx} * 0.5 + 0.5, 0.6 + k * 1.05, j - {nz} * 0.5 + 0.5) "
+        "+ 0.05 * (rand(set(i, j, k)) - 0.5));"))
+    display(pts)
+    box_geo = new_geo("objects_box")
+    box = create(box_geo, "box")
+    set_parm(box, ["size"], (0.8, 0.8, 0.8))
+    display(box)
+    objs = create(dop, "rbdpointobject", "objects")
+    set_parm(objs, ["soppath"], pts.path())
+    set_parm(objs, ["usegeo"], 1)
+    set_parm(objs, ["geopath", "instancepath", "geometrypath", "instance"], box.path())
+    ground = create(dop, "staticobject", "ground")
+    set_parm(ground, ["soppath"], ground_grid("objects_ground", max(40.0, 2.0 * max(nx, nz) + 6.0)))
+    last, _ = make_solver(kind, dop, merge(dop, [objs, ground]), p)
+    finish(dop, last)
+    return Scene(dop, int(p["frames"]), phases_for(int(p["frames"])))
+
+
+@scenario("static", "A pile of N boxes dropped onto a Static Object made of SOP geometry (a noisy grid, res x res): "
+          "motion none (still), move (the object's transform moves each frame) or deform (the geometry itself "
+          "changes each frame, Animate Geometry on). Box3D reads the whole collider again when it changes.",
+          {"n": 2000, "res": 100, "motion": "none", "frames": 120},
+          sweep=[{"motion": "none"}, {"motion": "move"}, {"motion": "deform"}])
+def scene_static(kind, p):
+    n, res, motion = int(p["n"]), int(p["res"]), p["motion"]
+    nx, ny, nz = pile_dims(n)
+    dop = new_dopnet("static")
+    path, _ = lattice_geo("static_pieces", nx, ny, nz)
+    pieces = packed_object(dop, "pieces", path)
+    width = max(40.0, 2.0 * max(nx, nz) + 6.0)
+    geo = new_geo("static_collider")
+    grid = create(geo, "grid")
+    set_parm(grid, ["size"], (width, width))
+    set_parm(grid, ["rows"], res)
+    set_parm(grid, ["cols"], res)
+    wr = create(geo, "attribwrangle", "noise")
+    set_parm(wr, ["class"], 2)
+    # `deform` makes the surface ripple with the frame; the others hold it still
+    ripple = " * sin(@Frame * 0.3)" if motion == "deform" else ""
+    set_parm(wr, ["snippet"], f"@P.y += 0.3 * (noise(@P * 0.4) - 0.3){ripple};")
+    wr.setInput(0, grid)
+    display(wr)
+    ground = create(dop, "staticobject", "collider")
+    set_parm(ground, ["soppath"], wr.path())
+    if motion == "move":
+        set_parm(ground, ["usetransform"], 1)
+        set_expression(geo, ["ty"], "0.4 * sin($FF * 0.2)")
+    elif motion == "deform":
+        set_parm(ground, ["animategeo"], 1)
+    last, _ = make_solver(kind, dop, merge(dop, [pieces, ground]), p)
+    finish(dop, last)
+    return Scene(dop, int(p["frames"]), phases_for(int(p["frames"])))
+
+
+@scenario("churn", "A pile that loses and gains bodies every frame: `rate` boxes die each frame (Enable Aging with a "
+          "staggered `life`, Reap Dead Points) and, with births 1, `rate` new boxes are made each frame by a SOP "
+          "Solver. The cost of removing and creating bodies in a running scene. Box3D only.",
+          {"n": 2000, "rate": 20, "births": 0, "frames": 100},
+          sweep=[{"rate": 0}, {"rate": 20}, {"rate": 20, "births": 1}, {"rate": 100, "births": 1}],
+          kinds=("box3d",))
+def scene_churn(kind, p):
+    n, rate, births = int(p["n"]), int(p["rate"]), int(p["births"])
+    nx, ny, nz = pile_dims(n)
+    dop = new_dopnet("churn")
+    # piece number i dies on frame 2 + i // rate: its life, at 24 frames a second (a rate of 0 kills none)
+    life_of = f"(2.0 + floor(n / {rate}.0)) / 24.0" if rate else "1.0e6"
+    life = ('addpointattrib(0, "life", 1.0e6); addpointattrib(0, "age", 0.0); '
+            f'setpointattrib(0, "life", pt, {life_of});')
+    path, _ = lattice_geo("churn_pieces", nx, ny, nz, extra=life)
+    pieces = packed_object(dop, "pieces", path)
+    ground = packed_object(dop, "ground", ground_for("churn_ground", nx, nz, life=1.0e6, age=0.0))
+    upstream = merge(dop, [pieces, ground])
+    if births:
+        ss = create(dop, "sopsolver", "emit")
+        outs = [c for c in ss.children() if c.type().name() == "output"]
+        if not outs:
+            raise SetupError("the SOP Solver has no Output SOP to add births in front of")
+        out = outs[0]
+        src = ss.createNode("attribwrangle", "new_points")
+        set_parm(src, ["class"], 0)
+        set_parm(src, ["snippet"], (
+            'addpointattrib(0, "name", ""); addpointattrib(0, "active", 1); addpointattrib(0, "life", 1.0e6); '
+            'addpointattrib(0, "age", 0.0);\n'
+            'if (npoints("op:../dop_geometry") > 50) '
+            f"for (int i = 0; i < {rate}; i++) {{ "
+            f"int pt = addpoint(0, set(({nx} - 2) * (rand(set(@Frame, i, 1)) - 0.5), {ny} + 6.0, "
+            f"({nz} - 2) * (rand(set(@Frame, i, 2)) - 0.5))); "
+            'setpointattrib(0, "name", pt, sprintf("n%d_%d", int(@Frame), i)); '
+            f'setpointattrib(0, "life", pt, {max(1, n // max(rate, 1))} / 24.0); }}'))
+        box = ss.createNode("box", "new_box")
+        set_parm(box, ["size"], (0.8, 0.8, 0.8))
+        copy = ss.createNode("copytopoints", "new_bodies")
+        copy.setInput(0, box)
+        copy.setInput(1, src)
+        set_parm(copy, ["pack", "packgeo"], 1)
+        set_parm(copy, ["targetattribs"], 1)
+        set_parm(copy, ["applyattribs1"], "name active life age")
+        mrg = ss.createNode("merge", "with_new")
+        mrg.setInput(0, out.input(0))
+        mrg.setInput(1, copy)
+        out.setInput(0, mrg)
+        try:
+            set_parm(ss, ["group", "objects"], "pieces")
+        except SetupError:
+            pass
+    solver = box3d_solver(dop, None if births else upstream)
+    set_parm(solver, ["enableaging"], 1)
+    set_parm(solver, ["reapdead"], 1)
+    finish(dop, multisolver(dop, upstream, [ss, solver]) if births else solver)
+    frames = int(p["frames"])
+    return Scene(dop, frames, [("fall", 2, 30), ("churn", 31, frames)])
+
+
+@scenario("solversop", "The Box3D Solver SOP asset on a pile of N boxes with a ground box on its Collision input: the "
+          "frame is the SOP cook (input packing, collision preparation, the simulation, the outputs), where the "
+          "other scenes time the DOP network alone. Box3D only.",
+          {"n": 5000, "frames": 120},
+          sweep=[{"n": 1000}, {"n": 5000}, {"n": 20000, "frames": 80}],
+          kinds=("box3d",))
+def scene_solversop(kind, p):
+    n = int(p["n"])
+    nx, ny, nz = pile_dims(n)
+    pieces_path, _ = lattice_geo("sop_pieces", nx, ny, nz)
+    ground_path = ground_for("sop_ground", nx, nz)
+    geo = new_geo("sop_solver")
+    solver = create(geo, "box3d_solver", "box3d_solver")
+    for i, path in ((0, pieces_path), (3, ground_path)):
+        merge_in = create(geo, "object_merge", f"input{i}")
+        set_parm(merge_in, ["objpath1"], path)
+        solver.setInput(i, merge_in)
+    display(solver)
+    inner = [c for c in solver.allSubChildren() if c.type().name() == "dopnet"]
+    if not inner:
+        raise SetupError("the Box3D Solver SOP has no DOP network inside")
+    return Scene(inner[0], int(p["frames"]), phases_for(int(p["frames"])), sop=solver)
 
 
 # ---------------------------------------------------------------------------

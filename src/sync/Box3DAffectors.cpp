@@ -12,10 +12,12 @@
 #include <GA/GA_PrimitiveTypes.h>
 #include <GEO/GEO_PrimVolume.h>
 #include <GU/GU_Detail.h>
+#include <SIM/SIM_DataFilter.h>
 #include <SIM/SIM_Geometry.h>
 #include <SIM/SIM_Names.h>
 #include <SIM/SIM_Object.h>
 #include <SIM/SIM_ObjectArray.h>
+#include <SIM/SIM_Relationship.h>
 #include <SIM/SIM_SDF.h>
 #include <SIM/SIM_Utils.h>
 #include <UT/UT_Matrix3.h>
@@ -230,17 +232,31 @@ std::vector<const SIM_Object *> gatherAffectors(SIM_ObjectArray &objects) {
 
   std::vector<const SIM_Object *> affectors;
   std::unordered_set<int> seen;
+  // Each relationship once, for the affectors of the objects in it: asking
+  // every object for its own (SIM_Object::getConstAffectors) walks the
+  // relationship's whole group each time, which is quadratic in the objects
+  // when thousands share one (30 ms a step for 2000 RBD Objects).
+  const SIM_DataFilterByType collide(kCollideRelationship);
+  std::unordered_set<const SIM_Relationship *> visited;
   for (int i = 0; i < objects.entries(); ++i) {
-    SIM_ConstObjectArray aff;
-    objects(i)->getConstAffectors(aff, kCollideRelationship);
-    for (int j = 0; j < aff.entries(); ++j) {
-      const SIM_Object *a = aff(j);
-      if (!a)
+    const SIM_Object *obj = objects(i);
+    const int count = obj->getNumRelationships(true);
+    for (int r = 0; r < count; ++r) {
+      const SIM_Relationship *rel = obj->getRelationship(true, r);
+      if (!rel || !visited.insert(rel).second)
         continue;
-      const int id = a->getObjectId();
-      if (solved.count(id) || !seen.insert(id).second)
+      const SIM_Data *type = rel->getConstRelationshipTypeData();
+      if (!type || !collide.acceptData(type, ""))
         continue;
-      affectors.push_back(a);
+      for (int j = 0; j < rel->getAffGroupEntries(); ++j) {
+        const SIM_Object *a = rel->getAffGroupObject(j);
+        if (!a)
+          continue;
+        const int id = a->getObjectId();
+        if (solved.count(id) || !seen.insert(id).second)
+          continue;
+        affectors.push_back(a);
+      }
     }
   }
   return affectors;

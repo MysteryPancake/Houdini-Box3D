@@ -292,5 +292,5 @@ Against the HDK reference, so they need no re-checking: `GU_PrimPacked` (`isPack
 point / vertex / primitive maps, `GA_AIFSharedStringTuple`, `SIM_DATA_CREATE` flags, `SIM_Impacts::addPointImpact`,
 `SIM_Object` relationships, `SIM_ConstraintNetworkRelationship::getGeometry`, `SIM_ConRel`, the
 `DECLARE_DATAFACTORY` expansions, `UT_Matrix3D::extractScales`, `UT_QuaternionT` matrix conversions,
-`PRM_Conditional`, `SIMgetGeometryTransform`, `SIM_Object::getConstAffectors`, the `GEO_PrimVolume` /
+`PRM_Conditional`, `SIMgetGeometryTransform`, `SIM_Relationship::getAffGroupObject`, the `GEO_PrimVolume` /
 `UT_VoxelArrayIterator` calls in Box3DAffectors.cpp, node icons as `config/Icons/DOP_<name>.svg`.

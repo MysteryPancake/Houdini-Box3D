@@ -111,6 +111,13 @@ def run_child(spec, result_file):
         scene = bench_scenes.SCENARIOS[name].build(kind, dict(params))
         record["build_s"] = time.perf_counter() - start
         dop = scene.dop
+
+        def cook():
+            if scene.sop is not None:
+                scene.sop.cook(force=False)
+            else:
+                dop.simulation().objects()
+
         if spec.get("threads"):
             for node in dop.children():
                 if node.type().name() == "box3d_solver":
@@ -120,7 +127,7 @@ def run_child(spec, result_file):
         for frame in range(1, scene.frames + 1):
             t0 = time.perf_counter()
             hou.setFrame(frame)
-            dop.simulation().objects()
+            cook()
             frames_ms[frame] = (time.perf_counter() - t0) * 1000.0
             if time.perf_counter() - begin > budget:
                 record["truncated"] = frame
@@ -143,14 +150,14 @@ def run_child(spec, result_file):
             # Reset Simulation, then frame 1 and frame 2 again: new objects are only solved from frame 2, so that is
             # where the world is rebuilt (the SOPs stay cached). rewind_ms is that frame 2.
             hou.setFrame(1)
-            dop.simulation().objects()
+            cook()
             dop.parm("resimulate").pressButton()
             dop.cook(force=True)
             hou.setFrame(1)
-            dop.simulation().objects()
+            cook()
             t0 = time.perf_counter()
             hou.setFrame(2)
-            dop.simulation().objects()
+            cook()
             record["rewind_ms"] = (time.perf_counter() - t0) * 1000.0
         record["phases"] = [list(p) for p in scene.phases]
     except Exception:

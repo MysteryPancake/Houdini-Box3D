@@ -54,8 +54,9 @@ they are unchanged nothing new was written and the read is skipped.
 ## Affector static colliders
 
 `Box3DAffectors.cpp` (`syncAffectorBodies`, after the objects, mutex held). Objects the solver is not given but that
-affect a solved object through a collision relationship (`getConstAffectors(arr, "SIM_RelationshipCollide")`) become
-static bodies: a height field if the geometry has one, else a triangle mesh of its polygons.
+affect a solved object through a collision relationship become static bodies. Each relationship the solved objects are in
+is read once (its affector group, `gatherAffectors`): asking every object for its `getConstAffectors` walked the
+relationship's whole group each time, which cost 60 ms a step for 2000 RBD Objects. They become static bodies: a height field if the geometry has one, else a triangle mesh of its polygons.
 
 * Gather: affectors of every solved object, deduplicated, solved objects skipped. State:
   `Box3DSharedState::affectors` (object id -> `Box3DAffectorBody`); a world rebuild starts empty, unseen ones are
