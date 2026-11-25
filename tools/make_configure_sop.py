@@ -622,7 +622,7 @@ def build_network(sub, rows):
     pins_on.setInput(0, con_in)
     pins_on.setInput(1, pins)
     pins_on.parm("input").setExpression(
-        'int(hou.pwd().parent().node("pin_any").geometry().attribValue("__pin_any") > 0)', hou.exprLanguage.Python)
+        'detail("../pin_any", "__pin_any", 0) > 0', hou.exprLanguage.Hscript)
     strip = sub.createNode("attribdelete", "strip_pin_marker")
     strip.setInput(0, setter)
     strip.parm("ptdel").set(PIN_ATTRIB)

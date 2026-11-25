@@ -120,8 +120,8 @@ Wire POP forces into PRESOLVE (dive into the node, then FORCES). With World Scal
 == Visualization ==
 
 Show Constraints draws the constraint lines, and False Color Mode colours them blue to red by angle, distance, force,
-impact, torque or an attribute you name. Guide Radius sets how thick the lines are, and each constraint type's Guide Scale
-(Advanced, Constraints) multiplies it. Under Impact Data, Show Impacts draws the impact points (needs Add Impact Data).
+impact, torque or an attribute you name. Show Guides draws them as thick wires, which is slow with many constraints.
+Guide Radius sets how thick the wires are, and each constraint type's Guide Scale (Advanced, Constraints) multiplies it. Under Impact Data, Show Impacts draws the impact points (needs Add Impact Data).
 Show Collision Shape draws the pieces' collision shapes, which costs time every step. Under Collision Geometry,
 Show Geometry draws the Collision input, and Show Collision Shape and Color draw its collision shapes. Show Ground draws
 the Ground Collision.

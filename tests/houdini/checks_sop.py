@@ -1754,6 +1754,54 @@ def test_solver_sop_constraints():
                    f"{nprims} primitive(s), force attribute {'present' if has_force else 'missing'}")]
 
 
+def test_solver_sop_fast_transform():
+    """The Geometry output's faster path (one wrangle) against Transform Pieces, for unpacked pieces that fall and tumble
+    onto the ground: without normals, with normals, and with a point attribute of vector type, which the wrangle does not
+    move, so Transform Pieces must be taken. P, w, v and N must differ by under 1e-5 between the two, and the Switch
+    must pick path 1, 2 and 0."""
+    ground, _ = packed_boxes("sop_fast_ground", [GROUND])
+    results = []
+    for label, normals, extra, want_path in (("no normals", False, "", 1), ("normals", True, "", 2),
+                                             ("typed vector", False, 'v@up = {0, 1, 0}; setattribtypeinfo(0, "point", "up", "vector");', 0)):
+        tag = label.replace(" ", "_")
+        raw = new_geo(f"sop_fast_{tag}")
+        box = create(raw, "box", "box")
+        set_parm(box, ["t"], (0.3, 2.5, 0.2))
+        set_parm(box, ["r"], (25, 10, 35))
+        last = box
+        if normals:
+            nrm = create(raw, "normal", "normals")
+            set_parm(nrm, ["type"], 0)  # point normals
+            nrm.setInput(0, last)
+            last = nrm
+        wr = create(raw, "attribwrangle", "extra")  # the piece's name on its points, as the fast path needs
+        set_parm(wr, ["class"], "point")
+        set_parm(wr, ["snippet"], 's@name = "piece0"; ' + extra)
+        wr.setInput(0, last)
+        last = wr
+        display(last)
+        sop = solver_sop(f"sop_fast_{tag}_solver", geometry=last.path(), collision=ground)
+        play(sop, 20, lambda s, f: None)
+        path = sop.node("switch_fast_transform").parm("input").eval()
+        reference = sop.node("transform_geometry").geometry()
+        wrangle = sop.node("move_pieces_normals_geometry" if want_path == 2 else "move_pieces_geometry").geometry()
+        worst = {}
+        for attrib in ("P", "w", "v", "N"):
+            if reference.findPointAttrib(attrib) is None or wrangle.findPointAttrib(attrib) is None:
+                continue
+            for a, b in zip(reference.points(), wrangle.points()):
+                va = tuple(a.position()) if attrib == "P" else a.attribValue(attrib)
+                vb = tuple(b.position()) if attrib == "P" else b.attribValue(attrib)
+                worst[attrib] = max(worst.get(attrib, 0.0), max(abs(x - y) for x, y in zip(va, vb)))
+        ok = path == want_path and all(v < 1e-5 for v in worst.values()) and (want_path == 0 or "P" in worst)
+        if normals:
+            ok = ok and "N" in worst
+        results.append(Result("solver_sop_fast_transform", Result.PASS if ok else Result.FAIL,
+                              f"{label}: path {path} (expected {want_path}); largest difference from Transform Pieces "
+                              f"{ {k: f'{v:.1e}' for k, v in worst.items()} }"))
+    return results
+
+
 def test_solver_sop_constraint_guide_radius():
     """Guide Radius and Guide Scale (the constraint lines in the viewport): a Weld line shown with Show
     Constraints has a radius of Guide Radius times its type's Guide Scale (0.05 by default; 0.15 with the Weld's
@@ -1768,6 +1816,7 @@ def test_solver_sop_constraint_guide_radius():
                                ("Guide Radius 0.1", {"showconstraintguidesradius": 0.1}, 0.1)):
         sop = solver_sop("sop_guide_radius_" + label.split()[0].lower(), geometry=pieces, constraints=lines)
         set_parm(sop, ["showconstraints"], 1)
+        set_parm(sop, ["showconstraintguides"], 1)
         for name, value in parms.items():
             set_parm(sop, [name], value)
 
@@ -1792,6 +1841,12 @@ def test_solver_sop_constraint_guide_radius():
     results.append(Result("solver_sop_constraint_guide_radius", Result.PASS if close(grew, 0.2, 0.02) else Result.FAIL,
                           f"wire thickness grew {grew:.3f} with Weld Guide Scale 3 (expected 0.2: the radius grows "
                           f"from 0.05 to 0.15, twice that across)"))
+    # Show Guides off: the line is drawn plain (a horizontal line has no height), with no wire made.
+    sop = solver_sop("sop_guide_radius_plain", geometry=pieces, constraints=lines)
+    set_parm(sop, ["showconstraints"], 1)
+    plain = play(sop, 3, lambda s, f: s.node("GUIDE_GEO").geometry().boundingBox().sizevec()[1] if f == 3 else None)[3]
+    results.append(Result("solver_sop_constraint_guide_radius", Result.PASS if plain < 0.01 else Result.FAIL,
+                          f"Show Guides off: the line's height is {plain:.4f} (expected 0: a plain line, not a wire)"))
     return results
 
 
@@ -2525,6 +2580,7 @@ TESTS = {
     "solver_sop_constraint_settings": test_solver_sop_constraint_settings,
     "solver_sop_ground_guide": test_solver_sop_ground_guide,
     "solver_sop_constraint_guide_radius": test_solver_sop_constraint_guide_radius,
+    "solver_sop_fast_transform": test_solver_sop_fast_transform,
     "solver_sop_break_next_settings": test_solver_sop_break_next_settings,
     "solver_sop_next_constraint_type": test_solver_sop_next_constraint_type,
     "constraint_properties_scaling": test_constraint_properties_scaling,

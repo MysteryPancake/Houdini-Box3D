@@ -384,6 +384,9 @@ def build_breaks(dopnet):
     enable = create(dopnet, "enablesolver", BREAK_ENABLE)
     enable.setInput(0, solver)
     rel = enable.relativePathTo(dopnet.parent())
-    enable.parm("enable").setExpression(f'ch("{rel}/{BREAKS_TOGGLE}") && ch("{rel}/{BREAKS}") > 0',
-                                        hou.exprLanguage.Hscript)
+    # Also only while there are constraints (as the `use_constraints` switch): the compiled loop costs about a
+    # millisecond a step even over nothing.
+    enable.parm("enable").setExpression(
+        f'ch("{rel}/{BREAKS_TOGGLE}") && ch("{rel}/{BREAKS}") > 0 && npoints(opinputpath("..", {DOP_CONSTRAINTS})) > 0',
+        hou.exprLanguage.Hscript)
     return enable

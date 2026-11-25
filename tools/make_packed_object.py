@@ -270,17 +270,16 @@ def build_stage(sub, rows):
     merge = net.createNode("object_merge", "object_merge")
     # Default Shape as bullet_georep, where it is not Box3D Data's own default and the points have none. (A string's
     # default is not applied to existing points, so the value is written, by a node the Switch skips otherwise.)
-    shapes = ", ".join(f'"{v}"' for v in b3d_settings.GEOREP_VALUES)
     shape = b3d_hda.attribute_create(net, "setup_shape", [
-        ("bullet_georep", "string", [f'[{shapes}][int(ch("../../defaultshape"))]'])], warn)
+        ("bullet_georep", "string", [f'strsplit("{" ".join(b3d_settings.GEOREP_VALUES)}", " ", ch("../../defaultshape"))'])], warn)
     shape.setInput(0, merge)
     shape_on = net.createNode("switch", "switch_shape")
     shape_on.setInput(0, merge)
     shape_on.setInput(1, shape)
     default_shape = next(b3d_settings.literal(pt, "i") for pt, kind in rows if kind == "bullet_georep")
     shape_on.parm("input").setExpression(
-        f'int(hou.evalParm("../../defaultshape") != {default_shape} and '
-        'hou.pwd().input(0).geometry().findPointAttrib("bullet_georep") is None)', hou.exprLanguage.Python)
+        f'ch("../../defaultshape") != {default_shape} && !haspointattrib(opinputpath(".", 0), "bullet_georep")',
+        hou.exprLanguage.Hscript)
     defaults = net.createNode("attribwrangle", "setup_defaults")
     defaults.setInput(0, shape_on)
     defaults.parm("class").set("detail")

@@ -828,7 +828,7 @@ def build_network(sub, rows):
     edits.setInput(0, use_vex)
     edits.setInput(1, apply_edits)
     edits.parm("input").setExpression(
-        'int(hou.pwd().parent().node("stash").geometry().intrinsicValue("pointcount") > 0)', hou.exprLanguage.Python)
+        'npoints("../stash") > 0', hou.exprLanguage.Hscript)
     # A wrangle, not a Group Delete: that warns on every cook while the group does not exist (Filter by Pieces off).
     strip = sub.createNode("attribwrangle", "strip_group")
     strip.setInput(0, edits)

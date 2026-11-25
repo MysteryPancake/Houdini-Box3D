@@ -124,6 +124,7 @@ from b3d_solver_common import (  # noqa: E402
     FALSE_COLOR_ATTRIB,
     SHOW_IMPACTS,
     VISUALIZE,
+    SHOW_GUIDES,
     GUIDE_RADIUS,
     COLLISION_COLOR,
     AGING_PARMS,
@@ -703,12 +704,17 @@ def visualization_tab(shapes):
     b3d_hda.attrib_menu(custom, 1, "prim", toggle=False, numeric=True, skip="angle distance force impact torque")
     custom.setConditional(hou.parmCondType.DisableWhen, f"{{ {SHOW_CONSTRAINTS} == 0 }}")
     custom.setConditional(hou.parmCondType.HideWhen, f"{{ {FALSE_COLOR_MODE} != 6 }}")
+    guides = hou.ToggleParmTemplate(
+        SHOW_GUIDES, "Show Guides", default_value=False,
+        help="Draws the constraint lines as thick wires. Slow with many constraints: off draws plain lines.")
+    guides.setConditional(hou.parmCondType.DisableWhen, f"{{ {SHOW_CONSTRAINTS} == 0 }}")
     radius = hou.FloatParmTemplate(
         GUIDE_RADIUS, "Guide Radius", 1, default_value=(0.05,), min=0.0, max=1.0, min_is_strict=True,
-        help="The constraint lines' thickness. Each constraint type's Guide Scale (Advanced > Constraints) multiplies it.")
+        help="The constraint wires' thickness. Each constraint type's Guide Scale (Advanced > Constraints) multiplies it.")
     radius.setConditional(hou.parmCondType.DisableWhen, f"{{ {SHOW_CONSTRAINTS} == 0 }}")
-    constraint_folder = collapsible("b3dsop_vis_constraint_geometry", "Constraint Geometry", [mode, custom, radius],
-                                     header_toggle=SHOW_CONSTRAINTS)
+    radius.setConditional(hou.parmCondType.HideWhen, f"{{ {SHOW_GUIDES} == 0 }}")
+    constraint_folder = collapsible("b3dsop_vis_constraint_geometry", "Constraint Geometry",
+                                    [mode, custom, guides, radius], header_toggle=SHOW_CONSTRAINTS)
     impacts = hou.ToggleParmTemplate(
         SHOW_IMPACTS, "Show Impacts", default_value=False,
         help="Draws the impact points in the viewport. Needs Add Impact Data on the Output tab.")

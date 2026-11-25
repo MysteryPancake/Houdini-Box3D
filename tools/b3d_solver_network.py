@@ -39,6 +39,7 @@ from b3d_solver_common import (
     FALSE_COLOR_MODE,
     FALSE_COLOR_ATTRIB,
     SHOW_IMPACTS,
+    SHOW_GUIDES,
     GUIDE_RADIUS,
     COLLISION_COLOR,
     SHOW_GROUND,
@@ -399,35 +400,36 @@ def build_ground_guide(sub, dopnet, empty):
 
 # Transform Pieces is the largest cost of the asset's frame (about 2.4 microseconds a piece, even with everything asleep),
 # almost all of it in the nodes that match the pieces to the points by name. For the usual case (the pieces carry a
-# `name` on their points, and the only attributes to copy are `w`) the same result takes a wrangle that finds each
-# piece's point once, writes its motion matrix, Transform by Attribute (the node Transform Pieces uses for this) and a
-# wrangle for `w` and `v`. Only attribute bindings are written (no setpointattrib), so the wrangles run in parallel.
-# Anything else, such as an `age` to copy or other Transfer Attributes, keeps Transform Pieces.
-MATCH_PIECES_VEX = """\
-int pt = findattribval(1, "point", "name", s@name);
-i@__pt = pt;
-4@__xform = ident();
-v@__wp = {0, 0, 0};
+# `name` on their points, and the only attributes to copy are `w`) one wrangle gives the same result: it finds each
+# piece's point once, moves `P` and the normals by the point's motion matrix and writes `w` and `v`. (A Transform by
+# Attribute with a matrix attribute per point, and a pass for `w` and `v`, took a third as long again.) Only attribute
+# bindings are written (no setpointattrib), so it runs in parallel. Anything else, such as an `age` to copy, other
+# Transfer Attributes or a point attribute of a type Transform Pieces would also move (a vector, quaternion or position
+# other than `P`), keeps Transform Pieces.
+MOVE_PIECES_VEX = """int pt = findattribval(1, "point", "name", s@name);
 if (pt < 0)
     return;
 matrix xf = pointtransform(1, pt);
-4@__xform = xf;
-v@__wp = point(1, "pivot", pt) * xf;
-"""
-MOTION_ATTRIBS_VEX = """\
-if (i@__pt < 0)
-    return;
-vector w = point(1, "w", i@__pt);
+vector w = point(1, "w", pt);
+@P *= xf;
 v@w = w;
-v@v = cross(w, @P - v@__wp) + point(1, "v", i@__pt);
+v@v = cross(w, @P - point(1, "pivot", pt) * xf) + point(1, "v", pt);
 """
-FAST_ATTRIBS = ("__pt", "__wp", "__xform")
+# With normals on the pieces: N moves by the inverse transpose of the matrix, as Transform by Attribute does. A second
+# wrangle, not a bound attribute left out of Attributes to Create: that list also decides what may be written, so N
+# would be made on pieces that have none.
+MOVE_NORMALS_VEX = MOVE_PIECES_VEX + "@N = normalize(@N * transpose(invert(matrix3(xf))));\n"
 # Whether the fast path does what Transform Pieces would: the pieces carry `name` on their points and no age, the
-# simulation points carry no age, and the attributes to copy are no more than age and w.
+# simulation points carry no age, the attributes to copy are no more than age and w, and no point attribute besides
+# P, N, w and v has a type Transform by Attribute would move. 0: Transform Pieces, 1: the wrangle, 2: the one with
+# normals (the pieces have N).
 FAST_TRANSFORM_EXPR = (
     '(lambda n, g, s: int(g is not None and s is not None and g.findPointAttrib("name") is not None '
     'and g.findPointAttrib("age") is None and s.findPointAttrib("age") is None '
-    'and set(n.parm("{attribs}").eval().split()) <= {{"age", "w"}}))'
+    'and set(n.parm("{attribs}").eval().split()) <= {{"age", "w"}} '
+    'and all(a.qualifier() not in ("Position", "Vector", "Quaternion", "Normal", "Matrix") '
+    'or a.name() in ("P", "N", "v", "w") for a in g.pointAttribs())) '
+    '* (1 + int(g.findPointAttrib("N") is not None)))'
     '(hou.pwd().parent(), hou.pwd().parent().node("{removed}").geometry(), '
     'hou.pwd().parent().node("{points}").geometry())')
 
@@ -435,37 +437,29 @@ FAST_TRANSFORM_EXPR = (
 def fast_transform(sub, removed, sim_points, xform):
     """The Geometry output's Transform Pieces with the faster path beside it: a Switch picking one of the two (the other
     does not cook). Returns the Switch."""
-    match = create(sub, "attribwrangle", "match_pieces_geometry")
-    match.setInput(0, removed)
-    match.setInput(1, sim_points)
-    match.parm("class").set("point")
-    match.parm("snippet").set(MATCH_PIECES_VEX)
-    apply_xform = create(sub, "xformbyattrib", "apply_motion_geometry")
-    apply_xform.setInput(0, match)
-    set_named(apply_xform, "xformattrib", "__xform")
-    set_named(apply_xform, "attribs", "*")
-    set_named(apply_xform, "updateaffectednmls", 0)
-    set_named(apply_xform, "grouptype", 3)  # Points
-    motion = create(sub, "attribwrangle", "motion_attribs_geometry")
-    motion.setInput(0, apply_xform)
-    motion.setInput(1, sim_points)
-    motion.parm("class").set("point")
-    motion.parm("snippet").set(MOTION_ATTRIBS_VEX)
-    drop = create(sub, "attribdelete", "drop_match_geometry")
-    drop.setInput(0, motion)
-    drop.parm("ptdel").set(" ".join(FAST_ATTRIBS))
+    moves = []
+    for name, snippet, writes in (("move_pieces_geometry", MOVE_PIECES_VEX, "P w v"),
+                                  ("move_pieces_normals_geometry", MOVE_NORMALS_VEX, "P N w v")):
+        move = create(sub, "attribwrangle", name)
+        move.setInput(0, removed)
+        move.setInput(1, sim_points)
+        move.parm("class").set("point")
+        move.parm("snippet").set(snippet)
+        set_named(move, "exportlist", writes)  # what it may write: `w` and `v` are made if missing
+        moves.append(move)
     pick = create(sub, "switch", "switch_fast_transform")
     pick.setInput(0, xform)
-    pick.setInput(1, drop)
+    for i, move in enumerate(moves):
+        pick.setInput(i + 1, move)
     pick.parm("input").setExpression(
         FAST_TRANSFORM_EXPR.format(attribs=TRANSFER_ATTRIBUTES, removed=removed.name(), points=sim_points.name()),
         hou.exprLanguage.Python)
     return pick
 
 
-
 def scale_xform(sub, name, src, inverse=False):
-    """A Transform SOP scaling `src` uniformly by the World Scale (or its inverse)."""
+    """A Transform SOP scaling `src` uniformly by the World Scale (or its inverse), and the Switch that uses it
+    only while scaling. Returns the switch."""
     xf = create(sub, "xform", name)
     xf.setInput(0, src)
     p = xf.parm("scale")
@@ -473,7 +467,12 @@ def scale_xform(sub, name, src, inverse=False):
         warn(f"{xf.path()} has no Uniform Scale (scale); World Scale ignored there")
     else:
         p.setExpression(f"1 / {SCALE_FACTOR}" if inverse else SCALE_FACTOR, hou.exprLanguage.Hscript)
-    return xf
+    # Behind a Switch that takes it only while scaling (as scale_wrangle's): a Transform by 1 still copies every point.
+    sw = create(sub, "switch", f"switch_{name}")
+    sw.setInput(0, src)
+    sw.setInput(1, xf)
+    sw.parm("input").setExpression(SCALE_ACTIVE, hou.exprLanguage.Hscript)
+    return sw
 
 
 def scale_wrangle(sub, name, src, snippet, inverse, run_over="point"):
@@ -582,12 +581,19 @@ def scale_forces(dopnet):
         wr.destroy()
         return
     wr.parm("snippet").set(SCALE_FORCES_VEX)
+    # Behind an Enable Solver DOP: with World Scale off (or 1) the wrangle is not cooked, where it would still visit
+    # every piece each step to return at once.
+    enable = create(dopnet, "enablesolver", "enable_scale_forces")
+    enable.setInput(0, wr)
+    enable.parm("enable").setExpression(
+        f'ch("{enable.relativePathTo(dopnet.parent())}/{WORLD_SCALE_TOGGLE}") && '
+        f'ch("{enable.relativePathTo(dopnet.parent())}/{WORLD_SCALE}") != 1', hou.exprLanguage.Hscript)
     wired = {c.inputIndex(): (c.inputNode(), c.outputIndex()) for c in multi.inputConnections()}
     presolve = 1  # inputs: objects, PRESOLVE, Box3D Solver, POSTSOLVE
     for i in sorted((i for i in wired if i > presolve), reverse=True):
         node, out = wired[i]
         multi.setInput(i + 1, node, out)
-    multi.setInput(presolve + 1, wr)
+    multi.setInput(presolve + 1, enable)
 
 
 def collision_rest(sub, dopnet, collision):
@@ -803,12 +809,8 @@ def build_network(sub):
 
     # The constraint lines (RBD Bullet Solver's Show Constraints) with False Color Mode, and the impact points (Show
     # Impacts), each cooked only while its toggle is on.
-    guide_radius = create(sub, "attribwrangle", "constraint_guide_radius")
-    guide_radius.setInput(0, con_unscaled)
-    guide_radius.parm("class").set("point")
-    guide_radius.parm("snippet").set(guide_radius_vex())
     fc_value = create(sub, "attribwrangle", "false_color_value")
-    fc_value.setInput(0, guide_radius)
+    fc_value.setInput(0, con_unscaled)
     fc_value.parm("class").set("primitive")
     fc_value.parm("snippet").set(FALSE_COLOR_VALUE_VEX)
     fc_value.parm("bindings").set(1)
@@ -834,17 +836,27 @@ def build_network(sub):
     set_named(fc_drop, "dtldel", "__fc_top")
     # Off (False Color Mode None) the lines keep the colour they came with.
     false_color = create(sub, "switch", "switch_false_color")
-    false_color.setInput(0, guide_radius)
+    false_color.setInput(0, con_unscaled)
     false_color.setInput(1, fc_drop)
     false_color.parm("input").setExpression(f'ch("../{FALSE_COLOR_MODE}") > 0', hou.exprLanguage.Hscript)
-    show_con = create(sub, "switch", "switch_show_constraints")
-    show_con.setInput(0, no_shapes)
+    # The lines are plain unless Show Guides is on: the radius per point and the wire (a tube round every line) are
+    # made only then, as they cost far more than the lines (seconds a frame on tens of thousands of constraints).
+    guide_radius = create(sub, "attribwrangle", "constraint_guide_radius")
+    guide_radius.setInput(0, false_color)
+    guide_radius.parm("class").set("point")
+    guide_radius.parm("snippet").set(guide_radius_vex())
     guide_wire = create(sub, "polywire", "constraint_guide_wire")  # thick lines, by each line's radius
-    guide_wire.setInput(0, false_color)
+    guide_wire.setInput(0, guide_radius)
     guide_wire.parm("radius").set(1)
     guide_wire.parm("usescaleattrib").set(1)
     guide_wire.parm("scaleattrib").set("guide_radius")
-    show_con.setInput(1, guide_wire)
+    thick = create(sub, "switch", "switch_thick_constraints")
+    thick.setInput(0, false_color)
+    thick.setInput(1, guide_wire)
+    thick.parm("input").setExpression(f'ch("../{SHOW_GUIDES}")', hou.exprLanguage.Hscript)
+    show_con = create(sub, "switch", "switch_show_constraints")
+    show_con.setInput(0, no_shapes)
+    show_con.setInput(1, thick)
     show_con.parm("input").setExpression(f'ch("../{VISUALIZE}") && ch("../{SHOW_CONSTRAINTS}")', hou.exprLanguage.Hscript)
     con_guide_out = before_start(sub, dopnet, "switchif_beforestart_constraint_guide", show_con, no_shapes)
     # The impact points in the guide: red.

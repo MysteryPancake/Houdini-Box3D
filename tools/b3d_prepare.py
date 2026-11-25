@@ -189,8 +189,8 @@ def collision_names(parent, name, src, other, warn):
     switch.setInput(0, inputs[0])
     switch.setInput(1, names)
     switch.parm("input").setExpression(
-        'int(any(hou.pwd().input(0).geometry().findPointAttrib(a) is not None '
-        'for a in ("collisiongroup", "collisionignore")))', hou.exprLanguage.Python)
+        'haspointattrib(opinputpath(".", 0), "collisiongroup") || haspointattrib(opinputpath(".", 0), "collisionignore")',
+        hou.exprLanguage.Hscript)
     out = net.createNode("output", "output0")
     out.setInput(0, switch)
     out.setDisplayFlag(True)

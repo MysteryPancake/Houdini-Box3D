@@ -87,6 +87,7 @@ SHOW_COLLISION_SHAPES = "showcollisionshapes"  # Visualization: the collider's c
 SHOW_CONSTRAINTS = "showconstraints"  # Visualization: the constraint lines in the guide (off)
 FALSE_COLOR_MODE = "vis_mode"  # their false colour: 0 None, 1 Angle, 2 Distance, 3 Force, 4 Impact, 5 Torque, 6 Custom
 FALSE_COLOR_ATTRIB = "customattrib"  # the attribute False Color Mode Custom colours by
+SHOW_GUIDES = "showconstraintguides"  # the constraint lines as thick wires (off: plain lines, as RBD Bullet Solver's)
 GUIDE_RADIUS = "showconstraintguidesradius"  # the constraint lines' radius in the guide, times each type's Guide Scale
 SHOW_IMPACTS = "showimpacts"  # Visualization: the impact points in the guide (off)
 ADD_GRAVITY = "addgravity"  # Forces: Gravity times 0 when off, RBD Bullet Solver's toggle

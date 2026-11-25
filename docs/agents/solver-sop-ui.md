@@ -31,7 +31,7 @@ The Solver SOP's parameter tabs, joint settings, Break Thresholds, constraint at
   `constraint_<key>attribupdate#`, the same constraint's value in the live Constraints input: `live_constraints`, an Object Merge of the
   DOP network's constraints input, through `break_compile_live` and `break_live` as the wrangle's third input, found by `__primid`, which `store_primid` writes on the input), scattered by Variance with `__primid` else
   the primitive number; Distance compares against threshold + `restlength`; At Frame's window is 0.5 / Global Substeps). The SOP Solver is the
-  Multiple Solver's last input, behind an Enable Solver DOP (`enable_constraint_breaks`): off, the constraint geometry is not
+  Multiple Solver's last input, behind an Enable Solver DOP (`enable_constraint_breaks`, on while Break Thresholds are on and the Constraints input has points: the compiled loop costs about a millisecond a step over nothing): off, the constraint geometry is not
   imported, because a rewrite changes its data ids and the solver then reads the whole network again each step. Test
   `solver_sop_break_impact_bullet`, `solver_sop_break_atframe_bullet`, `solver_sop_break_distance_bullet` and the INFO
   `solver_sop_break_angle_torque_bullet` and `solver_sop_break_attrib_update_bullet` (against the RBD Bullet Solver SOP). Not there: Force (see status.md), the Group parameter, plastic flow and the VEX snippet.
@@ -54,7 +54,7 @@ The Solver SOP's parameter tabs, joint settings, Break Thresholds, constraint at
   Geometries folder (header checkbox `VISUALIZE`, on: it gates every guide's Switch and greys out the folders, added to their
   own Disable When) with Geometry (Show Collision Shape, Shape Color), Ground and Collision Geometry (Show Geometry, Show Collision
   Shape, Color), Show Constraints (`SHOW_CONSTRAINTS`, off), Constraint Geometry (False Color Mode `FALSE_COLOR_MODE`,
-  Attribute), Impact Data (Show Impacts, off), then Inspector, as RBD Bullet Solver's; its Display Visualization
+  Attribute, Show Guides `SHOW_GUIDES`, Guide Radius), Impact Data (Show Impacts, off), then Inspector, as RBD Bullet Solver's; its Display Visualization
   Geometry master toggle, Show Active / Sleeping colouring and the constraint guide folders have no counterpart), then Advanced and Output always last; the
   solver's parameters are regrouped by name (`SOLVER_FOLDERS`, `IMPACT_SPEED`, `SHAPES_TOGGLE`, pulled
   with `pull`), whichever DOP tab holds them: the DOP's tabs and folders follow this layout (Contacts, Sleeping

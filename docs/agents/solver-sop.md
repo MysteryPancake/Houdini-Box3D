@@ -86,14 +86,21 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   name, and for Geometry, one in what was simulated.
   Transform Pieces is the asset's largest cost (about 2.4 microseconds a piece, with everything asleep), nearly all in
   its name matching, so the Geometry output has a faster path beside it (`fast_transform`, `switch_fast_transform`):
-  `match_pieces_geometry` finds each point's simulation point once and writes its motion matrix, Transform by Attribute
-  (the node Transform Pieces ends in) applies it, `motion_attribs_geometry` writes `w` and `v` as Transform Pieces does,
-  and the temporary attributes go. The result equals Transform Pieces' (checked: transform, `P`, `w` and `v` differ by 0).
-  Only attribute bindings are written, never `setpointattrib` and the like, whose queue stops a wrangle running in
-  parallel. The Switch takes it only when the pieces carry `name` on their points, neither they nor the simulation points
-  carry `age`, and the attributes to copy are no more than `age` and `w` (`FAST_TRANSFORM_EXPR`); else Transform Pieces.
+  one point wrangle (`move_pieces_geometry`, `MOVE_PIECES_VEX`) finds each point's simulation point once, moves `P` by its
+  motion matrix and writes `w` and `v` as Transform Pieces does; `move_pieces_normals_geometry` also moves `N` by the
+  inverse transpose, as Transform by Attribute does. Two wranglers, because Attributes to Create decides what may be
+  written, and a bound `N` left out of it errors, while one in it is made on pieces that have none. (Transform by
+  Attribute with a matrix attribute per point and a pass for `w` and `v` was a third slower: the 4x4 attribute and
+  deleting it afterwards cost more than the transform.) Only attribute bindings are written, never `setpointattrib` and
+  the like, whose queue stops a wrangle running in parallel. The Python expression of the Switch (`FAST_TRANSFORM_EXPR`,
+  Python because HScript cannot read an attribute's type) picks 1 or 2 only when the pieces carry `name` on their
+  points, neither they nor the simulation points carry `age`, the attributes to copy are no more than `age` and `w`, and
+  no point attribute besides `P`, `N`, `w` and `v` is a position, vector, quaternion, normal or matrix (Transform by
+  Attribute would move it); else Transform Pieces. Test `solver_sop_fast_transform` (differences from Transform Pieces
+  under 1e-5).
 * World Scale (`WORLD_SCALE_TOGGLE` / `WORLD_SCALE`, first on the Solver tab; Bullet's usescale / Bullet World Scale):
-  Transform SOPs scale every input (`world_scale_*`; the before-start outputs pass the unscaled inputs);
+  Transform SOPs scale every input (`world_scale_*`; the before-start outputs pass the unscaled inputs), each behind
+  a Switch (`switch_<name>`) that takes it only while scaling, as a Transform by 1 still copies every point (0.8 ms for 40,000);
   `scale_attributes` (`SCALE_ATTRIBS_VEX`) then divides `density` by the cube and `w` back, and scales the hand-set
   `bullet_prim*` sizes and `sleepthreshold` (Bullet leaves those). `scale_settings` turns the channel references in
   `SCALED_SETTINGS` (lengths and speeds of the solver, the pieces' and collider's Box3D Data) into reference x scale.
@@ -103,7 +110,7 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
   setting with a length or force in it its value x scale^power (`JOINT_SCALE_POWERS`, which must hold every float
   setting of our nodes, `JOINT_SCALE_BY_NODE`, `SIDEFX_SCALE_POWERS`), Set Initial. Float primitive attributes
   multiply those, so they follow. `scale_constraint_attribs` (`SCALE_CONSTRAINTS_VEX`) scales what replaces a setting
-  (`linear_velocity`) and `auto_restlength`. FORCES: `scale_forces`, a POP Wrangle after PRESOLVE in the Multiple
+  (`linear_velocity`) and `auto_restlength`. FORCES: `scale_forces`, a POP Wrangle behind `enable_scale_forces` (only while World Scale is on and not 1: it costs about 1 ms a step on 5,000 pieces even when it returns at once) after PRESOLVE in the Multiple
   Solver, scales `force` and `torque` (`SCALE_FORCES_VEX`), so POP force values are real units. POSTSOLVE is not scaled.
 * Constraints output: DOP Import of the pieces object, Geometry Data Path `ConstraintGeometry`, nothing transformed,
   packed or tagged (`CONSTRAINTS_TOGGLES`), so it carries `broken`, `force` and the rest. The solver does not move its
@@ -117,7 +124,8 @@ Four inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry
 * Collision shapes (the asset's Guide Geometry, node `GUIDE_GEO`, set as `guide=GUIDE_GEO` in the definition's extra info): DOP Import (`import_shapes`, the pieces object, Geometry Data Path `SHAPES_DATA`, `POINTS_TOGGLES`)
   -> `tint_shapes` (`SHAPES_TINT_VEX`, Shape Color) -> `unscale_shapes` -> `switch_show_shapes` (the solver's `exportshapes`, promoted
   to Output > Visualization as Show Collision Shapes; empty input when off, so nothing cooks) -> `switchif_beforestart_shapes` -> `merge_guide`.
-  The constraint lines (`constraint_guide_radius` (point `guide_radius` = `GUIDE_RADIUS` x the type's `<name>_guidescale`, by `constraint_name` against `<name>_dataname`) -> `false_color_value` (the chosen float's absolute value as `__fc`, read through a Bindings-tab variable named by `FALSE_COLOR_BOUND`; Attributes to Create is `__fc`, as a bound attribute that is missing would be created otherwise) -> `false_color_top` (Attribute Promote, max) -> `false_color_constraints` (`FALSE_COLOR_VEX`, blue to red) -> `false_color_drop`, behind `switch_false_color`) and the
+  The constraint lines (`false_color_value` (the chosen float's absolute value as `__fc`, read through a Bindings-tab variable named by `FALSE_COLOR_BOUND`; Attributes to Create is `__fc`, as a bound attribute that is missing would be created otherwise) -> `false_color_top` (Attribute Promote, max) -> `false_color_constraints` (`FALSE_COLOR_VEX`, blue to red) -> `false_color_drop`, behind `switch_false_color`) are drawn plain. With Show Guides (`SHOW_GUIDES`, off, as Bullet's) `switch_thick_constraints` takes
+  `constraint_guide_radius` (point `guide_radius` = `GUIDE_RADIUS` x the type's `<name>_guidescale`, by `constraint_name` against `<name>_dataname`) -> `constraint_guide_wire` (PolyWire) instead: the wire cost 2.3 s a frame on 78,000 constraints, the plain lines 4 ms. The
   impact points (`color_impacts`, a Color SOP, the `IMPACTS` records) are two more guide inputs behind `SHOW_CONSTRAINTS` / `SHOW_IMPACTS` switches.
   The collider's shapes are a second import (`import_collision_shapes`, `tint_collision_shapes` with `COLLISION_COLOR`, `SHOW_COLLISION_SHAPES`
   behind `usecollisions`), also merged; the inner solver's `exportshapes` is an expression on either toggle.
