@@ -1,18 +1,13 @@
 // Box3DPointSync.cpp
 //
-// One body per point: reading points, the change fingerprint, body settings,
-// shape plans and syncObject(), which adds, updates and removes an object's
-// bodies.
+// One body per point: reading points, the change fingerprint, the slot passes
+// (collect, read, plan, settings, apply) and syncObject(), which adds, updates
+// and removes an object's bodies.
 #include "Box3DSolverInternal.h"
-
 #include <functional>
 #include <string_view>
 
 namespace box3dsolver {
-
-// ---------------------------------------------------------------------------
-// Point state
-// ---------------------------------------------------------------------------
 
 // P / rotation / v / w of one point. A packed point's rotation: its
 // `restxform`'s times `orient` (the rotation since, as Bullet) once restxform
@@ -168,7 +163,6 @@ Box3DSyncFingerprint makeFingerprint(const GU_Detail *gdp, const PointAttrs &a,
   return fp;
 }
 
-#ifdef BOX3DDOP_DEBUG
 namespace {
 
 // Markers that differ, old -> new, for the debug log.
@@ -202,213 +196,6 @@ std::string describeFingerprintDifference(const Box3DSyncFingerprint &was,
 }
 
 } // namespace
-#endif
-
-// ---------------------------------------------------------------------------
-// Body settings, shape planning, and mid-simulation updates
-// ---------------------------------------------------------------------------
-
-// A point's changeable settings: Box3D Data's, with the point's attributes on
-// top. Building and comparing both read through here, so an untouched point
-// compares equal. (`awake` is not a setting: see startAwakeFor.)
-b3dop::BodyProps readDynamicProps(const b3dop::BodySettings &node,
-                                  const PointAttrs &a, GA_Offset off) {
-  b3dop::BodyProps p = node.props;
-  if (a.mass.isValid()) {
-    const float m = static_cast<float>(a.mass.get(off));
-    if (m > 0.0f && std::isfinite(m))
-      p.mass = m;
-  }
-  if (a.friction.isValid())
-    p.friction = b3dop::clampNonNegOr(a.friction.get(off), p.friction);
-  if (a.bounce.isValid())
-    p.restitution = b3dop::clampNonNegOr(a.bounce.get(off), p.restitution);
-  if (a.rollingResistance.isValid())
-    p.rollingResistance =
-        b3dop::clampNonNegOr(a.rollingResistance.get(off), p.rollingResistance);
-  if (a.tangentVelocity.isValid()) {
-    const UT_Vector3 t = a.tangentVelocity.get(off);
-    if (b3dop::finite3(t.data()))
-      for (unsigned i = 0; i < 3; ++i)
-        p.tangentVelocity[i] = static_cast<float>(t(i));
-  }
-  if (a.lineardamping.isValid())
-    p.linearDamping =
-        b3dop::clampNonNegOr(a.lineardamping.get(off), p.linearDamping);
-  if (a.angulardamping.isValid())
-    p.angularDamping =
-        b3dop::clampNonNegOr(a.angulardamping.get(off), p.angularDamping);
-  if (a.gravityscale.isValid()) {
-    const float g = a.gravityscale.get(off);
-    if (std::isfinite(g))
-      p.gravityScale = g; // may be negative
-  }
-  if (a.enablesleep.isValid())
-    p.enableSleep = a.enablesleep.get(off) != 0;
-  if (a.enabled.isValid())
-    p.enabled = a.enabled.get(off) != 0;
-
-  if (a.computeMass.isValid())
-    p.computeMass = a.computeMass.get(off) != 0;
-  if (a.computeCom.isValid())
-    p.computeCom = a.computeCom.get(off) != 0;
-  if (a.density.isValid()) {
-    const float d = a.density.get(off);
-    if (d > 0.0f && std::isfinite(d))
-      p.density = d;
-  }
-  if (a.inertiaStiffness.isValid()) {
-    const float k = a.inertiaStiffness.get(off);
-    if (k > 0.0f && std::isfinite(k))
-      p.inertiaScale = k;
-  }
-  auto threshold = [&](const GA_ROHandleF &h) {
-    if (!h.isValid())
-      return -1.0f;
-    const float v = h.get(off);
-    return (v >= 0.0f && std::isfinite(v)) ? v : -1.0f;
-  };
-  if (const float t = threshold(a.sleepThreshold); t >= 0.0f)
-    p.sleepThreshold = t;
-  if (const float t = threshold(a.ccdThreshold); t >= 0.0f)
-    p.ccdThreshold = t;
-  if (a.fastObject.isValid())
-    p.fastObject = a.fastObject.get(off) != 0;
-  if (a.fastRotation.isValid())
-    p.fastRotation = a.fastRotation.get(off) != 0;
-  if (a.contactRecycling.isValid())
-    p.contactRecycling = a.contactRecycling.get(off) != 0;
-  if (a.collisionCategory.isValid())
-    p.filter.category = static_cast<uint64_t>(a.collisionCategory.get(off));
-  if (a.collisionMask.isValid())
-    p.filter.mask = static_cast<uint64_t>(a.collisionMask.get(off));
-  if (a.collisionGroup.isValid())
-    p.filter.group = a.collisionGroup.get(off);
-  return p;
-}
-
-// Box3D density: computemass -> density; else mass / volume (density if
-// unusable).
-float boxDensity(const b3dop::BodyProps &p, float volume) {
-  if (p.computeMass)
-    return p.density;
-  return (p.mass > 0.0f && std::isfinite(p.mass) && volume > 0.0f)
-             ? p.mass / volume
-             : p.density;
-}
-
-// The mass Houdini reports (written to `mass` with computemass).
-float effectiveMass(const b3dop::BodyProps &p, float volume) {
-  return p.computeMass ? p.density * volume : p.mass;
-}
-
-// active -> the node's type; inactive -> static, or kinematic if animated;
-// shapeless -> static.
-b3dop::BodySettings::Type wantedType(const b3dop::BodySettings &node,
-                                     bool active, bool animated,
-                                     bool shapeless) {
-  if (shapeless)
-    return b3dop::BodySettings::Type::Static;
-  if (active)
-    return node.type;
-  return animated ? b3dop::BodySettings::Type::Kinematic
-                  : b3dop::BodySettings::Type::Static;
-}
-
-// The body's mass after shapes are added / replaced or its type changes. With
-// computecom the centre of mass stays where the shapes put it (the point, the
-// body origin, orbits it); without, as in Houdini RBD's pivot, the shapes'
-// centroid is moved to the point. Inertia is scaled by inertialtensorstiffness
-// (a custom or bounding box inertia replaces it first). Static / kinematic
-// bodies only get shape densities. setShapeDensity = false for shapes just
-// created with boxDensity(p, volume).
-void applyBodyMass(b3dop::Box3DWorld &world, b3dop::BodyHandle h,
-                   const b3dop::BodyProps &p, float volume,
-                   bool setShapeDensity) {
-  float boxInverse[6];
-  const float *inverse = nullptr;
-  if (p.customInertia)
-    inverse = p.inverseInertia;
-  else if (p.boundsInertia &&
-           b3dop::boundsInverseInertia(p.boundsExtents,
-                                       effectiveMass(p, volume), boxInverse))
-    inverse = boxInverse;
-  world.applyMassByHandle(h, boxDensity(p, volume), !p.computeCom,
-                          p.inertiaScale, setShapeDensity, inverse);
-}
-
-// `awake` for a new body: the point's value, else the Box3D Data default.
-// (Box3D starts a body that may not sleep awake whatever this says.)
-bool startAwakeFor(const b3dop::BodySettings &node, const PointAttrs &a,
-                   GA_Offset off) {
-  return a.awake.isValid() ? a.awake.get(off) != 0 : node.startAwake;
-}
-
-namespace {
-
-// Point attributes that replace a Box3D Data value the user changed, on an
-// object with a Box3D Data node. RBD Packed Object writes several of them onto
-// every point from its own parameters (mass, density, computemass, friction,
-// bounce in Houdini 22.0), so a Box3D Data value set for those does nothing;
-// this makes that visible. A value left at its default is not reported: then
-// the attribute is the only setting (the Box3D Packed Object writes the
-// settings that differ from the defaults as attributes, and its Box3D Data
-// keeps them all at the defaults). Reported once per object: on its first full
-// scan, and again only if the set changes. (`active` is left out: it only takes
-// over Body Type when 0.)
-void noteOverriddenData(const GU_Detail *gdp, Box3DObjectSync &os,
-                        SyncCounts &c, const b3dop::BodySettings &node) {
-  const b3dop::BodySettings d = b3dop::nodeBodyDefaults();
-  const b3dop::BodyProps &n = node.props, &p = d.props;
-  auto differs = [](float a, float b) { return !b3dop::sameFloat(a, b); };
-  const bool tangent = differs(n.tangentVelocity[0], p.tangentVelocity[0]) ||
-                       differs(n.tangentVelocity[1], p.tangentVelocity[1]) ||
-                       differs(n.tangentVelocity[2], p.tangentVelocity[2]);
-  const std::pair<const char *, bool> overriding[] = {
-      {"mass", differs(n.mass, p.mass)},
-      {"density", differs(n.density, p.density)},
-      {"computemass", n.computeMass != p.computeMass},
-      {"computecom", n.computeCom != p.computeCom},
-      {"friction", differs(n.friction, p.friction)},
-      {"bounce", differs(n.restitution, p.restitution)},
-      {"rollingresistance", differs(n.rollingResistance, p.rollingResistance)},
-      {"tangentvelocity", tangent},
-      {"lineardamping", differs(n.linearDamping, p.linearDamping)},
-      {"angulardamping", differs(n.angularDamping, p.angularDamping)},
-      {"gravityscale", differs(n.gravityScale, p.gravityScale)},
-      {"enablesleep", n.enableSleep != p.enableSleep},
-      {"awake", node.startAwake != d.startAwake},
-      {"sleepthreshold", differs(n.sleepThreshold, p.sleepThreshold)},
-      {"ccdthreshold", differs(n.ccdThreshold, p.ccdThreshold)},
-      {"fastobject", n.fastObject != p.fastObject},
-      {"contactrecycling", n.contactRecycling != p.contactRecycling},
-      {"inertialtensorstiffness", differs(n.inertiaScale, p.inertiaScale)},
-      {"bullet_georep", node.defaultShape != d.defaultShape},
-      {"bullet_autofit", node.autoFit != d.autoFit},
-      {"bullet_primS", node.prim.hasSize},
-      {"bullet_radius", node.prim.hasRadius},
-      {"bullet_length", node.prim.hasLength},
-      {"bullet_primT", node.prim.hasPos},
-      {"bullet_primR", node.prim.hasRot}};
-  constexpr size_t kCount = sizeof overriding / sizeof overriding[0];
-  bool hit[kCount] = {};
-  std::string found;
-  for (size_t i = 0; i < kCount; ++i)
-    if (overriding[i].second && gdp->findPointAttribute(overriding[i].first)) {
-      hit[i] = true;
-      found += found.empty() ? "" : " ";
-      found += overriding[i].first;
-    }
-  if (found == os.overridesReported)
-    return;
-  os.overridesReported = found;
-  if (found.empty())
-    return;
-  ++c.overriddenObjects;
-  for (size_t i = 0; i < kCount; ++i)
-    if (hit[i])
-      ++c.overriddenData[overriding[i].first];
-}
 
 // pscale / scale (a packed point's size is its transform; these only size its
 // fallback box).
@@ -424,6 +211,8 @@ void readPscaleScale(const PointAttrs &a, GA_Offset off, float &ps,
   }
 }
 
+namespace {
+
 // Within 1e-4 relative (our write-back recomposes packed transforms with float
 // noise).
 bool sameSizeKey(const double a[3], const double b[3]) {
@@ -435,6 +224,8 @@ bool sameSizeKey(const double a[3], const double b[3]) {
   return true;
 }
 
+} // namespace
+
 // The scale convex / concave shapes depend on: packed row lengths, else pscale
 // * scale.
 bool sizeKey(bool packed, const double m3[9], float ps, const float sc[3],
@@ -444,242 +235,6 @@ bool sizeKey(bool packed, const double m3[9], float ps, const float sc[3],
   for (int i = 0; i < 3; ++i)
     out[i] = static_cast<double>(ps) * static_cast<double>(sc[i]);
   return true;
-}
-
-// Equal signatures mean identical shapes (hull keys, primitive numbers): skip
-// the rebuild.
-uint64_t shapeSignature(b3dop::ShapeType type, const BuiltShapes &s) {
-  uint64_t h = b3dop::mixHash(
-      0x9e3779b97f4a7c15ull, static_cast<uint64_t>(static_cast<int>(type)) + 1);
-  for (const Piece &pc : s.pieces) {
-    if (pc.mesh) {
-      h = b3dop::mixHash(
-          b3dop::mixHash(h, 3),
-          b3dop::hashFloats(pc.mesh->xyz.data(), pc.mesh->xyz.size()));
-      h = b3dop::hashBytes(h, pc.mesh->tris.data(),
-                           pc.mesh->tris.size() * sizeof(int32_t));
-    } else if (pc.isHull)
-      h = b3dop::mixHash(b3dop::mixHash(h, 1), pc.hull);
-    else {
-      h = b3dop::mixHash(b3dop::mixHash(h, 2), b3dop::hashShapeSpec(pc.spec));
-    }
-  }
-  return h ? h : 1;
-}
-
-// The explicit primitive attributes (used when there is no packed geometry to
-// fit), over Box3D Data's hand-set shape.
-b3dop::PrimOverrides readPrimOverrides(const PointAttrs &a, GA_Offset off,
-                                       const b3dop::PrimOverrides &node) {
-  b3dop::PrimOverrides ov = node;
-  if (a.primS.isValid()) {
-    const UT_Vector3 v = a.primS.get(off);
-    ov.hasSize = true;
-    ov.size[0] = v.x();
-    ov.size[1] = v.y();
-    ov.size[2] = v.z();
-  }
-  if (a.primR.isValid()) {
-    const UT_Vector3 v = a.primR.get(off);
-    // Euler degrees, Houdini's XYZ rotate order. Non-finite: no override.
-    if (b3dop::finite3(v.data())) {
-      const float deg[3] = {v.x(), v.y(), v.z()};
-      box3dEulerToQuat(deg, ov.rot);
-      ov.hasRot = true;
-    }
-  }
-  if (a.primT.isValid()) {
-    const UT_Vector3 v = a.primT.get(off);
-    ov.hasPos = true;
-    ov.pos[0] = v.x();
-    ov.pos[1] = v.y();
-    ov.pos[2] = v.z();
-  }
-  if (a.radius.isValid()) {
-    ov.hasRadius = true;
-    ov.radius = a.radius.get(off);
-  }
-  if (a.length.isValid()) {
-    ov.hasLength = true;
-    ov.length = a.length.get(off);
-  }
-  return ov;
-}
-
-// A point's shapes from its current attributes and packed geometry. Only the
-// hull cache is touched, no body.
-ShapePlan planShapes(ScanContext &ctx, GA_Offset off, int64_t bodyId,
-                     const PackedInfo &pk, bool staticBody) {
-  const PointAttrs &a = ctx.a;
-  ShapePlan plan;
-
-  plan.type = ctx.node.defaultShape;
-  const bool named = ctx.georep.get(a, off, plan.type); // else the default
-  // A default hull on a plain point (no packed geometry to hull) is the
-  // pscale box, without the "needs a packed primitive" note an explicit
-  // bullet_georep gets.
-  if (!named && !pk.prim &&
-      (plan.type == b3dop::ShapeType::Convex ||
-       plan.type == b3dop::ShapeType::Concave))
-    plan.type = b3dop::ShapeType::Box;
-
-  // `none`: a static, shapeless body (like Bullet, it still exists for
-  // constraints).
-  if (plan.type == b3dop::ShapeType::None) {
-    plan.sig = shapeSignature(plan.type, plan.shapes());
-    return plan;
-  }
-
-  float ps, sc[3];
-  readPscaleScale(a, off, ps, sc);
-  const bool autofit =
-      a.autofit.isValid() ? (a.autofit.get(off) != 0) : ctx.node.autoFit;
-  plan.plannedStatic = staticBody;
-  const b3dop::PrimOverrides ov = readPrimOverrides(a, off, ctx.node.prim);
-
-  // Instances of one packed source with the same scale, pivot, shape type and
-  // overrides get the same shapes (the build reads the packed transform only
-  // through its scale), and a scan's points are mostly such runs: the last
-  // build is kept per thread and reused while the key matches, so the source
-  // lookups (a lock on its geometry, its identity, the caches) are made once
-  // for the run. Valid for one scan only (the epoch): the geometry cannot
-  // change inside it.
-  struct ShapeMemo {
-    uint64_t epoch = 0;
-    uint64_t key = 0;
-    bool valid = false;
-    std::shared_ptr<const BuiltShapes> built;
-    uint64_t sig = 0;
-  };
-  thread_local ShapeMemo memo;
-  double S[3];
-  const bool memoable = pk.prim && b3dop::packedScale(pk.m4, S);
-  uint64_t key = 0;
-  if (memoable) {
-    key = b3dop::mixHash(
-        0x51ed270b1b4d3a5full,
-        reinterpret_cast<uintptr_t>(pk.prim->sharedImplementation()));
-    key =
-        b3dop::mixHash(key, static_cast<uint64_t>(static_cast<int>(plan.type)));
-    key = b3dop::hashBytes(key, S, sizeof(S));
-    key = b3dop::hashBytes(key, pk.pivot, sizeof(pk.pivot));
-    key = b3dop::hashBytes(key, &ps, sizeof(ps));
-    key = b3dop::hashBytes(key, sc, sizeof(sc));
-    key = b3dop::mixHash(
-        key, (autofit ? 1u : 0u) | (staticBody ? 2u : 0u) |
-                 (ov.hasSize ? 4u : 0u) | (ov.hasRot ? 8u : 0u) |
-                 (ov.hasPos ? 16u : 0u) | (ov.hasRadius ? 32u : 0u) |
-                 (ov.hasLength ? 64u : 0u));
-    key = b3dop::hashBytes(key, ov.size, sizeof(ov.size));
-    key = b3dop::hashBytes(key, ov.rot, sizeof(ov.rot));
-    key = b3dop::hashBytes(key, ov.pos, sizeof(ov.pos));
-    key = b3dop::hashBytes(key, &ov.radius, sizeof(ov.radius));
-    key = b3dop::hashBytes(key, &ov.length, sizeof(ov.length));
-  }
-  if (memoable && memo.valid && memo.epoch == ctx.georep.generation &&
-      memo.key == key) {
-    plan.built = memo.built;
-    plan.sig = memo.sig;
-  } else {
-    plan.built = std::make_shared<const BuiltShapes>(buildShapes(
-        ctx.world, ctx.sources, plan.type, ctx.node.hullPerConnectedSet, ps, sc,
-        pk, autofit, ov, staticBody, ctx.world.settings().ground));
-    plan.sig = shapeSignature(plan.type, plan.shapes());
-    if (memoable) {
-      memo.epoch = ctx.georep.generation;
-      memo.key = key;
-      memo.valid = true;
-      memo.built = plan.built;
-      memo.sig = plan.sig;
-    }
-  }
-  if (plan.shapes().note)
-    B3D_DEBUG_LOG("  body id=%lld: %s", static_cast<long long>(bodyId),
-                  plan.shapes().note);
-
-  // Convex / concave follow scale changes (as in Houdini); primitives do not.
-  plan.autoScale = (plan.type == b3dop::ShapeType::Convex ||
-                    plan.type == b3dop::ShapeType::Concave) &&
-                   sizeKey(pk.prim != nullptr, pk.m3, ps, sc, plan.sizeKey);
-  return plan;
-}
-
-} // namespace
-
-bool retypeBody(b3dop::Box3DWorld &world, Box3DBodyMirror &entry,
-                b3dop::BodySettings::Type want) {
-  if (entry.type == want)
-    return false;
-  world.setTypeByHandle(entry.handle, want);
-  entry.type = want;
-  entry.driven = false;
-  // The mass comes back from the shapes: centre back to the point.
-  if (entry.dynamic())
-    applyBodyMass(world, entry.handle, entry.props, entry.volume);
-  return true;
-}
-
-// Adds the pieces without mass updates (the caller calls applyBodyMass).
-// Returns the count.
-int addShapes(b3dop::Box3DWorld &world, b3dop::BodyHandle h,
-              const b3dop::BodySettings &b, const BuiltShapes &shapes) {
-  int added = 0;
-  for (const Piece &pc : shapes.pieces) {
-    bool ok = false;
-    if (pc.mesh) // static bodies only (Box3DWorld refuses any other)
-      ok = world.createMeshShape(
-          h, b, pc.mesh->xyz.data(), static_cast<int>(pc.mesh->xyz.size() / 3),
-          pc.mesh->tris.data(), static_cast<int>(pc.mesh->tris.size() / 3));
-    else if (pc.isHull)
-      ok = world.createHullShape(h, b, pc.hull, false);
-    else
-      ok = world.createShape(h, b, pc.spec, false);
-    added += ok ? 1 : 0;
-  }
-  return added;
-}
-
-// Every piece or none, so a body is never left with only some of its shapes.
-// True if the body has its shapes (false with no pieces to add too).
-bool addAllShapes(b3dop::Box3DWorld &world, b3dop::BodyHandle h,
-                  const b3dop::BodySettings &b, const BuiltShapes &shapes) {
-  const int added = addShapes(world, h, b, shapes);
-  if (added == static_cast<int>(shapes.pieces.size()))
-    return added > 0;
-  if (added > 0)
-    world.destroyShapesByHandle(h);
-  return false;
-}
-
-// A body with settings `b` at `pose` (its user data `entry`), its `shapes` and
-// mass, then its initial velocity when `giveVelocity`: after the mass is final
-// (a moving centre of mass shifts the velocity), and not for a static body or
-// one that starts asleep or disabled (a velocity would wake it, so `v` only
-// takes effect once something wakes it). A shapeless body (`none`) gets no
-// shapes. 0 on failure, leaving no body behind.
-b3dop::BodyHandle
-createBodyWithShapes(b3dop::Box3DWorld &world, const b3dop::BodySettings &b,
-                     const Box3DBodyPose &pose, const BuiltShapes &shapes,
-                     bool shapeless, const b3dop::BodyProps &p,
-                     bool giveVelocity, Box3DBodyMirror &entry) {
-  const b3dop::BodyHandle h = world.createBody(b, pose.pos, pose.rot, &entry);
-  if (!h || shapeless)
-    return h;
-  if (addShapes(world, h, b, shapes) !=
-      static_cast<int>(shapes.pieces.size())) {
-    // Never a shapeless body (except `none`) or one with only some of its
-    // shapes: the caller counts it as failed.
-    world.destroyBody(h);
-    return 0;
-  }
-  applyBodyMass(world, h, p, shapes.totalVolume, false);
-  const bool hasVel =
-      !std::all_of(pose.lin, pose.lin + 3, [](float v) { return v == 0.0f; }) ||
-      !std::all_of(pose.ang, pose.ang + 3, [](float v) { return v == 0.0f; });
-  if (giveVelocity && hasVel && b.type != b3dop::BodySettings::Type::Static &&
-      world.isAwakeByHandle(h))
-    world.setVelocityByHandle(h, pose.lin, pose.ang);
-  return h;
 }
 
 namespace {
@@ -833,77 +388,6 @@ bool rebuildPointShapes(ScanContext &ctx, const Box3DPointSlot &s,
                         static_cast<long long>(s.bid));
   return true;
 }
-
-enum : unsigned { kPropsChanged = 1, kMassChanged = 2 };
-
-} // namespace
-
-// Push the settings that differ. After a rebuild the new shapes already carry
-// material, mass and filter profile. Returns kPropsChanged / kMassChanged.
-unsigned applyPropChanges(b3dop::Box3DWorld &world, Box3DBodyMirror &e,
-                          const b3dop::BodyProps &p, bool shapesRebuilt) {
-  const b3dop::BodyProps &o = e.props;
-  if (!shapesRebuilt && p == o)
-    // nothing differs (the field compares below would call setters for a NaN)
-    return 0;
-  const b3dop::BodyHandle h = e.handle;
-  unsigned changed = shapesRebuilt ? static_cast<unsigned>(kPropsChanged) : 0u;
-  // Runs `set` and records a props change when `differs`.
-  auto apply = [&](bool differs, auto &&set) {
-    if (differs) {
-      set();
-      changed |= kPropsChanged;
-    }
-  };
-  const bool massChanged =
-      p.mass != o.mass || p.computeMass != o.computeMass ||
-      p.computeCom != o.computeCom || p.density != o.density ||
-      p.inertiaScale != o.inertiaScale || !p.sameInertia(o);
-  if (!shapesRebuilt) {
-    apply(p.friction != o.friction || p.restitution != o.restitution,
-          [&] { world.setMaterialByHandle(h, p.friction, p.restitution); });
-    if (massChanged) {
-      applyBodyMass(world, h, p, e.volume);
-      changed |= kPropsChanged | kMassChanged;
-    }
-    apply(p.filter != o.filter, [&] { world.setFilterByHandle(h, p.filter); });
-  } else if (massChanged)
-    changed |= kMassChanged;
-  apply(
-      p.linearDamping != o.linearDamping ||
-          p.angularDamping != o.angularDamping,
-      [&] { world.setDampingByHandle(h, p.linearDamping, p.angularDamping); });
-  apply(p.gravityScale != o.gravityScale,
-        [&] { world.setGravityScaleByHandle(h, p.gravityScale); });
-  apply(p.ccdThreshold != o.ccdThreshold,
-        [&] { world.setCcdThresholdByHandle(h, p.ccdThreshold); });
-  apply(p.sleepThreshold != o.sleepThreshold,
-        [&] { world.setSleepThresholdByHandle(h, p.sleepThreshold); });
-  apply(p.fastRotation != o.fastRotation,
-        [&] { world.setFastRotationByHandle(h, p.fastRotation); });
-  apply(p.fastObject != o.fastObject,
-        [&] { world.setBulletByHandle(h, p.fastObject); });
-  apply(p.rollingResistance != o.rollingResistance ||
-            !std::equal(p.tangentVelocity, p.tangentVelocity + 3,
-                        o.tangentVelocity),
-        [&] {
-          world.setSurfaceByHandle(h, p.rollingResistance, p.tangentVelocity);
-        });
-  apply(p.contactRecycling != o.contactRecycling,
-        [&] { world.setContactRecyclingByHandle(h, p.contactRecycling); });
-  apply(p.enableSleep != o.enableSleep,
-        [&] { world.setSleepEnabledByHandle(h, p.enableSleep); });
-  apply(p.enabled != o.enabled, [&] {
-    world.setEnabledByHandle(h, p.enabled);
-    if (p.enabled)
-      // Box3D enables a body awake; the awake check after this applies a 0
-      e.awake = true;
-  });
-  e.props = p;
-  return changed;
-}
-
-namespace {
 
 // Queue a point attribute write for after the step.
 void queuePointWrite(Box3DSharedState &st, Box3DBodyMirror &m, unsigned flags,
@@ -1141,14 +625,6 @@ void readSlots(const ScanContext &ctx, int objectId, SlotList &snaps) {
       snaps.size(), [&](size_t i) { readSlot(ctx, objectId, snaps[i]); },
       ctx.anyPrims ? minParallelReadPacked() : minParallelReadPlain());
 }
-
-// ---- step 3 (parallel, chunked): plan the shapes of new and rebuilt bodies
-// Building hulls is the slow part of a new world and of deforming bodies.
-// Box3DWorld's hull calls, ShapeSources and GeorepLookup are thread-safe, so
-// the plans are made here in parallel and the apply pass only creates bodies.
-// Chunked, so Escape is checked in between. Each planned slot's packed
-// primitive is read again here, into one array per scan, rather than kept from
-// step 2 (a heap copy per new body).
 
 // The slots that need a plan: new bodies (unless `dead`) and existing ones
 // being rebuilt.

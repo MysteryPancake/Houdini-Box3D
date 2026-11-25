@@ -62,7 +62,9 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
                            include it
     Box3DSourceSync.cpp    Animated bodies following their source SOP (`followSourceSops`)
     Box3DShapeBuild.cpp    Packed primitives, collision source geometry (pieces, summary cache), buildShapes
-    Box3DPointSync.cpp     One body per point: point state, fingerprint, body settings, shape plans, syncObject
+    Box3DPointSync.cpp     One body per point: point state, fingerprint, the slot passes, syncObject
+    Box3DPointShapes.cpp   A point's shape plan (`planShapes`): size keys, primitive overrides, shape signature
+    Box3DPointBody.cpp     Body settings (dynamic props, mass, type), what a changed setting does, making a body
     Box3DWholeObject.cpp   One body per DOP object (RBD Object etc.): sync and Position write-back
     Box3DWriteBack.cpp     After the step: writeResultsBack (awake bodies and whole objects back to their points)
     Box3DImpacts.cpp       After the step: Impacts data (collectImpacts, recordImpacts)

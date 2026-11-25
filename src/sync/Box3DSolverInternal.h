@@ -4,8 +4,10 @@
 // solver's own files include it). The parts, all in namespace box3dsolver:
 //   Box3DShapeBuild.cpp   collision source geometry, packed primitives,
 //                         building shapes
-//   Box3DPointSync.cpp    one body per point: reading points, settings,
-//                         syncObject()
+//   Box3DPointSync.cpp    one body per point: reading points, the slot
+//                         passes, syncObject()
+//   Box3DPointShapes.cpp  a point's shape plan (planShapes)
+//   Box3DPointBody.cpp    body settings, mass, type, making a body
 //   Box3DWholeObject.cpp  one body per DOP object (RBD Object etc.): sync and
 //                         write-back
 //   Box3DWriteBack.cpp    after the step: write-back to points and whole
@@ -469,7 +471,8 @@ struct GeorepLookup {
   }
 };
 
-// ---- point state and body settings (Box3DPointSync.cpp) ----
+// ---- point state and body settings (Box3DPointSync.cpp, Box3DPointBody.cpp)
+// ----
 
 bool readPointState(const GU_Detail *gdp, const PointAttrs &a, GA_Offset off,
                     const PackedInfo &pk, Box3DBodyPose &out,
@@ -845,5 +848,38 @@ bool ensureResultAttribs(GU_Detail *gdp);
 void hardenWrittenPages(const GU_Detail *gdp,
                         const std::vector<Box3DWriteItem> &items, size_t begin,
                         size_t end, const std::array<GA_Attribute *, 5> &attrs);
+
+// ---- shared by the point-sync files (Box3DPointSync.cpp,
+// Box3DPointShapes.cpp, Box3DPointBody.cpp) ----
+
+// Point attributes that replace a Box3D Data value the user changed, on an
+// object with a Box3D Data node. RBD Packed Object writes several of them onto
+// every point from its own parameters (mass, density, computemass, friction,
+// bounce in Houdini 22.0), so a Box3D Data value set for those does nothing;
+// this makes that visible. A value left at its default is not reported: then
+// the attribute is the only setting (the Box3D Packed Object writes the
+// settings that differ from the defaults as attributes, and its Box3D Data
+// keeps them all at the defaults). Reported once per object: on its first full
+// scan, and again only if the set changes. (`active` is left out: it only takes
+// over Body Type when 0.)
+void noteOverriddenData(const GU_Detail *gdp, Box3DObjectSync &os,
+                        SyncCounts &c, const b3dop::BodySettings &node);
+
+// pscale / scale (a packed point's size is its transform; these only size its
+// fallback box).
+void readPscaleScale(const PointAttrs &a, GA_Offset off, float &ps,
+                     float sc[3]);
+
+// The scale convex / concave shapes depend on: packed row lengths, else pscale
+// * scale.
+bool sizeKey(bool packed, const double m3[9], float ps, const float sc[3],
+             double out[3]);
+
+// A point's shapes from its current attributes and packed geometry. Only the
+// hull cache is touched, no body.
+ShapePlan planShapes(ScanContext &ctx, GA_Offset off, int64_t bodyId,
+                     const PackedInfo &pk, bool staticBody);
+
+enum : unsigned { kPropsChanged = 1, kMassChanged = 2 };
 
 } // namespace box3dsolver

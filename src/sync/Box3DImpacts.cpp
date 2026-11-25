@@ -51,170 +51,194 @@ size_t impactSlot(const std::vector<Box3DImpactSlot> &table, uint64_t key) {
   return i;
 }
 
-void collectImpacts(Box3DSharedState &st, bool append) {
+namespace {
+
+// Plan::same for a contact no earlier step of the frame recorded.
+constexpr uint32_t kNewHit = ~0u;
+
+// Which of an event's four possible records exist, and the object each belongs
+// to (impactPlanRecords). Record r is side r / 2 (the contact as that awake
+// body sees it), the body itself when r is even, the other body when odd.
+struct ImpactPlan {
+  uint8_t mask = 0;
+  int objectId[4];
+  uint64_t key[4];  // impactKey, when the steps are merged
+  uint32_t same[4]; // the earlier step's hit it adds to, or kNewHit
+};
+
+// The hits of one object in st scratch (objects are few: linear search). Groups
+// are reused, not freed, so the hit vectors keep their capacity.
+size_t impactGroupFor(Box3DSharedState &st, int objectId) {
+  for (size_t i = 0; i < st.impactGroupCount; ++i)
+    if (st.impactGroups[i].objectId == objectId)
+      return i;
+  if (st.impactGroupCount == st.impactGroups.size())
+    st.impactGroups.emplace_back();
+  Box3DImpactGroup &g = st.impactGroups[st.impactGroupCount];
+  g.objectId = objectId;
+  g.hits.clear();
+  return st.impactGroupCount++;
+}
+
+// Substeps: a contact an earlier step of the frame already recorded (the same
+// bodies, side and spot) takes this step's impulse instead of a record of its
+// own, so the frame's impulses still add up with one record per contact
+// point, not one per step. Only the hits of the earlier steps are looked up
+// (the table is built here, before this step adds its own), so two points of
+// one step stay two records.
+void indexEarlierImpactHits(Box3DSharedState &st) {
   using Hit = Box3DImpactHit;
+  std::vector<Box3DImpactSlot> &table = st.impactSlots;
+  size_t total = 0;
+  for (size_t g = 0; g < st.impactGroupCount; ++g)
+    total += st.impactGroups[g].hits.size();
+  size_t size = 16;
+  while (size < 2 * total)
+    size *= 2;
+  table.assign(size, Box3DImpactSlot());
+  for (size_t g = 0; g < st.impactGroupCount; ++g) {
+    const std::vector<Hit> &hits = st.impactGroups[g].hits;
+    for (size_t k = 0; k < hits.size(); ++k) {
+      const uint64_t key = hits[k].key;
+      Box3DImpactSlot &s = table[impactSlot(table, key)];
+      if (!s.key) // the first of equal keys keeps the slot
+        s = {key, static_cast<uint32_t>(g), static_cast<uint32_t>(k)};
+    }
+  }
+}
+
+// Pass 1 (parallel): which of each event's records exist, and the object each
+// belongs to. This is the part that reads the bodies' entries. `merge`: the
+// table of the earlier steps' hits is built (indexEarlierImpactHits).
+void impactPlanRecords(Box3DSharedState &st,
+                       const std::vector<b3dop::ContactImpulse> &events,
+                       std::vector<ImpactPlan> &plans, bool merge) {
+  b3dop::Box3DWorld &world = st.world;
+  const bool speedFilter = world.settings().impactMinSpeed > 0.0f;
+  const bool keys = st.impactKeys;
+  const std::vector<Box3DImpactSlot> &table = st.impactSlots;
+  const size_t n = events.size();
+  // The groups that exist before this step adds its hits: where an earlier
+  // step's hits are (read-only while this pass runs).
+  const size_t oldGroups = st.impactGroupCount;
+  const auto oldGroupOf = [&](int objectId) -> size_t {
+    for (size_t g = 0; g < oldGroups; ++g)
+      if (st.impactGroups[g].objectId == objectId)
+        return g;
+    return oldGroups;
+  };
+  // A contact an earlier step recorded (same key, same object): the index of
+  // its hit in its group, else kNewHit.
+  const auto findSame = [&](uint64_t key, int objectId) -> uint32_t {
+    const Box3DImpactSlot &s = table[impactSlot(table, key)];
+    return s.key && s.group == oldGroupOf(objectId) ? s.hit : kNewHit;
+  };
+  plans.resize(n);
+  box3dParallelFor(
+      n,
+      [&](size_t k) {
+        const b3dop::ContactImpulse &ev = events[k];
+        ImpactPlan &plan = plans[k];
+        plan.mask = 0;
+        for (int side = 0; side < 2; ++side) {
+          const bool first = side == 0;
+          const Box3DBodyMirror *e = static_cast<const Box3DBodyMirror *>(
+              first ? ev.userDataA : ev.userDataB);
+          const Box3DBodyMirror *o = static_cast<const Box3DBodyMirror *>(
+              first ? ev.userDataB : ev.userDataA);
+          const bool selfAwake = first ? ev.awakeA : ev.awakeB;
+          const bool otherAwake = first ? ev.awakeB : ev.awakeA;
+          if (!selfAwake || !e || !e->handle || !st.isLive(*e))
+            continue;
+          const bool selfWants = e->sync->addImpact;
+          // The other side, unless it is awake (it records its own) or an
+          // asleep dynamic body.
+          const bool otherWants = o && st.isLive(*o) && o->sync->addImpact &&
+                                  !o->dynamic() && !otherAwake;
+          const b3dop::BodyHandle otherHandle = first ? ev.b : ev.a;
+          if ((!selfWants && !otherWants) ||
+              (speedFilter && !world.hadHitEvent(e->handle, otherHandle)))
+            continue;
+          if (selfWants) {
+            plan.mask |= static_cast<uint8_t>(1u << (2 * side));
+            plan.objectId[2 * side] = e->objectId;
+            plan.key[2 * side] =
+                keys ? impactKey(e, o, otherHandle, false, ev.pos) : 0;
+            plan.same[2 * side] =
+                merge ? findSame(plan.key[2 * side], e->objectId) : kNewHit;
+          }
+          if (otherWants) {
+            plan.mask |= static_cast<uint8_t>(2u << (2 * side));
+            plan.objectId[2 * side + 1] = o->objectId;
+            plan.key[2 * side + 1] =
+                keys ? impactKey(o, e, otherHandle, true, ev.pos) : 0;
+            plan.same[2 * side + 1] =
+                merge ? findSame(plan.key[2 * side + 1], o->objectId) : kNewHit;
+          }
+        }
+      },
+      minParallelWrite(), kCheapGrain);
+}
+
+// Pass 2 (serial): the hits, in event order, so the records do not depend on
+// the threads.
+void impactAddHits(Box3DSharedState &st,
+                   const std::vector<b3dop::ContactImpulse> &events,
+                   const std::vector<ImpactPlan> &plans) {
+  using Hit = Box3DImpactHit;
+  const size_t n = events.size();
+  for (size_t k = 0; k < n; ++k) {
+    const ImpactPlan &plan = plans[k];
+    if (!plan.mask)
+      continue;
+    const b3dop::ContactImpulse &ev = events[k];
+    for (int r = 0; r < 4; ++r) {
+      if (!(plan.mask & (1u << r)))
+        continue;
+      const bool first = (r >> 1) == 0;
+      const Box3DBodyMirror *e = static_cast<const Box3DBodyMirror *>(
+          first ? ev.userDataA : ev.userDataB);
+      const Box3DBodyMirror *o = static_cast<const Box3DBodyMirror *>(
+          first ? ev.userDataB : ev.userDataA);
+      b3dop::ContactPoint cp;
+      cp.other = first ? ev.b : ev.a;
+      b3dop::copy3(cp.pos, ev.pos);
+      const float sgn = first ? 1.0f : -1.0f;
+      for (int c = 0; c < 3; ++c)
+        cp.normal[c] = sgn * ev.normal[c];
+      cp.impulse = ev.impulse;
+      const size_t group = impactGroupFor(st, plan.objectId[r]);
+      if (plan.same[r] != kNewHit) {
+        st.impactGroups[group].hits[plan.same[r]].cp.impulse += cp.impulse;
+        continue;
+      }
+      if (!(r & 1))
+        st.impactGroups[group].hits.push_back({e, o, cp, false, plan.key[r]});
+      else
+        st.impactGroups[group].hits.push_back({o, e, cp, true, plan.key[r]});
+    }
+  }
+}
+
+} // namespace
+
+void collectImpacts(Box3DSharedState &st, bool append) {
   st.impactsCollected = true;
-  // Per-object hits in st scratch (objects are few: linear search). Groups are
-  // reused, not freed, so the hit vectors keep their capacity.
   if (!append)
     st.impactGroupCount = 0;
-  auto groupFor = [&st](int objectId) -> size_t {
-    for (size_t i = 0; i < st.impactGroupCount; ++i)
-      if (st.impactGroups[i].objectId == objectId)
-        return i;
-    if (st.impactGroupCount == st.impactGroups.size())
-      st.impactGroups.emplace_back();
-    Box3DImpactGroup &g = st.impactGroups[st.impactGroupCount];
-    g.objectId = objectId;
-    g.hits.clear();
-    return st.impactGroupCount++;
-  };
-
-  // Substeps: a contact an earlier step of the frame already recorded (the same
-  // bodies, side and spot) takes this step's impulse instead of a record of its
-  // own, so the frame's impulses still add up with one record per contact
-  // point, not one per step. Only the hits of the earlier steps are looked up
-  // (the table is built here, before this step adds its own), so two points of
-  // one step stay two records.
-  std::vector<Box3DImpactSlot> &table = st.impactSlots;
   const bool merge = append && st.impactGroupCount > 0;
-  if (merge) {
-    size_t total = 0;
-    for (size_t g = 0; g < st.impactGroupCount; ++g)
-      total += st.impactGroups[g].hits.size();
-    size_t size = 16;
-    while (size < 2 * total)
-      size *= 2;
-    table.assign(size, Box3DImpactSlot());
-    for (size_t g = 0; g < st.impactGroupCount; ++g) {
-      const std::vector<Hit> &hits = st.impactGroups[g].hits;
-      for (size_t k = 0; k < hits.size(); ++k) {
-        const uint64_t key = hits[k].key;
-        Box3DImpactSlot &s = table[impactSlot(table, key)];
-        if (!s.key) // the first of equal keys keeps the slot
-          s = {key, static_cast<uint32_t>(g), static_cast<uint32_t>(k)};
-      }
-    }
-  }
+  if (merge)
+    indexEarlierImpactHits(st);
 
-  if (wantsImpacts(st)) {
-    b3dop::Box3DWorld &world = st.world;
-    const bool speedFilter = world.settings().impactMinSpeed > 0.0f;
-    if (speedFilter && !st.hitsCollected)
-      world.updateHitEvents();
-    world.getContactImpulseEvents(st.impulseEvents);
-    const bool keys = st.impactKeys;
-    const std::vector<b3dop::ContactImpulse> &events = st.impulseEvents;
-    const size_t n = events.size();
-
-    // Pass 1 (parallel): which of an event's four possible records exist, and
-    // the object each belongs to. This is the part that reads the bodies'
-    // entries. Record r is side r / 2 (the contact as that awake body sees
-    // it), the body itself when r is even, the other body when odd.
-    struct Plan {
-      uint8_t mask = 0;
-      int objectId[4];
-      uint64_t key[4];  // impactKey, when the steps are merged
-      uint32_t same[4]; // the earlier step's hit it adds to, or kNew
-    };
-    constexpr uint32_t kNew = ~0u;
-    // The groups that exist before this step adds its hits: where an earlier
-    // step's hits are (read-only while pass 1 runs).
-    const size_t oldGroups = st.impactGroupCount;
-    const auto oldGroupOf = [&](int objectId) -> size_t {
-      for (size_t g = 0; g < oldGroups; ++g)
-        if (st.impactGroups[g].objectId == objectId)
-          return g;
-      return oldGroups;
-    };
-    // A contact an earlier step recorded (same key, same object): the index of
-    // its hit in its group, else kNew.
-    const auto findSame = [&](uint64_t key, int objectId) -> uint32_t {
-      const Box3DImpactSlot &s = table[impactSlot(table, key)];
-      return s.key && s.group == oldGroupOf(objectId) ? s.hit : kNew;
-    };
-    thread_local std::vector<Plan> planStore; // kept between steps
-    std::vector<Plan> &plans = planStore;
-    plans.resize(n);
-    box3dParallelFor(
-        n,
-        [&](size_t k) {
-          const b3dop::ContactImpulse &ev = events[k];
-          Plan &plan = plans[k];
-          plan.mask = 0;
-          for (int side = 0; side < 2; ++side) {
-            const bool first = side == 0;
-            const Box3DBodyMirror *e = static_cast<const Box3DBodyMirror *>(
-                first ? ev.userDataA : ev.userDataB);
-            const Box3DBodyMirror *o = static_cast<const Box3DBodyMirror *>(
-                first ? ev.userDataB : ev.userDataA);
-            const bool selfAwake = first ? ev.awakeA : ev.awakeB;
-            const bool otherAwake = first ? ev.awakeB : ev.awakeA;
-            if (!selfAwake || !e || !e->handle || !st.isLive(*e))
-              continue;
-            const bool selfWants = e->sync->addImpact;
-            // The other side, unless it is awake (it records its own) or an
-            // asleep dynamic body.
-            const bool otherWants = o && st.isLive(*o) && o->sync->addImpact &&
-                                    !o->dynamic() && !otherAwake;
-            const b3dop::BodyHandle otherHandle = first ? ev.b : ev.a;
-            if ((!selfWants && !otherWants) ||
-                (speedFilter && !world.hadHitEvent(e->handle, otherHandle)))
-              continue;
-            if (selfWants) {
-              plan.mask |= static_cast<uint8_t>(1u << (2 * side));
-              plan.objectId[2 * side] = e->objectId;
-              plan.key[2 * side] =
-                  keys ? impactKey(e, o, otherHandle, false, ev.pos) : 0;
-              plan.same[2 * side] =
-                  merge ? findSame(plan.key[2 * side], e->objectId) : kNew;
-            }
-            if (otherWants) {
-              plan.mask |= static_cast<uint8_t>(2u << (2 * side));
-              plan.objectId[2 * side + 1] = o->objectId;
-              plan.key[2 * side + 1] =
-                  keys ? impactKey(o, e, otherHandle, true, ev.pos) : 0;
-              plan.same[2 * side + 1] =
-                  merge ? findSame(plan.key[2 * side + 1], o->objectId) : kNew;
-            }
-          }
-        },
-        minParallelWrite(), kCheapGrain);
-
-    // Pass 2 (serial): the hits, in event order, so the records do not depend
-    // on the threads.
-    for (size_t k = 0; k < n; ++k) {
-      const Plan &plan = plans[k];
-      if (!plan.mask)
-        continue;
-      const b3dop::ContactImpulse &ev = events[k];
-      for (int r = 0; r < 4; ++r) {
-        if (!(plan.mask & (1u << r)))
-          continue;
-        const bool first = (r >> 1) == 0;
-        const Box3DBodyMirror *e = static_cast<const Box3DBodyMirror *>(
-            first ? ev.userDataA : ev.userDataB);
-        const Box3DBodyMirror *o = static_cast<const Box3DBodyMirror *>(
-            first ? ev.userDataB : ev.userDataA);
-        b3dop::ContactPoint cp;
-        cp.other = first ? ev.b : ev.a;
-        b3dop::copy3(cp.pos, ev.pos);
-        const float sgn = first ? 1.0f : -1.0f;
-        for (int c = 0; c < 3; ++c)
-          cp.normal[c] = sgn * ev.normal[c];
-        cp.impulse = ev.impulse;
-        const size_t group = groupFor(plan.objectId[r]);
-        if (plan.same[r] != kNew) {
-          st.impactGroups[group].hits[plan.same[r]].cp.impulse += cp.impulse;
-          continue;
-        }
-        if (!(r & 1))
-          st.impactGroups[group].hits.push_back({e, o, cp, false, plan.key[r]});
-        else
-          st.impactGroups[group].hits.push_back({o, e, cp, true, plan.key[r]});
-      }
-    }
-  }
+  if (!wantsImpacts(st))
+    return;
+  b3dop::Box3DWorld &world = st.world;
+  if (world.settings().impactMinSpeed > 0.0f && !st.hitsCollected)
+    world.updateHitEvents();
+  world.getContactImpulseEvents(st.impulseEvents);
+  thread_local std::vector<ImpactPlan> planStore; // kept between steps
+  impactPlanRecords(st, st.impulseEvents, planStore, merge);
+  impactAddHits(st, st.impulseEvents, planStore);
 }
 
 void recordImpacts(Box3DSharedState &st, SIM_ObjectArray &objects,
