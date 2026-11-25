@@ -63,36 +63,30 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   graph edge like a Glue bond (`inGlueGraph`; its Glue strength is -1, so the Glue's impulse never breaks it) and so
   merges into compounds, takes part in holds and bridges, and its `weakestBreak` is `bondBreakImpulse` (the weakest of
   the tensile, shear, compressive and a sixth of the bending strength, times the area, for `kBondHoldSeconds`). A bond inside an awake compound has a parked weld, so its
-  load is worked out: each piece needs the force and torque `mass * accel - mass * gravity - external`, the
-  acceleration from the compound's change of velocity over the step (`stepPre`, `recordCompoundMotion` records it
-  while Bonds are in the graph) plus its turning, the piece's own inertia taken as a block of its `radius`, and the
-  external loads from the bridges' welds. The contacts the compound rests on (`contactSupportsByHandle`: every
-  manifold point that carried impulse, except contacts with pieces of the compound's own glue group, whose weld the
-  bridges already take off the pieces) are elastic supports (`BondSupport`, `kSupportStiffness`, the same for every contact that carried at least `kSupportMinShare` of the mean impulse): what they push with
-  is whatever balances the rest, so the friction and the weight the compound's true change of velocity implies are
-  all in, and a rigid compound settles on them the way a rigid beam does on a soft bed, linearly. A support cannot pull (one whose spring ends up pulling is left out and the network solved again,
-  `kBondSupportPasses` times at most), and across its normal it is `kSupportTangent` as stiff, which shares the friction
-  like the normal load and keeps the solve well posed. Without contacts (in the air) nothing is external but the
-  bridges, and what does not add up (Force DOP forces, rounding) is spread over the pieces by mass.
+  load is worked out: each piece needs the force and torque `mass * accel - mass * gravity - external` (the acceleration
+  from the compound's change of velocity over the step, `stepPre`, recorded by `recordCompoundMotion` while Bonds are in
+  the graph, plus its turning; the external loads are the bridges' welds'). The contacts the compound rests on
+  (`contactSupportsByHandle`: every manifold point that carried impulse, except contacts with pieces of the compound's
+  own glue group) are elastic supports (`BondSupport`; `kSupportStiffness` for every contact that carried at least
+  `kSupportMinShare` of the mean impulse), so a rigid compound settles on them as a rigid beam does on a soft bed. A
+  support cannot pull (one that does is left out and the network solved again, `kBondSupportPasses` times at most), and
+  across its normal it is `kSupportTangent` as stiff, which shares the friction like the normal load. In the air nothing
+  is external but the bridges, and what does not add up (Force DOP forces, rounding) is spread over the pieces by mass.
   `core/Box3DBondNetwork.h` (`solveBondNetwork`, `core_bond`) turns those into the bonds' loads: small springs (a
   rigid-body spring network, stiffness in proportion to the bond's area), matrix-free conjugate gradient
   (`kBondSolveIterations`, `kBondSolveTolerance`), started from the compound's last displacement
-  (`Box3DCompound::bondWarm`): a large compound does not converge in one step's iterations, but the loads change little
-  between steps, so the residual keeps falling across them. Compounds are solved in parallel, one task each
-  (`solveCompoundBonds`; `kMinParallelBondSolves`). A diagonal preconditioner did not help (the springs are uniform). A 6x6 block preconditioner per piece did not either (more iterations in all, more support passes). The solve does not converge on a large compound (about two thirds of its conjugate-gradient calls reach `kBondSolveIterations` with a residual near 0.5), so a wall's breaking depends on how many iterations it gets: more makes it break less. Solving only on a frame's first step, or capping the iterations, was faster and made it break more.
+  (`Box3DCompound::bondWarm`). A large compound does not converge in one step's iterations (the residual keeps falling
+  across steps, and a wall's breaking depends on the iterations: more makes it break less), and neither a diagonal nor a
+  per-piece block preconditioner helped. Compounds are solved in parallel (`solveCompoundBonds`;
+  `kMinParallelBondSolves`).
   A compound keeps what its last solve was given and found (`Box3DCompound::bondMemo`), and a step that asks for nearly the
   same reuses the loads and skips the solve (`bondProblemAlike`: the same pieces and bonds, pieces' loads within
   `kBondReuseLoad`, nothing moved by more than `kBondReuseMove`, and no more than `kBondReuseSupports` of the contacts new
   or gone, since a marginal contact comes and goes). It compares with the last solve, not the last step, so the loads stay
   within those tolerances of a solve. A compound that is asleep is not solved at all, so this helps one kept awake.
-  Checked against a hanging chain, two bonds side by side, a cantilever,
-  an even squeeze, an overhang on supports and a support that would pull. A solve that comes out non-finite leaves the bond's last load, and the network is regularized (`kBondRegularization`) so a
+  A solve that comes out non-finite leaves the bond's last load, and the network is regularized (`kBondRegularization`) so a
   piece with no support still solves. A bond held by a bridge reads the bridge
   weld's load. `bond_compound_cantilever` compares the mode with the welds.
-  * The soft bed is an assumption: how a rigid compound's support is split among its pieces is not fixed by statics, and
-  the supports' stiffness against the bonds' is not a material property. Stiffer supports make each piece rest on its
-  own corners and send an overhang's moment through the weakest links. A bond at a free overhang gets the statics' load
-  whatever the stiffness.
   * Contact patch (`core/Box3DPatch.h`, `core_patch`, `bond_patch`; `bondGeometry`): the first step after a Bond is
   made, `hullFacesByHandle` gives each piece's convex faces in world space and `contactPatchOf` clips the faces that
   face each other across a plane (within `kPatchTolerance`) into the overlap polygon, adding the faces in the dominant
@@ -103,13 +97,6 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   bending split about `u` and `v` (`bondLoadInPatch`); a set Contact Area scales the patch, its shape kept. Without a
   patch (the other piece is the world, a non-hull shape, no faces within the tolerance) the bounding-box estimates are used:
   centre-to-centre normal, the smaller bounding-box face, a square patch.
-  * Benchmarks against statics (`core_bond`, `bond_benchmarks`, `bond_invariance`): a hanging box reads its weight to
-  three digits at 24 to 240 Hz and 1 to 8 substeps; stress scales with size (a box twice as big, twice the stress); a
-  box off the side of a fixed one reads its weight in shear and weight times arm in moment at three arms; a beam of two
-  halves on narrow supports reads no shear at the middle and the formula's moment once the supports' horizontal push
-  (friction, 0.25 below the bond) is counted. By bisection the strength at which a bar lets go is 9822 Pa for the
-  formula's 9807, and a beam's bending strength is 223548 Pa as a compound for 223584, 212519 as welds (5% under:
-  friction and sag); the bar's threshold is the same at 24 to 120 fps and 1 to 4 substeps.
 * `jointParams()`: one row per setting (attribute / parameter name, label, kind, joint types using it, member
   pointer, help). The constraint relationship nodes, the primitive attribute reader and `sameJointSettings` are all driven by
   it. `angleTypes` marks a Float that is an angle for some types only (`motor_speed`: revolute deg/s, prismatic and
@@ -119,8 +106,8 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   the type lacks (the parallel joint's spring and the motor joint's springs have none). Only the UI uses it: a disabled
   parameter is still read, and its primitive attribute still overrides it.
   `jointParamUiOrder(type)` is the order the node shows: table order, but each gated setting moves to just below its
-  toggle, so a toggle only greys out the block under it. Parameters are saved by name, so reordering is safe for
-  existing scenes. Keep always-on settings out of the middle of a toggle's block (why `restlength` is near the top).
+  toggle, so a toggle only greys out the block under it. Reordering is safe (parameters are saved by name); keep
+  always-on settings out of a toggle's block (why `restlength` is near the top).
   `jointParamIndices(type)` is the table filtered to the rows a type uses (built once, table order); `sameJointSettings`
   runs for every joint every step and walks only those rows. Per-type loops over the table should use it.
 * `Box3DWorld::defaultJointSettings(type)` copies `b3Default*JointDef`. The nodes start from `nodeJointDefaults(type, ...)`
@@ -193,8 +180,7 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   resolves to a whole object (an RBD Object) the anchor sits at that point (vertex's point) of the object's geometry
   through its geometry transform (`pointAnchorWorld`); on a packed piece, at that point of the piece's own geometry
   through its full transform (`packedAnchorWorld`: the packed point's position plus the geometry point from the pivot through the piece's
-  matrix, then `nowToRest`: authored anchors are at rest), as Bullet (`bullet_anchor_id`: its `distance` feedback fits "the
-  piece's own point" for ids 0 and 5, points and vertices). A packed fragment's own points are those of its primitives
+  matrix, then `nowToRest`: authored anchors are at rest), as Bullet (`bullet_anchor_id`). A packed fragment's own points are those of its primitives
   in the shared source (points in source order, vertices in primitive order: `fragmentAnchorPoint`). `orient` still applies. The position is kept in the entry (`pinA` /
   `pinB`, with the id it was taken for) at first sight, so the body moving is no edit. An id that is no point is
   `badAnchorId`: no joint. `-1` or a missing attribute: `P`. On the world and affectors the id is ignored.
@@ -242,10 +228,8 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
     later (a world rebuilt mid-simulation) is made from them (`createJoint(..., framesAreLocal)`) when they still
     agree with the live values: `localToWorld(body, local)` must land on the point's `current_P` / `current_orient` (1e-5
     relative, quaternion dot 1 - 1e-6), which holds when all three were written after the same step and fails for
-    a renamed, moved or new anchor (a zero `local_orient` means none). This makes rebuilds exact: going through
-    float world positions loses ~1 float step at the coordinates' size per rebuild (4.6e-4 at x = 12000 in the
-    test), the local frames are small offsets kept bit for bit (`asLocalFrame` in Box3DWorldJoints.cpp only renormalises a quaternion
-    that is not already unit length). The live `current_*` are still read: to make new joints and to see edits.
+    a renamed, moved or new anchor (a zero `local_orient` means none). This makes rebuilds exact (float world positions lose about a float step at the coordinates' size per rebuild;
+    `asLocalFrame` only renormalises a quaternion). The live `current_*` are still read: to make new joints and to see edits.
   * Edits: the entry remembers the authored anchors it was made from (`authA` / `authB`) and what it wrote
     (`wroteA` / `wroteB`), as stored in float. A reprocessed network whose `P` / `orient` differ from the first, or
     whose `current_*` differ from the second (1e-5 relative; q and -q equal), was edited upstream (a SOP Solver): the
@@ -256,11 +240,10 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
     `auto_restlength` primitive attribute (created with default -1), so a rebuild keeps the rest length instead of
     the current, stretched distance. Not `restlength`: that attribute multiplies the node's value, and -1 times the
     distance would be negative again. It is only read while the joint's rest length is negative.
-  * Our writes bump `current_P` / `current_orient`, which are in the network fingerprint; the fingerprint is re-recorded after the
-    write, so an unchanged network still skips. Writing happens every step, except for a network whose joints are
-    all quiet (`markQuietJoints`): bodies at rest and already written that way, or joints that broke and had their last
-    values written. With nothing broken and no Enable Aging, that network is left alone: no write lock, no new data
-    ids, no fingerprint.
+  * Our writes bump `current_P` / `current_orient` (in the network fingerprint), so the fingerprint is re-recorded after
+    the write and an unchanged network still skips. Writing happens every step except for a network whose joints are all
+    quiet (`markQuietJoints`: bodies at rest and already written, or broken joints with their last values written); with
+    nothing broken and no Enable Aging it is left alone (no write lock, new data ids or fingerprint).
   * A Constraint Network with Overwrite with SOP re-imports the SOP every step, dropping `current_*`: the joints
     carry on (their signature leaves the frames out), but a world rebuilt from a cached frame other than the first
     makes them from the authored anchors there.

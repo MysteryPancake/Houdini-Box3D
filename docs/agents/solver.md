@@ -26,10 +26,7 @@ and its 3x3, and what the body was built from (`props`, `volume`, `shapeSig`, `s
 `animated`, `driven`, `sleeping`). Box3D's body user data points at the entry, so entries live in `Box3DMirrorMap`'s
 slab of fixed-size chunks (never moved; a `std::deque` would give each of these 500-byte entries its own heap block), found
 through a flat key table, and are erased only with their body. A fresh world's `reserveMirror` allocates the chunks on the TBB
-pool, which touches their pages there, and `collectSlots` does the same for the slot list. Entries are made when handed out, so
-they are in the cache when used; making one is memory bound (about 100 ns of cold writes), so a smaller `Box3DBodyMirror` is what
-would cut the rest.
-The entry's fields are ordered hot first (pose, handle, type, stamp, point, packed data: what the write-back, forces and the
+pool, which touches their pages there, and `collectSlots` does the same for the slot list. The entry's fields are ordered hot first (pose, handle, type, stamp, point, packed data: what the write-back, forces and the
 quiet-point check read per body), then the settings it was built from; keep new per-step fields in the first part.
 
 Scratch reused every step: `slots` (per object: offset, key, cached entry, freshly read state and this scan's shape
@@ -93,18 +90,19 @@ built by `buildCollisionGuide` from the live world (`bodyShapeOutlines`: hulls, 
 the pose the displayed frame's geometry shows, so cached frames draw where the pieces were. Open polylines with `Cd`,
 dimmed for sleeping and static / kinematic bodies. The mutex is only tried: a guide asked for mid-step is skipped.
 
-**Export Collision Shapes** (`exportshapes`, Visualization tab; `exportCollisionShapes` in `Box3DGuide.cpp`). The same
-lines (`drawObjectShapes`, shared with the guide) as world-space open polylines in a `SIM_GeometryCopy` named
-`kShapesDataName` (`Box3DShapes`) on every object with bodies, updated each step after the point writes (the solver
-holds the mutex; poses are the mirror's, from the object's `bodies` list, so no geometry is read; a whole object is read from its
-Position data). A hull's or mesh's lines share its vertices as points. The outlines are kept in body
-space (`Box3DShapeExport`, `shapeExports`); a step only moves the points of bodies whose pose changed and recolours those whose shade
-did (found in parallel, written in parallel once `kMinParallelMovers` bodies changed, after the attributes' pages are hardened). A step with no move event,
-no scanned object and the same `bodyVersion` as the last export (`shapesFresh`) writes nothing: the geometry the object carries over is right. The geometry stores the signature of the bodies and shapes it was built for (`kShapesSigName` detail attribute: handle, `shapeSig`,
-shape count, body type, scale of each); a different signature or a geometry that does not match (another timeline) builds it again. `Cd` is white times the dimming; the SOP tints it. The Box3D Solver
-SOP's `GUIDE_GEO` imports it (see [solver-sop.md](solver-sop.md)); turning the toggle off stops writing but leaves the last data
-in the cache. A static concave piece's mesh is drawn as its boundary and creased edges (`meshOutline` in `Box3DWorld.cpp`, thinned past `kMaxMeshOutlineEdges`; test `collision_shapes_mesh`). Not drawn: affector colliders, and anything on an object's creation frame without Solve On Creation Frame (no
-body yet; expected).
+**Export Collision Shapes** (`exportshapes`, Visualization tab; `exportCollisionShapes` in `Box3DGuide.cpp`). The guide's
+lines (`drawObjectShapes`) as world-space open polylines in a `SIM_GeometryCopy` named `kShapesDataName` (`Box3DShapes`) on
+every object with bodies, updated each step after the point writes (the solver holds the mutex; poses are the mirror's, so
+no geometry is read; a whole object is read from its Position data). A hull's or mesh's lines share its vertices as
+points. The outlines are kept in body space (`Box3DShapeExport`, `shapeExports`); a step only moves the points of bodies
+whose pose changed and recolours those whose shade did (in parallel past `kMinParallelMovers` bodies). A step with no move
+event, no scanned object and the same `bodyVersion` as the last export (`shapesFresh`) writes nothing. The geometry stores
+the signature of what it was built for (`kShapesSigName` detail attribute: handle, `shapeSig`, shape count, body type,
+scale of each); a different signature or a geometry from another timeline builds it again. `Cd` is white times the
+dimming; the SOP tints it. The Box3D Solver SOP's `GUIDE_GEO` imports it ([solver-sop.md](solver-sop.md)); turning the
+toggle off stops writing but leaves the last data in the cache. A static concave piece's mesh is drawn as its boundary and
+creased edges (`meshOutline` in `Box3DWorld.cpp`, thinned past `kMaxMeshOutlineEdges`; test `collision_shapes_mesh`). Not
+drawn: affector colliders, and anything on an object's creation frame without Solve On Creation Frame (no body yet).
 
 **New objects.** Objects in `newobjects` (created this timestep) keep their initial state unless their object node has
 Solve On Creation Frame on (`SIM_Object::getSolveFirstFrame()`, as Bullet): `solveObjectsSubclass` drops the others
@@ -200,9 +198,9 @@ body's attributes and packed transform).
 
 Only dynamic bodies are written; of several points sharing an `id`, only the first.
 
-**Cost.** With the simulation cache on, the first writable access to an object's Geometry makes Houdini copy the previous frame's
-geometry (about 2.4 ms for 30000 packed bodies, in `box3dWritableGeometry`); it is Houdini's, and gone with Cache Simulation off.
-Running it on a pool task while `b3World_Step` runs made the step slower than the copy took (Box3D's workers wait on each other at every stage).
+**Cost.** With the simulation cache on, the first writable access to an object's Geometry makes Houdini copy the previous
+frame's geometry (about 2.4 ms for 30000 packed bodies, in `box3dWritableGeometry`); it is Houdini's, and gone with Cache
+Simulation off. Doing it on a pool task during `b3World_Step` was slower than the copy.
 
 ### Threading
 
@@ -215,7 +213,17 @@ Worker count: `autothreads` (off by default) = `UT_Thread::getNumProcessors()`, 
 `defaultWorkerCount()`, `Box3DCpu.h`: physical performance cores), never above Houdini's count; a change rebuilds the
 world.
 
-The step's own per-body passes run in parallel too: `mergeMoveEvents` (the frame's first step's events are the moves, their bodies noting a slot only if a later step needs it, `moveSlotsPending`; a later step with the same bodies in the same order replaces them without touching a body; else events are sorted into overwrite / new slot / no entry, slots numbered by a serial pass), `collectMovedBodies` (kinds, a serial numbering pass, then the items) and `resolvePointOffsets` (stored offsets checked in parallel, only the moved points looked up serially), with `kCheapGrain` tasks. The shape-type (`GeorepLookup`), source-summary and fit lookups of the parallel shape pre-pass keep each thread's last hit (a key is a function of its content), so the threads do not all take the same shared lock per point. `planShapes` keeps each thread's last build (`ShapeMemo`: keyed by the source's shared implementation, shape type, packed scale and pivot, pscale / scale, autofit, static, the primitive overrides; valid for one scan, the `georep.generation`), so the instances of one packed source in a run build their shapes once (test `instances_differ`). A `thread_local` scratch vector must be bound to a reference before a lambda uses it: each worker thread has its own copy. Test `parallel_matches_serial` compares one thread with all. The plugin's loops use `UTparallelFor` past thresholds (`kMinParallelPoints` and neighbours, `kMinParallelForces` for Force DOPs, in
+The step's own per-body passes run in parallel too: `mergeMoveEvents` (a frame's first step's events are the moves, their
+bodies noting a slot only if a later step needs it, `moveSlotsPending`; a later step with the same bodies in the same order
+replaces them without touching a body, else events are sorted into overwrite / new slot / no entry and slots numbered by a
+serial pass), `collectMovedBodies` and `resolvePointOffsets` (stored offsets checked in parallel, only the moved points
+looked up serially), with `kCheapGrain` tasks. The shape-type (`GeorepLookup`), source-summary and fit lookups of the
+parallel shape pre-pass keep each thread's last hit, so the threads do not all take the same shared lock per point.
+`planShapes` keeps each thread's last build (`ShapeMemo`: keyed by the source's shared implementation, shape type, packed
+scale and pivot, pscale / scale, autofit, static, the primitive overrides; valid for one scan, the `georep.generation`), so
+the instances of one packed source build their shapes once (test `instances_differ`). A `thread_local` scratch vector must
+be bound to a reference before a lambda uses it: each worker thread has its own copy. Test `parallel_matches_serial`
+compares one thread with all. The plugin's loops use `UTparallelFor` past thresholds (`kMinParallelPoints` and neighbours, `kMinParallelForces` for Force DOPs, in
 `Box3DSolverInternal.h`; overridable from the environment in debug builds); parallel lambdas only read shared data or
 write their own element. The world and mirror are touched in serial passes; the shared-state mutex is held for the
 whole step.

@@ -63,20 +63,20 @@ equal to what its body was built with.
   (`setSurfaceByHandle`) also rebuild the body's contacts, because Box3D skips material updates on recycled contacts.
   Affector meshes keep these out of their signature, so an animated belt speed updates the shapes, not the mesh.
 * **Impacts** (Box3D Data Add Impact Data): `recordImpacts` records Box3D's contact impulse events of the step (one per
-  manifold point, in the awake set) for both bodies whose object asks (the sleeping side too, unless it is an asleep dynamic body). A fresh
-  `SIM_Impacts` each step (`addPointImpact`, normal pointing at the body that gets the impact); no Feedback data.
-  `collectImpacts` decides each event's records in a parallel pass (up to four per event: each awake side, itself and the other
-  body), including the merge key and the earlier step's hit it joins (Substeps), then appends them in event order in a serial pass,
-  so the records do not depend on the threads. `addPointImpact` is most of the cost (about 110 ns a record, with the arrays
-  pre-sized or not), so a frame's time grows with the number of manifold points in contact.
+  manifold point, in the awake set) for both bodies whose object asks (the sleeping side too, unless it is an asleep
+  dynamic body), as a fresh `SIM_Impacts` each step (`addPointImpact`, normal pointing at the body that gets the impact;
+  no Feedback data). `collectImpacts` decides each event's records (up to four: each awake side, itself and the other
+  body) in a parallel pass, with the merge key and the earlier step's hit it joins (Substeps), then appends them in event
+  order serially, so the records do not depend on the threads. `addPointImpact` is most of the cost, so a frame's time
+  grows with the manifold points in contact.
 * **Dead** (`dead`): never stamped, so the body goes. With Reap Dead Points the point is queued as a `Box3DDeletion`;
   `deleteDeadPoints` resolves all queued points before deleting any, then bumps data ids and forces a scan.
 * **Aging** (solver Enable Aging): `age += dt` on every point (not on the creation frame without Solve On Creation
-  Frame), and with a `life` attribute `dead = 1` once `age > life`, a life of 0 or less included (no `life` never
-  dies), as RBD Bullet Solver (`solver_sop_aging_bullet`) and, for a positive life, POP (`aging_vs_pop*`). Reap Dead
-  Points is on by default, as Bullet always deletes dead points. Reap At Frame End deletes it in the same step, else
-  the next sync does. The Solver SOP's age stage (an Attribute Create with Write Values off) gives the pieces `age` 0 before the first step, as Bullet's
-  Age Attribute. Constraint primitives age too, as Bullet's (`ageConstraints` in `Box3DJointBreak.cpp` adds the time step to their `age`,
+  Frame), and with a `life` attribute `dead = 1` once `age > life`, a life of 0 or less included (no `life` never dies), as
+  RBD Bullet Solver (`solver_sop_aging_bullet`) and, for a positive life, POP (`aging_vs_pop*`). Reap Dead Points is on by
+  default, as Bullet always deletes dead points; Reap At Frame End deletes in the same step, else the next sync does. The
+  Solver SOP's age stage (an Attribute Create with Write Values off) gives the pieces `age` 0 before the first step.
+  Constraint primitives age too (`ageConstraints` in `Box3DJointBreak.cpp` adds the time step to their `age`,
   `create_constraint_age` makes it 0 on the first frame, `life` is ignored: `solver_sop_constraint_aging_bullet`).
   Parallel past `kMinParallelPoints`.
 * **Active age** (Solver SOP only, `tools/b3d_solver_activeage.py`; Add Active Age Attribute and Just Activated under
@@ -90,27 +90,26 @@ equal to what its body was built with.
 (`forEachObjectRun`), offsets via `resolvePointOffsets`, then `noteOwnWrite`.
 
 **Rest transform** (packed points, Bullet's convention): `restxform` (4x4, the packed transform at rest; all zero =
-unset), `pivot` (P at rest) and `orient` = the rotation since rest, so Transform Pieces needs no rest input. Bodies
-stay absolute inside: `readPointState` reads `restRotation(restxform) * orient` (`box3dRestToAbsolute`) once restxform is
-set, else the packed rotation; the write-back writes `orient` with `box3dAbsoluteToRest` from the entry's `restRot` and the
+unset), `pivot` (P at rest) and `orient` = the rotation since rest, so Transform Pieces needs no rest input. Bodies stay
+absolute inside: `readPointState` reads `restRotation(restxform) * orient` (`box3dRestToAbsolute`) once restxform is set,
+else the packed rotation; the write-back writes `orient` with `box3dAbsoluteToRest` from the entry's `restRot` and the
 packed transform as before. A new packed body (`initRest`) takes `restRot` from a set restxform, else from its packed
 transform stored as float (what the attribute will hold, so both paths split the same matrix) and queues `kRest`:
-restxform, `pivot` = P, `orient` from the mirror's pose (identity unless it moved this step). As Bullet's solver, an
-incoming restxform is kept: resetting it when an object is created is the object's job (the Box3D Packed Object's SOP
-stage, as RBD Packed Object's; [assets.md](assets.md)), so a world rebuilt mid-simulation keeps the rest too. Editing only a packed
-transform after rest is ignored, as in Bullet: edit `orient` / `P`. `restPos` (the packed pivot through restxform)
-is where the body's origin was at rest; joints map authored anchors with it ([joints.md](joints.md)).
+restxform, `pivot` = P, `orient` from the mirror's pose. As in Bullet's solver an incoming restxform is kept: resetting it
+when an object is created is the object's job (the Box3D Packed Object's SOP stage, [assets.md](assets.md)), so a world
+rebuilt mid-simulation keeps the rest too. Editing only a packed transform after rest is ignored, as in Bullet: edit
+`orient` / `P`. `restPos` (the packed pivot through restxform) is where the body's origin was at rest; joints map
+authored anchors with it ([joints.md](joints.md)).
 
 ## Building shapes (`addPointBody`, `planShapes`, `buildShapes`)
 
-* Unpacked geometry: a point on a primitive that is not packed (`Box3DPointSlot::unpackedPrim`, set in `readSlot`)
-  gets no body, and a body it had is removed. An object with such points and no packed point is not simulated at all
-  (returns before any body is made, so its bodies are removed): a warning naming it, with RBD Bullet Solver's wording
-  and severity (`SyncCounts::unsupportedObjects`); with packed points too, a warning (`unpackedPrimPoints`). Loose points (no vertex) stay bodies: a Box3D extension (`pscale` / `bullet_georep` points; tests `pscale`,
-  `messages`). RBD Bullet Solver gives its unsupported-geometry warning for them instead (`unpacked_geometry_bullet`).
-  RBD Point Object is not this path: it makes whole objects (`other_rbd_objects`). Either keeps the object
-  scanning every step (`problemCount`), so the message repeats. Tests `unpacked_geometry`, and
-  `unpacked_geometry_bullet` (INFO: what Bullet does with the same inputs).
+* Unpacked geometry: a point on a primitive that is not packed (`Box3DPointSlot::unpackedPrim`, set in `readSlot`) gets no
+  body, and a body it had is removed. An object with such points and no packed point is not simulated at all (a warning
+  naming it, with RBD Bullet Solver's wording and severity: `SyncCounts::unsupportedObjects`); with packed points too, a
+  warning (`unpackedPrimPoints`). Loose points (no vertex) stay bodies, a Box3D extension (`pscale` / `bullet_georep`
+  points; tests `pscale`, `messages`) where Bullet gives its unsupported-geometry warning (`unpacked_geometry_bullet`).
+  RBD Point Object is not this path: it makes whole objects (`other_rbd_objects`). Either keeps the object scanning every
+  step (`problemCount`), so the message repeats. Tests `unpacked_geometry`, `unpacked_geometry_bullet`.
 
 * Defaults: `nodeBodyDefaults()` (Box3DWorld.h), Bullet's RBD values, also for objects without Box3D Data.
   `BodySettings()` keeps the core's own values for direct use of `Box3DWorld`.

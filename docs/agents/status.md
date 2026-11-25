@@ -11,14 +11,13 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 
 **Not yet run in Houdini**
 
-* Glue as One Body releasing the pieces in a fast body's way (`holdCompoundsForApproach`,
-  [glue-compound.md](glue-compound.md)): only the `building` example has run it (`glue_compound_hit`). At Strength
-  20000 most of its bonds break from the building's weight on the ground in both modes before anything hits it:
-  Glue counts a resting body's contact impulse as a hit, as Bullet does ([joints-sidefx.md](joints-sidefx.md)). Not checked: other scenes, a slow heavy
-  body (the example's slow ball lands on the roof), many glued groups at once, the cost of a very large compound, a
-  kinematic body in a scene (only the core query is tested), the force and torque a bond reads while its weld is a
-  bridge's (the bond's own joint is parked, so they read zero), bridges of bonds remade while pieces are held, and what
-  the `clang-tidy` checks say about the files that need the HDK (`src/sync`, `src/dop`).
+* Glue as One Body releasing the pieces in a fast body's way (`holdCompoundsForApproach`, [glue-compound.md](glue-compound.md)):
+  only the `building` example has run it (`glue_compound_hit`). At Strength 20000 most of its bonds break from the
+  building's weight in both modes before anything hits it (Glue counts a resting body's contact impulse as a hit, as Bullet
+  does: [joints-sidefx.md](joints-sidefx.md)). Not checked: other scenes, a slow heavy body, many glued groups, a very large
+  compound's cost, a kinematic body in a scene (only the core query is tested), the force and torque a bond reads while its
+  weld is a bridge's (its own joint is parked, so they read zero), bridges of bonds remade while pieces are held, and
+  `clang-tidy` on the HDK files (`src/sync`, `src/dop`).
 
 * Packed Object Initial Object Type (`initialstate`): not checked are the Solver SOP's collision object (Custom), the Pieces tab's
   Body Type greying out with the menu (hython's `Parm.isDisabled()` never evaluates conditionals: Auto Fit's reads False too, so
@@ -125,14 +124,15 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   ends at 1.1 to 2.3 in Box3D (it clips into the collider: fork list) and at 1.0 in Bullet.
 * The proxy output with no proxy input is a copy of the geometry in Box3D and empty in Bullet (`solver_sop_before_start_bullet`).
 * With both anchors at one point (`bullet_joint_rest`, INFO) the centres end 2.19 and 2.59 apart, past the 2.06 possible.
-* Hand-set shapes: `bullet_primS`, `bullet_primR` (XYZ Euler degrees), `bullet_radius` and `bullet_length` match (`bullet_shape_attributes`, `bullet_primr_order`).
-  Differences kept on purpose (`bullet_shape_position`, `bullet_shape_probe`): Bullet drops a dynamic hand-set piece's x and z (to 0 plus `bullet_primT`'s),
-  takes the height from `bullet_primT`'s y, and finds a static piece away from the origin at the origin; Box3D keeps the shape on the piece with `bullet_primT`
-  as an offset, as copying Bullet would move every hand-set piece to the world origin. Bullet's dynamic box rests lower than Box3D's by the shape's vertical
-  half extent as first turned (the rule fits every case probed). Not understood: with `bullet_primR` 30 0 60 the piece fell through the ground in Bullet
-  (`bullet_primr_through`: 30 0 0, 0 0 30, 0 0 60, 30 0 30 and 0 0 45 end 0.14 to 0.47 below it, Box3D always at 0.10). A tilted box's top is a corner the
-  plate test stops on roughly (0 70 50: Box3D 0.44, Bullet 0.33, true 0.437), so that case is not compared. Not compared: `deforming`, `bullet_autofit_valid`,
-  AutoFit on whole objects and fractured pieces.
+* Hand-set shapes: `bullet_primS`, `bullet_primR` (XYZ Euler degrees), `bullet_radius` and `bullet_length` match
+  (`bullet_shape_attributes`, `bullet_primr_order`). Kept differences (`bullet_shape_position`, `bullet_shape_probe`):
+  Bullet drops a dynamic hand-set piece's x and z (to 0 plus `bullet_primT`'s), takes the height from `bullet_primT`'s y and
+  finds a static piece away from the origin at the origin, where Box3D keeps the shape on the piece with `bullet_primT` as
+  an offset (copying Bullet would move every hand-set piece to the world origin). Bullet's dynamic box rests lower by the
+  shape's vertical half extent as first turned. Not understood: with `bullet_primR` 30 0 60 the piece fell through the
+  ground in Bullet (`bullet_primr_through`: other angles end 0.14 to 0.47 below it, Box3D always at 0.10). A tilted box's top
+  is a corner the plate test stops on roughly, so that case is not compared. Not compared: `deforming`,
+  `bullet_autofit_valid`, AutoFit on whole objects and fractured pieces.
 * Impacts: a box landing and resting for 3 s has Box3D records on 13 frames (at most 8 on one),
   Bullet's on 49 (at most 40) because Bullet keeps writing contacts at rest (`bullet_impact_fresh`). Whether a fresh `SIM_Impacts` each step suits Houdini's
   impact tools is open.
@@ -160,12 +160,13 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * `anchor_id`: untested are other ids (a fragment's points are taken in source order,
   its vertices in primitive order), a piece that has moved before its joint is made (`nowToRest`), and non-fragment packed
   pieces.
-* Glue's impulse model (`core/Box3DGlue.h`, `glue_break_match`): `impact` matches Bullet's. The Strength at which a bond stops breaking does not match: Bullet breaks at about its `impact`
-  (1.0x) when something hits a resting glued pair or row, and at 3x to 10x when the glued pieces land themselves (more with
-  speed, bounce and the number of pieces, and with a piece's height more than its mass), where Box3D uses one factor,
-  `kGlueStrengthScale` (5.3, measured for a landing from 3). So a hit on a resting structure needs about 5x the Strength
-  in Box3D that it does in Bullet. Anchor position and rest length change neither. Not understood: what makes Bullet's
-  break value larger than its `impact`. Unchecked: the cost of reading every glued body's contacts each step on a large network.
+* Glue's impulse model (`core/Box3DGlue.h`, `glue_break_match`): `impact` matches Bullet's. The Strength at which a bond
+  stops breaking does not: Bullet breaks at about its `impact` (1.0x) when something hits a resting glued pair or row, and
+  at 3x to 10x when the glued pieces land themselves (more with speed, bounce, piece count and a piece's height), where
+  Box3D uses one factor, `kGlueStrengthScale` (5.3, measured for a landing from 3). So a hit on a resting structure needs
+  about 5x the Strength in Box3D that it does in Bullet. Anchor position and rest length change neither. Not understood: what
+  makes Bullet's break value larger than its `impact`. Unchecked: the cost of reading every glued body's contacts each step
+  on a large network.
 * What the precompiled headers (`BOX3DDOP_PCH`) save: not measured.
 * Transform Pieces with packed transforms that carry scale or shear.
 * Constraints output through Transform Pieces: constraints between collision pieces (not in the simulation points, so
@@ -268,15 +269,3 @@ Workarounds in the wrapper that the engine could own, roughly by value:
   avoid the call.
 * **Wheel angular separation.** `b3Joint_GetAngularSeparation` is a todo that asserts for wheel joints, so
   `jointFeedback` returns 0.
-
-## HDK calls checked
-
-Against the HDK reference, so they need no re-checking: `GU_PrimPacked` (`isPackedPrimitive`, `getPackedDetail`,
-`sharedImplementation`, `getFullTransform4`, `setLocalTransform`, `getPivot`, `transformDirty`),
-`GU_PackedFragment` (`getPrimitiveRange`, `detailPtr`), `UTgetInterrupt` / `opInterrupt`,
-`UT_PerfMonAutoSolveEvent`, the geometry locks, `GA_Detail` / `GA_PrimitiveList` / `GA_Attribute` data ids and the
-point / vertex / primitive maps, `GA_AIFSharedStringTuple`, `SIM_DATA_CREATE` flags, `SIM_Impacts::addPointImpact`,
-`SIM_Object` relationships, `SIM_ConstraintNetworkRelationship::getGeometry`, `SIM_ConRel`, the
-`DECLARE_DATAFACTORY` expansions, `UT_Matrix3D::extractScales`, `UT_QuaternionT` matrix conversions,
-`PRM_Conditional`, `SIMgetGeometryTransform`, `SIM_Relationship::getAffGroupObject`, the `GEO_PrimVolume` /
-`UT_VoxelArrayIterator` calls in Box3DAffectors.cpp, node icons as `config/Icons/DOP_<name>.svg`.

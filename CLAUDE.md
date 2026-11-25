@@ -81,7 +81,7 @@ Load only the file for the area you are changing.
 | [docs/agents/joints-sidefx.md](docs/agents/joints-sidefx.md) | SideFX constraint data (Glue, Hard, Spring, Soft, Cone Twist) mapped to joints, frame offsets |
 | [docs/agents/glue-compound.md](docs/agents/glue-compound.md) | Glue as One Body (`gluecompound`) |
 | [docs/agents/reference.md](docs/agents/reference.md) | Parameters, point attributes, node warnings, what is not supported, the parameter-tab builder |
-| [docs/agents/status.md](docs/agents/status.md) | Unverified, TODO, HDK calls checked |
+| [docs/agents/status.md](docs/agents/status.md) | Unverified, TODO |
 
 **Values that live in code stay in code.** Defaults, counts, thresholds and sizes are not copied into these files: name
 the constant or table and its file (`kMinParallelPoints` in `Box3DSolverInternal.h`, `kPropAttribNames` in
@@ -114,7 +114,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DRbdObject.h    Header-only: an RBD Object's own mass / friction / bounce / Bullet Data shape -> whole-object settings
     Box3DWorld.h/.cpp   Pimpl wrapper over one b3World: bodies, shapes, hulls, settings; defines TaskRunner
     Box3DWorldJoints.cpp  Box3DWorld's joint methods
-    Box3DWorldInternal.h  The world's private state (Impl) shared by those two .cpp files. With them (and `Box3DSideFX.cpp`, for `<box3d/math_functions.h>`), the ONLY files that include Box3D headers
+    Box3DWorldInternal.h  The world's private state (Impl) shared by those two .cpp files; with them (and `Box3DSideFX.cpp`, for `<box3d/math_functions.h>`) the only files that include Box3D headers
     Box3DAffectorMath.h Header-only: affector (Static Object) transform math
     Box3DDebug.h        B3D_LOG / counters, compiled out unless BOX3DDOP_DEBUG (args still type-checked, never evaluated)
   dop/                Houdini SIM_Data classes: the nodes and the world cache
@@ -145,36 +145,17 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DHoudiniTasks.h TaskRunner on Houdini's TBB pool (UT_TaskGroup). Only SIM_Box3DWorld.cpp includes it
 examples/            make_examples.py: builds demo scenes into examples/scenes (git-ignored)
 package/             Box3D.json.in: the Houdini package file the build configures
-tools/               make_assets.py (runs the four asset builders in one hython, as the build does),
-                     make_packed_object.py, make_configure_sop.py, make_constraint_properties_sop.py, make_solver_sop.py (the assets; the Solver SOP's inner builders are in b3d_solver_common.py, b3d_solver_network.py, b3d_solver_dops.py, b3d_solver_ground.py, b3d_solver_constraints.py, b3d_solver_breaks.py, b3d_solver_activeage.py, b3d_solver_updates.py and b3d_solver_help.py; b3d_solver_state.py, b3d_configure_state.py and b3d_constraint_properties_state.py are the SOPs' viewer states, read as text by the builders; b3d_layouts.py places both SOP assets' nodes),
-                     b3d.py (finds Houdini; runs the checks, examples, benchmarks or ctest on any OS), b3d_hda.py (warn, create, set_operations and the parameter-template helpers the asset builders share), b3d_prepare.py (the input packing both SOP assets share), b3d_materials.py (Configure's material presets), find_houdini.bat (finds HFS for test.bat, make_examples.bat and build.bat), b3d_settings.py (Box3D Data's
-                     settings as point attributes and the creation-frame rest, for Configure and the Packed Object),
-                     check_docs.py,
-                     houdini_network_dump.py (dumps a node's networks to text, for reading SideFX assets)
+tools/               make_assets.py (the four asset builders in one hython, as the build does), make_packed_object.py,
+                     make_configure_sop.py, make_constraint_properties_sop.py, make_solver_sop.py (the assets; its inner builders are
+                     b3d_solver_*.py, the SOPs' viewer states b3d_*_state.py, read as text by the builders), b3d.py (finds Houdini; runs
+                     the checks, examples, benchmarks or ctest on any OS), b3d_hda.py (helpers the builders share), b3d_prepare.py
+                     (input packing), b3d_materials.py, b3d_settings.py, b3d_layouts.py (node placement), find_houdini.bat,
+                     check_docs.py, houdini_network_dump.py (dumps a node's networks to text)
 docs/agents/         Technical notes by area; CLAUDE.md is the index ("Where to look")
 tests/
-  TestUtil.h          CHECK macro and failure counter shared by the core tests
-  WorldTestUtil.h     Box body, joint frame, position and step helpers for the tests that build a Box3DWorld
-  KeyedWorld.h        Test-only Box3DWorld subclass: bodies by caller-chosen id, over the handle API (and the toppling box grid the thread tests share)
-  core_smoke.cpp      Version print + world create/destroy
-  core_physics.cpp    Unit + physics checks: the case list, main and the basic body cases (CHECK macro, nonzero exit on failure)
-  physics_shapes.cpp  Physics cases for shapes, hulls, primitive overrides and extents (declared in PhysicsCases.h)
-  physics_bodies.cpp  Physics cases for body settings, filtering, forces, sleep and world settings
-  core_mesh.cpp       Static triangle meshes, mesh scale, decomposeScaledRigid
-  core_heightfield.cpp Static height fields: pose, scale, ramps, holes, refused input
-  core_ground.cpp     Static ground boxes (Ground Plane): resting, tumbling hulls, troughs, slopes, no tunnelling, refused input
-  core_quadrics.cpp   Quadric primitive surface points: sizes, position, transform
-  core_threads.cpp    1 worker vs N workers: timing + determinism
-  core_taskrunner.cpp Host-supplied TaskRunner shared by 40+ worlds: no extra threads, same results as 1 worker
-  core_worlds.cpp     Threads creating, stepping and destroying their own worlds at once
-  core_joints.cpp     Every joint type, world anchors, live updates, breaking, feedback, the parameter table
-  core_glue.cpp       Glue's impulse model: the Glue help's example, rounds, decay, breaking
-  core_bond.cpp       Bond stress ratio, tear impulse, area, a Bond joint under a hanging weight, the spring network's loads,
-                      benchmarks against statics
-  core_patch.cpp      Contact patches: area, centroid, moments, tolerance, the faces of a box body
-  core_sidefx.cpp     SideFX constraint data: option table, mapping per type / constraint_type, frame offsets, behaviour
-  core_compound.cpp   A compound body as glued pieces: mass, a beam on posts against a weld chain, impulses per shape, hulls at an offset, merge maths
-  core_rbdobject.cpp  RBD Object settings without Box3D Data: defaults, invalid values, Bullet Data shapes, density -> mass
+  core_*.cpp          One exe per area: smoke, physics (with physics_shapes.cpp and physics_bodies.cpp), mesh, heightfield, ground,
+                      quadrics, threads, taskrunner, worlds, joints, glue, bond, patch, sidefx, compound, rbdobject
+  TestUtil.h, WorldTestUtil.h, KeyedWorld.h   Shared helpers: CHECK macro, box / joint / step helpers, a world keyed by caller ids
   houdini/            Houdini checks: run_tests.py (runner), checks_*.py (tests by area), b3dtest.py (helpers),
                       review.py (tidies saved scenes), baseline.json; out/ holds each test's scene (git-ignored).
                       bench.py + bench_scenes.py: timing runs of Box3D against Bullet, outside run_tests.py (build.md)
