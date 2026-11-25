@@ -695,6 +695,16 @@ bool Box3DWorld::jointFeedback(JointHandle h, JointType type,
   freshenPose(b3StoreBodyId(b3Joint_GetBodyB(id)));
   storeVec3(b3Joint_GetConstraintForce(id), out.force);
   storeVec3(b3Joint_GetConstraintTorque(id), out.torque);
+  if (!B3_ID_EQUALS(b3Joint_GetBodyA(id), myImpl->anchor)) {
+    JointFrame a;
+    const b3WorldTransform xf = b3Body_GetTransform(b3Joint_GetBodyA(id));
+    frameToWorld(xf, b3Joint_GetLocalFrameA(id), a);
+    const float r[3] = {
+        static_cast<float>(a.pos[0] - static_cast<double>(xf.p.x)),
+        static_cast<float>(a.pos[1] - static_cast<double>(xf.p.y)),
+        static_cast<float>(a.pos[2] - static_cast<double>(xf.p.z))};
+    cross3(r, out.force, out.forceMoment);
+  }
   {
     b3Vec3 linear, angular;
     b3Joint_GetConstraintImpulse(id, &linear, &angular);

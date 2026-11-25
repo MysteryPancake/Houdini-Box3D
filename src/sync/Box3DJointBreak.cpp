@@ -1164,8 +1164,12 @@ void writeFeedback(const b3dop::Box3DWorld &world, GU_Detail *gdp,
       forceH.set(prim, b3dop::length3(it.fb.force));
     if (distH.isValid())
       distH.set(prim, it.distance);
+    // As RBD Bullet Solver: the force's moment about the first piece's centre.
+    // A Bond has no such reading in Bullet: its load's torque.
     if (torqueH.isValid())
-      torqueH.set(prim, b3dop::length3(it.fb.torque));
+      torqueH.set(prim, b3dop::length3(it.e->type == b3dop::JointType::Bond
+                                           ? it.fb.torque
+                                           : it.fb.forceMoment));
     if (angleH.isValid())
       angleH.set(prim, it.angle);
     for (int k = 0; k < it.fb.extraCount; ++k) {

@@ -1106,6 +1106,78 @@ def test_bullet_cone_twist_goal_apart():
     return results
 
 
+FEEDBACK_ATTRS = ("force", "torque", "distance", "angle")
+G = 9.80665
+
+
+def feedback_run(tag, kind, conrel_type, line_attrs, frames, hang=None, pieces=None, anchors=None, packed_parms=None,
+                 conrel_parms=None):
+    """A hanging pair (hanging_pair) played for `frames`: {frame: {force, torque, distance, angle}} read from the
+    constraint line's feedback attributes (None where the solver wrote none)."""
+    dop, _names = hanging_pair(f"{tag}_{kind}", None, line_attrs=line_attrs, conrels=[(conrel_type, dict(conrel_parms or {}))],
+                               solver_kind=kind, pieces=pieces, anchors=anchors, keep_velocity=True,
+                               packed_parms=packed_parms)
+
+    def sample(sim, f):
+        geo = find_network_geometry(sim)
+        if geo is None or not geo.prims():
+            return None
+        prim = geo.prims()[0]
+        return {a: (prim.attribValue(a) if geo.findPrimAttrib(a) is not None else None) for a in FEEDBACK_ATTRS}
+
+    return step(dop, frames, sample)
+
+
+def test_bullet_joint_feedback():
+    """The feedback attributes of a SideFX Hard line against the RBD Bullet Solver, with values known from physics.
+    (1) `angle` since rest, PASS or FAIL: the hanging piece spins freely at 2 rad/s about z on a position-only Hard line
+    between the two centroids (a rod, so the swing does not turn it), so it has turned 2 * t radians in both.
+    (2) `torque` of a 1 kg cantilever (fixed piece at x 0, hanging piece's centre at x 1, Rest Length 0 so nothing pulls
+    it), as Bullet's: the line's force (the weight, 9.81 N) taken about the fixed piece's centre, no couple, so 9.81 times
+    the anchor's x (0.5 at the shared face, 0 at the fixed piece's centre, 1 at the hanging piece's). Box3D's native Weld
+    and Bullet's Hard must read it. INFO: the Hard (all) readings of both."""
+    results = []
+    start = math.dist(CENTRES[0], CENTRES[1])
+    pieces = [{"size": (1, 1, 1), "center": CENTRES[0], "attrs": {"active": 0}},
+              {"size": (1, 1, 1), "center": CENTRES[1], "attrs": {"active": 1, "w": (0.0, 0.0, 2.0)}}]
+    frames = (7, 13, 25)  # 0.25, 0.5 and 1 s after frame 1
+    got = {kind: feedback_run("fb_angle", kind, "hardconrel", {"constraint_type": "position"}, max(frames),
+                              pieces=pieces, anchors=CENTRES, conrel_parms={"restlength": start}) for kind in KINDS}
+    rows, ok = [], True
+    for f in frames:
+        want = 2.0 * (f - 1) / 24.0
+        vals = {k: (got[k][f] or {}).get("angle") for k in KINDS}
+        rows.append(f"frame {f}: expected {want:.3f} rad, Box3D {vals['box3d']:.3f}, Bullet {vals['bullet']:.3f}"
+                    if None not in vals.values() else f"frame {f}: {vals}")
+        ok = ok and all(v is not None and close(abs(v), want, 0.05 * want) for v in vals.values())
+    results.append(Result("bullet_joint_feedback", Result.PASS if ok else Result.FAIL,
+                          "angle of a freely spinning piece (2 rad/s about z): " + "; ".join(rows)))
+
+    mass = {"computemass": 0, "mass": 1.0}
+    rows, hard_rows, ok = [], [], True
+    for label, point in (("the shared face", (0.5, 2.0, 0.0)), ("the fixed piece's centre", (0.0, 2.0, 0.0)),
+                         ("the hanging piece's centre", (1.0, 2.0, 0.0))):
+        want = G * point[0]  # the weight's moment about the fixed piece's centre (no couple)
+        weld = feedback_run("fb_cantilever_weld", "box3d", "box3d_weldconrel", None, 36, packed_parms=mass,
+                            anchors=(point, point))[36]
+        hard = {kind: feedback_run("fb_cantilever", kind, "hardconrel", {"constraint_type": "all"}, 36,
+                                   packed_parms=mass, anchors=(point, point), conrel_parms={"restlength": 0.0})[36]
+                for kind in KINDS}
+        torque = {"Box3D Weld": weld and weld["torque"], "Bullet Hard": hard["bullet"] and hard["bullet"]["torque"]}
+        ok = ok and all(v is not None and abs(v - want) < 0.05 * G for v in torque.values())
+        rows.append(f"anchor at {label}: expected {want:.2f}, Box3D Weld {torque['Box3D Weld']:.2f} "
+                    f"(force {weld['force']:.2f}), Bullet Hard {torque['Bullet Hard']:.2f}")
+        hard_rows.append(f"{label}: Box3D {hard['box3d']['force']:.2f} / {hard['box3d']['torque']:.2f}, "
+                         f"Bullet {hard['bullet']['force']:.2f} / {hard['bullet']['torque']:.2f}")
+    results.append(Result("bullet_joint_feedback", Result.PASS if ok else Result.FAIL,
+                          "torque of a 1 kg cantilever (Rest Length 0) on frame 36, the weight's moment about the fixed "
+                          "piece's centre, as Bullet's: " + "; ".join(rows)))
+    results.append(Result("bullet_joint_feedback", Result.INFO,
+                          "Hard (all) force / torque of the same cantilever (the weight is 9.81 N): Box3D's Hard reads "
+                          "less than the weight, which Bullet's does not: " + "; ".join(hard_rows)))
+    return results
+
+
 PRIMR_THROUGH_CASES = ((30, 0, 60), (30, 0, 0), (0, 0, 60), (30, 0, 30), (0, 0, 30), (0, 0, 45), (0, 30, 0),
                        (0, 60, 0))
 
@@ -1320,6 +1392,7 @@ TESTS = {
     "bullet_plane_piece": test_bullet_plane_piece,
     "bullet_rest_rescan": test_bullet_rest_rescan,
     "bullet_joint_angle": test_bullet_joint_angle,
+    "bullet_joint_feedback": test_bullet_joint_feedback,
     "bullet_cone_twist_goal_apart": test_bullet_cone_twist_goal_apart,
     "bullet_primr_through": test_bullet_primr_through,
     "bullet_primt_primr": test_bullet_primt_primr,

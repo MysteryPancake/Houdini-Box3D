@@ -961,6 +961,10 @@ struct JointFrame {
 struct JointFeedback {
   float force[3] = {0, 0, 0}; // constraint force on B (world)
   float torque[3] = {0, 0, 0};
+  // The force's moment about body A's centre, (anchor A - A's position) x force
+  // (the couple left out; zero when A is the world): what RBD Bullet Solver
+  // writes as `torque`.
+  float forceMoment[3] = {0, 0, 0};
   // A weld's impulse on B (N*s) and angular impulse over the whole last step:
   // the force and torque above are the last substep's alone, which misses what
   // an impact in an earlier substep did. Zero for the other types.

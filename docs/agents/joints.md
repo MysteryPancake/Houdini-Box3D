@@ -213,7 +213,7 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
 * After the step (`jointsAfterStep`): broken joints are destroyed and flagged (never remade, even if the
   primitive changes), and written back through the relationship's `getGeometry()` (non-const: a `SIM_GeometryCopy`)
   or the object's ConstraintGeometry (made a `SIM_GeometryCopy` once, like the object geometry): the `broken`
-  primitive group, then `force` / `torque` (magnitudes), `distance` / `angle` (the anchors' distance, the angle since
+  primitive group, then `force` / `torque` (magnitudes; `torque` is `JointFeedback::forceMoment`, the force's moment about body A's centre, zero for the world, as Bullet's: a Bond writes its load's torque), `distance` / `angle` (the anchors' distance, the angle since
   rest above, in radians, the Constraint Network DOP's names and units) and the per-type `current_*` readings (degrees) every step. The fingerprint is re-recorded after the write so it is not seen as an edit. A network that
   re-imports its SOP every step (Overwrite with SOP) overwrites the group; `Box3DJointEntry::broken` still holds until
   a world rebuild. `Box3DJointNetwork::writable` is false when the last write found no geometry; such a network keeps

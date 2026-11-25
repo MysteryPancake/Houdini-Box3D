@@ -124,8 +124,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * Solve on Creation Frame on the SOP's collider (`solver_sop_solve_first_frame_bullet`): a box on a collider lifted 0.5 a frame
   ends at 1.1 to 2.3 in Box3D (it clips into the collider: fork list) and at 1.0 in Bullet.
 * The proxy output with no proxy input is a copy of the geometry in Box3D and empty in Bullet (`solver_sop_before_start_bullet`).
-* The joint `angle` since rest is untested: `bullet_joint_rest_held` and `bullet_joint_angle` hold with a turn of 0 in both. With both anchors at one point
-  (`bullet_joint_rest`, INFO) the centres end 2.19 and 2.59 apart, past the 2.06 possible.
+* With both anchors at one point (`bullet_joint_rest`, INFO) the centres end 2.19 and 2.59 apart, past the 2.06 possible.
 * Hand-set shapes: `bullet_primS`, `bullet_primR` (XYZ Euler degrees), `bullet_radius` and `bullet_length` match (`bullet_shape_attributes`, `bullet_primr_order`).
   Differences kept on purpose (`bullet_shape_position`, `bullet_shape_probe`): Bullet drops a dynamic hand-set piece's x and z (to 0 plus `bullet_primT`'s),
   takes the height from `bullet_primT`'s y, and finds a static piece away from the origin at the origin; Box3D keeps the shape on the piece with `bullet_primT`
@@ -198,9 +197,11 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * Sticky collisions. Box3D's contact begin / end and sensor events: Houdini has no output for them (Bullet has none), so
   nothing reads them beyond Impacts. Sensors (trigger zones) would be the useful part.
 * Box3D Solver SOP:
-  * Break Thresholds (`b3d_solver_breaks.py`): the `angle` and `torque` readings differ from Bullet's
-    (`solver_sop_break_angle_torque_bullet`, INFO: a Soft constraint on a spinning box reads about 0.015 rad in Box3D against
-    0.2 to 0.4 in Bullet, and torque 6078 against 15004 on frame 2), so which of those thresholds breaks when is not
+  * Break Thresholds (`b3d_solver_breaks.py`): `angle` matches Bullet's for a freely spinning piece, and `torque` is Bullet's quantity (the
+    force's moment about the first piece's centre, `bullet_joint_feedback`), so the Torque Threshold breaks on the same frames
+    (`solver_sop_break_angle_torque_bullet`, INFO). A Hard (all) line reads only part of the load (7.3 N for a hanging 1 kg piece, 6.9 N
+    with the anchor at the fixed piece's centre) so its `force` and `torque` read low (probably its motor joints: not looked into). The Angle Threshold
+    still differs on a spinning box (0.2 rad: frame 13 in Box3D, 3 in Bullet), so which of those thresholds breaks when is not
     established. Untested: Variance, World Scale other than 1, and the cost on a large network with it on (the SOP Solver
     rewrites the constraint geometry each step, so the solver reads the whole network again). Not there: the Force
     Threshold (Bullet's `force` of a Glue is the difference of its pieces' forces times their mean mass,
