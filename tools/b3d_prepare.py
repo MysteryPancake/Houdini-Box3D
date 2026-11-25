@@ -25,38 +25,38 @@ PACKED_GROUP = "__packed"
 DEFAULT_PREFIX = "piece"  # Assemble's and RBD Configure's Name Prefix
 
 GROUP_PACKED_VEX = """\
-if (len(primpoints(0, @primnum)) != 1) return;
-if (string(primintrinsic(0, "typename", @primnum)) == "Poly") return;
-int class = prim(1, "class", @primnum);
+if (len(primpoints(0, i@primnum)) != 1) return;
+if (string(primintrinsic(0, "typename", i@primnum)) == "Poly") return;
+int class = prim(1, "class", i@primnum);
 if (findattribvalcount(1, "prim", "class", class) > 1) return;
 i@group___packed = 1;
 """
 
 # Primitives: an unpacked primitive without a name takes its point's.
 PRIM_NAME_FROM_POINT_VEX = """\
-string name = prim(0, "name", @primnum);
+string name = prim(0, "name", i@primnum);
 if (name != "" || !haspointattrib(0, "name")) return;
-name = point(0, "name", @ptnum);
-if (name != "") setprimattrib(0, "name", @primnum, name);
+name = point(0, "name", i@ptnum);
+if (name != "") setprimattrib(0, "name", i@primnum, name);
 """
 
 # Points of packed pieces: the point's name, else the primitive's, else <prefix><ptnum>.
 POINT_NAME_VEX = """\
 if (s@name != "") return;
-if (hasprimattrib(0, "name")) s@name = prim(0, "name", @primnum);
-if (s@name == "") s@name = chs("prefix") + itoa(@ptnum);
+if (hasprimattrib(0, "name")) s@name = prim(0, "name", i@primnum);
+if (s@name == "") s@name = chs("prefix") + itoa(i@ptnum);
 """
 
 # Names mode, points of packed pieces: as POINT_NAME_VEX, written where the name already lives.
 SET_NAME_VEX = """\
-string name = point(0, "name", @ptnum);
+string name = point(0, "name", i@ptnum);
 if (hasprimattrib(0, "name") && name == "")
-    name = prim(0, "name", @primnum);
-if (name == "") name = chs("prefix") + itoa(@ptnum);
+    name = prim(0, "name", i@primnum);
+if (name == "") name = chs("prefix") + itoa(i@ptnum);
 if (hasprimattrib(0, "name") || !haspointattrib(0, "name"))
-    setprimattrib(0, "name", @primnum, name);
+    setprimattrib(0, "name", i@primnum, name);
 else
-    setpointattrib(0, "name", @ptnum, name);
+    setpointattrib(0, "name", i@ptnum, name);
 """
 
 # Collision mode, packed colliders: Bullet's set_name_if_needed3 (the point's name wins when it has
@@ -65,10 +65,10 @@ else
 COLLISION_NAME_VEX = """\
 string name = "";
 if (hasprimattrib(0, "name"))
-    name = prim(0, "name", @primnum);
+    name = prim(0, "name", i@primnum);
 if (haspointattrib(0, "name") || name == "")
-    name = point(0, "name", @ptnum);
-if (name == "") name = chs("prefix") + itoa(@ptnum);
+    name = point(0, "name", i@ptnum);
+if (name == "") name = chs("prefix") + itoa(i@ptnum);
 s@name = name;
 """
 COLLISION_PREFIX = "static"  # Bullet's Output Prefix for assembled colliders
@@ -96,8 +96,8 @@ COLLISION_NAMES_VEX = """\
 int bit(int k) { return (int)pow(2.0, (float)k); }
 int hasGroup = haspointattrib(0, "collisiongroup");
 int hasIgnore = haspointattrib(0, "collisionignore");
-string group = hasGroup ? point(0, "collisiongroup", @ptnum) : "";
-string ignore = hasIgnore ? point(0, "collisionignore", @ptnum) : "";
+string group = hasGroup ? point(0, "collisiongroup", i@ptnum) : "";
+string ignore = hasIgnore ? point(0, "collisionignore", i@ptnum) : "";
 if (group == "" && ignore == "") return;
 string used[] = detail(1, "__used");
 int index = find(used, group);
@@ -115,8 +115,8 @@ for (int i = 0; i < len(used); i++) {
     }
     if (hit) ignored |= bit(min(i + 1, 30));
 }
-setpointattrib(0, "collision_category", @ptnum, category);
-setpointattrib(0, "collision_mask", @ptnum, ~ignored);
+setpointattrib(0, "collision_category", i@ptnum, category);
+setpointattrib(0, "collision_mask", i@ptnum, ~ignored);
 """
 # Bullet's Path Attribute on its Assembles.
 PACK_PATH = "op:`opfullpath('.')`/pack"

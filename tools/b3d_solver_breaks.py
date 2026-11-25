@@ -151,12 +151,12 @@ int passes(string key; int use; float threshold, var; string attrib; int update;
 }
 
 // The wrangle's Group is the constraints the entry names (see GROUP_EXPRESSION), so every primitive here is one.
-int pr = @primnum;
+int pr = i@primnum;
 int hit =chi("constraint_useatframe")
-    && @Frame > chf("constraint_atframe") - chf("substepwindow") && @Frame < chf("constraint_atframe") + chf("substepwindow");
+    && f@Frame > chf("constraint_atframe") - chf("substepwindow") && f@Frame < chf("constraint_atframe") + chf("substepwindow");
 if (!hit)
 {
-    if (chi("constraint_usefromframe") && chf("constraint_fromframe") > @Frame)
+    if (chi("constraint_usefromframe") && chf("constraint_fromframe") > f@Frame)
         return;
     int id = hasprimattrib(0, "__primid") ? prim(0, "__primid", pr) : pr;
     hit = PASSES;

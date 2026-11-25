@@ -390,13 +390,13 @@ def setting_vex(pt, kind):
 
     def put(attr, default, value):
         return (f'if (!haspointattrib(0, "{attr}")) addpointattrib(0, "{attr}", {default}); '
-                f'setpointattrib(0, "{attr}", @ptnum, {value});')
+                f'setpointattrib(0, "{attr}", i@ptnum, {value});')
 
     def bounded(expr, outside):
         """`expr` inside the bounds; `outside` for the others while Use Bounds is ticked."""
         if not has_bounds(pt, kind):
             return expr
-        return (f'(chi("../{bounds_name(n)}" + num) && !inpointgroup(0, "{INSIDE_GROUP}", @ptnum)) '
+        return (f'(chi("../{bounds_name(n)}" + num) && !inpointgroup(0, "{INSIDE_GROUP}", i@ptnum)) '
                 f'? ({outside}) : ({expr})')
 
     body = None
@@ -419,7 +419,7 @@ def setting_vex(pt, kind):
     elif kind == "f" and n in VAR_SETTINGS:
         # As RBD Configure: times a random 1 - Var to 1 + Var per piece (rand of its point number)
         var = ch("chf", var_name(n))
-        scatter = f'(chi("../{var_toggle_name(n)}" + num) ? fit01(rand(@ptnum), 1 - {var}, 1 + {var}) : 1.0)'
+        scatter = f'(chi("../{var_toggle_name(n)}" + num) ? fit01(rand(i@ptnum), 1 - {var}, 1 + {var}) : 1.0)'
         body = put(n, literal(pt, kind), f'{ch("chf")} * {scatter}')
     elif kind == "f":
         body = put(n, literal(pt, kind), ch("chf"))
@@ -439,7 +439,7 @@ def wrangle_vex(rows):
         "    string num = itoa(x);",
         '    if (!chi("../enable" + num)) continue;',
         '    string group = chs("../group" + num);',
-        '    if (group != "" && !(inpointgroup(0, group, @ptnum) || inprimgroup(0, group, @primnum))) continue;',
+        '    if (group != "" && !(inpointgroup(0, group, i@ptnum) || inprimgroup(0, group, i@primnum))) continue;',
         "",
     ]
     lines += [setting_vex(pt, kind) for pt, kind in rows]
@@ -447,9 +447,9 @@ def wrangle_vex(rows):
         "    // Pin: marks the piece for add_pin_constraints (1 + the Type), 0 = free.",
         '    if (chi("../addpin" + num)) {',
         '        int pin = chi("../pin" + num);',
-        f'        if (chi("../usepinbounds" + num) && !inpointgroup(0, "{INSIDE_GROUP}", @ptnum)) pin = !pin;',
+        f'        if (chi("../usepinbounds" + num) && !inpointgroup(0, "{INSIDE_GROUP}", i@ptnum)) pin = !pin;',
         f'        if (!haspointattrib(0, "{PIN_ATTRIB}")) addpointattrib(0, "{PIN_ATTRIB}", 0);',
-        f'        setpointattrib(0, "{PIN_ATTRIB}", @ptnum, pin ? chi("../pintype" + num) + 1 : 0);',
+        f'        setpointattrib(0, "{PIN_ATTRIB}", i@ptnum, pin ? chi("../pintype" + num) + 1 : 0);',
         "    }",
     ]
     lines.append("}")
@@ -668,14 +668,14 @@ def visualize_vex(defaults):
         'string attrib = "";',
         "float dflt = 0.0;",
         pick,
-        'f@__vis = attrib != "" ? value(attrib, @ptnum, dflt) : 0.0;',
+        'f@__vis = attrib != "" ? value(attrib, i@ptnum, dflt) : 0.0;',
     ])
     colour = "\n".join([
         "// Colours each piece by the chosen value. A missing attribute is Box3D Data's default.",
         value,
         'int mode = chi("../visualize");',
         "if (mode == 0) return;",
-        "int pt = primpoint(0, @primnum, 0);",
+        "int pt = primpoint(0, i@primnum, 0);",
         "vector lit = {1, 0, 0}, dim = {0.3, 0.3, 0.3}, c = {1, 1, 1};",
         'string attrib = "";',
         "float dflt = 0.0;",
@@ -747,12 +747,12 @@ def visualize_network(sub, source, rows):
 
 
 HISTOGRAM_VEX = f"""// One bar per value bin, as RBD Configure's: a cell is dark when its bin holds enough pieces for its height.
-@Cd = chramp("color", @P.x);
-@Alpha = 0.6;
+v@Cd = chramp("color", v@P.x);
+f@Alpha = 0.6;
 float vmax = detail(1, "__vmax");
 int cols = {HIST_COLS - 1};
 
-int x = @primnum % cols;
+int x = i@primnum % cols;
 int nums[];
 int values = 0;
 for (int z = 0; z < cols; z++)
@@ -771,11 +771,11 @@ int prims[] = findattribval(1, "prim", "val", x);
 int numfound = len(prims);
 if (numfound)
 {{
-    float y = (@primnum / cols) * 0.01;
+    float y = (i@primnum / cols) * 0.01;
     if ((float(numfound) / divider) > y)
     {{
-        @Cd *= 0;
-        @Alpha = 0.9;
+        v@Cd *= 0;
+        f@Alpha = 0.9;
     }}
 }}
 """
@@ -942,7 +942,7 @@ def check(out_path):
     pts = geo.createNode("attribwrangle", "chosen")  # the first box's faces: group chosen
     pts.setInput(0, merge)
     pts.parm("class").set("primitive")
-    pts.parm("snippet").set('if (@P.x < 1) setprimgroup(0, "chosen", @primnum, 1);')
+    pts.parm("snippet").set('if (v@P.x < 1) setprimgroup(0, "chosen", i@primnum, 1);')
     cfg = geo.createNode(TYPE_NAME, "probe")
     cfg.setInput(0, pts)
     for n, v in (("group1", "chosen"), ("addfriction1", 1), ("friction1", 0.25), ("addbodytype1", 1),

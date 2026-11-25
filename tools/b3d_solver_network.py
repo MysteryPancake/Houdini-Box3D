@@ -85,8 +85,8 @@ def prepare_input(sub, src, name, pack, collision=False):
 # rotations, mirrors flipped, as the solver splits packed matrices). Matched by name, else by number.
 COLLISION_REST_VEX = """\
 int rp = findattribval(1, "point", "name", s@name);
-if (rp < 0) rp = @ptnum;
-int now[] = pointprims(0, @ptnum);
+if (rp < 0) rp = i@ptnum;
+int now[] = pointprims(0, i@ptnum);
 int was[] = pointprims(1, rp);
 if (len(now) != 1 || len(was) != 1) return;
 // Both read as 4x4 first: matrix3(primintrinsic(...)) picks primintrinsic()'s matrix3 overload,
@@ -118,13 +118,13 @@ SOLVE_FIRST_PARM = "solvefirstframe"  # the Box3D Packed Object's Solve on Creat
 KEEP_BROKEN = "constraint_keepbroken"
 
 # Constraint points anchored to the world (no piece name) keep their imported position.
-RESET_ANCHORS_VEX = "@P = point(1, \"P\", @ptnum);"
+RESET_ANCHORS_VEX = "v@P = point(1, \"P\", i@ptnum);"
 
 # Every primitive removed, its points kept: an Add SOP's Delete Geometry But Keep the Points (one
 # bulk delete; removeprim per primitive is far slower on many pieces). The wrangle is the fallback
 # when no such toggle is found.
 POINTS_ONLY_PARM = "keep"  # Add SOP's Delete Geometry But Keep the Points
-POINTS_ONLY_VEX = "removeprim(0, @primnum, 0);"
+POINTS_ONLY_VEX = "removeprim(0, i@primnum, 0);"
 
 # World Scale (RBD Bullet Solver's usescale / Bullet World Scale): the inputs are scaled by it for the
 # simulation and every output scaled back, so pieces far from about 1 unit simulate at a size Box3D
@@ -174,12 +174,12 @@ SIDEFX_SCALE_POWERS = {"glue": {"strength": 1}, "hard": {"restlength": 1}, "spri
 SCALE_CONSTRAINTS_VEX = """\
 float s = chf("scale");
 if (hasprimattrib(0, "linear_velocity")) {
-    vector lv = prim(0, "linear_velocity", @primnum);
-    setprimattrib(0, "linear_velocity", @primnum, lv * s);
+    vector lv = prim(0, "linear_velocity", i@primnum);
+    setprimattrib(0, "linear_velocity", i@primnum, lv * s);
 }
 if (hasprimattrib(0, "auto_restlength")) {
-    float r = prim(0, "auto_restlength", @primnum);
-    if (r >= 0) setprimattrib(0, "auto_restlength", @primnum, r * s);
+    float r = prim(0, "auto_restlength", i@primnum);
+    if (r >= 0) setprimattrib(0, "auto_restlength", i@primnum, r * s);
 }
 """
 # FORCES: PRESOLVE's POP forces write force / torque in the scaled world. Scaled after it, so their
@@ -188,12 +188,12 @@ SCALE_FORCES_VEX = """\
 float s = chf("scale");
 if (s == 1) return;
 if (haspointattrib(0, "force")) {
-    vector f = point(0, "force", @ptnum);
-    setpointattrib(0, "force", @ptnum, f * s);
+    vector f = point(0, "force", i@ptnum);
+    setpointattrib(0, "force", i@ptnum, f * s);
 }
 if (haspointattrib(0, "torque")) {
-    vector t = point(0, "torque", @ptnum);
-    setpointattrib(0, "torque", @ptnum, t * s * s);
+    vector t = point(0, "torque", i@ptnum);
+    setpointattrib(0, "torque", i@ptnum, t * s * s);
 }
 """
 # The pieces after packing (Transform scaled P, v, w and the packed transforms): Bullet's
@@ -201,11 +201,11 @@ if (haspointattrib(0, "torque")) {
 # shape sizes and the sleep threshold, which Bullet leaves.
 SCALE_ATTRIBS_VEX = """\
 float s = chf("scale");
-if (haspointattrib(0, "density")) setpointattrib(0, "density", @ptnum, 1 / pow(s, 3), "mult");
-if (haspointattrib(0, "w")) setpointattrib(0, "w", @ptnum, 1 / s, "mult");
+if (haspointattrib(0, "density")) setpointattrib(0, "density", i@ptnum, 1 / pow(s, 3), "mult");
+if (haspointattrib(0, "w")) setpointattrib(0, "w", i@ptnum, 1 / s, "mult");
 foreach (string n; {"bullet_primS", "bullet_primT", "bullet_radius", "bullet_length", "sleepthreshold",
                           "tangentvelocity"})
-    if (haspointattrib(0, n)) setpointattrib(0, n, @ptnum, s, "mult");
+    if (haspointattrib(0, n)) setpointattrib(0, n, i@ptnum, s, "mult");
 """
 # Outputs scaled back (chf("scale") is 1 / World Scale): Bullet's scale_simpoints, scale_attribs and
 # scale_impacts. Joint feedback: force and distance scale with length, torque with its square.
@@ -213,26 +213,26 @@ UNSCALE_POINTS_VEX = """\
 float s = chf("scale");
 v@P *= s;
 // Not v@pivot / v@v: a binding creates its attribute even where it is never reached.
-if (haspointattrib(0, "pivot")) setpointattrib(0, "pivot", @ptnum, s, "mult");
-if (haspointattrib(0, "v")) setpointattrib(0, "v", @ptnum, s, "mult");
+if (haspointattrib(0, "pivot")) setpointattrib(0, "pivot", i@ptnum, s, "mult");
+if (haspointattrib(0, "v")) setpointattrib(0, "v", i@ptnum, s, "mult");
 """
 UNSCALE_CONSTRAINTS_VEX = """\
 float s = chf("scale");
 foreach (string n; {"force", "distance", "current_length", "current_translation", "current_speed",
                     "motor_force", "impact"})
-    if (hasprimattrib(0, n)) setprimattrib(0, n, @primnum, s, "mult");
+    if (hasprimattrib(0, n)) setprimattrib(0, n, i@primnum, s, "mult");
 foreach (string n; {"torque", "motor_torque", "spin_torque"})
-    if (hasprimattrib(0, n)) setprimattrib(0, n, @primnum, s * s, "mult");
+    if (hasprimattrib(0, n)) setprimattrib(0, n, i@primnum, s * s, "mult");
 if (hasprimattrib(0, "auto_restlength")) {
-    float r = prim(0, "auto_restlength", @primnum);
-    if (r >= 0) setprimattrib(0, "auto_restlength", @primnum, r * s);
+    float r = prim(0, "auto_restlength", i@primnum);
+    if (r >= 0) setprimattrib(0, "auto_restlength", i@primnum, r * s);
 }
 """
 UNSCALE_IMPACTS_VEX = """\
 float s = chf("scale");
 v@P *= s;
 foreach (string n; {"position", "v", "impulse"})
-    if (haspointattrib(0, n)) setpointattrib(0, n, @ptnum, s, "mult");
+    if (haspointattrib(0, n)) setpointattrib(0, n, i@ptnum, s, "mult");
 """
 
 # Collision shapes: the Box3DShapes polylines (white, dimmed by body state) tinted by Shape Color.
@@ -252,7 +252,7 @@ FALSE_COLOR_BOUND = (  # Hscript, relative to the wrangle
     f'ifs(ch("../{FALSE_COLOR_MODE}") == 5, "torque", "__none"))))))')
 FALSE_COLOR_VEX = '''\
 float top = detail(0, "__fc_top");
-vector colour = hasprimattrib(0, "Cd") ? prim(0, "Cd", @primnum) : {1, 1, 1};
+vector colour = hasprimattrib(0, "Cd") ? prim(0, "Cd", i@primnum) : {1, 1, 1};
 if (top > 0) colour = lerp({0, 0.4, 1}, {1, 0.1, 0}, f@__fc / top);
 v@Cd = colour;
 '''
@@ -260,7 +260,7 @@ v@Cd = colour;
 # The constraint lines' radius in the guide: Guide Radius times the Guide Scale of the line's type (its
 # `constraint_name` against each type's Data Name), set on the line's points (PolyWire reads it there).
 def guide_radius_vex():
-    lines = ["int prims[] = pointprims(0, @ptnum);",
+    lines = ["int prims[] = pointprims(0, i@ptnum);",
              'string cname = len(prims) && hasprimattrib(0, "constraint_name") ? '
              'prim(0, "constraint_name", prims[0]) : "";',
              "float scale = 1;"]
@@ -285,9 +285,9 @@ v@Cd = hasprimattrib(0, "Cd") ? v@Cd * 0.5 : {0.5, 0.5, 0.5};
 # what was simulated, so pieces that never were, such as geometry without a proxy piece, stay).
 # removeprim only runs for the deleted few.
 REMOVE_DELETED_VEX = """\
-string name = prim(0, "name", @primnum);
+string name = prim(0, "name", i@primnum);
 if (name == "")
-    name = point(0, "name", @ptnum);
+    name = point(0, "name", i@ptnum);
 int del = findattribval(1, "point", "name", name) < 0;
 if (npoints(2))
 {
@@ -296,7 +296,7 @@ if (npoints(2))
         pt = findattribval(2, "point", "name", name);
     del *= pt >= 0;
 }
-if (del) removeprim(0, @primnum, 1);
+if (del) removeprim(0, i@primnum, 1);
 """
 
 
@@ -411,14 +411,14 @@ if (pt < 0)
     return;
 matrix xf = pointtransform(1, pt);
 vector w = point(1, "w", pt);
-@P *= xf;
+v@P *= xf;
 v@w = w;
-v@v = cross(w, @P - point(1, "pivot", pt) * xf) + point(1, "v", pt);
+v@v = cross(w, v@P - point(1, "pivot", pt) * xf) + point(1, "v", pt);
 """
 # With normals on the pieces: N moves by the inverse transpose of the matrix, as Transform by Attribute does. A second
 # wrangle, not a bound attribute left out of Attributes to Create: that list also decides what may be written, so N
 # would be made on pieces that have none.
-MOVE_NORMALS_VEX = MOVE_PIECES_VEX + "@N = normalize(@N * transpose(invert(matrix3(xf))));\n"
+MOVE_NORMALS_VEX = MOVE_PIECES_VEX + "v@N = normalize(v@N * transpose(invert(matrix3(xf))));\n"
 # Whether the fast path does what Transform Pieces would: the pieces carry `name` on their points and no age, the
 # simulation points carry no age, the attributes to copy are no more than age and w, and no point attribute besides
 # P, N, w and v has a type Transform by Attribute would move. 0: Transform Pieces, 1: the wrangle, 2: the one with

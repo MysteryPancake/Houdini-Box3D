@@ -541,7 +541,7 @@ def wrangle_vex(rows):
             differs = f'({differs} || chi("../{value}scaling") != 0 || chi("../{value}randomize") != 0)'
             seed = zlib.crc32(value.encode()) % 10007  # each setting its own random numbers
             expression = (f'scaled(chf("../{value}"), chi("../{value}scaling"), "{attr}", chs("../{value}attribute"), '
-                          f'@primnum, clusterattr, transfermode, chi("../{value}randomize"), chf("../{value}variance"), '
+                          f'i@primnum, clusterattr, transfermode, chi("../{value}randomize"), chf("../{value}variance"), '
                           f"{seed}.0)")
         which = "nexttype" if following else "constrainttype"
         if joint < 0:
@@ -575,19 +575,19 @@ def wrangle_vex(rows):
                "// Box3D Constraint Properties: each setting that applies is written onto a constraint of the group."] + header
     setting.append(f'if ({rotate}) {{')
     setting.append(f'    vector4 q = eulertoquaternion(radians(chv("../{ROTATE}")), 0);')
-    setting.append('    foreach (int pt; primpoints(0, @primnum)) setpointattrib(0, "orient", pt, q);')
+    setting.append('    foreach (int pt; primpoints(0, i@primnum)) setpointattrib(0, "orient", pt, q);')
     setting.append("}")
     for condition, attr, _, value in items:
-        setting.append(f'if ({condition}) setprimattrib(0, "{attr}", @primnum, {value});')
+        setting.append(f'if ({condition}) setprimattrib(0, "{attr}", i@primnum, {value});')
     return "\n".join(creating), "\n".join(setting)
 
 
 APPLY_EDITS_VEX = """\
 // The viewport edits, over each line: each stash point holds a line's number and what was edited on it. An orient of all
 // zeros, an enable_motor below 0 and a motor_velocity below -1e30 are "not edited". The attributes are there already.
-int idx = prim(0, "%(idx)s", @primnum);  // typed: prim() alone is ambiguous for findattribval
+int idx = prim(0, "%(idx)s", i@primnum);  // typed: prim() alone is ambiguous for findattribval
 int p = findattribval(1, "point", "%(idx)s", idx);
-int pts[] = primpoints(0, @primnum);
+int pts[] = primpoints(0, i@primnum);
 if (p < 0 || len(pts) < 2) return;
 vector4 qa = point(1, "orient_a", p);
 vector4 qb = point(1, "orient_b", p);
@@ -596,9 +596,9 @@ if (dot(qa, qa) > 0 && dot(qb, qb) > 0) {
     setpointattrib(0, "orient", pts[1], qb);
 }
 int motor = point(1, "enable_motor", p);
-if (motor >= 0) setprimattrib(0, "enable_motor", @primnum, motor);
+if (motor >= 0) setprimattrib(0, "enable_motor", i@primnum, motor);
 vector velocity = point(1, "motor_velocity", p);
-if (velocity.x > -1e30) setprimattrib(0, "motor_velocity", @primnum, velocity);
+if (velocity.x > -1e30) setprimattrib(0, "motor_velocity", i@primnum, velocity);
 """ % {"idx": INDEX_ATTRIB}
 
 # The first selected line's handle: at the middle of its two anchors, in the frame of the first (or Anchor Rotation).
@@ -624,7 +624,7 @@ setcomp(m, P.z, 3, 2);
 # (three lines, red, green, blue) onto the lines' points, turned by their `orient` and sized by `pscale`, which is a
 # quarter of the line's length times Guide Scale (as RBD Constraint Properties' guides are copied onto the points).
 GUIDE_SIZE_VEX = """\
-int pts[] = primpoints(0, @primnum);
+int pts[] = primpoints(0, i@primnum);
 vector a = {0, 0, 0}, b = {0, 0, 0};
 if (len(pts) > 1) {
     a = point(0, "P", pts[0]);
@@ -635,8 +635,8 @@ f@pscale = len(pts) < 2 ? 0.0 : chf("../guidescale") * 0.25 * distance(a, b);
 
 # Only the lines that have an edit in the stash.
 GLOW_VEX = """\
-int idx = prim(0, "%(idx)s", @primnum);
-if (findattribval(1, "point", "%(idx)s", idx) < 0) removeprim(0, @primnum, 1);
+int idx = prim(0, "%(idx)s", i@primnum);
+if (findattribval(1, "point", "%(idx)s", idx) < 0) removeprim(0, i@primnum, 1);
 """ % {"idx": INDEX_ATTRIB}
 
 

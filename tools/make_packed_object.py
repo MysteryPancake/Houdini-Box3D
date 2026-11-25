@@ -105,7 +105,7 @@ VEL, ANGVEL, INHERIT_VEL = "vel", "angvel", "inheritvelocity"
 # initial_transform, on the creation frame after set_rest: Position and Rotation as a transform about the piece's
 # pivot, for the Transform by Attribute after it (as RBD Packed Object's set_rest_and_initial_xform). The pivot is the
 # point's own, else its position while Inherit Pivot is on, else Pivot.
-INITIAL_XFORM_VEX = """int pts[] = primpoints(0, @primnum);
+INITIAL_XFORM_VEX = """int pts[] = primpoints(0, i@primnum);
 if (len(pts) != 1) return;
 vector pivot = haspointattrib(0, "pivot") ? point(0, "pivot", pts[0])
              : (chi("../../%s") ? point(0, "P", pts[0]) : chv("../../%s"));

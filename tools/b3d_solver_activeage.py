@@ -39,7 +39,7 @@ CONSTRAINT_AGE_SWITCH = "switch_create_constraint_age"
 PRIMID_SOP = "store_primid"
 
 # A piece with no `active` attribute is active (the solver's default).
-ACTIVE_VEX = 'int act = haspointattrib(0, "active") ? point(0, "active", @ptnum) : 1;'
+ACTIVE_VEX = 'int act = haspointattrib(0, "active") ? point(0, "active", i@ptnum) : 1;'
 
 # Before the point pass: the Just Activated attribute must exist, as a point wrangle cannot add one.
 SOP_PREPARE_VEX = f"""\
@@ -54,14 +54,14 @@ if (!haspointattrib(0, "{ACTIVE_AGE_ATTRIB}"))
 SOP_VEX = f"""\
 {ACTIVE_VEX}
 string grp = chs("../{JUST_ACTIVATED}");
-float age = act == 1 ? @TimeInc : 0.0;
+float age = act == 1 ? f@TimeInc : 0.0;
 f@{ACTIVE_AGE_ATTRIB} = age;
 if (grp != "")
 {{
     if (chi("../{JUST_ACTIVATED_TYPE}"))
-        setpointattrib(0, grp, @ptnum, age > 0);
+        setpointattrib(0, grp, i@ptnum, age > 0);
     else
-        setpointgroup(0, grp, @ptnum, age > 0);
+        setpointgroup(0, grp, i@ptnum, age > 0);
 }}
 """
 
@@ -74,20 +74,20 @@ int doattrib = chi("type");
 if (dogroup)
 {{
     if (doattrib)
-        setpointattrib(0, grp, @ptnum, 0);
+        setpointattrib(0, grp, i@ptnum, 0);
     else
-        setpointgroup(0, grp, @ptnum, 0);
+        setpointgroup(0, grp, i@ptnum, 0);
 }}
 if (act == 1)
 {{
     if (dogroup && f@{ACTIVE_AGE_ATTRIB} == 0)
     {{
         if (doattrib)
-            setpointattrib(0, grp, @ptnum, 1);
+            setpointattrib(0, grp, i@ptnum, 1);
         else
-            setpointgroup(0, grp, @ptnum, 1);
+            setpointgroup(0, grp, i@ptnum, 1);
     }}
-    f@{ACTIVE_AGE_ATTRIB} += @TimeInc;
+    f@{ACTIVE_AGE_ATTRIB} += f@TimeInc;
 }}
 else
     f@{ACTIVE_AGE_ATTRIB} = 0;
@@ -138,7 +138,7 @@ def build_constraint_age_sop(sub, upstream):
     primid = create(sub, "attribwrangle", PRIMID_SOP)
     primid.setInput(0, switch)
     primid.parm("class").set("primitive")
-    primid.parm("snippet").set("i@__primid = @primnum;")
+    primid.parm("snippet").set("i@__primid = i@primnum;")
     return primid
 
 

@@ -110,7 +110,7 @@ def packed_defaults_vex(rows, parm_path, driven=None):
 # Solver SOP's Geometry output by it on the creation frame too. A point-instance transform gets an
 # identity rest, as Bullet. pivot = P: the position at rest, which Transform Pieces reads.
 REST_VEX = """\
-int prims[] = pointprims(0, @ptnum);
+int prims[] = pointprims(0, i@ptnum);
 if (len(prims) != 1) return;
 int prim = prims[0];
 v@rest = v@P;
@@ -122,12 +122,12 @@ if (primintrinsic(0, "pointinstancetransform", prim)) {
 4@restxform = primintrinsic(0, "packedfulltransform", prim);
 vector s = {1, 1, 1};
 if (haspointattrib(0, "pscale"))
-    s *= float(point(0, "pscale", @ptnum));
+    s *= float(point(0, "pscale", i@ptnum));
 if (haspointattrib(0, "scale"))
-    s *= vector(point(0, "scale", @ptnum));
+    s *= vector(point(0, "scale", i@ptnum));
 vector4 q = {0, 0, 0, 1};
 if (haspointattrib(0, "orient"))
-    q = normalize(vector4(point(0, "orient", @ptnum)));
+    q = normalize(vector4(point(0, "orient", i@ptnum)));
 matrix3 bake = ident();
 scale(bake, s);
 bake *= qconvert(q);
@@ -141,6 +141,6 @@ p@orient = q;
 # (the solver reads the point's).
 NAME_VEX = """\
 if (haspointattrib(0, "name")) return;
-string name = hasprimattrib(0, "name") ? prim(0, "name", @primnum) : "";
-s@name = name != "" ? name : chs("objname") + "_" + itoa(@primnum);
+string name = hasprimattrib(0, "name") ? prim(0, "name", i@primnum) : "";
+s@name = name != "" ? name : chs("objname") + "_" + itoa(i@primnum);
 """
