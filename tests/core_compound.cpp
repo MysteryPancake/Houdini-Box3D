@@ -6,6 +6,7 @@
 #include "core/Box3DMath.h"
 #include "core/Box3DWorld.h"
 #include <algorithm>
+#include <chrono>
 
 #include <cmath>
 #include <cstdio>
@@ -312,6 +313,87 @@ int main() {
     w.destroyBody(ball);
     w.approachingBodies(&ball, 1, kDt, 2.0f, 0.0f, out);
     CHECK(out.empty());
+  }
+
+  // ---- a kinematic mover and a compound: found, hits one piece, is not slowed
+  // ----
+  {
+    WorldSettings flying = ws;
+    flying.gravity[0] = flying.gravity[1] = flying.gravity[2] = 0.0f;
+    Box3DWorld w;
+    CHECK(w.create(flying));
+    // Four pieces of a compound in a row along x, at 0, 0.5, 1 and 1.5.
+    BodySettings b;
+    const double origin[3] = {0, 0, 0};
+    const BodyHandle compound = w.createBody(b, origin, kQid);
+    for (int i = 0; i < 4; ++i)
+      CHECK(w.createShape(compound, b, cube(0.5f * static_cast<float>(i)),
+                          false));
+    w.applyMassFromShapes(compound);
+    BodySettings kb;
+    kb.type = BodySettings::Type::Kinematic;
+    const double start[3] = {-2, 0, 0};
+    const BodyHandle mover = w.createBody(kb, start, kQid);
+    CHECK(w.createShape(mover, kb, cube(0.0f)));
+    const float v[3] = {6, 0, 0}, none[3] = {0, 0, 0};
+    CHECK(w.setVelocityByHandle(mover, v, none));
+
+    // Looked at in a long enough step whatever the compound's momentum limit
+    // (a kinematic mover has none), as the compound and not as its pieces.
+    std::vector<Box3DWorld::Approach> out;
+    w.approachingBodies(&mover, 1, 0.5f, 2.0f, 1e9f, out);
+    CHECK(out.size() == 1);
+    if (out.size() == 1) {
+      CHECK(out[0].mover == mover && out[0].target == compound);
+      CHECK(out[0].moverMass == 0.0f);
+      CHECK(near(out[0].relLin[0], 6.0, 1e-4));
+    }
+    // Too close to the compound's motion to come at it: carried along.
+    w.setVelocityByHandle(compound, v, none);
+    out.clear();
+    w.approachingBodies(&mover, 1, 0.5f, 2.0f, 0.0f, out);
+    CHECK(out.empty());
+    w.setVelocityByHandle(compound, none, none);
+
+    // The hit: the first step with an impulse is on the nearest piece alone
+    // (the piece a glue hit is read from), the mover keeps its speed and pose,
+    // and the compound is carried off at the mover's speed.
+    int steps = 0;
+    std::vector<float> impulses;
+    bool hit = false;
+    for (; steps < 120 && !hit; ++steps) {
+      w.step(kDt);
+      w.contactImpulsesByShape(compound, impulses);
+      for (const float i : impulses)
+        hit = hit || i > 0.0f;
+    }
+    CHECK(hit && impulses.size() == 4);
+    if (hit && impulses.size() == 4) {
+      std::printf("kinematic hit on step %d: piece impulses %.2f %.2f %.2f "
+                  "%.2f\n",
+                  steps, impulses[0], impulses[1], impulses[2], impulses[3]);
+      CHECK(impulses[0] > 0.0f);
+      CHECK(impulses[1] == 0.0f && impulses[2] == 0.0f && impulses[3] == 0.0f);
+    }
+    for (int i = 0; i < 30; ++i)
+      ++steps, w.step(kDt);
+    double pm[3], pc[3];
+    float qm[4], qc[4], lin[3], spin[3];
+    CHECK(w.getTransformByHandle(mover, pm, qm));
+    CHECK(w.getTransformByHandle(compound, pc, qc));
+    CHECK(w.getVelocityByHandle(mover, lin, spin));
+    const double travelled = -2.0 + 6.0 * steps * static_cast<double>(kDt);
+    std::printf("kinematic after %d steps: x %.3f (a free run %.3f), speed "
+                "%.4f, compound x %.3f\n",
+                steps, pm[0], travelled, lin[0], pc[0]);
+    CHECK(near(lin[0], 6.0, 1e-4));
+    CHECK(near(pm[0], travelled, 1e-3));
+    float cl[3], cs[3];
+    CHECK(w.getVelocityByHandle(compound, cl, cs));
+    CHECK(near(cl[0], 6.0, 0.3) && pc[0] > 0.5);
+    // Pushed on its axis: the contact's corners leave a little sideways speed.
+    CHECK(std::fabs(cl[1]) < 1.0f && std::fabs(cl[2]) < 1.0f);
+    (void)cs;
   }
 
   // ---- contactImpulseByHandle: contacts the caller ignores are left out ----
@@ -667,6 +749,66 @@ int main() {
     const GlueComponents d = glueComponents(6, reversed);
     CHECK(d.of == c.of && d.count == c.count && d.size == c.size);
     CHECK(glueComponents(0, {}).count == 0);
+  }
+
+  // ---- many groups: 2500 chains of 4 pieces, numbered interleaved so that a
+  // group's nodes are far apart, bonds in reverse order ----
+  {
+    const int groups = 2500, per = 4;
+    std::vector<GlueBond> bonds;
+    for (int k = per - 2; k >= 0; --k)
+      for (int g = groups - 1; g >= 0; --g) {
+        GlueBond bond;
+        bond.a = g + (k + 1) * groups;
+        bond.b = g + k * groups;
+        bonds.push_back(bond);
+      }
+    const auto t0 = std::chrono::steady_clock::now();
+    const GlueComponents c = glueComponents(
+        static_cast<size_t>(groups) * static_cast<size_t>(per), bonds);
+    const double componentsMs = std::chrono::duration<double, std::milli>(
+                                    std::chrono::steady_clock::now() - t0)
+                                    .count();
+    CHECK(c.count == groups);
+    bool sizesOk = c.size.size() == static_cast<size_t>(groups);
+    for (const int nodes : c.size)
+      sizesOk = sizesOk && nodes == per;
+    CHECK(sizesOk);
+    // The members of a group share its number (counted in order of each
+    // group's first node, which is node g), and no other group has it.
+    bool membersOk = true;
+    for (int g = 0; g < groups; ++g)
+      for (int k = 0; k < per; ++k)
+        membersOk = membersOk && c.of[static_cast<size_t>(g + k * groups)] == g;
+    CHECK(membersOk);
+
+    // Each group merged into one body: the mass is the sum, the centre the
+    // mean, and every group is its own (here on a row y = g).
+    const auto t1 = std::chrono::steady_clock::now();
+    bool mergedOk = true;
+    for (int g = 0; g < groups; ++g) {
+      std::vector<RigidPiece> pieces(per);
+      for (int k = 0; k < per; ++k) {
+        pieces[static_cast<size_t>(k)].pos[0] = k;
+        pieces[static_cast<size_t>(k)].pos[1] = g;
+        pieces[static_cast<size_t>(k)].mass = 2.0f;
+        for (int i = 0; i < 3; ++i)
+          pieces[static_cast<size_t>(k)].inertia[i] = 1.0f;
+      }
+      const MergedBody body = mergePieces(pieces);
+      mergedOk = mergedOk && body.ok && near(body.mass, 8.0, 1e-4) &&
+                 near(body.com[0], 1.5, 1e-6) && near(body.com[1], g, 1e-6);
+    }
+    const double mergeMs = std::chrono::duration<double, std::milli>(
+                               std::chrono::steady_clock::now() - t1)
+                               .count();
+    CHECK(mergedOk);
+    std::printf("%d groups of %d: components %.3f ms, merging every group "
+                "%.3f ms\n",
+                groups, per, componentsMs, mergeMs);
+    // Far inside what a frame can spare (these were about a millisecond or less
+    // each): a quadratic search over the groups would be seconds.
+    CHECK(componentsMs < 250.0 && mergeMs < 250.0);
   }
 
   // ---- merging pieces keeps their momentum ----

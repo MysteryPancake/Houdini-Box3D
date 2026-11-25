@@ -380,6 +380,245 @@ def test_bond_loop_mass():
 TESTS["bond_loop_mass"] = test_bond_loop_mass
 
 
+def test_bond_kinematic_pusher():
+    """A kinematic piece (animated, moved along x at 3 m/s by a SOP Solver) pushes a row of 4 bonded boxes (1000 kg
+    each) standing on the ground, with Glue as One Body on and off. On a bond that cannot break, the row is pushed along
+    as one: after 2 s the first box is 1 m ahead of the pusher and the others 1 m apart (within 0.3), the bonds hold, and the
+    two modes agree within 0.3. On a weak bond (1 kN) the pusher, which has no momentum limit, breaks every bond
+    in both modes (it does not stall against the compound, nor is it thrown back: it keeps the animation within 0.05),
+    and every box ends ahead of it, the mean of the row within 1.5 m between the modes."""
+    original = hou.fps()
+    hou.setFps(24)
+    rows, ok = [], True
+    pusher_speed, frames = 3.0, 48
+    pieces = [dict(GROUND, attrs={"active": 0, "animated": 0})]
+    pieces += [{"size": (1, 1, 1), "center": (float(i), 0.5, 0), "attrs": {"active": 1, "animated": 0}}
+               for i in range(4)]
+    pieces += [{"size": (1, 1, 1), "center": (-2.5, 0.5, 0), "attrs": {"active": 0, "animated": 1}}]
+    lines = [(1 + i, (i + 0.5, 0.5, 0.0), 2 + i, (i + 0.5, 0.5, 0.0)) for i in range(3)]
+    results = {}
+    try:
+        for label, strength in (("strong", 1e9), ("weak", 1e3)):
+            for compound in (True, False):
+                dop, names = bond_scene(tag("bond_pusher"), pieces, lines, compound=compound,
+                                        bond={"bond_tensile": strength, "bond_shear": strength})
+                out = dop.node("output")
+                solver = out.inputs()[0]
+                upstream = solver.inputs()[0]
+                solver.setInput(0, None)
+                mover = sop_solver(dop, f'if (s@name == "{names[5]}") @P.x = -2.5 + {pusher_speed} * @Time;')
+                out.setInput(0, multisolver(dop, upstream, [mover, solver]))
+
+                def look(sim, f, names=names):
+                    if f != frames:
+                        return None
+                    pos = packed_positions(sim, "pieces")
+                    return [pos[n][0] for n in names[1:5]], pos[names[5]][0], broken_count(sim) or 0
+
+                row, pusher, broken = step(dop, frames, look)[frames]
+                results[(label, compound)] = (row, pusher, broken)
+        for label in ("strong", "weak"):
+            (on, p_on, b_on), (off, p_off, b_off) = results[(label, True)], results[(label, False)]
+            want_pusher = -2.5 + pusher_speed * ((frames - 1) / hou.fps())  # @Time of the last frame
+            good = abs(p_on - want_pusher) < 0.05 and abs(p_off - want_pusher) < 0.05
+            if label == "strong":
+                good = good and b_on == 0 and b_off == 0
+                for row, pusher in ((on, p_on), (off, p_off)):
+                    good = good and all(abs(row[i] - (row[0] + i)) < 0.3 for i in range(4))
+                    good = good and abs(row[0] - (pusher + 1.0)) < 0.3
+                good = good and all(abs(a - b) < 0.3 for a, b in zip(on, off))
+            else:
+                good = good and b_on == 3 and b_off == 3
+                good = good and all(x > p for x, p in [(min(on), p_on), (min(off), p_off)])
+                good = good and abs(sum(on) / 4 - sum(off) / 4) < 1.5
+            ok = ok and good
+            rows.append(f"{label}: compound row {[round(x, 2) for x in on]}, pusher {p_on:.2f}, {b_on} broken; welds row "
+                        f"{[round(x, 2) for x in off]}, pusher {p_off:.2f}, {b_off} broken ({'ok' if good else 'WRONG'})")
+    finally:
+        hou.setFps(original)
+    return [Result("bond_kinematic_pusher", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+TESTS["bond_kinematic_pusher"] = test_bond_kinematic_pusher
+
+
+def test_bond_kinematic_carry():
+    """Two boxes bonded in a row to a kinematic piece (animated, moved along x at 3 m/s by a SOP Solver) on the ground:
+    a bond to a body that does not simulate has a side that never moves, so the group is not made one body, and the
+    boxes are carried: after 2 s the first is 1 m and the second 2 m from the kinematic piece (within 0.3), nothing
+    broke and the kinematic piece keeps the animation (within 0.05), with Glue as One Body on and off."""
+    original = hou.fps()
+    hou.setFps(24)
+    rows, ok = [], True
+    frames = 48
+    pieces = [dict(GROUND, attrs={"active": 0, "animated": 0}),
+              {"size": (1, 1, 1), "center": (0.0, 0.5, 0), "attrs": {"active": 0, "animated": 1}},
+              {"size": (1, 1, 1), "center": (1.0, 0.5, 0), "attrs": {"active": 1, "animated": 0}},
+              {"size": (1, 1, 1), "center": (2.0, 0.5, 0), "attrs": {"active": 1, "animated": 0}}]
+    lines = [(1, (0.5, 0.5, 0.0), 2, (0.5, 0.5, 0.0)), (2, (1.5, 0.5, 0.0), 3, (1.5, 0.5, 0.0))]
+    try:
+        for compound in (True, False):
+            dop, names = bond_scene(tag("bond_carry"), pieces, lines, compound=compound,
+                                    bond={"bond_tensile": 1e9, "bond_shear": 1e9})
+            out = dop.node("output")
+            solver = out.inputs()[0]
+            upstream = solver.inputs()[0]
+            solver.setInput(0, None)
+            mover = sop_solver(dop, f'if (s@name == "{names[1]}") @P.x = 3.0 * @Time;')
+            out.setInput(0, multisolver(dop, upstream, [mover, solver]))
+
+            def look(sim, f, names=names):
+                if f != frames:
+                    return None
+                pos = packed_positions(sim, "pieces")
+                return pos[names[1]][0], pos[names[2]][0], pos[names[3]][0], broken_count(sim) or 0
+
+            k, b, c, broken = step(dop, frames, look)[frames]
+            want = 3.0 * (frames - 1) / hou.fps()
+            good = abs(k - want) < 0.05 and abs(b - k - 1.0) < 0.3 and abs(c - k - 2.0) < 0.3 and broken == 0
+            ok = ok and good
+            rows.append(f"{'compound' if compound else 'welds'}: kinematic {k:.2f} (animation {want:.2f}), boxes "
+                        f"{b - k:+.2f} and {c - k:+.2f} from it, {broken} broken ({'ok' if good else 'WRONG'})")
+    finally:
+        hou.setFps(original)
+    return [Result("bond_kinematic_carry", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+TESTS["bond_kinematic_carry"] = test_bond_kinematic_carry
+
+
+def test_bond_kinematic_topple():
+    """A kinematic piece (animated, moved along x at 3 m/s) hits the top box of a column of 4 bonded boxes (1000 kg each,
+    standing on the ground, bonds of 20 kPa that the push breaks), with Glue as One Body on and off. All 3 bonds break in
+    both, and on frame 24, while the column is still going over, the boxes are in the same place in both modes within
+    0.1. Later the pieces tumble and the modes part (INFO: frame 72)."""
+    original = hou.fps()
+    hou.setFps(24)
+    got = {}
+    pieces = [dict(GROUND, attrs={"active": 0, "animated": 0})]
+    pieces += [{"size": (1, 1, 1), "center": (0.0, 0.5 + i, 0), "attrs": {"active": 1, "animated": 0}}
+               for i in range(4)]
+    pieces += [{"size": (1, 1, 1), "center": (-2.5, 3.5, 0), "attrs": {"active": 0, "animated": 1}}]
+    lines = [(1 + i, (0.0, 1.0 + i, 0.0), 2 + i, (0.0, 1.0 + i, 0.0)) for i in range(3)]
+    try:
+        for compound in (True, False):
+            dop, names = bond_scene(tag("bond_topple"), pieces, lines, compound=compound,
+                                    bond={"bond_tensile": 2e4, "bond_shear": 2e4})
+            out = dop.node("output")
+            solver = out.inputs()[0]
+            upstream = solver.inputs()[0]
+            solver.setInput(0, None)
+            mover = sop_solver(dop, f'if (s@name == "{names[5]}") @P.x = -2.5 + 3.0 * @Time;')
+            out.setInput(0, multisolver(dop, upstream, [mover, solver]))
+
+            def look(sim, f, names=names):
+                if f not in (24, 72):
+                    return None
+                pos = packed_positions(sim, "pieces")
+                return [(pos[n][0], pos[n][1]) for n in names[1:5]], broken_count(sim) or 0
+
+            got[compound] = step(dop, 72, look)
+    finally:
+        hou.setFps(original)
+    (on24, b_on), (off24, b_off) = got[True][24], got[False][24]
+    gap = max(max(abs(a - b) for a, b in zip(p, q)) for p, q in zip(on24, off24))
+    ok = b_on == 3 and b_off == 3 and gap < 0.1
+    fmt = lambda row: [(round(x, 2), round(y, 2)) for x, y in row]
+    return [Result("bond_kinematic_topple", Result.PASS if ok else Result.FAIL,
+                   f"frame 24: {b_on} / {b_off} bonds broken (compound / welds), the boxes differ by at most {gap:.3f} m"),
+            Result("bond_kinematic_topple", Result.INFO,
+                   f"frame 72: compound {fmt(got[True][72][0])}, welds {fmt(got[False][72][0])}")]
+
+
+TESTS["bond_kinematic_topple"] = test_bond_kinematic_topple
+
+
+def test_bond_many_groups():
+    """Many small glued groups at once. 400 groups of 3 boxes (1000 kg each, a Bond between neighbours, strong ones) on a
+    20 x 20 grid 4 m apart, dropped 1.5 m on the ground without bounce, with Glue as One Body on and off. With it on every group is
+    its own compound (Write Bond Attributes shows `compound_id`: 400 different numbers, the three pieces of a group
+    sharing theirs) and with it off none is. Both ways every box lands on the ground and stays where its group put it
+    (y 0.5 and its x within 0.05 of the start, nothing broken) and the two modes agree within 0.05. INFO: the seconds
+    each took for 36 frames."""
+    import time
+
+    original = hou.fps()
+    hou.setFps(24)
+    side, per, frames = 20, 3, 36
+    pieces = [{"size": (100, 1, 100), "center": (0, -0.5, 0), "attrs": {"active": 0}}]
+    lines = []
+    for gz in range(side):
+        for gx in range(side):
+            x0, z0 = 4.0 * (gx - side / 2), 4.0 * (gz - side / 2)
+            first = len(pieces)
+            for k in range(per):
+                pieces.append({"size": (1, 1, 1), "center": (x0 + k, 2.0, z0), "attrs": {"active": 1}})
+            lines += [(first + k, (x0 + k + 0.5, 2.0, z0), first + k + 1, (x0 + k + 0.5, 2.0, z0))
+                      for k in range(per - 1)]
+    results, seconds, per_frame = {}, {}, {}
+    try:
+        for compound in (True, False):
+            dop, names = bond_scene(tag("bond_groups"), pieces, lines, compound=compound,
+                                    bond={"bond_tensile": 1e9, "bond_shear": 1e9}, packed_parms={"bounce": 0.0})
+            set_parm(dop.node("box3d_solver"), ["bondreadouts"], 1)
+
+            marks = [time.time()]
+
+            def look(sim, f, names=names, marks=marks):
+                marks.append(time.time())
+                if f != frames:
+                    return None
+                obj = sim.findObject("pieces")
+                geo = obj.geometry()
+                ids = {pt.attribValue("name"): pt.attribValue("compound_id") for pt in geo.points()}                     if geo.findPointAttrib("compound_id") is not None else {}
+                pos = packed_positions(sim, "pieces")
+                return {n: pos[n] for n in names[1:]}, ids, broken_count(sim) or 0
+
+            start = time.time()
+            results[compound] = step(dop, frames, look)[frames]
+            seconds[compound] = time.time() - start
+            per_frame[compound] = [b - a for a, b in zip(marks, marks[1:])]
+    finally:
+        hou.setFps(original)
+    names = list(results[True][0])
+    rows, ok = [], True
+    for compound in (True, False):
+        pos, ids, broken = results[compound]
+        landed = all(abs(pos[n][1] - 0.5) < 0.05 for n in names)
+        in_place = True
+        for g in range(side * side):
+            for k in range(per):
+                x0 = 4.0 * (g % side - side / 2)
+                in_place = in_place and abs(pos[names[g * per + k]][0] - (x0 + k)) < 0.05
+        group_ids = [{ids.get(names[g * per + k]) for k in range(per)} for g in range(side * side)]
+        if compound:
+            shared = all(len(s) == 1 and None not in s and next(iter(s)) >= 0 for s in group_ids)
+            distinct = len({next(iter(s)) for s in group_ids if len(s) == 1})
+            grouped = shared and distinct == side * side
+        else:
+            grouped = all(v == -1 for v in ids.values())
+            distinct = 0
+        good = landed and in_place and broken == 0 and grouped
+        ok = ok and good
+        rows.append(f"{'compound' if compound else 'welds'}: landed {landed}, in place {in_place}, {broken} broken, "
+                    f"{distinct if compound else 'no'} compounds ({'ok' if good else 'WRONG'})")
+    gap = max(abs(results[True][0][n][i] - results[False][0][n][i]) for n in names for i in range(3))
+    ok = ok and gap < 0.05
+    rows.append(f"modes differ by at most {gap:.3f} m")
+    return [Result("bond_many_groups", Result.PASS if ok else Result.FAIL, "; ".join(rows)),
+            Result("bond_many_groups", Result.INFO,
+                   f"{len(names)} boxes in {side * side} groups, {frames} frames: {seconds[True]:.1f} s as compounds, "
+                   f"{seconds[False]:.1f} s as welds; per frame (first, second, median of the rest, ms): compounds "
+                   + ", ".join(f"{1000 * t:.0f}" for t in (per_frame[True][0], per_frame[True][1],
+                                                           sorted(per_frame[True][2:])[len(per_frame[True][2:]) // 2]))
+                   + ", welds "
+                   + ", ".join(f"{1000 * t:.0f}" for t in (per_frame[False][0], per_frame[False][1],
+                                                           sorted(per_frame[False][2:])[len(per_frame[False][2:]) // 2])))]
+
+
+TESTS["bond_many_groups"] = test_bond_many_groups
+
+
 def test_bond_tear_mass_compound():
     """The mass a Bond tears with is the graph sides' mass, the same as a compound and as welds. As in bond_impact's
     pair, a 1000 kg ball hits two bonded free boxes at 4 m/s in zero gravity (reduced mass 500 kg), and in

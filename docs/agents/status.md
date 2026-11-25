@@ -12,10 +12,11 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 **Not yet run in Houdini**
 
 * Glue as One Body releasing the pieces in a fast body's way (`holdCompoundsForApproach`, [glue-compound.md](glue-compound.md)):
-  only the `building` example has run it (`glue_compound_hit`). At Strength 20000 most of its bonds break from the
+  only the `building` example (`glue_compound_hit`) and a kinematic piece pushing Bonds (`bond_kinematic_pusher`,
+  `bond_kinematic_topple`) have run it. At Strength 20000 most of its bonds break from the
   building's weight in both modes before anything hits it (Glue counts a resting body's contact impulse as a hit, as Bullet
-  does: [joints-sidefx.md](joints-sidefx.md)). Not checked: other scenes, a slow heavy body, many glued groups, a very large
-  compound's cost, a kinematic body in a scene (only the core query is tested), the force and torque a bond reads while its
+  does: [joints-sidefx.md](joints-sidefx.md)). Not checked: other scenes, a slow heavy body, a very large
+  compound's cost, the force and torque a bond reads while its
   weld is a bridge's (its own joint is parked, so they read zero), bridges of bonds remade while pieces are held, and
   `clang-tidy` on the HDK files (`src/sync`, `src/dop`).
 
@@ -68,8 +69,10 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * Glue Inertial Load (`gluecompoundload`, `pieceLoad`): the maths is checked in `core_compound` and `glue_compound_load` shows
   the load reaching the bonds of a column landing on its end. Not checked: that a cube dropped on a corner collapses, nor how its
   break values compare with Bullet's impacts.
-* Collision group names (`collision_names`, test `solver_sop_collision_group_names`): unchecked are whether the collision
-  input's pieces honour category / mask, and whether Bullet also lets either side's ignore pattern be enough.
+* Collision group names (`collision_names`, tests `solver_sop_collision_group_names`, `solver_sop_collider_group_names`): unchecked is
+  whether Bullet also lets either side's ignore pattern be enough. In `solver_sop_collision_group_names_bullet` and the collider
+  test's INFO row RBD Bullet Solver ignored `collisionignore` in every case (the boxes always collided), so either its
+  attribute setup differs from what the tests write or it needs more than the attribute; no comparison yet.
 * Escape mid-step: the step is discarded and re-cooked, earlier frames stay cached, the re-cook rebuilds once.
 * Data ids surviving the DOP copy between timesteps (the sync skip; debug log `scan skipped`); our own writes not
   looking like edits (debug log `full scan, changed:`).
