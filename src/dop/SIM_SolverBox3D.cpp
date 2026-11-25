@@ -15,8 +15,6 @@
 #include <SIM/SIM_Engine.h>
 #include <SIM/SIM_GuidePerObject.h>
 #include <UT/UT_PerfMonAutoEvent.h>
-#include <UT/UT_PerfMonTimedEvent.h>
-#include <UT/UT_Performance.h>
 #include <UT/UT_Thread.h>
 
 #include <algorithm>
@@ -37,56 +35,11 @@ namespace {
 // Performance Monitor shows {Category} with {Stage} below it, as the Bullet
 // solver's tree does. A plain "A/B" or "A/{B}" gives unbalanced braces.
 
-// Box3D times the parts of its own step. Each part becomes an event under
-// "Stepping Simulation" in Houdini's Performance Monitor, with Box3D's time, so
-// the profile shows where the step went. Only while a profile records.
-void reportStepProfile(const SIM_Solver *solver,
-                       const b3dop::Box3DWorld &world) {
-  UT_Performance *perf = UTgetPerformance();
-  if (!perf->isRecordingSolveStats())
-    return;
-  const b3dop::Box3DWorld::StepProfile p = world.stepProfile();
-  const struct {
-    const char *name;
-    float ms;
-  } parts[] = {
-      {"Stepping Simulation}/{Box3D Pairs", p.pairs},
-      {"Stepping Simulation}/{Box3D Collide", p.collide},
-      {"Stepping Simulation}/{Box3D Solver Setup", p.solverSetup},
-      {"Stepping Simulation}/{Box3D Constraints", p.constraints},
-      {"Stepping Simulation}/{Box3D Constraints}/{Prepare",
-       p.prepareConstraints},
-      {"Stepping Simulation}/{Box3D Constraints}/{Integrate "
-       "Velocities",
-       p.integrateVelocities},
-      {"Stepping Simulation}/{Box3D Constraints}/{Warm Start", p.warmStart},
-      {"Stepping Simulation}/{Box3D Constraints}/{Solve", p.solveImpulses},
-      {"Stepping Simulation}/{Box3D Constraints}/{Integrate "
-       "Positions",
-       p.integratePositions},
-      {"Stepping Simulation}/{Box3D Constraints}/{Relax", p.relaxImpulses},
-      {"Stepping Simulation}/{Box3D Constraints}/{Restitution", p.restitution},
-      {"Stepping Simulation}/{Box3D Constraints}/{Store "
-       "Impulses",
-       p.storeImpulses},
-      {"Stepping Simulation}/{Box3D Split Islands", p.splitIslands},
-      {"Stepping Simulation}/{Box3D Transforms", p.transforms},
-      {"Stepping Simulation}/{Box3D Events", p.events},
-      {"Stepping Simulation}/{Box3D Refit", p.refit},
-      {"Stepping Simulation}/{Box3D Fast Bodies", p.bullets},
-      {"Stepping Simulation}/{Box3D Sensors", p.sensorHits + p.sensors},
-      {"Stepping Simulation}/{Box3D Sleep Islands", p.sleepIslands},
-  };
-  for (const auto &part : parts) {
-    const int id = perf->startTimedSolveEvent(solver, part.name);
-    if (id == UT_PERFMON_INVALID_ID)
-      continue;
-    // The part took no time here: it ran inside the step. Give it Box3D's.
-    UT_PerfMonEvent *event = const_cast<UT_PerfMonEvent *>(perf->getEvent(id));
-    if (event && event->isTimedEvent())
-      static_cast<UT_PerfMonTimedEvent *>(event)->overrideTime(part.ms);
-    perf->stopEvent(id);
-  }
+// Steps the world inside an event of its own, so the profile shows the time of
+// Box3D's step apart from the plugin's own stages.
+void stepWorld(const SIM_Solver *solver, b3dop::Box3DWorld &world, float dt) {
+  UT_PerfMonAutoSolveEvent e(solver, "Stepping Simulation}/{Box3D Step");
+  world.step(dt);
 }
 
 } // namespace
@@ -549,8 +502,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
       recordCompoundMotion(*st);
       holdCompoundsForApproach(*st, st->moves, left);
     }
-    st->world.step(subDt);
-    reportStepProfile(this, st->world);
+    stepWorld(this, st->world, subDt);
     if (wantHits) {
       st->world.updateHitEvents();
       st->hitsCollected = true;
@@ -609,8 +561,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
           holdCompoundsForApproach(*st, i == 0 ? lastFrame : events, left);
         }
         mayRepeat = !left.empty();
-        st->world.step(subDt);
-        reportStepProfile(this, st->world);
+        stepWorld(this, st->world, subDt);
         // Before the glue reads them; appended across the frame's steps.
         if (collectHits)
           st->world.updateHitEvents(i > 0);

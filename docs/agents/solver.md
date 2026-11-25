@@ -79,16 +79,14 @@ stamp = now
 
 **Performance Monitor.** Each stage is a `UT_PerfMonAutoSolveEvent(this, "<category>}/{<stage>")` (names written out in `SIM_SolverBox3D.cpp`; Houdini wraps a name in braces and nests at a `/` outside them).
 The Stats view then shows `{Category}` > `{Stage}`, as Bullet's Pre-Solve / Stepping Simulation / Post-Solve. A plain `A/B` or `A/{B}` gives unbalanced braces. Pre-Solve: Rebuilding World,
-Updating Bodies, Updating Colliders, Removing Bodies, Updating Constraints. Stepping Simulation: Applying Forces, Compound Motion, Glue Hits, Breaking Bonds, Compound Bridges, Collecting Contacts (the per-step contacts for Recording Impacts) and the `Box3D <part>` rows below.
+Updating Bodies, Updating Colliders, Removing Bodies, Updating Constraints. Stepping Simulation: Applying Forces, Compound Motion, Glue Hits, Breaking Bonds, Compound Bridges, Collecting Contacts (the per-step contacts for Recording Impacts) and Box3D Step, the measured `world.step` (`stepWorld`), so Box3D's time shows apart from the plugin's own stages.
 Post-Solve: Exporting Simulation Results, Updating Constraint States, Recording Impacts, Updating Points, and Exporting
 Collision Shapes (Export Collision Shapes on). Sub-stages nest one level deeper, written out the same way (opening an event inside another does not nest them):
 Updating Bodies has Checking Changes,
 Reading Points, Planning Shapes, Checking Unchanged Points and Applying to Box3D (`syncObject`, which gets the solver from `StepProgress::solver`);
 Exporting Simulation Results has Compound Pieces and Writing Back; Updating Points has Writing Attributes, Aging and Deleting Dead Points.
 Opened only on the solve thread.
-While a profile records, `reportStepProfile` (`SIM_SolverBox3D.cpp`) adds one `Stepping Simulation/Box3D <part>` event per part of Box3D's own
-step timing (`Box3DWorld::stepProfile`, `b3World_GetProfile`: Pairs, Collide, Solver Setup, Constraints and its parts (Prepare, Integrate Velocities, Warm Start, Solve, Integrate Positions, Relax, Restitution, Store
-Impulses), Split Islands (runs beside the constraints), Transforms, Events, Refit, Fast Bodies, Sensors, Sleep Islands), each given Box3D's time with `overrideTime`. Their sum is about the time of `world.step`, which no event of its own times, so the step is not counted twice.
+Box3D's own per-part step timing (`Box3DWorld::stepProfile`, `b3World_GetProfile`) is not reported to the monitor: an overridden event adds its time to the solver node's, so the parts would count the step twice (a negative event cancelling them was rejected).
 
 **Guide geometry** (`Box3DGuide.cpp`; Guide Options: Show Collision Shapes, Shape Color). A `SIM_GuidePerObject`
 built by `buildCollisionGuide` from the live world (`bodyShapeOutlines`: hulls, spheres, capsules), each body placed at

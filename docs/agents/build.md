@@ -100,8 +100,7 @@ pile, edit, collider, animated, joints, wall, fracture, bondwall, objects, stati
   what makes it re-solve). Frame 1 is its own `first` phase: the scene's SOPs cook there and Box3D builds nothing yet
   (new objects are solved from frame 2).
 * `hou.perfMon` records the solvers' stages (`Pre-Solve/...`, `Stepping Simulation/...`, `Post-Solve/...` are nested
-  under the solver node; Bullet has none, only its node time) and the time of every DOP node. The `Box3D <part>` rows under
-  Stepping Simulation are Box3D's own step timing (`solver.md`); the rest of the solver's stages are the plugin's own code, the part to optimise. A frame's total minus its nodes is the DOP engine.
+  under the solver node; Bullet has none, only its node time) and the time of every DOP node. Stepping Simulation/Box3D Step is the time of Box3D's `world.step` (`solver.md`); the rest of the solver's stages are the plugin's own code, the part to optimise. A frame's total minus its nodes is the DOP engine.
 * Results go to `tests/houdini/out/bench/` (`latest.json` and a timestamped copy); `--compare file.json` prints the
   ratio per phase. `--repeat N` keeps the median run, `--threads N` sets `HOUDINI_MAXTHREADS`, `--budget` caps a run.
 * `fracture` is a Voronoi-fractured cube (Points from Volume) glued by the fracture's own constraints, dropped on the ground, through the Box3D Solver SOP or the RBD Bullet Solver SOP (`sep`: smaller is more pieces). Its frame time includes the SOP's Break Thresholds.

@@ -14,7 +14,7 @@ Each run is its own hython process (a fresh hip file, a cold start). It plays fr
 (setFrame and the DOP cook, as a user waits for it), then resets the simulation and times frame 2 again (the world
 rebuild). Frames are grouped into the scene's phases and reported as median, 95th percentile and maximum per frame.
 Houdini's Performance Monitor records the solvers' stages (Box3D's are Pre-Solve / Stepping Simulation /
-Post-Solve, so what is not a `Box3D <part>` row is the plugin's own code) and each DOP node's time.
+Post-Solve, so what is not under `Box3D Step` is the plugin's own code) and each DOP node's time.
 
 Results are saved to tests/houdini/out/bench/<time>.json and latest.json (compare against a saved one with
 --compare). Timing is noisy: use --repeat, keep other work off the machine, and treat under about 10% as noise.
