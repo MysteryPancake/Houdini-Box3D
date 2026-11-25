@@ -67,10 +67,10 @@ def test_messages_clear():
     def animate_name(path):
         def setup(node):
             set_parm(node, ["class"], 1)  # primitives
-            set_parm(node, ["snippet"], 's@constraint_name = @Frame < 10 ? "nothing" : "weld";')
+            set_parm(node, ["snippet"], 's@constraint_name = @Frame < 10 ? "nothing" : "Weld";')
         return append_sop(path, "attribwrangle", setup)
 
-    dop, names = hanging_pair("messages_clear", "weld", conrels=[("box3d_weldconrel", {})],
+    dop, names = hanging_pair("messages_clear", "Weld", conrels=[("box3d_weldconrel", {})],
                               network_edit=animate_name,
                               net_parms={("reloadfromsops", "overwrite", "overwritewithsop"): 1})
     solver = dop.node("box3d_solver")
@@ -351,7 +351,7 @@ def test_dead_with_network():
     constraint network still names it: no errors from the solver."""
     pieces = [{"size": (1, 1, 1), "center": (0, 2, 0), "attrs": {"active": 0, "life": 0.0, "age": 0.0}},
               {"size": (1, 1, 1), "center": (1, 2, 0), "attrs": {"active": 1, "life": 0.25, "age": 0.0}}]
-    dop, names = hanging_pair("dead_network", "weld", conrels=[("box3d_weldconrel", {})], pieces=pieces)
+    dop, names = hanging_pair("dead_network", "Weld", conrels=[("box3d_weldconrel", {})], pieces=pieces)
     solver = dop.node("box3d_solver")
     set_parm(solver, ["enableaging"], 1)
     errors = []
@@ -455,7 +455,7 @@ def test_animated_static():
 def test_internal_constraints():
     """A Constraint Network with Attach Internal Constraints to Object on: the weld still holds."""
     dop, names = hanging_pair(
-        "internal", "weld", conrels=[("box3d_weldconrel", {})],
+        "internal", "Weld", conrels=[("box3d_weldconrel", {})],
         net_parms={("attachinternal", "internalconstraints", "useinternal", "attachtoobject",
                     "attachinternalconstraints"): 1})
     y = step(dop, 48, lambda sim, f: packed_positions(sim, "pieces"))[48][names[1]][1]
@@ -1649,7 +1649,7 @@ def held_by_duplicate_name(order):
     dop = new_dopnet("dup_names_" + "_".join(map(str, order)))
     obj = box3d_packed_object(dop, "pieces", path)
     node = create(dop, "box3d_weldconrel", "joint")
-    network = constraint_lines(dop.name() + "_network", [(names[0], (0.5, 2, 0), "dup", (0.5, 2, 0), "weld")])
+    network = constraint_lines(dop.name() + "_network", [(names[0], (0.5, 2, 0), "dup", (0.5, 2, 0), "Weld")])
     net = create(dop, "constraintnetwork", "constraint_network")
     net.setInput(0, obj)
     set_parm(net, ["soppath", "constraintsoppath", "geosoppath"], network)

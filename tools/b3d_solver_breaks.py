@@ -1,7 +1,7 @@
 """Box3D Solver SOP: Break Thresholds, on the Constraints tab.
 
-RBD Bullet Solver breaks constraints in a SOP Solver after its solver (`Constraint_Solver`): a wrangle over the
-object's ConstraintGeometry deletes the primitives whose `impact`, `force`, `distance`, `torque` or `angle` passes a
+RBD Bullet Solver breaks constraints in a SOP Solver after its solver (`Constraint_Solver`): a primitive wrangle, run
+once for each break entry in a loop, over the object's ConstraintGeometry deletes the primitives whose `impact`, `force`, `distance`, `torque` or `angle` passes a
 threshold, or switches them to their `next_constraint_name`. This is the same, for Angle, Distance, Impact and Torque
 (Force is left out: Bullet's `force` on Glue is not a joint force, see docs/notes.md), and for At Frame. Impact is the
 one that breaks SideFX Glue the way Houdini does: the solver writes `impact` on Glue, see docs/agents/joints-sidefx.md.
@@ -27,7 +27,10 @@ BREAKS_TOGGLE = "enable_constraintbreaks"
 BREAK_SOLVER = "constraint_breaks"  # the SOP Solver DOP
 BREAK_ENABLE = "enable_constraint_breaks"  # the Enable Solver DOP in front of it
 BREAK_WRANGLE = "break_constraints"
-BREAK_LIVE = "live_constraints"  # the SOP Solver's Object Merge of the live constraints input, the wrangle's input 2
+BREAK_BEGIN, BREAK_META, BREAK_END = "break_begin", "break_metadata", "break_end"  # the loop over the entries
+BREAK_LIVE_IN = "break_live"  # the loop's block begin that fetches the live constraints
+BREAK_COMPILE_BEGIN, BREAK_COMPILE_LIVE, BREAK_COMPILE_END = "break_compile_begin", "break_compile_live", "break_compile_end"
+BREAK_LIVE = "live_constraints"  # the SOP Solver's Object Merge of the live constraints input, the wrangle's third input
 CONSTRAINT_GEOMETRY = "ConstraintGeometry"
 
 # The thresholds, in the order Bullet checks them: (key, label, default threshold, default on, scaled by World Scale,
@@ -50,8 +53,17 @@ BREAK_PARMS = [BREAKS_TOGGLE, BREAKS] + [
               f"constraint_use{key}var#", f"constraint_{key}var#", f"constraint_{key}attrib#",
               f"constraint_{key}attribupdate#")]
 
-# The wrangle (Run Over Detail: the entries are read once, not for every constraint) in the SOP Solver. REL is the path from the wrangle to the asset.
-BREAK_VEX = '''// Breaks the constraints the Break Thresholds name, as RBD Bullet Solver's break_constraints (Force excepted).
+# The wrangle's Group: the constraints the entry's Constraint Names list, one `@constraint_name=` pattern per name, so
+# the match is found natively and not by string work in VEX for every primitive. "!*" for no names, as an empty group
+# would be every primitive. REL is the path to the asset.
+GROUP_EXPRESSION = """words = hou.evalParm("REL/constraint_names%d" % (int(hou.hscriptExpression('detail(-1, "iteration", 0)')) + 1)).split()
+return " ".join("@constraint_name=" + word for word in words) or "!*"
+"""
+
+# The wrangle (Run Over Primitives, once for each break entry by the loop around it) in the SOP Solver, as RBD Bullet
+# Solver's: the entry's settings are spare parameters of the wrangle (`break_spare_parms`), which the loop's iteration
+# picks, so the code reads them with plain literal channels.
+BREAK_VEX = '''// Breaks the constraints one Break Thresholds entry names, as RBD Bullet Solver's break_constraints (Force excepted).
 #define UNSETF -3.4028235e38
 // A constraint that switches takes its next settings: each next_<setting> that is set becomes <setting> and is cleared
 // (a number at UNSETF, a toggle below 0 and an empty string are "not set").
@@ -113,108 +125,46 @@ void switchnext(int primnum)
     else removeprim(0, primnum, 1);
 }
 
-// Does the primitive's `key` attribute pass an entry's threshold? Everything but the primitive is read once, before the
-// loop over the constraints (see below): `use` is the entry's toggle (and the attribute existing), `threshold` the
-// entry's, times scale, `var` its variance (below 0: none), `attrib` the Scale by Attribute attribute ("" for none).
+// Does the primitive's `key` attribute pass the threshold? `use` is the entry's toggle, `threshold` the entry's (times
+// World Scale), `var` its variance (below 0: none), `attrib` the Scale by Attribute attribute ("" for none).
 int passes(string key; int use; float threshold, var; string attrib; int update; float rest; int primnum, id)
 {
-    if (!use)
+    if (!use || !hasprimattrib(0, key))
         return 0;
+    // (a copy: a function's parameters are writable, so they cannot be given channel calls)
+    float limit = threshold;
     if (var >= 0)
-        threshold *= fit01(rand(id), 1 - var, 1 + var);
-    if (attrib != "")
+        limit *= fit01(rand(id), 1 - var, 1 + var);
+    if (attrib != "" && hasprimattrib(0, attrib))
     {
         float value = prim(0, attrib, primnum);
         // Update from Input, as RBD Bullet Solver: the same constraint's value in the live input, found by __primid
-        if (update)
+        if (update && hasprimattrib(2, attrib))
         {
-            int live = findattribval(1, "prim", "__primid", id);
+            int live = findattribval(2, "prim", "__primid", id);
             if (live >= 0)
-                value = prim(1, attrib, live);
+                value = prim(2, attrib, live);
         }
-        threshold *= value;
+        limit *= value;
     }
-    return float(prim(0, key, primnum)) > threshold + rest;
+    return float(prim(0, key, primnum)) > limit + rest;
 }
 
-if (!chi("REL/enable_constraintbreaks") || !hasprimattrib(0, "constraint_name"))
+// The wrangle's Group is the constraints the entry names (see GROUP_EXPRESSION), so every primitive here is one.
+int pr = @primnum;
+int hit =chi("constraint_useatframe")
+    && @Frame > chf("constraint_atframe") - chf("substepwindow") && @Frame < chf("constraint_atframe") + chf("substepwindow");
+if (!hit)
+{
+    if (chi("constraint_usefromframe") && chf("constraint_fromframe") > @Frame)
+        return;
+    int id = hasprimattrib(0, "__primid") ? prim(0, "__primid", pr) : pr;
+    hit = PASSES;
+}
+if (!hit)
     return;
-int count = chi("REL/breaks");
-float scale = chi("REL/WORLD_SCALE_TOGGLE") ? chf("REL/WORLD_SCALE") : 1.0;
-float window = 0.5 / max(chi("REL/GLOBAL_SUBSTEPS"), 1);
-int hasid = hasprimattrib(0, "__primid");
-int hasrest = hasprimattrib(0, "restlength");
-
-// What the entries say, read once: a channel read per constraint would cost more than everything else here.
-string e_names[];
-int e_mode[], e_athit[], e_started[];
-KEY_ARRAYS
-for (int i = 0; i < count; ++i)
-{
-    string n = itoa(i + 1);
-    // Names match ignoring case, as the solver finds a constraint's data by `constraint_name`.
-    append(e_names, " " + join(split(tolower(chs("REL/constraint_names" + n)), " "), " ") + " ");
-    append(e_mode, chi("REL/constraint_mode" + n));
-    int hit = 0;
-    if (chi("REL/constraint_useatframe" + n))
-    {
-        float at = chf("REL/constraint_atframe" + n) + chi("REL/constraint_relatframe" + n) * chf("REL/START_FRAME");
-        hit = @Frame > at - window && @Frame < at + window;
-    }
-    append(e_athit, hit);
-    int started = 1;
-    if (chi("REL/constraint_usefromframe" + n))
-    {
-        float from = chf("REL/constraint_fromframe" + n) + chi("REL/constraint_relfromframe" + n) * chf("REL/START_FRAME");
-        started = from <= @Frame;
-    }
-    append(e_started, started);
-    KEY_APPENDS
-}
-
-// The constraints each entry applies to, found by name instead of looking at every constraint: a constraint's name is
-// compared with the entries once per distinct name. Looked up first and changed after, as changing the names would
-// move the lookup.
-string present[] = uniquevals(0, "prim", "constraint_name");
-int done[];
-resize(done, nprimitives(0));
-int todo[], todomode[];
-for (int i = 0; i < count; ++i)
-{
-    int atframe = e_athit[i];
-    if (!atframe && !e_started[i])
-        continue;
-    foreach (string s; present)
-    {
-        if (find(e_names[i], " " + tolower(s) + " ") < 0)
-            continue;
-        int found = findattribvalcount(0, "prim", "constraint_name", s);
-        for (int k = 0; k < found; ++k)
-        {
-            int pr = findattribval(0, "prim", "constraint_name", s, k);
-            if (done[pr])
-                continue;
-            int id = hasid ? prim(0, "__primid", pr) : pr;
-            float rest = hasrest ? prim(0, "restlength", pr) : 0.0;
-            int hit = atframe;
-            if (!hit)
-            {
-                hit = PASSES;
-            }
-            if (hit)
-            {
-                done[pr] = 1;
-                append(todo, pr);
-                append(todomode, e_mode[i]);
-            }
-        }
-    }
-}
-for (int j = 0; j < len(todo); ++j)
-{
-    if (todomode[j]) switchnext(todo[j]);
-    else removeprim(0, todo[j], 1);
-}
+if (chi("constraint_mode")) switchnext(pr);
+else removeprim(0, pr, 1);
 '''
 
 
@@ -312,27 +262,105 @@ def next_setting_names(dopnet):
     return sorted(floats), sorted(ints), sorted(vectors)
 
 
+def break_spare_parms(wrangle, rel, meta):
+    """The spare parameters the wrangle reads (`constraint_<name>`: the asset's `constraint_<name>#` of the loop's
+    current entry). `rel` is the path from the wrangle to the asset, `meta` the name of the loop's metadata block."""
+    entry = '(detail(-1, "iteration", 0) + 1)'  # -1: the spare input, the loop's metadata (a path would not compile)
+
+    def asset(name):
+        return f'ch("{rel}/{name}" + {entry})'
+
+    start = f'ch("{rel}/{START_FRAME}")'
+    numbers = {
+        "constraint_mode": asset("constraint_mode"),
+        "constraint_useatframe": asset("constraint_useatframe"),
+        "constraint_atframe": f'{asset("constraint_atframe")} + {asset("constraint_relatframe")} * {start}',
+        "constraint_usefromframe": asset("constraint_usefromframe"),
+        "constraint_fromframe": f'{asset("constraint_fromframe")} + {asset("constraint_relfromframe")} * {start}',
+        "substepwindow": f'0.5 / max(ch("{rel}/{GLOBAL_SUBSTEPS}"), 1)',
+        "worldscale": f'if(ch("{rel}/{WORLD_SCALE_TOGGLE}"), ch("{rel}/{WORLD_SCALE}"), 1)',
+    }
+    strings = {}
+    for key, _label, _default, _on, scaled, _help in THRESHOLDS:
+        numbers[f"constraint_use{key}"] = asset(f"constraint_use{key}")
+        threshold = asset(f"constraint_{key}threshold")
+        numbers[f"constraint_{key}threshold"] = threshold + (' * ch("worldscale")' if scaled else "")
+        for name in (f"constraint_use{key}var", f"constraint_{key}var", f"constraint_scale{key}",
+                     f"constraint_{key}attribupdate"):
+            numbers[name] = asset(name)
+        strings[f"constraint_{key}attrib"] = f'`chs("{rel}/constraint_{key}attrib" + {entry})`'
+    group = wrangle.parmTemplateGroup()
+    group.append(hou.StringParmTemplate("spare_input0", "Spare Input 0", 1, string_type=hou.stringParmType.NodeReference,
+                                        tags={"opfilter": "!!SOP!!", "oprelative": "."}))
+    for name in numbers:
+        group.append(hou.FloatParmTemplate(name, name, 1))
+    for name in strings:
+        group.append(hou.StringParmTemplate(name, name, 1))
+    wrangle.setParmTemplateGroup(group)
+    for name, expression in numbers.items():
+        wrangle.parm(name).setExpression(expression, hou.exprLanguage.Hscript)
+    for name, value in strings.items():
+        wrangle.parm(name).set(value)
+    wrangle.parm("spare_input0").set(f"../{meta}")
+
+
 def build_breaks(dopnet):
     """The SOP Solver over the pieces' ConstraintGeometry and the Enable Solver DOP in front of it (the node to wire
-    into the Multiple Solver). The wrangle reads the asset's parameters by path."""
+    into the Multiple Solver). The wrangle runs once for each break entry, in a loop as RBD Bullet Solver's."""
     solver = create(dopnet, "sopsolver", BREAK_SOLVER)
     set_named(solver, "datapath", CONSTRAINT_GEOMETRY)
     set_named(solver, "dataname", "Constraint_Breaks")
-    wrangle = solver.createNode("attribwrangle", BREAK_WRANGLE)
     outputs = [c for c in solver.children() if c.type().name() == "output"]
     if not outputs or not outputs[0].inputs():
         warn(f"{solver.path()} has no Output fed by its geometry import: Break Thresholds do nothing")
         return solver
-    wrangle.setInput(0, outputs[0].inputs()[0])
-    outputs[0].setInput(0, wrangle)
-    # Update from Input: the constraints as the SOP gives them now, the wrangle's input 2 (an Object Merge of the
+    source = outputs[0].inputs()[0]
+    begin = solver.createNode("block_begin", BREAK_BEGIN)  # Fetch Feedback: the first entry gets the import
+    meta = solver.createNode("block_begin", BREAK_META)  # the iteration, which picks the entry
+    end = solver.createNode("block_end", BREAK_END)
+    # Compiled, as RBD Bullet Solver's: the geometry comes in through Block Begin Compile nodes.
+    cend = solver.createNode("compile_end", BREAK_COMPILE_END)
+    cbegin = solver.createNode("compile_begin", BREAK_COMPILE_BEGIN)
+    set_named(cbegin, "blockpath", f"../{BREAK_COMPILE_END}")
+    set_named(cbegin, "name", "ConstraintGeometry")
+    cbegin.setInput(0, source)
+    begin.setInput(0, cbegin)
+    meta.setInput(0, cbegin)
+    set_named(begin, "method", "feedback")
+    set_named(meta, "method", "metadata")
+    for node in (begin, meta):
+        set_named(node, "blockpath", f"../{BREAK_END}")
+    set_named(end, "blockpath", f"../{BREAK_BEGIN}")
+    set_named(end, "itermethod", "count")
+    set_named(end, "multithread", 1)
+    end.parm("iterations").setExpression(f'ch("{end.relativePathTo(dopnet.parent())}/{BREAKS}")',
+                                         hou.exprLanguage.Hscript)
+    wrangle = solver.createNode("attribwrangle", BREAK_WRANGLE)
+    wrangle.setInput(0, begin)
+    wrangle.setInput(1, meta)
+    # Update from Input: the constraints as the SOP gives them now, the wrangle's input 3 (an Object Merge of the
     # DOP network's constraints input, read only while Break Thresholds are on).
     live = solver.createNode("object_merge", BREAK_LIVE)
     live.parm("objpath1").set(f'`dopcontextgeo("..", {DOP_CONSTRAINTS})`')
     live.parm("enable1").setExpression(f'ch("{live.relativePathTo(dopnet.parent())}/{BREAKS_TOGGLE}")',
                                        hou.exprLanguage.Hscript)
-    wrangle.setInput(1, live)
-    set_named(wrangle, "class", 0)  # detail
+    clive = solver.createNode("compile_begin", BREAK_COMPILE_LIVE)
+    set_named(clive, "blockpath", f"../{BREAK_COMPILE_END}")
+    set_named(clive, "name", "Live Constraints")
+    clive.setInput(0, live)
+    live_in = solver.createNode("block_begin", BREAK_LIVE_IN)
+    set_named(live_in, "method", "input")
+    set_named(live_in, "blockpath", f"../{BREAK_END}")
+    live_in.setInput(0, clive)
+    wrangle.setInput(2, live_in)
+    end.setInput(0, wrangle)
+    cend.setInput(0, end)
+    outputs[0].setInput(0, cend)
+    set_named(wrangle, "class", 1)  # primitive
+    rel = wrangle.relativePathTo(dopnet.parent())
+    break_spare_parms(wrangle, rel, BREAK_META)
+    wrangle.parm("group").setExpression(GROUP_EXPRESSION.replace("REL", rel),
+                                        hou.exprLanguage.Python)
     floats, ints, vectors = next_setting_names(dopnet)
 
     def names(values):
@@ -340,29 +368,18 @@ def build_breaks(dopnet):
 
     vex = BREAK_VEX.replace("NEXT_FLOATS", names(floats)).replace("NEXT_INTS", names(ints))
     vex = vex.replace("NEXT_VECTORS", names(vectors))
-    vex = vex.replace("REL", wrangle.relativePathTo(dopnet.parent()))
-    vex = vex.replace("WORLD_SCALE_TOGGLE", WORLD_SCALE_TOGGLE).replace("WORLD_SCALE", WORLD_SCALE)
-    # The checks, in THRESHOLDS' order: scaled ones multiply by World Scale, Distance adds the Rest Length. Each one's
-    # entry values are read once, into arrays, before the loop over the constraints.
-    arrays, appends, checks = [], [], []
-    for key, _label, _default, _on, scaled, _help in THRESHOLDS:
-        arrays.append(f"int use_{key}[], upd_{key}[]; float thr_{key}[], var_{key}[]; string attr_{key}[];")
-        appends.append(
-            f'append(use_{key}, chi("REL/constraint_use{key}" + n) && hasprimattrib(0, "{key}"));\n'
-            f'    append(thr_{key}, chf("REL/constraint_{key}threshold" + n) * {"scale" if scaled else "1.0"});\n'
-            f'    append(var_{key}, chi("REL/constraint_use{key}var" + n) ? chf("REL/constraint_{key}var" + n) : -1.0);\n'
-            f'    string a_{key} = chi("REL/constraint_scale{key}" + n) ? chs("REL/constraint_{key}attrib" + n) : "";\n'
-            f'    if (!hasprimattrib(0, a_{key})) a_{key} = "";\n'
-            f'    append(attr_{key}, a_{key});\n'
-            f'    append(upd_{key}, a_{key} != "" && chi("REL/constraint_{key}attribupdate" + n) && hasprimattrib(1, a_{key}));')
-        checks.append(f'passes("{key}", use_{key}[i], thr_{key}[i], var_{key}[i], attr_{key}[i], upd_{key}[i], '
-                      f'{"rest" if key == "distance" else "0.0"}, pr, id)')
-    vex = vex.replace("KEY_ARRAYS", "\n".join(arrays)).replace("KEY_APPENDS", "\n    ".join(appends))
-    vex = vex.replace("PASSES", "\n            || ".join(checks))
-    vex = vex.replace("REL", wrangle.relativePathTo(dopnet.parent()))  # the paths the lines above added
-    vex = vex.replace("GLOBAL_SUBSTEPS", GLOBAL_SUBSTEPS).replace("START_FRAME", START_FRAME)
+    # The checks, in THRESHOLDS' order: Distance adds the Rest Length.
+    checks = []
+    for key, *_ in THRESHOLDS:
+        rest = '(hasprimattrib(0, "restlength") ? prim(0, "restlength", pr) : 0.0)' if key == "distance" else "0.0"
+        checks.append(f'passes("{key}", chi("constraint_use{key}"), chf("constraint_{key}threshold"), '
+                      f'chi("constraint_use{key}var") ? chf("constraint_{key}var") : -1.0, '
+                      f'chi("constraint_scale{key}") ? chs("constraint_{key}attrib") : "", '
+                      f'chi("constraint_{key}attribupdate"), {rest}, pr, id)')
+    vex = vex.replace("PASSES", "\n        || ".join(checks))
     wrangle.parm("snippet").set(vex)
-    wrangle.moveToGoodPosition()
+    for node in (cbegin, clive, begin, meta, live_in, wrangle, live, end, cend):
+        node.moveToGoodPosition()
 
     enable = create(dopnet, "enablesolver", BREAK_ENABLE)
     enable.setInput(0, solver)

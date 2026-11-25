@@ -506,8 +506,9 @@ def build_wall(kind, p, joint):
 @scenario("fracture", "A cube fractured by Voronoi Fracture (Points from Volume, Particle Separation `sep`), every piece glued to "
           "its neighbours by the fracture's own constraints, dropped on the ground: the pieces and constraints go "
           "through the Solver SOP (Box3D Solver or RBD Bullet Solver). Options: sep (smaller = more pieces), strength "
-          "(Glue; the default holds the cube whole), compound 0|1 (Box3D's Glue as One Body).",
-          {"sep": 0.15, "strength": 1e9, "compound": 1, "frames": 60},
+          "(Glue; the default holds the cube whole), compound 0|1 (Box3D's Glue as One Body), breaknames (the Break "
+          "Thresholds' Constraint Names; `Glue` makes the break check look at every constraint).",
+          {"sep": 0.15, "strength": 1e9, "compound": 1, "frames": 60, "breaknames": ""},
           sweep=[{"compound": 1}, {"compound": 0}, {"sep": 0.1, "compound": 1}])
 def scene_fracture(kind, p):
     geo = new_geo("fracture")
@@ -535,6 +536,8 @@ def scene_fracture(kind, p):
     set_parm(solver, ["useground"], 1)
     if kind == "box3d" and p.get("compound") is not None:
         set_parm(solver, ["gluecompound"], p["compound"])
+    if p.get("breaknames"):
+        set_parm(solver, ["constraint_names1"], str(p["breaknames"]))
     inner = [c for c in solver.allSubChildren() if c.type().name() == "dopnet"]
     if not inner:
         raise SetupError("the solver SOP has no DOP network inside")

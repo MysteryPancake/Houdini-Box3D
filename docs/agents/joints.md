@@ -177,8 +177,7 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   Object). Network key = hash of the relationship name (or the object id). `anyJointNetwork` checks the same, without
   reading geometry; while true, each full object scan fills `Box3DObjectSync::byName` (point `name` -> entry, first
   wins) and an object without `namesKnown` cannot skip. `name` is a prop marker, so a renamed piece rescans.
-* Kinds (`networkKinds`): `constraint_name` matches a data name exactly, else ignoring case (so a lowercase
-  `weld` finds `Weld`). The `SIM_Box3DConRel` subdata, by data name, of the relationship, its
+* Kinds (`networkKinds`): `constraint_name` matches a data name exactly, as RBD Bullet Solver's does. The `SIM_Box3DConRel` subdata, by data name, of the relationship, its
   `SIM_ConstraintNetworkRelationship` and its geometry (internal: the ConstraintGeometry and the object); the first
   name found wins. Kinds are re-read every sync (a few subdata); any change reprocesses the network.
   The HDK's `SIM_ConstraintNetwork` iterators / accessors are not used: the geometry is read directly, which keeps

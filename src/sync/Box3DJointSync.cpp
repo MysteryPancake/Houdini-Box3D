@@ -28,7 +28,6 @@
 #include <UT/UT_Vector3.h>
 
 #include <algorithm>
-#include <cctype>
 #include <cmath>
 #include <string>
 #include <string_view>
@@ -750,16 +749,6 @@ b3dop::JointFrame asStored(const b3dop::JointFrame &f) {
 
 namespace {
 
-// ASCII case-insensitive equality, with no allocation (kind() runs for every
-// primitive of a network that is read again).
-bool equalIgnoreCase(const char *a, const char *b) {
-  for (; *a && *b; ++a, ++b)
-    if (std::tolower(static_cast<unsigned char>(*a)) !=
-        std::tolower(static_cast<unsigned char>(*b)))
-      return false;
-  return *a == *b;
-}
-
 // What processNetwork() reads from a network's geometry, bound once.
 struct NetworkReader {
   const GU_Detail *gdp;
@@ -900,13 +889,7 @@ struct NetworkReader {
     if (!n || !*n)
       return nullptr;
     const auto it = kinds.find(std::string(n));
-    if (it != kinds.end())
-      return &it->second;
-    // No exact match: ignore case, so "weld" finds a node named "Weld".
-    for (const auto &kv : kinds)
-      if (equalIgnoreCase(kv.first.c_str(), n))
-        return &kv.second;
-    return nullptr;
+    return it != kinds.end() ? &it->second : nullptr;
   }
 
   // The anchor's saved local frame (local_P / local_orient), if it has one (a

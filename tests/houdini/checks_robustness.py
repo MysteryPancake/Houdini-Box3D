@@ -193,7 +193,7 @@ def test_cross_object_constraint():
     path_b, names_b = packed_boxes("cross_b_geo", [{"size": (1, 1, 1), "center": (1, 2, 0)}])
     dop = new_dopnet("cross_object")
     objs = merge(dop, [packed_object(dop, "obj_a", path_a), packed_object(dop, "obj_b", path_b)])
-    network = constraint_lines("cross_network", [(f"obj_a/{names_a[0]}", FACE, f"obj_b/{names_b[0]}", FACE, "weld")])
+    network = constraint_lines("cross_network", [(f"obj_a/{names_a[0]}", FACE, f"obj_b/{names_b[0]}", FACE, "Weld")])
     net, _ = network_dop(dop, objs, network, "box3d_weldconrel")
     solver = box3d_solver(dop, net)
     finish(dop, solver)
@@ -207,7 +207,7 @@ def test_world_constraint():
     """A piece welded to the world (the line's other end has an empty name) stays where it is."""
     path, names = packed_boxes("world_geo", [{"size": (1, 1, 1), "center": (0, 2, 0)}])
     dop = new_dopnet("world_constraint")
-    network = constraint_lines("world_network", [("", (0, 2.5, 0), names[0], (0, 2.5, 0), "weld")])
+    network = constraint_lines("world_network", [("", (0, 2.5, 0), names[0], (0, 2.5, 0), "Weld")])
     net, _ = network_dop(dop, packed_object(dop, "pieces", path), network, "box3d_weldconrel")
     solver = box3d_solver(dop, net)
     finish(dop, solver)
@@ -223,7 +223,7 @@ def test_kinematic_anchor():
               {"size": (1, 1, 1), "center": (1, 2, 0), "attrs": {"active": 1, "animated": 0}}]
     path, names = packed_boxes("kin_anchor_geo", pieces)
     dop = new_dopnet("kinematic_anchor")
-    network = constraint_lines("kin_anchor_network", [(names[0], FACE, names[1], FACE, "weld")])
+    network = constraint_lines("kin_anchor_network", [(names[0], FACE, names[1], FACE, "Weld")])
     net, _ = network_dop(dop, packed_object(dop, "pieces", path), network, "box3d_weldconrel")
     mover = sop_solver(dop, f'if (s@name == "{names[0]}") @P.x = @Time;')
     finish(dop, multisolver(dop, net, [mover, box3d_solver(dop, None)]))
@@ -240,7 +240,7 @@ def test_joint_keyed_midsim():
     1e-3): it holds until 24, then breaks; frames before 24 match a run that never breaks, and
     scrubbing back to 12 shows it held."""
     def build(tag, keyed):
-        dop, names = hanging_pair(f"keyed_{tag}", "weld",
+        dop, names = hanging_pair(f"keyed_{tag}", "Weld",
                                   conrels=[("box3d_weldconrel", {"breakable": 0, "force_threshold": 1e-3})])
         if keyed:
             joint = dop.node("joint0")

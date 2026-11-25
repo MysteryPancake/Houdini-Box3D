@@ -132,7 +132,7 @@ def test_joint_breakable():
     under a 1000 kg one; with Breakable off the 1000 kg piece holds."""
     rows, ok = [], True
     for mass, breakable, want in ((1.0, 1, "held"), (1000.0, 1, "broke"), (1000.0, 0, "held")):
-        dop, names = hanging_pair(f"breakable_{int(mass)}_{breakable}", "weld",
+        dop, names = hanging_pair(f"breakable_{int(mass)}_{breakable}", "Weld",
                                   conrels=[("box3d_weldconrel", {"breakable": breakable})],
                                   packed_parms={"computemass": 0, "mass": mass})
         joint = dop.node("joint0")
@@ -154,7 +154,7 @@ def test_negative_never_values():
     """Break Force / Torque of -1 with Breakable on (never) keep a weld holding a 1000 kg piece; the
     parameters must accept -1 rather than clamping it to 0 (which breaks at once)."""
     results = []
-    dop, names = hanging_pair("never_values", "weld",
+    dop, names = hanging_pair("never_values", "Weld",
                               conrels=[("box3d_weldconrel", {"breakable": 1, "force_threshold": -1.0,
                                                              "torque_threshold": -1.0})],
                               packed_parms={"computemass": 0, "mass": 1000.0})
@@ -175,7 +175,7 @@ def test_weld_hold_separation():
     anchors together instead, so that distance is only reported."""
     rows, ok = [], True
     for hold in (1, 0):
-        dop, names = hanging_pair(f"weld_hold{hold}", "weld", conrels=[("box3d_weldconrel", {"hold_separation": hold})],
+        dop, names = hanging_pair(f"weld_hold{hold}", "Weld", conrels=[("box3d_weldconrel", {"hold_separation": hold})],
                                   gravity=(0, 0, 0), anchors=((0.0, 2.0, 0.0), (1.0, 2.0, 0.0)))
         track = step(dop, 48, lambda sim, f: packed_positions(sim, "pieces") if f == 48 else None)[48]
         a, b = track[names[0]], track[names[1]]

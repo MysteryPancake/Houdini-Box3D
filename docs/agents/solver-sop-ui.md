@@ -17,20 +17,24 @@ The Solver SOP's parameter tabs, joint settings, Break Thresholds, constraint at
   its Spring (named `Spring`, off), `PIECE_DEFAULTS` the Pieces Bounce (0.25): a `strength` attribute multiplies the setting in both solvers,
   so the same scene breaks at the same impulse (`glue_fracture_vs_bullet`). Cone Twist keeps the node's defaults: Bullet's own do not hold a
   piece (`bullet_cone_twist_goal`), so there is nothing to match.
-* Break Thresholds (`b3d_solver_breaks.py`, first on the Constraints tab, then Export Broken Constraints): RBD Bullet Solver's `Constraint_Solver` for the Angle, Distance, Impact and Torque Thresholds and At Frame. A SOP Solver DOP (`constraint_breaks`, Data Defaults are RBD Bullet Solver's (enabled, Constraint Names `Soft Hard`, only the Distance Threshold on at 1, no Scale Attribute), so a Soft or Hard constraint stretched past its Rest Length by 1 breaks in both.
-  Name `ConstraintGeometry`) with a wrangle (`BREAK_VEX`, over the detail: the entries are read once, then only the constraints whose name an entry lists are looked at (`uniquevals`, `findattribval`), changed after the lookups; a wrangle over primitives read every entry's channels and every name for every constraint, 38 of 50 ms a frame on a fractured cube of 13,000 pieces) between its geometry import and its output deletes the
-  primitives whose `impact` passes a break entry's threshold, or switches them to `next_constraint_name`. The parameters are
+* Break Thresholds (`b3d_solver_breaks.py`, first on the Constraints tab, then Export Broken Constraints): RBD Bullet Solver's `Constraint_Solver` for the Angle, Distance, Impact and Torque Thresholds and At Frame. Data Defaults are RBD Bullet Solver's (enabled, Constraint Names `Soft Hard`, only the Distance Threshold on at 1, no Scale Attribute), so a Soft or Hard constraint stretched past its Rest Length by 1 breaks in both.
+  A SOP Solver DOP (`constraint_breaks`, Name `ConstraintGeometry`) loops over the entries as Bullet's does: `break_begin` (Fetch Feedback), `break_metadata` (the `iteration`), `break_end` (Count = `breaks`), inside
+  Block Begin / End Compile nodes (`break_compile_begin`, `break_compile_live`, `break_compile_end`; compiled it costs a third of what it does uncompiled, 1.9 against 6.5 ms a frame on the `fracture` bench scene with `breaknames=Glue`, so every constraint is looked at). The primitive wrangle `break_constraints` (`BREAK_VEX`)
+  deletes the primitives whose `impact` passes an entry's threshold, or switches them to `next_constraint_name`. The entries run in order, so a constraint one switches to another name can be taken by a later one, as Bullet's.
+  The entry's settings are spare parameters of the wrangle (`break_spare_parms`: `constraint_<name>` is the asset's `constraint_<name>#` of `iteration + 1`), read through its spare input, the metadata block: `detail(-1, "iteration", 0)`
+  (a node path is an error inside a compiled block). Its Group (`GROUP_EXPRESSION`, a Python expression) is the entry's names as one `@constraint_name=` pattern each, so the match is exact, as Bullet's, and happens natively
+  (string work in VEX per primitive is slow: `tolower` alone cost 340 ms a frame on 45,000 primitives). The parameters are
   Bullet's names (`enable_constraintbreaks`, the `breaks` multiparm, `constraint_names#`, `constraint_mode#`,
   `constraint_usefromframe#`, `constraint_useatframe#`, and per key in `THRESHOLDS` `constraint_use<key>#`,
   `constraint_<key>threshold#`, `constraint_scale<key>#`, `constraint_use<key>var#`) and rules (Distance and Impact
   thresholds x World Scale, x the `strength` attribute with Scale by Attribute (with Update from Input,
   `constraint_<key>attribupdate#`, the same constraint's value in the live Constraints input: `live_constraints`, an Object Merge of the
-  DOP network's constraints input as the wrangle's input 2, found by `__primid`, which `store_primid` writes on the input), scattered by Variance with `__primid` else
-  the primitive number; Distance compares against threshold + `restlength`; At Frame's window is 0.5 / Global Substeps). The wrangle reads them by path. The SOP Solver is the
+  DOP network's constraints input, through `break_compile_live` and `break_live` as the wrangle's third input, found by `__primid`, which `store_primid` writes on the input), scattered by Variance with `__primid` else
+  the primitive number; Distance compares against threshold + `restlength`; At Frame's window is 0.5 / Global Substeps). The SOP Solver is the
   Multiple Solver's last input, behind an Enable Solver DOP (`enable_constraint_breaks`): off, the constraint geometry is not
   imported, because a rewrite changes its data ids and the solver then reads the whole network again each step. Test
   `solver_sop_break_impact_bullet`, `solver_sop_break_atframe_bullet`, `solver_sop_break_distance_bullet` and the INFO
-  `solver_sop_break_angle_torque_bullet` and `solver_sop_break_attrib_update_bullet` (against the RBD Bullet Solver SOP). Not there: Force (see status.md), Group, plastic flow and the VEX snippet.
+  `solver_sop_break_angle_torque_bullet` and `solver_sop_break_attrib_update_bullet` (against the RBD Bullet Solver SOP). Not there: Force (see status.md), the Group parameter, plastic flow and the VEX snippet.
 * Constraint attribute updates (`tools/b3d_solver_updates.py`, as RBD Bullet Solver's): the Constraints tab's Override Attributes folder
   (`enable_constraintupdates` with its label hidden, joined to `constraint_attributes`, then `constraint_attribgroup`) runs a SOP Solver DOP
   (`constraint_updates`) over the ConstraintGeometry behind an Enable Solver DOP, before the breaks: an Attribute Copy SOP copies the listed

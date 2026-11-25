@@ -108,7 +108,7 @@ def broken_count(sim):
 def test_breaking():
     """A Breakable weld with a tiny Break Force breaks at once: the piece falls, its line joins the
     `broken` group, and scrubbing back to frame 1 shows it unbroken (no leak into cached frames)."""
-    dop, names = hanging_pair("breaking", "weld",
+    dop, names = hanging_pair("breaking", "Weld",
                               conrels=[("box3d_weldconrel", {"breakable": 1, "force_threshold": 1e-3})])
     track = step(dop, 24, lambda sim, f: (packed_positions(sim, "pieces"), broken_count(sim)))
     if track[24][1] is None:
@@ -128,7 +128,7 @@ def test_attribute_multiplies():
     reach in both, as its default breaks the hanging weld by itself)."""
     ys = {}
     for kind, attrs in (("alone", None), ("times", {"force_threshold": 1e-12})):
-        dop, names = hanging_pair("multiply_" + kind, "weld", line_attrs=attrs,
+        dop, names = hanging_pair("multiply_" + kind, "Weld", line_attrs=attrs,
                                   conrels=[("box3d_weldconrel", {"breakable": 1, "force_threshold": 1e9,
                                                                  "torque_threshold": 1e12})])
         ys[kind] = step(dop, 24, lambda sim, f: packed_positions(sim, "pieces"))[24][names[1]][1]
@@ -154,7 +154,7 @@ def test_unset_attributes():
              {"force_threshold": unset}, True),
             ("torque_threshold unset on 1e-3", {"force_threshold": far, "torque_threshold": 1e-3},
              {"torque_threshold": unset}, True)):
-        dop, names = hanging_pair("unset_" + label.replace(" ", "_"), "weld", line_attrs=attrs,
+        dop, names = hanging_pair("unset_" + label.replace(" ", "_"), "Weld", line_attrs=attrs,
                                   conrels=[("box3d_weldconrel", dict(node, breakable=1))])
         y = step(dop, 24, lambda sim, f: packed_positions(sim, "pieces"))[24][names[1]][1]
         good = (y < 1.5) == falls
@@ -167,7 +167,7 @@ def test_next_constraint():
     """A breaking weld with next_constraint_name = spherical becomes a ball joint at the same
     place: the piece swings but stays 0.5 from the anchor, and the line's constraint_name changes."""
     dop, names = hanging_pair(
-        "next_constraint", "weld", line_attrs={"next_constraint_name": "spherical"},
+        "next_constraint", "Weld", line_attrs={"next_constraint_name": "Spherical"},
         conrels=[("box3d_weldconrel", {"breakable": 1, "force_threshold": 1e-3}), ("box3d_sphericalconrel", {})])
 
     def sample(sim, f):
@@ -184,7 +184,7 @@ def test_next_constraint():
     pos = track[36][0][names[1]]
     dist = (pos - hou.Vector3(FACE)).length()
     attrs = track[36][1]
-    ok = pos[1] < 1.9 and close(dist, 0.5, 0.05) and attrs.get("constraint_name") == "spherical" \
+    ok = pos[1] < 1.9 and close(dist, 0.5, 0.05) and attrs.get("constraint_name") == "Spherical" \
         and not attrs.get("next_constraint_name")
     return [Result("next_constraint", Result.PASS if ok else Result.FAIL,
                    f"piece at y={pos[1]:.2f} (swung = below 1.9), {dist:.3f} from the anchor (expected 0.5); "
@@ -196,8 +196,8 @@ def test_next_settings():
     next_cone_angle 0.25 become enable_cone_limit and cone_angle on the line and are cleared (not set again), so the
     ball joint is made with them."""
     dop, _ = hanging_pair(
-        "next_settings", "weld",
-        line_attrs={"next_constraint_name": "spherical", "next_enable_cone_limit": 1, "next_cone_angle": 0.25},
+        "next_settings", "Weld",
+        line_attrs={"next_constraint_name": "Spherical", "next_enable_cone_limit": 1, "next_cone_angle": 0.25},
         conrels=[("box3d_weldconrel", {"breakable": 1, "force_threshold": 1e-3}), ("box3d_sphericalconrel", {})])
 
     def sample(sim, f):
@@ -212,7 +212,7 @@ def test_next_settings():
         return attrs
 
     attrs = step(dop, 36, sample)[36]
-    ok = (attrs.get("constraint_name") == "spherical" and attrs.get("enable_cone_limit") == 1
+    ok = (attrs.get("constraint_name") == "Spherical" and attrs.get("enable_cone_limit") == 1
           and close(attrs.get("cone_angle", -1.0), 0.25, 1e-4) and attrs.get("next_enable_cone_limit", 0) < 0
           and attrs.get("next_cone_angle", 0.0) <= -3.0e38)
     return [Result("next_settings", Result.PASS if ok else Result.FAIL,
@@ -222,7 +222,7 @@ def test_next_settings():
 
 def test_feedback():
     """The solver writes force, torque, distance and angle onto a holding weld's line."""
-    dop, _ = hanging_pair("feedback", "weld", conrels=[("box3d_weldconrel", {})],
+    dop, _ = hanging_pair("feedback", "Weld", conrels=[("box3d_weldconrel", {})],
                               packed_parms={"computemass": 0, "mass": 1.0})
 
     def sample(sim, f):
@@ -816,7 +816,7 @@ def test_constraint_type_ignored_warning():
     for label, attrs, expect_warning in (("none", None, False), ("all", {"constraint_type": "all"}, False),
                                          ("position", {"constraint_type": "position"}, True),
                                          ("rotation", {"constraint_type": "rotation"}, True)):
-        dop, names = hanging_pair(f"conn_type_{label}", "weld", conrels=[("box3d_weldconrel", {})], line_attrs=attrs)
+        dop, names = hanging_pair(f"conn_type_{label}", "Weld", conrels=[("box3d_weldconrel", {})], line_attrs=attrs)
         solver = dop.node("box3d_solver")
         track = step(dop, 12, lambda sim, f: (packed_positions(sim, "pieces")[names[1]][1], node_messages(solver)))
         held = abs(track[12][0] - 2.0) < 0.1

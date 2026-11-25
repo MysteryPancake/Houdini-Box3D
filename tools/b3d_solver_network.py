@@ -261,10 +261,10 @@ v@Cd = colour;
 def guide_radius_vex():
     lines = ["int prims[] = pointprims(0, @ptnum);",
              'string cname = len(prims) && hasprimattrib(0, "constraint_name") ? '
-             'tolower(prim(0, "constraint_name", prims[0])) : "";',
+             'prim(0, "constraint_name", prims[0]) : "";',
              "float scale = 1;"]
     for i, (_, name) in enumerate(RELATIONSHIPS):
-        lines.append(f'{"if" if i == 0 else "else if"} (cname == tolower(chs("../{name}_dataname"))) '
+        lines.append(f'{"if" if i == 0 else "else if"} (cname == chs("../{name}_dataname")) '
                      f'scale = ch("../{name}_guidescale");')
     lines.append(f'f@guide_radius = max(ch("../{GUIDE_RADIUS}") * scale, 0.0001);')
     return "\n".join(lines) + "\n"
