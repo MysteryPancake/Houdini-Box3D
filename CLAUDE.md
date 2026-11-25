@@ -90,6 +90,26 @@ Layering (keep it):
 3. `box3d` is linked `PRIVATE` into `b3dop_core`, so its defines (notably `BOX3D_DOUBLE_PRECISION`) cannot leak into
    plugin code.
 
+## Commands (Windows)
+
+* Build: `build.bat` (add `debug` for debug logging), or `cmake --build build --config Release` (`--target Box3DDOP`
+  for the plugin alone). Close Houdini first. The plugin lands in `C:\Users\<you>\Documents\houdini22.0\dso` and the
+  assets in `...\otls`.
+* C++ tests: `ctest --test-dir build -C Release`.
+* Houdini checks: `test.bat <names>` (`test.bat --list` for the names; with none it runs everything, which is slow).
+  `python -I tests/python/test_harness.py` needs no Houdini.
+* Benchmarks: `python tools/b3d.py bench <scenario>[:key=value,...] --kinds box3d` (scenarios and options: build.md).
+* Docs: `python tools/check_docs.py`.
+
+**`HOME` decides where Houdini looks.** On Windows Houdini uses `%HOME%` as its preferences folder when it is set, and
+Git Bash sets it. Then Houdini (the plugin install, `hython`) uses `C:\Users\<you>\houdini22.0`, where the plugin is
+not, and creates that folder. The symptoms are a plugin built into `C:\Users\<you>\houdini22.0` instead of
+`Documents\houdini22.0`, `hython` failing with "Invalid node type name" for `box3d_*` nodes, and the asset build
+warning that no node types exist. `CMakeLists.txt` (configure and the asset step), `build.bat`, `test.bat` and
+`tools/b3d.py` drop `HOME` themselves, so use them. Never start `hython` directly from Git Bash: run
+`env -u HOME hython ...`, or `subprocess` with `HOME` removed from the environment. If a `C:\Users\<you>\houdini22.0`
+folder appears, something ran Houdini with `HOME` set: delete the folder and find what did.
+
 ## Conventions and gotchas
 
 * A `SIM_DopDescription` must live in zero-filled static memory (a function-local static, or placement new into a

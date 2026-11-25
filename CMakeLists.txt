@@ -303,8 +303,15 @@ if(BOX3DDOP_MAKE_HDA)
         # OUTPUT cannot hold generator expressions (the otls folder depends on the Houdini install), so
         # a stamp file in the build folder records that the assets are up to date.
         set(BOX3DDOP_ASSET_STAMP "${CMAKE_BINARY_DIR}/box3d_assets.stamp")
+        # hython reads $HOME as its preferences folder on Windows when it is set (Git Bash sets it), so it would look
+        # for the plugin in C:/Users/<you>/houdiniX.Y instead of Documents/houdiniX.Y: run it without HOME, as the
+        # configure step above does.
+        set(BOX3DDOP_HYTHON_ENV "")
+        if(WIN32 AND DEFINED ENV{HOME} AND NOT DEFINED ENV{HOUDINI_USER_PREF_DIR})
+            set(BOX3DDOP_HYTHON_ENV ${CMAKE_COMMAND} -E env --unset=HOME)
+        endif()
         add_custom_command(OUTPUT "${BOX3DDOP_ASSET_STAMP}"
-            COMMAND "${BOX3DDOP_HYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/make_assets.py" "${BOX3DDOP_OTLS_DIR}"
+            COMMAND ${BOX3DDOP_HYTHON_ENV} "${BOX3DDOP_HYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/make_assets.py" "${BOX3DDOP_OTLS_DIR}"
             COMMAND ${CMAKE_COMMAND} -E touch "${BOX3DDOP_ASSET_STAMP}"
             DEPENDS Box3DDOP ${BOX3DDOP_TOOL_SCRIPTS}
             COMMENT "Building the Box3D digital assets"
