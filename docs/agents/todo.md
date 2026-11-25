@@ -1,7 +1,7 @@
 # TODO
 
-What is still to do, and what to add to the Box3D fork. Keep each item to a line or two; remove it once done.
-What is unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index and rules: [CLAUDE.md](../../CLAUDE.md).
+What is still to do, and what to add to the Box3D fork. Keep each item to a line or two; remove it once done. What is
+unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index and rules: [CLAUDE.md](../../CLAUDE.md).
 
 * Glue's frame cost on a 3200 brick wall (`bench.py wall:w=80,h=40`, Glue as One Body on; 5.5 ms, welds 10 to 13): of
   Updating Constraint States' 1.1 to 1.4 ms, Advancing Glue was 0.2 (below) and Writing Joints (`jointsAfterStep`) 0.9
@@ -13,12 +13,12 @@ What is unverified: [status.md](status.md), [status-areas.md](status-areas.md). 
   0.07 is `contactImpulsesByShape` of the one compound, and 0.15 is the loop over 3200 pieces (about 50 ns each: the
   `compoundOf` lookup is 0.05 of it, the rest cache misses on the member and compound structs). Keeping each glue
   node's compound and member index (rebuilt when `compoundOf` changes: five places in `Box3DCompoundSync.cpp`) and
-  looping over compounds would remove most of that, about 0.25 ms of the 5.5 a frame. On welds `Glue Hits` is 0.65 a
-  frame (it was 1.5 with a record per contact point: 12500 points a call to convert and look up twice each) from the
-  per-pair records of `getContactImpulseSums`, `Box3D Step` is 4 to 5 and the rest is the weld solve. Advancing Glue
-  is 0.14 ms awake and 0.003 asleep on that wall (6280 bonds; the bond list is kept between frames, `glueMirror`):
-  `glueAdvance` 0.10 (spread 0.055, decay and break test 0.05) and the copy back 0.03 are what is left. Spreading only
-  from nodes with hits would shrink the spread to the base row.
+  looping over compounds (`Box3DCompoundPieces.cpp`) would remove most of that, about 0.25 ms of the 5.5 a frame. On
+  welds `Glue Hits` is 0.65 a frame (it was 1.5 with a record per contact point: 12500 points a call to convert and
+  look up twice each) from the per-pair records of `getContactImpulseSums`, `Box3D Step` is 4 to 5 and the rest is the
+  weld solve. Advancing Glue is 0.14 ms awake and 0.003 asleep on that wall (6280 bonds; the bond list is kept between
+  frames, `glueMirror`): `glueAdvance` 0.10 (spread 0.055, decay and break test 0.05) and the copy back 0.03 are what
+  is left. Spreading only from nodes with hits would shrink the spread to the base row.
 * `glue_fracture_vs_bullet` (Box, Points from Volume, Voronoi Fracture's constraints named Glue, frame 24): Box3D's
   equivalent Strength is 0.3 to 1.5x Bullet's with Glue as One Body on and 0.5 to 0.7x with it off, only checked on
   that scene.
@@ -53,7 +53,7 @@ What is unverified: [status.md](status.md), [status-areas.md](status-areas.md). 
     Solver rewrites the constraint geometry each step, so the solver reads the whole network again). Not there: the
     Force Threshold (Bullet's `force` of a Glue is the difference of its pieces' forces times their mean mass, Box3D's
     is the joint's), the Group parameter, plastic flow, the VEX snippet.
-* Glue as one body (`gluecompound`, `Box3DCompoundSync.cpp`, how it works: glue-compound.md; on by default, so the
+* Glue as one body (`gluecompound`, `Box3DCompound*.cpp`, how it works: glue-compound.md; on by default, so the
   glue tests run it; `glue_compound_break`, `glue_compound_load`, `glue_compound_vs_welds`, `glue_compound_sleep` and
   `core_compound` check it). Not covered: Impacts and the collision guide for pieces, pieces with another joint or a
   custom inertia (they stay on welds, as does their whole group), a group changed only by editing a piece's settings

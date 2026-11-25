@@ -3,7 +3,8 @@
 `gluecompound`: a glued group runs as one Box3D body. The Glue model itself: [joints-sidefx.md](joints-sidefx.md).
 Index and rules: [CLAUDE.md](../../CLAUDE.md).
 
-* **Glue as One Body** (`gluecompound`, on by default; `Box3DCompoundSync.cpp`): after `syncJoints`, a group of bonded
+* **Glue as One Body** (`gluecompound`, on by default; `Box3DCompoundSync.cpp`, with `Box3DCompoundSplit.cpp`,
+  `Box3DCompoundHold.cpp` and `Box3DCompoundPieces.cpp`): after `syncJoints`, a group of bonded
   pieces runs as one Box3D body that carries copies of the pieces' shapes (`copyShapesByHandle`, mass from the shapes,
   velocity from `mergePieces`). Each piece keeps its own body, disabled: Box3D parks a disabled body's joints, so the
   welds sleep and the per-point sync, mirror and joints stay as they are. A group merges only when every piece is a

@@ -96,8 +96,12 @@ add_library(b3dop_core STATIC
     src/core/Box3DCpu.cpp
     src/core/Box3DWorld.h
     src/core/Box3DWorld.cpp
+    src/core/Box3DWorldShapes.cpp
+    src/core/Box3DWorldHulls.cpp
+    src/core/Box3DWorldContacts.cpp
     src/core/Box3DWorldJoints.cpp
     src/core/Box3DWorldInternal.h
+    src/core/Box3DWorldHulls.h
     src/core/Box3DAffectorMath.h
     src/core/Box3DDebug.h
 )
@@ -207,6 +211,9 @@ add_library(Box3DDOP SHARED
     src/dop/SIM_Box3DRegister.cpp
     # sync/: Houdini data -> Box3D world, the solver's parts (Box3DSolverInternal.h)
     src/sync/Box3DState.h
+    src/sync/Box3DBodyState.h
+    src/sync/Box3DJointState.h
+    src/sync/Box3DCompoundState.h
     src/sync/Box3DAttribNames.h
     src/sync/Box3DSolverInternal.h
     src/sync/Box3DShapeBuild.cpp
@@ -217,7 +224,11 @@ add_library(Box3DDOP SHARED
     src/sync/Box3DGuide.cpp
     src/sync/Box3DSourceSync.cpp
     src/sync/Box3DCompoundSync.h
+    src/sync/Box3DCompoundInternal.h
     src/sync/Box3DCompoundSync.cpp
+    src/sync/Box3DCompoundSplit.cpp
+    src/sync/Box3DCompoundHold.cpp
+    src/sync/Box3DCompoundPieces.cpp
     src/sync/Box3DJointSync.h
     src/sync/Box3DJointSync.cpp
     src/sync/Box3DJointNetwork.h

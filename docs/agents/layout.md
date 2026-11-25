@@ -26,10 +26,17 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DCpu.h/.cpp     Physical performance core count (the solver's Threads default)
     Box3DRbdObject.h    Header-only: an RBD Object's own mass / friction / bounce / Bullet Data shape ->
                         whole-object settings
-    Box3DWorld.h/.cpp   Pimpl wrapper over one b3World: bodies, shapes, hulls, settings; defines TaskRunner
+    Box3DWorld.h/.cpp   Pimpl wrapper over one b3World: the world's life (create, step), bodies and their
+                        properties, mass, transforms, lazy poses; defines TaskRunner
+    Box3DWorldShapes.cpp  Box3DWorld's shapes: box / sphere / capsule / cylinder / hull / mesh / height field,
+                        copying and destroying them, outlines, filters, bounds
+    Box3DWorldHulls.cpp   Hulls and fits: building a hull from points, the fit cache, pruning, statistics
+    Box3DWorldContacts.cpp  Contact impulses and points, impulse / hit / move events, fast movers' approach
     Box3DWorldJoints.cpp  Box3DWorld's joint methods
-    Box3DWorldInternal.h  The world's private state (Impl) shared by those two .cpp files. With them (and
-                        Box3DSideFX.cpp, for <box3d/math_functions.h>) the only files that include Box3D headers
+    Box3DWorldInternal.h  The world's private state (Impl) and the conversions the Box3DWorld*.cpp files share
+    Box3DWorldHulls.h     The process-wide hull and fit caches (HullLibrary, FitLibrary) and hull-building helpers.
+                        With the Box3DWorld*.cpp files and Box3DSideFX.cpp (for <box3d/math_functions.h>) the only
+                        files that include Box3D headers
     Box3DAffectorMath.h Header-only: affector (Static Object) transform math
     Box3DDebug.h        B3D_DEBUG_LOG / counters, compiled out unless BOX3DDOP_DEBUG (args still type-checked,
                         never evaluated)
@@ -44,8 +51,11 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     SIM_SolverBox3D.*   The solver node: parameters, node messages and the solve loop (the parts are in sync/)
     SIM_Box3DRegister.cpp  initializeSIM(); includes UT_DSOVersion.h (exactly once, keep it here)
   sync/               Houdini data -> the Box3D world, used by the solver
-    Box3DState.h           Box3DSharedState: mirror entries, per-object sync records, affector bodies, joint
-                           entries, scratch
+    Box3DState.h           Box3DSharedState: the world, mirrors, scratch and flags; includes the three below
+    Box3DBodyState.h       The body mirror and its map, per-object sync records, point slots and writes,
+                           affector bodies
+    Box3DJointState.h      Joint entries (and what few joints keep), Glue nodes, constraint kinds and networks
+    Box3DCompoundState.h   Compound members, bridges and the compound (glued groups run as one body)
     Box3DAttribNames.h     The point attributes the solver reads, by name (PointAttrs and the prop markers come
                            from it)
     Box3DSolverInternal.h  What the solver's parts share (namespace box3dsolver); only the solver's files
@@ -58,8 +68,12 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DForces.cpp        Force DOPs and point force / torque
     Box3DGuide.cpp         The solver's guide geometry: every body's collision shapes
     Box3DJointSync.*       Constraint networks -> Box3D joints: read, resolve names, create / update / remove
-    Box3DCompoundSync.*    Glued groups as one compound body (`gluecompound`): merge, dissolve, pieces' moves,
-                           forces, glue hits
+    Box3DCompoundSync.*    Glued groups as one compound body (`gluecompound`): merge, dissolve, shrink,
+                           `syncCompounds` (the public functions are declared in the .h)
+    Box3DCompoundSplit.cpp Pieces that leave a compound when bonds break (`splitOffSmallPieces`)
+    Box3DCompoundHold.cpp  Pieces freed for a fast body (`holdCompoundsForApproach`), bridges, hold expiry
+    Box3DCompoundPieces.cpp  Per-step piece queries: moves, live poses, glue hits, state and force for Force DOPs
+    Box3DCompoundInternal.h  What those four share (namespace `compoundsync`); only they include it
     Box3DJointBreak.cpp    After the step: Glue, breaking, feedback and live frames written onto the networks
     Box3DJointNetwork.h    What those two share: attribute names, network geometry and fingerprint helpers
     Box3DAffectors.*       Affector objects (Static Object DOP etc.) -> static colliders

@@ -77,7 +77,7 @@ detail attribute: handle, `shapeSig`, shape count, body type, scale of each); a 
 another timeline builds it again. `Cd` is white times the dimming; the SOP tints it. The Box3D Solver SOP's
 `GUIDE_GEO` imports it ([solver-sop.md](solver-sop.md)); turning the toggle off stops writing but leaves the last data
 in the cache. A static concave piece's mesh is drawn as its boundary and creased edges (`meshOutline` in
-`Box3DWorld.cpp`, thinned past `kMaxMeshOutlineEdges`; test `collision_shapes_mesh`). Not drawn: affector colliders,
+`Box3DWorldShapes.cpp`, thinned past `kMaxMeshOutlineEdges`; test `collision_shapes_mesh`). Not drawn: affector colliders,
 and anything on an object's creation frame without Solve On Creation Frame (no body yet).
 
 **New objects.** Objects in `newobjects` (created this timestep) keep their initial state unless their object node has

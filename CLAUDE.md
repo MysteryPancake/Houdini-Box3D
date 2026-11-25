@@ -115,9 +115,9 @@ folder appears, something ran Houdini with `HOME` set: delete the folder and fin
 * A `SIM_DopDescription` must live in zero-filled static memory (a function-local static, or placement new into a
   static buffer as `SIM_Box3DConRel::describe` does), never on the heap: heap ones crash Houdini 22 now and then in
   `SIM_DopDescription::computeLiveInput` (a member its constructor leaves unset).
-* Box3D headers only in `Box3DWorld.cpp`, `Box3DWorldJoints.cpp`, `Box3DWorldInternal.h` and (`math_functions.h`
-  alone) `Box3DSideFX.cpp`; `UT/UT_DSOVersion.h` only in `SIM_Box3DRegister.cpp`; new `SIM_Data` classes registered in
-  `initializeSIM`.
+* Box3D headers only in the `Box3DWorld*.cpp` files, `Box3DWorldInternal.h`, `Box3DWorldHulls.h` and
+  (`math_functions.h` alone) `Box3DSideFX.cpp`; `UT/UT_DSOVersion.h` only in `SIM_Box3DRegister.cpp`; new `SIM_Data`
+  classes registered in `initializeSIM`.
 * The solver's parts live in `namespace box3dsolver`; anything one part uses from another is declared in
   `Box3DSolverInternal.h` (default arguments there, not on the definitions). Small Houdini helpers used by several
   files go in `Box3DHoudiniUtil.h`, Houdini-free math (`kDegToRad`, `quatsDiffer`, `xformPoint`) in `Box3DMath.h`,

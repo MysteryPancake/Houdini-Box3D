@@ -1,8 +1,10 @@
 // Box3DCompoundSync.cpp
 //
 // Glued groups as compound bodies: see Box3DCompoundSync.h. The maths is in
-// core/Box3DCompound.h; this file keeps the groups in step with the bodies.
+// core/Box3DCompound.h; this file keeps the groups in step with the bodies:
+// merging, dissolving and shrinking compounds, and `syncCompounds`.
 #include "Box3DCompoundSync.h"
+#include "Box3DCompoundInternal.h"
 #include "Box3DHoudiniUtil.h"
 
 #include "Box3DJointSync.h"
@@ -21,6 +23,8 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+using namespace compoundsync;
 
 bool glueSameGroup(const Box3DSharedState &st, b3dop::BodyHandle body,
                    int group) {
@@ -42,11 +46,7 @@ int compoundGlueGroup(const Box3DSharedState &st, const Box3DCompound &c) {
   return -1;
 }
 
-namespace {
-
-using b3dop::BodyHandle;
-
-using Pose = b3dop::BodyPose;
+namespace compoundsync {
 
 bool bodyPose(const b3dop::Box3DWorld &w, BodyHandle h, Pose &out) {
   return w.getTransformByHandle(h, out.p, out.q);
@@ -104,6 +104,10 @@ bool sameBodyLevel(const b3dop::BodyProps &a, const b3dop::BodyProps &b) {
          a.fastRotation == b.fastRotation;
 }
 
+} // namespace compoundsync
+
+namespace {
+
 // The glue nodes that can be reached from `seeds` through the live bonds
 // (their nodes' partners), grouped by component: `of` is a node's component
 // number, `nodes` the nodes of each component. Work in proportion to the
@@ -117,6 +121,10 @@ struct Reach {
   }
 };
 
+} // namespace
+
+namespace compoundsync {
+
 // Whether the piece of a glue node is held out of its compound
 // (holdCompoundsForApproach): held pieces are not part of any group, they and
 // their bonds are left out of the grouping.
@@ -124,6 +132,10 @@ bool heldNode(const Box3DSharedState &st, int node) {
   return !st.glueHold.empty() &&
          st.glueHold.held(st.glueNodes[static_cast<size_t>(node)].body);
 }
+
+} // namespace compoundsync
+
+namespace {
 
 // Whether glue nodes `a` and `b` are still joined through live bonds, found by
 // searching from both at once, a node at a time, until the searches meet. In a
@@ -191,6 +203,10 @@ Reach reachFrom(const Box3DSharedState &st, const std::vector<int> &seeds) {
   return r;
 }
 
+} // namespace
+
+namespace compoundsync {
+
 // A piece the compound can carry: a plain dynamic body whose mass and inertia
 // come from its shapes.
 bool eligible(const Box3DBodyMirror &e) {
@@ -203,6 +219,10 @@ bool eligible(const Box3DBodyMirror &e) {
 uint64_t keyOf(const Box3DBodyMirror &e) {
   return b3dop::makeBodyKey(e.objectId, e.pointId);
 }
+
+} // namespace compoundsync
+
+namespace {
 
 // A parked piece's transform is not set every step (expandCompoundMoves):
 // the world brings it up to date from here when something reads it.
@@ -224,10 +244,13 @@ void installPoseRefresher(Box3DSharedState &st) {
   });
 }
 
+} // namespace
+
+namespace compoundsync {
+
 // A move event for a piece of `entry` put at `pp`.
 b3dop::BodyMove moveAt(Box3DBodyMirror &entry, BodyHandle body, const Pose &pp,
-                       bool asleep, const float lin[3] = nullptr,
-                       const float ang[3] = nullptr) {
+                       bool asleep, const float lin[3], const float ang[3]) {
   b3dop::BodyMove mv;
   mv.userData = &entry;
   mv.handle = body;
@@ -240,6 +263,10 @@ b3dop::BodyMove moveAt(Box3DBodyMirror &entry, BodyHandle body, const Pose &pp,
   mv.fellAsleep = asleep;
   return mv;
 }
+
+} // namespace compoundsync
+
+namespace {
 
 // Takes a piece out of its compound: enabled (a piece the user disabled stays
 // disabled) and, if the compound's pose `cp` is known, put where the compound
@@ -274,21 +301,6 @@ void releasePiece(b3dop::Box3DWorld &w, const Box3DCompoundMember &m,
   e.glueEdited = false;
 }
 
-// Destroys the bridges at the compound's pieces in `members` (null: all of
-// them) and forgets them. A bridge to a piece that leaves, or all of them when
-// the compound goes.
-void dropBridges(Box3DSharedState &st, Box3DCompound &c,
-                 const std::unordered_set<BodyHandle> *members = nullptr) {
-  for (auto it = c.bridges.begin(); it != c.bridges.end();) {
-    if (members && !members->count(it->member)) {
-      ++it;
-      continue;
-    }
-    st.world.destroyJoint(it->handle);
-    it = c.bridges.erase(it);
-  }
-}
-
 // The component with the most pieces (the lowest number on a tie), -1 if there
 // are none; `best` is its piece count.
 int largestComponent(const std::unordered_map<int, size_t> &count,
@@ -303,12 +315,16 @@ int largestComponent(const std::unordered_map<int, size_t> &count,
   return stay;
 }
 
+} // namespace
+
+namespace compoundsync {
+
 // Enables the pieces where the compound left them and destroys the compound
 // body. Pieces whose entry is gone (`entry` null) were destroyed with their
 // points. `moves` (optional): gets a move event for each piece, for a release
 // in the middle of a frame.
 void dissolve(Box3DSharedState &st, Box3DCompound &c,
-              std::vector<b3dop::BodyMove> *moves = nullptr) {
+              std::vector<b3dop::BodyMove> *moves) {
   b3dop::Box3DWorld &w = st.world;
   dropBridges(st, c);
   Pose cp;
@@ -344,8 +360,7 @@ bool resolveMembers(Box3DSharedState &st, Box3DCompound &c) {
 
 // Which Glue bonds join two pieces of one compound. `nodes`: only the bonds of
 // those glue nodes (the components a change was in); null: all.
-void markCompoundBonds(Box3DSharedState &st,
-                       const std::vector<int> *nodes = nullptr) {
+void markCompoundBonds(Box3DSharedState &st, const std::vector<int> *nodes) {
   auto mark = [&st](Box3DJointEntry *e) {
     const auto a = st.compoundOf.find(e->bodyA);
     const auto b = st.compoundOf.find(e->bodyB);
@@ -371,106 +386,9 @@ void eraseCompound(Box3DSharedState &st, const Box3DCompound *c) {
     st.compounds.erase(it);
 }
 
-// Bridges whose bond's joint is gone (the bond broke, its network went) are
-// destroyed and forgotten.
-void pruneBridges(Box3DSharedState &st) {
-  for (auto &c : st.compounds)
-    for (auto it = c->bridges.begin(); it != c->bridges.end();) {
-      if (st.world.isJointValid(it->original) &&
-          st.world.isJointValid(it->handle)) {
-        ++it;
-        continue;
-      }
-      st.world.destroyJoint(it->handle);
-      it = c->bridges.erase(it);
-      st.bridgesDirty = true;
-    }
-}
+} // namespace compoundsync
 
-// A weld from the free piece `other` to the compound's body for the Glue bond
-// `e` between it and the compound's piece `m`: at the piece's place in the
-// compound and with the bond's own frames, so it holds what the bond's parked
-// weld would. `have`: the bonds that have a bridge. False if none was made.
-bool bridgeBond(Box3DSharedState &st, Box3DCompound &c,
-                const Box3DCompoundMember &m, const Box3DJointEntry &e,
-                BodyHandle other,
-                std::unordered_set<b3dop::JointHandle> &have) {
-  b3dop::Box3DWorld &w = st.world;
-  if (!e.handle || e.broken || have.count(e.handle) ||
-      !w.isJointValid(e.handle))
-    return false;
-  const bool memberIsA = e.bodyA == m.body;
-  if (!memberIsA && e.bodyB != m.body)
-    return false;
-  b3dop::JointFrame fa, fb;
-  if (!w.jointLocalFrames(e.handle, fa, fb))
-    return false;
-  const b3dop::JointFrame &onFree = memberIsA ? fb : fa;
-  const b3dop::JointFrame &inMember = memberIsA ? fa : fb;
-  // The frame in the compound's body: the piece's place in it, then the bond's
-  // frame in the piece.
-  b3dop::JointFrame onBody;
-  b3dop::frameInCompound(m.lp, m.lq, inMember.pos, inMember.rot, onBody.pos,
-                         onBody.rot);
-  const b3dop::JointHandle h = w.createJoint(e.type, other, c.body, onFree,
-                                             onBody, e.settings, nullptr, true);
-  if (!h)
-    return false;
-  Box3DBridge b;
-  b.original = e.handle;
-  b.handle = h;
-  b.member = m.body;
-  c.bridges.push_back(b);
-  have.insert(e.handle);
-  return true;
-}
-
-// A bridge for each Glue bond between a piece of the compound and a piece that
-// is not in a compound (held out). All the compound's pieces are looked at:
-// for after the groups were worked out again.
-void bridgeBoundaries(Box3DSharedState &st, Box3DCompound &c) {
-  std::unordered_set<b3dop::JointHandle> have;
-  for (const Box3DBridge &b : c.bridges)
-    have.insert(b.original);
-  for (const Box3DCompoundMember &m : c.members) {
-    const auto n = st.glueNodeOf.find(m.body);
-    if (n == st.glueNodeOf.end())
-      continue;
-    for (Box3DJointEntry *e :
-         st.glueNodes[static_cast<size_t>(n->second)].bonds) {
-      const BodyHandle other = e->bodyA == m.body ? e->bodyB : e->bodyA;
-      // Inside the compound (or in another one): nothing to hold.
-      if (!other || st.compoundOf.count(other))
-        continue;
-      bridgeBond(st, c, m, *e, other, have);
-    }
-  }
-}
-
-// The same for the pieces just taken out of the compound (`released`): only
-// their bonds are looked at.
-void bridgeReleased(Box3DSharedState &st, Box3DCompound &c,
-                    const std::vector<BodyHandle> &released) {
-  std::unordered_set<b3dop::JointHandle> have;
-  for (const Box3DBridge &b : c.bridges)
-    have.insert(b.original);
-  for (const BodyHandle piece : released) {
-    const auto n = st.glueNodeOf.find(piece);
-    if (n == st.glueNodeOf.end())
-      continue;
-    for (Box3DJointEntry *e :
-         st.glueNodes[static_cast<size_t>(n->second)].bonds) {
-      if (e->bodyA != piece && e->bodyB != piece)
-        continue;
-      const auto in =
-          st.compoundOf.find(e->bodyA == piece ? e->bodyB : e->bodyA);
-      if (in == st.compoundOf.end() || in->second.first != &c)
-        continue;
-      bridgeBond(st, c, c.members[static_cast<size_t>(in->second.second)], *e,
-                 piece, have);
-    }
-  }
-}
+namespace {
 
 void dissolveAll(Box3DSharedState &st) {
   for (auto &c : st.compounds) {
@@ -481,6 +399,10 @@ void dissolveAll(Box3DSharedState &st) {
   st.compoundOf.clear();
 }
 
+} // namespace
+
+namespace compoundsync {
+
 // Takes the pieces whose component is not `mainId` out of the compound and
 // keeps the body (and the contacts of the pieces that stay): they are enabled
 // where the compound has them, their shapes destroyed, and the body keeps the
@@ -489,7 +411,7 @@ void dissolveAll(Box3DSharedState &st) {
 // `leave` and `moves` as for dissolve: the pieces that leave take `leave`'s
 // motion, the ones that stay keep the compound's now.
 bool shrink(Box3DSharedState &st, Box3DCompound &c, const std::vector<int> &cid,
-            int mainId, std::vector<b3dop::BodyMove> *moves = nullptr) {
+            int mainId, std::vector<b3dop::BodyMove> *moves) {
   b3dop::Box3DWorld &w = st.world;
   Pose cp;
   b3dop::MergedBody was;
@@ -645,7 +567,7 @@ bool merge(Box3DSharedState &st, const std::vector<Box3DBodyMirror *> &group) {
   return true;
 }
 
-} // namespace
+} // namespace compoundsync
 
 void queueCompoundIds(Box3DSharedState &st) {
   if (!st.compoundIds || (st.compounds.empty() && st.compoundIdKeys.empty()))
@@ -689,286 +611,38 @@ void queueCompoundIds(Box3DSharedState &st) {
 
 namespace {
 
-// What bonds breaking inside one compound do to it, found from the broken
-// bonds' nodes alone.
-struct SmallSplit {
-  Box3DCompound *compound = nullptr;
-  // True: the pieces that stay are everything not in `leaving`. False: they are
-  // `stay` (every piece was reached, so all are listed).
-  bool remainderStays = true;
-  std::vector<int> stay;
-  // The glue nodes of each group of pieces that leaves the compound.
-  std::vector<std::vector<int>> leaving;
+// The glue groups of pieces this frame and what became of them (syncCompounds).
+struct GroupPlan {
+  bool partial = false;       // only the components of the touched nodes
+  b3dop::GlueComponents comp; // all the nodes' components
+  Reach reach;                // or only those of the touched nodes
+  std::vector<std::vector<Box3DBodyMirror *>> groups;
+  std::vector<char> ok, covered;
+  int componentOf(int node) const {
+    return partial ? reach.componentOf(node)
+                   : comp.of[static_cast<size_t>(node)];
+  }
 };
 
-// Searches from `seeds` (glue nodes of `c`, the ends of the bonds that broke),
-// each one a node at a time in turn, so the work is in proportion to the pieces
-// that came loose and not to the compound. Searches that meet are one; the
-// search stops when at most one is still growing: what it has not reached is
-// the rest of the compound, which stays. Gives 1 with `out` set when pieces
-// leave, 0 when the compound is as it was, and -1 when the work is not simple
-// enough (a search reaches a piece outside the compound, the part that stays is
-// not the biggest or is too small to be a compound): syncCompounds then works
-// the components out the full way.
-int planSmallSplit(const Box3DSharedState &st, Box3DCompound &c,
-                   const std::vector<int> &seeds, SmallSplit &out) {
-  const size_t n = seeds.size();
-  std::vector<std::vector<int>> queue(n);
-  std::vector<size_t> head(n, 0), parent(n);
-  std::unordered_map<int, size_t> owner; // node -> the search that reached it
-  for (size_t i = 0; i < n; ++i) {
-    queue[i].push_back(seeds[i]);
-    parent[i] = i;
-    owner.emplace(seeds[i], i);
-  }
-  const auto find = [&parent](size_t x) {
-    while (parent[x] != x) {
-      parent[x] = parent[parent[x]];
-      x = parent[x];
-    }
-    return x;
-  };
-  std::vector<char> growing(n);
-  size_t aliveCount = 0;
-  for (;;) {
-    std::fill(growing.begin(), growing.end(), 0);
-    for (size_t i = 0; i < n; ++i)
-      if (head[i] < queue[i].size())
-        growing[find(i)] = 1;
-    aliveCount = static_cast<size_t>(
-        std::count(growing.begin(), growing.end(), static_cast<char>(1)));
-    if (aliveCount <= 1)
-      break;
-    for (size_t i = 0; i < n; ++i) {
-      if (head[i] >= queue[i].size())
-        continue;
-      const int node = queue[i][head[i]++];
-      for (const BodyHandle h :
-           st.glueNodes[static_cast<size_t>(node)].partners) {
-        const auto it = st.glueNodeOf.find(h);
-        if (it == st.glueNodeOf.end() || heldNode(st, it->second))
-          continue;
-        const auto in = st.compoundOf.find(h);
-        if (in == st.compoundOf.end() || in->second.first != &c)
-          return -1; // the bonds lead out of the compound
-        const auto ins = owner.emplace(it->second, i);
-        if (ins.second) {
-          queue[i].push_back(it->second);
-        } else {
-          const size_t a = find(i), b = find(ins.first->second);
-          if (a != b)
-            parent[a] = b;
-        }
-      }
-    }
-  }
-
-  // The searches that ran out are whole components.
-  std::unordered_map<size_t, std::vector<int>> byRoot;
-  for (const auto &kv : owner)
-    byRoot[find(kv.second)].push_back(kv.first);
-  std::vector<std::vector<int>> done;
-  size_t doneTotal = 0;
-  for (auto &kv : byRoot) {
-    if (aliveCount == 1 && growing[kv.first])
-      continue;
-    std::sort(kv.second.begin(), kv.second.end());
-    doneTotal += kv.second.size();
-    done.push_back(std::move(kv.second));
-  }
-  std::sort(done.begin(), done.end(),
-            [](const std::vector<int> &a, const std::vector<int> &b) {
-              return a.front() < b.front();
-            });
-
-  const size_t members = c.members.size();
-  size_t best = 0;
-  if (aliveCount == 1) {
-    if (done.empty())
-      return 0; // all still joined
-    if (doneTotal >= members)
-      return -1;
-    best = members - doneTotal;
-    for (const auto &d : done)
-      if (d.size() > best)
-        return -1; // the rest is not the biggest piece left
-    out.remainderStays = true;
-    out.leaving = std::move(done);
-  } else {
-    if (doneTotal != members)
-      return -1;
-    if (done.size() == 1)
-      return 0;
-    size_t stayAt = 0;
-    for (size_t k = 1; k < done.size(); ++k)
-      if (done[k].size() > done[stayAt].size())
-        stayAt = k;
-    best = done[stayAt].size();
-    out.remainderStays = false;
-    out.stay = std::move(done[stayAt]);
-    done.erase(done.begin() + static_cast<std::ptrdiff_t>(stayAt));
-    out.leaving = std::move(done);
-  }
-  if (best < 2 || best * 2 < members)
-    return -1; // the compound would not stay (dissolved the full way)
-  out.compound = &c;
-  return 1;
-}
-
-// A piece group that leaves a compound, and whether it can become a compound of
-// its own (the checks the full regrouping makes for every group).
-struct LeavingGroup {
-  std::vector<Box3DBodyMirror *> pieces;
-  bool ok = true;
-};
-
-LeavingGroup leavingGroupOf(Box3DSharedState &st,
-                            const std::vector<int> &nodes) {
-  LeavingGroup g;
-  for (const int node : nodes) {
-    const BodyHandle h = st.glueNodes[static_cast<size_t>(node)].body;
-    Box3DBodyMirror *e =
-        static_cast<Box3DBodyMirror *>(st.world.bodyUserDataByHandle(h));
-    if (!e || e->handle != h || e->wholeObject || !st.isLive(*e) ||
-        !eligible(*e) || st.tiedBodies.count(h)) {
-      g.ok = false;
-      continue;
-    }
-    g.pieces.push_back(e);
-  }
-  for (const Box3DBodyMirror *e : g.pieces)
-    if (!sameBodyLevel(e->props, g.pieces[0]->props))
-      g.ok = false;
-  return g;
-}
-
-// Bonds broke inside compounds (st.glueTouched: their nodes). For each compound
-// that loses pieces, the pieces leave it (shrink) and groups of two or more
-// become compounds of their own, with work in proportion to the pieces that
-// left and not to the compounds. What it cannot do that way is left in
-// glueTouched for the full regrouping.
-void splitOffSmallPieces(Box3DSharedState &st) {
-  std::vector<std::pair<Box3DCompound *, std::vector<int>>> byCompound;
-  std::vector<int> left; // nodes for the full regrouping
-  {
-    std::unordered_set<int> seen;
-    for (const int node : st.glueTouched) {
-      if (!seen.insert(node).second)
-        continue;
-      const auto in =
-          st.compoundOf.find(st.glueNodes[static_cast<size_t>(node)].body);
-      if (in == st.compoundOf.end() || heldNode(st, node)) {
-        left.push_back(node);
-        continue;
-      }
-      Box3DCompound *const c = in->second.first;
-      auto it = std::find_if(byCompound.begin(), byCompound.end(),
-                             [c](const auto &p) { return p.first == c; });
-      if (it == byCompound.end()) {
-        byCompound.emplace_back(c, std::vector<int>());
-        it = std::prev(byCompound.end());
-      }
-      it->second.push_back(node);
-    }
-  }
-
-  // Plan every compound before changing any.
-  std::vector<SmallSplit> plans;
-  for (auto &entry : byCompound) {
-    SmallSplit plan;
-    Pose cp;
-    b3dop::MergedBody mb;
-    bool awake = false;
-    int result = -1;
-    // shrink needs the body's pose and motion
-    if (bodyPose(st.world, entry.first->body, cp) &&
-        bodyMotion(st.world, entry.first->body, mb, awake))
-      result = planSmallSplit(st, *entry.first, entry.second, plan);
-    if (result == 1)
-      plans.push_back(std::move(plan));
-    else if (result < 0)
-      left.insert(left.end(), entry.second.begin(), entry.second.end());
-  }
-
-  std::vector<int> affectedNodes;
-  for (SmallSplit &plan : plans) {
-    Box3DCompound &c = *plan.compound;
-    std::vector<LeavingGroup> groups;
-    groups.reserve(plan.leaving.size());
-    for (const std::vector<int> &nodes : plan.leaving)
-      groups.push_back(leavingGroupOf(st, nodes));
-
-    std::vector<int> cid(c.members.size(), plan.remainderStays ? 0 : 1);
-    const auto setMembers = [&](const std::vector<int> &nodes, int value) {
-      for (const int node : nodes) {
-        const auto in =
-            st.compoundOf.find(st.glueNodes[static_cast<size_t>(node)].body);
-        if (in != st.compoundOf.end())
-          cid[static_cast<size_t>(in->second.second)] = value;
-      }
-    };
-    if (plan.remainderStays)
-      for (const std::vector<int> &nodes : plan.leaving)
-        setMembers(nodes, 1);
-    else
-      setMembers(plan.stay, 0);
-    for (const std::vector<int> &nodes : plan.leaving)
-      affectedNodes.insert(affectedNodes.end(), nodes.begin(), nodes.end());
-
-    if (!shrink(st, c, cid, 0)) {
-      // (the body was readable when planned) leave it to the full way
-      st.groupsRecheck = true;
-      continue;
-    }
-    for (LeavingGroup &g : groups) {
-      if (!g.ok || g.pieces.size() < 2)
-        continue;
-      std::sort(g.pieces.begin(), g.pieces.end(),
-                [](const Box3DBodyMirror *a, const Box3DBodyMirror *b) {
-                  return keyOf(*a) < keyOf(*b);
-                });
-      if (merge(st, g.pieces) && !st.glueHold.empty())
-        bridgeBoundaries(st, *st.compounds.back());
-    }
-  }
-  if (!affectedNodes.empty())
-    markCompoundBonds(st, &affectedNodes);
-  st.glueTouched = std::move(left);
-}
-
-} // namespace
-
-void syncCompounds(Box3DSharedState &st) {
-  if (!st.glueCompounds) {
-    if (!st.compounds.empty()) {
-      dissolveAll(st);
-      markCompoundBonds(st);
-    }
-    st.glueHold = b3dop::GlueHolds();
-    st.groupsRecheck = true;
+// Pieces held out of their compound stay joined to it: the bridges are made
+// again when the compounds or the bonds changed, also when nothing is grouped
+// again.
+void rebuildBridges(Box3DSharedState &st) {
+  if (!st.bridgesDirty)
     return;
-  }
-  b3dop::Box3DWorld &w = st.world;
-  pruneBridges(st);
-  // Pieces held out of their compound stay joined to it: the bridges are made
-  // again when the compounds or the bonds changed, also when nothing is grouped
-  // again.
-  const auto rebuildBridges = [&st]() {
-    if (!st.bridgesDirty)
-      return;
-    st.bridgesDirty = false;
-    if (!st.glueHold.empty())
-      for (auto &c : st.compounds)
-        bridgeBoundaries(st, *c);
-  };
+  st.bridgesDirty = false;
+  if (!st.glueHold.empty())
+    for (auto &c : st.compounds)
+      bridgeBoundaries(st, *c);
+}
 
-  // 1. Compounds whose pieces changed since they were merged. Only a full
-  // scan of an object (or a body added or removed) can change a piece's entry,
-  // settings or shapes; a step with none leaves them as merged, and checking
-  // every piece of every compound each frame was most of what a held compound
-  // cost.
+// 1. Compounds whose pieces changed since they were merged. Only a full
+// scan of an object (or a body added or removed) can change a piece's entry,
+// settings or shapes; a step with none leaves them as merged, and checking
+// every piece of every compound each frame was most of what a held compound
+// cost. True if one was dissolved; `membership` is set then.
+bool dissolveChangedCompounds(Box3DSharedState &st, bool &membership) {
   bool dissolved = false;
-  bool membership = false; // a compound was dissolved or made
   const bool piecesMayDiffer = st.fullScans > 0 ||
                                st.bodyVersion != st.groupsBodyVersion ||
                                st.groupsRecheck;
@@ -983,16 +657,20 @@ void syncCompounds(Box3DSharedState &st) {
       ++i;
     }
   }
+  return dissolved;
+}
 
-  // 2. The groups again, only when the glue graph or the bodies changed. When
-  // only bonds broke (the lists were taken apart in place), only the components
-  // those bonds were in are worked out again.
+// 2. The groups again, only when the glue graph or the bodies changed. When
+// only bonds broke (the lists were taken apart in place), only the components
+// those bonds were in are worked out again. True when the compounds and groups
+// are settled without working them out (bridges made again as needed).
+bool settledWithoutRegrouping(Box3DSharedState &st, bool dissolved) {
   const bool bodiesSame = st.bodyVersion == st.groupsBodyVersion;
   if (!dissolved && !st.groupsRecheck && bodiesSame &&
       st.glueSignature == st.groupsSignature) {
     st.glueTouched.clear();
-    rebuildBridges();
-    return;
+    rebuildBridges(st);
+    return true;
   }
   // Only bonds broke (their two nodes are in glueTouched, a pair each), and
   // each broke inside one compound whose pieces are still joined some other
@@ -1014,8 +692,8 @@ void syncCompounds(Box3DSharedState &st) {
     if (unchanged) {
       st.groupsSignature = st.glueSignature;
       st.glueTouched.clear();
-      rebuildBridges();
-      return;
+      rebuildBridges(st);
+      return true;
     }
   }
   // Bonds that cut pieces off a compound: those pieces leave it, with the work
@@ -1025,116 +703,106 @@ void syncCompounds(Box3DSharedState &st) {
     splitOffSmallPieces(st);
     if (st.glueTouched.empty() && !st.groupsRecheck) {
       st.groupsSignature = st.glueSignature;
-      rebuildBridges();
-      return;
+      rebuildBridges(st);
+      return true;
     }
   }
-  const bool partial = !dissolved && !st.groupsRecheck && bodiesSame &&
-                       !st.glueTouched.empty() && st.tiedKnown;
-  st.groupsSignature = st.glueSignature;
-  st.groupsBodyVersion = st.bodyVersion;
-  st.groupsRecheck = false;
+  return false;
+}
 
-  b3dop::GlueComponents comp; // all the nodes' components
-  Reach reach;                // or only those of the touched nodes
-  std::vector<std::vector<Box3DBodyMirror *>> groups;
-  std::vector<char> ok, covered;
-  if (partial) {
-    reach = reachFrom(st, st.glueTouched);
-    groups.resize(reach.nodes.size());
-    ok.assign(reach.nodes.size(), 1);
-    for (size_t g = 0; g < reach.nodes.size(); ++g)
-      for (const int n : reach.nodes[g]) {
-        const BodyHandle h = st.glueNodes[static_cast<size_t>(n)].body;
-        Box3DBodyMirror *e =
-            static_cast<Box3DBodyMirror *>(w.bodyUserDataByHandle(h));
-        if (!e || e->handle != h || e->wholeObject || !st.isLive(*e) ||
-            !eligible(*e) || st.tiedBodies.count(h))
-          ok[g] = 0;
-        else
-          groups[g].push_back(e);
-      }
-  } else {
-    // Held pieces are out of the graph: their bonds join nothing here, so each
-    // is a group of one that is never merged.
-    std::vector<b3dop::GlueBond> list = glueBondList(st, false, false);
-    if (!st.glueHold.empty())
-      for (b3dop::GlueBond &g : list)
-        if (g.a >= 0 && g.b >= 0 && (heldNode(st, g.a) || heldNode(st, g.b)))
-          g.a = g.b = -1;
-    comp = b3dop::glueComponents(st.glueNodes.size(), list);
-
-    std::unordered_map<BodyHandle, Box3DBodyMirror *> byHandle;
-    for (auto &kv : st.objectSync)
-      for (Box3DBodyMirror *e : kv.second.bodies)
-        if (e && e->handle && !e->wholeObject)
-          byHandle[e->handle] = e;
-
-    // Pieces another joint touches would go dormant with their bodies.
-    st.tiedBodies.clear();
-    {
-      const std::unordered_set<const Box3DJointEntry *> bondSet(
-          st.glueBonds.begin(), st.glueBonds.end());
-      for (const auto &kv : st.joints) {
-        const Box3DJointEntry &j = kv.second;
-        if (bondSet.count(&j) || !w.isJointValid(j.handle))
-          continue;
-        if (j.bodyA)
-          st.tiedBodies.insert(j.bodyA);
-        if (j.bodyB)
-          st.tiedBodies.insert(j.bodyB);
-      }
-    }
-    st.tiedKnown = true;
-
-    const size_t groupCount = static_cast<size_t>(comp.count);
-    groups.resize(groupCount);
-    ok.assign(groupCount, 1);
-    for (size_t i = 0; i < st.glueNodes.size(); ++i) {
-      const size_t g = static_cast<size_t>(comp.of[i]);
-      const BodyHandle h = st.glueNodes[i].body;
-      const auto it = byHandle.find(h);
-      if (it == byHandle.end() || !eligible(*it->second) ||
-          st.tiedBodies.count(h))
-        ok[g] = 0;
+// The pieces of the components the touched nodes are in.
+void planPartialGroups(Box3DSharedState &st, GroupPlan &plan) {
+  b3dop::Box3DWorld &w = st.world;
+  plan.reach = reachFrom(st, st.glueTouched);
+  plan.groups.resize(plan.reach.nodes.size());
+  plan.ok.assign(plan.reach.nodes.size(), 1);
+  for (size_t g = 0; g < plan.reach.nodes.size(); ++g)
+    for (const int n : plan.reach.nodes[g]) {
+      const BodyHandle h = st.glueNodes[static_cast<size_t>(n)].body;
+      Box3DBodyMirror *e =
+          static_cast<Box3DBodyMirror *>(w.bodyUserDataByHandle(h));
+      if (!e || e->handle != h || e->wholeObject || !st.isLive(*e) ||
+          !eligible(*e) || st.tiedBodies.count(h))
+        plan.ok[g] = 0;
       else
-        groups[g].push_back(it->second);
+        plan.groups[g].push_back(e);
+    }
+}
+
+// The pieces of every component of the glue graph.
+void planAllGroups(Box3DSharedState &st, GroupPlan &plan) {
+  b3dop::Box3DWorld &w = st.world;
+  // Held pieces are out of the graph: their bonds join nothing here, so each
+  // is a group of one that is never merged.
+  std::vector<b3dop::GlueBond> list = glueBondList(st, false, false);
+  if (!st.glueHold.empty())
+    for (b3dop::GlueBond &g : list)
+      if (g.a >= 0 && g.b >= 0 && (heldNode(st, g.a) || heldNode(st, g.b)))
+        g.a = g.b = -1;
+  plan.comp = b3dop::glueComponents(st.glueNodes.size(), list);
+
+  std::unordered_map<BodyHandle, Box3DBodyMirror *> byHandle;
+  for (auto &kv : st.objectSync)
+    for (Box3DBodyMirror *e : kv.second.bodies)
+      if (e && e->handle && !e->wholeObject)
+        byHandle[e->handle] = e;
+
+  // Pieces another joint touches would go dormant with their bodies.
+  st.tiedBodies.clear();
+  {
+    const std::unordered_set<const Box3DJointEntry *> bondSet(
+        st.glueBonds.begin(), st.glueBonds.end());
+    for (const auto &kv : st.joints) {
+      const Box3DJointEntry &j = kv.second;
+      if (bondSet.count(&j) || !w.isJointValid(j.handle))
+        continue;
+      if (j.bodyA)
+        st.tiedBodies.insert(j.bodyA);
+      if (j.bodyB)
+        st.tiedBodies.insert(j.bodyB);
     }
   }
-  const size_t groupCount = groups.size();
-  covered.assign(groupCount, 0);
+  st.tiedKnown = true;
+
+  const size_t groupCount = static_cast<size_t>(plan.comp.count);
+  plan.groups.resize(groupCount);
+  plan.ok.assign(groupCount, 1);
+  for (size_t i = 0; i < st.glueNodes.size(); ++i) {
+    const size_t g = static_cast<size_t>(plan.comp.of[i]);
+    const BodyHandle h = st.glueNodes[i].body;
+    const auto it = byHandle.find(h);
+    if (it == byHandle.end() || !eligible(*it->second) ||
+        st.tiedBodies.count(h))
+      plan.ok[g] = 0;
+    else
+      plan.groups[g].push_back(it->second);
+  }
+}
+
+// A group is only merged when its pieces are alike.
+void checkGroupsAlike(GroupPlan &plan) {
+  const size_t groupCount = plan.groups.size();
+  plan.covered.assign(groupCount, 0);
   for (size_t g = 0; g < groupCount; ++g) {
-    if (!ok[g])
+    if (!plan.ok[g])
       continue;
-    for (const Box3DBodyMirror *e : groups[g])
-      if (!sameBodyLevel(e->props, groups[g][0]->props))
-        ok[g] = 0;
+    for (const Box3DBodyMirror *e : plan.groups[g])
+      if (!sameBodyLevel(e->props, plan.groups[g][0]->props))
+        plan.ok[g] = 0;
   }
-  auto componentOf = [&](int node) {
-    return partial ? reach.componentOf(node)
-                   : comp.of[static_cast<size_t>(node)];
-  };
+}
 
-  // The compounds that can have changed: those with a piece in a component
-  // worked out again.
-  std::unordered_set<const Box3DCompound *> affected;
-  std::vector<int> affectedNodes;
-  if (partial)
-    for (const auto &kv : reach.of) {
-      affectedNodes.push_back(kv.first);
-      const auto it =
-          st.compoundOf.find(st.glueNodes[static_cast<size_t>(kv.first)].body);
-      if (it != st.compoundOf.end())
-        affected.insert(it->second.first);
-    }
-
-  // A compound still the group it was made from stays. One that lost pieces
-  // (a bond broke) keeps its body for the largest group of pieces left and
-  // lets the others go; the rest are dissolved. Pieces that leave may join a
-  // new compound below.
+// A compound still the group it was made from stays. One that lost pieces
+// (a bond broke) keeps its body for the largest group of pieces left and
+// lets the others go; the rest are dissolved. Pieces that leave may join a
+// new compound afterwards. Only `affected` ones are looked at when partial.
+void keepShrinkOrDissolve(
+    Box3DSharedState &st, GroupPlan &plan,
+    const std::unordered_set<const Box3DCompound *> &affected,
+    bool &membership) {
   for (size_t i = 0; i < st.compounds.size();) {
     Box3DCompound &c = *st.compounds[i];
-    if (partial && !affected.count(&c)) {
+    if (plan.partial && !affected.count(&c)) {
       ++i;
       continue;
     }
@@ -1144,20 +812,20 @@ void syncCompounds(Box3DSharedState &st) {
       const auto n = st.glueNodeOf.find(c.members[k].body);
       if (n == st.glueNodeOf.end())
         continue; // no bonds left
-      cid[k] = componentOf(n->second);
+      cid[k] = plan.componentOf(n->second);
       if (cid[k] >= 0)
         ++count[cid[k]];
     }
     size_t best = 0;
     const int stay = largestComponent(count, best);
-    const bool usable = stay >= 0 && ok[static_cast<size_t>(stay)] &&
-                        groups[static_cast<size_t>(stay)].size() == best &&
+    const bool usable = stay >= 0 && plan.ok[static_cast<size_t>(stay)] &&
+                        plan.groups[static_cast<size_t>(stay)].size() == best &&
                         best >= 2 && best * 2 >= c.members.size();
     if (usable && best == c.members.size()) {
-      covered[static_cast<size_t>(stay)] = 1;
+      plan.covered[static_cast<size_t>(stay)] = 1;
       ++i;
     } else if (usable && shrink(st, c, cid, stay)) {
-      covered[static_cast<size_t>(stay)] = 1;
+      plan.covered[static_cast<size_t>(stay)] = 1;
       membership = true;
       ++i;
     } else {
@@ -1166,553 +834,73 @@ void syncCompounds(Box3DSharedState &st) {
       membership = true;
     }
   }
+}
 
-  // 3. New compounds.
-  for (size_t g = 0; g < groupCount; ++g) {
-    if (covered[g] || !ok[g] || groups[g].size() < 2)
+// 3. New compounds from the groups no compound covers.
+void mergeNewGroups(Box3DSharedState &st, GroupPlan &plan, bool &membership) {
+  for (size_t g = 0; g < plan.groups.size(); ++g) {
+    if (plan.covered[g] || !plan.ok[g] || plan.groups[g].size() < 2)
       continue;
-    std::sort(groups[g].begin(), groups[g].end(),
+    std::sort(plan.groups[g].begin(), plan.groups[g].end(),
               [](const Box3DBodyMirror *a, const Box3DBodyMirror *b) {
                 return keyOf(*a) < keyOf(*b);
               });
-    if (merge(st, groups[g]))
+    if (merge(st, plan.groups[g]))
       membership = true;
   }
-  st.glueTouched.clear();
-  if (membership) {
-    markCompoundBonds(st, partial ? &affectedNodes : nullptr);
-    st.bridgesDirty = true;
-  }
-  rebuildBridges();
-}
-
-void pruneCompoundBridges(Box3DSharedState &st) {
-  if (!st.compounds.empty())
-    pruneBridges(st);
-}
-
-void releaseExpiredHolds(Box3DSharedState &st, float frameDt) {
-  st.glueClock += static_cast<double>(frameDt);
-  if (st.glueHold.empty())
-    return;
-  const bool let = st.glueHold.expire(st.glueClock);
-  if (let)
-    st.groupsRecheck = true; // the pieces can merge again
-}
-
-namespace {
-
-void releasePieces(Box3DSharedState &st, Box3DCompound &c,
-                   const std::vector<int> &cid, size_t leaving, double until,
-                   std::vector<b3dop::BodyMove> &moves,
-                   std::vector<int> &nodes);
-
-// Takes the pieces of `c` out of it (releasePieces) that reach the box
-// [lo, hi] grown by `halo`: a piece counts when its centre of mass is within
-// its full bounds diagonal of the box (the centre can be at a corner).
-void releaseWithin(Box3DSharedState &st, Box3DCompound &c, const double lo[3],
-                   const double hi[3], double halo, double until,
-                   std::vector<b3dop::BodyMove> &moves,
-                   std::vector<int> &nodes) {
-  // A piece gone or edited: syncCompounds dissolves the compound.
-  if (resolveMembers(st, c))
-    return;
-  Pose cp;
-  if (!bodyPose(st.world, c.body, cp))
-    return;
-  std::vector<int> cid(c.members.size(), 0); // 0: stays, 1: leaves
-  size_t leaving = 0;
-  for (size_t k = 0; k < c.members.size(); ++k) {
-    const Box3DCompoundMember &m = c.members[k];
-    if (!m.entry)
-      continue;
-    double com[3];
-    centreOf(placed(cp, m), m, com);
-    const double reach = halo + 2.0 * static_cast<double>(m.radius);
-    bool inside = true;
-    for (int i = 0; i < 3; ++i)
-      inside = inside && com[i] >= lo[i] - reach && com[i] <= hi[i] + reach;
-    if (inside) {
-      cid[k] = 1;
-      ++leaving;
-    }
-  }
-  if (leaving == 0)
-    return;
-  releasePieces(st, c, cid, leaving, until, moves, nodes);
-}
-
-// Takes the pieces of `c` that a body is about to plow through out of it and
-// holds them until `until`: the body's bounds swept along its velocity relative
-// to the compound until its centre leaves the compound's bounds
-// (pathThroughBounds), grown by kGlueHoldHaloScale times its size. They are
-// enabled where the compound has them (a move event each in `moves`), and the
-// compound keeps the rest as one body, joined to them by bridges. The path is
-// the whole way through, not a time ahead: a piece left in the compound behind
-// the freed ones is rigid and throws the body back. Nothing is done for a body
-// that is not heading into or through the compound. If fewer than two pieces
-// would stay, all of it is taken apart. `nodes` collects the glue nodes whose
-// bonds changed sides.
-void releaseNear(Box3DSharedState &st, Box3DCompound &c,
-                 const b3dop::Box3DWorld::Approach &a, double until,
-                 std::vector<b3dop::BodyMove> &moves, std::vector<int> &nodes) {
-  double lo[3], hi[3];
-  if (!st.world.boundsByHandle(c.body, lo, hi))
-    return;
-  double pathLo[3], pathHi[3];
-  if (!b3dop::pathThroughBounds(a.moverCom, a.relLin,
-                                static_cast<double>(a.moverHalf), lo, hi,
-                                pathLo, pathHi))
-    return;
-  const double halo =
-      static_cast<double>(b3dop::kGlueHoldHaloScale) * a.moverHalf;
-  // Nothing of the compound within reach of the path: nothing to free, and the
-  // pieces need not be looked at.
-  for (int i = 0; i < 3; ++i)
-    if (pathHi[i] + halo < lo[i] || pathLo[i] - halo > hi[i])
-      return;
-  releaseWithin(st, c, pathLo, pathHi, halo, until, moves, nodes);
-}
-
-// Takes the pieces of `c` marked 1 in `cid` out of it and holds them until
-// `until` (`leaving` of them); all of it is taken apart when fewer than two
-// would stay.
-void releasePieces(Box3DSharedState &st, Box3DCompound &c,
-                   const std::vector<int> &cid, size_t leaving, double until,
-                   std::vector<b3dop::BodyMove> &moves,
-                   std::vector<int> &nodes) {
-  const auto hold = [&](const Box3DCompoundMember &m) {
-    st.glueHold.hold(m.body, until);
-    const auto n = st.glueNodeOf.find(m.body);
-    if (n != st.glueNodeOf.end())
-      nodes.push_back(n->second);
-  };
-  const auto takeAllApart = [&]() {
-    for (const Box3DCompoundMember &m : c.members)
-      hold(m);
-    const Box3DCompound *raw = &c;
-    dissolve(st, c, &moves);
-    eraseCompound(st, raw);
-  };
-  if (c.members.size() - leaving < 2) {
-    takeAllApart();
-    return;
-  }
-  std::vector<BodyHandle> released;
-  released.reserve(leaving);
-  for (size_t k = 0; k < c.members.size(); ++k)
-    if (cid[k] == 1) {
-      hold(c.members[k]);
-      released.push_back(c.members[k].body);
-    }
-  if (shrink(st, c, cid, 0, &moves))
-    bridgeReleased(st, c, released);
-  else
-    takeAllApart();
-}
-
-// Takes the pieces of the moving compound `c` that are about to reach `target`
-// (a static body, the ground, or any body that is not of its group) out of it:
-// those within reach of where the compound's bounds, swept along its velocity
-// for `lead` seconds, overlap the target's. A compound is rigid, so it would
-// take the whole hit through the pieces that touch and be stopped before its
-// bonds could break; free and welded, the pieces near the contact give way as
-// they do on welds.
-void releaseTowards(Box3DSharedState &st, Box3DCompound &c, BodyHandle target,
-                    const float lin[3], float lead, double until,
-                    std::vector<b3dop::BodyMove> &moves,
-                    std::vector<int> &nodes) {
-  double lo[3], hi[3], tlo[3], thi[3];
-  if (!st.world.boundsByHandle(c.body, lo, hi) ||
-      !st.world.boundsByHandle(target, tlo, thi))
-    return;
-  double sweptLo[3], sweptHi[3];
-  for (int i = 0; i < 3; ++i) {
-    const double d = static_cast<double>(lin[i]) * static_cast<double>(lead);
-    sweptLo[i] = lo[i] + std::min(d, 0.0);
-    sweptHi[i] = hi[i] + std::max(d, 0.0);
-  }
-  double overLo[3], overHi[3];
-  for (int i = 0; i < 3; ++i) {
-    overLo[i] = std::max(sweptLo[i], tlo[i]);
-    overHi[i] = std::min(sweptHi[i], thi[i]);
-    if (overLo[i] > overHi[i])
-      return;
-  }
-  releaseWithin(st, c, overLo, overHi, 0.0, until, moves, nodes);
-}
-
-// The impulse a bond takes to break: the Glue's Strength over
-// kGlueStrengthScale (a body that cannot deliver that in about a frame cannot
-// break it). Infinity when it cannot break.
-float bondBreakImpulse(const Box3DJointEntry &e) {
-  constexpr float kNever = std::numeric_limits<float>::infinity();
-  if (!e.extra)
-    return kNever;
-  const float strength = e.extra->glueParams.strength;
-  return strength >= 0.0f && std::isfinite(strength)
-             ? strength / b3dop::kGlueStrengthScale
-             : kNever;
-}
-
-// The weakest break impulse (bondBreakImpulse) of the bonds of one glue node;
-// infinity when none can break.
-float nodeWeakest(const Box3DSharedState &st, int node) {
-  float least = std::numeric_limits<float>::infinity();
-  for (const Box3DJointEntry *e : st.glueNodes[static_cast<size_t>(node)].bonds)
-    least = std::min(least, bondBreakImpulse(*e));
-  return least;
-}
-
-// The weakest break impulse of the bonds of a compound's pieces.
-float compoundWeakest(Box3DSharedState &st, Box3DCompound &c) {
-  float least = std::numeric_limits<float>::infinity();
-  for (const Box3DCompoundMember &m : c.members) {
-    const auto n = st.glueNodeOf.find(m.body);
-    if (n != st.glueNodeOf.end())
-      least = std::min(least, nodeWeakest(st, n->second));
-  }
-  return least;
-}
-
-// The weakest break impulse of any bond: a body that cannot deliver that much
-// cannot break anything anywhere. Infinity when no bond can break. Worked out
-// once per frame, or again when the bonds changed.
-float weakestBreak(Box3DSharedState &st) {
-  if (st.glueMinBreakClock == st.glueClock &&
-      st.glueMinBreakSignature == st.glueSignature)
-    return st.glueMinBreak;
-  float least = std::numeric_limits<float>::infinity();
-  for (const Box3DJointEntry *e : st.glueBonds)
-    least = std::min(least, bondBreakImpulse(*e));
-  st.glueMinBreak = least;
-  st.glueMinBreakClock = st.glueClock;
-  st.glueMinBreakSignature = st.glueSignature;
-  return least;
 }
 
 } // namespace
 
-void holdCompoundsForApproach(Box3DSharedState &st,
-                              const std::vector<b3dop::BodyMove> &seen,
-                              std::vector<b3dop::BodyMove> &moves) {
-  // Held pieces stay to be looked at after the last compound is gone.
-  if (!st.glueCompounds || st.glueBonds.empty() || seen.empty() ||
-      (st.compounds.empty() && st.glueHold.empty()))
-    return;
-  // What a body has to be able to deliver to break any bond: nothing smaller
-  // is looked at (and with no bond that can break there is nothing to do).
-  const float floorBreak = weakestBreak(st);
-  if (!std::isfinite(floorBreak))
-    return;
-  refreshGlueGroups(st);
-  thread_local std::vector<BodyHandle> movers;
-  thread_local std::vector<b3dop::Box3DWorld::Approach> approaches;
-  movers.clear();
-  approaches.clear();
-  // Only bodies fast enough to matter.
-  const float minSpeed2 = b3dop::kGlueHoldMinSpeed * b3dop::kGlueHoldMinSpeed;
-  for (const b3dop::BodyMove &mv : seen) {
-    const float s2 =
-        mv.lin[0] * mv.lin[0] + mv.lin[1] * mv.lin[1] + mv.lin[2] * mv.lin[2];
-    if (s2 >= minSpeed2)
-      movers.push_back(mv.handle);
-  }
-  if (movers.empty())
-    return;
-  // A piece can be in `seen` twice (released ahead of the step's own event).
-  std::sort(movers.begin(), movers.end());
-  movers.erase(std::unique(movers.begin(), movers.end()), movers.end());
-  // Two frames at least: the pieces must be free before the step the body
-  // touches the compound in (a release in that frame still threw it back).
-  const float lead = std::max(b3dop::kGlueHoldLeadSeconds, 2.0f * st.stepDt);
-  st.world.approachingBodies(movers.data(), movers.size(), lead,
-                             b3dop::kGlueHoldMinSpeed, floorBreak, approaches);
-  if (approaches.empty())
-    return;
-
-  std::unordered_map<BodyHandle, Box3DCompound *> byBody;
-  byBody.reserve(st.compounds.size());
-  st.compoundGroup.clear();
-  for (auto &c : st.compounds) {
-    byBody[c->body] = c.get();
-    st.compoundGroup[c->body] = compoundGlueGroup(st, *c);
-  }
-  const double until =
-      st.glueClock + static_cast<double>(b3dop::kGlueHoldSeconds);
-  const auto neighbours = [&st](uint64_t piece, const auto &visit) {
-    const auto n = st.glueNodeOf.find(piece);
-    if (n == st.glueNodeOf.end())
-      return;
-    for (const BodyHandle partner :
-         st.glueNodes[static_cast<size_t>(n->second)].partners)
-      visit(partner);
-  };
-  struct Target {
-    Box3DCompound *compound;
-    const b3dop::Box3DWorld::Approach *by;
-  };
-  std::vector<Target> take;
-  for (const b3dop::Box3DWorld::Approach &a : approaches) {
-    const auto c = byBody.find(a.target);
-    const auto node = st.glueNodeOf.find(a.target);
-    const bool held = st.glueHold.held(a.target) && node != st.glueNodeOf.end();
-    if (c == byBody.end() && !held)
-      continue;
-    // A piece of the structure itself is not the body that has to be let
-    // through (a body of another group is, glued or not).
-    const int targetGroup =
-        c != byBody.end() ? st.compoundGroup[a.target]
-                          : st.glueGroup[static_cast<size_t>(node->second)];
-    if (targetGroup >= 0 && glueSameGroup(st, a.mover, targetGroup))
-      continue;
-    // What it can deliver to the bonds there, from its motion relative to the
-    // structure. A kinematic body (mass 0) is not slowed by anything it hits.
-    const float breakAt = c != byBody.end() ? compoundWeakest(st, *c->second)
-                                            : nodeWeakest(st, node->second);
-    if (!std::isfinite(breakAt))
-      continue; // no bond there can break
-    const double relSpeed =
-        std::sqrt(static_cast<double>(a.relLin[0]) * a.relLin[0] +
-                  static_cast<double>(a.relLin[1]) * a.relLin[1] +
-                  static_cast<double>(a.relLin[2]) * a.relLin[2]);
-    if (a.moverMass > 0.0f &&
-        !(static_cast<double>(a.moverMass) * relSpeed >= breakAt))
-      continue;
-    if (c != byBody.end())
-      take.push_back({c->second, &a});
-    else
-      st.glueHold.refresh(a.target, until, neighbours);
-  }
-  // A compound heading into something that is not of its group (the ground,
-  // another body): the pieces about to touch it are freed too.
-  for (const b3dop::Box3DWorld::Approach &a : approaches) {
-    const auto m = byBody.find(a.mover);
-    if (m == byBody.end())
-      continue;
-    const int group = st.compoundGroup[a.mover];
-    if (group >= 0 && glueSameGroup(st, a.target, group))
-      continue;
-    const float breakAt = compoundWeakest(st, *m->second);
-    const double speed =
-        std::sqrt(static_cast<double>(a.relLin[0]) * a.relLin[0] +
-                  static_cast<double>(a.relLin[1]) * a.relLin[1] +
-                  static_cast<double>(a.relLin[2]) * a.relLin[2]);
-    if (!std::isfinite(breakAt) ||
-        !(static_cast<double>(a.moverMass) * speed >= breakAt))
-      continue;
-    const auto live =
-        std::find_if(st.compounds.begin(), st.compounds.end(),
-                     [&m](const std::unique_ptr<Box3DCompound> &p) {
-                       return p.get() == m->second;
-                     });
-    if (live == st.compounds.end())
-      continue;
-    std::vector<int> moved;
-    releaseTowards(st, *m->second, a.target, a.moverLin, lead, until, moves,
-                   moved);
-    if (!moved.empty())
-      markCompoundBonds(st, &moved);
-  }
-
-  std::vector<int> nodes;
-  for (const Target &t : take) {
-    // An earlier body may have taken all of it apart already.
-    const auto live =
-        std::find_if(st.compounds.begin(), st.compounds.end(),
-                     [&t](const std::unique_ptr<Box3DCompound> &p) {
-                       return p.get() == t.compound;
-                     });
-    if (live != st.compounds.end())
-      releaseNear(st, *t.compound, *t.by, until, moves, nodes);
-  }
-  if (!nodes.empty())
-    markCompoundBonds(st, &nodes);
-}
-
-void recordCompoundMotion(Box3DSharedState &st) {
-  if (st.glueCompoundLoad <= 0.0f)
-    return;
-  for (auto &c : st.compounds) {
-    b3dop::MergedBody mb;
-    bool awake = false;
-    c->stepPreOk = st.world.isAwakeByHandle(c->body) &&
-                   bodyMotion(st.world, c->body, mb, awake) && awake;
-    c->stepPre = mb;
-  }
-}
-
-void expandCompoundMoves(Box3DSharedState &st) {
-  if (st.compounds.empty())
-    return;
-  b3dop::Box3DWorld &w = st.world;
-  std::unordered_map<BodyHandle, Box3DCompound *> byBody;
-  byBody.reserve(st.compounds.size());
-  for (auto &c : st.compounds)
-    byBody[c->body] = c.get();
-  const size_t original = st.moves.size();
-  bool moved = false;
-  for (size_t i = 0; i < original; ++i) {
-    const auto it = byBody.find(st.moves[i].handle);
-    if (it == byBody.end())
-      continue;
-    moved = true;
-    const b3dop::BodyMove ev = st.moves[i]; // push_back may move the vector
-    Box3DCompound &c = *it->second;
-    Pose cp;
-    b3dop::copy3(cp.p, ev.pos);
-    b3dop::copy4(cp.q, ev.rot);
-    b3dop::MergedBody mb;
-    bool awake = false;
-    if (!bodyMotion(w, c.body, mb, awake))
-      continue;
-    for (Box3DCompoundMember &m : c.members) {
-      if (!m.entry)
-        continue;
-      const Pose pp = placed(cp, m);
-      double com[3];
-      centreOf(pp, m, com);
-      b3dop::pieceVelocity(mb, com, m.entry->glueLin, m.entry->glueAng);
-      st.moves.push_back(moveAt(*m.entry, m.body, pp, ev.fellAsleep,
-                                m.entry->glueLin, m.entry->glueAng));
+void syncCompounds(Box3DSharedState &st) {
+  if (!st.glueCompounds) {
+    if (!st.compounds.empty()) {
+      dissolveAll(st);
+      markCompoundBonds(st);
     }
+    st.glueHold = b3dop::GlueHolds();
+    st.groupsRecheck = true;
+    return;
   }
-  // The parked bodies are where the pieces were: whatever reads one first
-  // puts it where the piece is now (Box3DWorld::setLazyPose).
-  if (moved)
-    w.invalidateLazyPoses();
-}
+  pruneBridges(st);
 
-void refreshLivePoses(Box3DSharedState &st) {
-  for (auto &c : st.compounds)
-    c->livePoseOk = bodyPose(st.world, c->body, c->livePose);
-}
+  bool membership = false; // a compound was dissolved or made
+  const bool dissolved = dissolveChangedCompounds(st, membership);
+  if (settledWithoutRegrouping(st, dissolved))
+    return;
 
-bool compoundJointPoses(const Box3DSharedState &st, const Box3DJointEntry &e,
-                        b3dop::BodyPose &poseA, b3dop::BodyPose &poseB) {
-  const auto a = st.compoundOf.find(e.bodyA);
-  const auto b = st.compoundOf.find(e.bodyB);
-  if (a == st.compoundOf.end() || b == st.compoundOf.end() ||
-      a->second.first != b->second.first)
-    return false;
-  const Box3DCompound &c = *a->second.first;
-  if (!c.livePoseOk)
-    return false;
-  poseA = placed(c.livePose, c.members[static_cast<size_t>(a->second.second)]);
-  poseB = placed(c.livePose, c.members[static_cast<size_t>(b->second.second)]);
-  return true;
-}
+  GroupPlan plan;
+  plan.partial = !dissolved && !st.groupsRecheck &&
+                 st.bodyVersion == st.groupsBodyVersion &&
+                 !st.glueTouched.empty() && st.tiedKnown;
+  st.groupsSignature = st.glueSignature;
+  st.groupsBodyVersion = st.bodyVersion;
+  st.groupsRecheck = false;
+  if (plan.partial)
+    planPartialGroups(st, plan);
+  else
+    planAllGroups(st, plan);
+  checkGroupsAlike(plan);
 
-bool compoundGlueHits(Box3DSharedState &st, BodyHandle body, float &hits) {
-  const auto it = st.compoundOf.find(body);
-  if (it == st.compoundOf.end())
-    return false;
-  Box3DCompound &c = *it->second.first;
-  const Box3DCompoundMember &m =
-      c.members[static_cast<size_t>(it->second.second)];
-  hits = 0.0f;
-  // Per compound, once a tick: hits land on moving bodies, a sleeping one has
-  // none.
-  if (c.hitsTick != st.hitsTick) {
-    c.hitsTick = st.hitsTick;
-    c.hitsActive =
-        st.world.typeByHandle(c.body) == b3dop::BodySettings::Type::Dynamic &&
-        st.world.isAwakeByHandle(c.body);
-    if (c.hitsActive) {
-      // Contacts with pieces of its own group (the pieces held out of it, say,
-      // resting on it) carry weight, not hits.
-      const int group = compoundGlueGroup(st, c);
-      const std::function<bool(BodyHandle)> sameGroup =
-          [&st, group](BodyHandle other) {
-            return glueSameGroup(st, other, group);
-          };
-      st.world.contactImpulsesByShape(c.body, c.shapeImpulse,
-                                      group >= 0 ? &sameGroup : nullptr);
+  // The compounds that can have changed: those with a piece in a component
+  // worked out again.
+  std::unordered_set<const Box3DCompound *> affected;
+  std::vector<int> affectedNodes;
+  if (plan.partial)
+    for (const auto &kv : plan.reach.of) {
+      affectedNodes.push_back(kv.first);
+      const auto it =
+          st.compoundOf.find(st.glueNodes[static_cast<size_t>(kv.first)].body);
+      if (it != st.compoundOf.end())
+        affected.insert(it->second.first);
     }
+
+  keepShrinkOrDissolve(st, plan, affected, membership);
+  mergeNewGroups(st, plan, membership);
+  st.glueTouched.clear();
+  if (membership) {
+    markCompoundBonds(st, plan.partial ? &affectedNodes : nullptr);
+    st.bridgesDirty = true;
   }
-  if (!c.hitsActive)
-    return true;
-  for (int i = m.shapeFirst; i < m.shapeFirst + m.shapeCount &&
-                             static_cast<size_t>(i) < c.shapeImpulse.size();
-       ++i)
-    hits += c.shapeImpulse[static_cast<size_t>(i)];
-  // Inertial load: slowing the whole body at one point also loads the pieces
-  // away from it. A piece takes at least the impulse it needs to follow the
-  // body's change of motion (a piece touching the ground keeps its contact
-  // hit when that is larger).
-  if (st.glueCompoundLoad > 0.0f && c.stepPreOk) {
-    if (c.loadTick != st.hitsTick) {
-      c.loadTick = st.hitsTick;
-      bool awake = false;
-      if (!bodyPose(st.world, c.body, c.postPose) ||
-          !bodyMotion(st.world, c.body, c.stepPost, awake))
-        c.stepPost.ok = false;
-    }
-    if (c.stepPost.ok && c.stepPre.ok) {
-      double com[3];
-      centreOf(placed(c.postPose, m), m, com);
-      hits = std::max(hits,
-                      st.glueCompoundLoad *
-                          b3dop::pieceLoad(c.stepPre, c.stepPost, com, m.mass));
-    }
-  }
-  return true;
-}
-
-bool compoundPieceState(Box3DSharedState &st, const Box3DBodyMirror &piece,
-                        b3dop::BodyState &out) {
-  const auto it = st.compoundOf.find(piece.handle);
-  if (it == st.compoundOf.end())
-    return false;
-  const Box3DCompound &c = *it->second.first;
-  const Box3DCompoundMember &m =
-      c.members[static_cast<size_t>(it->second.second)];
-  Pose cp;
-  b3dop::MergedBody mb;
-  bool awake = false;
-  b3dop::BodyState own;
-  if (!bodyPose(st.world, c.body, cp) ||
-      !bodyMotion(st.world, c.body, mb, awake) ||
-      !st.world.bodyStateByHandle(piece.handle, own))
-    return false;
-  const Pose pp = placed(cp, m);
-  out.awake = awake;
-  out.mass = own.mass;
-  centreOf(pp, m, out.com);
-  b3dop::pieceVelocity(mb, out.com, out.lin, out.ang);
-  return true;
-}
-
-bool compoundPieceAwake(Box3DSharedState &st, const Box3DBodyMirror &piece) {
-  const auto it = st.compoundOf.find(piece.handle);
-  return it != st.compoundOf.end() &&
-         st.world.isAwakeByHandle(it->second.first->body);
-}
-
-bool compoundPieceForce(Box3DSharedState &st, const Box3DBodyMirror &piece,
-                        float force[3], float torque[3], BodyHandle &target) {
-  const auto it = st.compoundOf.find(piece.handle);
-  if (it == st.compoundOf.end())
-    return false;
-  const Box3DCompound &c = *it->second.first;
-  const Box3DCompoundMember &m =
-      c.members[static_cast<size_t>(it->second.second)];
-  Pose cp;
-  b3dop::BodyState cs;
-  if (!bodyPose(st.world, c.body, cp) ||
-      !st.world.bodyStateByHandle(c.body, cs))
-    return false;
-  const Pose pp = placed(cp, m);
-  // The torque about the compound's centre of mass: the piece's own plus
-  // (where it acts - centre) x force. A force acts at the piece's centre.
-  double at[3];
-  centreOf(pp, m, at);
-  const double r[3] = {at[0] - cs.com[0], at[1] - cs.com[1], at[2] - cs.com[2]};
-  const double f[3] = {force[0], force[1], force[2]};
-  double rxf[3];
-  b3dop::cross3(r, f, rxf);
-  for (int i = 0; i < 3; ++i)
-    torque[i] += static_cast<float>(rxf[i]);
-  target = c.body;
-  return true;
+  rebuildBridges(st);
 }

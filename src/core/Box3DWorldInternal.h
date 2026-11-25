@@ -1,8 +1,7 @@
 // Box3DWorldInternal.h
 //
-// What Box3DWorld.cpp and Box3DWorldJoints.cpp share: the world's private
-// state and a few Box3D conversions. It includes Box3D headers, so only those
-// two files include it.
+// What the Box3DWorld*.cpp files share: the world's private state and a few
+// Box3D conversions. It includes Box3D headers, so only those files include it.
 #pragma once
 
 #include "Box3DDebug.h"
@@ -10,6 +9,7 @@
 
 #include <box3d/box3d.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <functional>
@@ -160,6 +160,56 @@ inline void storeVec3(const b3Vec3 &v, float out[3]) {
   out[0] = v.x;
   out[1] = v.y;
   out[2] = v.z;
+}
+
+// ---- conversions and helpers every Box3DWorld*.cpp uses
+// ---------------------------
+
+// Every shape of a body (newest first), into a reused scratch vector.
+inline int bodyShapes(b3BodyId id, std::vector<b3ShapeId> &out) {
+  const int n = b3Body_GetShapeCount(id);
+  out.resize(static_cast<size_t>(n > 0 ? n : 0));
+  return n > 0 ? b3Body_GetShapes(id, out.data(), n) : 0;
+}
+
+// b3Pos is float, or double with BOX3D_DOUBLE_PRECISION; these work either way.
+inline b3Pos makePos(const double p[3]) {
+  b3Pos r;
+  r.x = static_cast<decltype(r.x)>(p[0]);
+  r.y = static_cast<decltype(r.y)>(p[1]);
+  r.z = static_cast<decltype(r.z)>(p[2]);
+  return r;
+}
+
+inline b3Vec3 makeVec3(const float *v) // null -> origin
+{
+  b3Vec3 r;
+  r.x = v ? v[0] : 0.0f;
+  r.y = v ? v[1] : 0.0f;
+  r.z = v ? v[2] : 0.0f;
+  return r;
+}
+
+// A unit quaternion from any input (zero, non-finite or off-unit values become
+// a valid rotation): Box3D asserts on anything else.
+inline b3Quat cleanQuat(const float q[4]) {
+  float c[4] = {q[0], q[1], q[2], q[3]};
+  sanitizeQuat(c);
+  return makeQuat(c);
+}
+
+inline void storePos(const b3Pos &p, double out[3]) {
+  out[0] = static_cast<double>(p.x);
+  out[1] = static_cast<double>(p.y);
+  out[2] = static_cast<double>(p.z);
+}
+
+// Box3D asserts on a negative or non-finite rolling resistance and tangent
+// velocity: clean them (the rolling resistance with nonNegOr).
+inline void cleanTangent(const float in[3], float out[3]) {
+  const bool ok = finite3(in);
+  for (int i = 0; i < 3; ++i)
+    out[i] = ok ? in[i] : 0.0f;
 }
 
 } // namespace b3dop
