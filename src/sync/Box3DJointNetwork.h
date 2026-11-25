@@ -29,7 +29,7 @@ inline constexpr const char *kAutoRestLength = "auto_restlength";
 inline constexpr const char *kCurrentP = "current_P";
 inline constexpr const char *kCurrentOrient = "current_orient";
 // Glue's feedback: the impulse its hits have accumulated
-// (docs/agents/joints.md).
+// (docs/agents/joints-sidefx.md).
 inline constexpr const char *kImpact = "impact";
 // Detail attribute of a Constraint Network: Glue rounds for a bond with a
 // negative count.

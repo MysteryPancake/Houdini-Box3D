@@ -19,12 +19,14 @@ its state in the object's `Position` data instead of point attributes.
   box, zero velocity.
 * Object space = the geometry through its own transform (`SIM_Geometry::getTransform`; scale / shear baked into the
   shape points). Shapes (`buildWholeObjectShapes`) from Box3D Data's Default Shape / Create Convex Hull per Set of
-  Connected Primitives: box / sphere / capsule fitted to all points (`fitShapeOriented`, as for points; see bodies.md), convex one hull (or per connected set), concave
-  one hull per primitive `name` (or per connected set), or, on a static body, one triangle mesh of the polygons (winding flipped as for packed pieces;
-  none: hulls); unkeyed hulls (by content); `none` or no points: shapeless static. The shape signature
-  (`wholeObjectShapeSig`: geometry identity, P / primitive list data ids, counts, own transform, pivot, shape settings, whether the body is static)
-  changing rebuilds the shapes on the same body. A body becoming static is retyped before the rebuild (a mesh needs it); one leaving static is rebuilt as
-  hulls first (`updateWholeObjectBody`). Tests `static_rbd_object_mesh`, `static_rbd_object_retype`.
+  Connected Primitives: box / sphere / capsule fitted to all points (`fitShapeOriented`, as for points; see
+  bodies.md), convex one hull (or per connected set), concave one hull per primitive `name` (or per connected set),
+  or, on a static body, one triangle mesh of the polygons (winding flipped as for packed pieces; none: hulls); unkeyed
+  hulls (by content); `none` or no points: shapeless static. The shape signature (`wholeObjectShapeSig`: geometry
+  identity, P / primitive list data ids, counts, own transform, pivot, shape settings, whether the body is static)
+  changing rebuilds the shapes on the same body. A body becoming static is retyped before the rebuild (a mesh needs
+  it); one leaving static is rebuilt as hulls first (`updateWholeObjectBody`). Tests `static_rbd_object_mesh`,
+  `static_rbd_object_retype`.
 * Settings (`readDynamicProps` with unbound point attributes; changes go through `applyPropChanges`, read every step):
   Box3D Data whenever it is attached. Without it, the RBD Object's own data (`readRbdObjectSettings`, then
   `b3dop::rbdObjectSetup` over Box3D Data's defaults; option names from a Houdini 22.0 probe, read by name with
@@ -34,12 +36,13 @@ its state in the object's `Position` data instead of point attributes.
     `computeinertialtensor` on and `computeinertialtensortype` at Use Bounding Box (index 1, or a token containing
     "box" / "bound"), the inertia is that of a solid box with the mass and the geometry's object-space bounding box
     (`BodyProps::boundsInertia`, applied in `applyBodyMass`; the extents are rescanned every step); the scale still
-    applies. `computeinertialtensor` off keeps the computed inertia. The node has no tensor parameter. Glue options are
-    not read. `computecom` on (the default): the pivot is the centroid of the convex hull of the geometry's object-space points
-    (`objectCentreOfMass`, `Box3DWorld::hullCentroid`; the bounding box centre if no hull can be made), because Houdini's
-    solvers fill `p` in themselves and it is (0, 0, 0) until then (the body would otherwise spin about the world origin,
-    away from the shape; `bullet_rbd_box_settle`, `bullet_rbd_pivot`). Recomputed only when the geometry or its transform
-    changes (`Box3DBodyMirror::pivotKey`). `computecom` off: `p`, read through `getPivot`.
+    applies. `computeinertialtensor` off keeps the computed inertia. The node has no tensor parameter. Glue options
+    are not read. `computecom` on (the default): the pivot is the centroid of the convex hull of the geometry's
+    object-space points (`objectCentreOfMass`, `Box3DWorld::hullCentroid`; the bounding box centre if no hull can be
+    made), because Houdini's solvers fill `p` in themselves and it is (0, 0, 0) until then (the body would otherwise
+    spin about the world origin, away from the shape; `bullet_rbd_box_settle`, `bullet_rbd_pivot`). Recomputed only
+    when the geometry or its transform changes (`Box3DBodyMirror::pivotKey`). `computecom` off: `p`, read through
+    `getPivot`.
   * `SolverParms` (`ActiveValue`, Create Active Object): off makes the body static (`rbdObjectSetup`), as `active = 0`
     does on a point. Read every step, so toggling retypes the body. In practice Houdini does not give the solver an
     object with it off (a Static Object does not reach `syncWholeObject` either): it is an affector, a static collider
@@ -49,21 +52,22 @@ its state in the object's `Position` data instead of point attributes.
   * `Geometry/BulletData` (`SIM_BulletData`): `bullet_georep` (unknown names, and plane: the default shape),
     `bullet_groupconnected`, `bullet_autofit`; with AutoFit off a box / sphere / capsule is built from `bullet_primS`
     (half extents, as for points), `bullet_primT` (offset from the pivot), `bullet_primR` (Euler XYZ degrees),
-    `bullet_radius`, `bullet_length` instead of being fitted (`wholeObjectShapes`; the spec is in the shape signature).
-    Padding / shrink and Bullet's sleep options stay unread (see "Not supported on purpose" in [reference.md](reference.md)); `bullet_add_impact` is
-    not read either, so Impacts stay opt-in through Box3D Data.
-  Values Box3D cannot use (non-positive mass / density / inertia, negative friction / bounce, non-finite) keep Box3D
-  Data's defaults. Houdini's RBD Object defaults match Box3D Data's (`nodeBodyDefaults`: density 1000 with Compute
-  Mass, so a 1 m box is 1000 kg; friction 1; bounce 0.5; a convex hull). Body type is the node's, or static
-  with Create Active Object off (no `animated`).
+    `bullet_radius`, `bullet_length` instead of being fitted (`wholeObjectShapes`; the spec is in the shape
+    signature). Padding / shrink and Bullet's sleep options stay unread (see "Not supported on purpose" in
+    [reference.md](reference.md)); `bullet_add_impact` is not read either, so Impacts stay opt-in through Box3D Data.
+    Values Box3D cannot use (non-positive mass / density / inertia, negative friction / bounce, non-finite) keep Box3D
+    Data's defaults. Houdini's RBD Object defaults match Box3D Data's (`nodeBodyDefaults`: density 1000 with Compute
+    Mass, so a 1 m box is 1000 kg; friction 1; bounce 0.5; a convex hull). Body type is the node's, or static with
+    Create Active Object off (no `animated`).
 * Mirror: one entry, key `makeBodyKey(objectId, kWholeObjectId = -1)`, `wholeObject = true`, `pivot`, no point
   (`pointOff` -1, `pointIndex` -1 in Impacts). The object scans every step (one body: no fingerprint).
   `Box3DObjectSync::wholeObject` makes aging and point `force` / `torque` skip the object; Force DOPs still apply.
   Joint anchors name the object (Anchors: an object with one body).
-* Edits: Position data differing from what the solver last wrote (`poseDiffers`) teleports a static or dynamic body, as
-  an edited point does. A kinematic one (a Kinematic Box3D Data) gets `setTargetTransformByHandle(cur, stepDt)` instead,
-  so it pushes what it touches, and its velocity is cleared on the first step without an edit (`driven`), as an
-  `animated` point. It is not written back. Test `rbd_object_kinematic_pushes`, against Bullet `bullet_kinematic_object_push`.
+* Edits: Position data differing from what the solver last wrote (`poseDiffers`) teleports a static or dynamic body,
+  as an edited point does. A kinematic one (a Kinematic Box3D Data) gets `setTargetTransformByHandle(cur, stepDt)`
+  instead, so it pushes what it touches, and its velocity is cleared on the first step without an edit (`driven`), as
+  an `animated` point. It is not written back. Test `rbd_object_kinematic_pushes`, against Bullet
+  `bullet_kinematic_object_push`.
 * Write-back (`writeWholeObject`, from `writeResultsBack`'s move events, serial): the `SIM_PositionSimple` at
   `Position` (created as a `SIM_Motion` if missing; other `SIM_Position` kinds are left alone with a warning): pivot,
   orientation, translation, then velocities when it is a `SIM_Motion` (RBD State stays an RBD State). The translation

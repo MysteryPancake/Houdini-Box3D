@@ -34,8 +34,8 @@ sys.path.insert(0, HOUDINI_TESTS)
 def check_modules():
     """The names of the checks_*.py modules in tests/houdini, from the files."""
     paths = glob.glob(os.path.join(HOUDINI_TESTS, "checks_*.py"))
-    # checks_common holds helpers shared by the others, not tests
-    return sorted(os.path.splitext(os.path.basename(p))[0] for p in paths if not p.endswith("checks_common.py"))
+    # *_common.py files hold helpers shared by the others, not tests
+    return sorted(os.path.splitext(os.path.basename(p))[0] for p in paths if not p.endswith("_common.py"))
 
 
 def registered_modules():

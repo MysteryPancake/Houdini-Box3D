@@ -1,6 +1,7 @@
 # SideFX constraint data and Glue
 
-Glue, Hard, Spring, Bullet Soft and Cone Twist mapped onto Box3D joints. Joint nodes, networks and live frames: [joints.md](joints.md). Index and rules: [CLAUDE.md](../../CLAUDE.md).
+Glue, Hard, Spring, Bullet Soft and Cone Twist mapped onto Box3D joints. Joint nodes, networks and live frames:
+[joints.md](joints.md). Index and rules: [CLAUDE.md](../../CLAUDE.md).
 
 **SideFX constraint data** (`core/Box3DSideFX.*`, tested in `tests/core_sidefx.cpp`; read in `Box3DJointSync.cpp`):
 * Found by data type among the same subdata as our nodes (`networkKinds`): `SIM_ConRelGlue`, `SIM_ConRelHard`,
@@ -11,23 +12,32 @@ Glue, Hard, Spring, Bullet Soft and Cone Twist mapped onto Box3D joints. Joint n
   only), per option in `sideFXParams()`. Option names are the node
   parameter names, from the same probe. `Box3DJointKind` holds the SideFX type and options instead of a joint type.
 * Per primitive: matching primitive attributes modify the options (floats multiply, ints / vectors replace; our
-  `jointParams` overrides are not applied), `constraint_type` is read (missing, empty or unknown: position, as SideFX's help says and Bullet does: `sidefx_hard_untyped`), then `mapSideFX`
-  picks the joint:
-  * Glue: rigid weld holding the pieces where they are, never colliding, never broken by force or torque. It breaks
-    on the impulse of the hits it takes, as the Glue help describes Bullet's (`core/Box3DGlue.h`, Houdini-free,
-    `tests/core_glue.cpp`): after every Box3D step `collectGlueHits` adds the normal impulse of each glued body's contacts
-    (not its glued neighbours', nor its own glue group's: see `glueSameGroup`, [glue-compound.md](glue-compound.md)) to its hits; at the end of the frame `advanceGlue` spreads them over the bonds
-    (`impulse` shares: itself 1, each bond its Propagation Rate, `propagationiterations` rounds), adds the two bodies'
-    results to the bond's `impact` after it decayed by `impulse_halflife`, and queues a bond over its Strength
-    divided by `kGlueStrengthScale` (< 0 never) for `jointsAfterStep`, which breaks it with the force ones (the `broken` group, `next_constraint_name`).
-    `advanceGlue` spreads over a copy of the bonds (`glueMirror`, with a flag that none carries an impact, which is what makes a quiet frame idle) kept between frames: it is made again only when `glueEpoch` moved, so anything that adds, removes, breaks or remakes a bond or sets its Glue settings or impact must call `touchGlueBonds`. `impact` is written to the primitives and read back when a joint is remade. The bonds are listed by `syncJoints`'s
-    removal loop (no pass of their own); the hits of single bodies come from the step's impulse events in one pass (`glueHitsFromEvents`, on while there are glued bodies), read as one record per body pair (`getContactImpulseSums`) with both bodies' node and group looked up once per pair; `contactImpulseByHandle` agrees with them for awake bodies in `core_compound`, a compound's pieces from `contactImpulsesByShape`, and a decayed `impact` under `kGlueImpactFloor` is 0, so a quiet frame is idle. Every contact counts, a resting body's weight
-    included, as in Bullet (a deliberate match: only the contacts inside a glue group are left out). A hanging piece has no contacts and
-    holds at any Strength (`sidefx_glue`); a landing is a hit (`glue_impact`). `impact` matches Bullet's own (peak within
-    ~20%, the same decay: `glue_impact_trace`); a Bullet glue holds from about 5 to 6 times its peak impact, so
-    the break test uses `kGlueStrengthScale` (measured from one scene: `glue_impact_scale`). A negative iteration count is the global one
-    (the `propagate_iteration` detail attribute of the network, read by `NetworkReader::glueIterations`; one round without it);
-    the most iterations of any bond set the rounds.
+  `jointParams` overrides are not applied), `constraint_type` is read (missing, empty or unknown: position, as
+  SideFX's help says and Bullet does: `sidefx_hard_untyped`), then `mapSideFX` picks the joint:
+  * Glue: rigid weld holding the pieces where they are, never colliding, never broken by force or torque. It breaks on
+    the impulse of the hits it takes, as the Glue help describes Bullet's (`core/Box3DGlue.h`, Houdini-free,
+    `tests/core_glue.cpp`): after every Box3D step `collectGlueHits` adds the normal impulse of each glued body's
+    contacts (not its glued neighbours', nor its own glue group's: see `glueSameGroup`,
+    [glue-compound.md](glue-compound.md)) to its hits; at the end of the frame `advanceGlue` spreads them over the
+    bonds (`impulse` shares: itself 1, each bond its Propagation Rate, `propagationiterations` rounds), adds the two
+    bodies' results to the bond's `impact` after it decayed by `impulse_halflife`, and queues a bond over its Strength
+    divided by `kGlueStrengthScale` (< 0 never) for `jointsAfterStep`, which breaks it with the force ones (the
+    `broken` group, `next_constraint_name`). `advanceGlue` spreads over a copy of the bonds (`glueMirror`, with a flag
+    that none carries an impact, which is what makes a quiet frame idle) kept between frames: it is made again only
+    when `glueEpoch` moved, so anything that adds, removes, breaks or remakes a bond or sets its Glue settings or
+    impact must call `touchGlueBonds`. `impact` is written to the primitives and read back when a joint is remade. The
+    bonds are listed by `syncJoints`'s removal loop (no pass of their own); the hits of single bodies come from the
+    step's impulse events in one pass (`glueHitsFromEvents`, on while there are glued bodies), read as one record per
+    body pair (`getContactImpulseSums`) with both bodies' node and group looked up once per pair;
+    `contactImpulseByHandle` agrees with them for awake bodies in `core_compound`, a compound's pieces from
+    `contactImpulsesByShape`, and a decayed `impact` under `kGlueImpactFloor` is 0, so a quiet frame is idle. Every
+    contact counts, a resting body's weight included, as in Bullet (a deliberate match: only the contacts inside a
+    glue group are left out). A hanging piece has no contacts and holds at any Strength (`sidefx_glue`); a landing is
+    a hit (`glue_impact`). `impact` matches Bullet's own (peak within ~20%, the same decay: `glue_impact_trace`); a
+    Bullet glue holds from about 5 to 6 times its peak impact, so the break test uses `kGlueStrengthScale` (measured
+    from one scene: `glue_impact_scale`). A negative iteration count is the global one (the `propagate_iteration`
+    detail attribute of the network, read by `NetworkReader::glueIterations`; one round without it); the most
+    iterations of any bond set the rounds.
   * Glue as One Body (`gluecompound`): [glue-compound.md](glue-compound.md).
   * Hard: all -> rigid weld with the anchors kept the rest length apart (as Bullet does; held where they are when there
     is no rest length); position -> rigid distance joint at the
@@ -48,14 +58,13 @@ Glue, Hard, Spring, Bullet Soft and Cone Twist mapped onto Box3D joints. Joint n
     motor are ignored.
   * Hard / Spring / Soft / Cone Twist: Collide Connected = !disablecollisions.
 * **Frame offsets**: a SideFX joint's frames need not sit on its anchors. `sideFXFrameOffsets` gives each anchor an
-  offset in its own axes (`adjA` / `adjB` on `Box3DJointEntry`): a rotation (cone twist) and/or a shift along the anchor
-  line so the frames meet when the anchors are `separation` apart (Soft / Spring / Hard all with a rest length), or are
-  as far apart as now (`holdSeparation`: Glue, Hard all without one; anchors from Connect Adjacent Pieces sit at the
-  centroids, and
-  a plain weld there would pull the pieces together). The joint is made from `applyFrameOffset(anchor, adj)`;
-  `writeLiveFrames` and the `next_constraint_name` switch write `removeFrameOffset(frame, adj)` back as `current_P` / `current_orient`,
-  so the anchors stay anchors, and `local_P` / `local_orient` hold the joint's own frames (compared with the
-  offset anchors in `localFrameAgrees`). Offsets are fixed when the joint is made; their inputs (rotations,
-  separation, the hold flag, not the anchor positions) are in the joint signature. Our Weld's Hold Separation
-  (`JointSettings::holdSeparation`, `hold_separation`, not a Box3D setting) gets Glue's hold offsets in `specFor`.
-  Identity offsets (our other nodes) bypass the math.
+  offset in its own axes (`adjA` / `adjB` on `Box3DJointEntry`): a rotation (cone twist) and/or a shift along the
+  anchor line so the frames meet when the anchors are `separation` apart (Soft / Spring / Hard all with a rest
+  length), or are as far apart as now (`holdSeparation`: Glue, Hard all without one; anchors from Connect Adjacent
+  Pieces sit at the centroids, and a plain weld there would pull the pieces together). The joint is made from
+  `applyFrameOffset(anchor, adj)`; `writeLiveFrames` and the `next_constraint_name` switch write
+  `removeFrameOffset(frame, adj)` back as `current_P` / `current_orient`, so the anchors stay anchors, and `local_P` /
+  `local_orient` hold the joint's own frames (compared with the offset anchors in `localFrameAgrees`). Offsets are
+  fixed when the joint is made; their inputs (rotations, separation, the hold flag, not the anchor positions) are in
+  the joint signature. Our Weld's Hold Separation (`JointSettings::holdSeparation`, `hold_separation`, not a Box3D
+  setting) gets Glue's hold offsets in `specFor`. Identity offsets (our other nodes) bypass the math.

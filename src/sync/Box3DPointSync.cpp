@@ -698,8 +698,8 @@ void storePlan(Box3DBodyMirror &m, const ShapePlan &plan) {
   b3dop::copy3(m.sizeKey, plan.sizeKey);
 }
 
-// A new packed body's rest (docs/agents/bodies.md, "Rest transform"): the
-// point's `restxform` if set; else its transform now, which the solver then
+// A new packed body's rest (docs/agents/body-features.md, "Rest transform"):
+// the point's `restxform` if set; else its transform now, which the solver then
 // writes as `restxform` with `pivot` = P (writeRest, kRest). Plain data with no
 // initializers, made in the parallel plan pass (the array of them is not
 // cleared first, so its pages are first touched by the threads that fill it).

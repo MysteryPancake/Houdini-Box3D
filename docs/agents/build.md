@@ -1,6 +1,9 @@
 # Build, tests, debug, package
 
-How the project is built, tested and packaged. The digital assets' own notes are in [assets.md](assets.md), [solver-sop.md](solver-sop.md), [solver-sop-ui.md](solver-sop-ui.md), [constraint-properties.md](constraint-properties.md) and [configure.md](configure.md). Index and rules: [CLAUDE.md](../../CLAUDE.md).
+How the project is built, tested and packaged. The digital assets' own notes are in [assets.md](assets.md),
+[solver-sop.md](solver-sop.md), [solver-sop-ui.md](solver-sop-ui.md),
+[constraint-properties.md](constraint-properties.md) and [configure.md](configure.md). Index and rules:
+[CLAUDE.md](../../CLAUDE.md).
 
 ## Build system
 
@@ -14,15 +17,17 @@ How the project is built, tested and packaged. The digital assets' own notes are
   * The digital assets (`BOX3DDOP_MAKE_HDA`, default ON), with hython (found at `${Houdini_DIR}/../../bin` or
     `$HFS/bin`), into `<dso>/../otls/`: one `tools/make_assets.py` run (one hython session) builds
     `tools/make_packed_object.py` (`box3d_packedobject.hda`), `tools/make_configure_sop.py` (`box3d_configure.hda`),
-    `tools/make_constraint_properties_sop.py` (`box3d_constraint_properties.hda`), then `tools/make_solver_sop.py` (`box3d_solver_sop.hda`, which contains the Packed Object). It is the custom target
-    `Box3DAssets` (part of ALL), re-run when the plugin relinks or any `tools/make_*.py` / `b3d_*.py` changes; a stamp
-    file in the build folder records it (OUTPUT cannot hold the dso-relative path). Without hython a configure warning
-    names the command to run by hand. The assets copy parameters from the plugin just built ([assets.md](assets.md)).
+    `tools/make_constraint_properties_sop.py` (`box3d_constraint_properties.hda`), then `tools/make_solver_sop.py`
+    (`box3d_solver_sop.hda`, which contains the Packed Object). It is the custom target `Box3DAssets` (part of ALL),
+    re-run when the plugin relinks or any `tools/make_*.py` / `b3d_*.py` changes; a stamp file in the build folder
+    records it (OUTPUT cannot hold the dso-relative path). Without hython a configure warning names the command to run
+    by hand. The assets copy parameters from the plugin just built ([assets.md](assets.md)).
 * Warnings: `b3dop_warnings(target)` adds `-Wall -Wextra -Wshadow -Wconversion` (`/W4` on MSVC) to our targets, never to
   Box3D; Houdini's headers are system includes. `BOX3DDOP_WARNINGS_AS_ERRORS` (default OFF, on in CI) adds `-Werror` /
   `/WX`.
-* `BOX3DDOP_PCH` (default ON) precompiles the HDK and standard headers most plugin files include (`target_precompile_headers`
-  on `Box3DDOP`: no Box3D headers, no `UT_DSOVersion.h`); turn it off if a header ever needs a different include order.
+* `BOX3DDOP_PCH` (default ON) precompiles the HDK and standard headers most plugin files include
+  (`target_precompile_headers` on `Box3DDOP`: no Box3D headers, no `UT_DSOVersion.h`); turn it off if a header ever
+  needs a different include order.
 * `CMAKE_EXPORT_COMPILE_COMMANDS` feeds clang-tidy (`.clang-tidy`); the plugin's files only appear in it after an HDK
   build. `format` / `format-check` targets run clang-format; `.githooks/pre-commit` checks staged files once enabled
   (`git config core.hooksPath .githooks`).
@@ -68,7 +73,9 @@ note holding the test's docstring and results, so write docstrings for a reader 
 guessed a node or parameter name wrong; the message lists the real ones. The last status of each test is in
 `tests/houdini/out/last_results.json`.
 
-In Git Bash run hython with `HOME` unset (`unset HOME`): Houdini takes `HOME` as its preferences folder, so the plugin and assets in `Documents/houdiniX.Y` are not found and every test reports SETUP or a missing node type (`test.bat` does this itself).
+In Git Bash run hython with `HOME` unset (`unset HOME`): Houdini takes `HOME` as its preferences folder, so the plugin
+and assets in `Documents/houdiniX.Y` are not found and every test reports SETUP or a missing node type (`test.bat`
+does this itself).
 
 Tests are in `tests/houdini/checks_*.py` by area, each module with a `TESTS` dict listed in `MODULES`
 (`run_tests.py`); helpers in `b3dtest.py`. The exit code is 1 if anything failed, errored or crashed. A test
@@ -79,9 +86,9 @@ function can carry `.env` (environment for its process, e.g. `HOUDINI_MAXTHREADS
 After an intended change of behaviour, or of `baseline_scene`, re-record it with `--update-baseline`.
 
 `checks_bullet.py` runs one scene in Box3D and in RBD Bullet Solver and compares the numbers (`solver_for`).
-`python -I tests/python/test_harness.py` needs no Houdini: it loads the Houdini checks against a stand-in `hou` and checks
-that every module is registered and every test named and documented, lint (pyflakes, if installed), the pure helpers, that
-the docs name tests that exist, `baseline.json`, and that no file mixes line endings.
+`python -I tests/python/test_harness.py` needs no Houdini: it loads the Houdini checks against a stand-in `hou` and
+checks that every module is registered and every test named and documented, lint (pyflakes, if installed), the pure
+helpers, that the docs name tests that exist, `baseline.json`, and that no file mixes line endings.
 
 Core tests (`ctest`; each `tests/core_<name>.cpp` is `b3dop_core_<name>`, see `CMakeLists.txt`): smoke, physics
 (handle API, shapes, mass, setters, CCD, filtering, forces, ...), mesh, heightfield, ground, quadrics, joints,
@@ -91,23 +98,30 @@ differ by more than 1e-4). The file's header comment says what it covers. The ph
 
 ## Benchmarks
 
-`hython tests/houdini/bench.py` (or `python tools/b3d.py bench`) times scenes in Box3D and RBD Bullet Solver; it is not
-part of `run_tests.py` and nothing in it passes or fails. `--list` names the scenarios (`bench_scenes.py`:
-pile, edit, collider, animated, joints, wall, fracture, objects, static, churn, solversop, hulls, features), each with parameters (`name:key=value,...`) and a default sweep.
+`hython tests/houdini/bench.py` (or `python tools/b3d.py bench`) times scenes in Box3D and RBD Bullet Solver; it is
+not part of `run_tests.py` and nothing in it passes or fails. `--list` names the scenarios (`bench_scenes.py`: pile,
+edit, collider, animated, joints, wall, fracture, objects, static, churn, solversop, hulls, features), each with
+parameters (`name:key=value,...`) and a default sweep.
 
 * Each run is its own hython process: frames 1..N timed as `setFrame` plus the DOP cook, grouped into the scene's
-  phases (median, p95, max per frame), then Reset Simulation and frame 2 again (`rewind`: the world rebuild; the forced `cook` is
-  what makes it re-solve). Frame 1 is its own `first` phase: the scene's SOPs cook there and Box3D builds nothing yet
-  (new objects are solved from frame 2).
+  phases (median, p95, max per frame), then Reset Simulation and frame 2 again (`rewind`: the world rebuild; the
+  forced `cook` is what makes it re-solve). Frame 1 is its own `first` phase: the scene's SOPs cook there and Box3D
+  builds nothing yet (new objects are solved from frame 2).
 * `hou.perfMon` records the solvers' stages (`Pre-Solve/...`, `Stepping Simulation/...`, `Post-Solve/...` are nested
-  under the solver node; Bullet has none, only its node time) and the time of every DOP node. Stepping Simulation/Box3D Step is the time of Box3D's `world.step` (`solver.md`); the rest of the solver's stages are the plugin's own code, the part to optimise. A frame's total minus its nodes is the DOP engine.
+  under the solver node; Bullet has none, only its node time) and the time of every DOP node. Stepping
+  Simulation/Box3D Step is the time of Box3D's `world.step` (`solver.md`); the rest of the solver's stages are the
+  plugin's own code, the part to optimise. A frame's total minus its nodes is the DOP engine.
 * Results go to `tests/houdini/out/bench/` (`latest.json` and a timestamped copy); `--compare file.json` prints the
   ratio per phase. `--repeat N` keeps the median run, `--threads N` sets `HOUDINI_MAXTHREADS`, `--budget` caps a run.
-* `fracture` is a Voronoi-fractured cube (Points from Volume) glued by the fracture's own constraints, dropped on the ground, through the Box3D Solver SOP or the RBD Bullet Solver SOP (`sep`: smaller is more pieces). Its frame time includes the SOP's Break Thresholds.
-* `objects` is the whole-object path (RBD Objects from an RBD Point Object), `static` a pile on a Static Object (`motion`
-  none / move / deform), `churn` bodies dying (Enable Aging, every piece carrying an `id`: without one the point number is the body, and each death renumbers and teleports the bodies after it) and, with `births 1`, appearing each frame (a SOP Solver; Box3D
-  only), and `solversop` the Box3D Solver SOP asset: its frame is the SOP cook (`Scene.sop`), with the inner DOP network
-  as `dop`, so the asset's own SOP nodes are in the frame but not in the stage list.
+* `fracture` is a Voronoi-fractured cube (Points from Volume) glued by the fracture's own constraints, dropped on the
+  ground, through the Box3D Solver SOP or the RBD Bullet Solver SOP (`sep`: smaller is more pieces). Its frame time
+  includes the SOP's Break Thresholds.
+* `objects` is the whole-object path (RBD Objects from an RBD Point Object), `static` a pile on a Static Object
+  (`motion` none / move / deform), `churn` bodies dying (Enable Aging, every piece carrying an `id`: without one the
+  point number is the body, and each death renumbers and teleports the bodies after it) and, with `births 1`,
+  appearing each frame (a SOP Solver; Box3D only), and `solversop` the Box3D Solver SOP asset: its frame is the SOP
+  cook (`Scene.sop`), with the inner DOP network as `dop`, so the asset's own SOP nodes are in the frame but not in
+  the stage list.
 * Copy to Points takes no point attributes onto packed copies unless `targetattribs` / `applyattribs1` are set
   (`copy_packed`): without it every body is named by number and dynamic, and a constraint network matches nothing.
 * A SideFX Hard / Soft / Spring node's Rest Length defaults to 1: anchors that start closer are pulled to it, which
@@ -116,12 +130,12 @@ pile, edit, collider, animated, joints, wall, fracture, objects, static, churn, 
 
 ## Debug logging (`Box3DDebug.h`)
 
-`B3D_DEBUG_LOG` for one-off events (rebuilds, bodies added / removed, fallbacks); `B3D_DEBUG_LOG_VERBOSE` per step, printed only
-with `BOX3DDOP_VERBOSE=1`; `B3D_DEBUG_LOG_IF(cond, ...)` always when `cond`, else only when verbose. All compile to nothing
-without `BOX3DDOP_DEBUG`. Output: stderr, `[b3dop]`; `run_tests.py` drops a test's stderr, so set `BOX3DDOP_TEST_LOG=1`
-to print its `[b3dop]` lines. Other environment variables of debug builds (the header lists
+`B3D_DEBUG_LOG` for one-off events (rebuilds, bodies added / removed, fallbacks); `B3D_DEBUG_LOG_VERBOSE` per step,
+printed only with `BOX3DDOP_VERBOSE=1`; `B3D_DEBUG_LOG_IF(cond, ...)` always when `cond`, else only when verbose. All
+compile to nothing without `BOX3DDOP_DEBUG`. Output: stderr, `[b3dop]`; `run_tests.py` drops a test's stderr, so set
+`BOX3DDOP_TEST_LOG=1` to print its `[b3dop]` lines. Other environment variables of debug builds (the header lists
 them): `BOX3DDOP_REQUESTED_CACHE` (what `getRequestedCacheSubclass` returns) and `BOX3DDOP_VERIFY_READBACK=1`
-([solver.md](solver.md), writeResultsBack).
+([solver-sync.md](solver-sync.md), writeResultsBack).
 
 ## Package
 

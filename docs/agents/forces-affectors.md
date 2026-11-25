@@ -1,6 +1,7 @@
 # Forces and affectors
 
-External forces (Force DOPs, point `force` / `torque`) and Static Object colliders. Index and rules: [CLAUDE.md](../../CLAUDE.md).
+External forces (Force DOPs, point `force` / `torque`) and Static Object colliders. Index and rules:
+[CLAUDE.md](../../CLAUDE.md).
 
 ## External forces (`applyExternalForces`)
 
@@ -10,11 +11,12 @@ SIM_DataFilterNone())` with a `SIM_EachDataCallback` (`ForceCollector`) that cas
 
 Only objects with force DOPs or non-zero point forces are visited, and only their own bodies
 (`Box3DObjectSync::bodies`, rebuilt by each full scan and kept while the object is skipped): skip bodies that are not
-`dynamic()`, are not `props.enabled`, or are asleep while `forceswake` is off. For each remaining body one `bodyStateByHandle` call reads awake, mass, world centre of mass and `v` / `w`
-(it replaces four separate calls; with only point forces and no Force DOP just `isAwakeByHandle` is read, and only when
-`forceswake` is off). Mass, centre of mass and velocities go into `SIM_Force::getForce(object, pos, vel, angvel,
-mass, force, torque)` for every force on the object, summed, and the sum goes in through `applyForceByHandle`
-(`b3Body_ApplyForceToCenter` + `b3Body_ApplyTorque`).
+`dynamic()`, are not `props.enabled`, or are asleep while `forceswake` is off. For each remaining body one
+`bodyStateByHandle` call reads awake, mass, world centre of mass and `v` / `w` (it replaces four separate calls; with
+only point forces and no Force DOP just `isAwakeByHandle` is read, and only when `forceswake` is off). Mass, centre of
+mass and velocities go into `SIM_Force::getForce(object, pos, vel, angvel, mass, force, torque)` for every force on
+the object, summed, and the sum goes in through `applyForceByHandle` (`b3Body_ApplyForceToCenter` +
+`b3Body_ApplyTorque`).
 
 * Box3D adds `invMass * force` and `invInertiaWorld * torque` in every substep's velocity integration
   (`b3IntegrateVelocitiesTask`) and zeroes both when the step finishes, so they are per-step: never carry them over, and
@@ -25,46 +27,49 @@ mass, force, torque)` for every force on the object, summed, and the sum goes in
   sanitizes (`finiteVec3`) because Box3D asserts on non-finite vectors.
 * Substeps (the solver's, whole Box3D steps) apply the forces again before each step, so a force is evaluated once per
   step. The point `force` / `torque` the first step read and cleared are applied again in the others
-  (`PointForceCarry`), so the frame's force acts in every step. What stays constant is Box3D's own Constraint Iterations inside a step (`subStepCount`): no hook runs between them.
-* Evaluation (`applyToObjectBodies`) is three phases per object: read each body's state (serial, it reads Box3D), evaluate
-  the forces, apply the sums (serial). From `kMinParallelForces` bodies, the forces sampled at a point whose
-  `SIM_ForceResolver` reports `threadsafe()` are evaluated on the TBB pool (`evaluateResolvers`: each range of 64 bodies
-  takes its own `copy()` of the resolvers, as the header asks). Everything else stays serial: forces sampled over a circle or
-  sphere (the resolver only has the point call), and a custom Force DOP, whose generic resolver is not thread-safe. Below the
-  threshold all forces are serial, as before. A debug build logs each force's verdict when it splits them (`force <type>:
-  ... parallel` / `serial`), which `force_dops_threadsafe` reads (`BOX3DDOP_MIN_PARALLEL_FORCES` lowers the count). In Houdini
-  22.0.508 Gravity, Drag, Fan, Impulse, Point, Reference Frame and Uniform go to the pool, Magnet, Vex and Vortex do not
-  (resolver not thread-safe), Buoyancy and Field are not sampled at a point.
+  (`PointForceCarry`), so the frame's force acts in every step. What stays constant is Box3D's own Constraint
+  Iterations inside a step (`subStepCount`): no hook runs between them.
+* Evaluation (`applyToObjectBodies`) is three phases per object: read each body's state (serial, it reads Box3D),
+  evaluate the forces, apply the sums (serial). From `kMinParallelForces` bodies, the forces sampled at a point whose
+  `SIM_ForceResolver` reports `threadsafe()` are evaluated on the TBB pool (`evaluateResolvers`: each range of 64
+  bodies takes its own `copy()` of the resolvers, as the header asks). Everything else stays serial: forces sampled
+  over a circle or sphere (the resolver only has the point call), and a custom Force DOP, whose generic resolver is
+  not thread-safe. Below the threshold all forces are serial, as before. A debug build logs each force's verdict when
+  it splits them (`force <type>: ... parallel` / `serial`), which `force_dops_threadsafe` reads
+  (`BOX3DDOP_MIN_PARALLEL_FORCES` lowers the count). In Houdini 22.0.508 Gravity, Drag, Fan, Impulse, Point, Reference
+  Frame and Uniform go to the pool, Magnet, Vex and Vortex do not (resolver not thread-safe), Buoyancy and Field are
+  not sampled at a point.
 * Gravity Force DOP + the solver's `gravity` add up (both are applied). `gravityscale` only scales the solver's gravity.
-* Sampling: each force is sampled as its own Sample Mode asks (`SIM_Force::getOptimalForceSampling`, a point unless the
-  Force DOP is set otherwise). Sphere: `getForceOnSphere` with the radius of a sphere of the same volume as the body's
-  bounding box. Circle: the force's direction comes from a point sample, then `getForceOnCircle` with the radius of a circle
-  of the same area as the box seen along that direction. The box is `Box3DWorld::extentByHandle` (world axes, so a turned
-  body counts larger; read only when a force asks). A body with no shapes falls back to the point sample. Not used:
-  `getPointForces`.
+* Sampling: each force is sampled as its own Sample Mode asks (`SIM_Force::getOptimalForceSampling`, a point unless
+  the Force DOP is set otherwise). Sphere: `getForceOnSphere` with the radius of a sphere of the same volume as the
+  body's bounding box. Circle: the force's direction comes from a point sample, then `getForceOnCircle` with the
+  radius of a circle of the same area as the box seen along that direction. The box is `Box3DWorld::extentByHandle`
+  (world axes, so a turned body counts larger; read only when a force asks). A body with no shapes falls back to the
+  point sample. Not used: `getPointForces`.
 * `useforces` / `forceswake` are plain options read each step; nothing is stored in the world, so they need no rebuild.
 
 ## Force and torque point attributes
 
 `applyExternalForces` also reads per-point `force` / `torque` (V3) attributes from each object's geometry into a short
-list of the non-zero ones (by offset; a body finds its point by binary search), adds them to the Force DOP result for the
-same body, applies the sum, then zeroes the ones it read (a write lock, followed by
-`noteOwnWrite`, so the next sync does not see the clear as an external edit). Zeroing is needed because
-nothing else clears `force` without a POP Solver. The POP Force node must run before this solver. The attributes' data
-ids right after the clear (or after a read found them all zero) are kept in `Box3DObjectSync::forceId / torqueId`; while
-they are unchanged nothing new was written and the read is skipped.
+list of the non-zero ones (by offset; a body finds its point by binary search), adds them to the Force DOP result for
+the same body, applies the sum, then zeroes the ones it read (a write lock, followed by `noteOwnWrite`, so the next
+sync does not see the clear as an external edit). Zeroing is needed because nothing else clears `force` without a POP
+Solver. The POP Force node must run before this solver. The attributes' data ids right after the clear (or after a
+read found them all zero) are kept in `Box3DObjectSync::forceId / torqueId`; while they are unchanged nothing new was
+written and the read is skipped.
 
-A body that got a point force last step (`Box3DBodyMirror::pointForced`) and gets none now is woken once: a sleeping body's
-joints read as they were, so it would keep what it read under the force. An object with such
-a body is visited even when it has no forces (`Box3DObjectSync::pointForcedAny`). Not covered: a Force DOP that ends (a
-sleeping body is not evaluated, so its end is not seen) and pieces of a compound.
+A body that got a point force last step (`Box3DBodyMirror::pointForced`) and gets none now is woken once: a sleeping
+body's joints read as they were, so it would keep what it read under the force. An object with such a body is visited
+even when it has no forces (`Box3DObjectSync::pointForcedAny`). Not covered: a Force DOP that ends (a sleeping body is
+not evaluated, so its end is not seen) and pieces of a compound.
 
 ## Affector static colliders
 
 `Box3DAffectors.cpp` (`syncAffectorBodies`, after the objects, mutex held). Objects the solver is not given but that
-affect a solved object through a collision relationship become static bodies. Each relationship the solved objects are in
-is read once (its affector group, `gatherAffectors`): asking every object for its `getConstAffectors` walked the
-relationship's whole group each time, which cost 60 ms a step for 2000 RBD Objects. They become static bodies: a height field if the geometry has one, else a triangle mesh of its polygons.
+affect a solved object through a collision relationship become static bodies. Each relationship the solved objects are
+in is read once (its affector group, `gatherAffectors`): asking every object for its `getConstAffectors` walked the
+relationship's whole group each time, which cost 60 ms a step for 2000 RBD Objects. They become static bodies: a
+height field if the geometry has one, else a triangle mesh of its polygons.
 
 * Gather: affectors of every solved object, deduplicated, solved objects skipped. State:
   `Box3DSharedState::affectors` (object id -> `Box3DAffectorBody`); a world rebuild starts empty, unseen ones are
@@ -77,13 +82,13 @@ relationship's whole group each time, which cost 60 ms a step for 2000 RBD Objec
   `nodeBodyDefaults()`. Bodies start static.
 * Moving: a mesh affector whose pose changes (`Box3DAffectorBody::movable`: a rigid transform, not a height field or
   ground) is retyped kinematic on its first move and driven by `setTargetTransformByHandle(pose, stepDt)` each change,
-  so it pushes what it touches, as Bullet does; the velocity is cleared on the first step without one (`driven`). Height
-  fields and grounds are teleported (`setTransformByHandle`). An inactive RBD Object (Create Active Object off) is one of
-  these: Houdini does not give the solver such an object. Tests `bullet_inactive_push` (a box carried at 2 and 10 m/s as
-  Bullet does), `rbd_object_active`.
+  so it pushes what it touches, as Bullet does; the velocity is cleared on the first step without one (`driven`).
+  Height fields and grounds are teleported (`setTransformByHandle`). An inactive RBD Object (Create Active Object off)
+  is one of these: Houdini does not give the solver such an object. Tests `bullet_inactive_push` (a box carried at 2
+  and 10 m/s as Bullet does), `rbd_object_active`.
 * A failed build keeps handle 0 until the signature changes (one warning per step).
-* Core: `createMeshShape` (static or kinematic bodies) / `createHeightFieldShape` (static only). Box3D keeps pointers to the mesh and
-  height-field data, so `Impl::bodyGeometry` owns them until the body, its shapes or the world go.
+* Core: `createMeshShape` (static or kinematic bodies) / `createHeightFieldShape` (static only). Box3D keeps pointers
+  to the mesh and height-field data, so `Impl::bodyGeometry` owns them until the body, its shapes or the world go.
 
 **Meshes.** Polygons fan-triangulated; Houdini front faces are clockwise and Box3D's one-sided meshes want
 counter-clockwise, so triangles are flipped. A rotation + positive per-axis scale
@@ -103,11 +108,12 @@ named `height` that is one voxel thick (with no `name` attribute, the first such
 * Box3D quantises heights to 16 bits over the field's own range (1.5 cm steps over 1000 m). `holes` exists in the core
   but is unused here.
 
-**Ground planes** (`isGroundPlane`). An affector whose `Volume` data is a `SIM_SDF` in Implicit Plane mode (`kImplicitPlaneMode`,
-the SDF Representation menu's index, which a Ground Plane DOP sets) becomes a static ground box (`groundSpec(settings.ground)`, the solver's Ground Box Size) whose top is the object's own `y = 0`,
-facing +y, instead of a mesh of its guide grid. Pose and scale come from `SIMgetGeometryTransform` as for any affector, but
-only the pose is used; a sheared transform fails the ground. Several Ground Plane DOPs give several grounds, each its own body.
-Material as above (Box3D Data, else the Ground Plane's Physical tab). The signature is the material and the size, so moving or
-turning the ground only moves its body. The object needs no geometry.
+**Ground planes** (`isGroundPlane`). An affector whose `Volume` data is a `SIM_SDF` in Implicit Plane mode
+(`kImplicitPlaneMode`, the SDF Representation menu's index, which a Ground Plane DOP sets) becomes a static ground box
+(`groundSpec(settings.ground)`, the solver's Ground Box Size) whose top is the object's own `y = 0`, facing +y,
+instead of a mesh of its guide grid. Pose and scale come from `SIMgetGeometryTransform` as for any affector, but only
+the pose is used; a sheared transform fails the ground. Several Ground Plane DOPs give several grounds, each its own
+body. Material as above (Box3D Data, else the Ground Plane's Physical tab). The signature is the material and the
+size, so moving or turning the ground only moves its body. The object needs no geometry.
 
 Not done: SDF / volume collision, mask holes, per-pair collider selection.
