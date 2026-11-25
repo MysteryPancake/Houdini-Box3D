@@ -482,6 +482,64 @@ private:
     return f;
   }
 
+  // The two bodies a primitive joins and its authored anchors, or false when it
+  // gets no joint this time (the entry is dropped).
+  bool resolveEnds(Box3DJointEntry &e, GA_Offset p0, GA_Offset p1,
+                   AnchorBody &ab, AnchorBody &bb, b3dop::JointFrame &authA,
+                   b3dop::JointFrame &authB) {
+    // Agent anchors name a transform of an agent's rig: nothing here simulates
+    // one.
+    if (myRd.anchorKind(p0) == AnchorKind::Agent ||
+        myRd.anchorKind(p1) == AnchorKind::Agent) {
+      ++myCounts.agentAnchors;
+      dropJoint(e);
+      return false;
+    }
+    if (!myAnchors.resolve(myRd.anchorName(p0), ab) ||
+        !myAnchors.resolve(myRd.anchorName(p1), bb)) {
+      ++myCounts.unresolved;
+      myNet.needsBodies = true;
+      dropJoint(e);
+      return false; // not stamped: removed; retried when bodies change
+    }
+    if (ab.byObjectName || bb.byObjectName)
+      myNet.needsBodies = true;
+    AnchorLookup badAnchor = AnchorLookup::Ok;
+    authA = asStored(authoredAnchor(e, false, p0, ab, badAnchor));
+    authB = asStored(authoredAnchor(e, true, p1, bb, badAnchor));
+    if (badAnchor != AnchorLookup::Ok) {
+      myNet.needsBodies = true;
+      ++(badAnchor == AnchorLookup::NoGeometry ? myCounts.anchorNoGeometry
+                                               : myCounts.badAnchorId);
+      dropJoint(e);
+      return false; // not stamped: removed
+    }
+    return true;
+  }
+
+  // What the entry keeps for its kind: a Glue's strength settings (and the
+  // impact a rebuilt world carries on from), a Spring's bodies.
+  void noteKind(Box3DJointEntry &e, const JointSpec &j, GA_Offset off) {
+    e.glue = j.glue;
+    e.massDependent = j.massDependent;
+    if (j.glue || j.massDependent) {
+      Box3DJointExtra &x = e.ensureExtra();
+      if (j.glue)
+        x.glueParams = j.glueParams;
+      if (j.massDependent) {
+        x.massA = j.bodyA;
+        x.massB = j.bodyB;
+      }
+      if (j.glue && !e.made && myRd.impact.isValid()) {
+        // A world rebuilt mid-simulation: carry on from what the geometry
+        // holds.
+        const float kept = myRd.impact.get(off);
+        x.glueImpact = std::isfinite(kept) && kept > 0.0f ? kept : 0.0f;
+      }
+      mySt.touchGlueBonds();
+    }
+  }
+
   void processPrimitive(const GA_Primitive &prim, GA_Offset off) {
     if (prim.getVertexCount() != 2) {
       ++myCounts.notLines;
@@ -507,40 +565,14 @@ private:
     }
 
     const GA_Offset p0 = prim.getPointOffset(0), p1 = prim.getPointOffset(1);
-    // Agent anchors name a transform of an agent's rig: nothing here simulates
-    // one.
-    if (myRd.anchorKind(p0) == AnchorKind::Agent ||
-        myRd.anchorKind(p1) == AnchorKind::Agent) {
-      ++myCounts.agentAnchors;
-      dropJoint(e);
-      return;
-    }
     AnchorBody ab, bb;
-    if (!myAnchors.resolve(myRd.anchorName(p0), ab) ||
-        !myAnchors.resolve(myRd.anchorName(p1), bb)) {
-      ++myCounts.unresolved;
-      myNet.needsBodies = true;
-      dropJoint(e);
-      return; // not stamped: removed; retried when bodies change
-    }
+    b3dop::JointFrame authA, authB;
+    if (!resolveEnds(e, p0, p1, ab, bb, authA, authB))
+      return;
     const b3dop::BodyHandle a = ab.handle, b = bb.handle;
-    if (ab.byObjectName || bb.byObjectName)
-      myNet.needsBodies = true;
     // On a written network current_P / current_orient say where the anchors
     // are now, so a world rebuilt mid-simulation makes its joints from them
     // exactly as frame 1 does from the authored P / orient.
-    AnchorLookup badAnchor = AnchorLookup::Ok;
-    const b3dop::JointFrame authA = asStored(
-                                authoredAnchor(e, false, p0, ab, badAnchor)),
-                            authB = asStored(
-                                authoredAnchor(e, true, p1, bb, badAnchor));
-    if (badAnchor != AnchorLookup::Ok) {
-      myNet.needsBodies = true;
-      ++(badAnchor == AnchorLookup::NoGeometry ? myCounts.anchorNoGeometry
-                                               : myCounts.badAnchorId);
-      dropJoint(e);
-      return; // not stamped: removed
-    }
     b3dop::JointFrame la, lb;
     const bool hasLive = myRd.live(p0, la) && myRd.live(p1, lb);
     // Edited upstream (a SOP Solver): the authored anchors differ from the ones
@@ -555,24 +587,7 @@ private:
     const b3dop::JointFrame fa = useLive ? la : authA,
                             fb = useLive ? lb : authB;
     const JointSpec j = specFor(*kind, off, a, b, fa, fb);
-    e.glue = j.glue;
-    e.massDependent = j.massDependent;
-    if (j.glue || j.massDependent) {
-      Box3DJointExtra &x = e.ensureExtra();
-      if (j.glue)
-        x.glueParams = j.glueParams;
-      if (j.massDependent) {
-        x.massA = j.bodyA;
-        x.massB = j.bodyB;
-      }
-      if (j.glue && !e.made && myRd.impact.isValid()) {
-        // A world rebuilt mid-simulation: carry on from what the geometry
-        // holds.
-        const float kept = myRd.impact.get(off);
-        x.glueImpact = std::isfinite(kept) && kept > 0.0f ? kept : 0.0f;
-      }
-      mySt.touchGlueBonds();
-    }
+    noteKind(e, j, off);
 
     const bool live = myNet.writable;
     uint64_t sig = jointSignature(j.type, a, b, fa, fb, !live);
