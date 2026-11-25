@@ -1257,6 +1257,7 @@ private:
     // Broken (by us, or marked in the geometry): never remade.
     if (e.broken || (myRd.broken && myRd.broken->containsOffset(off))) {
       e.broken = true;
+      mySt.touchGlueBonds();
       dropJoint(e);
       e.stamp = myNet.liveStamp;
       return;
@@ -1340,7 +1341,10 @@ private:
         const float kept = myRd.impact.get(off);
         x.glueImpact = std::isfinite(kept) && kept > 0.0f ? kept : 0.0f;
       }
+      mySt.touchGlueBonds();
     }
+    if (j.type == b3dop::JointType::Bond)
+      mySt.touchGlueBonds();
 
     const bool live = myNet.writable;
     uint64_t sig = jointSignature(j.type, a, b, fa, fb, !live);
@@ -1468,6 +1472,7 @@ void removeGlueBonds(Box3DSharedState &st) {
     e->glueIndex = -1;
   }
   st.glueRemoved.clear();
+  st.touchGlueBonds();
   if (st.glueOrphans * 4 > st.glueNodes.size())
     st.glueFull = true;
 }
@@ -1574,6 +1579,7 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
   } else if (changed || st.glueDirty || st.glueFull) {
     st.glueDirty = false;
     st.glueFull = false;
+    st.touchGlueBonds();
     st.glueRemoved.clear();
     st.glueTouched.clear();
     st.glueOrphans = 0;

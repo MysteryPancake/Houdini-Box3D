@@ -388,12 +388,12 @@ int main() {
                 steps, pm[0], travelled, lin[0], pc[0]);
     CHECK(near(lin[0], 6.0, 1e-4));
     CHECK(near(pm[0], travelled, 1e-3));
-    float cl[3], cs[3];
-    CHECK(w.getVelocityByHandle(compound, cl, cs));
-    CHECK(near(cl[0], 6.0, 0.3) && pc[0] > 0.5);
+    float compLin[3], compSpin[3];
+    CHECK(w.getVelocityByHandle(compound, compLin, compSpin));
+    CHECK(near(compLin[0], 6.0, 0.3) && pc[0] > 0.5);
     // Pushed on its axis: the contact's corners leave a little sideways speed.
-    CHECK(std::fabs(cl[1]) < 1.0f && std::fabs(cl[2]) < 1.0f);
-    (void)cs;
+    CHECK(std::fabs(compLin[1]) < 1.0f && std::fabs(compLin[2]) < 1.0f);
+    (void)compSpin;
   }
 
   // ---- contactImpulseByHandle: contacts the caller ignores are left out ----
@@ -422,6 +422,60 @@ int main() {
     // Skipping the upper cube by handle comes to the same.
     CHECK(near(ground, w.contactImpulseByHandle(lower, &upper, 1), 1e-5 * all));
     CHECK(w.contactImpulseByHandle(lower, nullptr, 0, &everything) == 0.0f);
+  }
+
+  // ---- the impulse events add up, body by body, to contactImpulseByHandle
+  // for the awake bodies (what the Glue's hits read; a body asleep has no
+  // events, and the Glue gives it no hits) ----
+  {
+    Box3DWorld w;
+    CHECK(w.create(ws));
+    w.enableContactImpulseEvents(true);
+    staticBox(w, 0.0, -0.5, 5.0, 0.5);
+    BodySettings b;
+    std::vector<BodyHandle> bodies;
+    // A leaning stack and a pair side by side: resting, pressed and sliding
+    // contacts between the bodies and with the ground.
+    const double at[5][3] = {{0, 0.26, 0},
+                             {0.1, 0.77, 0},
+                             {0.15, 1.28, 0.05},
+                             {2, 0.26, 0.4},
+                             {2.45, 0.26, 0.4}};
+    for (const auto &p : at) {
+      const BodyHandle h = w.createBody(b, p, kQid);
+      CHECK(w.createShape(h, b, cube(0.0f)));
+      bodies.push_back(h);
+    }
+    for (int i = 0; i < 40; ++i)
+      w.step(kDt);
+    std::vector<ContactImpulse> events;
+    w.getContactImpulseEvents(events);
+    CHECK(!events.empty());
+    // The same events one record per body pair: fewer records, the same sums.
+    std::vector<ContactImpulseSum> sums;
+    w.getContactImpulseSums(sums);
+    CHECK(!sums.empty() && sums.size() < events.size());
+    int awake = 0;
+    bool agree = true;
+    for (const BodyHandle h : bodies) {
+      double fromEvents = 0.0, fromSums = 0.0;
+      for (const ContactImpulse &e : events)
+        if (e.a == h || e.b == h)
+          fromEvents += e.impulse;
+      for (const ContactImpulseSum &e : sums)
+        if (e.a == h || e.b == h)
+          fromSums += e.impulse;
+      agree = agree && near(fromSums, fromEvents, 1e-5 * (fromEvents + 1e-9));
+      if (w.isAwakeByHandle(h)) {
+        ++awake;
+        const double perBody = w.contactImpulseByHandle(h, nullptr, 0);
+        agree =
+            agree && perBody > 0.0 && near(fromEvents, perBody, 1e-4 * perBody);
+      } else {
+        agree = agree && fromEvents == 0.0;
+      }
+    }
+    CHECK(awake >= 2 && agree);
   }
 
   // ---- contactImpulsesByShape: contacts the caller ignores are left out ----
@@ -792,8 +846,8 @@ int main() {
         pieces[static_cast<size_t>(k)].pos[0] = k;
         pieces[static_cast<size_t>(k)].pos[1] = g;
         pieces[static_cast<size_t>(k)].mass = 2.0f;
-        for (int i = 0; i < 3; ++i)
-          pieces[static_cast<size_t>(k)].inertia[i] = 1.0f;
+        for (float &moment : pieces[static_cast<size_t>(k)].inertia)
+          moment = 1.0f;
       }
       const MergedBody body = mergePieces(pieces);
       mergedOk = mergedOk && body.ok && near(body.mass, 8.0, 1e-4) &&

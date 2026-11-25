@@ -177,6 +177,13 @@ struct ContactImpulse {
   bool awakeA = false, awakeB = false; // in the awake set when it was made
 };
 
+// The normal impulse the last step's contact points carried between two bodies
+// (getContactImpulseSums).
+struct ContactImpulseSum {
+  BodyHandle a = 0, b = 0;
+  float impulse = 0.0f; // N*s, > 0
+};
+
 // Box3D's b3Filter, checked by Box3D in its broad phase. Two shapes with the
 // same non-zero group: positive always collide, negative never. Otherwise they
 // collide only when each one's mask has a bit of the other's category. The
@@ -533,6 +540,13 @@ public:
   // getContactsByHandle gives for all awake bodies at once, seen once per
   // contact). `out` is cleared first. Valid until the next step.
   int getContactImpulseEvents(std::vector<ContactImpulse> &out) const;
+
+  // The same events as one record per body pair: the points of one contact
+  // follow each other, so runs of the same two bodies are added up. Fewer
+  // records and fields to read than getContactImpulseEvents, for a caller that
+  // only adds impulse up per body. `out` is cleared first. Valid until the next
+  // step.
+  int getContactImpulseSums(std::vector<ContactImpulseSum> &out) const;
 
   // The dynamic bodies each of `movers` reaches in the next step of `dt`
   // seconds: those whose bounds overlap the mover's bounds swept along its

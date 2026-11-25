@@ -20,8 +20,8 @@ Glue, Hard, Spring, Bullet Soft and Cone Twist mapped onto Box3D joints. Joint n
     (`impulse` shares: itself 1, each bond its Propagation Rate, `propagationiterations` rounds), adds the two bodies'
     results to the bond's `impact` after it decayed by `impulse_halflife`, and queues a bond over its Strength
     divided by `kGlueStrengthScale` (< 0 never) for `jointsAfterStep`, which breaks it with the force ones (the `broken` group, `next_constraint_name`).
-    `impact` is written to the primitives and read back when a joint is remade. The bonds are listed by `syncJoints`'s
-    removal loop (no pass of their own); `contactImpulseByHandle` sums the contacts' impulses without building records. Every contact counts, a resting body's weight
+    `advanceGlue` spreads over a copy of the bonds (`glueMirror`, with a flag that none carries an impact, which is what makes a quiet frame idle) kept between frames: it is made again only when `glueEpoch` moved, so anything that adds, removes, breaks or remakes a bond or sets its Glue settings or impact must call `touchGlueBonds`. `impact` is written to the primitives and read back when a joint is remade. The bonds are listed by `syncJoints`'s
+    removal loop (no pass of their own); the hits of single bodies come from the step's impulse events in one pass (`glueHitsFromEvents`, on while there are glued bodies), read as one record per body pair (`getContactImpulseSums`) with both bodies' node and group looked up once per pair; `contactImpulseByHandle` agrees with them for awake bodies in `core_compound`, a compound's pieces from `contactImpulsesByShape`, and a decayed `impact` under `kGlueImpactFloor` is 0, so a quiet frame is idle. Every contact counts, a resting body's weight
     included, as in Bullet (a deliberate match: only the contacts inside a glue group are left out). A hanging piece has no contacts and
     holds at any Strength (`sidefx_glue`); a landing is a hit (`glue_impact`). `impact` matches Bullet's own (peak within
     ~20%, the same decay: `glue_impact_trace`); a Bullet glue holds from about 5 to 6 times its peak impact, so

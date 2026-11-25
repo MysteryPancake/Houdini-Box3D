@@ -466,9 +466,11 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
     return cancel();
   if (progress.check())
     return cancel();
-  // Impacts read Box3D's impulse events, made only while some object wants
-  // them.
-  st->world.enableContactImpulseEvents(wantsImpacts(*st));
+  // Impacts and Glue's hits read Box3D's impulse events, made only while
+  // something wants them.
+  st->glueHitsFromEvents = !st->glueNodes.empty();
+  st->world.enableContactImpulseEvents(wantsImpacts(*st) ||
+                                       st->glueHitsFromEvents);
 
   // Substeps: the frame is split into n whole Box3D steps of subDt, each with
   // its own collision detection and Constraint Iterations. st->stepDt stays the
@@ -628,10 +630,18 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   {
     UT_PerfMonAutoSolveEvent perf(this,
                                   "Post-Solve}/{Updating Constraint States");
-    advanceGlue(*st, st->stepDt);
+    {
+      UT_PerfMonAutoSolveEvent e(
+          this, "Post-Solve}/{Updating Constraint States}/{Advancing Glue");
+      advanceGlue(*st, st->stepDt);
+    }
     st->constraintAgeDt = getEnableAging() ? static_cast<float>(dt) : 0.0f;
-    if (const int broke = jointsAfterStep(*st, objects))
-      B3D_DEBUG_LOG("  joints: %d broke", broke);
+    {
+      UT_PerfMonAutoSolveEvent e(
+          this, "Post-Solve}/{Updating Constraint States}/{Writing Joints");
+      if (const int broke = jointsAfterStep(*st, objects))
+        B3D_DEBUG_LOG("  joints: %d broke", broke);
+    }
   }
   // Contacts are read before the queued point writes, aging and deletions.
   {

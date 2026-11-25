@@ -2199,6 +2199,27 @@ int Box3DWorld::getContactImpulseEvents(
   return ev.impulseCount;
 }
 
+int Box3DWorld::getContactImpulseSums(
+    std::vector<ContactImpulseSum> &out) const {
+  out.clear();
+  if (!isValid())
+    return 0;
+  const b3ContactEvents ev = b3World_GetContactEvents(myImpl->worldId);
+  out.reserve(static_cast<size_t>(ev.impulseCount) / 2 + 1);
+  for (int i = 0; i < ev.impulseCount; ++i) {
+    const b3ContactImpulseEvent &e = ev.impulseEvents[i];
+    if (!(e.impulse > 0.0f))
+      continue;
+    const BodyHandle a = b3StoreBodyId(e.bodyIdA);
+    const BodyHandle b = b3StoreBodyId(e.bodyIdB);
+    if (!out.empty() && out.back().a == a && out.back().b == b)
+      out.back().impulse += e.impulse;
+    else
+      out.push_back({a, b, e.impulse});
+  }
+  return static_cast<int>(out.size());
+}
+
 void Box3DWorld::setFilterByHandle(BodyHandle h, const CollisionFilter &f) {
   if (!h)
     return;

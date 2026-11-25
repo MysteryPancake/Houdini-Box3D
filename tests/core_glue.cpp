@@ -118,6 +118,22 @@ int main() {
     CHECK(near(bonds[0].impact, 10.0, 1e-3));
   }
 
+  // ---- a decayed impact is zero, so a quiet frame is idle again
+  {
+    std::vector<int> broken;
+    std::vector<GlueBond> bonds = {bond(0, 1, 0.0f, 1e9f, 1, 0.1f)};
+    bonds[0].impact = 1e5f;
+    int frames = 0;
+    for (; frames < 1000 && bonds[0].impact > 0.0f; ++frames)
+      glueAdvance(bonds, {0.0f, 0.0f}, 1.0f / 24.0f, broken);
+    // 1e5 down to 1e-6 is 37 half-lives of 0.1 s, at 24 frames a second.
+    CHECK(bonds[0].impact == 0.0f && frames > 80 && frames < 100);
+    // A NaN is not hidden by it.
+    bonds[0].impact = std::numeric_limits<float>::quiet_NaN();
+    glueAdvance(bonds, {0.0f, 0.0f}, 1.0f / 24.0f, broken);
+    CHECK(std::isnan(bonds[0].impact));
+  }
+
   // ---- bonds naming a missing node are ignored
   {
     std::vector<int> broken;

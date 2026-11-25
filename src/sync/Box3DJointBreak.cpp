@@ -244,6 +244,46 @@ void collectGlueHits(Box3DSharedState &st) {
       [&st, &group](b3dop::BodyHandle other) {
         return glueSameGroup(st, other, group);
       };
+  // The impulse each glued body's contacts carried, from the step's impulse
+  // events: one pass over the contact points, where asking each of thousands
+  // of bodies for its contacts is the cost. The same contacts are left out:
+  // those with a glued neighbour, and with the body's own group.
+  thread_local std::vector<b3dop::ContactImpulseSum> events;
+  thread_local std::vector<float> eventHits;
+  const bool fromEvents = st.glueHitsFromEvents;
+  if (fromEvents) {
+    world.getContactImpulseSums(events);
+    eventHits.assign(st.glueNodes.size(), 0.0f);
+    for (const b3dop::ContactImpulseSum &e : events) {
+      const auto na = st.glueNodeOf.find(e.a);
+      const auto nb = st.glueNodeOf.find(e.b);
+      const bool aNode = na != st.glueNodeOf.end();
+      const bool bNode = nb != st.glueNodeOf.end();
+      if (!aNode && !bNode)
+        continue;
+      if (aNode && bNode) {
+        // Two glued bodies: no hit between glued neighbours (their partner
+        // lists are alike both ways) or between bodies of one group.
+        const size_t ia = static_cast<size_t>(na->second);
+        const size_t ib = static_cast<size_t>(nb->second);
+        const std::vector<b3dop::BodyHandle> &partners =
+            st.glueNodes[ia].partners;
+        if (std::find(partners.begin(), partners.end(), e.b) !=
+                partners.end() ||
+            st.glueGroup[ia] == st.glueGroup[ib])
+          continue;
+        eventHits[ia] += e.impulse;
+        eventHits[ib] += e.impulse;
+        continue;
+      }
+      // One glued body, and what it touches (not a glued body, but maybe the
+      // body of a compound of its group).
+      const size_t i = static_cast<size_t>((aNode ? na : nb)->second);
+      if (glueSameGroup(st, aNode ? e.b : e.a, st.glueGroup[i]))
+        continue;
+      eventHits[i] += e.impulse;
+    }
+  }
   for (size_t i = 0; i < st.glueNodes.size(); ++i) {
     Box3DGlueNode &n = st.glueNodes[i];
     // A piece of a compound takes the hits on its shapes of the compound.
@@ -252,10 +292,16 @@ void collectGlueHits(Box3DSharedState &st) {
       n.hits += pieceHits;
       continue;
     }
+    if (fromEvents && !(eventHits[i] > 0.0f))
+      continue;
     // Hits land on moving bodies; a sleeping one has none this step.
     if (world.typeByHandle(n.body) != b3dop::BodySettings::Type::Dynamic ||
         !world.isAwakeByHandle(n.body))
       continue;
+    if (fromEvents) {
+      n.hits += eventHits[i];
+      continue;
+    }
     group = st.glueGroup[i];
     // A glued neighbour is not a hit (the pair never collides anyway).
     n.hits += world.contactImpulseByHandle(
@@ -760,20 +806,33 @@ void breakBonds(Box3DSharedState &st, float dt) {
   }
 }
 
+namespace {
+// Whether any bond carries an impact (or a NaN, which must not hide): stops at
+// the first, so a frame that still has some pays little.
+bool anyImpact(const std::vector<b3dop::GlueBond> &bonds) {
+  return std::any_of(bonds.begin(), bonds.end(), [](const b3dop::GlueBond &g) {
+    return g.impact > 0.0f || std::isnan(g.impact);
+  });
+}
+} // namespace
+
 void advanceGlue(Box3DSharedState &st, float dt) {
   if (st.glueBonds.empty())
     return;
+  // The bonds as the spread reads them are copied again only when something
+  // changed one (touchGlueBonds): the copy walks every bond's entry.
+  if (st.glueMirrorEpoch != st.glueEpoch ||
+      st.glueMirror.size() != st.glueBonds.size()) {
+    st.glueMirror = glueBondList(st, true, true);
+    st.glueMirrorEpoch = st.glueEpoch;
+    st.glueMirrorQuiet = !anyImpact(st.glueMirror);
+  }
   // Nothing hit this frame and no bond carries any impact: the decay and the
-  // spread would change nothing, so skip building the bond list.
-  bool idle = true;
-  for (const Box3DGlueNode &n : st.glueNodes)
-    if (n.hits > 0.0f) {
-      idle = false;
-      break;
-    }
+  // spread would change nothing.
+  bool idle = st.glueMirrorQuiet;
   if (idle)
-    for (const Box3DJointEntry *e : st.glueBonds)
-      if (e->extra->glueImpact > 0.0f || std::isnan(e->extra->glueImpact)) {
+    for (const Box3DGlueNode &n : st.glueNodes)
+      if (n.hits > 0.0f) {
         idle = false;
         break;
       }
@@ -782,13 +841,14 @@ void advanceGlue(Box3DSharedState &st, float dt) {
   std::vector<float> hits(st.glueNodes.size());
   for (size_t i = 0; i < hits.size(); ++i)
     hits[i] = st.glueNodes[i].hits;
-  std::vector<b3dop::GlueBond> bonds = glueBondList(st, true, true);
+  std::vector<b3dop::GlueBond> &bonds = st.glueMirror;
   std::vector<int> broken;
   b3dop::glueAdvance(bonds, std::move(hits), dt, broken);
   box3dParallelFor(
       bonds.size(),
       [&](size_t i) { st.glueBonds[i]->extra->glueImpact = bonds[i].impact; },
       2048, 256);
+  st.glueMirrorQuiet = !anyImpact(bonds);
   for (const int i : broken)
     st.glueBroken.push_back(st.glueBonds[static_cast<size_t>(i)]);
   for (Box3DGlueNode &n : st.glueNodes)
@@ -813,8 +873,10 @@ int breakJoints(Box3DSharedState &st, EntriesByNetwork &brokeIn) {
   // Glue bonds over their strength (advanceGlue) and Bonds (breakBonds).
   events.insert(events.end(), st.glueBroken.begin(), st.glueBroken.end());
   st.glueBroken.clear();
-  if (!events.empty())
+  if (!events.empty()) {
     st.glueDirty = true; // the Glue graph loses a bond
+    st.touchGlueBonds();
+  }
   int broke = 0;
   for (void *p : events) {
     Box3DJointEntry *e = static_cast<Box3DJointEntry *>(p);

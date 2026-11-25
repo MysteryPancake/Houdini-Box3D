@@ -32,6 +32,11 @@ namespace b3dop {
 // Measured, not derived, from one scene.
 constexpr float kGlueStrengthScale = 5.3f;
 
+// An impact below this (N*s) is zero: a decayed impact would otherwise halve
+// for minutes before it underflowed, and the frame would not be idle until it
+// did. Far below anything a bond's strength is set against.
+constexpr float kGlueImpactFloor = 1e-6f;
+
 // A compound is taken apart (see holdCompoundsForApproach) for a body that is
 // faster than this (m/s) and can deliver more than the weakest bond's break
 // impulse, and stays apart this many seconds after the last such body came
@@ -162,6 +167,8 @@ inline void glueAdvance(std::vector<GlueBond> &bonds, std::vector<float> hits,
     }
     bond.impact = bond.impact * lastDecay + hits[static_cast<size_t>(bond.a)] +
                   hits[static_cast<size_t>(bond.b)];
+    if (bond.impact < kGlueImpactFloor) // not for NaN: that stays visible
+      bond.impact = 0.0f;
     if (bond.params.strength >= 0.0f && std::isfinite(bond.params.strength) &&
         bond.impact > bond.params.strength / kGlueStrengthScale)
       broken.push_back(static_cast<int>(at));

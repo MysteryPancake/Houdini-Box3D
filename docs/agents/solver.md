@@ -46,9 +46,9 @@ positions (Box3D runs one solve and one relax per pass). Not to be confused with
 targets (`setTargetTransformByHandle`) and the Glue impact decay use the whole frame's `stepDt`, so they hold for any
 Substeps. Box3D clears its move, joint and hit events at the start of every step, so each is merged after every Box3D step:
 moves by body, joints over their force / torque threshold into `brokenThisFrame` (broken once, in Updating Constraint
-States), and hit pairs into `hitPairs` when Impact Min Speed is on (`hitsCollected`). Impacts read Box3D's contact impulse events
+States), and hit pairs into `hitPairs` when Impact Min Speed is on (`hitsCollected`). Glue's hits (`glueHitsFromEvents`) and Impacts read Box3D's contact impulse events
 after every Box3D step (`collectImpacts`, `impactsCollected`, appended; the world makes them only while some object has
-Add Impact Data), so a frame's impulses add up over its steps: a contact an earlier step already recorded (same bodies and side, position to about 1 cm; looked up in `impactSlots`) takes the impulse instead of a new record, so Substeps do not multiply the records (test `impacts_substeps`); with one step they are read after it. Point `force` / `torque` are read and cleared by
+Add Impact Data or there are glued bodies), so a frame's impulses add up over its steps: a contact an earlier step already recorded (same bodies and side, position to about 1 cm; looked up in `impactSlots`) takes the impulse instead of a new record, so Substeps do not multiply the records (test `impacts_substeps`); with one step they are read after it. Point `force` / `torque` are read and cleared by
 the first step and applied again from `PointForceCarry` in the others.
 
 ```
@@ -81,7 +81,7 @@ Post-Solve: Exporting Simulation Results, Updating Constraint States, Recording 
 Collision Shapes (Export Collision Shapes on). Sub-stages nest one level deeper, written out the same way (opening an event inside another does not nest them):
 Updating Bodies has Checking Changes,
 Reading Points, Planning Shapes, Checking Unchanged Points and Applying to Box3D (`syncObject`, which gets the solver from `StepProgress::solver`);
-Exporting Simulation Results has Compound Pieces and Writing Back; Updating Points has Writing Attributes, Aging and Deleting Dead Points.
+Exporting Simulation Results has Compound Pieces and Writing Back; Updating Constraint States has Advancing Glue and Writing Joints (`jointsAfterStep`); Updating Points has Writing Attributes, Aging and Deleting Dead Points.
 Opened only on the solve thread.
 Box3D's own per-part step timing (`Box3DWorld::stepProfile`, `b3World_GetProfile`) is not reported to the monitor: an overridden event adds its time to the solver node's, so the parts would count the step twice (a negative event cancelling them was rejected).
 

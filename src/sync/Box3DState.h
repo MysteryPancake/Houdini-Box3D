@@ -1067,6 +1067,17 @@ struct Box3DSharedState {
   size_t glueOrphans = 0; // nodes that lost every bond, kept until a rebuild
   // The hash of the bond list (computeGlueSignature), kept up to date.
   uint64_t glueSignature = 0;
+  // advanceGlue's copy of the glue bonds (their nodes, strength settings and
+  // impact), kept between frames so the frame does not walk every bond's entry
+  // to make it. It stays good while glueEpoch is the one it was made at: every
+  // place that adds, removes, breaks or remakes a bond, or sets its settings or
+  // impact, calls touchGlueBonds. glueMirrorQuiet: no bond has an impact (or
+  // a NaN) after the last advance, so with no hits either the frame is idle.
+  std::vector<b3dop::GlueBond> glueMirror;
+  uint64_t glueEpoch = 0;
+  uint64_t glueMirrorEpoch = ~0ull;
+  bool glueMirrorQuiet = false;
+  void touchGlueBonds() { ++glueEpoch; }
   // The bodies a live Bond ties to the world (such a Bond is not in the graph):
   // a side holding one does not move.
   std::unordered_set<b3dop::BodyHandle> glueAnchored;
@@ -1144,6 +1155,10 @@ struct Box3DSharedState {
   // Box3D step of this frame, so recordImpacts must not refill it from the
   // last.
   bool hitsCollected = false;
+  // Glue hits are read from the world's impulse events (one pass over the
+  // step's contact points) instead of asking each glued body for its contacts:
+  // set by the solver before it steps, while there are glued bodies.
+  bool glueHitsFromEvents = false;
   // The frame's impact hits were collected after each Box3D step already
   // (Substeps > 1; collectImpacts): the impulses of every step add up, where
   // reading the contacts after the last alone found a resting body's.

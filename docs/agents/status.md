@@ -15,8 +15,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   only the `building` example (`glue_compound_hit`) and a kinematic piece pushing Bonds (`bond_kinematic_pusher`,
   `bond_kinematic_topple`) have run it. At Strength 20000 most of its bonds break from the
   building's weight in both modes before anything hits it (Glue counts a resting body's contact impulse as a hit, as Bullet
-  does: [joints-sidefx.md](joints-sidefx.md)). Not checked: other scenes, a slow heavy body, a very large
-  compound's cost, the force and torque a bond reads while its
+  does: [joints-sidefx.md](joints-sidefx.md)). Not checked: other scenes, a slow heavy body, the force and torque a bond reads while its
   weld is a bridge's (its own joint is parked, so they read zero), bridges of bonds remade while pieces are held, and
   `clang-tidy` on the HDK files (`src/sync`, `src/dop`).
 
@@ -55,8 +54,9 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   bond's load is the statics' at every value, and the next bond's couple is the same within 0.2% from 1e-4 to 1e-2 and
   10% lower at 10. The ledge scene's 2 broken bonds against 1 for welds (`bond_compound_cantilever`) is therefore
   the rigid compound against sagging welds, not the choice of stiffness.
-* Cost: the network solve, the patch on the first step, the sides' mass walk, and `breakBonds` walking every Bond every
-  step (`bondEntries`) are not measured.
+* Cost (`bench.py bondwall:w=80,h=40,compound=1`, 3200 bricks as one block, Box3D only): 17 ms per frame standing and 98 to 132 ms once the ball hits
+  and the wall breaks into many compounds, nearly all of it `Breaking Bonds` (`breakBonds` walking every Bond, the network
+  solve): 17, then 83 to 119 ms. The patch on the first step and the sides' mass walk are not timed apart.
 * Linux build and `clang-tidy` of the Bond files: not run.
 
 **Build**
@@ -169,6 +169,16 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 
 ## TODO
 
+* Glue's frame cost on a 3200 brick wall (`bench.py wall:w=80,h=40`, Glue as One Body on; 5.5 ms, welds 10 to 13): of Updating Constraint States'
+  1.1 to 1.4 ms, Advancing Glue was 0.2 (below) and Writing Joints (`jointsAfterStep`) 0.9 to 1.1 (welds 1.6 to 2.1). Timed inside it, `markQuietJoints` + `allQuiet`
+  are 0.06 to 0.15 ms and everything else is `writeNetworkResults` writing the moved joints' `current_P` / `current_orient` and readings (1.0 ms awake, 0 asleep,
+  already parallel and only for joints that changed), so a dirty count would save nothing: only writing fewer attributes would. Glue Hits is 0.4 to 0.5 as a
+  compound and 1.5 on welds, from two `collectGlueHits` calls a frame (Substeps 2). As a compound each call is 0.2 to 0.25 ms: the prelude and the impulse events
+  cost nothing, 0.04 to 0.07 is `contactImpulsesByShape` of the one compound, and 0.15 is the loop over 3200 pieces (about 50 ns each: the `compoundOf` lookup is 0.05 of it,
+  the rest cache misses on the member and compound structs). Keeping each glue node's compound and member index (rebuilt when `compoundOf` changes: five places in
+  `Box3DCompoundSync.cpp`) and looping over compounds would remove most of that, about 0.25 ms of the 5.5 a frame. On welds `Glue Hits` is 0.65 a frame (it was 1.5 with a record per contact point: 12500 points a call to convert and look up twice each) from the per-pair records of `getContactImpulseSums`, `Box3D Step` is 4 to 5 and the rest is the weld solve.
+  Advancing Glue is 0.14 ms awake and 0.003 asleep on that wall (6280 bonds; the bond list is kept between frames, `glueMirror`): `glueAdvance` 0.10 (spread 0.055, decay and break
+  test 0.05) and the copy back 0.03 are what is left. Spreading only from nodes with hits would shrink the spread to the base row.
 * `glue_fracture_vs_bullet` (Box, Points from Volume, Voronoi Fracture's constraints named Glue, frame 24): Box3D's equivalent Strength is 0.3 to 1.5x Bullet's with Glue as One Body on and 0.5 to 0.7x with it off, only checked on that scene.
 * `glue_compound_bridges` (a beam balanced on a block, a ball falling on its tip) passes only at Strength 2e5. At 1e5 the hold frees
   5 of 8 pieces on the first frame, `kGlueHoldHaloScale` times the ball's size around its path, and the 3 left in the compound
