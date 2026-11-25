@@ -31,7 +31,10 @@ mass, force, torque)` for every force on the object, summed, and the sum goes in
   `SIM_ForceResolver` reports `threadsafe()` are evaluated on the TBB pool (`evaluateResolvers`: each range of 64 bodies
   takes its own `copy()` of the resolvers, as the header asks). Everything else stays serial: forces sampled over a circle or
   sphere (the resolver only has the point call), and a custom Force DOP, whose generic resolver is not thread-safe. Below the
-  threshold all forces are serial, as before.
+  threshold all forces are serial, as before. A debug build logs each force's verdict when it splits them (`force <type>:
+  ... parallel` / `serial`), which `force_dops_threadsafe` reads (`BOX3DDOP_MIN_PARALLEL_FORCES` lowers the count). In Houdini
+  22.0.508 Gravity, Drag, Fan, Impulse, Point, Reference Frame and Uniform go to the pool, Magnet, Vex and Vortex do not
+  (resolver not thread-safe), Buoyancy and Field are not sampled at a point.
 * Gravity Force DOP + the solver's `gravity` add up (both are applied). `gravityscale` only scales the solver's gravity.
 * Sampling: each force is sampled as its own Sample Mode asks (`SIM_Force::getOptimalForceSampling`, a point unless the
   Force DOP is set otherwise). Sphere: `getForceOnSphere` with the radius of a sphere of the same volume as the body's

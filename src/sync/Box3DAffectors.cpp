@@ -594,7 +594,7 @@ void buildAffector(Box3DSharedState &st, Box3DAffectorBody &ab, int objectId,
     }
     built(h, in.pos, in.rot, in.scale);
     ++counts.planes;
-    B3D_LOG("  affector id=%d: static ground built", objectId);
+    B3D_DEBUG_LOG("  affector id=%d: static ground built", objectId);
     return;
   }
 
@@ -605,8 +605,8 @@ void buildAffector(Box3DSharedState &st, Box3DAffectorBody &ab, int objectId,
     }
     built(ab.handle, in.pos, in.rot, in.scale);
     ++counts.heightFields;
-    B3D_LOG("  affector id=%d: static height field built, %d x %d", objectId,
-            in.frame.n1, in.frame.n2);
+    B3D_DEBUG_LOG("  affector id=%d: static height field built, %d x %d",
+                  objectId, in.frame.n1, in.frame.n2);
     return;
   }
 
@@ -646,10 +646,10 @@ void buildAffector(Box3DSharedState &st, Box3DAffectorBody &ab, int objectId,
   ab.movable = in.rigid; // a baked transform keeps the body at the origin
   if (in.volume)
     ++counts.heightFields;
-  B3D_LOG("  affector id=%d: static mesh built, %d triangle(s)%s%s", objectId,
-          static_cast<int>(mesh.tris.size() / 3),
-          in.volume ? " from a height field" : "",
-          in.rigid ? "" : " (transform baked)");
+  B3D_DEBUG_LOG("  affector id=%d: static mesh built, %d triangle(s)%s%s",
+                objectId, static_cast<int>(mesh.tris.size() / 3),
+                in.volume ? " from a height field" : "",
+                in.rigid ? "" : " (transform baked)");
 }
 
 // ---- remove: objects that are no longer affectors

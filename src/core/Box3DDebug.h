@@ -10,7 +10,7 @@
 //   BOX3DDOP_VERIFY_READBACK=1
 //       re-read written points and log "READBACK MISMATCH" (slow)
 //   BOX3DDOP_PROFILE=1
-//       log the time the Bond phases took each step (B3D_PROFILE)
+//       log the time the Bond phases took each step (B3D_DEBUG_PROFILE)
 #pragma once
 
 #include <atomic>
@@ -29,8 +29,8 @@ struct Counters {
   std::atomic<int> rebuilds{0}; // full world rebuilds
 };
 
-// Phases timed by B3D_PROFILE, summed until B3D_PROFILE_REPORT prints and
-// clears them.
+// Phases timed by B3D_DEBUG_PROFILE, summed until B3D_DEBUG_PROFILE_REPORT
+// prints and clears them.
 enum ProfileSlot {
   kProfileBondSolve,    // the compounds' bond network solves, with their set-up
   kProfileBondPatch,    // a bond's contact patch and area, when worked out
@@ -95,14 +95,14 @@ inline int envInt(const char *name, int fallback) {
   return (v && *v) ? std::atoi(v) : fallback;
 }
 
-// Read once. Per-step diagnostics go through B3D_LOG_VERBOSE and stay silent
-// unless this is set.
+// Read once. Per-step diagnostics go through B3D_DEBUG_LOG_VERBOSE and stay
+// silent unless this is set.
 inline bool verbose() {
   static const bool v = envInt("BOX3DDOP_VERBOSE", 0) != 0;
   return v;
 }
 
-// Read once. B3D_PROFILE_REPORT prints only when this is set.
+// Read once. B3D_DEBUG_PROFILE_REPORT prints only when this is set.
 inline bool profiling() {
   static const bool v = envInt("BOX3DDOP_PROFILE", 0) != 0;
   return v;
@@ -138,29 +138,29 @@ inline void profileReport(const char *what) {
 
 } // namespace b3dop_dbg
 
-#define B3D_LOG(...) ::b3dop_dbg::log(__VA_ARGS__)
-#define B3D_LOG_VERBOSE(...)                                                   \
+#define B3D_DEBUG_LOG(...) ::b3dop_dbg::log(__VA_ARGS__)
+#define B3D_DEBUG_LOG_VERBOSE(...)                                             \
   do {                                                                         \
     if (::b3dop_dbg::verbose())                                                \
       ::b3dop_dbg::log(__VA_ARGS__);                                           \
   } while (0) // arguments are only evaluated when verbose
-#define B3D_LOG_IF(cond, ...)                                                  \
+#define B3D_DEBUG_LOG_IF(cond, ...)                                            \
   do {                                                                         \
     if ((cond) || ::b3dop_dbg::verbose())                                      \
       ::b3dop_dbg::log(__VA_ARGS__);                                           \
   } while (0) // always when cond, else only when verbose
-#define B3D_COUNT(field) (++::b3dop_dbg::counters().field)
-#define B3D_UNCOUNT(field) (--::b3dop_dbg::counters().field)
-#define B3D_COUNTER(field) (::b3dop_dbg::counters().field.load())
-#define B3D_ENV_INT(name, dflt) ::b3dop_dbg::envInt(name, dflt)
-#define B3D_PROFILE_CAT2(a, b) a##b
-#define B3D_PROFILE_CAT(a, b) B3D_PROFILE_CAT2(a, b)
+#define B3D_DEBUG_COUNT(field) (++::b3dop_dbg::counters().field)
+#define B3D_DEBUG_UNCOUNT(field) (--::b3dop_dbg::counters().field)
+#define B3D_DEBUG_COUNTER(field) (::b3dop_dbg::counters().field.load())
+#define B3D_DEBUG_ENV_INT(name, dflt) ::b3dop_dbg::envInt(name, dflt)
+#define B3D_DEBUG_PROFILE_CAT2(a, b) a##b
+#define B3D_DEBUG_PROFILE_CAT(a, b) B3D_DEBUG_PROFILE_CAT2(a, b)
 // Times the rest of the scope into a slot (kProfileBondSolve, ...).
-#define B3D_PROFILE(slot)                                                      \
-  ::b3dop_dbg::ScopedTimer B3D_PROFILE_CAT(b3dProfile,                         \
-                                           __LINE__)(::b3dop_dbg::slot)
-// Prints and clears what B3D_PROFILE collected (with BOX3DDOP_PROFILE=1).
-#define B3D_PROFILE_REPORT(what) ::b3dop_dbg::profileReport(what)
+#define B3D_DEBUG_PROFILE(slot)                                                \
+  ::b3dop_dbg::ScopedTimer B3D_DEBUG_PROFILE_CAT(b3dProfile,                   \
+                                                 __LINE__)(::b3dop_dbg::slot)
+// Prints and clears what B3D_DEBUG_PROFILE collected (with BOX3DDOP_PROFILE=1).
+#define B3D_DEBUG_PROFILE_REPORT(what) ::b3dop_dbg::profileReport(what)
 
 #else // !BOX3DDOP_DEBUG
 
@@ -169,24 +169,24 @@ inline void profileReport(const char *what) {
 // Compiled out: never evaluated, but the arguments are still type-checked
 // against the format and count as used, so variables that only feed a log line
 // need no (void) casts.
-#define B3D_LOG(...)                                                           \
+#define B3D_DEBUG_LOG(...)                                                     \
   do {                                                                         \
     if (false)                                                                 \
       std::printf(__VA_ARGS__);                                                \
   } while (0)
-#define B3D_LOG_VERBOSE(...) B3D_LOG(__VA_ARGS__)
-#define B3D_LOG_IF(cond, ...)                                                  \
+#define B3D_DEBUG_LOG_VERBOSE(...) B3D_DEBUG_LOG(__VA_ARGS__)
+#define B3D_DEBUG_LOG_IF(cond, ...)                                            \
   do {                                                                         \
     if (false) {                                                               \
       (void)(cond);                                                            \
       std::printf(__VA_ARGS__);                                                \
     }                                                                          \
   } while (0)
-#define B3D_COUNT(field) ((void)0)
-#define B3D_UNCOUNT(field) ((void)0)
-#define B3D_COUNTER(field) (0)
-#define B3D_ENV_INT(name, dflt) (dflt)
-#define B3D_PROFILE(slot) ((void)0)
-#define B3D_PROFILE_REPORT(what) ((void)0)
+#define B3D_DEBUG_COUNT(field) ((void)0)
+#define B3D_DEBUG_UNCOUNT(field) ((void)0)
+#define B3D_DEBUG_COUNTER(field) (0)
+#define B3D_DEBUG_ENV_INT(name, dflt) (dflt)
+#define B3D_DEBUG_PROFILE(slot) ((void)0)
+#define B3D_DEBUG_PROFILE_REPORT(what) ((void)0)
 
 #endif

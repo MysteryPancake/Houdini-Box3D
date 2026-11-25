@@ -119,9 +119,10 @@ struct Box3DWorld::Impl {
     for (auto &kv : bodyGeometry)
       releaseOwned(kv.second);
     bodyGeometry.clear();
-    B3D_LOG_IF(!sharedMeshes.empty(),
-               "%zu shared mesh(es) still held at teardown (user count off)",
-               sharedMeshes.size());
+    B3D_DEBUG_LOG_IF(
+        !sharedMeshes.empty(),
+        "%zu shared mesh(es) still held at teardown (user count off)",
+        sharedMeshes.size());
     for (auto &kv : sharedMeshes)
       b3DestroyMesh(kv.second.data);
     sharedMeshes.clear();

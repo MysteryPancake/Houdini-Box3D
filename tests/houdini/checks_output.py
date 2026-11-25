@@ -301,6 +301,145 @@ def test_mirrored_piece():
                    f"rests spanning y {lo[1]:.2f} to {hi[1]:.2f}")]
 
 
+def test_mirrored_midsim():
+    """A packed piece that turns mirrored mid-simulation. A wedge (a box with one corner pulled in, so its mirror
+    image is another shape) floats with no gravity, and a SOP Solver flips the third row of its packed transform on
+    frame 12 (the flip the solver itself splits a mirror into). The collision shape (Export Collision Shapes) must
+    follow the geometry from the next step on: every corner of the wedge, through the packed transform, is a corner
+    of the exported shape and the other way round, before the flip and after it, and the shape did change (the
+    mirror image is a different shape)."""
+    geo = new_geo("mirror_mid")
+    box = create(geo, "box")
+    set_parm(box, ["size"], (2, 2, 2))
+    wedge = create(geo, "attribwrangle", "wedge")
+    wedge.setInput(0, box)
+    set_parm(wedge, ["class"], "point")
+    set_parm(wedge, ["snippet"], "if (@P.x > 0 && @P.y > 0 && @P.z > 0) @P.x = 0;")
+    asm = create(geo, "assemble")
+    asm.setInput(0, wedge)
+    set_parm(asm, ["pack_geo", "packgeo", "pack"], 1)
+    xf = create(geo, "xform")
+    xf.setInput(0, asm)
+    set_parm(xf, ["t"], (0, 5, 0))
+    display(xf)
+    dop = new_dopnet("mirror_mid")
+    obj = packed_object(dop, "piece", xf.path())
+    solver = box3d_solver(dop, None, gravity=(0, 0, 0))
+    set_parm(solver, ["exportshapes"], 1)
+    flip = sop_solver(dop, "")
+    set_parm(flip.node("edit"), ["class"], "primitive")
+    set_parm(flip.node("edit"), ["snippet"], """
+if (@Frame == 12) {
+    matrix3 s = set(1, 0, 0, 0, 1, 0, 0, 0, -1);
+    setprimintrinsic(0, "transform", @primnum, s * matrix3(primintrinsic(0, "transform", @primnum)));
+}
+""")
+    finish(dop, multisolver(dop, obj, [solver, flip]))
+    reader = new_geo("mirror_mid_read")
+    imp = create(reader, "dopimport", "import_shapes")
+    set_parm(imp, ["doppath"], dop.path())
+    set_parm(imp, ["objpattern"], "piece")
+    set_parm(imp, ["geodatapath"], "Box3DShapes")
+
+    def far(a, b):
+        return max(min(max(abs(x - y) for x, y in zip(p, q)) for q in b) for p in a)
+
+    # The flip is made after frame 12's step, so the shape follows from frame 13.
+    rows, ok, shapes = [], True, {}
+    for f in range(1, 21):
+        hou.setFrame(f)
+        sim = dop.simulation()
+        body = sim.findObject("piece").geometry()
+        lines = imp.geometry()
+        if f not in (11, 13, 14, 20):
+            continue
+        if not lines.prims():
+            return [Result("mirrored_midsim", Result.FAIL, f"frame {f}: no shape lines ({imp.warnings()})")]
+        pr = body.prims()[0]
+        m = pr.intrinsicValue("packedfulltransform")
+        centre = pr.points()[0].position()
+        corners = set()
+        for p in wedge.geometry().points():  # the piece's own points: its pivot is the origin
+            q = p.position()
+            corners.add(tuple(round(sum(q[r] * m[4 * r + k] for r in range(3)) + centre[k], 3) for k in range(3)))
+        shapes[f] = {tuple(round(c, 3) for c in p.position()) for p in lines.points()}
+        gap = max(far(corners, shapes[f]), far(shapes[f], corners))
+        det = det3([list(m[0:3]), list(m[4:7]), list(m[8:11])])
+        ok = ok and gap < 0.05
+        rows.append(f"frame {f}: determinant {det:+.0f}, shape and geometry corners {gap:.3f} m apart")
+    moved = far(shapes[11], shapes[14]) if 11 in shapes and 14 in shapes else 0.0
+    rows.append(f"shape moved {moved:.2f} m between frames 11 and 14 (expected over 0.5)")
+    return [Result("mirrored_midsim", Result.PASS if ok and moved > 0.5 else Result.FAIL, "; ".join(rows))]
+
+
+def test_source_edit_hull():
+    """A packed piece's source geometry edited between runs gives the new hull, not the cached one. A wedge (a box
+    with one corner pulled in) floats with no gravity and its collision shape (Export Collision Shapes) is read back; then
+    the wedge's SOP is edited to pull in a different corner and the simulation is run again in the same process (the
+    source summaries are kept for the whole process, keyed on the source's identity). Every corner of the wedge
+    is a corner of the shape and the other way round, both times, and the two shapes differ."""
+    geo = new_geo("source_edit")
+    box = create(geo, "box")
+    set_parm(box, ["size"], (2, 2, 2))
+    wedge = create(geo, "attribwrangle", "wedge")
+    wedge.setInput(0, box)
+    set_parm(wedge, ["class"], "point")
+    first = "if (@P.x > 0 && @P.y > 0 && @P.z > 0) @P.x = 0;"
+    second = "if (@P.x < 0 && @P.y < 0 && @P.z > 0) @P.y = 0;"
+    set_parm(wedge, ["snippet"], first)
+    asm = create(geo, "assemble")
+    asm.setInput(0, wedge)
+    set_parm(asm, ["pack_geo", "packgeo", "pack"], 1)
+    xf = create(geo, "xform")
+    xf.setInput(0, asm)
+    set_parm(xf, ["t"], (0, 5, 0))
+    display(xf)
+    dop = new_dopnet("source_edit")
+    obj = packed_object(dop, "piece", xf.path())
+    solver = box3d_solver(dop, None, gravity=(0, 0, 0))
+    set_parm(solver, ["exportshapes"], 1)
+    finish(dop, multisolver(dop, obj, [solver]))
+    reader = new_geo("source_edit_read")
+    imp = create(reader, "dopimport", "import_shapes")
+    set_parm(imp, ["doppath"], dop.path())
+    set_parm(imp, ["objpattern"], "piece")
+    set_parm(imp, ["geodatapath"], "Box3DShapes")
+
+    def far(a, b):
+        return max(min(max(abs(x - y) for x, y in zip(p, q)) for q in b) for p in a)
+
+    def shape_and_corners():
+        for f in range(1, 5):
+            hou.setFrame(f)
+            sim = dop.simulation()
+            body = sim.findObject("piece").geometry()
+            lines = imp.geometry()
+        pr = body.prims()[0]
+        m = pr.intrinsicValue("packedfulltransform")
+        centre = pr.points()[0].position()
+        corners = {tuple(round(sum(p.position()[r] * m[4 * r + k] for r in range(3)) + centre[k], 3) for k in range(3))
+                   for p in wedge.geometry().points()}
+        shape = {tuple(round(c, 3) for c in p.position()) for p in lines.points()}
+        return corners, shape
+
+    rows, ok, shapes = [], True, []
+    for label, snippet in (("first", first), ("second", second)):
+        set_parm(wedge, ["snippet"], snippet)
+        resim = dop.parm("resimulate")
+        if resim is not None:
+            resim.pressButton()
+        corners, shape = shape_and_corners()
+        if not shape:
+            return [Result("source_edit_hull", Result.FAIL, f"{label} wedge: no shape lines")]
+        gap = max(far(corners, shape), far(shape, corners))
+        shapes.append(shape)
+        ok = ok and gap < 0.05
+        rows.append(f"{label} wedge: shape and geometry corners {gap:.3f} m apart")
+    moved = far(shapes[0], shapes[1])
+    rows.append(f"the two shapes are {moved:.2f} m apart (expected over 0.5)")
+    return [Result("source_edit_hull", Result.PASS if ok and moved > 0.5 else Result.FAIL, "; ".join(rows))]
+
+
 # ---------------------------------------------------------------------------
 # Written v / w (status: downstream readers get v of the body origin and w in radians/s)
 # ---------------------------------------------------------------------------
@@ -672,6 +811,71 @@ def test_force_dops_many_and_sampled():
         results.append(Result("force_dops_many_and_sampled", Result.INFO,
                               f"ratios to Point: Circle {slowed['Circle'] / point:.2f}, Sphere {slowed['Sphere'] / point:.2f}"))
     return results
+
+
+def _stderr_lines(run):
+    """Calls run() with the process's stderr (file descriptor 2) going to a file, so the plugin's own [b3dop]
+    lines can be read; returns the lines."""
+    import sys
+
+    sys.stderr.flush()
+    saved = os.dup(2)
+    with tempfile.TemporaryFile(mode="w+b") as tmp:
+        os.dup2(tmp.fileno(), 2)
+        try:
+            run()
+        finally:
+            sys.stderr.flush()
+            os.dup2(saved, 2)
+            os.close(saved)
+        tmp.seek(0)
+        return tmp.read().decode("utf-8", "replace").splitlines()
+
+
+def test_force_dops_threadsafe():
+    """Which Force DOPs the solver evaluates on Houdini's thread pool. Force DOPs of an object are evaluated in
+    parallel from `kMinParallelForces` bodies when they are sampled at a point and their resolver says it is
+    thread-safe (`threadsafe()`, which Python cannot ask). A debug build (BOX3DDOP_DEBUG) logs each force's verdict
+    when it splits them (the test lowers the body count to 1 with BOX3DDOP_MIN_PARALLEL_FORCES); without one this
+    is INFO only. Gravity and Drag Force DOPs go to the pool (PASS); the others are listed (INFO)."""
+    kinds = ["gravity", "drag", "windforce", "fan", "uniformforce", "buoyancyforce", "vortexforce", "magnetforce",
+             "pointforce", "fieldforce", "vopforce", "referenceframeforce", "popforce", "popdrag", "popwind",
+             "popfan", "popattract", "impulseforce"]
+    path, _names = packed_boxes("force_threads", [{"size": (1, 1, 1), "center": (0, 50, 0)}])
+    dop = new_dopnet("force_threads")
+    last = box3d_solver(dop, packed_object(dop, "piece", path), gravity=(0, 0, 0))
+    made = []
+    for kind in kinds:
+        try:
+            node = dop.createNode(kind, "f_" + kind)
+        except hou.OperationFailed:
+            continue
+        node.setInput(0, last)
+        last = node
+        made.append(kind)
+    finish(dop, last)
+    lines = [l for l in _stderr_lines(lambda: step(dop, 2, lambda sim, f: None)) if l.startswith("[b3dop] force ")]
+    if not lines:
+        return [Result("force_dops_threadsafe", Result.INFO,
+                       "no [b3dop] force lines: needs a BOX3DDOP_DEBUG build (cmake -DBOX3DDOP_DEBUG=ON)")]
+    verdicts = {}
+    for l in lines:
+        name, _, rest = l[len("[b3dop] force "):].partition(": ")
+        verdicts[name] = rest
+    results = [Result("force_dops_threadsafe", Result.INFO,
+                      f"{len(made)} Force DOPs wired ({', '.join(made)}); "
+                      + "; ".join(f"{n}: {v.rsplit(': ', 1)[-1]}" for n, v in sorted(verdicts.items())))]
+    for n, v in sorted(verdicts.items()):
+        results.append(Result("force_dops_threadsafe", Result.INFO, f"{n}: {v}"))
+    gravity = [v for n, v in verdicts.items() if "ravity" in n]
+    drag = [v for n, v in verdicts.items() if "rag" in n and "pop" not in n.lower()]
+    ok = bool(gravity) and all(v.endswith("parallel") for v in gravity)
+    results.append(Result("force_dops_threadsafe", Result.PASS if ok else Result.FAIL,
+                          f"Gravity Force: {gravity or 'not logged'}; Drag Force: {drag or 'not logged'}"))
+    return results
+
+
+test_force_dops_threadsafe.env = {"BOX3DDOP_MIN_PARALLEL_FORCES": "1"}
 
 
 def test_rbd_packed_attributes():
@@ -1578,6 +1782,8 @@ TESTS = {
     "odd_packed_contents": test_odd_packed_contents,
     "packed_tube_taper": test_packed_tube_taper,
     "mirrored_piece": test_mirrored_piece,
+    "mirrored_midsim": test_mirrored_midsim,
+    "source_edit_hull": test_source_edit_hull,
     "written_velocity": test_written_velocity,
     "velocity_edit": test_velocity_edit,
     "instances_differ": test_instances_differ,
@@ -1593,4 +1799,5 @@ TESTS = {
     "point_force": test_point_force,
     "gravity_dop": test_gravity_dop,
     "force_dops_many_and_sampled": test_force_dops_many_and_sampled,
+    "force_dops_threadsafe": test_force_dops_threadsafe,
 }

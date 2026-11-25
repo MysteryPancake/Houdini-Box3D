@@ -118,12 +118,12 @@ pile, edit, collider, animated, joints, wall, fracture, bondwall, objects, stati
 
 ## Debug logging (`Box3DDebug.h`)
 
-`B3D_LOG` for one-off events (rebuilds, bodies added / removed, fallbacks); `B3D_LOG_VERBOSE` per step, printed only
-with `BOX3DDOP_VERBOSE=1`; `B3D_LOG_IF(cond, ...)` always when `cond`, else only when verbose. All compile to nothing
+`B3D_DEBUG_LOG` for one-off events (rebuilds, bodies added / removed, fallbacks); `B3D_DEBUG_LOG_VERBOSE` per step, printed only
+with `BOX3DDOP_VERBOSE=1`; `B3D_DEBUG_LOG_IF(cond, ...)` always when `cond`, else only when verbose. All compile to nothing
 without `BOX3DDOP_DEBUG`. Output: stderr, `[b3dop]`; `run_tests.py` drops a test's stderr, so set `BOX3DDOP_TEST_LOG=1`
 to print its `[b3dop]` lines. Other environment variables of debug builds (the header lists
 them): `BOX3DDOP_REQUESTED_CACHE` (what `getRequestedCacheSubclass` returns), `BOX3DDOP_PROFILE=1` (the Bond phases'
-time each step, `B3D_PROFILE` / `B3D_PROFILE_REPORT`) and `BOX3DDOP_VERIFY_READBACK=1`
+time each step, `B3D_DEBUG_PROFILE` / `B3D_DEBUG_PROFILE_REPORT`) and `BOX3DDOP_VERIFY_READBACK=1`
 ([solver.md](solver.md), writeResultsBack).
 
 ## Package

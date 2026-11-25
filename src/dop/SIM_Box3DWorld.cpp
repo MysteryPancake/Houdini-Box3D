@@ -48,8 +48,9 @@ void SIM_Box3DWorld::makeEqualSubclass(const SIM_Data *source) {
     myState = src->myState; // share, do not rebuild
   } else {
     myState.reset();
-    B3D_LOG("World[%p] makeEqual       from NON-world source %p, state dropped",
-            static_cast<const void *>(this), static_cast<const void *>(source));
+    B3D_DEBUG_LOG(
+        "World[%p] makeEqual       from NON-world source %p, state dropped",
+        static_cast<const void *>(this), static_cast<const void *>(source));
   }
 }
 
@@ -73,7 +74,8 @@ bool SIM_Box3DWorld::createWorld(const b3dop::WorldSettings &settings) {
   // One runner per world: the world's parallel work goes to Houdini's TBB pool,
   // no threads of its own.
   if (!fresh->world.create(settings, std::make_shared<Box3DHoudiniTasks>())) {
-    B3D_LOG("World[%p] createWorld FAILED", static_cast<const void *>(this));
+    B3D_DEBUG_LOG("World[%p] createWorld FAILED",
+                  static_cast<const void *>(this));
     return false;
   }
   myState = std::move(fresh);

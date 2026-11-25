@@ -319,6 +319,67 @@ def test_bond_gravity_and_forces():
 TESTS["bond_gravity_and_forces"] = test_bond_gravity_and_forces
 
 
+def test_bond_loop_mass():
+    """The mass a Bond tears with where other bonds still join its two pieces (a loop). Cutting such a bond frees
+    nothing alone, so it holds its two pieces' own masses, where a bond that is the only way between two groups holds
+    each group's. The tear impulse is sqrt(2 G A m) and `bond_damage` is `bond_impulse` over it, so the mass is read off
+    a bond that is over its capacity but far from tearing: m = (impulse / damage)^2 / (2 G A). Four 1000 kg boxes in a
+    square, the top left one static. As a ring of 4 bonds they hold 1000 kg (the static piece is fixed, so the other
+    one's mass), 500, 500 and 1000 kg. With the last-but-one bond left out (a chain) the first holds the two boxes
+    below it (2000 kg), the second the one under that (1000 kg) and the last the box it hangs (1000 kg). Within 3%, as
+    a compound and as welds."""
+    original = hou.fps()
+    hou.setFps(24)
+    rows, ok = [], True
+    energy = 1.0e7
+    # Static top left (0), then clockwise: top right (1), bottom right (2), bottom left (3).
+    pieces = [{"size": (1, 1, 1), "center": (0, 5, 0), "attrs": {"active": 0}},
+              {"size": (1, 1, 1), "center": (1, 5, 0), "attrs": {"active": 1}},
+              {"size": (1, 1, 1), "center": (1, 4, 0), "attrs": {"active": 1}},
+              {"size": (1, 1, 1), "center": (0, 4, 0), "attrs": {"active": 1}}]
+    sides = [(0, (0.5, 5.0, 0.0), 1, (0.5, 5.0, 0.0)), (1, (1.0, 4.5, 0.0), 2, (1.0, 4.5, 0.0)),
+             (2, (0.5, 4.0, 0.0), 3, (0.5, 4.0, 0.0)), (3, (0.0, 4.5, 0.0), 0, (0.0, 4.5, 0.0))]
+    try:
+        for label, lines, expected in (("ring", sides, (1000.0, 500.0, 500.0, 1000.0)),
+                                       ("chain", [sides[0], sides[1], sides[3]], (2000.0, 1000.0, 1000.0))):
+            for compound in (True, False):
+                mode = "compound" if compound else "welds"
+                seen = {}
+
+                def look(sim, f, seen=seen):
+                    geo = find_network_geometry(sim)
+                    if geo is None or f != 10:
+                        return
+                    for name in ("bond_impulse", "bond_damage", "bond_area"):
+                        if geo.findPrimAttrib(name) is not None:
+                            seen[name] = [prim.attribValue(name) for prim in geo.prims()]
+
+                dop, _names = bond_scene(tag("bond_loop"), pieces, lines, compound=compound,
+                                         bond={"bond_tensile": 1000.0, "bond_shear": 1000.0,
+                                               "bond_fracture_energy": energy})
+                set_parm(dop.node("box3d_solver"), ["bondreadouts"], 1)
+                step(dop, 10, look)
+                got = []
+                for i in range(len(lines)):
+                    try:
+                        impulse, damage, area = (seen[n][i] for n in ("bond_impulse", "bond_damage", "bond_area"))
+                    except (KeyError, IndexError):
+                        got.append(None)
+                        continue
+                    got.append(None if not (damage > 0.0 and impulse > 0.0 and area > 0.0)
+                               else (impulse / damage) ** 2 / (2.0 * energy * area))
+                good = all(m is not None and abs(m - e) < 0.03 * e for m, e in zip(got, expected))
+                ok = ok and good
+                rows.append(f"{label}, {mode}: " + ", ".join(f"{m and round(m)}" for m in got)
+                            + f" kg (expected {', '.join(str(round(e)) for e in expected)}, {'ok' if good else 'wrong'})")
+    finally:
+        hou.setFps(original)
+    return [Result("bond_loop_mass", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+TESTS["bond_loop_mass"] = test_bond_loop_mass
+
+
 def test_bond_tear_mass_compound():
     """The mass a Bond tears with is the graph sides' mass, the same as a compound and as welds. As in bond_impact's
     pair, a 1000 kg ball hits two bonded free boxes at 4 m/s in zero gravity (reduced mass 500 kg), and in

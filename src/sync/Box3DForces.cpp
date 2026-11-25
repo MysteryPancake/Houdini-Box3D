@@ -231,9 +231,15 @@ void splitForces(const SIM_Object &obj,
                  std::vector<const SIM_Force *> &serial) {
   for (const SIM_Force *sf : forces) {
     ResolverPtr resolver;
-    if (sf->getOptimalForceSampling() == SIM_Force::SIM_FORCE_SAMPLEPOINT)
+    const bool point =
+        sf->getOptimalForceSampling() == SIM_Force::SIM_FORCE_SAMPLEPOINT;
+    if (point)
       resolver.reset(sf->getForceResolver(obj));
-    if (resolver && resolver->threadsafe())
+    const bool safe = resolver && resolver->threadsafe();
+    B3D_DEBUG_LOG("force %s: point sampling %d, resolver %d, threadsafe %d: %s",
+                  sf->getDataType().c_str(), point ? 1 : 0, resolver ? 1 : 0,
+                  safe ? 1 : 0, safe ? "parallel" : "serial");
+    if (safe)
       parallel.push_back(std::move(resolver));
     else
       serial.push_back(sf);

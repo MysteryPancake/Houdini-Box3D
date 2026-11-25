@@ -239,16 +239,17 @@ constexpr int kMaxAssertLogs = 20;
 int assertHandler(const char *condition, const char *fileName, int lineNumber) {
   const int n = gAssertCount.fetch_add(1) + 1;
   if (n <= kMaxAssertLogs)
-    B3D_LOG("Box3D assertion failed (ignored, simulation continues): %s, %s, "
-            "line %d",
-            condition ? condition : "?", fileName ? fileName : "?", lineNumber);
+    B3D_DEBUG_LOG(
+        "Box3D assertion failed (ignored, simulation continues): %s, %s, "
+        "line %d",
+        condition ? condition : "?", fileName ? fileName : "?", lineNumber);
   if (n == kMaxAssertLogs)
-    B3D_LOG("further Box3D assertion messages are not printed");
+    B3D_DEBUG_LOG("further Box3D assertion messages are not printed");
   return 0;
 }
 
 void logHandler(const char *message) {
-  B3D_LOG("%s (from Box3D)", message ? message : "?");
+  B3D_DEBUG_LOG("%s (from Box3D)", message ? message : "?");
 }
 
 // Box3D's world list is not thread-safe: creating or destroying worlds from

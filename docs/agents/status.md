@@ -46,7 +46,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   joint scaling).
 
 **Bonds** (`core/Box3DBond.h`, `Box3DBondNetwork.h`, `Box3DPatch.h`, [joints.md](joints.md); `core_bond`, `core_patch` and the `bond_*` checks)
-* Not checked: the fallback mass of a loop (`bondReducedMassOf`, in the sync layer: needs a Houdini check), the 2600-piece `building` with Bonds, and the `bond_shear`,
+* Not checked: the 2600-piece `building` with Bonds, and the `bond_shear`,
   `bond_bending` and `bond_twist` readouts away from 0.
 * A Bond sliding on the ground under friction: the compound reads about 6.4 kN and the same bond as a weld about 3.1 kN.
   No reference says which is right. With friction on one box of a pair only, both modes let the bond go at m * a of the
@@ -71,18 +71,15 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   break values compare with Bullet's impacts.
 * Collision group names (`collision_names`, test `solver_sop_collision_group_names`): unchecked are whether the collision
   input's pieces honour category / mask, and whether Bullet also lets either side's ignore pattern be enough.
-* A packed piece that turns mirrored mid-simulation: the shape rebuild is keyed on the row lengths, not the sign
-  (`mirrored_piece` covers a piece that starts mirrored).
+* A mirror made mid-simulation by flipping the packed transform's first row (not the third, which `mirrored_midsim` flips):
+  the write-back gives the third-row flip with the old rotation, so the geometry ends up another mirror image than the
+  one set. Probably the rotation comes from `orient`, not the 3x3. Not looked into.
 * Escape mid-step: the step is discarded and re-cooked, earlier frames stay cached, the re-cook rebuilds once.
 * Data ids surviving the DOP copy between timesteps (the sync skip; debug log `scan skipped`); our own writes not
   looking like edits (debug log `full scan, changed:`).
-* `SourceSummaryCache`: a packed source edited in place without a new unique id or data id gives a stale hull.
+* `SourceSummaryCache`: a packed source edited in place without bumping its data ids would give a stale hull. hython cannot
+  make one (an edit through a SOP gives a new unique id: `source_edit_hull`).
 * Box3D's tasks on Houdini's TBB pool with several DOP networks or threaded SOPs cooking at once.
-* Parallel Force DOP evaluation (`evaluateResolvers`, `kMinParallelForces`): 300 boxes under a Gravity Force DOP give the
-  right result (`force_dops_many_and_sampled`), but nothing shows that the parallel path ran: whether the built-in forces
-  report `threadsafe()` true is unchecked (a force that does not just stays serial). Circle / Sphere sampling works on a Drag
-  Force DOP (the test prints its ratios to Point: 4.6 and 9.2 for a 2 m box); how a force scales over a size is the Force
-  DOP's own.
 * The ground guide (`build_ground_guide`, test `solver_sop_ground_guide` checks the geometry): not seen in a viewport, so
   whether the ground box is drawn solid and transparent like the collider geometry under `gl_wireframe` -1.
 * Box3D Data's Default Shape menu and the Packed Object / Configure menus built from it, opened in Houdini's UI

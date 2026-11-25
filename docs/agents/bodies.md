@@ -14,7 +14,7 @@ equal to what its body was built with.
   `applyBodyMass`, the same as a fresh build.
 * **Shape rebuild** (`rebuildPointShapes`): on `deforming` (every step), `bullet_autofit_valid == 0` (once), a size-key
   change beyond 1e-4 relative for convex / concave (`autoScale`; packed row lengths or `pscale * scale`), or a concave
-  body changing between static and not. `planShapes` gives a `shapeSignature`; equal means nothing is touched,
+  body changing between static and not, or a packed piece whose 3x3 turned mirrored or back (`mirrored_midsim`). `planShapes` gives a `shapeSignature`; equal means nothing is touched,
   otherwise shapes are replaced on the same body (handle, pose, velocity kept), the mass reapplied and the body woken.
   No usable shape leaves it `shapeless`, hence static.
 * Editing `bullet_georep`, `bullet_prim*` or the node's shape settings alone does nothing (as in Bullet); they apply at

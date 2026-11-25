@@ -274,7 +274,7 @@ void SIM_SolverBox3D::warnCount(SIM_ObjectArray &objects, int n,
 int SIM_SolverBox3D::getRequestedCacheSubclass() const {
   // Keep one past timestep (the world we continue from). Debug builds:
   // BOX3DDOP_REQUESTED_CACHE.
-  const int value = B3D_ENV_INT("BOX3DDOP_REQUESTED_CACHE", 1);
+  const int value = B3D_DEBUG_ENV_INT("BOX3DDOP_REQUESTED_CACHE", 1);
   return value;
 }
 
@@ -609,8 +609,8 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
     }
     warnCount(objects, forceStats.nonFinite, kNonFiniteForce);
   }
-  B3D_LOG_VERBOSE("  step: %d contact(s) recycled",
-                  st->world.recycledContactCount());
+  B3D_DEBUG_LOG_VERBOSE("  step: %d contact(s) recycled",
+                        st->world.recycledContactCount());
   {
     UT_PerfMonAutoSolveEvent perf(this,
                                   "Post-Solve}/{Exporting Simulation Results");
@@ -631,7 +631,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
     advanceGlue(*st, st->stepDt);
     st->constraintAgeDt = getEnableAging() ? static_cast<float>(dt) : 0.0f;
     if (const int broke = jointsAfterStep(*st, objects))
-      B3D_LOG("  joints: %d broke", broke);
+      B3D_DEBUG_LOG("  joints: %d broke", broke);
   }
   // Contacts are read before the queued point writes, aging and deletions.
   {
@@ -697,8 +697,8 @@ SIM_SolverBox3D::findOrCreateWorldData(SIM_ObjectArray &objects) {
 bool SIM_SolverBox3D::createFreshWorld(SIM_Box3DWorld &worldData,
                                        const b3dop::WorldSettings &settings,
                                        const char *reason) {
-  B3D_COUNT(rebuilds);
-  B3D_LOG("REBUILD #%d: %s", B3D_COUNTER(rebuilds), reason);
+  B3D_DEBUG_COUNT(rebuilds);
+  B3D_DEBUG_LOG("REBUILD #%d: %s", B3D_DEBUG_COUNTER(rebuilds), reason);
 
   // The old state stays for other timesteps; the empty mirror makes every point
   // a new body.
@@ -767,11 +767,12 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
             "affector object(s) have no usable collision geometry (they need "
             "polygons or a height field) and are ignored");
   if (affectorCounts.added || affectorCounts.removed || affectorCounts.moved)
-    B3D_LOG("  affectors: %d, +%d built (%d height field, %d plane), %d moved, "
-            "-%d removed, %d baked",
-            affectorCounts.total, affectorCounts.added,
-            affectorCounts.heightFields, affectorCounts.planes,
-            affectorCounts.moved, affectorCounts.removed, affectorCounts.baked);
+    B3D_DEBUG_LOG(
+        "  affectors: %d, +%d built (%d height field, %d plane), %d moved, "
+        "-%d removed, %d baked",
+        affectorCounts.total, affectorCounts.added, affectorCounts.heightFields,
+        affectorCounts.planes, affectorCounts.moved, affectorCounts.removed,
+        affectorCounts.baked);
 
   // Remove bodies whose point (or object) is gone: the unstamped entries.
   int removed = 0;
@@ -850,10 +851,11 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
               "constraint primitive(s) could not be made (both ends on the "
               "world, or the same body twice)");
     if (jointCounts.created || jointCounts.removed || jointCounts.updated)
-      B3D_LOG("  joints: %d network(s), +%d made, %d updated, -%d removed "
-              "(joints now %d)",
-              jointCounts.networks, jointCounts.created, jointCounts.updated,
-              jointCounts.removed, st->world.jointCount());
+      B3D_DEBUG_LOG(
+          "  joints: %d network(s), +%d made, %d updated, -%d removed "
+          "(joints now %d)",
+          jointCounts.networks, jointCounts.created, jointCounts.updated,
+          jointCounts.removed, st->world.jointCount());
   }
 
   // The shapes are made: let go of the hulls this sync held (the shared cache
@@ -898,25 +900,26 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
   warnCount(objects, counts.badVelocity,
             "point(s) have a non-finite v or w; it was treated as zero");
   if (counts.dead && !st->deletions.empty())
-    B3D_LOG("  sync: %d dead point(s) removed", counts.dead);
+    B3D_DEBUG_LOG("  sync: %d dead point(s) removed", counts.dead);
 
   if (counts.skipped)
-    B3D_LOG_VERBOSE("  sync: %d of %d object(s) unchanged, scan skipped",
-                    counts.skipped, static_cast<int>(objects.entries()));
+    B3D_DEBUG_LOG_VERBOSE("  sync: %d of %d object(s) unchanged, scan skipped",
+                          counts.skipped, static_cast<int>(objects.entries()));
   // Adds, removals and rebuilds are logged; the rest can repeat every step
   // (BOX3DDOP_VERBOSE=1).
   if (counts.added || counts.edited || counts.retyped || counts.failed ||
       counts.duplicates || counts.badP || counts.rebuilt || counts.updated ||
       removed) {
     const bool event = counts.added || removed || counts.rebuilt;
-    B3D_LOG_IF(event,
-               "  sync: +%d added, -%d removed, %d edited externally, %d type "
-               "changes, "
-               "%d shapes rebuilt, %d settings changed, "
-               "%d failed, %d duplicate ids, %d non-finite P  (bodies now %d)",
-               counts.added, removed, counts.edited, counts.retyped,
-               counts.rebuilt, counts.updated, counts.failed, counts.duplicates,
-               counts.badP, st->world.bodyCount());
+    B3D_DEBUG_LOG_IF(
+        event,
+        "  sync: +%d added, -%d removed, %d edited externally, %d type "
+        "changes, "
+        "%d shapes rebuilt, %d settings changed, "
+        "%d failed, %d duplicate ids, %d non-finite P  (bodies now %d)",
+        counts.added, removed, counts.edited, counts.retyped, counts.rebuilt,
+        counts.updated, counts.failed, counts.duplicates, counts.badP,
+        st->world.bodyCount());
   }
   return true;
 }

@@ -116,7 +116,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DWorldJoints.cpp  Box3DWorld's joint methods
     Box3DWorldInternal.h  The world's private state (Impl) shared by those two .cpp files; with them (and `Box3DSideFX.cpp`, for `<box3d/math_functions.h>`) the only files that include Box3D headers
     Box3DAffectorMath.h Header-only: affector (Static Object) transform math
-    Box3DDebug.h        B3D_LOG / counters, compiled out unless BOX3DDOP_DEBUG (args still type-checked, never evaluated)
+    Box3DDebug.h        B3D_DEBUG_LOG / counters, compiled out unless BOX3DDOP_DEBUG (args still type-checked, never evaluated)
   dop/                Houdini SIM_Data classes: the nodes and the world cache
     SIM_Box3DWorld.*    SIM_Data owning the shared world state (the rebuildable cache); the state itself is sync/Box3DState.h
     SIM_Box3DData.*     Default-settings DOP node

@@ -1026,7 +1026,7 @@ public:
         myAnyAwakeWrite = st.writeItems[k].awakeState >= 0 &&
                           st.writeItems[k].off != GA_INVALID_OFFSET;
 #ifdef BOX3DDOP_DEBUG
-    myVerifyReadback = B3D_ENV_INT("BOX3DDOP_VERIFY_READBACK", 0) != 0;
+    myVerifyReadback = B3D_DEBUG_ENV_INT("BOX3DDOP_VERIFY_READBACK", 0) != 0;
 #endif
   }
 
@@ -1154,14 +1154,15 @@ private:
     }
     if (readPointState(myGdp, myA, w.off, pk, stored) &&
         poseDiffers(stored, mirror)) {
-      B3D_LOG("  READBACK MISMATCH object=%d point=%lld: predicted pos=(%.9g "
-              "%.9g %.9g) rot=(%.9g %.9g %.9g %.9g) "
-              "read pos=(%.9g %.9g %.9g) rot=(%.9g %.9g %.9g %.9g)",
-              w.objectId, static_cast<long long>(w.entry->pointId),
-              mirror.pos[0], mirror.pos[1], mirror.pos[2], mirror.rot[0],
-              mirror.rot[1], mirror.rot[2], mirror.rot[3], stored.pos[0],
-              stored.pos[1], stored.pos[2], stored.rot[0], stored.rot[1],
-              stored.rot[2], stored.rot[3]);
+      B3D_DEBUG_LOG(
+          "  READBACK MISMATCH object=%d point=%lld: predicted pos=(%.9g "
+          "%.9g %.9g) rot=(%.9g %.9g %.9g %.9g) "
+          "read pos=(%.9g %.9g %.9g) rot=(%.9g %.9g %.9g %.9g)",
+          w.objectId, static_cast<long long>(w.entry->pointId), mirror.pos[0],
+          mirror.pos[1], mirror.pos[2], mirror.rot[0], mirror.rot[1],
+          mirror.rot[2], mirror.rot[3], stored.pos[0], stored.pos[1],
+          stored.pos[2], stored.rot[0], stored.rot[1], stored.rot[2],
+          stored.rot[3]);
     }
   }
 #endif
@@ -1242,9 +1243,10 @@ void SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData,
   const auto reportMissing = [&](int count) {
     if (!count)
       return;
-    B3D_LOG_VERBOSE("  writeBack: %d moved bodies had no readable state or no "
-                    "point to write to",
-                    count);
+    B3D_DEBUG_LOG_VERBOSE(
+        "  writeBack: %d moved bodies had no readable state or no "
+        "point to write to",
+        count);
     warnCount(objects, count,
               "body(ies) could not be matched to a point; their results were "
               "not written back");
@@ -1265,9 +1267,10 @@ void SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData,
 
     SIM_GeometryCopy *geo = box3dWritableGeometry(*obj, SIM_GEOMETRY_DATANAME);
     if (!geo) {
-      B3D_LOG_VERBOSE("  writeBack: object id=%d Geometry is not writable and "
-                      "could not be converted",
-                      obj->getObjectId());
+      B3D_DEBUG_LOG_VERBOSE(
+          "  writeBack: object id=%d Geometry is not writable and "
+          "could not be converted",
+          obj->getObjectId());
       addError(obj, SIM_MESSAGE,
                "This object's Geometry is not writable and could not be "
                "converted to a SIM_GeometryCopy; results are not written back",

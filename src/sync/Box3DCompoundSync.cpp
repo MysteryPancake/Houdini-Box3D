@@ -1727,7 +1727,7 @@ struct BondJob {
 void solveCompoundBonds(Box3DSharedState &st, float dt) {
   if (!st.bondsInGraph || !(dt > 0.0f))
     return;
-  B3D_PROFILE(kProfileBondSolve);
+  B3D_DEBUG_PROFILE(kProfileBondSolve);
   b3dop::Box3DWorld &w = st.world;
   // The Bonds inside each compound, and every Bond by its joint (a bridge names
   // the joint it stands in for).

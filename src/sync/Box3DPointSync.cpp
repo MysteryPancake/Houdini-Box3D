@@ -594,8 +594,8 @@ ShapePlan planShapes(ScanContext &ctx, GA_Offset off, int64_t bodyId,
     }
   }
   if (plan.shapes().note)
-    B3D_LOG("  body id=%lld: %s", static_cast<long long>(bodyId),
-            plan.shapes().note);
+    B3D_DEBUG_LOG("  body id=%lld: %s", static_cast<long long>(bodyId),
+                  plan.shapes().note);
 
   // Convex / concave follow scale changes (as in Houdini); primitives do not.
   plan.autoScale = (plan.type == b3dop::ShapeType::Convex ||
@@ -829,8 +829,8 @@ bool rebuildPointShapes(ScanContext &ctx, const Box3DPointSlot &s,
   applyBodyMass(world, h, p, plan.shapes().totalVolume,
                 false);  // even with no shapes: clears Box3D's dirty mass
   world.wakeByHandle(h); // let it re-settle
-  B3D_LOG_VERBOSE("  body id=%lld: collision shape rebuilt",
-                  static_cast<long long>(s.bid));
+  B3D_DEBUG_LOG_VERBOSE("  body id=%lld: collision shape rebuilt",
+                        static_cast<long long>(s.bid));
   return true;
 }
 
@@ -1122,6 +1122,11 @@ void readSlot(const ScanContext &ctx, int objectId, Box3DPointSlot &s) {
       s.rebuild =
           sizeKey(s.packed, s.m3, ps, sc, sk) && !sameSizeKey(sk, e->sizeKey);
     }
+    // A packed piece that turned mirrored (or back): the row lengths do not
+    // show it, but its hull is built mirrored to match.
+    if (!s.rebuild && s.packed && e->packed &&
+        (b3dop::matrixDeterminant(s.m3) < 0.0) != e->mirrored)
+      s.rebuild = true;
   }
 }
 
@@ -1610,8 +1615,8 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
   const SIM_Geometry *geo =
       SIM_DATA_GETCONST(obj, SIM_GEOMETRY_DATANAME, SIM_Geometry);
   if (!geo) {
-    B3D_LOG_VERBOSE("  object id=%d has no Geometry data, skipped",
-                    obj.getObjectId());
+    B3D_DEBUG_LOG_VERBOSE("  object id=%d has no Geometry data, skipped",
+                          obj.getObjectId());
     return;
   }
   SIM_GeometryAutoReadLock lock(geo);
@@ -1652,8 +1657,8 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
   }
 #ifdef BOX3DDOP_DEBUG
   if (os.canSkip)
-    B3D_LOG_VERBOSE("  object id=%d: full scan, changed: %s", objectId,
-                    describeFingerprintDifference(os.fp, fpNow).c_str());
+    B3D_DEBUG_LOG_VERBOSE("  object id=%d: full scan, changed: %s", objectId,
+                          describeFingerprintDifference(os.fp, fpNow).c_str());
 #endif
   os.canSkip = false;
   ++st.fullScans;

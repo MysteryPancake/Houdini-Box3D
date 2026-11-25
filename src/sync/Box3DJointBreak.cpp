@@ -496,7 +496,7 @@ void computeBondSides(Box3DSharedState &st) {
 float bondReducedMassOf(Box3DSharedState &st, Box3DJointEntry &e) {
   Box3DJointExtra &x = e.ensureExtra();
   if (!x.bondSidesKnown || x.bondSidesSignature != st.glueSignature) {
-    B3D_PROFILE(kProfileBondSideMass);
+    B3D_DEBUG_PROFILE(kProfileBondSideMass);
     // All the bonds' sides in one pass (once per change of the glue graph),
     // else this one's alone.
     if (st.bondSidesPass != st.glueSignature) {
@@ -544,7 +544,7 @@ bool bondGeometry(Box3DSharedState &st, Box3DJointEntry &e) {
   if (x.bondReady && b3dop::sameFloat(x.bondAreaSetting, e.settings.bondArea))
     return true;
   x.bondReady = false;
-  B3D_PROFILE(kProfileBondPatch);
+  B3D_DEBUG_PROFILE(kProfileBondPatch);
   b3dop::Box3DWorld &world = st.world;
   // The normal runs from A's centre to B's (from the anchor when A is the
   // world), the area is the smaller face of the two boxes across it.
@@ -646,9 +646,9 @@ void breakBonds(Box3DSharedState &st, float dt) {
   refreshNetworkEntries(st);
   solveCompoundBonds(st, dt);
   const struct ReportAtEnd {
-    ~ReportAtEnd() { B3D_PROFILE_REPORT("bonds"); }
+    ~ReportAtEnd() { B3D_DEBUG_PROFILE_REPORT("bonds"); }
   } reportAtEnd;
-  B3D_PROFILE(kProfileBondScan);
+  B3D_DEBUG_PROFILE(kProfileBondScan);
   for (Box3DJointEntry *e : st.bondEntries) {
     if (!e->handle || e->broken)
       continue;
