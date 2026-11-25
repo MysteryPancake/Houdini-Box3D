@@ -8,8 +8,10 @@
 //                         syncObject()
 //   Box3DWholeObject.cpp  one body per DOP object (RBD Object etc.): sync and
 //                         write-back
-//   Box3DPostStep.cpp     after the step: write-back, impacts, point writes,
-//                         aging, deletion
+//   Box3DWriteBack.cpp    after the step: write-back to points and whole
+//   objects Box3DImpacts.cpp      after the step: Impacts data
+//   Box3DPostStep.cpp     after the step: point writes, move events, aging,
+//                         deletion
 //   Box3DForces.cpp       Force DOPs and point force / torque
 //   Box3DGuide.cpp        the guide geometry and Export Collision Shapes
 // SIM_SolverBox3D.cpp holds the node and the solve loop.
@@ -608,7 +610,8 @@ bool writeWholeObject(SIM_Object &obj, Box3DBodyMirror &e, const double pos[3],
                       const float rot[4], const float lin[3],
                       const float ang[3]);
 
-// ---- after the step (Box3DPostStep.cpp) and forces (Box3DForces.cpp) ----
+// ---- after the step (Box3DPostStep.cpp, Box3DWriteBack.cpp, Box3DImpacts.cpp)
+// and forces (Box3DForces.cpp) ----
 
 // Our own write to the object's Geometry this step: its fingerprint is
 // re-recorded by recordFingerprintsAfterWrites, once every lock is released.
@@ -695,5 +698,152 @@ void exportCollisionShapes(Box3DSharedState &st, SIM_ObjectArray &objects);
 // Pieces are matched by `name`.
 void followSourceSops(Box3DSharedState &st, SIM_ObjectArray &objects,
                       double now, double dt);
+
+// ---- shared by the post-step files (Box3DPostStep.cpp, Box3DWriteBack.cpp,
+// Box3DImpacts.cpp) ----
+
+// Elements per task for the loops whose work per element is a few memory
+// reads and writes.
+inline constexpr size_t kCheapGrain = 256;
+
+// The point `pointId` (its `id`, else its point number) is still at `off`.
+inline bool samePointAt(const GU_Detail *gdp, const GA_ROHandleI &id,
+                        GA_Offset off, int64_t pointId) {
+  if (off < 0 || off >= gdp->getNumPointOffsets() ||
+      gdp->getPointMap().isOffsetVacant(off))
+    return false;
+  return id.isValid() ? static_cast<int64_t>(id.get(off)) == pointId
+                      : static_cast<int64_t>(gdp->pointIndex(off)) == pointId;
+}
+
+// Each item's point offset in the geometry about to be written: the entry's
+// stored offset if it still names the point (in range, same id / number), else
+// looked up by id; GA_INVALID_OFFSET if not found. The stored offsets are
+// checked in parallel (read-only); only the points that moved are looked up.
+template <class Item> // needs .entry and .off
+void resolvePointOffsets(const GU_Detail *gdp, const PointAttrs &a,
+                         std::vector<Item> &items, size_t begin, size_t end) {
+  // A first lookup by the serial code, in case the point map builds anything
+  // on first use, before threads read it.
+  if (end > begin)
+    (void)gdp->pointIndex(static_cast<GA_Offset>(items[begin].entry->pointOff));
+  box3dParallelFor(
+      end - begin,
+      [&](size_t j) {
+        Item &w = items[begin + j];
+        const Box3DBodyMirror &m = *w.entry;
+        const GA_Offset stored = static_cast<GA_Offset>(m.pointOff);
+        w.off = samePointAt(gdp, a.id, stored, m.pointId) ? stored
+                                                          : GA_INVALID_OFFSET;
+      },
+      minParallelWrite(), kCheapGrain);
+
+  std::unordered_map<int64_t, GA_Offset> byId; // built only when needed
+  bool builtById = false;
+  for (size_t k = begin; k < end; ++k) {
+    Item &w = items[k];
+    if (w.off != GA_INVALID_OFFSET)
+      continue;
+    const Box3DBodyMirror &m = *w.entry;
+    if (!a.id.isValid()) {
+      if (m.pointId >= 0 &&
+          m.pointId < static_cast<int64_t>(gdp->getNumPoints()))
+        w.off = gdp->pointOffset(static_cast<GA_Index>(m.pointId));
+      continue;
+    }
+    if (!builtById) {
+      builtById = true;
+      for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it)
+        byId.emplace(static_cast<int64_t>(a.id.get(*it)),
+                     *it); // first point of a duplicate id wins
+    }
+    const auto f = byId.find(m.pointId);
+    if (f != byId.end())
+      w.off = f->second;
+  }
+}
+
+// f(begin, end) per run of items with the same objectId. Items are first
+// grouped by object, in O(n): a stable bucket pass (items of one object keep
+// their relative order), not a sort, since objects are few and the order of the
+// move events changes from step to step. Runs come in the order each object
+// first appears, not in id order. Already grouped items are not moved.
+template <class Item, class F>
+void forEachObjectRun(std::vector<Item> &items, const F &f) {
+  const size_t n = items.size();
+  if (n == 0)
+    return;
+
+  // Pass 1: the bucket of every item, and the size of every bucket.
+  // Object ids in first-seen order: the index is the bucket. Objects are few,
+  // so a linear search beats a hash map. The vectors are kept between calls (no
+  // allocation); `bucket` is fully overwritten below.
+  thread_local std::vector<int> bucketIds;
+  thread_local std::vector<uint32_t> bucket;
+  // The size of a bucket, then its first slot.
+  thread_local std::vector<size_t> start;
+  bucketIds.clear();
+  start.clear();
+  bucket.resize(n);
+  size_t runs = 0;
+  int lastId = items[0].objectId;
+  uint32_t lastBucket = 0;
+  bool haveLast = false;
+  for (size_t i = 0; i < n; ++i) {
+    const int id = items[i].objectId;
+    if (!haveLast || id != lastId) {
+      size_t b = 0;
+      while (b < bucketIds.size() && bucketIds[b] != id)
+        ++b;
+      if (b == bucketIds.size())
+        bucketIds.push_back(id);
+      lastBucket = static_cast<uint32_t>(b);
+      lastId = id;
+      haveLast = true;
+      ++runs;
+    }
+    if (lastBucket >= start.size())
+      start.resize(static_cast<size_t>(lastBucket) + 1, 0);
+    ++start[lastBucket];
+    bucket[i] = lastBucket;
+  }
+
+  // More runs than objects: an object's items are not together, so move them.
+  if (runs != bucketIds.size()) {
+    size_t sum = 0;
+    for (size_t &c : start) {
+      const size_t count = c;
+      c = sum;
+      sum += count;
+    }
+    thread_local std::vector<Item> scratch; // kept between steps: no allocation
+    scratch.resize(n);
+    for (size_t i = 0; i < n; ++i)
+      scratch[start[bucket[i]]++] = items[i];
+    items.swap(scratch);
+  }
+
+  for (size_t runBegin = 0; runBegin < n;) {
+    size_t runEnd = runBegin;
+    while (runEnd < n && items[runEnd].objectId == items[runBegin].objectId)
+      ++runEnd;
+    f(runBegin, runEnd);
+    runBegin = runEnd;
+  }
+}
+
+// A new quaternion attribute is 0,0,0,0: start every point at identity.
+void startOrientAtIdentity(GU_Detail *gdp);
+
+// Creates `orient`, `v`, `w` if missing. True if `orient` was created.
+bool ensureResultAttribs(GU_Detail *gdp);
+
+// Harden only the offset ranges the parallel write pass touches (hardenAllPages
+// takes a range). Written offsets are bucketed by 1024 and runs of buckets
+// hardened; nearly all hit: one full call. `end` is the first offset after a
+// run, right whether the HDK reads it as exclusive or not.
+void hardenWrittenPages(const GU_Detail *gdp,
+                        const std::vector<Box3DWriteItem> &items, size_t begin,
+                        size_t end, const std::array<GA_Attribute *, 5> &attrs);
 
 } // namespace box3dsolver

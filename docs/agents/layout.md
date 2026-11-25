@@ -64,10 +64,17 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DShapeBuild.cpp    Packed primitives, collision source geometry (pieces, summary cache), buildShapes
     Box3DPointSync.cpp     One body per point: point state, fingerprint, body settings, shape plans, syncObject
     Box3DWholeObject.cpp   One body per DOP object (RBD Object etc.): sync and Position write-back
-    Box3DPostStep.cpp      After the step: writeResultsBack, Impacts, point writes, aging, dead points
+    Box3DWriteBack.cpp     After the step: writeResultsBack (awake bodies and whole objects back to their points)
+    Box3DImpacts.cpp       After the step: Impacts data (collectImpacts, recordImpacts)
+    Box3DPostStep.cpp      After the step: queued point writes, merged move events, aging, dead points
     Box3DForces.cpp        Force DOPs and point force / torque
     Box3DGuide.cpp         The solver's guide geometry: every body's collision shapes
-    Box3DJointSync.*       Constraint networks -> Box3D joints: read, resolve names, create / update / remove
+    Box3DJointSync.*       Constraint networks -> Box3D joints: the pass that makes, updates and removes joints,
+                           `syncJoints`, the Glue lists
+    Box3DJointRead.cpp     Reading a network: its geometry and fingerprint, settings and SideFX attributes, the
+                           table of constraint kinds
+    Box3DJointAnchors.cpp  Where a joint's anchors are (point / vertex / fragment anchors, rest frames)
+    Box3DJointSyncInternal.h  What those three share (namespace `jointsync`); only they include it
     Box3DCompoundSync.*    Glued groups as one compound body (`gluecompound`): merge, dissolve, shrink,
                            `syncCompounds` (the public functions are declared in the .h)
     Box3DCompoundSplit.cpp Pieces that leave a compound when bonds break (`splitOffSmallPieces`)

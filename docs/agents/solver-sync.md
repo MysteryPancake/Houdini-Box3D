@@ -1,7 +1,8 @@
 # Solver: sync, skip fingerprint, write-back, threading
 
-The per-object sync pass, the skip fingerprint, `writeResultsBack` and threading. The step order: [solver.md](solver.md).
-What the sync does to a body: [bodies.md](bodies.md). Index and rules: [CLAUDE.md](../../CLAUDE.md).
+The per-object sync pass, the skip fingerprint, `writeResultsBack` and threading. The step order:
+[solver.md](solver.md). What the sync does to a body: [bodies.md](bodies.md). Index and rules:
+[CLAUDE.md](../../CLAUDE.md).
 
 ## syncObject (per object)
 
@@ -69,7 +70,7 @@ list and no hash collision. Equal fingerprint -> skip.
 
 ## writeResultsBack
 
-`SIM_SolverBox3D::writeResultsBack` is the driver (it owns the node messages); the work is in `Box3DPostStep.cpp`:
+`SIM_SolverBox3D::writeResultsBack` is the driver (it owns the node messages); the work is in `Box3DWriteBack.cpp`:
 `collectMovedBodies`, `writeWholeObjects`, then per object `writeObjectResults` (`BodyWriter` for one
 body's attributes and packed transform).
 

@@ -3,7 +3,7 @@
 Glue, Hard, Spring, Bullet Soft and Cone Twist mapped onto Box3D joints. Joint nodes, networks and live frames:
 [joints.md](joints.md). Index and rules: [CLAUDE.md](../../CLAUDE.md).
 
-**SideFX constraint data** (`core/Box3DSideFX.*`, tested in `tests/core_sidefx.cpp`; read in `Box3DJointSync.cpp`):
+**SideFX constraint data** (`core/Box3DSideFX.*`, tested in `tests/core_sidefx.cpp`; read in `Box3DJointRead.cpp`):
 * Found by data type among the same subdata as our nodes (`networkKinds`): `SIM_ConRelGlue`, `SIM_ConRelHard`,
   `SIM_ConRelSpring`, `SIM_ConRelBulletSoft`, `SIM_ConRelConeTwist` (names from a Houdini 22.0 probe; their default
   Data Names are Glue, Hard, ConRelSpring, Soft, ConeTwist). Only Hard and Spring have HDK headers, so all five are read

@@ -1,9 +1,11 @@
 # Joint nodes and networks
 
-The Houdini side of joints: the constraint relationship nodes, networks, `constraint_name` kinds, the fingerprint, what is
-written back after the step, `next_constraint_name` and live frames. The core joint API: [joints.md](joints.md). Index and rules: [CLAUDE.md](../../CLAUDE.md).
+The Houdini side of joints: the constraint relationship nodes, networks, `constraint_name` kinds, the fingerprint,
+what is written back after the step, `next_constraint_name` and live frames. The core joint API:
+[joints.md](joints.md). Index and rules: [CLAUDE.md](../../CLAUDE.md).
 
-**Houdini** (`Box3DJointSync.cpp`, `Box3DJointBreak.cpp` for the after-step part, `SIM_Box3DConRel.cpp`):
+**Houdini** (`Box3DJointSync.cpp` for the pass over a network, `Box3DJointRead.cpp` for reading it,
+`Box3DJointAnchors.cpp` for anchors, `Box3DJointBreak.cpp` for the after-step part, `SIM_Box3DConRel.cpp`):
 * Nodes: `SIM_Box3DConRel` (`SIM_ConRel` + `SIM_OptionsUser`, like SideFX's `SIM_ConRelSpring`; abstract,
   `DECLARE_CLASSNAME` only) and one subclass per joint type from `BOX3D_DECLARE_CONREL`, each with its own automatic
   DOP (`box3d_<type>conrel`, label "Box3D <Type> Constraint Relationship", default Data Name the type label, `Weld`

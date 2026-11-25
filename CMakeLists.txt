@@ -220,6 +220,8 @@ add_library(Box3DDOP SHARED
     src/sync/Box3DPointSync.cpp
     src/sync/Box3DWholeObject.cpp
     src/sync/Box3DPostStep.cpp
+    src/sync/Box3DWriteBack.cpp
+    src/sync/Box3DImpacts.cpp
     src/sync/Box3DForces.cpp
     src/sync/Box3DGuide.cpp
     src/sync/Box3DSourceSync.cpp
@@ -230,7 +232,10 @@ add_library(Box3DDOP SHARED
     src/sync/Box3DCompoundHold.cpp
     src/sync/Box3DCompoundPieces.cpp
     src/sync/Box3DJointSync.h
+    src/sync/Box3DJointSyncInternal.h
     src/sync/Box3DJointSync.cpp
+    src/sync/Box3DJointAnchors.cpp
+    src/sync/Box3DJointRead.cpp
     src/sync/Box3DJointNetwork.h
     src/sync/Box3DJointBreak.cpp
     src/sync/Box3DAffectors.h
