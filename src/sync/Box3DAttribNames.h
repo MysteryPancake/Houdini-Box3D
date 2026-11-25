@@ -14,6 +14,7 @@
 
 #include <cstddef>
 #include <iterator>
+#include <string_view>
 
 // Bound when a PointAttrs is made: what the skip check and the write-back need.
 #define BOX3D_SYNC_ATTRS(X)                                                    \
@@ -99,14 +100,6 @@ inline constexpr const char *kAllNames[] = {
 #undef BOX3D_NAME_OF
 };
 
-constexpr bool sameString(const char *a, const char *b) {
-  while (*a && *a == *b) {
-    ++a;
-    ++b;
-  }
-  return *a == *b;
-}
-
 // No name is empty or listed twice (a pasted line whose name was not changed).
 constexpr bool namesAreDistinct() {
   constexpr size_t n = std::size(kAllNames);
@@ -114,7 +107,7 @@ constexpr bool namesAreDistinct() {
     if (!*kAllNames[i])
       return false;
     for (size_t j = i + 1; j < n; ++j)
-      if (sameString(kAllNames[i], kAllNames[j]))
+      if (std::string_view(kAllNames[i]) == kAllNames[j])
         return false;
   }
   return true;

@@ -66,23 +66,21 @@ constexpr float kMinGroundSize = 0.1f;
 constexpr float kMaxGroundSize[3] = {20000.0f, 5000.0f,
                                      20000.0f}; // below B3_HUGE
 
-// `v` kept within [kMinGroundSize, max]; the default for a non-finite value.
-inline float clampGroundSize(float v, float max, float fallback) {
-  if (!std::isfinite(v))
-    return fallback;
-  return v < kMinGroundSize ? kMinGroundSize : (v > max ? max : v);
-}
-
 // The ground as a ShapeSpec of type Plane: halfExtents are half the size on
 // each axis, so a spec carries its size (and a change of size is a change of
-// shape).
+// shape). Each size is kept within [kMinGroundSize, kMaxGroundSize]; a
+// non-finite one becomes the default.
 inline ShapeSpec groundSpec(const GroundSize &g = GroundSize()) {
   const GroundSize d;
   ShapeSpec s;
   s.type = ShapeType::Plane;
-  for (int i = 0; i < 3; ++i)
-    s.halfExtents[i] =
-        0.5f * clampGroundSize(g.size[i], kMaxGroundSize[i], d.size[i]);
+  for (int i = 0; i < 3; ++i) {
+    const float size =
+        std::isfinite(g.size[i])
+            ? std::clamp(g.size[i], kMinGroundSize, kMaxGroundSize[i])
+            : d.size[i];
+    s.halfExtents[i] = 0.5f * size;
+  }
   return s;
 }
 

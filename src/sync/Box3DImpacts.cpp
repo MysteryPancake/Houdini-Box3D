@@ -5,6 +5,7 @@
 #include "Box3DSolverInternal.h"
 #include "dop/SIM_SolverBox3D.h"
 #include <GA/GA_SplittableRange.h>
+#include <algorithm>
 #include <array>
 
 namespace box3dsolver {
@@ -19,10 +20,10 @@ namespace box3dsolver {
 // Normal: of the surface hit, pointing at the body that gets the impact. No
 // Feedback data (that is for interaction with other solvers).
 bool wantsImpacts(const Box3DSharedState &st) {
-  for (const auto &kv : st.objectSync)
-    if (kv.second.visited == st.syncStamp && kv.second.addImpact)
-      return true;
-  return false;
+  return std::any_of(
+      st.objectSync.begin(), st.objectSync.end(), [&](const auto &kv) {
+        return kv.second.visited == st.syncStamp && kv.second.addImpact;
+      });
 }
 
 // Which contact a hit is: its two bodies, its side and its position to about
