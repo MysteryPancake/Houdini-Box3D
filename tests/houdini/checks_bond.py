@@ -688,6 +688,71 @@ def test_bond_readouts():
 TESTS["bond_readouts"] = test_bond_readouts
 
 
+def test_bond_readout_loads():
+    """`bond_tension`, `bond_shear`, `bond_bending` and `bond_twist` where they are not 0, against statics (Write Bond
+    Attributes on, a bond too strong to break, a 1000 kg box of 9807 N, as a compound and as welds, within 5%). (1)
+    Crushed: the box standing on a static one reads a tension of minus its weight, no shear. (2) Cantilever: the box beside
+    a static one, its centre 0.5 from the bond, reads its weight as shear and 0.5 times that as bending, no tension. (3)
+    Twisted: the hanging box under a point `torque` of 4903 N*m about the vertical reads that as twist, with its weight as
+    tension and no bending."""
+    original = hou.fps()
+    hou.setFps(24)
+    rows, ok = [], True
+    top = {"size": (1, 1, 1), "center": (0, 5, 0), "attrs": {"active": 0}}
+    awake = {"enablesleep": 0}
+    cases = (
+        ("crushed", [dict(top, center=(0, 4, 0)), {"size": (1, 1, 1), "center": (0, 5, 0), "attrs": {"active": 1}}],
+         (0.0, 4.5, 0.0), None, {"bond_tension": -WEIGHT, "bond_shear": 0.0, "bond_bending": 0.0, "bond_twist": 0.0}),
+        ("cantilever", [top, {"size": (1, 1, 1), "center": (1, 5, 0), "attrs": {"active": 1}}],
+         (0.5, 5.0, 0.0), None, {"bond_tension": 0.0, "bond_shear": WEIGHT, "bond_bending": 0.5 * WEIGHT,
+                                 "bond_twist": 0.0}),
+        ("twisted", [dict(top, attrs=dict(awake, active=0)), {"size": (1, 1, 1), "center": (0, 4, 0), "attrs": dict(awake, active=1)}],
+         AT, f"v@torque = i@active == 1 ? {{0, {0.5 * WEIGHT}, 0}} : {{0, 0, 0}};",
+         {"bond_tension": WEIGHT, "bond_shear": 0.0, "bond_bending": 0.0, "bond_twist": 0.5 * WEIGHT}),
+    )
+    try:
+        for label, pieces, at, torque, expected in cases:
+            for compound in (True, False):
+                mode = "compound" if compound else "welds"
+                seen = {}
+
+                def look(sim, f, seen=seen):
+                    geo = find_network_geometry(sim)
+                    if geo is None or f != 12:
+                        return
+                    for name in expected:
+                        if geo.findPrimAttrib(name) is not None:
+                            seen[name] = max(prim.attribValue(name) for prim in geo.prims()) if expected[name] >= 0 \
+                                else min(prim.attribValue(name) for prim in geo.prims())
+
+                dop, _names = bond_scene(tag("bond_loads"), pieces, [(0, at, 1, at)], compound=compound)
+                set_parm(dop.node("box3d_solver"), ["bondreadouts"], 1)
+                if torque:
+                    out = dop.node("output")
+                    solver = out.inputs()[0]
+                    upstream = solver.inputs()[0]
+                    solver.setInput(0, None)
+                    push = sop_solver(dop, torque)
+                    out.setInput(0, multisolver(dop, upstream, [solver, push]))
+                step(dop, 12, look)
+                bad = []
+                for name, want in expected.items():
+                    got = seen.get(name)
+                    # Zero is read against the weight: nothing over 5% of it (N, or N*m with a unit arm).
+                    if got is None or abs(got - want) > 0.05 * (abs(want) if want else WEIGHT):
+                        bad.append(f"{name[5:]} {got and round(got)} (expected {round(want)})")
+                good = not bad
+                ok = ok and good
+                rows.append(f"{label}, {mode}: " + ("ok: " + ", ".join(f"{n[5:]} {round(seen[n])}" for n in expected)
+                                                    if good else "WRONG " + ", ".join(bad)))
+    finally:
+        hou.setFps(original)
+    return [Result("bond_readout_loads", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+TESTS["bond_readout_loads"] = test_bond_readout_loads
+
+
 def test_bond_compound_id():
     """`compound_id` on the points of pieces glued into a compound, with Write Bond Attributes on: the lowest point
     number in the compound for each piece of it (a row of 3 boxes bonded together reads 0, 0, 0) and -1 for a loose one

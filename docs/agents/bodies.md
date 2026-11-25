@@ -98,7 +98,8 @@ transform stored as float (what the attribute will hold, so both paths split the
 restxform, `pivot` = P, `orient` from the mirror's pose. As in Bullet's solver an incoming restxform is kept: resetting it
 when an object is created is the object's job (the Box3D Packed Object's SOP stage, [assets.md](assets.md)), so a world
 rebuilt mid-simulation keeps the rest too. Editing only a packed transform after rest is ignored, as in Bullet: edit
-`orient` / `P`. `restPos` (the packed pivot through restxform) is where the body's origin was at rest; joints map
+`orient` / `P`. Only its mirror is kept: the sign of the 3x3's determinant, written back as a flip of the third row whichever row
+was flipped, with the hull rebuilt (`mirrored_midsim`). Bullet drops the mirror too (`bullet_mirror_flip`). `restPos` (the packed pivot through restxform) is where the body's origin was at rest; joints map
 authored anchors with it ([joints.md](joints.md)).
 
 ## Building shapes (`addPointBody`, `planShapes`, `buildShapes`)

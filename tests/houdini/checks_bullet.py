@@ -1055,6 +1055,44 @@ def test_bullet_rest_rescan():
                    f"{own[2]:.2f} deg; against Bullet: {other[0]:.4f}, {other[1]:.2f} deg, {other[2]:.2f} deg")]
 
 
+def mirror_flip_run(kind, row):
+    """A piece high in the air with no velocity, its packed transform's first or third row flipped by a SOP Solver on
+    frame 6, before the physics solver: its packed 3x3 on frame 10."""
+    piece = {"size": (0.6, 0.4, 0.8), "center": (0, 20, 0), "attrs": {"active": 1}}
+    path, names = packed_boxes(f"mirror_flip_{kind}_{row}_pieces", [piece])
+    dop = new_dopnet(f"mirror_flip_{kind}_{row}")
+    obj = packed_object(dop, "pieces", path)
+    flip = sop_solver(dop, "")
+    set_parm(flip.node("edit"), ["class"], "primitive")
+    signs = "-1, 1, 1" if row == "first" else "1, 1, -1"
+    set_parm(flip.node("edit"), ["snippet"], f"""
+if (@Frame == 6) {{
+    matrix3 s = set({signs.split(", ")[0]}, 0, 0, 0, {signs.split(", ")[1]}, 0, 0, 0, {signs.split(", ")[2]});
+    setprimintrinsic(0, "transform", @primnum, s * matrix3(primintrinsic(0, "transform", @primnum)));
+}}
+""")
+    if kind == "box3d":
+        last = multisolver(dop, obj, [flip, box3d_solver(dop, None)])
+    else:
+        last = create(dop, "gravity", "gravity")
+        last.setInput(0, multisolver(dop, obj, [flip, create(dop, "bulletrbdsolver", "bullet_solver")]))
+    finish(dop, last)
+    return step(dop, 10, lambda sim, f: packed_transform(sim, "pieces", names[0]))[10]
+
+
+def test_bullet_mirror_flip():
+    """A packed piece whose transform is flipped mid-simulation, first row (an x mirror) and third row, in Box3D and
+    in Bullet: the 3x3 each leaves on frame 10 (INFO). Box3D takes the rotation from `orient`, so an edit of the packed
+    transform alone keeps it and only the mirror's sign is kept, as the third row's flip."""
+    results = []
+    for row in ("first", "third"):
+        got = {kind: mirror_flip_run(kind, row) for kind in KINDS}
+        fmt = {kind: "[" + " ".join(f"{v:+.2f}" for r in m for v in r) + "]" if m else None for kind, m in got.items()}
+        results.append(Result("bullet_mirror_flip", Result.INFO,
+                               f"{row} row flipped: Box3D {fmt['box3d']}, Bullet {fmt['bullet']}"))
+    return results
+
+
 JOINT_ANGLE_CASES = (
     # label, the hanging piece's own rotation in degrees, its initial spin (radians/s)
     ("turned 30 degrees about z, spinning about y", (0.0, 0.0, 30.0), (0.0, 2.0, 0.0)),
@@ -1391,6 +1429,7 @@ TESTS = {
     "bullet_computecom": test_bullet_computecom,
     "bullet_plane_piece": test_bullet_plane_piece,
     "bullet_rest_rescan": test_bullet_rest_rescan,
+    "bullet_mirror_flip": test_bullet_mirror_flip,
     "bullet_joint_angle": test_bullet_joint_angle,
     "bullet_joint_feedback": test_bullet_joint_feedback,
     "bullet_cone_twist_goal_apart": test_bullet_cone_twist_goal_apart,

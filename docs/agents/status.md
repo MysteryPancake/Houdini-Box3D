@@ -46,8 +46,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   joint scaling).
 
 **Bonds** (`core/Box3DBond.h`, `Box3DBondNetwork.h`, `Box3DPatch.h`, [joints.md](joints.md); `core_bond`, `core_patch` and the `bond_*` checks)
-* Not checked: the 2600-piece `building` with Bonds, and the `bond_shear`,
-  `bond_bending` and `bond_twist` readouts away from 0.
+* Not checked: the 2600-piece `building` with Bonds.
 * A Bond sliding on the ground under friction: the compound reads about 6.4 kN and the same bond as a weld about 3.1 kN.
   No reference says which is right. With friction on one box of a pair only, both modes let the bond go at m * a of the
   pair's slowing (`bond_sliding_friction`).
@@ -71,9 +70,6 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   break values compare with Bullet's impacts.
 * Collision group names (`collision_names`, test `solver_sop_collision_group_names`): unchecked are whether the collision
   input's pieces honour category / mask, and whether Bullet also lets either side's ignore pattern be enough.
-* A mirror made mid-simulation by flipping the packed transform's first row (not the third, which `mirrored_midsim` flips):
-  the write-back gives the third-row flip with the old rotation, so the geometry ends up another mirror image than the
-  one set. Probably the rotation comes from `orient`, not the 3x3. Not looked into.
 * Escape mid-step: the step is discarded and re-cooked, earlier frames stay cached, the re-cook rebuilds once.
 * Data ids surviving the DOP copy between timesteps (the sync skip; debug log `scan skipped`); our own writes not
   looking like edits (debug log `full scan, changed:`).
