@@ -33,8 +33,8 @@ The Solver SOP's parameter tabs, joint settings, Break Thresholds, constraint at
   the primitive number; Distance compares against threshold + `restlength`; At Frame's window is 0.5 / Global Substeps). The SOP Solver is the
   Multiple Solver's last input, behind an Enable Solver DOP (`enable_constraint_breaks`, on while Break Thresholds are on and the Constraints input has points: the compiled loop costs about a millisecond a step over nothing): off, the constraint geometry is not
   imported, because a rewrite changes its data ids and the solver then reads the whole network again each step. Test
-  `solver_sop_break_impact_bullet`, `solver_sop_break_atframe_bullet`, `solver_sop_break_distance_bullet` and the INFO
-  `solver_sop_break_angle_torque_bullet` and `solver_sop_break_attrib_update_bullet` (against the RBD Bullet Solver SOP). Not there: Force (see status.md), the Group parameter, plastic flow and the VEX snippet.
+  `solver_sop_break_impact_bullet`, `solver_sop_break_atframe_bullet`, `solver_sop_break_distance_bullet`, `solver_sop_break_attrib_update_bullet` (against the RBD Bullet Solver SOP), `solver_sop_break_next_settings` and the INFO
+  `solver_sop_break_angle_torque_bullet`.
 * Constraint attribute updates (`tools/b3d_solver_updates.py`, as RBD Bullet Solver's): the Constraints tab's Override Attributes folder
   (`enable_constraintupdates` with its label hidden, joined to `constraint_attributes`, then `constraint_attribgroup`) runs a SOP Solver DOP
   (`constraint_updates`) over the ConstraintGeometry behind an Enable Solver DOP, before the breaks: an Attribute Copy SOP copies the listed

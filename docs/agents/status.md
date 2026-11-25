@@ -29,8 +29,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * Constraint Properties scaling and Geometry Attribute Transfer (`SCALE_VEX`). Not checked against RBD Constraint Properties: Closest uses piece point positions (Bullet uses the nearest surface point),
   a piece that is missing leaves the value unscaled (Bullet skips the setting), integers, toggles and vectors have no scaling, and there
   is no Next Constraint scaling. Randomize and Variance are on every number setting here (Bullet: Glue Strength only), seeded per setting.
-* The group / attribute menus beside the fields (`MENU_SOURCE` in `b3d_hda.py`): `asset_menus` builds every Constraint Properties menu and checks Configure's,
-  Constraint Properties' and the Packed Object's list the connected geometry. Not checked: a multi-name field toggling picks in and out
+* The group / attribute menus beside the fields (`MENU_SOURCE` in `b3d_hda.py`, lists covered by `asset_menus`). Not checked: a multi-name field toggling picks in and out
   (a click), the menus on the Solver SOP's nested nodes, and the node's output (Inspector Attributes).
 
 * Animated bodies following their source SOP (`followSourceSops`). Not checked: a source `orient` / `pscale` attribute on the animated piece (only its packed transform
@@ -48,13 +47,9 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   joint scaling).
 
 **Bonds** (`core/Box3DBond.h`, `Box3DBondNetwork.h`, `Box3DPatch.h`, [joints.md](joints.md); `core_bond`, `core_patch` and the `bond_*` checks)
-* Checked against formulas (`checks_bond.py`, `checks_more.py`): hanging loads, a spinning piece's centripetal load,
-  gravity scale and a Force DOP on a compound, an impact's tear impulse (the tear mass as compound and as welds, a hit
-  below it leaves the bond whole), rotated pieces, a Bond to the world, spheres' bounding-box area (`bond_sphere_fallback`), `bond_*` attributes, the Solver SOP's World
-  Scale and Material, Constraint Properties, scrubbing, sleeping, long runs, a wall hit as compound and as welds, damage kept while
-  the load is below the capacity (`bond_damage_kept_unloaded`), `compound_id` (`bond_compound_id`), the Bond readouts (`bond_readouts`: ratio, damage, tension, area; shear, bending and twist only at 0 in the hang).
 * Not checked: compression and twisting loads, pieces of several convex shapes, the no-patch fallback for
-  meshes and a Bond to the world, the fallback mass of a loop, the 2600-piece `building` with Bonds.
+  meshes and a Bond to the world, the fallback mass of a loop, the 2600-piece `building` with Bonds, and the `bond_shear`,
+  `bond_bending` and `bond_twist` readouts away from 0.
 * A Bond sliding on the ground under friction: the compound reads about 6.4 kN and the same bond as a weld about 3.1 kN.
   No reference says which is right. With friction on one box of a pair only, both modes let the bond go at m * a of the
   pair's slowing (`bond_sliding_friction`).
@@ -95,7 +90,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * The ground guide (`build_ground_guide`, test `solver_sop_ground_guide` checks the geometry): not seen in a viewport, so
   whether the ground box is drawn solid and transparent like the collider geometry under `gl_wireframe` -1.
 * Box3D Data's Default Shape menu and the Packed Object / Configure menus built from it, opened in Houdini's UI
-  (`default_shape_menus` checks their entries and what Plane and Cylinder write). `bullet_cylinder` and the cylinder cases of `bullet_shape_attributes` pass against Bullet.
+  (`default_shape_menus` checks their entries and what Plane and Cylinder write).
 * `bullet_georep` `plane` on a packed piece (`ShapeType::Plane`, `buildShapes`): `bullet_plane_piece` has a box rest on it at the piece's height
   (through the piece's origin, +Y, as a Ground Plane). A box dropped on it in Bullet fell through, so there is nothing to compare against. A piece turning moving
   mid-simulation rebuilds as a box.
@@ -126,10 +121,9 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 
 **Bullet semantics not compared**
 * The extra `restRotation` split per packed point in every full scan (the rest convention matches Bullet: `bullet_rest_convention`, `bullet_rest_rescan`).
-* Solve on Creation Frame on the SOP's collider (`solver_sop_solve_first_frame_bullet`): a free-falling box matches. A box on a collider lifted 0.5 a frame
+* Solve on Creation Frame on the SOP's collider (`solver_sop_solve_first_frame_bullet`): a box on a collider lifted 0.5 a frame
   ends at 1.1 to 2.3 in Box3D (it clips into the collider: fork list) and at 1.0 in Bullet.
-* Before-start outputs and Export Broken Constraints match (`solver_sop_before_start_bullet`, `solver_sop_keep_broken_bullet`) except the proxy
-  output with no proxy input: a copy of the geometry in Box3D, empty in Bullet.
+* The proxy output with no proxy input is a copy of the geometry in Box3D and empty in Bullet (`solver_sop_before_start_bullet`).
 * The joint `angle` since rest is untested: `bullet_joint_rest_held` and `bullet_joint_angle` hold with a turn of 0 in both. With both anchors at one point
   (`bullet_joint_rest`, INFO) the centres end 2.19 and 2.59 apart, past the 2.06 possible.
 * Hand-set shapes: `bullet_primS`, `bullet_primR` (XYZ Euler degrees), `bullet_radius` and `bullet_length` match (`bullet_shape_attributes`, `bullet_primr_order`).
@@ -140,7 +134,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   (`bullet_primr_through`: 30 0 0, 0 0 30, 0 0 60, 30 0 30 and 0 0 45 end 0.14 to 0.47 below it, Box3D always at 0.10). A tilted box's top is a corner the
   plate test stops on roughly (0 70 50: Box3D 0.44, Bullet 0.33, true 0.437), so that case is not compared. Not compared: `deforming`, `bullet_autofit_valid`,
   AutoFit on whole objects and fractured pieces.
-* Impacts: the normal direction matches (`bullet_impact_normal`). A box landing and resting for 3 s has Box3D records on 13 frames (at most 8 on one),
+* Impacts: a box landing and resting for 3 s has Box3D records on 13 frames (at most 8 on one),
   Bullet's on 49 (at most 40) because Bullet keeps writing contacts at rest (`bullet_impact_fresh`). Whether a fresh `SIM_Impacts` each step suits Houdini's
   impact tools is open.
 * Whole RBD Object pivot (`wholeObjectPose`, tests `hull_centroid`, `bullet_rbd_pivot`, `bullet_rbd_pivot_far`): Bullet's `p` is 0.03 off the hull centroid
@@ -164,14 +158,10 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   hython), and whether every setting tolerates being re-applied each step.
 * The Solver SOP's Override Attributes from SOP (the pieces' `overwritefromsop`) is checked for its link, not for changed
   attributes reaching the solver.
-* `anchor_id` passes on whole objects (`anchor_id`) and on packed pieces against Bullet (`bullet_anchor_id`, ids 0 and 5,
-  points and vertices; the test's pieces are fragments). Untested: other ids (a fragment's points are taken in source order,
+* `anchor_id`: untested are other ids (a fragment's points are taken in source order,
   its vertices in primitive order), a piece that has moved before its joint is made (`nowToRest`), and non-fragment packed
   pieces.
-* Glue's impulse model (`core/Box3DGlue.h`, `core_glue`, `glue_impact`, `glue_impact_trace`, `glue_break_match`, `sidefx_glue`):
-  `impact` matches Bullet's in every scene tried (`glue_break_match`: pairs and rows landing from 1 to 8, with bounce, and a
-  box dropped on a pair or row: peaks within 1.25x, the split along a row too; half-life and propagation rate / iterations
-  barely change either). The Strength at which a bond stops breaking does not match: Bullet breaks at about its `impact`
+* Glue's impulse model (`core/Box3DGlue.h`, `glue_break_match`): `impact` matches Bullet's. The Strength at which a bond stops breaking does not match: Bullet breaks at about its `impact`
   (1.0x) when something hits a resting glued pair or row, and at 3x to 10x when the glued pieces land themselves (more with
   speed, bounce and the number of pieces, and with a piece's height more than its mass), where Box3D uses one factor,
   `kGlueStrengthScale` (5.3, measured for a landing from 3). So a hit on a resting structure needs about 5x the Strength
@@ -208,18 +198,13 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * Sticky collisions. Box3D's contact begin / end and sensor events: Houdini has no output for them (Bullet has none), so
   nothing reads them beyond Impacts. Sensors (trigger zones) would be the useful part.
 * Box3D Solver SOP:
-  * Break Thresholds (`b3d_solver_breaks.py`): Impact (`solver_sop_break_impact_bullet`: a glued pair stops breaking at 22.4k
-    in Box3D and 22.9k in the RBD Bullet Solver SOP) and At Frame (`solver_sop_break_atframe_bullet`: same frame as Bullet,
-    also relative to Start Frame) match. Distance is `distance` = the anchors' distance (as Bullet, test
-    `solver_sop_break_distance_bullet`). Angle and Torque thresholds run, but the
-    `angle` and `torque` readings differ from Bullet's (`solver_sop_break_angle_torque_bullet`, INFO: a Soft constraint on
-    a spinning box reads about 0.015 rad in Box3D against 0.2 to 0.4 in Bullet, and torque 6078 against 15004 on frame 2).
-    Which threshold breaks when is not established beyond that listing.
-    Untested: Mode Switch to Next Constraint,
-    Relative to Start Frame, Variance, World Scale other than 1, and the cost on a large network with it on (the SOP Solver
+  * Break Thresholds (`b3d_solver_breaks.py`): the `angle` and `torque` readings differ from Bullet's
+    (`solver_sop_break_angle_torque_bullet`, INFO: a Soft constraint on a spinning box reads about 0.015 rad in Box3D against
+    0.2 to 0.4 in Bullet, and torque 6078 against 15004 on frame 2), so which of those thresholds breaks when is not
+    established. Untested: Variance, World Scale other than 1, and the cost on a large network with it on (the SOP Solver
     rewrites the constraint geometry each step, so the solver reads the whole network again). Not there: the Force
     Threshold (Bullet's `force` of a Glue is the difference of its pieces' forces times their mean mass,
-    Box3D's is the joint's), Group, Update from Input, plastic flow, the VEX snippet.
+    Box3D's is the joint's), the Group parameter, plastic flow, the VEX snippet.
 * Glue as one body (`gluecompound`, `Box3DCompoundSync.cpp`, how it works: glue-compound.md; on by default, so the glue tests run
   it; `glue_compound_break`, `glue_compound_load`, `glue_compound_vs_welds`, `glue_compound_sleep` and `core_compound` check it).
   Not covered: Impacts and the collision guide for pieces, pieces with another joint or a custom inertia (they stay
@@ -246,7 +231,7 @@ Workarounds in the wrapper that the engine could own, roughly by value:
 
 * **Worlds allocated on demand.** `B3_MAX_WORLDS` sizes the static `b3_worlds` array at compile time, so the build
   passes `BOX3DDOP_MAX_WORLDS` through to Box3D and the solver reports "world limit reached" past it.
-* **A hull build that always succeeds.** `b3CreateHull` fails when the vertex, face or edge limits are exceeded, so
+* **A hull build that always succeeds.** `b3CreateHull` fails when the vertex, face or edge limits are exceeded, or the hull is thin (thinner than the larger of `B3_LINEAR_SLOP` and 0.1% of its largest extent), so
   `createHullWithKey` retries smaller vertex budgets (a triangulated hull hits the half-edge limit well below the
   vertex limit), `fitShapeOriented` and `hullCentroid` use the same ladder (`kHullBudgets`), and a per-group hint remembers the budget that worked. Wanted:
   simplify until it fits, or say which limit failed.

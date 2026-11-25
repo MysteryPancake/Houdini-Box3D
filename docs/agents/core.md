@@ -66,8 +66,8 @@ solver's guide geometry. `createHull` keys by
 content (`hashFloats` of the points; hashing mixes 8 bytes per round); packed instances pass their own key (`findHull`
 first, build on a miss). Builds try vertex budgets `{B3_MAX_HULL_VERTICES, 44, 32, 16, 8}` (a triangulated hull hits
 the 256 half-edge limit at ~44 vertices). `createHullWithKey`'s `budgetGroup` (the solver passes the source hash and
-kind) remembers the budget that worked, so later hulls of the group start there. Flat or non-finite results are rejected
-and the caller falls back to a box. Several hulls on one body make a dynamic compound; overlapping pieces count their
+kind) remembers the budget that worked, so later hulls of the group start there. Flat, thin or non-finite results are rejected
+(`b3CreateHull` returns NULL for a hull thinner than the larger of `B3_LINEAR_SLOP` and 0.1% of its largest extent) and the caller falls back to a box. Several hulls on one body make a dynamic compound; overlapping pieces count their
 overlap twice in the mass.
 
 The hull cache is **process-wide** (`HullLibrary` in Box3DWorld.cpp, mutex-protected): Box3D adds a hull to the

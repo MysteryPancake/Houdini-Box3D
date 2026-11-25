@@ -93,7 +93,7 @@ differ by more than 1e-4). The file's header comment says what it covers. The ph
 
 `hython tests/houdini/bench.py` (or `python tools/b3d.py bench`) times scenes in Box3D and RBD Bullet Solver; it is not
 part of `run_tests.py` and nothing in it passes or fails. `--list` names the scenarios (`bench_scenes.py`:
-pile, edit, collider, animated, joints, wall, fracture, bondwall, objects, static, churn, solversop), each with parameters (`name:key=value,...`) and a default sweep.
+pile, edit, collider, animated, joints, wall, fracture, bondwall, objects, static, churn, solversop, hulls, features), each with parameters (`name:key=value,...`) and a default sweep.
 
 * Each run is its own hython process: frames 1..N timed as `setFrame` plus the DOP cook, grouped into the scene's
   phases (median, p95, max per frame), then Reset Simulation and frame 2 again (`rewind`: the world rebuild; the forced `cook` is
