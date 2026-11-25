@@ -46,8 +46,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   joint scaling).
 
 **Bonds** (`core/Box3DBond.h`, `Box3DBondNetwork.h`, `Box3DPatch.h`, [joints.md](joints.md); `core_bond`, `core_patch` and the `bond_*` checks)
-* Not checked: compression and twisting loads, pieces of several convex shapes, the no-patch fallback for
-  meshes and a Bond to the world, the fallback mass of a loop, the 2600-piece `building` with Bonds, and the `bond_shear`,
+* Not checked: the fallback mass of a loop (`bondReducedMassOf`, in the sync layer: needs a Houdini check), the 2600-piece `building` with Bonds, and the `bond_shear`,
   `bond_bending` and `bond_twist` readouts away from 0.
 * A Bond sliding on the ground under friction: the compound reads about 6.4 kN and the same bond as a weld about 3.1 kN.
   No reference says which is right. With friction on one box of a pair only, both modes let the bond go at m * a of the
@@ -58,8 +57,6 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   the rigid compound against sagging welds, not the choice of stiffness.
 * Cost: the network solve, the patch on the first step, the sides' mass walk, and `breakBonds` walking every Bond every
   step (`bondEntries`) are not measured.
-* A box held by a Bond under a point `force` fell asleep and did not wake when the force was removed, so damage stopped
-  building (`bond_damage_kept_unloaded` keeps it awake with `enablesleep` 0). Not looked into.
 * Linux build and `clang-tidy` of the Bond files: not run.
 
 **Build**

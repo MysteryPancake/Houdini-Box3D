@@ -41,7 +41,8 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
   those are not in the graph, so `glueAnchored` lists them and is part of the signature). Where other bonds still join the two pieces (a loop, a
   wall) cutting this one frees nothing alone and the two pieces' own masses are used.
   The load is read from the pose at the step's end, and a bond over its capacity keeps accumulating while its pieces
-  sleep (`bondOverCapacity`). `bondAdvance` adds `(ratio - 1) * capacity * dt` each Box3D step to `bondImpulse` (kept when the load drops: damage is
+  sleep (`bondOverCapacity`). A sleeping joint reads as it was (`core_bond`), so a body held by a bond under a point `force`
+  is woken when the force ends (forces-affectors.md; `bond_force_end_wakes`). `bondAdvance` adds `(ratio - 1) * capacity * dt` each Box3D step to `bondImpulse` (kept when the load drops: damage is
   not undone) and breaks at the tear impulse, so the time to tear does not depend on the step size, and a fracture
   energy of 0 breaks at a ratio of 1. The weld is rigid, and the Box3D spring stiffness a stiff material would need is
   beyond what its soft constraints resolve, so the bond does not stretch: no softening curve, no stored elastic energy.

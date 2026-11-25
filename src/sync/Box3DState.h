@@ -84,6 +84,9 @@ struct Box3DBodyMirror : Box3DBodyPose {
 
   bool awake =
       true; // the value of `awake` as last read from or written to the point
+  // A point `force` / `torque` was applied to it in the last step that visited
+  // it (Box3DForces.cpp: the body is woken once when it ends).
+  bool pointForced = false;
   bool packed = false;
   bool hasRest = false;
   bool wholeObject = false; // see below
@@ -511,6 +514,9 @@ struct Box3DObjectSync {
   GA_DataId restCacheId = GA_DataId(-1);
   GA_DataId forceId = GA_DataId(-1);
   GA_DataId torqueId = GA_DataId(-1);
+  // Some body has `pointForced`: the object is visited for forces even when it
+  // has none this step.
+  bool pointForcedAny = false;
 
   // Bodies by their point's `name` (first point wins), for joint anchors.
   // Rebuilt by each full scan while some object has a joint network

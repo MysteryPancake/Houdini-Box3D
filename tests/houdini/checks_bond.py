@@ -523,6 +523,42 @@ def test_bond_damage_kept_unloaded():
 TESTS["bond_damage_kept_unloaded"] = test_bond_damage_kept_unloaded
 
 
+def test_bond_force_end_wakes():
+    """A box held by a Bond under a point `force` falls asleep (the weld does not let it move), the force stops
+    reaching it and the joint's reading stays at the load it had. When the force ends the body is woken, so the bond
+    feels the whole weight again. The hanging box (1000 kg, 1 m^2) on a bond of 8 kPa with a Fracture Energy of
+    500 J/m^2, a force of 5 kN up from frame 1 to 31 (load 4.8 kN, under the capacity) with the default sleeping: the
+    bond holds through the force and, once it ends, breaks within about 13 frames (the 1.8 kN*s per second over its
+    capacity against a tear impulse of 1000 N*s, at 24 fps), where a body left asleep never would."""
+    original = hou.fps()
+    hou.setFps(24)
+    try:
+        dop, _names = bond_scene(tag("bond_force_end"), HANG, [LINE],
+                                 bond={"bond_tensile": 8000.0, "bond_shear": 8000.0, "bond_fracture_energy": 500.0})
+        out = dop.node("output")
+        solver = out.inputs()[0]
+        upstream = solver.inputs()[0]
+        solver.setInput(0, None)
+        lift = sop_solver(dop, "v@force = (@Frame < 32 && i@active == 1) ? {0, 5000, 0} : {0, 0, 0};")
+        out.setInput(0, multisolver(dop, upstream, [solver, lift]))
+        first = None
+        for f in range(1, 65):
+            hou.setFrame(f)
+            sim = dop.simulation()
+            sim.objects()
+            if (broken_count(sim) or 0) >= 1:
+                first = f
+                break
+    finally:
+        hou.setFps(original)
+    ok = first is not None and 38 <= first <= 52
+    return [Result("bond_force_end_wakes", Result.PASS if ok else Result.FAIL,
+                   f"force until frame 31, bond broke on frame {first} (expected 38 to 52, never when the box stays asleep)")]
+
+
+TESTS["bond_force_end_wakes"] = test_bond_force_end_wakes
+
+
 def test_bond_readouts():
     """The Bond's readouts on its line (`bond_ratio`, `bond_damage`, `bond_tension`, `bond_shear`, `bond_bending`,
     `bond_twist`, `bond_area`), with Write Bond Attributes on (off, none exists).

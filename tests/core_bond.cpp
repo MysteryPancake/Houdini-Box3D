@@ -663,7 +663,250 @@ int main() {
           0.3f * half); // friction: 0.6 of a support's push at most
     (void)r;
   }
+  {
+    // Compression: a box standing on a fixed one, held by a Bond. The normal
+    // from A to B points up and the joint pushes B up by its weight, so the
+    // load reads as tension of minus the weight at any step size, and the bond
+    // is crushed (not pulled apart) when it has less compressive strength than
+    // that stress.
+    float worst = 0.0f;
+    for (const double dt : {1.0 / 24.0, 1.0 / 60.0, 1.0 / 240.0}) {
+      WorldSettings ws;
+      ws.workerCount = 1;
+      Box3DWorld w;
+      w.create(ws);
+      const BodyHandle a =
+          boxOf(w, 0, 0, 0, 0.5f, 0.5f, 0.5f, BodySettings::Type::Static);
+      const BodyHandle b =
+          boxOf(w, 0, 1, 0, 0.5f, 0.5f, 0.5f, BodySettings::Type::Dynamic);
+      JointFrame f;
+      f.pos[1] = 0.5;
+      const JointHandle j =
+          w.createJoint(JointType::Bond, a, b, f, f,
+                        Box3DWorld::defaultJointSettings(JointType::Bond));
+      for (double t = 0.0; t < 2.0; t += dt)
+        w.step(static_cast<float>(dt));
+      const float up[3] = {0, 1, 0};
+      const BondLoad l = loadOf(w, j, up);
+      const float weight = 9.80665f * w.massByHandle(b);
+      std::printf("standing box dt 1/%.0f: tension %.3f of weight %.3f, shear "
+                  "%.3f\n",
+                  1.0 / dt, l.tension, weight, l.shear);
+      worst = std::max(worst, std::fabs(l.tension + weight) / weight);
+      CHECK(l.tension < 0.0f);
+      CHECK(l.shear < 0.05f * weight);
+      float ea[3], eb[3];
+      CHECK(w.tightExtentByHandle(a, ea) && w.tightExtentByHandle(b, eb));
+      BondParams p;
+      p.area = bondAreaOf(ea, eb, up);
+      p.tensile = 1.0f; // far below the weight: a push does not pull
+      p.shear = 1.0e9f;
+      p.compressive = 1.2f * weight / p.area;
+      CHECK(bondRatio(p, l) < 1.0f);
+      p.compressive = 0.8f * weight / p.area;
+      CHECK(bondRatio(p, l) > 1.0f);
+      p.compressive = 0.0f; // 0 never crushes
+      CHECK(bondRatio(p, l) == 0.0f);
+    }
+    CHECK(worst < 0.03f);
+  }
+  {
+    // A Bond to the world (no body A): a box hangs from it, the tension is the
+    // weight with no shear, the same as from a fixed box. With no piece A the
+    // area is the one of B's box (the solver uses B's extent for both sides).
+    WorldSettings ws;
+    ws.workerCount = 1;
+    Box3DWorld w;
+    w.create(ws);
+    const BodyHandle b =
+        boxOf(w, 0, 4, 0, 0.5f, 0.5f, 0.5f, BodySettings::Type::Dynamic);
+    JointFrame f;
+    f.pos[1] = 4.5;
+    const JointHandle j =
+        w.createJoint(JointType::Bond, 0, b, f, f,
+                      Box3DWorld::defaultJointSettings(JointType::Bond));
+    CHECK(j != 0 && w.isJointValid(j));
+    for (int i = 0; i < 180; ++i)
+      w.step(1.0f / 60.0f);
+    const float down[3] = {0, -1, 0};
+    const BondLoad l = loadOf(w, j, down);
+    const float weight = 9.80665f * w.massByHandle(b);
+    float eb[3];
+    CHECK(w.tightExtentByHandle(b, eb));
+    BondParams p;
+    p.area = bondAreaOf(eb, eb, down);
+    std::printf("bond to the world: tension %.3f of weight %.3f, shear %.3f, "
+                "area %.3f\n",
+                l.tension, weight, l.shear, p.area);
+    CHECK(near(l.tension, weight, 0.02 * weight));
+    CHECK(l.shear < 0.02f * weight && l.bending < 0.02f * weight);
+    CHECK(near(p.area, 1.0, 1e-3));
+    p.tensile = 1.2f * weight / p.area;
+    CHECK(bondRatio(p, l) < 1.0f);
+    p.tensile = 0.8f * weight / p.area;
+    CHECK(bondRatio(p, l) > 1.0f);
+    // The world holds nothing of its own mass: a side that is the world is
+    // infinite and the other side's mass is what tears.
+    CHECK(near(bondReducedMass(std::numeric_limits<float>::infinity(),
+                               w.massByHandle(b)),
+               w.massByHandle(b), 1e-6));
+  }
+  {
+    // Twisting: a box hanging from a fixed one under a torque about the bond's
+    // normal. The weld holds it still, so the bond carries all of the torque as
+    // twisting, none as bending, and the weight as tension as before. The sign
+    // of the torque does not matter. The twisting is held by the shear
+    // strength over the section modulus (the square patch's, or the patch's
+    // own when given), not the tensile one.
+    for (const float sign : {1.0f, -1.0f}) {
+      WorldSettings ws;
+      ws.workerCount = 1;
+      Box3DWorld w;
+      w.create(ws);
+      const BodyHandle a =
+          boxOf(w, 0, 5, 0, 0.5f, 0.5f, 0.5f, BodySettings::Type::Static);
+      const BodyHandle b =
+          boxOf(w, 0, 4, 0, 0.5f, 0.5f, 0.5f, BodySettings::Type::Dynamic);
+      JointFrame f;
+      f.pos[1] = 4.5;
+      const JointHandle j =
+          w.createJoint(JointType::Bond, a, b, f, f,
+                        Box3DWorld::defaultJointSettings(JointType::Bond));
+      const float weight = 9.80665f * w.massByHandle(b);
+      const float torqueSize = 0.5f * weight; // N*m about the vertical
+      const float force[3] = {0, 0, 0}, torque[3] = {0, sign * torqueSize, 0};
+      for (int i = 0; i < 180; ++i) {
+        w.applyForceByHandle(b, force, torque, true);
+        w.step(1.0f / 60.0f);
+      }
+      const float down[3] = {0, -1, 0};
+      const BondLoad l = loadOf(w, j, down);
+      float turning[3], spin[3];
+      CHECK(w.getVelocityByHandle(b, turning, spin));
+      std::printf("twisted box: twisting %.3f of %.3f, bending %.3f, tension "
+                  "%.3f of weight %.3f, spin %.4f\n",
+                  l.twisting, torqueSize, l.bending, l.tension, weight,
+                  spin[1]);
+      CHECK(std::fabs(spin[1]) < 0.05f);
+      CHECK(near(l.twisting, torqueSize, 0.05 * torqueSize));
+      CHECK(l.bending < 0.05f * torqueSize);
+      CHECK(near(l.tension, weight, 0.05 * weight));
+      CHECK(l.shear < 0.05f * weight);
+      // The ratio of the twist alone (no weight): 1 at the shear strength
+      // times the modulus. The tensile strength is no part of it.
+      BondLoad twist;
+      twist.twisting = l.twisting;
+      BondParams p;
+      p.area = 1.0f;
+      p.tensile = 1.0f;
+      p.shear = 1.0f;
+      p.bending = 1.0f;
+      const float modulus = p.area * std::sqrt(p.area) / 6.0f;
+      p.shear = 1.2f * l.twisting / modulus;
+      CHECK(bondRatio(p, twist) < 1.0f);
+      p.shear = 0.8f * l.twisting / modulus;
+      CHECK(bondRatio(p, twist) > 1.0f);
+      // A patch's own twisting modulus replaces the square's.
+      p.shear = 1.0f;
+      p.modulusTwist = 1.2f * l.twisting / p.shear;
+      CHECK(bondRatio(p, twist) < 1.0f);
+      p.modulusTwist = 0.8f * l.twisting / p.shear;
+      CHECK(bondRatio(p, twist) > 1.0f);
+    }
+  }
+  {
+    // A load split about the patch's in-plane axes: a torque across the normal
+    // along u is all bending about u, and the twisting about the normal stays
+    // apart from it.
+    const float force[3] = {0, 0, 0};
+    const float torque[3] = {3, 4,
+                             12}; // about u = x, about the normal y, v = z
+    const float normal[3] = {0, 1, 0}, u[3] = {1, 0, 0}, v[3] = {0, 0, 1};
+    const BondLoad l = bondLoadInPatch(force, torque, normal, u, v);
+    CHECK(near(l.bendingU, 3.0, 1e-5) && near(l.bendingV, 12.0, 1e-5));
+    CHECK(near(l.twisting, 4.0, 1e-5));
+    CHECK(near(l.bending, std::sqrt(3.0 * 3.0 + 12.0 * 12.0), 1e-4));
+    // The thin side's modulus fails first: the same bending about v with a
+    // smaller modulus for v is over 1, with the other kept as it was.
+    BondParams p;
+    p.area = 1.0f;
+    p.tensile = 1.0f;
+    p.shear = 1.0f;
+    p.compressive = 1.0f;
+    p.modulusU = 3.0f / 0.9f;
+    p.modulusV = 12.0f / 0.9f;
+    p.modulusTwist = 4.0f / 0.9f;
+    BondLoad bendU = BondLoad();
+    bendU.bendingU = 3.0f;
+    bendU.bending = 3.0f;
+    CHECK(near(bondRatio(p, bendU), 0.9, 1e-4));
+    BondLoad bendV = BondLoad();
+    bendV.bendingV = 12.0f;
+    bendV.bending = 12.0f;
+    CHECK(near(bondRatio(p, bendV), 0.9, 1e-4));
+    p.modulusV *= 0.5f;
+    CHECK(bondRatio(p, bendV) > 1.0f && bondRatio(p, bendU) < 1.0f);
+  }
 
+  {
+    // Sleep: a box hung from a Bond under a force up of half its weight,
+    // applied without waking, as the solver does by default. The weld holds it
+    // still, so it falls asleep with the force on, the force stops reaching it,
+    // and the joint's reading stays what it was: 0.5 weights. Taking the force
+    // away does not wake it (nothing moves), so the reading stays there, where
+    // the load is a whole weight. Box3D reads a sleeping body's joint as it
+    // was. Woken (a nonzero force with `wake`: a zero one is skipped) the
+    // reading follows again, and a body that may not sleep never goes stale.
+    for (const bool mayRest : {true, false}) {
+      WorldSettings ws;
+      ws.workerCount = 1;
+      Box3DWorld w;
+      w.create(ws);
+      const BodyHandle a =
+          boxOf(w, 0, 5, 0, 0.5f, 0.5f, 0.5f, BodySettings::Type::Static);
+      const BodyHandle b =
+          boxOf(w, 0, 4, 0, 0.5f, 0.5f, 0.5f, BodySettings::Type::Dynamic);
+      w.setSleepEnabledByHandle(b, mayRest);
+      JointFrame f;
+      f.pos[1] = 4.5;
+      const JointHandle j =
+          w.createJoint(JointType::Bond, a, b, f, f,
+                        Box3DWorld::defaultJointSettings(JointType::Bond));
+      const float weight = 9.80665f * w.massByHandle(b);
+      const float up[3] = {0, 0.5f * weight, 0}, none[3] = {0, 0, 0};
+      const float down[3] = {0, -1, 0};
+      for (int i = 0; i < 120; ++i) {
+        w.applyForceByHandle(b, up, none, false);
+        w.step(1.0f / 60.0f);
+      }
+      const bool asleepUnderForce = !w.isAwakeByHandle(b);
+      const float underForce = loadOf(w, j, down).tension;
+      for (int i = 0; i < 120; ++i)
+        w.step(1.0f / 60.0f);
+      const bool asleepAfter = !w.isAwakeByHandle(b);
+      const float afterRemoval = loadOf(w, j, down).tension;
+      std::printf("sleep %d: asleep under the force %d, tension %.3f; force "
+                  "gone for 2 s: asleep %d, tension %.3f (weight %.3f)\n",
+                  mayRest ? 1 : 0, asleepUnderForce ? 1 : 0, underForce,
+                  asleepAfter ? 1 : 0, afterRemoval, weight);
+      CHECK(near(underForce, 0.5 * weight, 0.02 * weight));
+      CHECK(asleepUnderForce == mayRest && asleepAfter == mayRest);
+      if (mayRest) {
+        CHECK(near(afterRemoval, 0.5 * weight, 0.02 * weight)); // stale
+        // A zero force is skipped, so the nudge is a tiny one.
+        const float nudge[3] = {0, 1e-4f, 0};
+        w.applyForceByHandle(b, nudge, none, true);
+        w.step(1.0f / 60.0f);
+        std::printf("  nudged: awake %d\n", w.isAwakeByHandle(b) ? 1 : 0);
+        for (int i = 0; i < 10; ++i)
+          w.step(1.0f / 60.0f);
+        const float woken = loadOf(w, j, down).tension;
+        std::printf("  woken: tension %.3f\n", woken);
+        CHECK(near(woken, weight, 0.02 * weight));
+      } else
+        CHECK(near(afterRemoval, weight, 0.02 * weight));
+    }
+  }
   {
     // An impact: in zero gravity a ball (restitution about 0) hits a block that
     // a Bond welds to a static wall, so the block cannot move and everything

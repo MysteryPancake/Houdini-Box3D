@@ -7,6 +7,7 @@
 #include "core/Box3DWorld.h"
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 
 using namespace b3dop;
@@ -221,6 +222,115 @@ int main() {
     w.hullFacesByHandle(h2, faces2);
     const ContactPatch p = contactPatchOf(faces, faces2, 0.02);
     CHECK(p.ok && near(p.area, 0.5, 1e-5) && near(p.normal[1], 1.0, 1e-5));
+  }
+
+  // A piece of several convex shapes: two boxes side by side on one body give
+  // both their faces (12), and a cube standing across the seam touches both
+  // tops, which share a plane and add into one patch.
+  {
+    WorldSettings ws;
+    ws.workerCount = 1;
+    Box3DWorld w;
+    CHECK(w.create(ws));
+    BodySettings bs;
+    bs.type = BodySettings::Type::Static;
+    const double at[3] = {0, 0, 0};
+    const float q[4] = {0, 0, 0, 1};
+    const BodyHandle floor = w.createBody(bs, at, q);
+    for (const float x : {-0.5f, 0.5f}) {
+      ShapeSpec s;
+      s.type = ShapeType::Box;
+      s.halfExtents[0] = s.halfExtents[1] = s.halfExtents[2] = 0.5f;
+      s.center[0] = x;
+      CHECK(w.createShape(floor, bs, s));
+    }
+    std::vector<PatchFace> faces;
+    CHECK(w.hullFacesByHandle(floor, faces) == 12);
+    const double above[3] = {0, 1.0, 0};
+    const BodyHandle cube = w.createBody(bs, above, q);
+    ShapeSpec c;
+    c.type = ShapeType::Box;
+    c.halfExtents[0] = c.halfExtents[1] = c.halfExtents[2] = 0.5f;
+    CHECK(w.createShape(cube, bs, c));
+    std::vector<PatchFace> top;
+    CHECK(w.hullFacesByHandle(cube, top) == 6);
+    const ContactPatch p = contactPatchOf(faces, top, 0.02);
+    std::printf("cube across two boxes: patch area %.3f\n", p.area);
+    CHECK(p.ok && near(p.area, 1.0, 1e-4) && near(p.normal[1], 1.0, 1e-5));
+    CHECK(near(p.centroid[0], 0.0, 1e-4) && near(p.centroid[1], 0.5, 1e-4));
+    // The faces follow the body: turned a quarter about z, the top is at x.
+    const float quarter[4] = {0, 0, -0.70710678f, 0.70710678f};
+    const BodyHandle turned = w.createBody(bs, at, quarter);
+    CHECK(w.createShape(turned, bs, c));
+    std::vector<PatchFace> turnedFaces;
+    CHECK(w.hullFacesByHandle(turned, turnedFaces) == 6);
+    int toX = 0;
+    for (const PatchFace &f : turnedFaces)
+      toX += f.normal[0] > 0.99 ? 1 : 0;
+    CHECK(toX == 1);
+  }
+
+  // Where there is no patch: shapes that are not hulls (a sphere, a capsule, a
+  // mesh) and no body give no faces, `out` emptied, so a bond to them keeps the
+  // bounding-box area. A sphere's box is its own size, so a ball on a cube is
+  // the cube's face; a flat mesh has no volume to give a face (its tight
+  // extent is 0 thick), so the box with Box3D's margin is used instead, as the
+  // solver does, and the area comes from the other piece.
+  {
+    WorldSettings ws;
+    ws.workerCount = 1;
+    Box3DWorld w;
+    CHECK(w.create(ws));
+    BodySettings bs;
+    bs.type = BodySettings::Type::Static;
+    const float q[4] = {0, 0, 0, 1};
+    const double origin[3] = {0, 0, 0}, above[3] = {0, 1.0, 0};
+    std::vector<PatchFace> out(3);
+    CHECK(w.hullFacesByHandle(0, out) == 0 && out.empty());
+
+    const BodyHandle ball = w.createBody(bs, origin, q);
+    ShapeSpec s;
+    s.type = ShapeType::Sphere;
+    s.radius = 0.5f;
+    CHECK(w.createShape(ball, bs, s));
+    out.assign(3, PatchFace());
+    CHECK(w.hullFacesByHandle(ball, out) == 0 && out.empty());
+
+    const BodyHandle pill = w.createBody(bs, origin, q);
+    s.type = ShapeType::Capsule;
+    s.radius = 0.25f;
+    s.halfLength = 0.25f;
+    CHECK(w.createShape(pill, bs, s));
+    CHECK(w.hullFacesByHandle(pill, out) == 0 && out.empty());
+
+    const float verts[] = {-10, 0, -10, 10, 0, -10, 10, 0, 10, -10, 0, 10};
+    const int32_t tris[] = {0, 2, 1, 0, 3, 2};
+    const BodyHandle mesh = w.createBody(bs, origin, q);
+    CHECK(w.createMeshShape(mesh, bs, verts, 4, tris, 2));
+    CHECK(w.hullFacesByHandle(mesh, out) == 0 && out.empty());
+
+    const BodyHandle cube = w.createBody(bs, above, q);
+    ShapeSpec c;
+    c.type = ShapeType::Box;
+    c.halfExtents[0] = c.halfExtents[1] = c.halfExtents[2] = 0.5f;
+    CHECK(w.createShape(cube, bs, c));
+    const float up[3] = {0, 1, 0};
+    float ball3[3], cube3[3], mesh3[3];
+    CHECK(w.tightExtentByHandle(ball, ball3) &&
+          w.tightExtentByHandle(cube, cube3));
+    std::printf("ball %.3f %.3f %.3f, cube %.3f\n", ball3[0], ball3[1],
+                ball3[2], cube3[0]);
+    CHECK(near(bondAreaOf(ball3, cube3, up), 1.0, 1e-3));
+
+    CHECK(w.tightExtentByHandle(mesh, mesh3));
+    const float tightArea = bondAreaOf(mesh3, cube3, up);
+    float fullMesh[3], fullCube[3];
+    CHECK(w.extentByHandle(mesh, fullMesh) && w.extentByHandle(cube, fullCube));
+    const float fullArea = bondAreaOf(fullMesh, fullCube, up);
+    std::printf("flat mesh: tight area %.4f, with margins %.4f\n", tightArea,
+                fullArea);
+    CHECK(tightArea == 0.0f);
+    CHECK(fullArea > 1.0f && fullArea < 1.2f);
   }
 
   CHECK(Box3DWorld::assertCount() == assertsBefore);

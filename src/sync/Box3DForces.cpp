@@ -195,17 +195,19 @@ void addForceDops(const SIM_Object &obj, const b3dop::BodyState &bs,
 
 // The body's point force, if it has one (binary search: pointForces is sorted
 // by offset).
-void addPointForce(const std::vector<PointForce> &pointForces,
-                   const Box3DBodyMirror &e, UT_Vector3 &force,
-                   UT_Vector3 &torque) {
+const PointForce *findPointForce(const std::vector<PointForce> &pointForces,
+                                 const Box3DBodyMirror &e) {
   const GA_Offset po = static_cast<GA_Offset>(e.pointOff);
   const auto it = std::lower_bound(
       pointForces.begin(), pointForces.end(), po,
       [](const PointForce &pf, GA_Offset o) { return pf.off < o; });
-  if (it != pointForces.end() && it->off == po) {
-    force += it->force;
-    torque += it->torque;
-  }
+  return it != pointForces.end() && it->off == po ? &*it : nullptr;
+}
+
+void addPointForce(const PointForce &pf, UT_Vector3 &force,
+                   UT_Vector3 &torque) {
+  force += pf.force;
+  torque += pf.torque;
 }
 
 // One body's inputs and result: read and applied serially, the Force DOPs
@@ -276,8 +278,7 @@ void evaluateResolvers(const std::vector<ResolverPtr> &resolvers,
 // are evaluated (the thread-safe ones in parallel when there are many bodies),
 // and the results go into Box3D (serial).
 void applyToObjectBodies(Box3DSharedState &st, const SIM_Object &obj,
-                         const Box3DObjectSync &os,
-                         PointForceCarry::ObjectForces &of,
+                         Box3DObjectSync &os, PointForceCarry::ObjectForces &of,
                          const std::vector<PointForce> &pointForces, bool wake,
                          ForceStats &stats) {
   const std::vector<const SIM_Force *> &forces = of.forces;
@@ -287,7 +288,17 @@ void applyToObjectBodies(Box3DSharedState &st, const SIM_Object &obj,
   thread_local std::vector<ForceJob> jobs;
   jobs.clear();
   jobs.reserve(os.bodies.size());
-  for (const Box3DBodyMirror *e : os.bodies) {
+  for (Box3DBodyMirror *e : os.bodies) {
+    const PointForce *own =
+        pointForces.empty() ? nullptr : findPointForce(pointForces, *e);
+    // A point force that has ended: a sleeping body does not feel it go (Box3D
+    // reads a sleeping joint as it was, so a Bond would keep its old load), so
+    // it is woken once.
+    if (e->pointForced && !own) {
+      e->pointForced = false;
+      if (e->handle && e->dynamic() && !e->inCompound)
+        world.wakeByHandle(e->handle);
+    }
     if (!e->handle || !e->dynamic() || !e->props.enabled)
       continue;
     // The body's state is read once, and only when a Force DOP needs it.
@@ -306,10 +317,15 @@ void applyToObjectBodies(Box3DSharedState &st, const SIM_Object &obj,
     } else if (!wake && !(piece ? compoundPieceAwake(st, *e)
                                 : world.isAwakeByHandle(e->handle)))
       continue;
-    if (!pointForces.empty())
-      addPointForce(pointForces, *e, job.force, job.torque);
+    if (own) {
+      addPointForce(*own, job.force, job.torque);
+      e->pointForced = !e->inCompound;
+    }
     jobs.push_back(job);
   }
+  os.pointForcedAny =
+      std::any_of(os.bodies.begin(), os.bodies.end(),
+                  [](const Box3DBodyMirror *e) { return e->pointForced; });
 
   // The Force DOPs.
   if (!forces.empty()) {
@@ -441,7 +457,8 @@ ForceStats applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects,
       if (carry && !pointForces.empty())
         carry->byObject[obj->getObjectId()] = pointForces;
     }
-    if (of.forces.empty() && applied->empty())
+    // A body whose point force just ended is still visited (to wake it).
+    if (of.forces.empty() && applied->empty() && !os.pointForcedAny)
       continue;
 
     applyToObjectBodies(st, *obj, os, of, *applied, wake, stats);
