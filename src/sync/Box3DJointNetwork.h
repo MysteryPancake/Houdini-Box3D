@@ -31,9 +31,6 @@ inline constexpr const char *kCurrentOrient = "current_orient";
 // Glue's feedback: the impulse its hits have accumulated
 // (docs/agents/joints.md).
 inline constexpr const char *kImpact = "impact";
-// A Bond's feedback: the impulse its load has delivered beyond its capacity so
-// far (core/Box3DBond.h), written so a rebuilt world carries on from it.
-inline constexpr const char *kBondImpulse = "bond_impulse";
 // Detail attribute of a Constraint Network: Glue rounds for a bond with a
 // negative count.
 inline constexpr const char *kPropagateIteration = "propagate_iteration";

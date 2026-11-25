@@ -759,8 +759,7 @@ struct NetworkReader {
   const GA_PrimitiveGroup *broken;
   const GA_ROHandleI anchorIdH, anchorTypeI;
   const GA_ROHandleS anchorTypeS;
-  const GA_ROHandleF impact;      // Glue's accumulated impact (feedback)
-  const GA_ROHandleF bondImpulse; // a Bond's accumulated impulse (feedback)
+  const GA_ROHandleF impact; // Glue's accumulated impact (feedback)
   // The network's global Glue propagation iterations (detail attribute)
   const GA_ROHandleI globalIterations;
   const GA_ROHandleF globalIterationsF;
@@ -780,7 +779,6 @@ struct NetworkReader {
         anchorTypeI(g, GA_ATTRIB_POINT, kAnchorType),
         anchorTypeS(g, GA_ATTRIB_POINT, kAnchorType),
         impact(g, GA_ATTRIB_PRIMITIVE, kImpact),
-        bondImpulse(g, GA_ATTRIB_PRIMITIVE, kBondImpulse),
         globalIterations(g, GA_ATTRIB_GLOBAL, kPropagateIteration),
         globalIterationsF(g, GA_ATTRIB_GLOBAL, kPropagateIteration) {}
 
@@ -1141,8 +1139,6 @@ private:
                  uint64_t sig, bool edited, bool fromLive) {
     const b3dop::BodyHandle a = ab.handle, b = bb.handle;
     dropJoint(e);
-    if (e.type != j.type)
-      mySt.networkEntriesDirty = true; // the Bond list follows the types
     e.type = j.type;
     e.bodyA = a;
     e.bodyB = b;
@@ -1314,19 +1310,6 @@ private:
     const JointSpec j = specFor(*kind, off, a, b, fa, fb);
     e.glue = j.glue;
     e.massDependent = j.massDependent;
-    if (j.type == b3dop::JointType::Bond) {
-      // In the glue graph, but never broken by the Glue's impulse.
-      b3dop::GlueParams never;
-      never.strength = -1.0f;
-      Box3DJointExtra &bx = e.ensureExtra();
-      bx.glueParams = never;
-      if (!e.made && myRd.bondImpulse.isValid()) {
-        // A world rebuilt mid-simulation: carry on from what the geometry
-        // holds.
-        const float kept = myRd.bondImpulse.get(off);
-        bx.bondImpulse = std::isfinite(kept) && kept > 0.0f ? kept : 0.0f;
-      }
-    }
     if (j.glue || j.massDependent) {
       Box3DJointExtra &x = e.ensureExtra();
       if (j.glue)
@@ -1343,8 +1326,6 @@ private:
       }
       mySt.touchGlueBonds();
     }
-    if (j.type == b3dop::JointType::Bond)
-      mySt.touchGlueBonds();
 
     const bool live = myNet.writable;
     uint64_t sig = jointSignature(j.type, a, b, fa, fb, !live);
@@ -1585,12 +1566,10 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
     st.glueOrphans = 0;
     st.networkEntriesDirty = true; // joints may have come or gone
     st.groupsRecheck = true;       // a piece may have gained or lost a joint
-    st.bondsInGraph = false;
     st.glueNodes.clear();
     st.glueNodeOf.clear();
     st.glueBonds.clear();
     st.glueBondNodes.clear();
-    st.glueAnchored.clear();
     auto nodeOf = [&st](b3dop::BodyHandle h) {
       const auto ins =
           st.glueNodeOf.try_emplace(h, static_cast<int>(st.glueNodes.size()));
@@ -1611,14 +1590,9 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
       if (live) {
         if (e.massDependent && !e.broken)
           ++springs;
-        if (e.type == b3dop::JointType::Bond && e.extra && !e.broken &&
-            (!e.bodyA != !e.bodyB) && st.world.isJointValid(e.handle))
-          st.glueAnchored.insert(e.bodyA ? e.bodyA : e.bodyB);
         // Glue to the world is not a bond (Bullet does not support it either).
         if (inGlueGraph(e) && e.extra && !e.broken && e.bodyA && e.bodyB &&
             st.world.isJointValid(e.handle)) {
-          if (e.type == b3dop::JointType::Bond)
-            st.bondsInGraph = true;
           const int a = nodeOf(e.bodyA), b = nodeOf(e.bodyB);
           st.glueNodes[static_cast<size_t>(a)].partners.push_back(e.bodyB);
           st.glueNodes[static_cast<size_t>(b)].partners.push_back(e.bodyA);

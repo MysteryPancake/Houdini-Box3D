@@ -297,9 +297,8 @@ void applyToObjectBodies(Box3DSharedState &st, const SIM_Object &obj,
   for (Box3DBodyMirror *e : os.bodies) {
     const PointForce *own =
         pointForces.empty() ? nullptr : findPointForce(pointForces, *e);
-    // A point force that has ended: a sleeping body does not feel it go (Box3D
-    // reads a sleeping joint as it was, so a Bond would keep its old load), so
-    // it is woken once.
+    // A point force that has ended: a sleeping body does not feel it go, so it
+    // is woken once.
     if (e->pointForced && !own) {
       e->pointForced = false;
       if (e->handle && e->dynamic() && !e->inCompound)

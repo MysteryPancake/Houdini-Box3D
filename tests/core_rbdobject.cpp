@@ -4,7 +4,6 @@
 #include "core/Box3DRbdObject.h"
 #include "core/Box3DWorld.h"
 
-#include <cmath>
 #include <cstdio>
 
 using namespace b3dop;

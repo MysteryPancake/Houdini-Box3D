@@ -1672,8 +1672,8 @@ def test_solver_sop_layout():
     sop.parm("useglue").set(1)
     switch_on = glue_switch.parm("input").eval() if glue_switch else None
     expect("Enable Glue off / on drives its Switch", (switch_off, switch_on), (0, 1))
-    sop.parm("glue_dataname").set("Bond")
-    expect("Glue Data Name reaches the node", glue.parm("dataname").eval() if glue else None, "Bond")
+    sop.parm("glue_dataname").set("Other")
+    expect("Glue Data Name reaches the node", glue.parm("dataname").eval() if glue else None, "Other")
     sop.parm("glue_dataname").set("Glue")
     sop.parm("glue_defaultparmop").set(1)
     expect("Glue Default Operation Set Always reaches its settings (Parameter Operation 1)",
@@ -1703,7 +1703,7 @@ def test_solver_sop_layout():
     expect("Add Impact Data on Output", sop.parm("addimpact") is not None, True)
     advanced = by_path.get(("Advanced",))
     expect("Advanced tab folders", [pt.label() for pt in advanced.parmTemplates()] if advanced else None,
-           ["Stability", "Performance", "Bonds", "Collision", "Constraints"])
+           ["Stability", "Performance", "Collision", "Constraints"])
     advanced_collision = by_path.get(("Advanced", "Collision"))
     expect("Advanced / Collision", [pt.name() for pt in advanced_collision.parmTemplates()] if advanced_collision
            else None, ["collision_solvefirstframe"])
@@ -1713,7 +1713,7 @@ def test_solver_sop_layout():
            ["Gravity", "Force DOPs", "Bounce / Friction", "Glue"])
     glue = by_path.get(("Forces", "Glue"))
     expect("Forces / Glue", [pt.name() for pt in glue.parmTemplates()] if glue else None,
-           ["gluecompound", "gluecompoundload"])
+           ["gluecompound", "gluecompoundload", "compoundids"])
     expect("Solver tab folders", [pt.label() for pt in solver_tab.parmTemplates()] if solver_tab else None,
            ["General", "Simulation", "Contacts", "Sleeping"])
     general = by_path.get(("Setup", "General"))

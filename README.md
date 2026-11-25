@@ -75,7 +75,7 @@ Example scenes: run `make_examples.bat` (Linux: `hython examples/make_examples.p
 | Box3D Configure (SOP) | Like RBD Configure: packs geometry and sets Box3D Data's settings on a group of pieces, with material presets |
 | Box3D Constraint Properties (SOP) | Like RBD Constraint Properties: sets any Box3D constraint setting on a group of constraints |
 | Box3D Data | Per-object settings, for objects made by other nodes |
-| Box3D Weld / Spherical / Revolute / Prismatic / Distance / Motor / Parallel / Wheel / Filter / Bond / Motion Lock Constraint Relationship | Joint types, used with a Constraint Network |
+| Box3D Weld / Spherical / Revolute / Prismatic / Distance / Motor / Parallel / Wheel / Filter / Motion Lock Constraint Relationship | Joint types, used with a Constraint Network |
 
 ## Reference
 

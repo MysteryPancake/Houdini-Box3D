@@ -67,6 +67,6 @@
   (`writeLiveFrames`, above `kMinParallelFrames` bonds; each joint looks up its own primitive, only a joint with a rest
   length or local frames to write is looked at serially). `writeFeedback` takes its readings and writes a Glue's `impact` in
   parallel too, and `advanceGlue` builds the bond list and writes impacts back in parallel. Impacts data and the collision guide are not made for pieces.
-* `compound_id` (`queueCompoundIds`, with the solver's Write Bond Attributes on): each member's point shows the lowest point id in
+* `compound_id` (`queueCompoundIds`, with the solver's Write Compound IDs on): each member's point shows the lowest point id in
   its compound, queued as a point write before `writePointAttrs` (`Box3DPointWrite::kCompound`; the attribute defaults to -1)
   and set back to -1 when the piece leaves (`compoundShown` on the entry, `compoundIdKeys` the pieces showing one).

@@ -18,7 +18,6 @@
 
 #include "Box3DJoints.h"
 #include "Box3DMath.h" // sameFloat
-#include "Box3DPatch.h"
 #include "Box3DShapes.h"
 
 namespace b3dop {
@@ -160,7 +159,6 @@ struct WorldSettings {
 // One contact point of a body after a step (getContactsByHandle).
 struct ContactPoint {
   BodyHandle other = 0;
-  void *otherUserData = nullptr;
   double pos[3] = {0, 0, 0};   // world space
   float normal[3] = {0, 1, 0}; // from this body into the other
   float impulse = 0.0f;        // total normal impulse over the step (N*s), > 0
@@ -477,9 +475,6 @@ public:
   // The size (x, y, z) of the body's bounding box in world axes, from its
   // shapes. False for a null handle or a body with no shapes (zero size).
   bool extentByHandle(BodyHandle h, float out[3]) const;
-  // The same without Box3D's speculative margin (0.02 on every side), so a box
-  // is its own size: for areas and lengths of the shapes themselves.
-  bool tightExtentByHandle(BodyHandle h, float out[3]) const;
   // A force (N) through the centre of mass and a torque (N*m) about it, in
   // world space, for the NEXT step only: Box3D adds both to its integration in
   // every substep and clears them when the step ends, so call this once per
@@ -590,26 +585,6 @@ public:
   // asked about the other body of each contact: true leaves that contact out.
   int contactImpulsesByShape(
       BodyHandle h, std::vector<float> &out,
-      const std::function<bool(BodyHandle)> *ignore = nullptr) const;
-
-  // The convex faces of the body's hull shapes in world space (corners in
-  // order, outward unit normals): what Box3DPatch.h clips into a contact patch.
-  // Other shapes give none. Returns the face count.
-  int hullFacesByHandle(BodyHandle h, std::vector<PatchFace> &out) const;
-
-  // The contact points the body rested or pushed on in the last step: the shape
-  // (creation order), the point, the unit direction the contact pushes the body
-  // and the total normal impulse there (N*s). Points that carried none are left
-  // out. `ignore` (optional) is asked about the other body of each contact:
-  // true leaves that contact out.
-  struct ContactSupport {
-    int shape = 0;
-    double pos[3] = {0, 0, 0};
-    double push[3] = {0, 1, 0};
-    double impulse = 0.0;
-  };
-  int contactSupportsByHandle(
-      BodyHandle h, std::vector<ContactSupport> &out,
       const std::function<bool(BodyHandle)> *ignore = nullptr) const;
 
   // Hit events of the last step (pairs that approached faster than

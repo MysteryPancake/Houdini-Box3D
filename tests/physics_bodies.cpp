@@ -9,7 +9,6 @@
 #include "core/Box3DShapes.h"
 #include <cmath>
 #include <cstdio>
-#include <cstring>
 #include <limits>
 #include <vector>
 

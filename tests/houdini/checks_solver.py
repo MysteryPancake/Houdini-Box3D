@@ -190,11 +190,10 @@ def test_ui():
            [("Force DOPs", True, ["forceswake", "useforces"]),
             ("Bounce / Friction", True, ["bouncethreshold", "frictionmixing", "restitutioniterations",
                                          "restitutionmixing", "restitutionpropagation"]),
-            ("Glue", True, ["gluecompound", "gluecompoundload"])])
+            ("Glue", True, ["compoundids", "gluecompound", "gluecompoundload"])])
     expect("Visualization tab folders", tab_folders("Visualization"), [("Geometry", True, ["exportshapes"])])
     expect("Advanced tab folders", tab_folders("Advanced"),
            [("Stability", True, ["enablecontinuous", "enablewarmstarting", "isotropicinertia", "maxlinearspeed"]),
-            ("Bonds", True, ["bondreadouts"]),
             ("Ground Box", True, ["groundsize"]),
             ("Performance", True, ["autothreads", "threads"])])
     expect("Output tab folders", tab_folders("Output"), [("Impact Data", True, ["impactminspeed"])])

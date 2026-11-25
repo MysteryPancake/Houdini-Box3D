@@ -119,14 +119,6 @@ public:
     s.radius = radius;
     return addShape(id, s);
   }
-  bool addCapsuleShape(uint64_t id, float radius, float halfLength,
-                       const float center[3] = nullptr,
-                       const float rotationXYZW[4] = nullptr) {
-    ShapeSpec s = spec(ShapeType::Capsule, center, rotationXYZW);
-    s.radius = radius;
-    s.halfLength = halfLength;
-    return addShape(id, s);
-  }
   bool addHullShape(uint64_t id, HullId hull) {
     Entry *e = find(id);
     return e && createHullShape(e->handle, e->settings, hull, true);

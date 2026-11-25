@@ -93,7 +93,7 @@ differ by more than 1e-4). The file's header comment says what it covers. The ph
 
 `hython tests/houdini/bench.py` (or `python tools/b3d.py bench`) times scenes in Box3D and RBD Bullet Solver; it is not
 part of `run_tests.py` and nothing in it passes or fails. `--list` names the scenarios (`bench_scenes.py`:
-pile, edit, collider, animated, joints, wall, fracture, bondwall, objects, static, churn, solversop, hulls, features), each with parameters (`name:key=value,...`) and a default sweep.
+pile, edit, collider, animated, joints, wall, fracture, objects, static, churn, solversop, hulls, features), each with parameters (`name:key=value,...`) and a default sweep.
 
 * Each run is its own hython process: frames 1..N timed as `setFrame` plus the DOP cook, grouped into the scene's
   phases (median, p95, max per frame), then Reset Simulation and frame 2 again (`rewind`: the world rebuild; the forced `cook` is
@@ -104,8 +104,6 @@ pile, edit, collider, animated, joints, wall, fracture, bondwall, objects, stati
 * Results go to `tests/houdini/out/bench/` (`latest.json` and a timestamped copy); `--compare file.json` prints the
   ratio per phase. `--repeat N` keeps the median run, `--threads N` sets `HOUDINI_MAXTHREADS`, `--budget` caps a run.
 * `fracture` is a Voronoi-fractured cube (Points from Volume) glued by the fracture's own constraints, dropped on the ground, through the Box3D Solver SOP or the RBD Bullet Solver SOP (`sep`: smaller is more pieces). Its frame time includes the SOP's Break Thresholds.
-* `bondwall` is the wall on Box3D Bonds (Box3D only; `wait=60,sleep=0` stands it awake for 60 frames before the ball). The Bond load solve and patch work run in Stepping Simulation: the
-  plugin's share is `Breaking Bonds` and `Glue Hits`.
 * `objects` is the whole-object path (RBD Objects from an RBD Point Object), `static` a pile on a Static Object (`motion`
   none / move / deform), `churn` bodies dying (Enable Aging, every piece carrying an `id`: without one the point number is the body, and each death renumbers and teleports the bodies after it) and, with `births 1`, appearing each frame (a SOP Solver; Box3D
   only), and `solversop` the Box3D Solver SOP asset: its frame is the SOP cook (`Scene.sop`), with the inner DOP network
@@ -122,8 +120,7 @@ pile, edit, collider, animated, joints, wall, fracture, bondwall, objects, stati
 with `BOX3DDOP_VERBOSE=1`; `B3D_DEBUG_LOG_IF(cond, ...)` always when `cond`, else only when verbose. All compile to nothing
 without `BOX3DDOP_DEBUG`. Output: stderr, `[b3dop]`; `run_tests.py` drops a test's stderr, so set `BOX3DDOP_TEST_LOG=1`
 to print its `[b3dop]` lines. Other environment variables of debug builds (the header lists
-them): `BOX3DDOP_REQUESTED_CACHE` (what `getRequestedCacheSubclass` returns), `BOX3DDOP_PROFILE=1` (the Bond phases'
-time each step, `B3D_DEBUG_PROFILE` / `B3D_DEBUG_PROFILE_REPORT`) and `BOX3DDOP_VERIFY_READBACK=1`
+them): `BOX3DDOP_REQUESTED_CACHE` (what `getRequestedCacheSubclass` returns) and `BOX3DDOP_VERIFY_READBACK=1`
 ([solver.md](solver.md), writeResultsBack).
 
 ## Package

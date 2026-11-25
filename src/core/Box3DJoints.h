@@ -30,14 +30,11 @@ enum class JointType : int {
   Parallel, // keeps the frames' z axes parallel with a spring
   Wheel,    // wheel on a chassis: suspension, spin motor, steering
   Filter,   // no constraint: the two bodies do not collide
-  // a rigid weld that breaks by stress (Box3DBond.h): strengths in Pa over the
-  // contact area instead of force / torque thresholds
-  Bond,
   // restricts the motion of B in frame A to a point, line or plane (and
   // rotation about frame A's z axis only): the way to lock body axes
   MotionLock,
 };
-constexpr int kJointTypeCount = 11;
+constexpr int kJointTypeCount = 10;
 
 constexpr unsigned jointBit(JointType t) {
   return 1u << static_cast<unsigned>(t);
@@ -46,16 +43,16 @@ constexpr unsigned kAllJoints = (1u << kJointTypeCount) - 1u;
 
 inline const char *jointTypeName(JointType t) {
   static const char *const kNames[kJointTypeCount] = {
-      "weld",     "spherical", "revolute", "prismatic", "distance",  "motor",
-      "parallel", "wheel",     "filter",   "bond",      "motionlock"};
+      "weld",  "spherical", "revolute", "prismatic", "distance",
+      "motor", "parallel",  "wheel",    "filter",    "motionlock"};
   const int i = static_cast<int>(t);
   return (i >= 0 && i < kJointTypeCount) ? kNames[i] : "";
 }
 
 inline const char *jointTypeLabel(JointType t) {
   static const char *const kLabels[kJointTypeCount] = {
-      "Weld",     "Spherical", "Revolute", "Prismatic", "Distance",   "Motor",
-      "Parallel", "Wheel",     "Filter",   "Bond",      "Motion Lock"};
+      "Weld",  "Spherical", "Revolute", "Prismatic", "Distance",
+      "Motor", "Parallel",  "Wheel",    "Filter",    "Motion Lock"};
   const int i = static_cast<int>(t);
   return (i >= 0 && i < kJointTypeCount) ? kLabels[i] : "";
 }
@@ -157,14 +154,6 @@ struct JointSettings {
   bool lockLinearY = false;
   bool lockLinearZ = false;
   bool lockAngularXY = false; // only rotation about frame A's z is left
-
-  // Bond (Box3DBond.h).
-  float bondTensile = 1.0e6f;     // Pa
-  float bondShear = 1.0e6f;       // Pa
-  float bondBending = 0.0f;       // Pa; <= 0: the tensile strength
-  float bondCompressive = 1.0e7f; // Pa; <= 0: never crushes
-  float bondArea = 0.0f;          // m^2; <= 0: from the two bodies' boxes
-  float bondFracture = 0.0f;      // J/m^2 to tear it apart; 0: at its strength
 };
 
 // One setting as Houdini sees it: attribute name (also the parameter name on
@@ -278,7 +267,6 @@ inline const std::vector<JointParam> &jointParams() {
                      M = jointBit(JointType::Motor),
                      Pa = jointBit(JointType::Parallel),
                      Wh = jointBit(JointType::Wheel),
-                     B = jointBit(JointType::Bond),
                      ML = jointBit(JointType::MotionLock);
   // Every type except filter, which has no constraint to tune or break.
   constexpr unsigned C = kAllJoints & ~jointBit(JointType::Filter);
@@ -310,21 +298,6 @@ inline const std::vector<JointParam> &jointParams() {
          "Stop movement along frame A's z axis."),
       jp("lock_angular_xy", "Lock Tilt", ML, &S::lockAngularXY,
          "Only allow rotation about frame A's z axis."),
-
-      // ---- bond ----
-      jp("bond_tensile", "Tensile Strength", B, &S::bondTensile,
-         "Pull per area the bond holds, in Pa. Concrete is a few MPa."),
-      jp("bond_shear", "Shear Strength", B, &S::bondShear,
-         "Sliding load per area the bond holds, in Pa."),
-      jp("bond_bending", "Bending Strength", B, &S::bondBending,
-         "Bending and twisting strength in Pa. 0: the same as Tensile."),
-      jp("bond_compressive", "Compressive Strength", B, &S::bondCompressive,
-         "Crushing strength in Pa. 0: never crushes."),
-      jp("bond_area", "Contact Area", B, &S::bondArea,
-         "Area of the glued face in m^2. 0: taken from the two pieces."),
-      jp("bond_fracture_energy", "Fracture Energy", B, &S::bondFracture,
-         "Energy per area in J/m^2 it takes to tear the bond past its "
-         "strength. 0: it goes at its strength."),
 
       // ---- distance (ahead of the shared springs, so it is not shown inside a
       // toggle's block) ----
@@ -700,12 +673,6 @@ inline JointRange jointParamRange(const JointParam &p, JointType t) {
       {"max_tension_force", {0, 1000, true}},
       {"max_compression_force", {0, 1000, true}},
       {"restlength", {0, 10, true}},
-      {"bond_tensile", {0, 1.0e7, true}},
-      {"bond_shear", {0, 1.0e7, true}},
-      {"bond_bending", {0, 1.0e7, true}},
-      {"bond_compressive", {0, 1.0e8, true}},
-      {"bond_area", {0, 4, true}},
-      {"bond_fracture_energy", {0, 1000, true}},
       {"min_length", {0, 10, true}},
       {"max_length", {0, 10, true}},
       {"target_angle", {-180, 180, true, true}},
@@ -965,11 +932,6 @@ struct JointFeedback {
   // (the couple left out; zero when A is the world): what RBD Bullet Solver
   // writes as `torque`.
   float forceMoment[3] = {0, 0, 0};
-  // A weld's impulse on B (N*s) and angular impulse over the whole last step:
-  // the force and torque above are the last substep's alone, which misses what
-  // an impact in an earlier substep did. Zero for the other types.
-  float impulse[3] = {0, 0, 0};
-  float angularImpulse[3] = {0, 0, 0};
   float linearSeparation = 0.0f;  // how far the joint is from being satisfied
   float angularSeparation = 0.0f; // radians
   // Per type (attribute names; none is also a setting name): revolute

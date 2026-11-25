@@ -76,8 +76,8 @@ public:
 
   GETSET_DATA_FUNCS_B("exportshapes",
                       ExportShapes); // every body's collision shapes as data
-  GETSET_DATA_FUNCS_B("bondreadouts",
-                      BondReadouts); // bond_ratio / bond_damage on the lines
+  GETSET_DATA_FUNCS_B("compoundids",
+                      CompoundIds); // compound_id on the glued pieces
   GETSET_DATA_FUNCS_B("gluecompound",
                       GlueCompound); // glued groups run as one body
   GETSET_DATA_FUNCS_F("gluecompoundload",

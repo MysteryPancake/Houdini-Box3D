@@ -30,7 +30,7 @@ material values are clamped to 0, non-finite ones ignored (`gravityscale` may be
 anchors. Identity is `(object id, id or point number)`.
 
 Written: `P`, `orient`, `v`, `w` and packed transforms (awake dynamic bodies), `awake` (if it exists),
-`restxform` / `pivot` / `orient` on new packed bodies without a rest ([bodies.md](bodies.md)), `bullet_autofit_valid`, `mass` (computemass), `age` / `dead` (aging), `compound_id` (Write Bond Attributes: `queueCompoundIds`), `force` / `torque` zeroed once applied; `dead` points lose their body, and are deleted with
+`restxform` / `pivot` / `orient` on new packed bodies without a rest ([bodies.md](bodies.md)), `bullet_autofit_valid`, `mass` (computemass), `age` / `dead` (aging), `compound_id` (Write Compound IDs: `queueCompoundIds`), `force` / `torque` zeroed once applied; `dead` points lose their body, and are deleted with
 `reapdead` (on by default) or kept, frozen. Constraint networks get `broken`, feedback and live frames
 ([joints.md](joints.md)); whole objects their `Position` data ([whole-object.md](whole-object.md)).
 
@@ -69,6 +69,6 @@ are simple folders, each a one-folder switcher with `PRM_SpareData::groupTypeSim
 uses one kind, except `subfolder()`: a simple folder inside a tab (`<prefix>sub<index>`), counted as one parameter of
 the tab. The solver uses tabs by subject, laid out like the Box3D Solver SOP's (same tab order and folder names): Solver (time scale, Substeps, Constraint Iterations; simple folders Contacts, Sleeping, Aging),
 Forces (gravity; folders Force DOPs, Bounce / Friction, Glue), Visualization (folder Geometry: Export Collision Shapes),
-Advanced (folders Stability, Bonds: Write Bond Attributes, Ground Box: Ground Box Size, and Performance) and Output (folder Impact Data); its guide parameters are a plain list on Houdini's own Guide Options tab (so the
+Advanced (folders Stability, Ground Box: Ground Box Size, and Performance) and Output (folder Impact Data); its guide parameters are a plain list on Houdini's own Guide Options tab (so the
 solver's tabs sit inside Data Options). Box3D Data and the joint nodes use simple folders: Box3D Data's are Shape, Body, Material, CCD & Contacts (CCD Threshold, Fast Object, Contact Recycling, Add
 Impact Data) and Sleep (Allow Sleeping, Start Asleep, Sleep Threshold). A function-local static, because Houdini keeps pointers into it. Menu tokens are "0", "1", ... in item order (read as ints).

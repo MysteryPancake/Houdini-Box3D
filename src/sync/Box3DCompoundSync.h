@@ -25,7 +25,7 @@ struct Box3DSharedState;
 // (Box3DSharedState::glueCompounds) off, dissolves every compound.
 void syncCompounds(Box3DSharedState &st);
 
-// With the solver's Write Bond Attributes on, queues each compound piece's
+// With the solver's Write Compound IDs on, queues each compound piece's
 // `compound_id` (the lowest point id in its compound; -1 once it is out of one)
 // as a point write, for the write-back.
 void queueCompoundIds(Box3DSharedState &st);
@@ -85,13 +85,6 @@ void recordCompoundMotion(Box3DSharedState &st);
 // last Box3D step. False if `body` is not a piece of a compound.
 bool compoundGlueHits(Box3DSharedState &st, b3dop::BodyHandle body,
                       float &hits);
-
-// After a Box3D step (breakBonds calls it): the load of each Bond that has no
-// joint to read, in `extra->bondForce` / `bondTorque` at `st.hitsTick`. A Bond
-// inside an awake compound gets it from the compound's spring network
-// (core/Box3DBondNetwork.h) under what each piece needs to move as the body
-// does; a Bond held by a bridge gets the bridge's. `dt`: the step.
-void solveCompoundBonds(Box3DSharedState &st, float dt);
 
 // What a force evaluation reads of a piece of a compound (awake, mass, its
 // centre, its velocity from the compound). False if the entry is not one.

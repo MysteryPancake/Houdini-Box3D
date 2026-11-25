@@ -26,7 +26,7 @@ recomputes from the shapes, so the caller re-applies after a type change.
 
 **Lazy poses.** A body parked in a compound (disabled, placed by its compound) is made lazy with `setLazyPose`:
 `invalidateLazyPoses` (O(1), once a step) makes every one stale, and the first read of a stale body through the API
-(`getTransformByHandle`, `bodyStateByHandle`, `extentByHandle`, `hullFacesByHandle`, `localToWorld`, `jointWorldFrames`,
+(`getTransformByHandle`, `bodyStateByHandle`, `extentByHandle`, `localToWorld`, `jointWorldFrames`,
 `jointFeedback`, `createJoint`, enabling it) calls the refresher the host set (`setPoseRefresher`), which sets the transform. A refresh is
 serialized and stores its epoch only once the transform is set, since several threads can read one body (test `lazy_pose`).
 `jointWorldFramesAt` gives a joint's frames from poses the caller already has.

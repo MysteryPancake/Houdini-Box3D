@@ -19,85 +19,13 @@ current are `current_*` (`current_P` / `current_orient` on network points, and t
 not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `current_*`), as the Bullet solver does.
 
 **Core** (`Box3DJoints.h`, `Box3DWorld`, tested in `tests/core_joints.cpp`):
-* `JointType` (weld, spherical, revolute, prismatic, distance, motor, parallel, wheel, filter, bond, motionlock) and `JointSettings`:
+* `JointType` (weld, spherical, revolute, prismatic, distance, motor, parallel, wheel, filter, motionlock) and `JointSettings`:
   every setting of every type in Box3D units (radians, rad/s, Hz). Box3D's FLT_MAX caps are negative values here
   (unlimited): break thresholds, parallel `maxTorque`, distance `maxLength`, `maxTensionForce`,
   `maxCompressionForce` (Box3D's signed `lowerSpringForce` / `upperSpringForce`, renamed so the sign cannot be got
   wrong). Distance `restLength < 0` (`restlength`) = the anchors' distance when the joint is made. Weld: `enableLinearSpring` /
   `enableAngularSpring` (off = rigid; Box3D's own rule is "hertz 0 = rigid", which reads backwards with the name
   stiffness). Every Box3D "hertz" is called stiffness.
-* Bond (`JointType::Bond`, `core/Box3DBond.h`, `tests/core_bond.cpp`, `bond_hang`): made as a rigid weld
-  (`createWeldJoint`, springs off). After every Box3D step `breakBonds` (`Box3DJointBreak.cpp`) reads the joint's
-  constraint force and torque (`jointFeedback`: force on B, in world axes; the torque is the couple at the
-  anchor; both are the weld's impulse over the whole step divided by the step, `b3Joint_GetConstraintImpulse` in the fork, because the last substep's alone read a few percent of an impact) and splits them in the bond's frame (the normal, area and moduli are the contact patch's, below,
-  found on the first step and kept in `Box3DJointExtra::bond*`; the two sides' masses for a fracture energy come from
-  one search over the glue graph per change of it, `computeBondSides`, bridges against loops). `bondRatio` combines tension, shear, bending and
-  twisting over those (without a patch a square one, section modulus `area * sqrt(area) / 6`), crushing is its own
-  strength. Past a ratio of 1 the load beyond the capacity (`bondCapacity`: tensile, else shear, over the area) pushes the
-  two sides apart: the bond is torn when the energy that gives them reaches its fracture energy, an impulse of
-  `bondTearImpulse` = sqrt(2 * G * A * m) with m the reduced mass of the two sides the bond holds together
-  (`bondReducedMassOf`: everything bonded to each piece without going through this bond, found in the glue graph and kept
-  for its `glueSignature`; a side with a fixed body is infinite, as is one holding a piece another Bond ties to the world:
-  those are not in the graph, so `glueAnchored` lists them and is part of the signature). Where other bonds still join the two pieces (a loop, a
-  wall) cutting this one frees nothing alone and the two pieces' own masses are used.
-  The load is read from the pose at the step's end, and a bond over its capacity keeps accumulating while its pieces
-  sleep (`bondOverCapacity`). A sleeping joint reads as it was (`core_bond`), so a body held by a bond under a point `force`
-  is woken when the force ends (forces-affectors.md; `bond_force_end_wakes`). `bondAdvance` adds `(ratio - 1) * capacity * dt` each Box3D step to `bondImpulse` (kept when the load drops: damage is
-  not undone) and breaks at the tear impulse, so the time to tear does not depend on the step size, and a fracture
-  energy of 0 breaks at a ratio of 1. The weld is rigid, and the Box3D spring stiffness a stiff material would need is
-  beyond what its soft constraints resolve, so the bond does not stretch: no softening curve, no stored elastic energy.
-  The damage is written onto the network as `bond_impulse` (`kBondImpulse`) and read back when the bond is made, so a
-  world rebuilt mid-simulation carries on from it. `bond_ratio`, `bond_damage` (`bondImpulse` over the tear impulse, 0 without a
-  fracture energy), the load's `bond_tension` / `bond_shear` / `bond_bending` / `bond_twist` (`BondLoad`) and `bond_area`
-  (`bondAreaUsed`: the patch's, or the bounding-box fallback's), the `BondReadout` table in `Box3DState.h`, are only displayed (nothing reads them back) and written only with the
-  solver's `bondreadouts` on (Advanced > Bonds, off by default), when they change; with it off they do not keep a quiet
-  joint awake. A breaking bond is queued on `glueBroken` and destroyed with the
-  other broken joints, so `broken`, `next_constraint_name` and the live frames work as for any joint. World Scale gives
-  the strengths a power of -1 and the area 2 (`JOINT_SCALE_POWERS`).
-  * Materials (`bondMaterials()` in `core/Box3DBond.h`, `SIM_Box3DConRel::settings`): the menu `bond_material` (0 is
-  Custom) and `bond_material_scale` are node-only parameters (no attribute). A chosen material replaces the four
-  strengths (times the scale) and the fracture energy in the settings, and a `bond_tensile` attribute then multiplies that
-  as for any setting. The strengths and the fracture energy are disabled while a material is chosen. The scale has World Scale power -1 like
-  them, so the material's values follow the scale (fracture energy has power 0). The values are order-of-magnitude
-  typical ones.
-  * Bonds in compounds (`Box3DCompoundSync.cpp`, `solveCompoundBonds`, called by `breakBonds` each step): a Bond is a
-  graph edge like a Glue bond (`inGlueGraph`; its Glue strength is -1, so the Glue's impulse never breaks it) and so
-  merges into compounds, takes part in holds and bridges, and its `weakestBreak` is `bondBreakImpulse` (the weakest of
-  the tensile, shear, compressive and a sixth of the bending strength, times the area, for `kBondHoldSeconds`). A bond inside an awake compound has a parked weld, so its
-  load is worked out: each piece needs the force and torque `mass * accel - mass * gravity - external` (the acceleration
-  from the compound's change of velocity over the step, `stepPre`, recorded by `recordCompoundMotion` while Bonds are in
-  the graph, plus its turning; the external loads are the bridges' welds'). The contacts the compound rests on
-  (`contactSupportsByHandle`: every manifold point that carried impulse, except contacts with pieces of the compound's
-  own glue group) are elastic supports (`BondSupport`; `kSupportStiffness` for every contact that carried at least
-  `kSupportMinShare` of the mean impulse), so a rigid compound settles on them as a rigid beam does on a soft bed. A
-  support cannot pull (one that does is left out and the network solved again, `kBondSupportPasses` times at most), and
-  across its normal it is `kSupportTangent` as stiff, which shares the friction like the normal load. In the air nothing
-  is external but the bridges, and what does not add up (Force DOP forces, rounding) is spread over the pieces by mass.
-  `core/Box3DBondNetwork.h` (`solveBondNetwork`, `core_bond`) turns those into the bonds' loads: small springs (a
-  rigid-body spring network, stiffness in proportion to the bond's area), matrix-free conjugate gradient
-  (`kBondSolveIterations`, `kBondSolveTolerance`), started from the compound's last displacement
-  (`Box3DCompound::bondWarm`). A large compound does not converge in one step's iterations (the residual keeps falling
-  across steps, and a wall's breaking depends on the iterations: more makes it break less), and neither a diagonal nor a
-  per-piece block preconditioner helped. Compounds are solved in parallel (`solveCompoundBonds`;
-  `kMinParallelBondSolves`).
-  A compound keeps what its last solve was given and found (`Box3DCompound::bondMemo`), and a step that asks for nearly the
-  same reuses the loads and skips the solve (`bondProblemAlike`: the same pieces and bonds, pieces' loads within
-  `kBondReuseLoad`, nothing moved by more than `kBondReuseMove`, and no more than `kBondReuseSupports` of the contacts new
-  or gone, since a marginal contact comes and goes). It compares with the last solve, not the last step, so the loads stay
-  within those tolerances of a solve. A compound that is asleep is not solved at all, so this helps one kept awake.
-  A solve that comes out non-finite leaves the bond's last load, and the network is regularized (`kBondRegularization`) so a
-  piece with no support still solves. A bond held by a bridge reads the bridge
-  weld's load. `bond_compound_cantilever` compares the mode with the welds.
-  * Contact patch (`core/Box3DPatch.h`, `core_patch`, `bond_patch`; `bondGeometry`): the first step after a Bond is
-  made, `hullFacesByHandle` gives each piece's convex faces in world space and `contactPatchOf` clips the faces that
-  face each other across a plane (within `kPatchTolerance`) into the overlap polygon, adding the faces in the dominant
-  plane. Its area, normal (A to B), centroid, in-plane axes `u` / `v` and second moments replace the bounding-box
-  estimates; the section moduli are `momentU / extentV` (bending about u), `momentV / extentU` and
-  `(momentU + momentV) / extentR` (twisting, a circle's formula), all kept in body A's frame in `Box3DJointExtra`. The
-  load read at the weld's anchor is moved to the centroid (the couple plus the force's moment over the offset) and its
-  bending split about `u` and `v` (`bondLoadInPatch`); a set Contact Area scales the patch, its shape kept. Without a
-  patch (the other piece is the world, a non-hull shape, no faces within the tolerance) the bounding-box estimates are used:
-  centre-to-centre normal, the smaller bounding-box face, a square patch.
 * `jointParams()`: one row per setting (attribute / parameter name, label, kind, joint types using it, member
   pointer, help). The constraint relationship nodes, the primitive attribute reader and `sameJointSettings` are all driven by
   it. `angleTypes` marks a Float that is an angle for some types only (`motor_speed`: revolute deg/s, prismatic and
@@ -200,7 +128,7 @@ not read itself, except feedback (`force`, `distance`, `torque`, `angle`, `curre
 * After the step (`jointsAfterStep`): broken joints are destroyed and flagged (never remade, even if the
   primitive changes), and written back through the relationship's `getGeometry()` (non-const: a `SIM_GeometryCopy`)
   or the object's ConstraintGeometry (made a `SIM_GeometryCopy` once, like the object geometry): the `broken`
-  primitive group, then `force` / `torque` (magnitudes; `torque` is `JointFeedback::forceMoment`, the force's moment about body A's centre, zero for the world, as Bullet's: a Bond writes its load's torque), `distance` / `angle` (the anchors' distance, the angle since
+  primitive group, then `force` / `torque` (magnitudes; `torque` is `JointFeedback::forceMoment`, the force's moment about body A's centre, zero for the world, as Bullet's), `distance` / `angle` (the anchors' distance, the angle since
   rest above, in radians, the Constraint Network DOP's names and units) and the per-type `current_*` readings (degrees) every step. The fingerprint is re-recorded after the write so it is not seen as an edit. A network that
   re-imports its SOP every step (Overwrite with SOP) overwrites the group; `Box3DJointEntry::broken` still holds until
   a world rebuild. `Box3DJointNetwork::writable` is false when the last write found no geometry; such a network keeps

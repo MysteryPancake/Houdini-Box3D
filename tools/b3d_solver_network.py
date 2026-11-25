@@ -153,10 +153,8 @@ JOINT_SCALE_POWERS = {name: power for power, names in (
          "force_threshold", "max_motor_force", "max_tension_force", "max_compression_force",
          "max_velocity_force", "max_spring_force")),
     (2, ("torque_threshold", "max_motor_torque", "max_velocity_torque", "max_spring_torque", "max_torque",
-         "max_spin_torque", "max_steering_torque", "bond_area")),
-    # A Bond's strengths are force per area: the force's power less the area's.
-    (-1, ("bond_tensile", "bond_shear", "bond_bending", "bond_compressive", "bond_material_scale")),
-    (0, ("bond_fracture_energy", "constraint_stiffness", "constraint_damping_ratio", "stiffness", "damping_ratio", "linear_stiffness",
+         "max_spin_torque", "max_steering_torque")),
+    (0, ("constraint_stiffness", "constraint_damping_ratio", "stiffness", "damping_ratio", "linear_stiffness",
          "linear_damping_ratio", "angular_stiffness", "angular_damping_ratio", "target_rotation", "cone_angle",
          "lower_twist_angle", "upper_twist_angle", "motor_velocity", "target_angle", "lower_angle",
          "upper_angle", "motor_speed", "angular_velocity", "suspension_stiffness", "suspension_damping_ratio",

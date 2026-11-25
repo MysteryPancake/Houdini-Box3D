@@ -5,7 +5,6 @@
 // and no world is left alive. usage: b3dop_core_worlds [threads=8] [rounds=40]
 #include "KeyedWorld.h"
 #include <atomic>
-#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <thread>

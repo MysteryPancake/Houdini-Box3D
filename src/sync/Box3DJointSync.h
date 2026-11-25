@@ -81,15 +81,6 @@ std::vector<b3dop::GlueBond> glueBondList(const Box3DSharedState &st,
                                           bool withParams, bool blankBroken);
 void advanceGlue(Box3DSharedState &st, float dt);
 
-// Bonds (core/Box3DBond.h): after every Box3D step of `dt` seconds, reads each
-// Bond joint's constraint force and torque, turns them into a stress ratio and
-// queues the bonds whose load beyond their strength has torn them (fracture
-// energy) for jointsAfterStep.
-void breakBonds(Box3DSharedState &st, float dt);
-// The bond's normal (from A to B, kept in A's frame) and contact area, found
-// once; false while the bodies or the joint cannot be read yet.
-bool bondGeometry(Box3DSharedState &st, Box3DJointEntry &e);
-
 // After the step: joints over their force / torque threshold are destroyed and
 // marked broken (`broken` primitive group, or switched to their
 // next_constraint_name), and the live frames and feedback attributes are

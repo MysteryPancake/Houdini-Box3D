@@ -55,7 +55,7 @@ ids right after the clear (or after a read found them all zero) are kept in `Box
 they are unchanged nothing new was written and the read is skipped.
 
 A body that got a point force last step (`Box3DBodyMirror::pointForced`) and gets none now is woken once: a sleeping body's
-joints read as they were, so a Bond would keep the load it had under the force (`bond_force_end_wakes`). An object with such
+joints read as they were, so it would keep what it read under the force. An object with such
 a body is visited even when it has no forces (`Box3DObjectSync::pointForcedAny`). Not covered: a Force DOP that ends (a
 sleeping body is not evaluated, so its end is not seen) and pieces of a compound.
 

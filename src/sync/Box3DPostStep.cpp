@@ -476,7 +476,6 @@ void collectImpacts(Box3DSharedState &st, bool append) {
             first ? ev.userDataB : ev.userDataA);
         b3dop::ContactPoint cp;
         cp.other = first ? ev.b : ev.a;
-        cp.otherUserData = first ? ev.userDataB : ev.userDataA;
         b3dop::copy3(cp.pos, ev.pos);
         const float sgn = first ? 1.0f : -1.0f;
         for (int c = 0; c < 3; ++c)

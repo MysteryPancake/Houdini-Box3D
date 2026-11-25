@@ -18,7 +18,6 @@
 #include <UT/UT_Thread.h>
 
 #include <algorithm>
-#include <cmath>
 #include <cstdio>
 #include <mutex>
 #include <string>
@@ -157,6 +156,10 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                   "slowing the whole body puts on them. 0 is off, 1 is "
                   "physical.",
                   "{ gluecompound == 0 }")
+          .toggle("compoundids", "Write Compound IDs", false,
+                  "Write each glued piece's compound_id on its point: the "
+                  "lowest point id in its compound, -1 once it is out of one.",
+                  "{ gluecompound == 0 }")
           // Show Collision Shapes and Shape Color are guide parameters (the
           // node's Guide Options tab), kept out of the tabs.
           .tab("Visualization")
@@ -180,12 +183,6 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                   R{0, 1, true},
                   "Treats nearly spherical bodies as spheres for spin. Applies "
                   "to new bodies and mass changes.")
-          .subfolder("Bonds")
-          .toggle(
-              "bondreadouts", "Write Bond Attributes", false,
-              "Write each Bond's stress ratio, damage, load and area on its "
-              "line (bond_ratio, bond_damage, bond_tension, ...) and each "
-              "glued piece's compound_id on its point. Off keeps them quiet.")
           .subfolder("Ground Box")
           .vector("groundsize", "Ground Box Size", {1000, 10, 1000},
                   "The box a Ground Plane DOP or a static plane piece makes: "
@@ -513,10 +510,6 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
       UT_PerfMonAutoSolveEvent e(this, "Stepping Simulation}/{Glue Hits");
       collectGlueHits(*st);
     }
-    {
-      UT_PerfMonAutoSolveEvent e(this, "Stepping Simulation}/{Breaking Bonds");
-      breakBonds(*st, subDt);
-    }
     st->world.getMoveEvents(st->moves); // read once: write-back and impacts
     // Before the step's own events: they carry the final poses.
     st->moves.insert(st->moves.begin(), left.begin(), left.end());
@@ -570,11 +563,6 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
         {
           UT_PerfMonAutoSolveEvent e(this, "Stepping Simulation}/{Glue Hits");
           collectGlueHits(*st);
-        }
-        {
-          UT_PerfMonAutoSolveEvent e(this,
-                                     "Stepping Simulation}/{Breaking Bonds");
-          breakBonds(*st, subDt);
         }
         st->world.getMoveEvents(events);
         // Before the step's own events: they carry the final poses.
@@ -746,7 +734,7 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
   st->reapDead = getReapDead();
   st->reapAtFrameEnd = getReapAtFrameEnd();
   st->glueCompounds = getGlueCompound();
-  st->bondReadouts = getBondReadouts();
+  st->compoundIds = getCompoundIds();
   st->glueCompoundLoad =
       std::max(0.0f, static_cast<float>(getGlueCompoundLoad()));
   st->removedBodies.clear();

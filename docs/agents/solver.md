@@ -76,7 +76,7 @@ stamp = now
 
 **Performance Monitor.** Each stage is a `UT_PerfMonAutoSolveEvent(this, "<category>}/{<stage>")` (names written out in `SIM_SolverBox3D.cpp`; Houdini wraps a name in braces and nests at a `/` outside them).
 The Stats view then shows `{Category}` > `{Stage}`, as Bullet's Pre-Solve / Stepping Simulation / Post-Solve. A plain `A/B` or `A/{B}` gives unbalanced braces. Pre-Solve: Rebuilding World,
-Updating Bodies, Updating Colliders, Removing Bodies, Updating Constraints. Stepping Simulation: Applying Forces, Compound Motion, Glue Hits, Breaking Bonds, Compound Bridges, Collecting Contacts (the per-step contacts for Recording Impacts) and Box3D Step, the measured `world.step` (`stepWorld`), so Box3D's time shows apart from the plugin's own stages.
+Updating Bodies, Updating Colliders, Removing Bodies, Updating Constraints. Stepping Simulation: Applying Forces, Compound Motion, Glue Hits, Compound Bridges, Collecting Contacts (the per-step contacts for Recording Impacts) and Box3D Step, the measured `world.step` (`stepWorld`), so Box3D's time shows apart from the plugin's own stages.
 Post-Solve: Exporting Simulation Results, Updating Constraint States, Recording Impacts, Updating Points, and Exporting
 Collision Shapes (Export Collision Shapes on). Sub-stages nest one level deeper, written out the same way (opening an event inside another does not nest them):
 Updating Bodies has Checking Changes,

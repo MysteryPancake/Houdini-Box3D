@@ -43,8 +43,7 @@ TAB_GROUPS = {
     "Advanced": [("Stability", ["enablewarmstarting", "enablecontinuous", "maxlinearspeed",
                                 "isotropicinertia"]),
                  # Cache Simulation / Cache Memory (MB) join this folder first (make_solver_sop.py).
-                 ("Performance", ["autothreads", "threads"]),
-                 ("Bonds", ["bondreadouts"])],
+                 ("Performance", ["autothreads", "threads"])],
 }
 # The Pieces tab is the pieces' Box3D Data folders (Shape, Body, Material, CCD & Contacts, Sleep).
 # The solver's settings the SOP regroups by name, wherever the DOP has them: (folder label, names, open) on the
@@ -144,7 +143,7 @@ STATIC_COLLIDER_FOLDERS = ("Shape", "Contacts")
 
 # Every constraint relationship the solver supports, wired into the constraint network so any
 # constraint_name in the network finds one. (node type candidates, node name). Data Names stay at
-# their defaults: Weld, Spherical ... Bond and SideFX's Glue, Hard, ConRelSpring, Soft, ConeTwist.
+# their defaults: Weld, Spherical ... Motion Lock and SideFX's Glue, Hard, ConRelSpring, Soft, ConeTwist.
 RELATIONSHIPS = [
     (["box3d_weldconrel"], "weld"),
     (["box3d_sphericalconrel"], "spherical"),
@@ -155,7 +154,6 @@ RELATIONSHIPS = [
     (["box3d_parallelconrel"], "parallel"),
     (["box3d_wheelconrel"], "wheel"),
     (["box3d_filterconrel"], "filter"),
-    (["box3d_bondconrel"], "bond"),
     (["box3d_motionlockconrel"], "motionlock"),
     (["glueconrel"], "glue"),
     (["hardconrel"], "hard"),

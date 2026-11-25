@@ -12,12 +12,10 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 **Not yet run in Houdini**
 
 * Glue as One Body releasing the pieces in a fast body's way (`holdCompoundsForApproach`, [glue-compound.md](glue-compound.md)):
-  only the `building` example (`glue_compound_hit`) and a kinematic piece pushing Bonds (`bond_kinematic_pusher`,
-  `bond_kinematic_topple`) have run it. At Strength 20000 most of its bonds break from the
+  only the `building` example (`glue_compound_hit`) has run it. At Strength 20000 most of its bonds break from the
   building's weight in both modes before anything hits it (Glue counts a resting body's contact impulse as a hit, as Bullet
-  does: [joints-sidefx.md](joints-sidefx.md)). Not checked: other scenes, a slow heavy body, the force and torque a bond reads while its
-  weld is a bridge's (its own joint is parked, so they read zero), bridges of bonds remade while pieces are held, and
-  `clang-tidy` on the HDK files (`src/sync`, `src/dop`).
+  does: [joints-sidefx.md](joints-sidefx.md)). Not checked: other scenes, a slow heavy body, bridges of bonds remade while pieces
+  are held, and `clang-tidy` on the HDK files (`src/sync`, `src/dop`).
 
 * Packed Object Initial Object Type (`initialstate`): not checked are the Solver SOP's collision object (Custom), the Pieces tab's
   Body Type greying out with the menu (hython's `Parm.isDisabled()` never evaluates conditionals: Auto Fit's reads False too, so
@@ -44,20 +42,6 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   stand-in `hou` only. The build's `check` probes both.
 * Box3D Configure's Bounds / Use Bounds and World Scale on FORCES: no test, only the builders' `check`s (Use Bounds, the
   joint scaling).
-
-**Bonds** (`core/Box3DBond.h`, `Box3DBondNetwork.h`, `Box3DPatch.h`, [joints.md](joints.md); `core_bond`, `core_patch` and the `bond_*` checks)
-* Not checked: the 2600-piece `building` with Bonds.
-* A Bond sliding on the ground under friction: the compound reads about 6.4 kN and the same bond as a weld about 3.1 kN.
-  No reference says which is right. With friction on one box of a pair only, both modes let the bond go at m * a of the
-  pair's slowing (`bond_sliding_friction`).
-* Support stiffness (`kSupportStiffness`, 0.01 of the bonds') is an assumption. `core_bond` sweeps it on an overhang: the edge
-  bond's load is the statics' at every value, and the next bond's couple is the same within 0.2% from 1e-4 to 1e-2 and
-  10% lower at 10. The ledge scene's 2 broken bonds against 1 for welds (`bond_compound_cantilever`) is therefore
-  the rigid compound against sagging welds, not the choice of stiffness.
-* Cost (`bench.py bondwall:w=80,h=40,compound=1`, 3200 bricks as one block, Box3D only): 17 ms per frame standing and 98 to 132 ms once the ball hits
-  and the wall breaks into many compounds, nearly all of it `Breaking Bonds` (`breakBonds` walking every Bond, the network
-  solve): 17, then 83 to 119 ms. The patch on the first step and the sides' mass walk are not timed apart.
-* Linux build and `clang-tidy` of the Bond files: not run.
 
 **Build**
 * Linux plugin build (only the core builds in CI): `build.sh`, gcc warnings in `src/dop` / `src/sync`, the dso and
@@ -215,12 +199,6 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   Not covered: Impacts and the collision guide for pieces, pieces with another joint or a custom inertia (they stay
   on welds, as does their whole group), a group changed only by editing a piece's settings while it never merged
   (it is worked out again when the Glue graph or the bodies change).
-* Bonds: no softening curve and no stored elastic energy (a full cohesive law needs the bond to stretch: see
-  [joints.md](joints.md)), damage over time only as the kept impulse (it also builds while the pieces sleep), no rate dependence. Patches use the dominant plane
-  only (an L contact gives 1 of 1.5 m^2, `core_patch`), the network's rotational stiffness is not from the patch's
-  moments (a couple between two bonds of a square and a 0.1 x 10 m patch splits 50:50 where the moments give 1:99,
-  `core_bond`), supports have no friction cone and read the last step's contacts, holds count the capacity but not the tear impulse, no
-  guide or viewer state shows `bond_ratio` / `bond_damage`, non-hull shapes use the bounding-box estimates, the materials are order-of-magnitude values.
 
 ## Box3D fork (`extern/box3d`)
 

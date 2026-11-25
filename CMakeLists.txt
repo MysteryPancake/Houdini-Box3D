@@ -163,8 +163,6 @@ b3dop_add_test(ground)
 b3dop_add_test(joints)
 b3dop_add_test(sidefx)
 b3dop_add_test(glue)
-b3dop_add_test(bond)
-b3dop_add_test(patch)
 b3dop_add_test(compound)
 b3dop_add_test(rbdobject)
 b3dop_add_test(threads)
@@ -275,7 +273,7 @@ houdini_configure_target(Box3DDOP)
 set(BOX3DDOP_NODES box3d_solver box3d_data                       # internal node names
     box3d_weldconrel box3d_sphericalconrel box3d_revoluteconrel box3d_prismaticconrel box3d_distanceconrel
     box3d_motorconrel box3d_parallelconrel box3d_wheelconrel box3d_filterconrel
-    box3d_bondconrel box3d_motionlockconrel
+    box3d_motionlockconrel
     box3d_packedobject)                                          # the asset below
 set(BOX3DDOP_ICON_DIR "$<TARGET_FILE_DIR:Box3DDOP>/../config/Icons")
 set(BOX3DDOP_ICON_COPIES "")

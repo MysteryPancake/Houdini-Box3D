@@ -26,7 +26,6 @@
 #include <utility>
 #include <vector>
 
-#include "core/Box3DBondNetwork.h"
 #include "core/Box3DCompound.h"
 #include "core/Box3DGlue.h"
 #include "core/Box3DShapes.h"
@@ -563,34 +562,8 @@ struct Box3DAffectorBody {
   bool heightsKnown = false;
 };
 
-// What a Bond shows on its line, when the solver's Write Bond Attributes
-// is on: the attribute for each, in this order.
-enum BondReadout {
-  kReadoutRatio,   // the stress ratio: 1 is at its capacity
-  kReadoutDamage,  // the impulse taken as a share of the tear impulse (0 to 1)
-  kReadoutTension, // N along the normal (negative: pushed together)
-  kReadoutShear,   // N across it
-  kReadoutBending, // N*m about axes across the normal
-  kReadoutTwist,   // N*m about the normal
-  kReadoutArea,    // m^2 of the patch
-  kReadoutCount
-};
-inline constexpr const char *kBondReadoutNames[kReadoutCount] = {
-    "bond_ratio",   "bond_damage", "bond_tension", "bond_shear",
-    "bond_bending", "bond_twist",  "bond_area"};
-
-// The point attribute of a glued piece: its compound (Write Bond Attributes).
+// The point attribute of a glued piece: its compound (Write Compound IDs).
 inline constexpr const char *kCompoundIdName = "compound_id";
-
-struct BondReadouts {
-  float value[kReadoutCount] = {};
-  float written[kReadoutCount];
-  BondReadouts() { std::fill(std::begin(written), std::end(written), -1.0f); }
-  // Something to write: a value differs from the one on the line.
-  bool pending() const {
-    return !std::equal(std::begin(value), std::end(value), std::begin(written));
-  }
-};
 
 // The parts of a joint entry that few joints use (Box3DJointEntry::extra).
 struct Box3DJointExtra {
@@ -610,54 +583,6 @@ struct Box3DJointExtra {
   // A joint that broke: its local frames at the break, so a next constraint can
   // start from them (switchFrames).
   b3dop::JointFrame brokeLocalA, brokeLocalB;
-  // Bond (core/Box3DBond.h): the normal from piece A to piece B in body A's
-  // frame and the patch area, found on the first step after it is made, the
-  // impulse its load has delivered beyond its capacity (it breaks at the tear
-  // impulse), and whether it is queued to break.
-  float bondNormalLocal[3] = {0, 0, 0};
-  float bondAreaUsed = 0.0f;
-  float bondImpulse = 0.0f;
-  // The load was over the capacity when last looked at: damage goes on while
-  // the pieces sleep, under the load they last had.
-  bool bondOverCapacity = false;
-  // The readouts of the last load (BondReadout), and what was last written to
-  // each attribute (-1: nothing yet).
-  BondReadouts bondReadouts;
-  // The mass of what the bond holds together on each side (infinity: a fixed
-  // body), found for the glue graph `bondSidesSignature` was taken at.
-  float bondSideMass[2] = {0.0f, 0.0f};
-  uint64_t bondSidesSignature = 0;
-  bool bondSidesKnown = false;
-  bool bondReady = false;
-  // The Contact Area setting the geometry was found with: found again when it
-  // changes.
-  float bondAreaSetting = 0.0f;
-  bool bondQueued = false;
-  // A bond inside a compound has no joint to read: the load its compound's
-  // spring network gave it (the force and couple on piece B, world axes) and
-  // the `hitsTick` it was worked out at.
-  float bondForce[3] = {0, 0, 0};
-  float bondTorque[3] = {0, 0, 0};
-  uint64_t bondLoadTick = 0;
-  // Where piece A and the anchor are for a bond inside a compound, from the
-  // compound's pose after the step (the parked piece bodies are placed later,
-  // so they are a step behind), at `bondPoseTick`.
-  double bondPosA[3] = {0, 0, 0};
-  float bondRotA[4] = {0, 0, 0, 1};
-  double bondAnchor[3] = {0, 0, 0};
-  uint64_t bondPoseTick = 0;
-  // The contact patch of the two pieces (core/Box3DPatch.h), when their convex
-  // faces could be clipped: its centroid and in-plane axes in body A's frame,
-  // and its section moduli (bending about each axis, twisting about the
-  // normal). Without it the normal runs centre to centre and the patch is a
-  // square of the area.
-  bool patchOk = false;
-  float patchCentroidLocal[3] = {0, 0, 0};
-  float patchULocal[3] = {1, 0, 0};
-  float patchVLocal[3] = {0, 1, 0};
-  float modulusU = 0.0f;
-  float modulusV = 0.0f;
-  float modulusTwist = 0.0f;
 };
 
 // One joint made from a primitive of a constraint network (Box3DJointSync.cpp).
@@ -741,11 +666,8 @@ struct Box3DJointEntry {
 };
 
 // Whether the joint is an edge of the glue graph (the groups that run as one
-// body, the contacts inside a group that are no hits): a SideFX Glue bond, or a
-// Bond (which never breaks by the Glue's impulse: its strength there is < 0).
-inline bool inGlueGraph(const Box3DJointEntry &e) {
-  return e.glue || e.type == b3dop::JointType::Bond;
-}
+// body, the contacts inside a group that are no hits): a SideFX Glue bond.
+inline bool inGlueGraph(const Box3DJointEntry &e) { return e.glue; }
 
 // A body in a Glue network this frame and the impulse its contacts put on it
 // over the frame's Box3D steps.
@@ -891,19 +813,6 @@ struct Box3DCompound {
   bool stepPreOk = false;
   b3dop::BodyPose postPose;
   uint64_t loadTick = 0;
-  // The last bond network solve's displacement (6 per member), the next one's
-  // starting guess. Empty when none, or when the members changed.
-  std::vector<double> bondWarm;
-  // What the last bond network solve was given and found, kept while the next
-  // asks for nearly the same (b3dop::bondProblemAlike): then its loads stand.
-  struct BondMemo {
-    bool valid = false;
-    std::vector<b3dop::BondNode> nodes;
-    std::vector<b3dop::BondLink> links;
-    std::vector<b3dop::BondSupport> supports;
-    std::vector<Box3DJointEntry *> used; // the bond of each link
-    std::vector<b3dop::BondForce> out;
-  } bondMemo;
 };
 
 // What one bond adds to the signature of the bond list (kGlueCountSalt for the
@@ -1078,18 +987,11 @@ struct Box3DSharedState {
   uint64_t glueMirrorEpoch = ~0ull;
   bool glueMirrorQuiet = false;
   void touchGlueBonds() { ++glueEpoch; }
-  // The bodies a live Bond ties to the world (such a Bond is not in the graph):
-  // a side holding one does not move.
-  std::unordered_set<b3dop::BodyHandle> glueAnchored;
-  // The signature computeBondSides last ran for (every bond's sides at once).
-  uint64_t bondSidesPass = ~0ull;
   uint64_t computeGlueSignature() const {
     uint64_t sum = static_cast<uint64_t>(glueBondNodes.size()) * kGlueCountSalt;
     for (const auto &ab : glueBondNodes)
       sum += glueBondHash(glueNodes[static_cast<size_t>(ab.first)].body,
                           glueNodes[static_cast<size_t>(ab.second)].body);
-    for (const b3dop::BodyHandle h : glueAnchored)
-      sum += glueBondHash(h, 0);
     return sum;
   }
   std::vector<void *> glueBroken;
@@ -1098,9 +1000,6 @@ struct Box3DSharedState {
   // rebuilt only after syncJoints changed the joints.
   std::unordered_map<uint64_t, std::vector<Box3DJointEntry *>> networkEntries;
   bool networkEntriesDirty = true;
-  // The Bonds among them, in the same order, so breakBonds does not walk the
-  // other joints every step. Rebuilt with networkEntries.
-  std::vector<Box3DJointEntry *> bondEntries;
   // Glued groups as compound bodies (syncCompounds): the solver's switch, the
   // live compounds, each piece's own body -> its compound and index, and what
   // the groups were last worked out from (the graph and body versions), so an
@@ -1110,9 +1009,8 @@ struct Box3DSharedState {
   std::unordered_set<b3dop::BodyHandle> tiedBodies;
   bool tiedKnown = false;
   bool glueCompounds = false;
-  // Write each Bond's attributes onto its line, and `compound_id` onto the
-  // points of glued pieces.
-  bool bondReadouts = false;
+  // Write `compound_id` onto the points of glued pieces.
+  bool compoundIds = false;
   // The pieces whose point shows a `compound_id` (keys into `mirror`).
   std::vector<uint64_t> compoundIdKeys;
   // Glued compounds: scales the load slowing the whole body puts on each
@@ -1142,9 +1040,6 @@ struct Box3DSharedState {
   // kGlueStrengthScale; infinity: none can break), worked out again once per
   // glueClock value that is asked for it: what a body has to be able to deliver
   // to be looked at at all.
-  // A Bond is among the graph's bonds (the compounds then record their motion
-  // for the bonds' loads).
-  bool bondsInGraph = false;
   float glueMinBreak = 0.0f;
   double glueMinBreakClock = -1.0;
   uint64_t glueMinBreakSignature = 0;

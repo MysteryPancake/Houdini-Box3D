@@ -85,7 +85,7 @@ def solver_opts(kind, dop, solver, p):
     if kind == "box3d":
         for key, names in (("substeps", ["substeps"]), ("passes", ["solverpasses"]), ("sleep", ["enablesleep"]),
                            ("exportshapes", ["exportshapes"]), ("compound", ["gluecompound"]),
-                           ("readouts", ["bondreadouts"]), ("impacts_guide", ["showshapes"])):
+                           ("compoundids", ["compoundids"]), ("impacts_guide", ["showshapes"])):
             if p.get(key) is not None:
                 set_parm(solver, names, p[key])
     else:
@@ -439,11 +439,11 @@ def scene_joints(kind, p):
           sweep=[{"compound": 1}, {"compound": 0}, {"w": 20, "h": 10, "compound": 1},
                  {"group": 5, "compound": 1}])
 def scene_wall(kind, p):
-    return build_wall(kind, p, "glue")
+    return build_wall(kind, p)
 
 
-def build_wall(kind, p, joint):
-    """The brick wall of `wall` (joint "glue": SideFX Glue) and `bondwall` (joint "bond": Box3D Bond)."""
+def build_wall(kind, p):
+    """The brick wall of `wall`: bricks glued to each neighbour (SideFX Glue)."""
     w, h, group = int(p["w"]), int(p["h"]), int(p["group"])
     dop = new_dopnet("wall")
     geo = new_geo("wall_bricks")
@@ -457,21 +457,14 @@ def build_wall(kind, p, joint):
     box = create(geo, "box")
     set_parm(box, ["size"], (1.0, 0.5, 0.5))
     copy = copy_packed(geo, box, pts)
-    if joint == "bond":
-        glue = create(dop, "box3d_bondconrel", "bond")
-        strength = float(p["strength"])
-        for parm, value in (("bond_tensile", strength), ("bond_shear", strength), ("bond_bending", strength),
-                            ("bond_compressive", strength * 10)):
-            set_parm(glue, [parm], value)
-    else:
-        glue = create(dop, "glueconrel", "glue")
-        set_parm(glue, ["strength"], float(p["strength"]))
+    glue = create(dop, "glueconrel", "glue")
+    set_parm(glue, ["strength"], float(p["strength"]))
     net_geo = new_geo("wall_network")
     net = create(net_geo, "attribwrangle", "network")
     set_parm(net, ["class"], 0)
     skip_h = f"&& (a + 1) % {group} != 0" if group else ""
     skip_v = f"&& (b + 1) % {group} != 0" if group else ""
-    cname = parm_value(glue, ["dataname", "data_name", "DataName"], "Bond" if joint == "bond" else "Glue")
+    cname = parm_value(glue, ["dataname", "data_name", "DataName"], "Glue")
     set_parm(net, ["snippet"], (
         'addpointattrib(0, "name", ""); addprimattrib(0, "constraint_name", "");\n'
         "void link(int i; int j; vector pos) {\n"
@@ -543,19 +536,6 @@ def scene_fracture(kind, p):
         raise SetupError("the solver SOP has no DOP network inside")
     frames = int(p["frames"])
     return Scene(inner[0], frames, [("fall", 2, 18), ("land", 19, 40), ("settled", 41, frames)], sop=solver)
-
-
-@scenario("bondwall", "The wall with a Box3D Bond between neighbouring bricks instead of Glue: the cost of reading each "
-          "bond's load every step (as one compound, a spring network solved for every awake compound) and of its patch "
-          "and tear impulse. Options: w, h, strength (Pa; tensile, shear and bending, compressive is 10 times it; the "
-          "default holds the wall intact until the hit), group, compound 0|1, readouts 0|1 (Write Bond Attributes), "
-          "wait (frames the wall stands before the ball arrives, a `stand` phase). Box3D only.",
-          {"w": 40, "h": 20, "strength": 1e7, "group": 0, "frames": 120},
-          sweep=[{"compound": 1}, {"compound": 0}, {"compound": 1, "readouts": 1}, {"w": 20, "h": 10, "compound": 1},
-                 {"compound": 1, "wait": 60, "frames": 200}],
-          kinds=("box3d",))
-def scene_bondwall(kind, p):
-    return build_wall(kind, p, "bond")
 
 
 # ---------------------------------------------------------------------------

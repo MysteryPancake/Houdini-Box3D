@@ -25,7 +25,6 @@
 #include <cmath>
 #include <memory>
 #include <mutex>
-#include <numeric>
 #include <vector>
 
 namespace box3dsolver {
