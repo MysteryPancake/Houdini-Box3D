@@ -70,7 +70,11 @@ Index and rules: [CLAUDE.md](../../CLAUDE.md).
     Live frames are written in parallel (`writeLiveFrames`, above `kMinParallelFrames` bonds; each joint looks up its
     own primitive, only a joint with a rest length or local frames to write is looked at serially). `writeFeedback`
     takes its readings and writes a Glue's `impact` in parallel too, and `advanceGlue` builds the bond list and writes
-    impacts back in parallel. Impacts data and the collision guide are not made for pieces.
+    impacts back in parallel. Impacts data is made for pieces too: a compound's body has no entry, so
+    `attributeCompoundEvents` (`Box3DImpacts.cpp`) points each event's user data at the piece whose shape the point is
+    on (`ContactImpulse::shapeA` / `shapeB` against `shapeKeysByHandle` and the members' shape ranges) before the
+    records are planned; the Impact Min Speed filter still asks about the compound's own body. The collision guide
+    follows the pieces as well (tests `glue_compound_impacts`, `glue_compound_guide`).
 * `compound_id` (`queueCompoundIds`, with the solver's Write Compound IDs on): each member's point shows the lowest
   point id in its compound, queued as a point write before `writePointAttrs` (`Box3DPointWrite::kCompound`; the
   attribute defaults to -1) and set back to -1 when the piece leaves (`compoundShown` on the entry, `compoundIdKeys`

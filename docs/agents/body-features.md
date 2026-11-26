@@ -53,7 +53,8 @@ is updated: [bodies.md](bodies.md). Index and rules: [CLAUDE.md](../../CLAUDE.md
   the impact; no Feedback data). `collectImpacts` decides each event's records (up to four: each awake side, itself
   and the other body) in a parallel pass, with the merge key and the earlier step's hit it joins (Substeps), then
   appends them in event order serially, so the records do not depend on the threads. `addPointImpact` is most of the
-  cost, so a frame's time grows with the manifold points in contact.
+  cost, so a frame's time grows with the manifold points in contact. A glued piece run in a compound gets its records
+  too ([glue-compound.md](glue-compound.md)).
 * **Dead** (`dead`): never stamped, so the body goes. With Reap Dead Points the point is queued as a `Box3DDeletion`;
   `deleteDeadPoints` resolves all queued points before deleting any, then bumps data ids and forces a scan.
 * **Aging** (solver Enable Aging): `age += dt` on every point (not on the creation frame without Solve On Creation

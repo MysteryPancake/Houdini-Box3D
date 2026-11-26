@@ -12,6 +12,8 @@ from b3dtest import (
     box3d_data,
     box3d_packed_object,
     box3d_solver,
+    box_sop,
+    bullet_solver,
     close,
     constraint_lines,
     create,
@@ -28,6 +30,7 @@ from b3dtest import (
     packed_positions,
     plain_points,
     point_attributes,
+    rbd_object,
     Result,
     set_expression,
     set_parm,
@@ -438,6 +441,66 @@ def test_animated_static():
 # ---------------------------------------------------------------------------
 
 
+def test_other_solver():
+    """Objects solved by RBD Bullet Solver beside a Box3D Solver's, which sees them only as affectors: they are static
+    polygon colliders for Box3D, one-way, and packed ones have no usable collision geometry. (1) A packed Bullet box
+    dropped onto a Box3D box on a Box3D ground: Bullet does not see the Box3D ground or box, so the box falls
+    through both (below y -10 after 3 s), the Box3D box does not move (within 0.05 of its start) and the Box3D Solver
+    says that the affector has no usable collision geometry. (2) A polygon box solved by Bullet as an RBD Object, with no
+    gravity, moving along x at 4 m/s into the Box3D box: it keeps its speed (the animation, within 0.05 after 3 s) and
+    pushes the Box3D box ahead of it, which rests against its front face (1 m ahead of its centre, within 0.1) on the
+    ground, with no message."""
+    results = []
+    path_b, names_b = packed_boxes("other_box3d", [GROUND, {"size": (1, 1, 1), "center": (0, 0.5, 0)}])
+    path_a, names_a = packed_boxes("other_bullet", [{"size": (1, 1, 1), "center": (0, 4, 0)}])
+    dop = new_dopnet("other_solver")
+    b = packed_object(dop, "box3d_obj", path_b)
+    a = packed_object(dop, "bullet_obj", path_a)
+    b_solver = box3d_solver(dop, b)
+    a_chain = bullet_solver(dop, a)
+    finish(dop, merge(dop, [a_chain, b_solver], "both"))
+    msgs = []
+
+    def sample(sim, f):
+        msgs.extend(node_messages(b_solver))
+        return packed_positions(sim, "bullet_obj"), packed_positions(sim, "box3d_obj")
+
+    track = step(dop, 72, sample)
+    ya = track[72][0][names_a[0]][1]
+    pb = track[72][1][names_b[1]]
+    warned = any("no usable collision geometry" in m for m in msgs)
+    ok = ya < -10.0 and abs(pb[0]) < 0.05 and close(pb[1], 0.5, 0.05) and abs(pb[2]) < 0.05 and warned
+    results.append(Result("other_solver", Result.PASS if ok else Result.FAIL,
+                          f"packed: Bullet box at y={ya:.2f} (expected below -10: it fell through); Box3D box at "
+                          f"({pb[0]:.2f}, {pb[1]:.2f}) (expected its start (0, 0.5)); warned: {warned} (expected True)"))
+
+    path_b, names_b = packed_boxes("other_poly_box3d", [GROUND, {"size": (1, 1, 1), "center": (0, 0.5, 0)}])
+    dop = new_dopnet("other_solver_polygon")
+    b = packed_object(dop, "box3d_obj", path_b)
+    a = rbd_object(dop, "poly_obj", box_sop("other_poly", (-3, 0.5, 0)), vel=(4, 0, 0))
+    b_solver = box3d_solver(dop, b)
+    a_chain = bullet_solver(dop, a)
+    set_parm(a_chain, ["forcey"], 0.0)  # Bullet's gravity off: the box moves along x
+    finish(dop, merge(dop, [a_chain, b_solver], "both"))
+    msgs = []
+
+    def sample_polygon(sim, f):
+        msgs.extend(node_messages(b_solver))
+        return (sim.findObject("poly_obj").transform().extractTranslates()[0],
+                packed_positions(sim, "box3d_obj")[names_b[1]])
+
+    track = step(dop, 72, sample_polygon)
+    x, pb = track[72]
+    want = 4.0 * 71 / hou.fps()  # the box's translation on the last frame
+    ahead = pb[0] - (-3.0 + want)  # the Box3D box's centre from the polygon box's
+    ok = (abs(x - want) < 0.05 and abs(ahead - 1.0) < 0.1 and close(pb[1], 0.5, 0.05) and not msgs)
+    results.append(Result("other_solver", Result.PASS if ok else Result.FAIL,
+                          f"polygon: Bullet box moved {x:.2f} (expected {want:.2f}); the Box3D box is {ahead:.2f} ahead of "
+                          f"its centre (expected 1.0) at y={pb[1]:.3f} (expected 0.5); messages: {sorted(set(msgs)) or 'none'} "
+                          f"(expected none)"))
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Attach Internal Constraints to Object (status: ConstraintGeometry on the object)
 # ---------------------------------------------------------------------------
@@ -767,6 +830,7 @@ TESTS = {
     "dop_import": test_dop_import,
     "dead_with_network": test_dead_with_network,
     "animated_static": test_animated_static,
+    "other_solver": test_other_solver,
     "internal_constraints": test_internal_constraints,
     "aging_vs_pop": test_aging_vs_pop,
     "aging_vs_pop_keep": test_aging_vs_pop_keep,

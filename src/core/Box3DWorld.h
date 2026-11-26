@@ -168,6 +168,9 @@ struct ContactPoint {
 // bodies (getContactImpulseEvents).
 struct ContactImpulse {
   BodyHandle a = 0, b = 0;
+  // The shapes of the two bodies the point is between, as shapeKeysByHandle
+  // lists them.
+  uint64_t shapeA = 0, shapeB = 0;
   void *userDataA = nullptr, *userDataB = nullptr; // of the bodies
   double pos[3] = {0, 0, 0};                       // world space
   float normal[3] = {0, 1, 0};                     // from a into b
@@ -586,6 +589,11 @@ public:
   int contactImpulsesByShape(
       BodyHandle h, std::vector<float> &out,
       const std::function<bool(BodyHandle)> *ignore = nullptr) const;
+
+  // The body's shapes in the order they were created (the order of
+  // contactImpulsesByShape), each as the key a ContactImpulse names it by.
+  // `out` is resized to the shape count; returns it.
+  int shapeKeysByHandle(BodyHandle h, std::vector<uint64_t> &out) const;
 
   // Hit events of the last step (pairs that approached faster than
   // impactMinSpeed).

@@ -29,8 +29,9 @@ def test_constraint_properties_scaling():
     line between anchors A and B, Stiffness 10 ticked. The pieces are A1, A2, A3 (parentpiece A, weight 1, 3, 8, the
     anchor nearest A2) and B (weight 5). Scale by Attribute `weight` multiplies by the average of the two ends'
     pieces: A is its three pieces by Transfer Mode (Closest 3, Min 1, Average 4, Max 8) and B is 5, so 40, 30, 45 and 65.
-    Scale by Value multiplies by the line's own stiffness attribute (2): 20; both: 10 * 2 * 4 = 80. Randomize with
-    Variance 0 leaves 10 as it is, and with 0.5 gives a value from 5 to 15."""
+    Scale by Value multiplies by the line's own stiffness attribute (2): 20; both: 10 * 2 * 4 = 80. Only the Weld's
+    Linear and Angular Stiffness have Randomize and Variance (RBD Constraint Properties: Glue's Strength only); on a
+    Weld line, Linear Stiffness 10 randomized with Variance 0 stays 10, and with 0.5 gives a value from 5 to 15."""
     geo = new_geo("cp_scaling")
     pieces = create(geo, "attribwrangle", "pieces")
     set_parm(pieces, ["class"], 0)
@@ -67,17 +68,86 @@ def test_constraint_properties_scaling():
     ok = got == want
     results = [Result("constraint_properties_scaling", Result.PASS if ok else Result.FAIL,
                        f"stiffness by scaling / Transfer Mode {got} (expected {want})")]
-    # Randomize: Variance 0 changes nothing, Variance 0.5 gives 5 to 15 (and not exactly 10).
-    set_parm(cp, ["revolute_stiffnessscaling"], 0)
-    set_parm(cp, ["revolute_stiffnessrandomize"], 1)
+    # Randomize and Variance are on the Weld's two stiffnesses only (RBD Constraint Properties: Glue's Strength only).
+    parms = {p.name() for p in cp.parms()}
+    names = sorted(n for n in parms if n.endswith(("randomize", "variance")))
+    want_names = sorted(f"weld_{s}_stiffness{t}" for s in ("linear", "angular") for t in ("randomize", "variance"))
+    # Weld's Linear Stiffness: Variance 0 changes nothing, Variance 0.5 gives 5 to 15 (and not exactly 10).
+    weld = create(geo, "attribwrangle", "weld_lines")
+    set_parm(weld, ["class"], 0)
+    set_parm(weld, ["snippet"], 'addpointattrib(0, "name", ""); addprimattrib(0, "constraint_name", ""); '
+             'int a = addpoint(0, set(0, 0, 0)); int b = addpoint(0, set(1, 0, 0)); '
+             'setpointattrib(0, "name", a, "A"); setpointattrib(0, "name", b, "B"); '
+             'int pr = addprim(0, "polyline", a, b); setprimattrib(0, "constraint_name", pr, "Weld");')
+    wp = create(geo, "box3d_constraint_properties", "weld_props")
+    wp.setInput(1, weld)
+    for name, value in (("action", 0), ("doconstrainttype", 1), ("constrainttype", 0),
+                        ("addweld_linear_stiffness", 1), ("weld_linear_stiffness", 10.0),
+                        ("weld_linear_stiffnessrandomize", 1)):
+        set_parm(wp, [name], value)
     spread = {}
     for variance in (0.0, 0.5):
-        set_parm(cp, ["revolute_stiffnessvariance"], variance)
-        spread[variance] = round(cp.geometry(1).prims()[0].attribValue("stiffness"), 3)
-    good = spread[0.0] == 10.0 and 5.0 <= spread[0.5] <= 15.0 and spread[0.5] != 10.0
+        set_parm(wp, ["weld_linear_stiffnessvariance"], variance)
+        g = wp.geometry(1)
+        spread[variance] = round(g.prims()[0].attribValue("linear_stiffness"), 3) if g.findPrimAttrib(
+            "linear_stiffness") else None
+    good = (names == want_names and spread[0.0] == 10.0 and spread[0.5] is not None
+            and 5.0 <= spread[0.5] <= 15.0 and spread[0.5] != 10.0)
     results.append(Result("constraint_properties_scaling", Result.PASS if good else Result.FAIL,
-                          f"stiffness 10 randomized with Variance 0 / 0.5: {spread} (expected 10, and 5 to 15 but not 10)"))
+                          f"Randomize / Variance parameters {names} (expected {want_names}); Weld Linear Stiffness 10 "
+                          f"with Variance 0 / 0.5: {spread} (expected 10, and 5 to 15 but not 10)"))
     return results
+
+
+def test_constraint_properties_proxy_transfer():
+    """Scaling by an attribute with a Proxy, as RBD Constraint Properties: the anchors name proxy pieces, and a proxy
+    piece that is no Geometry piece stands for the Geometry pieces its parentpiece names. Geometry H1 (weight 2) and
+    H2 (6) are parentpiece P1, H3 (10) is P2; proxy pieces px1 (P1, weight 100, never read) and px2 (P2) stand for them,
+    and px3 has no parentpiece and weight 7, so it stands for itself. Stiffness 10 scaled by `weight`, on px1 to px2
+    and on px1 to px3: Closest (the anchor at x=0.9 nearest H2) 80 and 65, Min 60 and 45, Max 80 and 65,
+    Average 70 and 55."""
+    geo = new_geo("cp_proxy_transfer")
+
+    def pieces(name, rows):
+        node = create(geo, "attribwrangle", name)
+        set_parm(node, ["class"], 0)
+        body = ('addpointattrib(0, "name", ""); addpointattrib(0, "parentpiece", ""); addpointattrib(0, "weight", 0.0); '
+                'string names[] = {%s}; string parents[] = {%s}; float weights[] = {%s}; float xs[] = {%s}; '
+                'for (int i = 0; i < len(names); i++) { int pt = addpoint(0, set(xs[i], 0, 0)); '
+                'setpointattrib(0, "name", pt, names[i]); setpointattrib(0, "parentpiece", pt, parents[i]); '
+                'setpointattrib(0, "weight", pt, weights[i]); }')
+        quote = lambda items: ", ".join(f'"{i}"' for i in items)
+        set_parm(node, ["snippet"], body % (quote([r[0] for r in rows]), quote([r[1] for r in rows]),
+                                            ", ".join(str(float(r[2])) for r in rows),
+                                            ", ".join(str(float(r[3])) for r in rows)))
+        return node
+
+    geometry = pieces("geometry", [("H1", "P1", 2, -1), ("H2", "P1", 6, 1), ("H3", "P2", 10, 10)])
+    proxy = pieces("proxy", [("px1", "P1", 100, 0), ("px2", "P2", 100, 10), ("px3", "", 7, 20)])
+    lines = create(geo, "attribwrangle", "lines")
+    set_parm(lines, ["class"], 0)
+    set_parm(lines, ["snippet"], 'addpointattrib(0, "name", ""); addprimattrib(0, "constraint_name", ""); '
+             'string ends[] = {"px2", "px3"}; float xs[] = {10.0, 20.0}; '
+             'for (int i = 0; i < 2; i++) { int a = addpoint(0, set(0.9, 0, 0)); int b = addpoint(0, set(xs[i], 0, 0)); '
+             'setpointattrib(0, "name", a, "px1"); setpointattrib(0, "name", b, ends[i]); '
+             'int pr = addprim(0, "polyline", a, b); setprimattrib(0, "constraint_name", pr, "Revolute"); }')
+    cp = create(geo, "box3d_constraint_properties", "props")
+    cp.setInput(0, geometry)
+    cp.setInput(1, lines)
+    cp.setInput(2, proxy)
+    for name, value in (("action", 0), ("doconstrainttype", 1), ("addrevolute_stiffness", 1),
+                        ("revolute_stiffness", 10.0), ("revolute_stiffnessattribute", "weight"),
+                        ("revolute_stiffnessscaling", 1)):
+        set_parm(cp, [name], value)
+    got = {}
+    for mode, label in ((0, "closest"), (1, "min"), (3, "max"), (2, "average")):
+        set_parm(cp, ["transfermode"], mode)
+        g = cp.geometry(1)
+        got[label] = ([round(p.attribValue("stiffness"), 3) for p in g.prims()]
+                      if g and g.findPrimAttrib("stiffness") else None)
+    want = {"closest": [80.0, 65.0], "min": [60.0, 45.0], "max": [80.0, 65.0], "average": [70.0, 55.0]}
+    return [Result("constraint_properties_proxy_transfer", Result.PASS if got == want else Result.FAIL,
+                   f"stiffness of px1-px2 and px1-px3 by Transfer Mode {got} (expected {want})")]
 
 
 def test_constraint_properties_closest_surface():
@@ -773,6 +843,7 @@ TESTS = {
     "configure_packs": test_configure_packs,
     "constraint_properties_scaling": test_constraint_properties_scaling,
     "constraint_properties_closest_surface": test_constraint_properties_closest_surface,
+    "constraint_properties_proxy_transfer": test_constraint_properties_proxy_transfer,
     "constraint_properties_next": test_constraint_properties_next,
     "constraint_properties_vexpressions": test_constraint_properties_vexpressions,
     "constraint_properties_collisions": test_constraint_properties_collisions,

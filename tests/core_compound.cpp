@@ -361,12 +361,30 @@ int main() {
     int steps = 0;
     std::vector<float> impulses;
     bool hit = false;
+    // The impulse events name the shape of the compound that was touched, which
+    // shapeKeysByHandle places among its pieces' (creation order).
+    w.enableContactImpulseEvents(true);
+    std::vector<b3dop::ContactImpulse> events;
+    std::vector<uint64_t> keys;
+    int touched = -1;
     for (; steps < 120 && !hit; ++steps) {
       w.step(kDt);
       w.contactImpulsesByShape(compound, impulses);
       for (const float i : impulses)
         hit = hit || i > 0.0f;
+      w.getContactImpulseEvents(events);
+      for (const b3dop::ContactImpulse &ev : events) {
+        if (!(ev.impulse > 0.0f) || (ev.a != compound && ev.b != compound))
+          continue;
+        w.shapeKeysByHandle(compound, keys);
+        const uint64_t shape = ev.a == compound ? ev.shapeA : ev.shapeB;
+        for (size_t k = 0; k < keys.size(); ++k)
+          if (keys[k] == shape)
+            touched = static_cast<int>(k);
+      }
     }
+    CHECK(keys.size() == 4);
+    CHECK(touched == 0); // the nearest piece, as the impulses by shape say
     CHECK(hit && impulses.size() == 4);
     if (hit && impulses.size() == 4) {
       std::printf("kinematic hit on step %d: piece impulses %.2f %.2f %.2f "

@@ -4,8 +4,8 @@ What is unverified: here for the general items, [status-areas.md](status-areas.m
 and the assets. What is still to do: [todo.md](todo.md). Index and rules: [CLAUDE.md](../../CLAUDE.md). Keep each
 item to a line or two; remove it once settled (the test that settles it is the record, not these files).
 
-Last full run (Houdini 22.0.502, MSVC, the Box3D fork): every check passes, `baseline` included. The INFO results
-are not pass marks.
+Last full run (Houdini 22.0.502, MSVC, the Box3D fork): every check passes, `baseline` included. Changes since have
+been checked one test at a time under 22.0.508, with no full run. The INFO results are not pass marks.
 What no script checks: Escape mid-step, the viewport, motion blur, how greyed-out parameters look.
 
 ## Unverified
@@ -13,11 +13,12 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 **Not yet run in Houdini**
 
 * Glue as One Body releasing the pieces in a fast body's way (`holdCompoundsForApproach`,
-  [glue-compound.md](glue-compound.md)): only the `building` example (`glue_compound_hit`) has run it. At Strength
-  20000 most of its bonds break from the building's weight in both modes before anything hits it (Glue counts a
-  resting body's contact impulse as a hit, as Bullet does: [joints-sidefx.md](joints-sidefx.md)). Not checked: other
-  scenes, a slow heavy body, bridges of bonds remade while pieces are held, and `clang-tidy` on the HDK files
-  (`src/sync`, `src/dop`).
+  [glue-compound.md](glue-compound.md)): run by the `building` example (`glue_compound_hit`), by a box thrown at a
+  glued pair (`glue_compound_id`: the pair's `compound_id` goes to -1 with nothing broken) and by a kinematic piece
+  (`glue_compound_kinematic`). At Strength 20000 most of the building's bonds break from its weight in both modes
+  before anything hits it (Glue counts a resting body's contact impulse as a hit, as Bullet does:
+  [joints-sidefx.md](joints-sidefx.md)). Not checked: other scenes, a slow heavy body, bridges of bonds remade while
+  pieces are held, and `clang-tidy` on the HDK files (`src/sync`, `src/dop`).
 
 * Packed Object Initial Object Type (`initialstate`): not checked are the Solver SOP's collision object (Custom), the
   Pieces tab's Body Type greying out with the menu (hython's `Parm.isDisabled()` never evaluates conditionals: Auto
@@ -27,10 +28,9 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   (`vexpressionmenu.buildSnippetMenu` with our own key lists nothing unless snippets are saved under it) and the type
   folders' layout.
 * Constraint Properties scaling and Geometry Attribute Transfer (`SCALE_VEX`). Not checked against RBD Constraint
-  Properties: a piece that is missing
-  leaves the value unscaled (Bullet skips the setting), integers, toggles and vectors have no scaling, and there is no
-  Next Constraint scaling. Randomize and Variance are on every number setting here (Bullet: Glue Strength only),
-  seeded per setting.
+  Properties: whether Bullet scales the Next Constraint settings (ours has no such scaling). Known difference: Bullet
+  scales one integer, Glue's `propagationiterations`; ours has no integer scaling (Bullet scales no toggles or
+  vectors). Randomize and Variance are on the Weld's two stiffnesses only, where Bullet has them on Glue Strength.
 * The group / attribute menus beside the fields (`MENU_SOURCE` in `b3d_hda.py`, lists covered by `asset_menus`). Not
   checked: a multi-name field toggling picks in and out (a click), the menus on the Solver SOP's nested nodes, and the
   node's output (Inspector Attributes).
@@ -102,5 +102,5 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   from a dump of RBD Constraint Properties and never run in a viewport. Only its stash and network are checked
   (`constraint_properties_edit`). Not known: whether the selector picks a line with a click and with a box, whether the
   handle's Euler order matches the stored quaternion on every rotation, the guide colours and size.
-* Not done: Proxy attribute transfer; the wheel edits only the spherical joint's `motor_velocity` (the other motor
+* Not done: the wheel edits only the spherical joint's `motor_velocity` (the other motor
   settings are multiplying floats), and Toggle Motor does not cover the Wheel joint's spin motor.

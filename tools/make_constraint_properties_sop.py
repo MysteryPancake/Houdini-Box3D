@@ -74,6 +74,9 @@ INDEX_ATTRIB = "__idx"  # each constraint line's number, for the viewport select
 
 GROUP_ATTRIB = "__tmpconpropgrp"  # the group SideFX's RBD Group Constraints makes
 ROTATE, ROTATE_BOX = "anchorrotate", "addanchorrotate"  # the Anchor Rotation setting (the orient attribute)
+# The settings with Randomize and Variance. RBD Constraint Properties has them on Glue's Strength only, and Glue is not
+# on this node, so the nearest are the Weld's stiffnesses.
+RANDOMIZABLE = ("weld_linear_stiffness", "weld_angular_stiffness")
 SCALING = ("No Scaling", "Scale by Attribute", "Scale by Value", "Scale by Both")  # RBD Constraint Properties' menu
 TRANSFER_MODES = (("0", "Closest"), ("1", "Min"), ("3", "Max"), ("2", "Average"))  # its tokens
 VEX_DEFAULT = "// Second Input: Geometry\n// Third Input: Proxy Geometry"  # RBD Constraint Properties' placeholder
@@ -122,14 +125,16 @@ def collect(dopnet):
 # multiplies by the constraint's own attribute of the setting's name, "Scale by Attribute" by the named attribute, taken
 # from the constraint (a primitive attribute) or else from the pieces at its two ends (point attributes of the Geometry,
 # else the Proxy Geometry), averaged over the ends. A piece an end stands for is the one named like it, or, when the
-# Geometry has the Cluster Attribute, every piece with that attribute equal to the name, combined by Transfer Mode.
+# Geometry has the Cluster Attribute, every piece with that attribute equal to the name, combined by Transfer Mode. An
+# end naming a proxy piece that is no Geometry piece stands for the Geometry pieces its Cluster Attribute names.
 SCALE_VEX = """\
 #define NONE -1e38
 // The value of `attr` on the piece(s) anchor `name` stands for in geometry `input`: NONE if there is no such piece.
 // mode: 0 the piece nearest `P` (to its surface, as RBD Constraint Properties does: a packed primitive is measured
 // by its geometry, a piece with no primitive by its point), 1 Min, 2 Average, 3 Max.
-float anchorvalue(int input; string attr; string cluster; string name; vector P; int mode)
+float piecesvalue(int input; string attr; string cluster; string name; vector P; int mode)
 {
+    if (!haspointattrib(input, attr)) return NONE;
     string key = "name";
     if (cluster != "" && haspointattrib(input, cluster) && findattribvalcount(input, "point", cluster, name) > 0)
         key = cluster;
@@ -169,7 +174,30 @@ float anchorvalue(int input; string attr; string cluster; string name; vector P;
     return result;
 }
 
-// `value` of setting `setting` on constraint `pr`, scaled (0 No Scaling, 1 by Attribute `attr`, 2 by Value, 3 Both),
+// The value of `attr` for anchor `name`, as RBD Constraint Properties finds it. With a Proxy, an anchor names a proxy
+// piece, and when the Geometry has no piece of that name the proxy piece's own Cluster Attribute names the Geometry
+// pieces it stands for; without those, the proxy piece itself. Otherwise the pieces the name stands for in the
+// Geometry, else in the Proxy.
+float anchorvalue(string attr; string cluster; string name; vector P; int mode)
+{
+    float result = NONE;
+    int proxy_piece = -1;
+    if (name != "" && npoints(2) > 0 && haspointattrib(2, "name")) proxy_piece = findattribval(2, "point", "name", name);
+    if (proxy_piece >= 0 && !(haspointattrib(1, "name") && findattribval(1, "point", "name", name) >= 0)) {
+        if (cluster != "" && haspointattrib(1, cluster) && haspointattrib(2, cluster)) {
+            string group = point(2, cluster, proxy_piece);
+            if (group != "" && findattribvalcount(1, "point", cluster, group) > 0)
+                result = piecesvalue(1, attr, cluster, group, P, mode);
+        }
+        if (result <= NONE) result = piecesvalue(2, attr, "", name, P, mode);
+        return result;
+    }
+    result = piecesvalue(1, attr, cluster, name, P, mode);
+    if (result <= NONE) result = piecesvalue(2, attr, cluster, name, P, mode);
+    return result;
+}
+
+// `base` of setting `setting` on constraint `pr`, scaled (0 No Scaling, 1 by Attribute `attr`, 2 by Value, 3 Both),
 // then randomized: times a number from 1 - variance to 1 + variance, from the constraint's number and `seed`.
 float scaled(float base; int scaling; string setting; string attr; int pr; string cluster; int transfer;
              int randomize; float variance; float seed)
@@ -182,14 +210,13 @@ float scaled(float base; int scaling; string setting; string attr; int pr; strin
     if (scaling == 1 || scaling == 3) {
         if (hasprimattrib(0, attr)) value *= prim(0, attr, pr);
         else {
-            int input = haspointattrib(1, attr) ? 1 : haspointattrib(2, attr) ? 2 : -1;
-            if (input > 0) {
+            if (haspointattrib(1, attr) || haspointattrib(2, attr)) {
                 float total = 0;
                 int count = 0;
                 foreach (int pt; primpoints(0, pr)) {
                     string anchor = point(0, "name", pt);
                     vector at = point(0, "P", pt);
-                    float v = anchorvalue(input, attr, cluster, anchor, at, transfer);
+                    float v = anchorvalue(attr, cluster, anchor, at, transfer);
                     if (v > -1e37) { total += v; count++; }
                 }
                 if (count > 0) value *= total / count;
@@ -224,7 +251,7 @@ def condition(pt, prefix, names):
 
 def setting_templates(rows, prefix, names, scalable=True, gate=""):
     """The checkbox and value of each setting: add<prefix><name> and <prefix><name>. `scalable`: the number settings
-    get their Scaling, Attribute, Randomize and Variance. `gate`: one more disable-when, for the next settings."""
+    get their Scaling and Attribute, and the `RANDOMIZABLE` ones Randomize and Variance. `gate`: one more disable-when, for the next settings."""
     items = []
     for pt, kind in rows:
         pname = prefix + pt.name()
@@ -259,16 +286,18 @@ def setting_templates(rows, prefix, names, scalable=True, gate=""):
             scaling.setConditional(hou.parmCondType.DisableWhen, grey)
             attrib.setConditional(hou.parmCondType.DisableWhen, grey)
             attrib.setConditional(hou.parmCondType.HideWhen, f"{{ {pname}scaling == 0 }} {{ {pname}scaling == 2 }}")
-            rand_box = hou.ToggleParmTemplate(
-                f"{pname}randomize", f"Randomize {value.label()}", default_value=False, join_with_next=True,
-                help="Vary the setting from constraint to constraint, by up to the Variance either way.")
-            rand_box.hideLabel(True)
-            variance = hou.FloatParmTemplate(
-                f"{pname}variance", f"{value.label()} Variance", 1, default_value=(0.8,), min=0.0, max=1.0,
-                help="How far a randomized setting goes from its value: 0.8 gives 0.2 to 1.8 times it.")
-            rand_box.setConditional(hou.parmCondType.DisableWhen, grey)
-            variance.setConditional(hou.parmCondType.DisableWhen, grey + f" {{ {pname}randomize == 0 }}")
-            items += [scaling, attrib, rand_box, variance]
+            items += [scaling, attrib]
+            if pname in RANDOMIZABLE:
+                rand_box = hou.ToggleParmTemplate(
+                    f"{pname}randomize", f"Randomize {value.label()}", default_value=False, join_with_next=True,
+                    help="Vary the setting from constraint to constraint, by up to the Variance either way.")
+                rand_box.hideLabel(True)
+                variance = hou.FloatParmTemplate(
+                    f"{pname}variance", f"{value.label()} Variance", 1, default_value=(0.8,), min=0.0, max=1.0,
+                    help="How far a randomized setting goes from its value: 0.8 gives 0.2 to 1.8 times it.")
+                rand_box.setConditional(hou.parmCondType.DisableWhen, grey)
+                variance.setConditional(hou.parmCondType.DisableWhen, grey + f" {{ {pname}randomize == 0 }}")
+                items += [rand_box, variance]
     return items
 
 
@@ -554,11 +583,14 @@ def wrangle_vex(rows):
         differs = f'{read[kind]}("../{value}") != {dflt}'
         expression = f'{read[kind]}("../{value}")'
         if kind == "f" and not following:  # Set also writes a setting that is scaled, whatever its value
-            differs = f'({differs} || chi("../{value}scaling") != 0 || chi("../{value}randomize") != 0)'
-            seed = zlib.crc32(value.encode()) % 10007  # each setting its own random numbers
+            differs = f'({differs} || chi("../{value}scaling") != 0)'
+            randomize, variance, seed = "0", "0.0", 0
+            if value in RANDOMIZABLE:
+                differs = f'({differs} || chi("../{value}randomize") != 0)'
+                randomize, variance = f'chi("../{value}randomize")', f'chf("../{value}variance")'
+                seed = zlib.crc32(value.encode()) % 10007  # each setting its own random numbers
             expression = (f'scaled(chf("../{value}"), chi("../{value}scaling"), "{attr}", chs("../{value}attribute"), '
-                          f'i@primnum, clusterattr, transfermode, chi("../{value}randomize"), chf("../{value}variance"), '
-                          f"{seed}.0)")
+                          f"i@primnum, clusterattr, transfermode, {randomize}, {variance}, {seed}.0)")
         which = "nexttype" if following else "constrainttype"
         if joint < 0:
             applies = f'(setmode && {differs}) || (!setmode && chi("../{box}"))'

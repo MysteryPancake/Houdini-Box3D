@@ -5,7 +5,7 @@ Index and rules: [CLAUDE.md](../../CLAUDE.md).
 `tools/make_constraint_properties_sop.py <out.hda>` builds `box3d_constraint_properties` (SOP), like RBD Constraint
 Properties: the settings of every joint type as primitive attributes on the Constraint Geometry's lines. Inputs and
 outputs are Geometry, Constraint Geometry (pink), Proxy Geometry; only the constraints are edited, the others pass
-through. No Bullet settings, no Proxy attribute transfer.
+through. No Bullet settings.
 * Settings are copied from the `box3d_<type>conrel` DOP nodes (`collect`): the Weld node's Joint folder is the common
   folder, each node's own folder is that type's. `NODE_ONLY` lists the node parameters that are no attribute
   (Breakable, Set Rest Length, the Limit toggles, Attributes Replace Values). Names: `<type>_<attribute>` in a type's
@@ -66,14 +66,19 @@ through. No Bullet settings, no Proxy attribute transfer.
   "not set" one is ignored), Scale by Attribute by the named primitive attribute of the line, else the point attribute
   of the Geometry (else Proxy) pieces its two points' `name`s stand for, averaged over the ends. The Geometry
   Attribute Transfer folder (`clusterattrib`, default `parentpiece`; `transfermode`: Closest 0, Min 1, Max 3, Average
-  2, as Bullet's tokens) picks the pieces: those whose Cluster Attribute equals the name, else the one named so;
-  Closest is the nearest to the anchor's surface (one `xyzdist` over the primitives of those pieces, as Bullet's, so a
+  2, as Bullet's tokens) picks the pieces: those whose Cluster Attribute equals the name, else the one named so. With
+  a Proxy, as Bullet's `get_name_and_attrib`, an end that names a proxy piece which is no Geometry piece stands for the
+  Geometry pieces its own Cluster Attribute value names (`anchorvalue`), else for the proxy piece; a Geometry piece
+  of that name is used as before. Closest is the nearest to the anchor's surface (one `xyzdist` over the primitives of those pieces, as Bullet's, so a
   packed piece is measured by its geometry; a piece with no primitive by its point; a packed primitive gives its
-  point's value, any other is interpolated with `primuv`), the others combine them. A piece that is not
-  found leaves the value alone. Set also writes a scaled setting whatever its value. Each of these settings also has
-  `<name>randomize` (a joined checkbox) and `<name>variance` (default 0.8): after the scaling the value is times
-  `fit01(rand(constraint number, seed), max(0, 1 - variance), 1 + variance)` when it is not negative, the seed from
-  the setting's name so the settings differ (RBD Constraint Properties has it for Glue's Strength only). `__idx` /
+  point's value, any other is interpolated with `primuv`), the others combine them. An end whose piece is
+  not found is left out of the average, and with none found the setting is written unscaled. RBD Constraint Properties
+  writes nothing when either end has no piece (a world anchor too); kept different so a line pinned to the world still
+  scales by its one piece. Set also writes a scaled setting whatever its value. `RANDOMIZABLE` (the Weld's
+  Linear and Angular Stiffness: RBD Constraint Properties has them on Glue's Strength only, and Glue is not on this
+  node) also have `<name>randomize` (a joined checkbox) and `<name>variance` (default 0.8): after the scaling the value
+  is times `fit01(rand(constraint number, seed), max(0, 1 - variance), 1 + variance)` when it is not negative, the
+  seed from the setting's name. `__idx` /
   `__sel` (Index, Selection, not saved with the scene) hold the selection. All three are visible in a HandleParms
   folder, as RBD Constraint Properties'. Edit Parms makes the handle edit Anchor Rotation, for every line in the
   group, instead. Clear Edits, Import Edits and Edit Parms are in the viewport toolbar (`show_in_toolbar`). Guide

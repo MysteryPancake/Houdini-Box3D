@@ -45,6 +45,7 @@ import checks_contact  # noqa: E402
 import checks_determinism  # noqa: E402
 import checks_geometry  # noqa: E402
 import checks_glue  # noqa: E402
+import checks_glue_compound  # noqa: E402
 import checks_heightfield  # noqa: E402
 import checks_joints  # noqa: E402
 import checks_mixing  # noqa: E402
@@ -63,7 +64,7 @@ from b3dtest import Result, SetupError  # noqa: E402
 
 # Every test, in run order: module by module.
 MODULES = [checks_core, checks_solver, checks_output, checks_packed, checks_geometry, checks_constraints, checks_more,
-           checks_glue, checks_joints, checks_mixing, checks_bullet, checks_determinism, checks_contact,
+           checks_glue, checks_glue_compound, checks_joints, checks_mixing, checks_bullet, checks_determinism, checks_contact,
            checks_robustness, checks_heightfield, checks_sop, checks_sop_constraints, checks_sop_collision,
            checks_assets, checks_regress]
 TESTS = {}

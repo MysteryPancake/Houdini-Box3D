@@ -230,6 +230,22 @@ int Box3DWorld::contactImpulsesByShape(
   return got;
 }
 
+int Box3DWorld::shapeKeysByHandle(BodyHandle h,
+                                  std::vector<uint64_t> &out) const {
+  out.clear();
+  if (!h)
+    return 0;
+  const int got = bodyShapes(b3LoadBodyId(h), tShapes);
+  if (got <= 0)
+    return 0;
+  out.resize(static_cast<size_t>(got));
+  // bodyShapes lists the newest first.
+  for (int i = 0; i < got; ++i)
+    out[static_cast<size_t>(got - 1 - i)] =
+        b3StoreShapeId(tShapes[static_cast<size_t>(i)]);
+  return got;
+}
+
 int Box3DWorld::getContactsByHandle(BodyHandle h,
                                     std::vector<ContactPoint> &out) const {
   out.clear();
@@ -293,6 +309,8 @@ int Box3DWorld::getContactImpulseEvents(
     ContactImpulse &c = out[static_cast<size_t>(i)];
     c.a = b3StoreBodyId(e.bodyIdA);
     c.b = b3StoreBodyId(e.bodyIdB);
+    c.shapeA = b3StoreShapeId(e.shapeIdA);
+    c.shapeB = b3StoreShapeId(e.shapeIdB);
     c.userDataA = e.userDataA;
     c.userDataB = e.userDataB;
     storePos(e.point, c.pos);

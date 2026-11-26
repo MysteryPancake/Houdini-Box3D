@@ -7,6 +7,7 @@
 #include <GA/GA_SplittableRange.h>
 #include <algorithm>
 #include <array>
+#include <unordered_map>
 
 namespace box3dsolver {
 
@@ -53,6 +54,54 @@ size_t impactSlot(const std::vector<Box3DImpactSlot> &table, uint64_t key) {
 }
 
 namespace {
+
+// A compound's body has no entry of its own, so its side of an event is the
+// piece whose shape the point is on: the event's user data is pointed at that
+// piece's entry, and the record lands on its point like any other body's. Only
+// compounds with a piece that asks for Impacts are looked at, and a compound's
+// shapes are indexed once, on its first event.
+void attributeCompoundEvents(Box3DSharedState &st,
+                             std::vector<b3dop::ContactImpulse> &events) {
+  struct Lookup {
+    const Box3DCompound *compound = nullptr;
+    bool indexed = false;
+    std::unordered_map<uint64_t, Box3DBodyMirror *> pieceOfShape;
+  };
+  std::unordered_map<b3dop::BodyHandle, Lookup> compounds;
+  for (const auto &c : st.compounds)
+    if (std::any_of(c->members.begin(), c->members.end(),
+                    [&](const Box3DCompoundMember &m) {
+                      return m.entry && m.entry->sync &&
+                             m.entry->sync->addImpact;
+                    }))
+      compounds[c->body].compound = c.get();
+  if (compounds.empty())
+    return;
+  thread_local std::vector<uint64_t> keys;
+  const auto pieceOf = [&](b3dop::BodyHandle body,
+                           uint64_t shape) -> Box3DBodyMirror * {
+    const auto it = compounds.find(body);
+    if (it == compounds.end())
+      return nullptr;
+    Lookup &l = it->second;
+    if (!l.indexed) {
+      l.indexed = true;
+      st.world.shapeKeysByHandle(body, keys);
+      for (const Box3DCompoundMember &m : l.compound->members)
+        for (int i = m.shapeFirst; i < m.shapeFirst + m.shapeCount; ++i)
+          if (static_cast<size_t>(i) < keys.size())
+            l.pieceOfShape[keys[static_cast<size_t>(i)]] = m.entry;
+    }
+    const auto p = l.pieceOfShape.find(shape);
+    return p == l.pieceOfShape.end() ? nullptr : p->second;
+  };
+  for (b3dop::ContactImpulse &ev : events) {
+    if (!ev.userDataA)
+      ev.userDataA = pieceOf(ev.a, ev.shapeA);
+    if (!ev.userDataB)
+      ev.userDataB = pieceOf(ev.b, ev.shapeB);
+  }
+}
 
 // Plan::same for a contact no earlier step of the frame recorded.
 constexpr uint32_t kNewHit = ~0u;
@@ -156,9 +205,11 @@ void impactPlanRecords(Box3DSharedState &st,
           // asleep dynamic body.
           const bool otherWants = o && st.isLive(*o) && o->sync->addImpact &&
                                   !o->dynamic() && !otherAwake;
+          // The bodies of the event (a compound's, not its piece's).
+          const b3dop::BodyHandle selfHandle = first ? ev.a : ev.b;
           const b3dop::BodyHandle otherHandle = first ? ev.b : ev.a;
           if ((!selfWants && !otherWants) ||
-              (speedFilter && !world.hadHitEvent(e->handle, otherHandle)))
+              (speedFilter && !world.hadHitEvent(selfHandle, otherHandle)))
             continue;
           if (selfWants) {
             plan.mask |= static_cast<uint8_t>(1u << (2 * side));
@@ -237,6 +288,7 @@ void collectImpacts(Box3DSharedState &st, bool append) {
   if (world.settings().impactMinSpeed > 0.0f && !st.hitsCollected)
     world.updateHitEvents();
   world.getContactImpulseEvents(st.impulseEvents);
+  attributeCompoundEvents(st, st.impulseEvents);
   thread_local std::vector<ImpactPlan> planStore; // kept between steps
   impactPlanRecords(st, st.impulseEvents, planStore, merge);
   impactAddHits(st, st.impulseEvents, planStore);

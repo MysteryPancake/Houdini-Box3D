@@ -14,7 +14,7 @@ EXTRA = (0.45, 0.45, 0.45)
 SOLVER_LAYOUT = [
     [("Inputs", ["#0", "#1", "#2", "#3", "IN_geometry", "IN_constraints", "IN_proxy", "IN_collision"],
       {"color": INPUTS})],
-    [("Geometry", ["world_scale_geometry", "switch_world_scale_geometry", "world_scale_proxy", "switch_world_scale_proxy", "sim_source", "sim_source_unscaled",
+    [("Geometry", ["world_scale_geometry", "switch_world_scale_geometry", "world_scale_proxy", "switch_world_scale_proxy", "sim_source",
                    "prepare_pieces", "collision_names_pieces", "scale_attributes", "switch_scale_attributes",
                    "create_age", "switch_create_age", "set_active_age_prepare", "set_active_age",
                    "switch_active_age"], {"color": PREPARE}),
@@ -31,7 +31,8 @@ SOLVER_LAYOUT = [
      ("Geometry Output", ["names_geometry", "remove_deleted_geometry", "transform_geometry", "move_pieces_geometry", "move_pieces_normals_geometry", "switch_fast_transform", "unscale_geometry", "switch_unscale_geometry",
                           "switchif_beforestart", "OUT_geometry"], {"color": OUTPUT}),
      ("Proxy Output", ["names_proxy", "remove_deleted_proxy", "transform_proxy", "unscale_proxy", "switch_unscale_proxy",
-                       "switchif_beforestart_proxy", "OUT_proxy"], {"color": OUTPUT}),
+                       "switchif_beforestart_proxy", "no_proxy", "switch_proxy_connected", "OUT_proxy"],
+      {"color": OUTPUT}),
      ("Constraints Output", ["import_constraints", "blast_broken", "switchif_keepbroken", "transform_constraints",
                              "reset_world_anchors", "unscale_constraint_attribs",
                              "switch_unscale_constraint_attribs", "unscale_constraints", "switch_unscale_constraints", "constraints_result",

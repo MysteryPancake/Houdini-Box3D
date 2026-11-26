@@ -33,7 +33,8 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
   at 0.46 to 0.48 where Bullet rests at 0.499, because a Box3D hull keeps about 44 vertices and loses the poles
   (keeping the farthest point per direction rested lower: a 38-vertex ball tips onto a face). Volumes: Bullet's packed
   one falls through, its RBD Object stays at 2, Box3D's falls.
-* Objects solved by another solver: packed ones are ignored as colliders; one-way collision with polygons untested.
+* Objects solved by another solver: only RBD Bullet Solver's are tried (`other_solver`: packed ones are ignored as
+  colliders, polygon ones push Box3D bodies one way). Vellum, FLIP and the rest are not.
 * Height fields: holes from a mask layer, height fields on points.
 * Constraint networks: agent anchors (`anchor_type` agent), the `anchor_pid` / `anchor_vid` matching. A missing
   `constraint_type` is `position` for Hard, Soft and Spring (`sidefx_hard_untyped`).
@@ -54,9 +55,10 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
     Force Threshold (Bullet's `force` of a Glue is the difference of its pieces' forces times their mean mass, Box3D's
     is the joint's), the Group parameter, plastic flow, the VEX snippet.
 * Glue as one body (`gluecompound`, `Box3DCompound*.cpp`, how it works: glue-compound.md; on by default, so the
-  glue tests run it; `glue_compound_break`, `glue_compound_load`, `glue_compound_vs_welds`, `glue_compound_sleep` and
-  `core_compound` check it). Not covered: Impacts and the collision guide for pieces, pieces with another joint or a
-  custom inertia (they stay on welds, as does their whole group), a group changed only by editing a piece's settings
+  glue tests run it; `glue_compound_break`, `glue_compound_load`, `glue_compound_vs_welds`, `glue_compound_hit`,
+  `glue_compound_sleep`, `glue_compound_id`, `glue_compound_kinematic`, `glue_compound_many_groups`,
+  `glue_compound_guide`, `glue_compound_impacts` and `core_compound` check it). Not covered: pieces with another
+  joint or a custom inertia (they stay on welds, as does their whole group), a group changed only by editing a piece's settings
   while it never merged (it is worked out again when the Glue graph or the bodies change).
 
 ## Box3D fork (`extern/box3d`)
