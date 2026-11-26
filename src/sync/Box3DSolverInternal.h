@@ -695,13 +695,14 @@ void refreshCompoundMotion(Box3DSharedState &st);
 // accelmax / angaccelmax, as Bullet: the change in velocity and spin a Box3D
 // step's constraints (contacts and joints) make is limited, after the step, so
 // the velocity carried on is changed and the step's motion is not. The change
-// is the velocity after the step less the one before it, gravity and the forces
-// put on the body (Box3D has no separate constraint change), so damping counts
-// as part of it. refreshAccelLimits: once a frame, after refreshCompoundMotion,
-// the bodies with a limit (a compound by its combined one). beginAccelLimits:
-// before each step's forces, their velocities. noteAccelForce: the force pass
-// adds what it puts on one. applyAccelLimits: after the step, before
-// applySpeedLimits, in the events and the bodies.
+// is the velocity after the step less what the one before it would be with
+// only gravity, the forces put on the body and its damping
+// (b3dop::undisturbedVelocity: Box3D has no separate constraint change).
+// refreshAccelLimits: once a frame, after refreshCompoundMotion, the bodies
+// with a limit (a compound by its combined one). beginAccelLimits: before each
+// step's forces, their velocities. noteAccelForce: the force pass adds what it
+// puts on one. applyAccelLimits: after the step, before applySpeedLimits, in
+// the events and the bodies.
 void refreshAccelLimits(Box3DSharedState &st);
 void beginAccelLimits(Box3DSharedState &st);
 void noteAccelForce(Box3DSharedState &st, b3dop::BodyHandle body,

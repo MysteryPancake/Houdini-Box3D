@@ -13,7 +13,7 @@ geometry when the object is created:
     Empty Object -> SOP Geometry (create_attributes/OUT) -> Box3D Data -> visualize_hires
                     ^ Rendering Parameters Volatile          -> Collider Label (output)
     create_attributes: Object Merge of the SOP Path -> setup_defaults -> create_name
-                       -> [creation frame] set_rest -> initial_transform -> apply_initial_xform -> setup_velocities -> setup_deforming -> OUT
+                       -> [creation frame] setup_velocities -> set_rest -> initial_transform -> apply_initial_xform -> setup_deforming -> OUT
 
 setup_velocities writes Velocity / Angular Velocity as v / w on the creation frame, unless Inherit
 Velocity keeps the points' own (off by default, as RBD Packed Object's; the Box3D Solver SOP turns it on
@@ -103,13 +103,13 @@ POS, ROT = "t", "r"
 INHERIT_PIVOT, PIVOT = "inheritpivot", "p"
 VEL, ANGVEL, INHERIT_VEL = "vel", "angvel", "inheritvelocity"
 
-# initial_transform, on the creation frame after set_rest: Position and Rotation as a transform about the piece's
-# pivot, for the Transform by Attribute after it (as RBD Packed Object's set_rest_and_initial_xform). The pivot is the
-# point's own, else its position while Inherit Pivot is on, else Pivot.
-INITIAL_XFORM_VEX = """int pts[] = primpoints(0, i@primnum);
-if (len(pts) != 1) return;
-vector pivot = haspointattrib(0, "pivot") ? point(0, "pivot", pts[0])
-             : (chi("../../%s") ? point(0, "P", pts[0]) : chv("../../%s"));
+# initial_transform, on the creation frame after set_rest (a point wrangle: a point matrix attribute, which the
+# Transform by Attribute after it applies to the point and its packed primitive, as RBD Packed Object's
+# set_rest_and_initial_xform): Position and Rotation as a transform about the piece's pivot. The pivot, as RBD's
+# no_custom_pivot / setup_packed_attribs: the point's own `pivot` from before set_rest (input 1; set_rest writes P
+# there for the Solver SOP's Transform Pieces), else its position while Inherit Pivot is on, else Pivot.
+INITIAL_XFORM_VEX = """vector pivot = haspointattrib(1, "pivot") ? point(1, "pivot", i@ptnum)
+             : (chi("../../%s") ? v@P : chv("../../%s"));
 4@__initialxform = maketransform(XFORM_SRT, XFORM_XYZ, chv("../../%s"), chv("../../%s"), {1, 1, 1}, pivot);
 """ % (INHERIT_PIVOT, PIVOT, POS, ROT)
 
@@ -289,27 +289,30 @@ def build_stage(sub, rows):
     name.setInput(0, defaults)
     name.addSpareParmTuple(hou.StringParmTemplate("objname", "Object Name", 1))
     name.parm("snippet").set(b3d_settings.NAME_VEX)
+    # Velocity and Angular Velocity (degrees per second, written as radians) as v and w on the creation frame, unless
+    # the points' own v / w are inherited (then the node is skipped, so nothing is added). Before the initial
+    # transform, as RBD Packed Object's setup_velocities, so Rotation turns them with the piece.
+    velocities = b3d_hda.attribute_create(net, "setup_velocities", [
+        ("v", "vector", [f'ch("../../{VEL}x")', f'ch("../../{VEL}y")', f'ch("../../{VEL}z")']),
+        ("w", "vector", [f'rad(ch("../../{ANGVEL}x"))', f'rad(ch("../../{ANGVEL}y"))', f'rad(ch("../../{ANGVEL}z"))'])], warn)
+    velocities.setInput(0, name)
+    start_velocity = net.createNode("switch", "switch_velocities")
+    start_velocity.setInput(0, name)
+    start_velocity.setInput(1, velocities)
+    start_velocity.parm("input").setExpression(f'!ch("../../{INHERIT_VEL}")', hou.exprLanguage.Hscript)
     rest = net.createNode("attribwrangle", "set_rest")
-    rest.setInput(0, name)
+    rest.setInput(0, start_velocity)
     rest.parm("snippet").set(b3d_settings.REST_VEX)
-    # Initial State's Position and Rotation, per piece about its pivot, after the rest is recorded.
+    # Initial State's Position and Rotation, per piece about its pivot, after the rest is recorded. The Transform by
+    # Attribute turns the points' vectors too (v, w, orient), as RBD Packed Object's apply_initial_xform.
     place = net.createNode("attribwrangle", "initial_transform")
     place.setInput(0, rest)
-    place.parm("class").set("primitive")
+    place.setInput(1, name)  # the points' own pivot, before set_rest writes P there
+    place.parm("class").set("point")
     place.parm("snippet").set(INITIAL_XFORM_VEX)
     apply = net.createNode("xformbyattrib", "apply_initial_xform")
     apply.setInput(0, place)
     apply.parm("xformattrib").set("__initialxform")
-    # Velocity and Angular Velocity (degrees per second, written as radians) as v and w on the creation frame, unless
-    # the points' own v / w are inherited (then the node is skipped, so nothing is added).
-    velocities = b3d_hda.attribute_create(net, "setup_velocities", [
-        ("v", "vector", [f'ch("../../{VEL}x")', f'ch("../../{VEL}y")', f'ch("../../{VEL}z")']),
-        ("w", "vector", [f'rad(ch("../../{ANGVEL}x"))', f'rad(ch("../../{ANGVEL}y"))', f'rad(ch("../../{ANGVEL}z"))'])], warn)
-    velocities.setInput(0, apply)
-    start_velocity = net.createNode("switch", "switch_velocities")
-    start_velocity.setInput(0, apply)
-    start_velocity.setInput(1, velocities)
-    start_velocity.parm("input").setExpression(f'!ch("../../{INHERIT_VEL}")', hou.exprLanguage.Hscript)
     stamps = net.createNode("null", "STAMPS")
     for parm, key in (("frame", "SF"), ("objcf", "OBJCF"), ("objid", "OBJID")):
         stamps.addSpareParmTuple(hou.FloatParmTemplate(parm, key, 1))
@@ -329,7 +332,7 @@ def build_stage(sub, rows):
     later.setInput(1, name)
     first = net.createNode("switch", "switch_first_frame")
     first.setInput(0, later)
-    first.setInput(1, start_velocity)
+    first.setInput(1, apply)
     first.parm("input").setExpression('ch("../STAMPS/frame") == ch("../STAMPS/objcf")',
                                       hou.exprLanguage.Hscript)
     # On every import: the deforming attribute, so the solver rebuilds the shapes (skipped when it is off).

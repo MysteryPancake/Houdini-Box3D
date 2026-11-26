@@ -302,6 +302,23 @@ def extra_folders():
             (T("fastrotation", "Fast Rotation", default_value=False,
                help="No spin speed limit. For round pieces such as wheels."), "i"),
         ]),
+        # RBD Configure's Speed Limit folder: the same names, labels, defaults and ranges (-1: no limit).
+        ("Speed Limit", [
+            (F("speedmin", "Speed Min", 1, default_value=(-1.0,), min=-1.0, max=10.0,
+               help="The slowest a moving piece may go, in units per second. Below 0: no limit."), "f"),
+            (F("speedmax", "Speed Max", 1, default_value=(-1.0,), min=-1.0, max=10.0,
+               help="The fastest a piece may go, in units per second. Below 0: no limit."), "f"),
+            (F("spinmin", "Spin Min", 1, default_value=(-1.0,), min=-1.0, max=10.0,
+               help="The slowest a spinning piece may turn, in radians per second. Below 0: no limit."), "f"),
+            (F("spinmax", "Spin Max", 1, default_value=(-1.0,), min=-1.0, max=10.0,
+               help="The fastest a piece may turn, in radians per second. Below 0: no limit."), "f"),
+            (F("accelmax", "Acceleration Max", 1, default_value=(-1.0,), min=-1.0, max=10.0,
+               help="The most collisions and constraints may change a piece's velocity, per second. Below 0: no "
+                    "limit."), "f"),
+            (F("angaccelmax", "Angular Acceleration Max", 1, default_value=(-1.0,), min=-1.0, max=10.0,
+               help="The most collisions and constraints may change a piece's spin, per second. Below 0: no "
+                    "limit."), "f"),
+        ]),
         ("Collision Filtering", [
             (b3d_hda.menu_script(
                 S("collisiongroup", "Collision Group", 1, default_value=("",),

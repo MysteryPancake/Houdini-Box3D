@@ -278,12 +278,14 @@ void refreshAccelLimits(Box3DSharedState &st) {
   if (!st.anyMotion)
     return;
   const auto add = [&st](b3dop::BodyHandle h, const b3dop::MotionParams &p,
-                         float gravityScale) {
+                         const b3dop::BodyProps &props) {
     Box3DAccelSlot s;
     s.body = h;
     s.maxAccel = p.maxAccel;
     s.maxAngAccel = p.maxAngAccel;
-    s.gravityScale = gravityScale;
+    s.gravityScale = props.gravityScale;
+    s.linearDamping = props.linearDamping;
+    s.angularDamping = props.angularDamping;
     st.accelSlotOf.emplace(h, st.accelSlots.size());
     st.accelSlots.push_back(s);
   };
@@ -297,12 +299,12 @@ void refreshAccelLimits(Box3DSharedState &st) {
       const Box3DMotionEntry *m =
           findMotion(os, static_cast<GA_Offset>(e->pointOff));
       if (m && m->params.hasAccelLimits())
-        add(e->handle, m->params, e->props.gravityScale);
+        add(e->handle, m->params, e->props);
     }
   }
   for (const auto &c : st.compounds)
     if (c->hasMotion && c->motion.hasAccelLimits() && !c->members.empty())
-      add(c->body, c->motion, c->members[0].props.gravityScale);
+      add(c->body, c->motion, c->members[0].props);
 }
 
 void beginAccelLimits(Box3DSharedState &st) {
@@ -336,6 +338,7 @@ void applyAccelLimits(Box3DSharedState &st,
     return;
   b3dop::Box3DWorld &w = st.world;
   const float *g = w.settings().gravity;
+  const int subSteps = w.settings().subSteps;
   for (b3dop::BodyMove &mv : events) {
     if (mv.fellAsleep)
       continue;
@@ -345,30 +348,31 @@ void applyAccelLimits(Box3DSharedState &st,
     const Box3DAccelSlot &s = st.accelSlots[it->second];
     bool changed = false;
     if (s.maxAccel >= 0.0f) {
-      // What gravity and the step's forces alone make of the velocity.
+      // What gravity, the step's forces and the damping alone make of the
+      // velocity.
       const float mass = w.massByHandle(mv.handle);
       const float invMass = mass > 0.0f ? 1.0f / mass : 0.0f;
-      float expected[3];
+      float accel[3], expected[3];
       for (int k = 0; k < 3; ++k)
-        expected[k] =
-            s.lin0[k] + dt * (g[k] * s.gravityScale + invMass * s.force[k]);
+        accel[k] = g[k] * s.gravityScale + invMass * s.force[k];
+      b3dop::undisturbedVelocity(s.lin0, accel, s.linearDamping, dt, subSteps,
+                                 expected);
       changed |= b3dop::clampConstraintChange(s.maxAccel, dt, expected, mv.lin);
     }
     if (s.maxAngAccel >= 0.0f) {
-      // The torque's change, on the inertia the body has now.
-      float expected[3] = {s.ang0[0], s.ang0[1], s.ang0[2]};
+      // The torque's (on the inertia the body has now) and the damping's.
+      float alpha[3] = {0.0f, 0.0f, 0.0f}, expected[3];
       float inertia[6], inverse[6];
       if ((s.torque[0] != 0.0f || s.torque[1] != 0.0f || s.torque[2] != 0.0f) &&
           w.inertiaWorldByHandle(mv.handle, inertia) &&
           b3dop::invertSymmetric3(inertia, inverse)) {
         const float *t = s.torque;
-        expected[0] +=
-            dt * (inverse[0] * t[0] + inverse[3] * t[1] + inverse[4] * t[2]);
-        expected[1] +=
-            dt * (inverse[3] * t[0] + inverse[1] * t[1] + inverse[5] * t[2]);
-        expected[2] +=
-            dt * (inverse[4] * t[0] + inverse[5] * t[1] + inverse[2] * t[2]);
+        alpha[0] = inverse[0] * t[0] + inverse[3] * t[1] + inverse[4] * t[2];
+        alpha[1] = inverse[3] * t[0] + inverse[1] * t[1] + inverse[5] * t[2];
+        alpha[2] = inverse[4] * t[0] + inverse[5] * t[1] + inverse[2] * t[2];
       }
+      b3dop::undisturbedVelocity(s.ang0, alpha, s.angularDamping, dt, subSteps,
+                                 expected);
       changed |=
           b3dop::clampConstraintChange(s.maxAngAccel, dt, expected, mv.ang);
     }

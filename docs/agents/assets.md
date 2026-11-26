@@ -42,7 +42,7 @@ Geometry reads a SOP stage inside the asset (`STAGE`, RBD Packed Object's `creat
 Merge of the asset's effective SOP path (`EFFECTIVE_SOP`, hidden: SOP Path, or `dopcontextgeo(".", n)` for Geometry
 Source First to Fourth Context Geometry; Use Object Transform drives its Transform, Into This Object: the DOP
 network's space; SOP Geometry's own stays off, as 22.0's has no OBJ Path to point at an object) -> `setup_defaults` ->
-`create_name` -> `set_rest`, `initial_transform` and `setup_velocities` (+ `switch_velocities`) on the creation frame
+`create_name` -> `setup_velocities` (+ `switch_velocities`), `set_rest` and `initial_transform` on the creation frame
 only -> `setup_deforming` (+ `switch_deforming`) -> `OUT`. The stage's references to the asset's parameters are set
 once the asset exists (`wire_stage`).
 * `save_source_geo` (Link to Source Object) and `applydata1` (on the creation frame) attach the SOP Path as the
@@ -54,11 +54,13 @@ once the asset exists (`wire_stage`).
   runs Set Always while it, Deforming or `reimportsop` is on (`REIMPORT`). Deforming, or `reimportsop` (set by the
   Solver SOP for a Deforming collider), outputs the whole SOP instead (`switch_reimport`): changing shapes need the
   full re-import. Poses do not: an Animated collider follows through `SourceObject`.
-* `initial_transform` (primitive wrangle, `INITIAL_XFORM_VEX`) writes `__initialxform` per piece: Position and
-  Rotation about the pivot (the point's `pivot`, else P while Inherit Pivot is on, else Pivot), applied by
-  `apply_initial_xform` (Transform by Attribute) after `set_rest`, so the rest stays at the SOP's pose, as RBD Packed
-  Object's `set_rest_and_initial_xform`. The solver does not read a `pivot` attribute: it only decides where the
-  initial rotation is about.
+* `initial_transform` (point wrangle, `INITIAL_XFORM_VEX`) writes the point matrix `__initialxform`: Position and
+  Rotation about the pivot (the point's own `pivot` from before `set_rest`, which writes P there: its input 1; else P
+  while Inherit Pivot is on, else Pivot), applied by `apply_initial_xform` (Transform by Attribute: a primitive
+  attribute is not found, so it must be a point one) after `set_rest`, so the rest stays at the SOP's pose, as RBD
+  Packed Object's `set_rest_and_initial_xform`. It turns the points' vectors too: `v` and `w`, set before it, turn
+  with the piece, as RBD's. The solver does not read a `pivot` attribute: it only decides where the initial rotation
+  is about. Matched against RBD Packed Object in Bullet by `packed_object_initial_bullet`.
 * `setup_defaults` (detail wrangle, `b3d_settings.packed_defaults_vex`; Default Shape is `setup_shape`, an Attribute
   Create with Write Values on behind `switch_shape`, which skips it when the points have `bullet_georep`, as a
   string's default is not applied): each per-body setting whose value differs from Box3D Data's default becomes a

@@ -30,7 +30,7 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
 * Box3D Configure has no Units (RBD Configure's Unit Mass and Unit Length, which scale Density by
   `unitlength / unitmass`, each over 1000).
 * Drag and speed limits (`Box3DMotion.cpp`, [motion-limits.md](motion-limits.md)): World Scale other than 1 does not
-  scale the values. Box3D Configure has no Acceleration Max / Angular Acceleration Max (RBD Configure's).
+  scale the values.
 * Bounding Box Inertia ([body-features.md](body-features.md)): a Glue as One Body compound takes the true inertia of
   its merged shapes, where Bullet's chunk sums the pieces' box inertias, so a glued group spins more freely than
   Bullet's. `kBulletInertiaPad` was fitted on 1 m pieces (a tetrahedron and an icosahedron); other scales are unchecked.

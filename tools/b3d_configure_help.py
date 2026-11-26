@@ -83,10 +83,10 @@ Number of Attributes:
 
     Settings:
         The folders of Box3D Data's settings (Shape, Body, Material, CCD & Contacts, Sleep), plus Initial State
-        (velocity, spin, Enabled, Deforming), Motion and Collision Filtering. Only ticked settings are written. Var
-        scatters Density, Bounce, Friction or Rotational Stiffness per piece. Use Bounds gives a setting's value
-        inside the bounds and the opposite outside. A Material preset fills Density, Bounce and Friction from a list
-        of real materials, as RBD Configure's.
+        (velocity, spin, Enabled, Deforming), Motion, Speed Limit (as RBD Configure's: speed, spin and acceleration
+        limits) and Collision Filtering. Only ticked settings are written. Var scatters Density, Bounce, Friction or
+        Rotational Stiffness per piece. Use Bounds gives a setting's value inside the bounds and the opposite outside.
+        A Material preset fills Density, Bounce and Friction from a list of real materials, as RBD Configure's.
 
     Constraints:
         Add Pin adds a constraint from the world to each piece in the group, a Weld that holds it rigidly or a Soft one

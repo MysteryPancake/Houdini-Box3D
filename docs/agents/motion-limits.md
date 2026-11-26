@@ -21,7 +21,9 @@ Body compound takes them. The other per-attribute features: [body-features.md](b
   the forces its pieces put on it (`applyCompoundDrag`), its limits on its body's move events; its pieces take none of
   their own. `accelmax` / `angaccelmax` limit the change a step's constraints make (`applyAccelLimits`, after the step,
   before the speed limits; `clampConstraintChange`): Box3D has no separate constraint change, so it is the velocity
-  after the step less the one before (`beginAccelLimits`), gravity and the forces the force pass put on the body
-  (`noteAccelForce`), shortened to the limit times the step; only the velocity carried on changes, as Bullet's. Tests
+  after the step less what the one before it (`beginAccelLimits`) would be with only gravity, the forces the force
+  pass put on the body (`noteAccelForce`) and Box3D's damping over the step's solver substeps (`undisturbedVelocity`),
+  shortened to the limit times the step; only the velocity carried on changes, as Bullet's. Joints are limited as
+  contacts are, and a compound takes its pieces' smallest limit, as Bullet's chunk. Tests
   `bullet_drag_limits`, `bullet_glue_drag_limits`, `bullet_accel_limits`, `solver_sop_speed_limit_bullet`,
   `solver_sop_pop_drag_bullet`, `core_motion`.

@@ -85,7 +85,9 @@ Glue, Hard, Spring, Bullet Soft and Cone Twist mapped onto Box3D joints. Joint n
     while the anchors are within `kSideFXAimMinDistance`, and `reaimJoints` (`Box3DJointSync.cpp`, before the steps;
     `Box3DWorld::reaimJointFrameA`) aims frame A's shift along the anchors' line again each frame, updating the entry's
     `adjA` so the written anchors stay the anchors. A joint made later (a rebuilt world) starts from the anchors as
-    they are (`bullet_soft_coincident_anchors`, `bullet_position_rest_length`, `position_rest_rebuild`).
+    they are (`bullet_soft_coincident_anchors`, `bullet_position_rest_length`, `position_rest_rebuild`). Which way that
+    gap opens comes from the first frame's sag, which differs between the solvers, so a swinging piece then moves
+    differently in each; a pin, or a rest offset fixed at rest, swings as Bullet's (`bullet_hard_pendulum`).
   * Cone Twist: spherical joint. Box3D's cone is round: the smaller of Max Up / Max Out, clamped to Box3D's 90 degree
     maximum; 180 or more turns it off (Houdini's default). Twist limit +-Max Twist (180 or more: none). Bullet twists
     about x, Box3D about z, so each frame is turned so z = the twist axis and x = the up axis (constrained axes on

@@ -23,9 +23,6 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * Glue as One Body drag and speed limits (`refreshCompoundMotion`, [motion-limits.md](motion-limits.md)):
   `bullet_glue_drag_limits` checks `airresist`, `speedmax`, `spinmax` and `spinmin` against Bullet. Not checked:
   `dragexp`, `targetv` / `targetw` and `spinresist` on a chunk (weighted by mass, as `airresist`).
-* `accelmax` / `angaccelmax` ([motion-limits.md](motion-limits.md)): `bullet_accel_limits` checks a landing and a
-  spinning box against Bullet. Not checked: a body with damping (counted as part of the constraints' change), joints,
-  and a Glue as One Body chunk (it takes its pieces' smallest limit, as `speedmax`).
 
 * Packed Object Initial Object Type (`initialstate`): not checked are the Solver SOP's collision object (Custom), the
   Pieces tab's Body Type greying out with the menu (hython's `Parm.isDisabled()` never evaluates conditionals: Auto
@@ -53,8 +50,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 
 * `computecom` on points (default on, as Bullet; `bullet_computecom` matches). Bullet also moves the point to the
   centre of mass and writes `pivot`, which Box3D does not. Not checked: `v` (the centre's velocity here), and joints,
-  Glue and forces with it on. Also unchecked: the Packed Object's Initial State Position / Rotation / Inherit Pivot /
-  Pivot and Creation Frame Specifies Simulation Frame against Bullet.
+  Glue and forces with it on.
 * Box3D Packed Object's Display Geometry (`visualize_hires`) and Collider Label (`add_display`): checked against a
   stand-in `hou` only. The build's `check` probes both.
 * Box3D Configure's Bounds / Use Bounds and World Scale on FORCES: no test, only the builders' `check`s (Use Bounds, the

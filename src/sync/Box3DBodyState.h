@@ -491,6 +491,7 @@ struct Box3DAccelSlot {
   b3dop::BodyHandle body = 0;
   float maxAccel = -1.0f, maxAngAccel = -1.0f;
   float gravityScale = 1.0f;
+  float linearDamping = 0.0f, angularDamping = 0.0f;
   float lin0[3] = {0, 0, 0}, ang0[3] = {0, 0, 0};
   float force[3] = {0, 0, 0}, torque[3] = {0, 0, 0};
 };

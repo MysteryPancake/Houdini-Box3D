@@ -695,6 +695,45 @@ def test_configure_initial_state():
                    f"(expected 2), other {x1:.3f} (expected 0)")]
 
 
+def test_configure_speed_limit():
+    """Box3D Configure's Speed Limit folder (RBD Configure's): Speed Max 3 and Acceleration Max 5 on the group's piece
+    write speedmax and accelmax on its point only (the other piece gets none, or -1, no limit). Through the Box3D
+    Solver SOP the group's piece falls at about 3 m/s after 2 s and the other freely (about 19.6)."""
+    pieces, names = packed_boxes("cfg_limit_pieces", [{"size": (1, 1, 1), "center": (0, 100, 0)},
+                                                      {"size": (1, 1, 1), "center": (0, 100, 5)}])
+    geo = new_geo("cfg_limit")
+    src = create(geo, "object_merge", "pieces")
+    set_parm(src, ["objpath1"], pieces)
+    grp = create(geo, "attribwrangle", "chosen")
+    grp.setInput(0, src)
+    set_parm(grp, ["snippet"], f'if (s@name == "{names[0]}") setpointgroup(0, "chosen", @ptnum, 1);')
+    cfg = create(geo, "box3d_configure", "configure")
+    cfg.setInput(0, grp)
+    for n, v in (("group1", "chosen"), ("addspeedmax1", 1), ("speedmax1", 3.0), ("addaccelmax1", 1),
+                 ("accelmax1", 5.0)):
+        set_parm(cfg, [n], v)
+    g = cfg.geometry()
+
+    def attr(name):
+        if g is None or g.findPointAttrib(name) is None:
+            return {}
+        return {p.attribValue("name"): p.attribValue(name) for p in g.points()}
+
+    speed, accel = attr("speedmax"), attr("accelmax")
+    written = (speed.get(names[0]) == 3.0 and accel.get(names[0]) == 5.0 and speed.get(names[1], -1.0) < 0.0
+               and accel.get(names[1], -1.0) < 0.0)
+    solver = create(geo, "box3d_solver", "box3d_solver")
+    solver.setInput(0, cfg)
+    display(solver)
+    pos = play(solver, 49, lambda s, f: named_positions(s.geometry(0)) if f in (48, 49) else None)
+    fall = {n: (pos[48][n][1] - pos[49][n][1]) * 24.0 for n in names}
+    ok = written and close(fall[names[0]], 3.0, 0.3) and fall[names[1]] > 15.0
+    return [Result("configure_speed_limit", Result.PASS if ok else Result.FAIL,
+                   f"speedmax {speed.get(names[0])} and accelmax {accel.get(names[0])} on the group's piece, "
+                   f"{speed.get(names[1])} and {accel.get(names[1])} on the other (expected 3, 5 and none); falling at "
+                   f"{fall[names[0]]:.2f} and {fall[names[1]]:.2f} m/s after 2 s (expected about 3, and free)")]
+
+
 def test_configure_pin():
     """Box3D Configure's Pin adds one Weld line from the world to each pinned piece on the Constraint Geometry
     output. Wired into the Box3D Solver SOP, the pinned piece stays at y = 3 and the other falls."""
@@ -856,5 +895,6 @@ TESTS = {
     "constraint_properties_edit": test_constraint_properties_edit,
     "no_subdata_warnings": test_no_subdata_warnings,
     "configure_initial_state": test_configure_initial_state,
+    "configure_speed_limit": test_configure_speed_limit,
     "configure_pin": test_configure_pin,
 }

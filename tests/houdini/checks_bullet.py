@@ -1538,15 +1538,126 @@ def accel_run(tag, kind, attrs, spin=False, frames=9):
     return step(dop, frames, sample)
 
 
+def hard_pendulum_run(tag, kind, rest, anchor_a, anchor_b, hang_x):
+    """A 1 m box at (hang_x, 2, 0) beside a fixed one at the origin, joined by a SideFX Hard (position) constraint from
+    `anchor_a` on the fixed box to `anchor_b` on it, with Rest Length `rest`: per frame its centre (x, y) and its tilt
+    about z in degrees."""
+    pieces = [{"size": (1, 1, 1), "center": (0, 2, 0), "attrs": {"active": 0}},
+              {"size": (1, 1, 1), "center": (hang_x, 2, 0), "attrs": {"active": 1}}]
+    path, names = packed_boxes(tag + "_pieces", pieces)
+    dop = new_dopnet(tag)
+    obj = packed_object(dop, "pieces", path)
+    hard = create(dop, "hardconrel", "hard")
+    set_parm(hard, ["restlength"], rest)
+    net = create(dop, "constraintnetwork", "constraint_network")
+    net.setInput(0, obj)
+    set_parm(net, ["soppath", "constraintsoppath", "geosoppath"],
+             constraint_lines(tag + "_network", [(names[0], anchor_a, names[1], anchor_b, "Hard",
+                                                  {"constraint_type": "position"})]))
+    net.setInput(1, hard)
+    finish(dop, solver_for(kind, dop, net))
+
+    def sample(sim, f):
+        p = packed_positions(sim, "pieces")[names[1]]
+        r = packed_transform(sim, "pieces", names[1])
+        return p[0], p[1], math.degrees(math.atan2(r[0][1], r[0][0]))
+
+    return step(dop, 12, sample)
+
+
+def test_bullet_hard_pendulum():
+    """A SideFX Hard (position) constraint as a pendulum, in both solvers: a 1 m box pinned at the middle of its left
+    face, half a unit clear of a fixed box, swinging down from level. Once as a pin (Rest Length 0, the anchors
+    together) and once with Bullet's rest offset (Rest Length 1, the anchors 1 apart: anchor A shifted onto B). Until
+    the box can reach the fixed one (frame 12) it is the same pendulum in both. Passes when Box3D's centre is within
+    0.02 and its tilt within 2 degrees of Bullet's on every frame. (Anchors that start together with a Rest Length
+    are left out: the gap opens along whichever way each solver's first frame sags, see joints-sidefx.md.)"""
+    cases = (("a pin", 0.0, (1.0, 2, 0), (1.0, 2, 0), 1.5),
+             ("rest length 1", 1.0, (0.5, 2, 0), (1.5, 2, 0), 2.0))
+    rows, ok = [], True
+    for i, (label, rest, a, b, x) in enumerate(cases):
+        got = {kind: hard_pendulum_run(f"hard_pendulum_{i}_{kind}", kind, rest, a, b, x) for kind in KINDS}
+        worst_p = max(math.hypot(got["box3d"][f][0] - got["bullet"][f][0], got["box3d"][f][1] - got["bullet"][f][1])
+                      for f in range(1, 13))
+        worst_t = max(abs(got["box3d"][f][2] - got["bullet"][f][2]) for f in range(1, 13))
+        ok = ok and worst_p < 0.02 and worst_t < 2.0
+        bx, by, bt = got["box3d"][12]
+        rows.append(f"{label}: on frame 12 Box3D ({bx:.2f}, {by:.2f}) {bt:.0f} deg, Bullet ({got['bullet'][12][0]:.2f}, "
+                    f"{got['bullet'][12][1]:.2f}) {got['bullet'][12][2]:.0f} deg; largest differences {worst_p:.3f} "
+                    f"and {worst_t:.1f} deg")
+    return [Result("bullet_hard_pendulum", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+def accel_damped_run(tag, attrs, spin):
+    """Box3D only (Bullet reads no damping): a box falling freely with Box3D Data's Linear Damping 2, or spinning at 20
+    rad/s about y with Angular Damping 2 and no gravity, with `attrs`. Its v.y or w.y after 1 s."""
+    box = {"size": (1, 1, 1), "center": (0, 100, 0),
+           "attrs": dict(attrs, active=1, **({"w": (0.0, 20.0, 0.0)} if spin else {}))}
+    path, names = packed_boxes(tag + "_pieces", [box])
+    dop = new_dopnet(tag)
+    obj = packed_object(dop, "pieces", path, keep_velocity=True)
+    data = box3d_data(dop, obj, "data", **({"angulardamping": 2.0} if spin else {"lineardamping": 2.0}))
+    finish(dop, box3d_solver(dop, data, gravity=(0, 0, 0) if spin else None))
+    a = step(dop, 24, lambda sim, f: point_attributes(sim, "pieces", names[0], ["v", "w"]) if f == 24 else None)[24]
+    return a["w"][1] if spin else a["v"][1]
+
+
+def accel_joint_run(tag, kind, limit):
+    """A box hanging beside a fixed one by a SideFX Hard (position) constraint, swinging down, with accelmax `limit`
+    on it: its v.y on frames 18 and 24."""
+    pieces = [{"size": (1, 1, 1), "center": (0, 2, 0), "attrs": {"active": 0, "accelmax": -1.0}},
+              {"size": (1, 1, 1), "center": (1, 2, 0), "attrs": {"active": 1, "accelmax": limit}}]
+    path, names = packed_boxes(tag + "_pieces", pieces)
+    dop = new_dopnet(tag)
+    obj = packed_object(dop, "pieces", path)
+    hard = create(dop, "hardconrel", "hard")
+    net = create(dop, "constraintnetwork", "constraint_network")
+    net.setInput(0, obj)
+    set_parm(net, ["soppath", "constraintsoppath", "geosoppath"],
+             constraint_lines(tag + "_network", [(names[0], (0.5, 2, 0), names[1], (0.5, 2, 0), "Hard",
+                                                  {"constraint_type": "position"})]))
+    net.setInput(1, hard)
+    finish(dop, solver_for(kind, dop, net))
+    t = step(dop, 24, lambda sim, f: point_attributes(sim, "pieces", names[1], ["v"])["v"][1]
+             if f in (18, 24) else None)
+    return t[18], t[24]
+
+
+def accel_chunk_run(tag, kind, light, heavy):
+    """Two boxes glued side by side (1000 and 3000 kg, accelmax `light` and `heavy`) landing at 10 m/s: the chunk's
+    v.y on frames 6 and 10."""
+    base = {"active": 1, "density": 1000.0, "bounce": 0.0, "friction": 0.5, "v": (0.0, -10.0, 0.0)}
+    pieces = [{"size": (1, 1, 1), "center": (-0.5, 0.6, 0), "attrs": dict(base, accelmax=light)},
+              {"size": (1, 1, 1), "center": (0.5, 0.6, 0), "attrs": dict(base, accelmax=heavy, density=3000.0)},
+              dict(GROUND, attrs=dict(base, active=0, accelmax=-1.0, v=(0.0, 0.0, 0.0)))]
+    path, names = packed_boxes(tag + "_pieces", pieces)
+    dop = new_dopnet(tag)
+    obj = packed_object(dop, "pieces", path, keep_velocity=True)
+    glue = create(dop, "glueconrel", "glue")
+    set_parm(glue, ["strength"], 1e12)
+    net = create(dop, "constraintnetwork", "constraint_network")
+    net.setInput(0, obj)
+    set_parm(net, ["soppath", "constraintsoppath", "geosoppath"],
+             constraint_lines(tag + "_network", [(names[0], (0, 0.6, 0), names[1], (0, 0.6, 0), "Glue")]))
+    net.setInput(1, glue)
+    finish(dop, solver_for(kind, dop, net))
+    t = step(dop, 10, lambda sim, f: point_attributes(sim, "pieces", names[0], ["v"])["v"][1]
+             if f in (6, 10) else None)
+    return t[6], t[10]
+
+
 def test_bullet_accel_limits():
     """accelmax and angaccelmax (the most the constraints may change a body's velocity / spin, per second), as RBD
     Bullet Solver: after the step, so the step's motion is kept and only the velocity carried on is changed. A box
     landing at 10 m/s with accelmax 1, 10 and 100: the ground still holds it (y 0.5), but its v.y loses at most
     accelmax / 24 per frame to the contact (with 1 it keeps falling faster on paper; with 100 it reaches 0 within a few
     frames). A box spinning at 20 rad/s on rough ground with angaccelmax 1 and 10: friction slows it by at most
-    angaccelmax / 24 per frame (without a limit it loses about 1.7 a frame). Passes when Box3D's v.y on frames 6 and 8
+    angaccelmax / 24 per frame (without a limit it loses about 1.7 a frame). Then: Box3D's own damping is unchanged by
+    the limits (it is no constraint), a box swinging on a Hard constraint is limited as in Bullet, and a glued chunk
+    takes its pieces' smallest accelmax, as Bullet's. Passes when Box3D's v.y on frames 6 and 8
     is within 0.15 of Bullet's, its box within 0.01 of y 0.5 on frame 8, and its w.y on frame 9 within 0.1 (0.3 without
-    a limit, the control: plain friction, which differs a little between the solvers)."""
+    a limit, the control: plain friction, which differs a little between the solvers), the damped velocities with and
+    without the limits within 0.01, and the jointed box's and the chunk's v.y within 0.15 of Bullet's."""
     rows, ok = [], True
     for limit in (1.0, 10.0, 100.0):
         got = {kind: accel_run(f"accel_land_{int(limit)}_{kind}", kind, {"accelmax": limit}) for kind in KINDS}
@@ -1562,6 +1673,24 @@ def test_bullet_accel_limits():
         ok = ok and abs(a - b) < (0.3 if limit is None else 0.1)
         rows.append(f"spinning, angaccelmax {'none' if limit is None else f'{limit:g}'}: w.y on frame 9 Box3D {a:.2f}, "
                     f"Bullet {b:.2f}")
+    # Damping is not the constraints' change: Box3D's own damping (Bullet reads none) is the same with the limits.
+    for spin, attrs, label in ((False, {"accelmax": 1.0}, "fall v.y"), (True, {"angaccelmax": 1.0}, "spin w.y")):
+        free = accel_damped_run(f"accel_damped_{int(spin)}_free", {}, spin)
+        held = accel_damped_run(f"accel_damped_{int(spin)}_held", attrs, spin)
+        ok = ok and abs(free - held) < 0.01
+        rows.append(f"Box3D damping, {label} after 1 s: {free:.3f} without the limit, {held:.3f} with it")
+    # A joint's change is limited as a contact's.
+    got = {kind: accel_joint_run(f"accel_joint_{kind}", kind, 2.0) for kind in KINDS}
+    ok = ok and all(abs(a - b) < 0.15 for a, b in zip(got["box3d"], got["bullet"]))
+    rows.append(f"hanging by a Hard constraint, accelmax 2: v.y on frames 18 and 24 Box3D "
+                f"{got['box3d'][0]:.2f} {got['box3d'][1]:.2f}, Bullet {got['bullet'][0]:.2f} {got['bullet'][1]:.2f}")
+    # A glued chunk takes its pieces' smallest limit, whichever piece has it.
+    for light, heavy in ((5.0, 50.0), (50.0, 5.0)):
+        got = {kind: accel_chunk_run(f"accel_chunk_{int(light)}_{kind}", kind, light, heavy) for kind in KINDS}
+        ok = ok and all(abs(a - b) < 0.15 for a, b in zip(got["box3d"], got["bullet"]))
+        rows.append(f"glued chunk landing, accelmax {light:g} / {heavy:g}: v.y on frames 6 and 10 Box3D "
+                    f"{got['box3d'][0]:.2f} {got['box3d'][1]:.2f}, Bullet {got['bullet'][0]:.2f} "
+                    f"{got['bullet'][1]:.2f}")
     return [Result("bullet_accel_limits", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
 
 
@@ -2095,6 +2224,7 @@ TESTS = {
     "bullet_drag_limits": test_bullet_drag_limits,
     "bullet_glue_drag_limits": test_bullet_glue_drag_limits,
     "bullet_accel_limits": test_bullet_accel_limits,
+    "bullet_hard_pendulum": test_bullet_hard_pendulum,
     "bullet_spring_cap": test_bullet_spring_cap,
     "bullet_position_rest_length": test_bullet_position_rest_length,
     "bullet_joint_rest_held": test_bullet_joint_rest_held,

@@ -640,6 +640,87 @@ def test_packed_object_initial_state():
     return results
 
 
+def _packed_initial_run(tag, kind, parms, start=1, frames=3):
+    """Two packed boxes of different sizes, made by the Box3D Packed Object (kind "box3d", in the Box3D Solver) or by
+    RBD Packed Object (in RBD Bullet Solver), with `parms` on the object node and no gravity, the DOP network starting at
+    frame `start`: per frame from `start`, None before the object exists, else {name: (position, 3x3 rotation)}."""
+    path, names = packed_boxes(tag + "_pieces", [{"size": (1, 1, 1), "center": (2, 3, 0)},
+                                                 {"size": (2, 0.5, 1), "center": (-1, 4, 1)}])
+    dop = new_dopnet(tag)
+    set_parm(dop, ["startframe"], start)
+    if kind == "box3d":
+        finish(dop, box3d_solver(dop, box3d_packed_object(dop, "pieces", path, **parms), gravity=(0, 0, 0)))
+    else:
+        solver = create(dop, "bulletrbdsolver", "bullet_solver")
+        solver.setInput(0, packed_object(dop, "pieces", path, **parms))
+        finish(dop, solver)
+    out = {}
+    for f in range(start, start + frames):
+        hou.setFrame(f)
+        sim = dop.simulation()
+        obj = sim.findObject("pieces")
+        geo = obj.geometry() if obj is not None else None
+        if geo is None or not geo.points():
+            out[f] = None
+            continue
+        pos = packed_positions(sim, "pieces")
+        out[f] = {n: (pos[n], packed_transform(sim, "pieces", n)) for n in names}
+    hou.setFrame(1)
+    return out
+
+
+def test_packed_object_initial_bullet():
+    """The Box3D Packed Object's Initial State transform and Creation Frame Specifies Simulation Frame, against RBD
+    Packed Object in RBD Bullet Solver (the same parameter names). Two boxes, Position (1, 0.5, 0) and Rotation
+    (30, 45, 0), turned about each piece's own position (Inherit Pivot on) or about Pivot (0, 2, 0) (off), and with
+    Angular Velocity (0, 90, 0) and no gravity: each piece's position and rotation on the first three frames match
+    within 0.001 and 0.1 degree. Then the DOP network starting at frame 10 and Creation Frame 3: the first frame the
+    object exists is the same in both: with Creation Frame Specifies Simulation Frame on, simulation frame 3 (scene
+    frame 12); off, scene frame 3 is before the start, so neither makes it. Angular Velocity is turned by Rotation
+    with the piece in both (RBD sets v and w before its initial transform)."""
+    def angle(a, b):
+        trace = sum(sum(a[i][k] * b[i][k] for k in range(3)) for i in range(3))
+        return math.degrees(math.acos(max(-1.0, min(1.0, (trace - 1.0) / 2.0))))
+
+    results = []
+    base = {"t": (1.0, 0.5, 0.0), "r": (30.0, 45.0, 0.0), "p": (0.0, 2.0, 0.0), "angvel": (0.0, 90.0, 0.0),
+            "inheritvelocity": 0}
+    for inherit in (1, 0):
+        parms = dict(base, inheritpivot=inherit)
+        got = {kind: _packed_initial_run(f"po_init_{inherit}_{kind}", kind, parms) for kind in ("box3d", "bullet")}
+        rows, ok = [], True
+        for f in (1, 2, 3):
+            a, b = got["box3d"][f], got["bullet"][f]
+            if a is None or b is None:
+                ok = False
+                rows.append(f"frame {f}: Box3D {'has' if a else 'has no'} pieces, Bullet {'has' if b else 'has no'}")
+                continue
+            for n in a:
+                dp = (a[n][0] - b[n][0]).length()
+                da = angle(a[n][1], b[n][1])
+                if dp > 1e-3 or da > 0.1:
+                    ok = False
+                    rows.append(f"frame {f} {n}: {dp:.4f} apart, {da:.2f} degrees")
+        first = got["box3d"][1]
+        where = ", ".join(f"{n} at {tuple(round(c, 3) for c in first[n][0])}" for n in first) if first else "none"
+        results.append(Result("packed_object_initial_bullet", Result.PASS if ok else Result.FAIL,
+                              f"Inherit Pivot {inherit}: " + ("; ".join(rows) if rows else
+                                                             f"positions and rotations match on frames 1-3 ({where} "
+                                                             f"on frame 1)")))
+    for sim_frame in (1, 0):
+        parms = {"createframe": 3, "usesimframe": sim_frame}
+        first = {}
+        for kind in ("box3d", "bullet"):
+            t = _packed_initial_run(f"po_create_{sim_frame}_{kind}", kind, parms, start=10, frames=6)
+            first[kind] = next((f for f in sorted(t) if t[f] is not None), None)
+        # Off, scene frame 3 is before the start: neither makes the object.
+        ok = first["box3d"] == first["bullet"] and (first["box3d"] == 12 if sim_frame else first["box3d"] is None)
+        results.append(Result("packed_object_initial_bullet", Result.PASS if ok else Result.FAIL,
+                              f"Creation Frame 3, Creation Frame Specifies Simulation Frame {sim_frame}, start frame "
+                              f"10: first frame with the object Box3D {first['box3d']}, Bullet {first['bullet']}"))
+    return results
+
+
 def test_packed_object_initial_type():
     """The Box3D Packed Object's Initial Object Type, as RBD Packed Object's: Body Type and Deforming follow it. Active
     writes neither active nor deforming; Static active 0; Animated Static active 0 and animated 1; Deforming Static
@@ -921,6 +1002,7 @@ TESTS = {
     "rest_reset": test_rest_reset,
     "packed_object_attributes": test_packed_object_attributes,
     "packed_object_initial_state": test_packed_object_initial_state,
+    "packed_object_initial_bullet": test_packed_object_initial_bullet,
     "packed_object_deforming": test_packed_object_deforming,
     "packed_object_initial_type": test_packed_object_initial_type,
     "packed_object_hand_set_shape": test_packed_object_hand_set_shape,

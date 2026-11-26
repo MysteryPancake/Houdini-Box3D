@@ -114,6 +114,18 @@ int main() {
     float none[3] = {0.0f, 0.0f, 0.0f};
     CHECK(!clampConstraintChange(-1.0f, 1.0f / 24.0f, expected, none) &&
           none[1] == 0.0f);
+    // The velocity a step makes with no constraints: plain without damping,
+    // and Box3D's substeps one by one with it.
+    const float v0[3] = {1.0f, 2.0f, 0.0f}, g[3] = {0.0f, -10.0f, 0.0f};
+    float free[3];
+    undisturbedVelocity(v0, g, 0.0f, 0.1f, 4, free);
+    CHECK(near(free[0], 1.0, 1e-6) && near(free[1], 1.0, 1e-6));
+    float stepped[3] = {v0[0], v0[1], v0[2]};
+    for (int i = 0; i < 4; ++i)
+      for (int k = 0; k < 3; ++k)
+        stepped[k] = g[k] * 0.025f + stepped[k] / (1.0f + 0.025f * 2.0f);
+    undisturbedVelocity(v0, g, 2.0f, 0.1f, 4, free);
+    CHECK(near(free[0], stepped[0], 1e-5) && near(free[1], stepped[1], 1e-5));
     // The change keeps its direction: shortened along it.
     const float e2[3] = {0, 0, 0};
     float diag[3] = {3.0f, 4.0f, 0.0f};

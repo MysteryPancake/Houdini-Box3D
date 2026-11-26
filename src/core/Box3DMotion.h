@@ -103,6 +103,26 @@ inline bool clampMotion(const MotionParams &m, float lin[3], float ang[3]) {
   return changed;
 }
 
+// What a Box3D step of `dt` makes of velocity `v0` with no constraints: an
+// acceleration `accel` (gravity and forces, constant over the step) and a
+// damping `damping`, over the step's `subSteps` solver substeps (Constraint
+// Iterations), each v <- accel h + v / (1 + h damping) with h = dt / subSteps,
+// as Box3D's integrate velocities does (the substep's own change undamped).
+// Closed form: d^n v0 + accel h (1 - d^n) / (1 - d), d = 1 / (1 + h damping).
+inline void undisturbedVelocity(const float v0[3], const float accel[3],
+                                float damping, float dt, int subSteps,
+                                float out[3]) {
+  const int n = std::max(subSteps, 1);
+  const double h = static_cast<double>(dt) / n;
+  const double c = damping > 0.0f && std::isfinite(damping) ? damping : 0.0;
+  const double d = 1.0 / (1.0 + h * c);
+  const double dn = std::pow(d, n);
+  // The sum 1 + d + ... + d^(n-1): n without damping.
+  const double sum = c > 0.0 ? (1.0 - dn) / (1.0 - d) : static_cast<double>(n);
+  for (int k = 0; k < 3; ++k)
+    out[k] = static_cast<float>(dn * v0[k] + accel[k] * h * sum);
+}
+
 // Bullet's accelmax / angaccelmax on one velocity: `v` after a step of `dt`
 // and `expected`, what the step's forces and gravity alone would have made of
 // the velocity before it. Their difference, the change the constraints made, is
