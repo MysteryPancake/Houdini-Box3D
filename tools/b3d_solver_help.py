@@ -18,7 +18,8 @@ same attributes and rules as RBD Bullet Solver, so most Bullet setups work with 
 Some Bullet settings differ. `bullet_want_deactivate`, `bullet_sleeping`, `bullet_ignore` and `min_activation_impulse`
 are not read: use `enablesleep`, `awake` and `enabled`. Collision padding and Bullet's solver settings (ERP, CFM,
 iterations) are ignored: use Substeps and the contact settings. `collisiongroup` and `collisionignore` work for up to
-30 groups, but ignoring a single piece by name is not supported.
+30 groups, and two pieces collide unless each ignores the other's group, as in Bullet; ignoring a single piece by
+name is not supported.
 
 Unpacked geometry is packed by `name`, or by connected pieces when nothing is named.
 

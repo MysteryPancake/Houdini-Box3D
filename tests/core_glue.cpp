@@ -1,8 +1,10 @@
 // SideFX Glue's impulse model (core/Box3DGlue.h): propagation as the Glue help
 // works it, decay by the half-life, breaking over the strength, and that a
-// bond nothing hits never breaks.
+// bond nothing hits never breaks; and the break estimate of Bullet's
+// pre-breaking (core/Box3DGlueEstimate.h).
 #include "TestUtil.h"
 #include "core/Box3DGlue.h"
+#include "core/Box3DGlueEstimate.h"
 
 #include <cmath>
 #include <cstdio>
@@ -86,15 +88,13 @@ int main() {
                                    bond(2, 3, 1.0f, -1.0f)};
     glueAdvance(bonds, {400.0f, 0.0f, 1e6f, 0.0f}, 1.0f / 24.0f, broken);
     CHECK(broken.size() == 1 && broken[0] == 0);
-    // just under and over the scaled strength (rate 0: the bond sees its own
-    // end's hits)
+    // just under and over the strength (rate 0: the bond sees its own end's
+    // hits)
     bonds = {bond(0, 1, 0.0f, 100.0f)};
-    glueAdvance(bonds, {100.0f / kGlueStrengthScale * 0.99f, 0.0f}, 0.0f,
-                broken);
+    glueAdvance(bonds, {99.0f, 0.0f}, 0.0f, broken);
     CHECK(broken.empty());
     bonds = {bond(0, 1, 0.0f, 100.0f)};
-    glueAdvance(bonds, {100.0f / kGlueStrengthScale * 1.01f, 0.0f}, 0.0f,
-                broken);
+    glueAdvance(bonds, {101.0f, 0.0f}, 0.0f, broken);
     CHECK(broken.size() == 1);
     bonds = {bond(0, 1, 1.0f, 1.0f)};
     for (int i = 0; i < 100; ++i)
@@ -132,6 +132,82 @@ int main() {
     bonds[0].impact = std::numeric_limits<float>::quiet_NaN();
     glueAdvance(bonds, {0.0f, 0.0f}, 1.0f / 24.0f, broken);
     CHECK(std::isnan(bonds[0].impact));
+  }
+
+  // ---- estimates: a bond breaks when its decayed impact plus its ends'
+  // estimates passes the strength, and reports that as its impact; the real
+  // hits are tested alone
+  {
+    std::vector<int> broken;
+    std::vector<GlueBond> bonds = {bond(0, 1, 0.0f, 100.0f)};
+    // under: nothing breaks, the impact is the hits'
+    glueAdvance(bonds, {10.0f, 0.0f}, {60.0f, 30.0f}, 0.0f, broken);
+    CHECK(broken.empty() && near(bonds[0].impact, 10.0, 1e-4));
+    // over: it breaks and keeps the estimate as its impact
+    bonds = {bond(0, 1, 0.0f, 100.0f)};
+    glueAdvance(bonds, {10.0f, 0.0f}, {60.0f, 50.0f}, 0.0f, broken);
+    CHECK(broken.size() == 1 && near(bonds[0].impact, 110.0, 1e-4));
+    // the decayed impact counts with it: 100 over one half-life is 50
+    bonds = {bond(0, 1, 0.0f, 100.0f, 1, 0.5f)};
+    bonds[0].impact = 100.0f;
+    glueAdvance(bonds, {0.0f, 0.0f}, {30.0f, 30.0f}, 0.5f, broken);
+    CHECK(broken.size() == 1 && near(bonds[0].impact, 110.0, 1e-4));
+    // estimates spread like hits: A's 1000 over a bond of rate 1 is 500 at
+    // each end, so the bond sees the whole 1000
+    bonds = {bond(0, 1, 1.0f, 900.0f)};
+    glueAdvance(bonds, {0.0f, 0.0f}, {1000.0f, 0.0f}, 0.0f, broken);
+    CHECK(broken.size() == 1 && near(bonds[0].impact, 1000.0, 1e-4));
+    // never-breaking and estimates of zero change nothing
+    bonds = {bond(0, 1, 0.0f, -1.0f)};
+    glueAdvance(bonds, {0.0f, 0.0f}, {1e9f, 1e9f}, 0.0f, broken);
+    CHECK(broken.empty());
+    bonds = {bond(0, 1, 0.0f, 100.0f)};
+    glueAdvance(bonds, {0.0f, 0.0f}, {0.0f, 0.0f}, 0.0f, broken);
+    CHECK(broken.empty() && bonds[0].impact == 0.0f);
+  }
+
+  // ---- the estimate of Bullet's pre-breaking: (1 + e v) v / d at each contact
+  // point. Two 1000 kg unit boxes in a row landing flat on the ground at 7 m/s:
+  // a rigid body of 2000 kg, inertia 333.3 about x and 833.3 about y and z,
+  // with eight points under it at x = -1, 0, 0, 1 and z = +-0.5. Each point's
+  // denominator is 1 / 2000 + x^2 / 833.3 + z^2 / 333.3 (0.00245 at x = +-1,
+  // 0.00125 at x = 0), so a point is worth 408 v and 800 v, which a pair of
+  // pieces sums to 4832 v, against a body of 2000 v of momentum.
+  {
+    GlueBody row;
+    row.moves = true;
+    row.mass = 2000.0f;
+    row.inertia[0] = 2000.0 * 2.0 / 12.0;
+    row.inertia[4] = row.inertia[8] = 2000.0 * 5.0 / 12.0;
+    GlueBody ground; // does not move
+    const float down[3] = {0.0f, -1.0f, 0.0f};
+    auto landing = [&](float approach, float restitution) {
+      double total = 0.0;
+      for (const double x : {-1.0, 0.0, 0.0, 1.0})
+        for (const double z : {-0.5, 0.5}) {
+          const double at[3] = {x, -0.5, z};
+          total +=
+              glueContactEstimate(row, ground, at, down, approach, restitution);
+        }
+      return total;
+    };
+    CHECK(near(landing(7.0f, 0.0f), 4832.0 * 7.0, 4832.0 * 7.0 * 2e-3));
+    CHECK(near(landing(7.0f, 0.25f), 4832.0 * 7.0 * 2.75,
+               4832.0 * 7.0 * 2.75 * 2e-3));
+    // moving away from the ground, or not at all: no impulse
+    CHECK(landing(-7.0f, 0.25f) == 0.0);
+    CHECK(landing(0.0f, 0.25f) == 0.0);
+    // straight under the centre of mass only the mass counts
+    const double centre[3] = {0.0, -0.5, 0.0};
+    CHECK(near(glueContactEstimate(row, ground, centre, down, 2.0f, 0.0f),
+               2000.0 * 2.0, 4.0 * 2e-3 * 1000.0));
+    // two bodies that move: the denominators add
+    GlueBody other = row;
+    other.com[1] = -1.0;
+    CHECK(near(glueContactEstimate(row, other, centre, down, 7.0f, 0.0f),
+               7.0 / (1.0 / 2000.0 + 1.0 / 2000.0), 14.0));
+    // nothing there takes an impulse: none
+    CHECK(glueContactEstimate(ground, ground, centre, down, 7.0f, 0.5f) == 0.0);
   }
 
   // ---- bonds naming a missing node are ignored

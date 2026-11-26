@@ -70,6 +70,11 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
 // end of the frame spreads those over the bonds, adds them to each `impact` and
 // queues the bonds over their strength for jointsAfterStep.
 void collectGlueHits(Box3DSharedState &st);
+// Bullet's break estimate for the step's contacts (core/Box3DGlueEstimate.h):
+// each glue node's `estimate` is from its group's first step of the frame that
+// has one. Called by
+// collectGlueHits. Box3DGlueEstimate.cpp.
+void estimateGlueHits(Box3DSharedState &st);
 // The glue group of each node (st.glueGroup), worked out again if the bonds
 // changed since: pieces of one group are what contacts inside it (weight) are
 // told from real hits by.

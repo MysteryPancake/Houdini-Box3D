@@ -306,9 +306,14 @@ inline bool packedScale(const double m4[16], double S[3]) {
 constexpr uint64_t kHashSeed = 1469598103934665603ull;
 constexpr uint64_t kHashMul = 0xff51afd7ed558ccdull;
 
-// Mixes one 64-bit value in (by value, so the same on any byte order).
+// Mixes one 64-bit value in (by value, so the same on any byte order). The
+// value is spread first (an odd multiply, so no two values meet) and then xored
+// in: without that the result depends on `h ^ v` alone, and two raw, structured
+// values (small ids) with the same xor collide, as mixHash(a, b) and
+// mixHash(c, d) do whenever a ^ b == c ^ d.
+constexpr uint64_t kHashSpread = 0x9e3779b97f4a7c15ull;
 inline uint64_t mixHash(uint64_t h, uint64_t v) {
-  h = (h ^ v) * kHashMul;
+  h = (h ^ (v * kHashSpread)) * kHashMul;
   return h ^ (h >> 32);
 }
 

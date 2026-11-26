@@ -240,6 +240,7 @@ add_library(Box3DDOP SHARED
     src/sync/Box3DJointRead.cpp
     src/sync/Box3DJointNetwork.h
     src/sync/Box3DJointBreak.cpp
+    src/sync/Box3DGlueEstimate.cpp
     src/sync/Box3DAffectors.h
     src/sync/Box3DAffectors.cpp
     src/sync/Box3DHoudiniTasks.h

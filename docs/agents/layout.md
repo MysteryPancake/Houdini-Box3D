@@ -20,7 +20,8 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DSideFX.h/.cpp  SideFX's Glue / Hard / Spring / Bullet Soft / Cone Twist data -> Box3D joints
                         (mapping, frame offsets)
     Box3DGlue.h         Header-only: SideFX Glue's impulse model (spread over bonds, half-life, break on
-                        strength)
+                        strength or on a contact estimate)
+    Box3DGlueEstimate.h Header-only: the impulse estimate Bullet breaks glue on, per contact point
     Box3DCompound.h     Header-only: glue components (union-find), merging pieces into one body and splitting
                         its velocity
     Box3DCpu.h/.cpp     Physical performance core count (the solver's Threads default)
@@ -84,6 +85,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DCompoundPieces.cpp  Per-step piece queries: moves, live poses, glue hits, state and force for Force DOPs
     Box3DCompoundInternal.h  What those four share (namespace `compoundsync`); only they include it
     Box3DJointBreak.cpp    After the step: Glue, breaking, feedback and live frames written onto the networks
+    Box3DGlueEstimate.cpp  Glue's break estimate for a step's contacts (what Bullet breaks glue on)
     Box3DJointNetwork.h    What those two share: attribute names, network geometry and fingerprint helpers
     Box3DAffectors.*       Affector objects (Static Object DOP etc.) -> static colliders
     Box3DHoudiniUtil.h     Shared Houdini helpers: writable geometry, object by id, 4x4 to array, Euler to

@@ -178,6 +178,14 @@ struct ContactImpulse {
   bool awakeA = false, awakeB = false; // in the awake set when it was made
 };
 
+// A contact of the last step whose shapes came together faster than the hit
+// threshold (getHitContacts): the speed they approached at when the step began.
+struct HitContact {
+  BodyHandle a = 0, b = 0;
+  uint64_t shapeA = 0, shapeB = 0; // as ContactImpulse names them
+  float approachSpeed = 0.0f;      // m/s, > 0
+};
+
 // The normal impulse the last step's contact points carried between two bodies
 // (getContactImpulseSums).
 struct ContactImpulseSum {
@@ -594,6 +602,11 @@ public:
   // contactImpulsesByShape), each as the key a ContactImpulse names it by.
   // `out` is resized to the shape count; returns it.
   int shapeKeysByHandle(BodyHandle h, std::vector<uint64_t> &out) const;
+
+  // The contacts of the last step that approached faster than the hit
+  // threshold (impactMinSpeed, or Box3D's default when that is 0), with the
+  // speed. Box3D clears them every step.
+  int getHitContacts(std::vector<HitContact> &out) const;
 
   // Hit events of the last step (pairs that approached faster than
   // impactMinSpeed).

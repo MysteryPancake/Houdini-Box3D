@@ -306,6 +306,8 @@ void collectGlueHits(Box3DSharedState &st) {
         n.body, n.partners.data(), n.partners.size(),
         weightPossible ? &sameGroup : nullptr);
   }
+  if (fromEvents)
+    estimateGlueHits(st);
 }
 
 std::vector<b3dop::GlueBond> glueBondList(const Box3DSharedState &st,
@@ -356,6 +358,7 @@ bool anyImpact(const std::vector<b3dop::GlueBond> &bonds) {
 } // namespace
 
 void advanceGlue(Box3DSharedState &st, float dt) {
+  st.glueEstimated.clear();
   if (st.glueBonds.empty())
     return;
   // The bonds as the spread reads them are copied again only when something
@@ -371,18 +374,20 @@ void advanceGlue(Box3DSharedState &st, float dt) {
   bool idle = st.glueMirrorQuiet;
   if (idle)
     for (const Box3DGlueNode &n : st.glueNodes)
-      if (n.hits > 0.0f) {
+      if (n.hits > 0.0f || n.estimate > 0.0f) {
         idle = false;
         break;
       }
   if (idle)
     return;
-  std::vector<float> hits(st.glueNodes.size());
-  for (size_t i = 0; i < hits.size(); ++i)
+  std::vector<float> hits(st.glueNodes.size()), estimates(st.glueNodes.size());
+  for (size_t i = 0; i < hits.size(); ++i) {
     hits[i] = st.glueNodes[i].hits;
+    estimates[i] = st.glueNodes[i].estimate;
+  }
   std::vector<b3dop::GlueBond> &bonds = st.glueMirror;
   std::vector<int> broken;
-  b3dop::glueAdvance(bonds, std::move(hits), dt, broken);
+  b3dop::glueAdvance(bonds, std::move(hits), std::move(estimates), dt, broken);
   box3dParallelFor(
       bonds.size(),
       [&](size_t i) { st.glueBonds[i]->extra->glueImpact = bonds[i].impact; },
@@ -391,7 +396,7 @@ void advanceGlue(Box3DSharedState &st, float dt) {
   for (const int i : broken)
     st.glueBroken.push_back(st.glueBonds[static_cast<size_t>(i)]);
   for (Box3DGlueNode &n : st.glueNodes)
-    n.hits = 0.0f;
+    n.hits = n.estimate = 0.0f;
 }
 
 namespace {

@@ -714,6 +714,7 @@ const TestCase kTests[] = {
     {"hull_cache", testHullCache},
     {"mirrored_packed", testMirroredPacked},
     {"estimated_bytes", testEstimatedBytes},
+    {"mix_hash", testMixHash},
     {"sleep_enable", testSleepEnable},
     {"bulk_create", testBulkCreate},
     {"lazy_pose", testLazyPose},

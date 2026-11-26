@@ -20,6 +20,7 @@ void testHullCentroid();
 void testBodyExtent();
 void testMirroredPacked();
 void testEstimatedBytes();
+void testMixHash();
 void testFastRotation();
 void testBodyPropsEquality();
 void testBodyPropsSanitize();

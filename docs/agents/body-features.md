@@ -20,8 +20,13 @@ is updated: [bodies.md](bodies.md). Index and rules: [CLAUDE.md](../../CLAUDE.md
   `collisionignore` names become these bits in the Box3D Solver SOP (`collision_names` in `b3d_prepare.py`, a subnet
   on the pieces and on the colliders: an Attribute Promote (unique) per geometry, `used_groups` joins the names once,
   and the point wrangle `COLLISION_NAMES_VEX` sets each point's bits, so both sides number the groups alike): bit 0 is
-  no group, groups take bits 1 to 30 in sorted order, a piece's mask lacks the groups its pattern matches. Ignoring
-  one piece by name (rather than a group) and ignoring the ground are not representable.
+  no group, groups take bits 1 to 30 in sorted order, a piece's mask lacks the groups its pattern matches. Box3D
+  collides two bodies only when each mask has the other's category, but Bullet does when either piece's pattern leaves
+  the other's group alone (`SIM_BulletRigidBody::checkCollideWithOverride`, in the HDK's `SIM_SolverBullet`), so
+  only both ignoring each other stops them: `used_groups` also writes `__allows` (per group, the groups some of its
+  pieces leave alone, over the pieces and the colliders) and the wrangle adds the groups whose pieces allow its own
+  to its mask. A group whose pieces have different patterns lets all of them in. Ignoring one piece by name (rather
+  than a group) and ignoring a DOP object by name are not representable.
 * **Animated** (`animated` with `active = 0`): kinematic; a pose edit becomes
   `setTargetTransformByHandle(cur, stepDt)` and a step without one zeroes the velocity. Not written back. An object
   with `SourceObject` data follows its source SOP (`followSourceSops`, Box3DSourceSync.cpp, as RBD Bullet Solver):

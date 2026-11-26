@@ -217,6 +217,9 @@ struct Box3DSharedState {
   uint64_t glueGroupSignature = 0;
   size_t glueGroupNodes = 0;
   bool glueGroupKnown = false;
+  // The glue groups that have their frame's break estimate (estimateGlueHits
+  // takes a group's from the first step that has one); cleared by advanceGlue.
+  std::unordered_set<int> glueEstimated;
   std::vector<Box3DJointEntry *> glueBonds;
   std::vector<std::pair<int, int>> glueBondNodes;
   // The bonds that broke since the lists were made: syncJoints takes them out
@@ -291,7 +294,7 @@ struct Box3DSharedState {
   // (Box3DBridge) are worked out again.
   bool bridgesDirty = false;
   // The weakest break impulse of any bond (the Glue's Strength over
-  // kGlueStrengthScale; infinity: none can break), worked out again once per
+  // kGlueHoldBreakScale; infinity: none can break), worked out again once per
   // glueClock value that is asked for it: what a body has to be able to deliver
   // to be looked at at all.
   float glueMinBreak = 0.0f;

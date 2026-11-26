@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md)
 
-- Bullet's `collisiongroup` and `collisionignore` work on the Box3D Solver SOP, for up to 30 groups. Ignoring a single piece by name is not supported.
+- Bullet's `collisiongroup` and `collisionignore` work on the Box3D Solver SOP, for up to 30 groups, as in Bullet: two pieces collide unless each ignores the other's group. Ignoring a single piece by name is not supported.
 - Glue Inertial Load (Forces tab, Glue folder, off by default) breaks glue bonds farther from a hit too. Raise it if a glued object only breaks at the point it lands on.
 - Bullet's collision padding and solver settings (ERP, CFM, iterations) are ignored. Use Substeps and the contact settings instead. Substeps 1 at 24 fps gives soft contacts.
 - `bullet_want_deactivate`, `bullet_sleeping`, `bullet_ignore` and `min_activation_impulse` are not read. Use `enablesleep`, `awake` and `enabled` instead.

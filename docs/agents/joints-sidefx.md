@@ -21,8 +21,9 @@ Glue, Hard, Spring, Bullet Soft and Cone Twist mapped onto Box3D joints. Joint n
     [glue-compound.md](glue-compound.md)) to its hits; at the end of the frame `advanceGlue` spreads them over the
     bonds (`impulse` shares: itself 1, each bond its Propagation Rate, `propagationiterations` rounds), adds the two
     bodies' results to the bond's `impact` after it decayed by `impulse_halflife`, and queues a bond over its Strength
-    divided by `kGlueStrengthScale` (< 0 never) for `jointsAfterStep`, which breaks it with the force ones (the
-    `broken` group, `next_constraint_name`). `advanceGlue` spreads over a copy of the bonds (`glueMirror`, with a flag
+    (< 0 never) for `jointsAfterStep`, which breaks it with the force ones (the `broken` group,
+    `next_constraint_name`). A bond also breaks when its decayed `impact` plus the spread break estimate passes the
+    Strength (below), and keeps that as its `impact`. `advanceGlue` spreads over a copy of the bonds (`glueMirror`, with a flag
     that none carries an impact, which is what makes a quiet frame idle) kept between frames: it is made again only
     when `glueEpoch` moved, so anything that adds, removes, breaks or remakes a bond or sets its Glue settings or
     impact must call `touchGlueBonds`. `impact` is written to the primitives and read back when a joint is remade. The
@@ -33,9 +34,22 @@ Glue, Hard, Spring, Bullet Soft and Cone Twist mapped onto Box3D joints. Joint n
     `contactImpulsesByShape`, and a decayed `impact` under `kGlueImpactFloor` is 0, so a quiet frame is idle. Every
     contact counts, a resting body's weight included, as in Bullet (a deliberate match: only the contacts inside a
     glue group are left out). A hanging piece has no contacts and holds at any Strength (`sidefx_glue`); a landing is
-    a hit (`glue_impact`). `impact` matches Bullet's own (peak within ~20%, the same decay: `glue_impact_trace`); a
-    Bullet glue holds from about 5 to 6 times its peak impact, so the break test uses `kGlueStrengthScale` (measured
-    from one scene: `glue_impact_scale`). A negative iteration count is the global one (the `propagate_iteration`
+    a hit (`glue_impact`). `impact` matches Bullet's own (peak within ~20%, the same decay: `glue_impact_trace`).
+    * The break estimate (`estimateGlueHits`, `Box3DGlueEstimate.cpp`; the maths in `core/Box3DGlueEstimate.h`, checked
+      in `tests/core_glue.cpp`): Bullet breaks glue before its step, on an impulse estimate at every contact point of
+      the glued body (the pieces of a group merged into one rigid body), (1 + e v) v / d, summed per piece and spread
+      like hits. The speed v of a contact is its hit event's approach speed (`getHitContacts`: only contacts that came
+      together faster than Box3D's hit threshold, the slower ones being a body at rest, left to their real impulse)
+      plus the step's gravity; e is the two restitutions multiplied; d is the group's impulse denominator at the point
+      (`GlueBody`, from `mergePieces` of the pieces' poses and mass data, so a compound and welds are the same) plus the
+      other body's. A contact is looked up by its shape pair (an exact key: a hashed one collided). A compound's
+      body has no entry, so its shapes' owners come from `shapeKeysByHandle` and the members' shape ranges. A group
+      takes its estimate from the first step of the frame that has one (`glueEstimated`), as Bullet makes one from the
+      speeds the frame begins with; later steps' contacts move because of the earlier ones. Landings match Bullet's
+      hold Strength within about 15%, and a box dropped on a group within 1.0x to 1.3x (`glue_break_match`); an edge
+      landing of a fractured block holds 4 to 7 times better than Bullet's, whose trial moves it a step forward into the
+      ground, so more pieces have points (`glue_fracture_vs_bullet`).
+    * A negative iteration count is the global one (the `propagate_iteration`
     detail attribute of the network, read by `NetworkReader::glueIterations`; one round without it); the most
     iterations of any bond set the rounds.
   * Glue as One Body (`gluecompound`): [glue-compound.md](glue-compound.md).

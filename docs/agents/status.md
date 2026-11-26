@@ -28,7 +28,9 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   (`vexpressionmenu.buildSnippetMenu` with our own key lists nothing unless snippets are saved under it) and the type
   folders' layout.
 * Constraint Properties scaling and Geometry Attribute Transfer (`SCALE_VEX`). Not checked against RBD Constraint
-  Properties: whether Bullet scales the Next Constraint settings (ours has no such scaling). Known difference: Bullet
+  Properties: Bullet has no `next_<setting>` attributes, only `next_constraint_name` and `next_constraint_type`: the
+  next type's settings are the type's own folder, under the plain names and with its scaling, where ours writes
+  separate `next_<setting>` attributes with no scaling (the Box3D solver reads those). Known difference: Bullet
   scales one integer, Glue's `propagationiterations`; ours has no integer scaling (Bullet scales no toggles or
   vectors). Randomize and Variance are on the Weld's two stiffnesses only, where Bullet has them on Glue Strength.
 * The group / attribute menus beside the fields (`MENU_SOURCE` in `b3d_hda.py`, lists covered by `asset_menus`). Not
@@ -61,11 +63,6 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * Glue Inertial Load (`gluecompoundload`, `pieceLoad`): the maths is checked in `core_compound` and
   `glue_compound_load` shows the load reaching the bonds of a column landing on its end. Not checked: that a cube
   dropped on a corner collapses, nor how its break values compare with Bullet's impacts.
-* Collision group names (`collision_names`, tests `solver_sop_collision_group_names`,
-  `solver_sop_collider_group_names`): unchecked is whether Bullet also lets either side's ignore pattern be enough. In
-  `solver_sop_collision_group_names_bullet` and the collider test's INFO row RBD Bullet Solver ignored
-  `collisionignore` in every case (the boxes always collided), so either its attribute setup differs from what the
-  tests write or it needs more than the attribute; no comparison yet.
 * Escape mid-step: the step is discarded and re-cooked, earlier frames stay cached, the re-cook rebuilds once.
 * Data ids surviving the DOP copy between timesteps (the sync skip; debug log `scan skipped`); our own writes not
   looking like edits (debug log `full scan, changed:`).

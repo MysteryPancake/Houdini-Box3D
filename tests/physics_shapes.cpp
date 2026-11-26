@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <set>
 #include <vector>
 
 // Row-vector rotation matrix for unit quaternion q (x, y, z, w); builds test
@@ -980,4 +981,28 @@ void testEstimatedBytes() {
   w.destroy();
   CHECK(w.estimatedBytes() == 0);
   std::printf("estimated bytes checks done\n");
+}
+
+// mixHash on two raw values, as an identity key (a pair of shape ids): pairs
+// with the same xor must not give the same key, which they did when the value
+// was xored in unspread.
+void testMixHash() {
+  std::set<uint64_t> seen;
+  size_t total = 0;
+  // Small, bit-packed ids of the kind Box3D hands out (index, world,
+  // generation).
+  for (uint64_t a = 1; a <= 200; ++a)
+    for (uint64_t b = a + 1; b <= 200; ++b) {
+      seen.insert(b3dop::mixHash(a, b));
+      seen.insert(b3dop::mixHash(a << 24 | 1, b << 24 | 1));
+      total += 2;
+    }
+  CHECK(seen.size() == total);
+  // The old failure: pairs with one xor.
+  CHECK(b3dop::mixHash(1, 2) != b3dop::mixHash(0, 3));
+  CHECK(b3dop::mixHash(5, 9) != b3dop::mixHash(12, 1));
+  // A chain still tells its order.
+  CHECK(b3dop::mixHash(b3dop::mixHash(b3dop::kHashSeed, 1), 2) !=
+        b3dop::mixHash(b3dop::mixHash(b3dop::kHashSeed, 2), 1));
+  std::printf("mix hash checks done\n");
 }

@@ -145,81 +145,83 @@ def test_solver_sop_collision_names():
                    f"collider point names {names_now} (expected one name starting with 'static')")]
 
 
+GROUP_CASES = [
+    # (tag, lower (group, ignore), upper (group, ignore), expected y of the upper box)
+    ("plain", ("debris", ""), ("debris", ""), 1.5),
+    ("lower_ignores_group_only", ("debris", "debris"), ("debris", ""), 1.5),
+    ("upper_ignores_other_group_only", ("a", ""), ("b", "a"), 1.5),
+    ("lower_ignores_upper_group_only", ("a", "b"), ("b", ""), 1.5),
+    ("both_ignore_each_other", ("a", "b"), ("b", "a"), 0.5),
+    ("both_ignore_own_group", ("debris", "debris"), ("debris", "debris"), 0.5),
+    ("both_ignore_by_pattern", ("a", "d*"), ("debris", "a"), 0.5),
+    ("other_group_ignored", ("a", "zzz"), ("b", ""), 1.5),
+    ("pattern_one_side", ("a", "d*"), ("debris", ""), 1.5),
+    ("pattern_taken_out", ("a", "d* ^debris"), ("debris", "a"), 1.5),
+]
+
+
+def _group_names_run(kind, tag, lower, upper, ground):
+    """The height after 2 s of a box dropped on another with collisiongroup / collisionignore on the two, in the Box3D
+    Solver SOP (kind "box3d") or the RBD Bullet Solver SOP."""
+    (g0, i0), (g1, i1) = lower, upper
+    pieces, names = packed_boxes(f"sop_cgn_{kind}_pieces_{tag}", [
+        {"size": (1, 1, 1), "center": (0, 0.5, 0), "attrs": {"collisiongroup": g0, "collisionignore": i0}},
+        {"size": (1, 1, 1), "center": (0, 2, 0), "attrs": {"collisiongroup": g1, "collisionignore": i1}}])
+    sop = (solver_sop if kind == "box3d" else bullet_sop)(f"sop_cgn_{kind}_{tag}", geometry=pieces, collision=ground)
+    pos = play(sop, 48, lambda s, f: named_positions(s.geometry(0)) if f == 48 else None)[48]
+    return pos[names[1]][1] if names[1] in pos else None
+
+
 def test_solver_sop_collision_group_names():
-    """Bullet's collisiongroup / collisionignore on the pieces become collision bits in the Solver SOP: a box dropped
-    onto another rests on it (y = 1.5) unless the lower one ignores the upper one's group, or the upper one ignores
-    the lower one's (either side is enough), and then it falls through to the ground (y = 0.5). A pattern that
-    matches no group, and a `^` that takes the group out again, change nothing."""
-    cases = [
-        # (tag, lower (group, ignore), upper (group, ignore), expected y of the upper box)
-        ("plain", ("debris", ""), ("debris", ""), 1.5),
-        ("lower_ignores_group", ("debris", "debris"), ("debris", ""), 0.5),
-        ("upper_ignores_other_group", ("a", ""), ("b", "a"), 0.5),
-        ("lower_ignores_upper_group", ("a", "b"), ("b", ""), 0.5),
-        ("other_group_ignored", ("a", "zzz"), ("b", ""), 1.5),
-        ("pattern", ("a", "d*"), ("debris", ""), 0.5),
-        ("pattern_taken_out", ("a", "d* ^debris"), ("debris", ""), 1.5),
-    ]
+    """Bullet's collisiongroup / collisionignore on the pieces become collision bits in the Solver SOP, as in RBD Bullet
+    Solver (SIM_BulletRigidBody::checkCollideWithOverride): two pieces collide when either one's `collisionignore`
+    leaves the other's group alone, so only both ignoring each other lets them pass. A box dropped onto another rests
+    on it (y = 1.5) unless each ignores the other's group (by name or pattern), and then it falls through to the ground
+    (y = 0.5). One side ignoring, a pattern that matches no group, and a `^` that takes the group out again change
+    nothing."""
     ground, _ = packed_boxes("sop_cgn_ground", [GROUND])
     results = []
-    for tag, (g0, i0), (g1, i1), want in cases:
-        pieces, names = packed_boxes(f"sop_cgn_pieces_{tag}", [
-            {"size": (1, 1, 1), "center": (0, 0.5, 0), "attrs": {"collisiongroup": g0, "collisionignore": i0}},
-            {"size": (1, 1, 1), "center": (0, 2, 0), "attrs": {"collisiongroup": g1, "collisionignore": i1}}])
-        sop = solver_sop(f"sop_cgn_{tag}", geometry=pieces, collision=ground)
-        pos = play(sop, 48, lambda s, f: named_positions(s.geometry(0)) if f == 48 else None)[48]
-        y = pos[names[1]][1] if names[1] in pos else None
+    for tag, lower, upper, want in GROUP_CASES:
+        y = _group_names_run("box3d", tag, lower, upper, ground)
         ok = y is not None and close(y, want, 0.05)
         results.append(Result("solver_sop_collision_group_names", Result.PASS if ok else Result.FAIL,
-                              f"{tag}: lower {g0!r} ignoring {i0!r}, upper {g1!r} ignoring {i1!r}: upper box at "
-                              f"y={y} after 2 s (expected {want})"))
+                              f"{tag}: lower {lower[0]!r} ignoring {lower[1]!r}, upper {upper[0]!r} ignoring "
+                              f"{upper[1]!r}: upper box at y={y} after 2 s (expected {want})"))
     return results
 
 
 def test_solver_sop_collision_group_names_bullet():
     """solver_sop_collision_group_names' cases (one box dropped on another, groups and ignore patterns on the two) in
-    RBD Bullet Solver (INFO: the cases where its box ends elsewhere than Box3D's expected 1.5 or 0.5), which says
-    whether Bullet too lets either side's ignore pattern be enough."""
-    cases = [
-        ("plain", ("debris", ""), ("debris", ""), 1.5),
-        ("lower_ignores_group", ("debris", "debris"), ("debris", ""), 0.5),
-        ("upper_ignores_other_group", ("a", ""), ("b", "a"), 0.5),
-        ("lower_ignores_upper_group", ("a", "b"), ("b", ""), 0.5),
-        ("other_group_ignored", ("a", "zzz"), ("b", ""), 1.5),
-        ("pattern", ("a", "d*"), ("debris", ""), 0.5),
-        ("pattern_taken_out", ("a", "d* ^debris"), ("debris", ""), 1.5),
-    ]
+    RBD Bullet Solver: the upper box ends where Box3D's does in every case, so Bullet too lets only both pieces
+    ignoring each other pass."""
     ground, _ = packed_boxes("sop_cgnb_ground", [GROUND])
     differ, same = [], []
-    for tag, (g0, i0), (g1, i1), want in cases:
-        pieces, names = packed_boxes(f"sop_cgnb_pieces_{tag}", [
-            {"size": (1, 1, 1), "center": (0, 0.5, 0), "attrs": {"collisiongroup": g0, "collisionignore": i0}},
-            {"size": (1, 1, 1), "center": (0, 2, 0), "attrs": {"collisiongroup": g1, "collisionignore": i1}}])
-        sop = bullet_sop(f"sop_cgnb_{tag}", geometry=pieces, collision=ground)
-        pos = play(sop, 48, lambda s, f: named_positions(s.geometry(0)) if f == 48 else None)[48]
-        y = pos[names[1]][1] if names[1] in pos else None
+    for tag, lower, upper, want in GROUP_CASES:
+        y = _group_names_run("bullet", tag, lower, upper, ground)
         (same if y is not None and close(y, want, 0.05) else differ).append(f"{tag} (y={y and round(y, 2)}, expected {want})")
-    return [Result("solver_sop_collision_group_names_bullet", Result.INFO,
-                   f"Bullet agrees with Box3D in: {', '.join(same) or 'no case'}. It differs in: "
-                   f"{'; '.join(differ) or 'no case'}")]
+    return [Result("solver_sop_collision_group_names_bullet", Result.FAIL if differ else Result.PASS,
+                   f"Bullet agrees in: {', '.join(same) or 'no case'}. It differs in: {'; '.join(differ) or 'no case'}")]
 
 
 def test_solver_sop_collider_group_names():
     """The collision input's pieces take part in collision groups like the pieces: its `collisiongroup` and
-    `collisionignore` become the same category / mask bits. A box dropped onto a ground piece rests on it (y = 0.5)
-    unless either side ignores the other's group (the box the ground's, or the ground the box's, by name or pattern), and
-    then it falls through (below y = -1 after 2 s). A pattern matching nothing, a ground ignoring only its own group, and
-    a ground with no group attributes at all (the box ignoring a group nobody has) change nothing. INFO: the same cases
-    in RBD Bullet Solver, where they differ."""
+    `collisionignore` become the same category / mask bits, and the same rule as between pieces holds (Bullet's: they
+    collide unless both ignore each other). A box dropped onto a ground piece rests on it (y = 0.5), and falls through
+    (below y = -1 after 2 s) only when the box ignores the ground's group and the ground the box's, by name or pattern. One
+    side ignoring, a pattern matching nothing, a ground ignoring only its own group, and a ground with no group
+    attributes at all (which the box ignores nothing of) change nothing. The same cases in RBD Bullet Solver give the
+    same."""
     cases = [
         # (tag, ground (group, ignore) or None for no attributes, box (group, ignore), falls through)
         ("plain", ("floor", ""), ("debris", ""), False),
-        ("box_ignores_ground", ("floor", ""), ("debris", "floor"), True),
-        ("ground_ignores_box", ("floor", "debris"), ("debris", ""), True),
-        ("ground_ignores_pattern", ("floor", "deb*"), ("debris", ""), True),
+        ("box_ignores_ground_only", ("floor", ""), ("debris", "floor"), False),
+        ("ground_ignores_box_only", ("floor", "debris"), ("debris", ""), False),
+        ("both_ignore_each_other", ("floor", "debris"), ("debris", "floor"), True),
+        ("both_ignore_by_pattern", ("floor", "deb*"), ("debris", "fl*"), True),
         ("ground_pattern_no_match", ("floor", "zzz"), ("debris", ""), False),
         ("ground_ignores_itself", ("floor", "floor"), ("debris", ""), False),
         ("ground_without_names", None, ("debris", "floor"), False),
+        ("ground_without_names_box_ignores_all", None, ("debris", "*"), False),
     ]
     results, bullet_notes = [], []
     for tag, ground_names, (g1, i1), through in cases:
@@ -236,15 +238,11 @@ def test_solver_sop_collider_group_names():
             ys[kind] = pos[names[0]][1] if names[0] in pos else None
         fell = {kind: y is not None and y < -1.0 for kind, y in ys.items()}
         rested = {kind: y is not None and close(y, 0.5, 0.05) for kind, y in ys.items()}
-        ok = fell["box3d"] if through else rested["box3d"]
-        results.append(Result("solver_sop_collider_group_names", Result.PASS if ok else Result.FAIL,
-                              f"{tag}: ground {ground_names}, box ({g1!r}, {i1!r}): box at y={ys['box3d']} after 2 s "
-                              f"(expected {'below -1' if through else '0.5'})"))
-        bullet_ok = fell["bullet"] if through else rested["bullet"]
-        if not bullet_ok:
-            bullet_notes.append(f"{tag}: Bullet y={ys['bullet']}")
-    results.append(Result("solver_sop_collider_group_names", Result.INFO,
-                          "Bullet differs from the expected result in: " + ("; ".join(bullet_notes) or "no case")))
+        expected = fell if through else rested
+        results.append(Result("solver_sop_collider_group_names",
+                              Result.PASS if expected["box3d"] and expected["bullet"] else Result.FAIL,
+                              f"{tag}: ground {ground_names}, box ({g1!r}, {i1!r}): box at y={ys['box3d']} in Box3D and "
+                              f"{ys['bullet']} in Bullet after 2 s (expected {'below -1' if through else '0.5'} in both)"))
     return results
 
 

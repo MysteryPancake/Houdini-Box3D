@@ -343,6 +343,24 @@ int Box3DWorld::getContactImpulseSums(
   return static_cast<int>(out.size());
 }
 
+int Box3DWorld::getHitContacts(std::vector<HitContact> &out) const {
+  out.clear();
+  if (!isValid())
+    return 0;
+  const b3ContactEvents ev = b3World_GetContactEvents(myImpl->worldId);
+  out.resize(static_cast<size_t>(ev.hitCount));
+  for (int i = 0; i < ev.hitCount; ++i) {
+    const b3ContactHitEvent &e = ev.hitEvents[i];
+    HitContact &h = out[static_cast<size_t>(i)];
+    h.a = b3StoreBodyId(b3Shape_GetBody(e.shapeIdA));
+    h.b = b3StoreBodyId(b3Shape_GetBody(e.shapeIdB));
+    h.shapeA = b3StoreShapeId(e.shapeIdA);
+    h.shapeB = b3StoreShapeId(e.shapeIdB);
+    h.approachSpeed = e.approachSpeed;
+  }
+  return ev.hitCount;
+}
+
 void Box3DWorld::updateHitEvents(bool append) {
   if (!append)
     myImpl->hitPairs.clear();

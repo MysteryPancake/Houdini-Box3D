@@ -29,9 +29,11 @@ What is still to do: [todo.md](todo.md). Index and rules: [CLAUDE.md](../../CLAU
   same moved 5 in x, and for a T), unexplained. A concave object with Hull per Piece is not checked against Bullet.
 * Which end is Cone Twist's goal (taken as point 1; `bullet_cone_twist_goal`, `bullet_cone_twist_goal_apart`):
   Bullet's piece fell freely in both, so it cannot say.
-* Unpacked geometry (`unpacked_geometry_bullet`, `unpacked_geometry_match`): an object of polygons only is skipped by
-  both (ours warns). Bullet ignores loose polygons beside packed pieces without a message (ours warns), gives that
-  message for loose points alone and ignores loose points beside a packed piece without one (ours simulates them).
+* Unpacked geometry (`unpacked_geometry_bullet`, `unpacked_geometry_match`): kept differences, as the HDK's
+  `SIM_BulletState` shows. Bullet reads only packed primitives and warns ("does not contain any primitive types
+  supported by the solver") only when the geometry has none, so an object of polygons only, or of loose points only,
+  gets the message in both, and loose polygons or points beside a packed piece get no message and are ignored. Ours
+  warns about the loose polygons and simulates the loose points.
 
 **Whole objects**
 * An RBD Object without Box3D Data colliding as its convex hull; `bullet_primT` / `bullet_primS` meaning there.
@@ -49,13 +51,18 @@ What is still to do: [todo.md](todo.md). Index and rules: [CLAUDE.md](../../CLAU
   changed attributes reaching the solver.
 * `anchor_id`: untested are other ids (a fragment's points are taken in source order, its vertices in primitive
   order), a piece that has moved before its joint is made (`nowToRest`), and non-fragment packed pieces.
-* Glue's impulse model (`core/Box3DGlue.h`, `glue_break_match`): `impact` matches Bullet's. The Strength at which a
-  bond stops breaking does not: Bullet breaks at about its `impact` (1.0x) when something hits a resting glued pair or
-  row, and at 3x to 10x when the glued pieces land themselves (more with speed, bounce, piece count and a piece's
-  height), where Box3D uses one factor, `kGlueStrengthScale` (5.3, measured for a landing from 3). So a hit on a
-  resting structure needs about 5x the Strength in Box3D that it does in Bullet. Anchor position and rest length
-  change neither. Not understood: what makes Bullet's break value larger than its `impact`. Unchecked: the cost of
-  reading every glued body's contacts each step on a large network.
+* Glue's break estimate (`core/Box3DGlueEstimate.h`, `Box3DGlueEstimate.cpp`, tests `glue_break_match`,
+  `glue_fracture_vs_bullet`): Bullet breaks glue before its step on an impulse estimate at every contact point of the
+  glued body ([joints-sidefx.md](joints-sidefx.md)), the HDK's `SIM_BulletState` (`preBreakGlue`, `updateGlue`).
+  Box3D's, from the step's contacts, holds from the same Strength as Bullet's in the landing and dropped-box scenes
+  (within about 15%, a row of 4 hit by a box 1.3x). Not matched: Bullet's trial moves the body a whole step
+  forward, so an edge landing sinks into the ground and more pieces have points than Box3D's contacts after the step: a
+  fractured block holds 4 to 7 times better here (`glue_fracture_vs_bullet`). Only contacts above Box3D's hit
+  threshold (1 m/s by default) are estimated; slower ones count by their real impulse, as a resting body's weight
+  does. A kinematic piece in a group, or one whose mass is not finite, leaves its group out of the estimate. The hold
+  that frees pieces for a fast body (`kGlueHoldBreakScale`, 5.3) is a heuristic of its own and frees pieces
+  at Strengths where the estimate would not break the bond (a row of 4 hit by a box). Unchecked: the cost of
+  estimating on a large network, and Substeps above 2.
 * What the precompiled headers (`BOX3DDOP_PCH`) save: not measured.
 * Transform Pieces with packed transforms that carry scale or shear.
 * Constraints output through Transform Pieces: constraints between collision pieces (not in the simulation points, so

@@ -47,10 +47,18 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
   * Break Thresholds (`b3d_solver_breaks.py`): `angle` matches Bullet's for a freely spinning piece, and `torque` is
     Bullet's quantity (the force's moment about the first piece's centre, `bullet_joint_feedback`), so the Torque
     Threshold breaks on the same frames (`solver_sop_break_angle_torque_bullet`, INFO). A Hard (all) line reads only
-    part of the load (7.3 N for a hanging 1 kg piece, 6.9 N with the anchor at the fixed piece's centre) so its
-    `force` and `torque` read low (probably its motor joints: not looked into). The Angle Threshold still differs on a
-    spinning box (0.2 rad: frame 13 in Box3D, 3 in Bullet), so which of those thresholds breaks when is not
-    established. Untested: Variance, World Scale other than 1, and the cost on a large network with it on (the SOP
+    part of the load when its two pieces touch (7.3 N for a hanging 1 kg piece, 6.9 N with the anchor at the fixed
+    piece's centre): Box3D reads the joint's own force, and friction at their shared face carries the rest. With
+    Disable Collisions on it reads the weight, and Bullet's reads the weight either way, being the pieces' net force
+    (`bullet_hard_collisions`). The Angle and Torque thresholds of a Soft line on a spinning box break on the
+    same frames in both with Rest Length 0, and Bullet's Soft Stiffness is the frequency in Hz that the mapping takes it
+    for (`soft_spring_hz`). They still differ with the default Rest Length of 1 and the anchors at one point (0.2 rad:
+    frame 13 in Box3D, 3 in Bullet): the spring has no direction while the anchors are exactly together, so Bullet
+    applies none on the first step and Box3D's sprung Distance joint does (0.62 m of the rest length closed by frame 2
+    against 0.00, at any Substeps), which holds the spinning box much tighter in the first frames (angle 0.05 against
+    0.19). Both settle at the rest length and nothing moves with Rest Length 0 (`soft_coincident_anchors`). Matching
+    it would mean leaving the spring out for the first step of a joint whose anchors coincide: not done, as it
+    only reproduces a one-frame lag. Untested: Variance, World Scale other than 1, and the cost on a large network with it on (the SOP
     Solver rewrites the constraint geometry each step, so the solver reads the whole network again). Not there: the
     Force Threshold (Bullet's `force` of a Glue is the difference of its pieces' forces times their mean mass, Box3D's
     is the joint's), the Group parameter, plastic flow, the VEX snippet.

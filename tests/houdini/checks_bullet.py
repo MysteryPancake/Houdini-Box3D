@@ -1212,8 +1212,121 @@ def test_bullet_joint_feedback():
                           "piece's centre, as Bullet's: " + "; ".join(rows)))
     results.append(Result("bullet_joint_feedback", Result.INFO,
                           "Hard (all) force / torque of the same cantilever (the weight is 9.81 N): Box3D's Hard reads "
-                          "less than the weight, which Bullet's does not: " + "; ".join(hard_rows)))
+                          "less than the weight, which Bullet's does not, because the two pieces touch "
+                          "(bullet_hard_collisions): " + "; ".join(hard_rows)))
     return results
+
+
+def test_bullet_hard_collisions():
+    """Why Box3D's Hard (all) `force` reads less than the weight where Bullet's does not. A 1 kg cantilever (fixed piece
+    at x 0, hanging piece's centre at x 1, Rest Length 0, weight 9.81 N) on a Hard line, its anchors at the shared face
+    and at the fixed piece's centre, with Disable Collisions off (the default) and on. Box3D reads the joint's own force:
+    with collisions off the pieces touch and friction at their shared face carries part of the weight, so it reads
+    less (between 3 and 9 N), and with them on the pieces do not touch and it reads the weight (within 0.3 N). Bullet
+    reads the weight either way (its `force` is the pieces' net force, not the joint's load)."""
+    mass = {"computemass": 0, "mass": 1.0}
+    rows, ok = [], True
+    for label, point in (("the shared face", (0.5, 2.0, 0.0)), ("the fixed piece's centre", (0.0, 2.0, 0.0))):
+        got = {}
+        for kind in KINDS:
+            for disabled in (0, 1):
+                run = feedback_run("hard_collisions", kind, "hardconrel", {"constraint_type": "all"}, 36,
+                                   packed_parms=mass, anchors=(point, point),
+                                   conrel_parms={"restlength": 0.0, "disablecollisions": disabled})[36]
+                got[kind, disabled] = run["force"] if run else None
+        good = (None not in got.values() and 3.0 < got["box3d", 0] < 9.0 and close(got["box3d", 1], G, 0.3)
+                and close(got["bullet", 0], G, 0.3) and close(got["bullet", 1], G, 0.3))
+        ok = ok and good
+        rows.append(f"anchor at {label}: Box3D {got['box3d', 0]:.2f} N with collisions between the pieces, "
+                    f"{got['box3d', 1]:.2f} with them disabled; Bullet {got['bullet', 0]:.2f} and {got['bullet', 1]:.2f}")
+    return [Result("bullet_hard_collisions", Result.PASS if ok else Result.FAIL,
+                   "Hard (all) force of a 1 kg cantilever on frame 36 (the weight is 9.81 N; expected Box3D between 3 and "
+                   "9 with collisions and the weight without, Bullet the weight): " + "; ".join(rows))]
+
+
+def soft_spring_run(kind, hz, mass):
+    """A 1 m box hanging from a fixed one on a position-only Bullet Soft line (Rest Length 1.5, damping ratio 0.05, the
+    anchors at the two centres, 2 apart so the spring starts stretched) for 4 s at 24 per second: (the time between the
+    first two peaks of its height, the mean length of the spring between the first peak and trough)."""
+    pieces = [{"size": (1, 1, 1), "center": (0, 4, 0), "attrs": {"active": 0}},
+              {"size": (1, 1, 1), "center": (0, 2, 0), "attrs": {"active": 1}}]
+    dop, names = hanging_pair(f"soft_spring_{kind}_{int(hz)}_{int(mass)}", None,
+                              line_attrs={"constraint_type": "position"},
+                              conrels=[("bulletsoftconrel", {"stiffness": hz, "dampingratio": 0.05, "restlength": 1.5})],
+                              solver_kind=kind, pieces=pieces, anchors=((0, 4, 0), (0, 2, 0)),
+                              packed_parms={"computemass": 0, "mass": mass})
+    track = step(dop, 96, lambda sim, f: packed_positions(sim, "pieces")[names[1]][1])
+    ys = [track[f] for f in range(1, 97)]
+    peaks = [i for i in range(1, len(ys) - 1) if ys[i] >= ys[i - 1] and ys[i] > ys[i + 1]]
+    troughs = [i for i in range(1, len(ys) - 1) if ys[i] <= ys[i - 1] and ys[i] < ys[i + 1]]
+    if len(peaks) < 2 or not troughs:
+        return None, None
+    return (peaks[1] - peaks[0]) / 24.0, 4.0 - 0.5 * (ys[peaks[0]] + ys[troughs[0]])
+
+
+def test_soft_spring_hz():
+    """Bullet Soft's Stiffness is a frequency in Hz, as the Box3D mapping takes it. A box hanging on a position-only Soft
+    line, Stiffness 1 and 2, 1 kg and 10 kg: in both solvers the height oscillates with a period of 1 / Stiffness
+    seconds (within 0.05 s, whatever the mass) and the spring's mean length is its Rest Length plus g / (2 pi f)^2
+    (within 0.08 m)."""
+    rows, ok = [], True
+    for hz in (1.0, 2.0):
+        for mass in (1.0, 10.0):
+            want_period = 1.0 / hz
+            want_length = 1.5 + G / (2.0 * math.pi * hz) ** 2
+            seen = {kind: soft_spring_run(kind, hz, mass) for kind in KINDS}
+            for kind, (period, length) in seen.items():
+                good = (period is not None and abs(period - want_period) < 0.05
+                        and abs(length - want_length) < 0.08)
+                ok = ok and good
+            rows.append(f"Stiffness {hz:g}, {mass:g} kg: " + ", ".join(
+                f"{kind} {seen[kind][0]:.2f} s / {seen[kind][1]:.2f} m" if seen[kind][0] is not None
+                else f"{kind} no oscillation" for kind in KINDS) + f" (expected {want_period:.2f} s / {want_length:.2f} m)")
+    return [Result("soft_spring_hz", Result.PASS if ok else Result.FAIL, "period / mean length: " + "; ".join(rows))]
+
+
+def soft_start_run(kind, rest):
+    """A box hanging under gravity from a position-only Bullet Soft line (Stiffness 10, damping ratio 1) whose two anchors
+    start at one point (the fixed box's bottom face): how far below the fixed anchor the box's anchor is on frames 1, 2,
+    3, 4, 6, 8, 12 and 24."""
+    pieces = [{"size": (1, 1, 1), "center": (0, 4, 0), "attrs": {"active": 0}},
+              {"size": (1, 1, 1), "center": (0, 2, 0), "attrs": {"active": 1}}]
+    anchor = (0, 3.5, 0)
+    dop, _names = hanging_pair(f"soft_start_{kind}_{int(rest)}", None, line_attrs={"constraint_type": "position"},
+                               conrels=[("bulletsoftconrel", {"stiffness": 10.0, "dampingratio": 1.0,
+                                                              "restlength": rest})],
+                               solver_kind=kind, pieces=pieces, anchors=(anchor, anchor),
+                               packed_parms={"computemass": 0, "mass": 1.0}, keep_velocity=True)
+    first = {}
+
+    def below(sim, f):
+        x = sim.findObject("pieces").geometry().prims()[1].fullTransform()
+        if f == 1:
+            first["inverse"] = x.inverted()
+        return anchor[1] - ((hou.Vector3(anchor) * first["inverse"]) * x)[1]
+
+    track = step(dop, 24, below)
+    return [track[f] for f in (1, 2, 3, 4, 6, 8, 12, 24)]
+
+
+def test_soft_coincident_anchors():
+    """A Soft line whose anchors start at one point, with a Rest Length of 1, against Bullet. A hanging box falls until
+    its anchor is the Rest Length below the fixed one and stays there (1.00 within 0.02 on frames 12 and 24 in both).
+    The spring has no direction while the anchors are exactly together, so Bullet applies none on the first step and
+    the box gets there one frame later (INFO: 0.62 m below on frame 2 in Box3D against 0.00 in Bullet, whatever the
+    Substeps). With Rest Length 0 neither moves the anchors apart."""
+    frames = (1, 2, 3, 4, 6, 8, 12, 24)
+    got = {(kind, rest): soft_start_run(kind, rest) for kind in KINDS for rest in (1.0, 0.0)}
+    ok = all(abs(got[kind, 1.0][i] - 1.0) < 0.02 for kind in KINDS for i in (6, 7)) and all(
+        abs(v) < 0.01 for kind in KINDS for v in got[kind, 0.0])
+    fmt = lambda values: ", ".join(f"{v:.2f}" for v in values)
+    return [Result("soft_coincident_anchors", Result.PASS if ok else Result.FAIL,
+                   f"Rest Length 1, the box's anchor below the fixed one on frames {list(frames)}: Box3D "
+                   f"{fmt(got['box3d', 1.0])}; Bullet {fmt(got['bullet', 1.0])} (expected 1.00 by frames 12 and 24); "
+                   f"Rest Length 0: Box3D {fmt(got['box3d', 0.0])}; Bullet {fmt(got['bullet', 0.0])} (expected 0.00)"),
+            Result("soft_coincident_anchors", Result.INFO,
+                   f"on frame 2 the box is {got['box3d', 1.0][1]:.2f} m below in Box3D and {got['bullet', 1.0][1]:.2f} in "
+                   "Bullet (its spring has no direction on the first step)")]
 
 
 PRIMR_THROUGH_CASES = ((30, 0, 60), (30, 0, 0), (0, 0, 60), (30, 0, 30), (0, 0, 30), (0, 0, 45), (0, 30, 0),
@@ -1432,6 +1545,9 @@ TESTS = {
     "bullet_mirror_flip": test_bullet_mirror_flip,
     "bullet_joint_angle": test_bullet_joint_angle,
     "bullet_joint_feedback": test_bullet_joint_feedback,
+    "bullet_hard_collisions": test_bullet_hard_collisions,
+    "soft_spring_hz": test_soft_spring_hz,
+    "soft_coincident_anchors": test_soft_coincident_anchors,
     "bullet_cone_twist_goal_apart": test_bullet_cone_twist_goal_apart,
     "bullet_primr_through": test_bullet_primr_through,
     "bullet_primt_primr": test_bullet_primt_primr,

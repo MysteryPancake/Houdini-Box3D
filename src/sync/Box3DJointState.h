@@ -130,6 +130,11 @@ inline bool inGlueGraph(const Box3DJointEntry &e) { return e.glue; }
 struct Box3DGlueNode {
   b3dop::BodyHandle body = 0;
   float hits = 0.0f;
+  // The impulse estimate of the frame's contacts (estimateGlueHits): its
+  // group's first step that has one (`estimateStep` is the step being worked
+  // out).
+  float estimate = 0.0f;
+  float estimateStep = 0.0f;
   std::vector<b3dop::BodyHandle> partners; // bodies it is glued to
   std::vector<Box3DJointEntry *> bonds;    // the live bonds it is in
 };

@@ -314,16 +314,16 @@ void releaseTowards(Box3DSharedState &st, Box3DCompound &c, BodyHandle target,
   releaseWithin(st, c, overLo, overHi, 0.0, until, moves, nodes);
 }
 
-// The impulse a bond takes to break: the Glue's Strength over
-// kGlueStrengthScale (a body that cannot deliver that in about a frame cannot
-// break it). Infinity when it cannot break.
+// The impulse a bond takes to break, for deciding which pieces to free: the
+// Glue's Strength over kGlueHoldBreakScale (a body that cannot deliver that in
+// about a frame cannot break it). Infinity when it cannot break.
 float bondBreakImpulse(const Box3DJointEntry &e) {
   constexpr float kNever = std::numeric_limits<float>::infinity();
   if (!e.extra)
     return kNever;
   const float strength = e.extra->glueParams.strength;
   return strength >= 0.0f && std::isfinite(strength)
-             ? strength / b3dop::kGlueStrengthScale
+             ? strength / b3dop::kGlueHoldBreakScale
              : kNever;
 }
 

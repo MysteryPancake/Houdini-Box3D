@@ -9,8 +9,10 @@
 //     propagation rate (0 to 1), all divided by the sum of the shares;
 //   * each bond adds the impulses its two bodies ended up with to its `impact`,
 //     after that has decayed by the half-life;
-//   * a bond whose impact passes its strength (< 0: never) divided by
-//   kGlueStrengthScale breaks.
+//   * a bond whose impact passes its strength (< 0: never) breaks. So does one
+//     whose decayed impact plus the spread estimates (core/Box3DGlueEstimate.h:
+//     what Bullet breaks glue on before the step, from every contact point of
+//     the glued body) passes it, and that impact is what it reports then.
 // A hit is the normal impulse of a body's contacts, as in Bullet, so a body
 // resting on something adds its weight every step. A piece hanging from its
 // bond has no contacts and holds at any strength.
@@ -18,19 +20,18 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 #include <vector>
 
 namespace b3dop {
 
-// A bond breaks when its impact passes its strength divided by this. The
-// impacts agree with Bullet's (the `impact` attribute, same peak within ~20%
-// and the same decay: `glue_impact_trace`), but a Bullet glue only holds from
-// about 5 to 6 times its peak impact (its Strength has to be that much higher),
-// so the break test is scaled to match: the Strength at which a landing stops
-// breaking the glue is within ~14% of Bullet's at both heights tried
-// (`glue_impact_scale`: Box3D's was 4.7 and 5.9 times lower without it).
-// Measured, not derived, from one scene.
-constexpr float kGlueStrengthScale = 5.3f;
+// What a body must be able to deliver for holdCompoundsForApproach to free the
+// pieces in its way, as a share of the weakest bond's Strength: Bullet breaks a
+// glued body that lands on an estimate several times the impulse the step
+// carries (core/Box3DGlueEstimate.h), which the momentum it brings falls short
+// of by about this much. A heuristic for when to free pieces, not the break
+// test.
+constexpr float kGlueHoldBreakScale = 5.3f;
 
 // An impact below this (N*s) is zero: a decayed impact would otherwise halve
 // for minutes before it underflowed, and the frame would not be idle until it
@@ -122,10 +123,13 @@ inline void glueSpread(const std::vector<GlueBond> &bonds,
 
 // One step of `dt` seconds: the bonds' impacts decay, take the propagated
 // hits, and those over their strength are listed in `broken` (indices into
-// `bonds`). `hits` (per node) is consumed. A bond with a < 0 or b < 0 is
-// ignored.
+// `bonds`). `hits` (per node) is consumed. `estimates` (per node, or empty):
+// the frame's impulse estimates (glueContactEstimate): spread the same way, a
+// bond whose decayed impact plus its ends' estimates passes its strength breaks
+// too, and keeps that as its impact. A bond with a < 0 or b < 0 is ignored.
 inline void glueAdvance(std::vector<GlueBond> &bonds, std::vector<float> hits,
-                        float dt, std::vector<int> &broken) {
+                        std::vector<float> estimates, float dt,
+                        std::vector<int> &broken) {
   broken.clear();
   // Node counts in `bonds` must fit `hits`.
   const auto usable = [&hits](const GlueBond &bond) {
@@ -152,6 +156,11 @@ inline void glueAdvance(std::vector<GlueBond> &bonds, std::vector<float> hits,
   }
   const std::vector<GlueBond> &spread = all ? bonds : live;
   glueSpread(spread, hits);
+  const bool estimated = estimates.size() == hits.size() &&
+                         std::any_of(estimates.begin(), estimates.end(),
+                                     [](float e) { return e > 0.0f; });
+  if (estimated)
+    glueSpread(spread, estimates);
   // Most bonds share a half-life: the decay is worked out once per value.
   float lastHalfLife = 0.0f, lastDecay = 0.0f;
   bool haveDecay = false;
@@ -165,14 +174,34 @@ inline void glueAdvance(std::vector<GlueBond> &bonds, std::vector<float> hits,
       lastHalfLife = hl;
       haveDecay = true;
     }
-    bond.impact = bond.impact * lastDecay + hits[static_cast<size_t>(bond.a)] +
+    const float decayed = bond.impact * lastDecay;
+    bond.impact = decayed + hits[static_cast<size_t>(bond.a)] +
                   hits[static_cast<size_t>(bond.b)];
     if (bond.impact < kGlueImpactFloor) // not for NaN: that stays visible
       bond.impact = 0.0f;
-    if (bond.params.strength >= 0.0f && std::isfinite(bond.params.strength) &&
-        bond.impact > bond.params.strength / kGlueStrengthScale)
+    const bool breakable =
+        bond.params.strength >= 0.0f && std::isfinite(bond.params.strength);
+    if (!breakable)
+      continue;
+    if (bond.impact > bond.params.strength) {
       broken.push_back(static_cast<int>(at));
+      continue;
+    }
+    if (estimated) {
+      const float before = decayed + estimates[static_cast<size_t>(bond.a)] +
+                           estimates[static_cast<size_t>(bond.b)];
+      if (before > bond.params.strength) {
+        bond.impact = before;
+        broken.push_back(static_cast<int>(at));
+      }
+    }
   }
+}
+
+// The same without estimates: a bond breaks on its propagated hits alone.
+inline void glueAdvance(std::vector<GlueBond> &bonds, std::vector<float> hits,
+                        float dt, std::vector<int> &broken) {
+  glueAdvance(bonds, std::move(hits), std::vector<float>(), dt, broken);
 }
 
 } // namespace b3dop

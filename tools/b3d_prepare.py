@@ -78,45 +78,96 @@ COLLISION_PREFIX = "static"  # Bullet's Output Prefix for assembled colliders
 # same group names the same way. Bit 0 is "no group"; groups take bits 1 to 30 in sorted order (more
 # share bit 30), so the values fit a 32-bit int. A piece ignores a group when the pattern matches
 # its name (space separated, `^` takes names out again, as Houdini patterns). Box3D collides two
-# bodies only when each one's mask has the other's category, so either side ignoring is enough.
+# bodies only when each one's mask has the other's category, but Bullet collides them when either
+# one's pattern leaves the other's group alone (SIM_BulletRigidBody::checkCollideWithOverride): only
+# both ignoring each other stops them. So a piece's mask is the groups its own pattern leaves alone, and
+# those of every group with a piece that leaves its group alone (`__allows`, below).
 # Points with neither attribute keep whatever they had (the solver's defaults when missing).
+COLLISION_IGNORED_FN = """\
+int bit(int k) { return (int)pow(2.0, (float)k); }
+// The bits of the groups in `used` that `ignore` matches.
+int ignoredBits(string ignore; string used[])
+{
+    string patterns[] = split(ignore);
+    int ignored = 0;
+    for (int i = 0; i < len(used); i++) {
+        int hit = 0;
+        foreach (string p; patterns) {
+            if (startswith(p, "^")) {
+                if (match(p[1:], used[i])) hit = 0;
+            } else if (match(p, used[i])) {
+                hit = 1;
+            }
+        }
+        if (hit) ignored |= bit(min(i + 1, 30));
+    }
+    return ignored;
+}
+"""
 # The group names of both geometries, once, sorted, without the empty one: a detail attribute `__used` (Attribute
-# Promote finds each geometry's unique names, as `__groups`).
-COLLISION_USED_VEX = """\
+# Promote finds each geometry's unique names, as `__groups`). And `__allows`: for the "no group" slot 0 and each
+# group k + 1, the bits of the groups that some piece of it leaves alone (every bit for a piece with neither attribute).
+COLLISION_USED_VEX = COLLISION_IGNORED_FN + """\
 string used[], first[] = detail(0, "__groups"), second[] = detail(1, "__groups");
 foreach (string n; first)
     if (n != "" && find(used, n) < 0) append(used, n);
 foreach (string n; second)
     if (n != "" && find(used, n) < 0) append(used, n);
-s[]@__used = sort(used);
+string names[] = sort(used);
+s[]@__used = names;
+int allows[];
+resize(allows, len(names) + 1);
+string seen[];
+int seenBits[];
+for (int src = 0; src < 2; src++) {
+    int hasGroup = haspointattrib(src, "collisiongroup");
+    int hasIgnore = haspointattrib(src, "collisionignore");
+    int count = npoints(src);
+    if (!hasGroup && !hasIgnore) {
+        if (count > 0) allows[0] |= -1;
+        continue;
+    }
+    for (int p = 0; p < count; p++) {
+        string group = hasGroup ? point(src, "collisiongroup", p) : "";
+        string ignore = hasIgnore ? point(src, "collisionignore", p) : "";
+        int slot = 0;
+        if (group != "") {
+            int index = find(names, group);
+            slot = index >= 0 ? index + 1 : 0;
+        }
+        int bits = -1;
+        if (group != "" || ignore != "") {
+            int at = find(seen, ignore);
+            if (at < 0) {
+                bits = ~ignoredBits(ignore, names);
+                append(seen, ignore);
+                append(seenBits, bits);
+            } else {
+                bits = seenBits[at];
+            }
+        }
+        allows[slot] |= bits;
+    }
+}
+i[]@__allows = allows;
 """
 # Per point (the node is skipped when the pieces have neither attribute; collision_category / collision_mask are
 # there, 1 and -1 where they were missing, so a point with neither attribute keeps what it had).
-COLLISION_NAMES_VEX = """\
-int bit(int k) { return (int)pow(2.0, (float)k); }
+COLLISION_NAMES_VEX = COLLISION_IGNORED_FN + """\
 int hasGroup = haspointattrib(0, "collisiongroup");
 int hasIgnore = haspointattrib(0, "collisionignore");
 string group = hasGroup ? point(0, "collisiongroup", i@ptnum) : "";
 string ignore = hasIgnore ? point(0, "collisionignore", i@ptnum) : "";
 if (group == "" && ignore == "") return;
 string used[] = detail(1, "__used");
+int allows[] = detail(1, "__allows");
 int index = find(used, group);
 int category = (group != "" && index >= 0) ? bit(min(index + 1, 30)) : 1;
-string patterns[] = split(ignore);
-int ignored = 0;
-for (int i = 0; i < len(used); i++) {
-    int hit = 0;
-    foreach (string p; patterns) {
-        if (startswith(p, "^")) {
-            if (match(p[1:], used[i])) hit = 0;
-        } else if (match(p, used[i])) {
-            hit = 1;
-        }
-    }
-    if (hit) ignored |= bit(min(i + 1, 30));
-}
+int mask = ~ignoredBits(ignore, used);
+for (int k = 0; k < len(allows); k++)
+    if (allows[k] & category) mask |= bit(min(k, 30));
 setpointattrib(0, "collision_category", i@ptnum, category);
-setpointattrib(0, "collision_mask", i@ptnum, ~ignored);
+setpointattrib(0, "collision_mask", i@ptnum, mask);
 """
 # Bullet's Path Attribute on its Assembles.
 PACK_PATH = "op:`opfullpath('.')`/pack"

@@ -484,20 +484,57 @@ def test_solver_sop_constraint_updates_bullet():
 
 
 def test_solver_sop_break_angle_torque_bullet():
-    """INFO, Break Thresholds, Angle and Torque Threshold, against the RBD Bullet Solver SOP: a Soft constraint on a
-    box spinning at 6 rad/s about z, thresholds from small to large. The frame it goes on in each is listed. They
-    are not expected to agree: the two solvers' `angle` and `torque` readings differ (docs/notes.md)."""
-    rows = []
-    for key, values in (("angle", (0.01, 0.05, 0.2)), ("torque", (100.0, 2000.0, 20000.0))):
+    """Break Thresholds, Angle and Torque Threshold, against the RBD Bullet Solver SOP: a Soft constraint on a box
+    spinning at 6 rad/s about z, its anchors at one point and Rest Length 0, thresholds from small to large. The frame
+    it goes on is the same in both (within 1 frame; none in both for the largest). The second result is INFO: with the
+    default Rest Length of 1 and the anchors still together, the Soft joint holds the box differently in the two (the
+    Angle Threshold of 0.2 goes on frame 13 in Box3D and 3 in Bullet), though plain Soft springs agree (soft_spring_hz)
+    and so do the `angle` readings (bullet_joint_feedback): the trace gives the angle and the anchors' distance."""
+    rows, problems = [], []
+    for key, values in (("angle", (0.01, 0.05, 0.2, 0.4)), ("torque", (100.0, 2000.0, 20000.0))):
         for value in values:
             got = {}
             for kind in ("box3d", "bullet"):
                 got[kind] = _first_break(kind, f"sop_{key}_{kind}{int(value * 100)}", "Soft",
                                          ((0, 3.5, 0), (0, 3.5, 0)), hang={"w": (0, 0, 6)}, enable=(key,),
-                                         parms={f"constraint_{key}threshold1": value}, names="Soft", frames=16)
-            rows.append(f"{key} {value}: {got['box3d']} / {got['bullet']}")
-    return [Result("solver_sop_break_angle_torque_bullet", Result.INFO,
-                   "gone on frame (Box3D / Bullet): " + "; ".join(rows))]
+                                         parms={f"constraint_{key}threshold1": value}, names="Soft", frames=16,
+                                         line_attrs={"restlength": 0.0})
+            a, b = got["box3d"], got["bullet"]
+            rows.append(f"{key} {value}: {a} / {b}")
+            if (a is None) != (b is None) or (a is not None and abs(a - b) > 1):
+                problems.append(f"{key} {value}: {a} / {b}")
+    results = [Result("solver_sop_break_angle_torque_bullet", Result.FAIL if problems else Result.PASS,
+                      "Rest Length 0, gone on frame (Box3D / Bullet): " + "; ".join(rows)
+                      + (f"; PROBLEMS: {'; '.join(problems)}" if problems else ""))]
+    # The same scene with the default Rest Length of 1 (no restlength attribute).
+    default = {kind: _first_break(kind, f"sop_angle_default_{kind}", "Soft", ((0, 3.5, 0), (0, 3.5, 0)),
+                                  hang={"w": (0, 0, 6)}, enable=("angle",), parms={"constraint_anglethreshold1": 0.2},
+                                  names="Soft", frames=16) for kind in ("box3d", "bullet")}
+    track = {}
+    for kind in ("box3d", "bullet"):
+        pieces, pnames = packed_boxes(f"sop_soft_trace_{kind}_pieces",
+                                      [{"size": (1, 1, 1), "center": (0, 4, 0), "attrs": {"active": 0}},
+                                       {"size": (1, 1, 1), "center": (0, 2, 0), "attrs": {"active": 1, "w": (0, 0, 6)}}])
+        lines = constraint_lines(f"sop_soft_trace_{kind}_network",
+                                 [(pnames[0], (0, 3.5, 0), pnames[1], (0, 3.5, 0), "Soft", {})])
+        sop = (solver_sop if kind == "box3d" else bullet_sop)(f"sop_soft_trace_{kind}", geometry=pieces,
+                                                              constraints=lines)
+        set_parm(sop, ["enable_constraintbreaks"], 0)
+
+        def read(s, f):
+            geo = s.geometry(1)
+            if f not in (2, 5, 8) or not geo.prims() or geo.findPrimAttrib("angle") is None:
+                return None
+            return geo.prims()[0].attribValue("angle"), geo.prims()[0].attribValue("distance")
+
+        track[kind] = play(sop, 8, read)
+    rows = [f"frame {f}: angle {track['box3d'][f][0]:.2f} / {track['bullet'][f][0]:.2f}, anchors "
+            f"{track['box3d'][f][1]:.2f} / {track['bullet'][f][1]:.2f} apart" for f in (2, 5, 8)
+            if track["box3d"].get(f) and track["bullet"].get(f)]
+    results.append(Result("solver_sop_break_angle_torque_bullet", Result.INFO,
+                          f"default Rest Length 1, Angle Threshold 0.2 gone on frame {default['box3d']} / "
+                          f"{default['bullet']}; the Soft line on the same box (Box3D / Bullet): " + "; ".join(rows)))
+    return results
 
 
 def test_solver_sop_constraints():
