@@ -72,7 +72,9 @@ in is read once (its affector group, `gatherAffectors`): asking every object for
 relationship's whole group each time, which cost 60 ms a step for 2000 RBD Objects. They become static bodies: a
 height field if the geometry has one, else a triangle mesh of its polygons.
 
-* Gather: affectors of every solved object, deduplicated, solved objects skipped. State:
+* Gather: affectors of every solved object through its Collide relationships (`kCollideRelationship`; RBD Bullet Solver
+  takes the same: Source, Target, Group, Empty, Pump, Sink and Initial Overlap relationships, and a Collide one pointing
+  the other way, give no collision in either, `affector_relationships`), deduplicated, solved objects skipped. State:
   `Box3DSharedState::affectors` (object id -> `Box3DAffectorBody`); a world rebuild starts empty, unseen ones are
   destroyed.
 * Transform: `SIMgetGeometryTransform`. Static Object's Use Object Transform (off by default) gives the whole world

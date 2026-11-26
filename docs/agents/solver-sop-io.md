@@ -17,12 +17,15 @@ and forces: [solver-sop.md](solver-sop.md). Index and rules: [CLAUDE.md](../../C
   Unused Groups (on, as RBD Configure's; `remove_unused_groups`).
 * Simulation Points: DOP Import of the pieces object, Fetch Geometry (`POINTS_TOGGLES`), primitives removed (an Add
   SOP's Delete Geometry But Keep the Points, found by `POINTS_ONLY_PARM`; a `removeprim` wrangle only if not), point
-  attributes cut to `POINTS_KEEP` plus the asset's `transferattributes`. Not Create Points to Represent Objects: that
+  attributes cut to `POINTS_KEEP` (with `scale`, which only an animated piece whose source scale changes has) plus the asset's `transferattributes`. Not Create Points to Represent Objects: that
   makes a point per packed primitive only for SideFX's RBD Packed Object, one per DOP object for ours, so this is
   the one place the asset does not copy RBD Bullet Solver (its `dopimport` uses that style). The points carry
   Bullet's rest convention ([bodies.md](bodies.md), "Rest transform").
 * Geometry and Proxy outputs: Transform Pieces of the named Geometry / simulated source onto the simulation points by
-  `name`, no rest input, as RBD Bullet Solver: points only, so it builds each transform from `pivot`, `orient` and `P`
+  `name`, no rest input, the source as of the Start Frame (`rest_source`: a Time Shift and a Switch If that takes the
+  current frame instead while the input has a `deforming` attribute, as Bullet's `timeshift1` / `switchif_deforming`;
+  the points carry the motion since then, so an input that moves itself would move twice; test
+  `solver_sop_moving_input`), as RBD Bullet Solver: points only, so it builds each transform from `pivot`, `orient` and `P`
   (on a one-vertex primitive's point it would use the packed transform instead). Before it, `remove_deleted_*`
   (`REMOVE_DELETED_VEX`, Bullet's `remove_deleted`) drops pieces the solver deleted: no simulation point of their
   name, and for Geometry, one in what was simulated. Transform Pieces is the asset's largest cost (nearly all in its
@@ -33,7 +36,7 @@ and forces: [solver-sop.md](solver-sop.md). Index and rules: [CLAUDE.md](../../C
   of it errors, while one in it is made on pieces that have none. Only attribute bindings are written, never
   `setpointattrib` and the like, whose queue stops a wrangle running in parallel. The Python expression of the Switch
   (`FAST_TRANSFORM_EXPR`, Python because HScript cannot read an attribute's type) picks 1 or 2 only when the pieces
-  carry `name` on their points, neither they nor the simulation points carry `age`, the attributes to copy are no more
+  carry `name` on their points, neither they nor the simulation points carry `age`, the simulation points carry no `scale` (an animated piece's), the attributes to copy are no more
   than `age` and `w`, and no point attribute besides `P`, `N`, `w` and `v` is a position, vector, quaternion, normal
   or matrix; else Transform Pieces. Test `solver_sop_fast_transform` (differences from Transform Pieces under 1e-5).
 * World Scale (`WORLD_SCALE_TOGGLE` / `WORLD_SCALE`, first on the Solver tab; Bullet's usescale / Bullet World Scale):

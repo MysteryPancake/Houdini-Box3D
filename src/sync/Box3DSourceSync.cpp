@@ -12,6 +12,7 @@
 
 #include <GA/GA_Handle.h>
 #include <GU/GU_Detail.h>
+#include <GU/GU_PrimPacked.h>
 #include <OP/OP_Context.h>
 #include <OP/OP_Director.h>
 #include <OP/OP_Node.h>
@@ -48,7 +49,7 @@ SOP_Node *findSourceSop(const SIM_Object &obj, bool &useTransform) {
 // The pose a source piece has: its position and rotation through `xf` (the
 // SOP object's world transform, or identity).
 bool sourcePose(const GU_Detail *src, GA_Offset off, const UT_Matrix4D &xf,
-                double pos[3], float rot[4]) {
+                double pos[3], float rot[4], double scale[3]) {
   const PackedInfo pk = getPackedInfo(src, off);
   if (!pk.prim)
     return false;
@@ -62,7 +63,7 @@ bool sourcePose(const GU_Detail *src, GA_Offset off, const UT_Matrix4D &xf,
   pos[0] = p.x();
   pos[1] = p.y();
   pos[2] = p.z();
-  double m3[9], scale[3];
+  double m3[9];
   for (unsigned r = 0; r < 3; ++r)
     for (unsigned c = 0; c < 3; ++c)
       m3[r * 3 + c] = m(r, c);
@@ -107,7 +108,7 @@ void readSourcePoses(SOP_Node &sop, double t, bool useTransform,
     if (it == cache.index.end())
       continue;
     Box3DSourcePose pose;
-    if (sourcePose(src, it->second, xf, pose.pos, pose.rot))
+    if (sourcePose(src, it->second, xf, pose.pos, pose.rot, pose.scale))
       out[kv.first] = pose;
   }
 }
@@ -115,6 +116,9 @@ void readSourcePoses(SOP_Node &sop, double t, bool useTransform,
 bool samePose(const Box3DSourcePose &a, const Box3DSourcePose &b) {
   for (int i = 0; i < 3; ++i)
     if (std::fabs(a.pos[i] - b.pos[i]) > 1e-6)
+      return false;
+  for (int i = 0; i < 3; ++i)
+    if (std::fabs(a.scale[i] - b.scale[i]) > 1e-6 * std::fabs(b.scale[i]))
       return false;
   return !b3dop::quatsDiffer(a.rot, b.rot, 1e-6);
 }
@@ -185,8 +189,14 @@ void followSourceSops(Box3DSharedState &st, SIM_ObjectArray &objects,
           Box3DSourceFollower f;
           f.off = off;
           f.name = names.get(off).c_str();
-          if (!restRotation(restxform.get(off), f.rest))
+          const UT_Matrix4F rx = restxform.get(off);
+          if (!restRotation(rx, f.rest))
             continue;
+          for (unsigned r = 0; r < 3; ++r)
+            f.restScale[r] =
+                std::sqrt(static_cast<double>(rx(r, 0)) * rx(r, 0) +
+                          static_cast<double>(rx(r, 1)) * rx(r, 1) +
+                          static_cast<double>(rx(r, 2)) * rx(r, 2));
           cache.wanted.emplace(f.name, true);
           cache.followers.push_back(std::move(f));
         }
@@ -219,8 +229,13 @@ void followSourceSops(Box3DSharedState &st, SIM_ObjectArray &objects,
     readSourcePoses(*sop, engine.getGlobalTime(SIM_Time(now)), useTransform,
                     cache, wanted, current);
 
-    std::vector<std::pair<const Box3DSourceFollower *, const Box3DSourcePose *>>
-        moves;
+    // The pieces whose pose changed, and of those the ones whose scale did.
+    struct Move {
+      const Box3DSourceFollower *follower;
+      const Box3DSourcePose *pose;
+      bool scaled;
+    };
+    std::vector<Move> moves;
     for (const Box3DSourceFollower &f : followers) {
       auto it = current.find(f.name);
       if (it == current.end())
@@ -228,9 +243,15 @@ void followSourceSops(Box3DSharedState &st, SIM_ObjectArray &objects,
       auto was = known.find(f.name);
       const bool moved =
           was != known.end() && !samePose(was->second, it->second);
+      bool scaled = false;
+      if (moved)
+        for (int k = 0; k < 3; ++k)
+          scaled =
+              scaled || std::fabs(was->second.scale[k] - it->second.scale[k]) >
+                            1e-6 * std::fabs(it->second.scale[k]);
       known[f.name] = it->second;
       if (moved)
-        moves.emplace_back(&f, &it->second);
+        moves.push_back({&f, &it->second, scaled});
     }
     if (moves.empty())
       continue;
@@ -244,9 +265,14 @@ void followSourceSops(Box3DSharedState &st, SIM_ObjectArray &objects,
     GA_RWHandleQ orient(gdp, GA_ATTRIB_POINT, "orient");
     if (!orient.isValid())
       continue;
-    for (const auto &mv : moves) {
-      const Box3DSourceFollower &f = *mv.first;
-      const Box3DSourcePose &pose = *mv.second;
+    bool wrotePacked = false;
+    // `scale` on the points, as RBD Bullet Solver writes it: the piece's scale
+    // against its rest, which Transform Pieces applies to the piece (added at
+    // 1 for every point the first time a piece's scale changes).
+    GA_RWHandleV3 scaleAttr(gdp, GA_ATTRIB_POINT, "scale");
+    for (const Move &mv : moves) {
+      const Box3DSourceFollower &f = *mv.follower;
+      const Box3DSourcePose &pose = *mv.pose;
       float since[4];
       box3dAbsoluteToRest(f.rest, pose.rot, since);
       b3dop::sanitizeQuat(since);
@@ -254,7 +280,38 @@ void followSourceSops(Box3DSharedState &st, SIM_ObjectArray &objects,
                                      static_cast<float>(pose.pos[1]),
                                      static_cast<float>(pose.pos[2])));
       orient.set(f.off, UT_QuaternionF(since[0], since[1], since[2], since[3]));
+      if (!mv.scaled)
+        continue;
+      // The source's scale reaches the piece's packed transform, whose row
+      // lengths the sync sizes the shapes by (a convex or concave piece is
+      // rebuilt when they change). Its rotation stays: the pose rotation is
+      // `orient` since rest.
+      const PackedInfo pk = getPackedInfo(gdp, f.off);
+      if (!pk.prim)
+        continue;
+      double m3[9];
+      composePackedMatrix(pk.rot, pose.scale, m3);
+      b3dop::keepMirror(pk.m3, m3);
+      setLocal3(*static_cast<GU_PrimPacked *>(gdp->getPrimitive(pk.primOff)),
+                m3);
+      wrotePacked = true;
+      if (!scaleAttr.isValid()) {
+        const GA_Defaults ones(1.0);
+        scaleAttr = GA_RWHandleV3(gdp->addFloatTuple(GA_ATTRIB_POINT, "scale",
+                                                     3, ones, nullptr, nullptr,
+                                                     GA_STORE_REAL32));
+      }
+      if (scaleAttr.isValid())
+        scaleAttr.set(
+            f.off,
+            UT_Vector3(static_cast<float>(pose.scale[0] / f.restScale[0]),
+                       static_cast<float>(pose.scale[1] / f.restScale[1]),
+                       static_cast<float>(pose.scale[2] / f.restScale[2])));
     }
+    if (scaleAttr.isValid())
+      scaleAttr.getAttribute()->bumpDataId();
+    if (wrotePacked)
+      gdp->getPrimitiveList().bumpDataId();
     if (GA_Attribute *p = gdp->getP())
       p->bumpDataId();
     orient.getAttribute()->bumpDataId();

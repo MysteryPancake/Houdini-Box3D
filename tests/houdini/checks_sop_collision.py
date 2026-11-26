@@ -119,9 +119,17 @@ def test_solver_sop_animated_collision():
         y1 = track[49][1] if track[49] else None
         want = 1.5 if animated else 0.5
         ok = y1 is not None and close(y1, want, 0.05)
+        # The collider's SourceObject names a SOP node inside the asset (the context geometry resolved), which
+        # `followSourceSops` can read, not a path to nothing.
+        source = sop.node("dopnet").simulation().findObject("collision").findSubData("SourceObject")
+        source_path = source.record("Options", 0).field("objpath") if source is not None else None
+        source_node = hou.node(source_path) if source_path else None
+        source_ok = source_node is not None and isinstance(source_node, hou.SopNode)
+        ok = ok and source_ok
         results.append(Result("solver_sop_animated_collision", Result.PASS if ok else Result.FAIL,
                               f"Collision Type {'Animated' if animated else 'Static'}: box y {y0} on frame 1, {y1} on frame 49 "
-                              f"(expected about {want}; the ground's top rises from 0 to 1)"))
+                              f"(expected about {want}; the ground's top rises from 0 to 1); the collider's source path "
+                              f"{source_path} is {'a SOP node' if source_ok else 'not a SOP node'} (expected one)"))
     return results
 
 

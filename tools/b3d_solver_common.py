@@ -116,7 +116,7 @@ POINTS_TOGGLES = {"pack": False,  # Pack Geometry Before Merging
                   "dogeoxform": False,  # Transform Geometry With Geometry Data
                   "keepworldspacepos": False}  # Preserve World Space Positions
 # Point attributes the simulation points keep besides P and the asset's Transfer Attributes.
-POINTS_KEEP = "name orient pivot restxform v w id"
+POINTS_KEEP = "name orient pivot restxform scale v w id"
 CONSTRAINTS_TOGGLES = dict(POINTS_TOGGLES)
 # The Output tab, always last, as RBD Bullet Solver's: Impact Data (the pieces' Add Impact Data as the
 # folder's header toggle, the solver's Impact Min Speed, Fetch Impacts; closed), then Transfer Attributes.

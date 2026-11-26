@@ -83,6 +83,7 @@ struct Box3DShapeExport {
 struct Box3DSourcePose {
   double pos[3] = {0, 0, 0};
   float rot[4] = {0, 0, 0, 1};
+  double scale[3] = {1, 1, 1}; // the packed transform's row lengths
 };
 
 // What followSourceSops keeps per object so a step where nothing changed does
@@ -90,7 +91,8 @@ struct Box3DSourcePose {
 struct Box3DSourceFollower {
   GA_Offset off = GA_INVALID_OFFSET;
   std::string name;
-  float rest[4] = {0, 0, 0, 1}; // the rotation of its restxform
+  float rest[4] = {0, 0, 0, 1};    // the rotation of its restxform
+  double restScale[3] = {1, 1, 1}; // the row lengths of its restxform
 };
 
 struct Box3DSourceCache {

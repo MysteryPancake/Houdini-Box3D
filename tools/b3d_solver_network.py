@@ -419,12 +419,13 @@ v@v = cross(w, v@P - point(1, "pivot", pt) * xf) + point(1, "v", pt);
 # would be made on pieces that have none.
 MOVE_NORMALS_VEX = MOVE_PIECES_VEX + "v@N = normalize(v@N * transpose(invert(matrix3(xf))));\n"
 # Whether the fast path does what Transform Pieces would: the pieces carry `name` on their points and no age, the
-# simulation points carry no age, the attributes to copy are no more than age and w, and no point attribute besides
+# simulation points carry no age and no scale (an animated piece's, which the wrangle does not apply), the attributes to copy are no more than age and w, and no point attribute besides
 # P, N, w and v has a type Transform by Attribute would move. 0: Transform Pieces, 1: the wrangle, 2: the one with
 # normals (the pieces have N).
 FAST_TRANSFORM_EXPR = (
     '(lambda n, g, s: int(g is not None and s is not None and g.findPointAttrib("name") is not None '
     'and g.findPointAttrib("age") is None and s.findPointAttrib("age") is None '
+    'and s.findPointAttrib("scale") is None '
     'and set(n.parm("{attribs}").eval().split()) <= {{"age", "w"}} '
     'and all(a.qualifier() not in ("Position", "Vector", "Quaternion", "Normal", "Matrix") '
     'or a.name() in ("P", "N", "v", "w") for a in g.pointAttribs())) '
@@ -453,6 +454,33 @@ def fast_transform(sub, removed, sim_points, xform):
     pick.parm("input").setExpression(
         FAST_TRANSFORM_EXPR.format(attribs=TRANSFER_ATTRIBUTES, removed=removed.name(), points=sim_points.name()),
         hou.exprLanguage.Python)
+    return pick
+
+
+def rest_source(sub, dopnet, src, name):
+    """What the Geometry / Proxy outputs move: the input as of the Start Frame (Time Shift), as RBD Bullet Solver's
+    timeshift1, since the simulation points carry each piece's motion since then; an input that moves on its own would
+    otherwise move twice (a kinematic piece drawn twice as far). With a `deforming` point attribute on the input the
+    current frame instead, as Bullet's switchif_deforming. Returns the Switch If."""
+    start = start_frame_expr(dopnet)
+    if start is None:
+        warn("no Start Frame on the DOP network: the Geometry output moves the current input")
+        return src
+    at_start = create(sub, "timeshift", f"at_start_{name}")
+    at_start.setInput(0, src)
+    if at_start.parm("frame") is None:
+        warn(f"{at_start.path()} has no Frame: the Geometry output moves the current input")
+        at_start.destroy()
+        return src
+    at_start.parm("frame").setExpression(start, hou.exprLanguage.Hscript)
+    pick = create(sub, "switchif", f"switchif_deforming_{name}")
+    pick.setInput(0, at_start)
+    pick.setInput(1, src)
+    ok = all(set_menu(pick, parm, token) for parm, token in (("testinput", "second"), ("type1", "attrib"),
+                                                             ("attribowner1", "any")))
+    ok = all([set_named(pick, "attributes1", "deforming"), set_named(pick, "enable1", 1), ok])
+    if not ok:
+        warn(f"{pick.path()}: the Geometry output may move the current input")
     return pick
 
 
@@ -716,6 +744,7 @@ def build_network(sub):
     pieces_out = []
     for name, src in (("transform_geometry", scaled[GEO]), ("transform_proxy", sim_source)):
         kind = name[len('transform_'):]
+        src = rest_source(sub, dopnet, src, kind)
         # Emit RBDs: the emitting render pieces are the ones the simulation stored when each was emitted.
         named = emit_render(sub, prepare_input(sub, src, f"names_{kind}", pack=False), emit_flags, kind)
         named = replicate_render(sub, named, replicas, kind)  # a render piece per copy

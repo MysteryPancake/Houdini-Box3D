@@ -774,6 +774,133 @@ def test_packed_object_deforming():
     return results
 
 
+def follow_source_poses(kind, tag, count, source_vex="", start=None, moving_sop=True, frames=13):
+    """{frame: {piece name: (position, orient)}} of `count` kinematic pieces (animated = 1) whose source SOP rises 0.1
+    and turns 3 degrees per frame (a Transform SOP; `moving_sop` off: not at all), after `source_vex` ran over their
+    points, in a Box3D Packed Object under the Box3D Solver (`kind` box3d) or an RBD Packed Object under the Bullet
+    solver. `start`: the DOP network's Start Frame."""
+    pieces = [{"size": (1, 1, 1), "center": (2.0 * (i % 10), 3, 2.0 * (i // 10)), "attrs": {"active": 0, "animated": 1}}
+              for i in range(count)]
+    path, _ = packed_boxes(f"follow_{kind}_{tag}", pieces)
+    geo = hou.node(path).parent()
+    last = hou.node(path)
+    if source_vex:
+        wr = create(geo, "attribwrangle", "source_attributes")
+        wr.setInput(0, last)
+        set_parm(wr, ["class"], 2)
+        set_parm(wr, ["snippet"], source_vex)
+        last = wr
+    xf = create(geo, "xform", "move")
+    xf.setInput(0, last)
+    if moving_sop:
+        xf.parm("ty").setExpression("($FF - 1) * 0.1", hou.exprLanguage.Hscript)
+        xf.parm("ry").setExpression("($FF - 1) * 3", hou.exprLanguage.Hscript)
+    display(xf)
+    dop = new_dopnet(f"follow_{kind}_{tag}")
+    if start is not None:
+        set_parm(dop, ["startframe"], start)
+    if kind == "box3d":
+        obj = box3d_packed_object(dop, "pieces", xf.path())
+        finish(dop, box3d_solver(dop, obj, gravity=(0, 0, 0)))
+    else:
+        obj = packed_object(dop, "pieces", xf.path())
+        solver = create(dop, "bulletrbdsolver", "bullet_solver")
+        solver.setInput(0, obj)
+        finish(dop, solver)
+
+    def sample(sim, f):
+        obj = sim.findObject("pieces")
+        gdp = obj.geometry() if obj is not None else None
+        if gdp is None or not gdp.points():
+            return {}
+        return {pt.attribValue("name"): (tuple(pt.position()), tuple(pt.attribValue("orient"))) for pt in gdp.points()}
+
+    return step(dop, frames, sample)
+
+
+def test_animated_follows_source():
+    """Kinematic pieces follow their source SOP as RBD Bullet Solver's do, in every frame: with source `orient` /
+    `pscale` attributes on the pieces (fixed, and changing each frame), 200 pieces, and a DOP Start Frame of 5
+    (nothing exists before it). The pieces rise 0.1 and turn 3 degrees a frame in the source; each case is
+    compared point by point with Bullet (largest position / orient difference), and must have moved."""
+    cases = (
+        ("fixed orient / pscale", "fixed", 2, dict(source_vex="p@orient = quaternion(radians(45), {0,1,0}); f@pscale = 2;")),
+        ("changing orient / pscale", "changing", 2, dict(
+            source_vex="p@orient = quaternion(radians((@Frame - 1) * 3), {0,1,0}); f@pscale = 1 + 0.1 * (@Frame - 1);",
+            moving_sop=False)),
+        ("200 pieces", "many", 200, {}),
+        ("Start Frame 5", "start", 2, dict(start=5, frames=17)),
+    )
+    results = []
+    for label, tag, count, kw in cases:
+        runs = {kind: follow_source_poses(kind, tag, count, **kw) for kind in ("box3d", "bullet")}
+        last = max(runs["box3d"])
+        worst, compared = 0.0, 0
+        for f, b3d in runs["box3d"].items():
+            bullet = runs["bullet"][f]
+            if bool(b3d) != bool(bullet):
+                worst = float("inf")
+            for name, (pos, orient) in b3d.items():
+                if name not in bullet:
+                    worst = float("inf")
+                    continue
+                compared += 1
+                worst = max(worst, max(abs(a - c) for a, c in zip(pos, bullet[name][0])),
+                            max(abs(a - c) for a, c in zip(orient, bullet[name][1])))
+        end = runs["box3d"][last]
+        first = runs["box3d"][5 if kw.get("start") else 1]
+        moved = max((abs(end[n][0][1] - first[n][0][1]) for n in end if n in first), default=0.0)
+        expect_move = 0.0 if tag == "changing" else 0.1 * (last - (5 if kw.get("start") else 1))
+        ok = compared > 0 and worst < 1e-3 and (tag == "changing" or close(moved, expect_move, 1e-3))
+        results.append(Result("animated_follows_source", Result.PASS if ok else Result.FAIL,
+                              f"{label}: largest difference from Bullet {worst:.2e} over {compared} piece poses (expected "
+                              f"below 1e-3); a piece rose {moved:.3f} by frame {last} (expected {expect_move:.3f}"
+                              f"{', fixed height' if tag == 'changing' else ''})"))
+    return results
+
+
+def growing_source(name, attrs_first=None):
+    """Two packed boxes (`piece0` at the origin, kinematic; `piece1` at x = 2, free) whose first piece's source scale
+    grows 0.1 a frame (a Transform SOP on the group): returns (the SOP's path, the piece names)."""
+    path, names = packed_boxes(name, [{"size": (1, 1, 1), "center": (0, 0, 0), "attrs": {"active": 0, "animated": 1}},
+                                      {"size": (1, 1, 1), "center": (2, 0, 0), "attrs": {"active": 1, "animated": 0}}])
+    geo = hou.node(path).parent()
+    group = create(geo, "attribwrangle", "grow_group")
+    group.setInput(0, hou.node(path))
+    set_parm(group, ["class"], 1)
+    set_parm(group, ["snippet"], f'if (point(0, "name", primpoint(0, @primnum, 0)) == "{names[0]}") '
+                                 'setprimgroup(0, "grow", @primnum, 1);')
+    xf = create(geo, "xform", "grow")
+    xf.setInput(0, group)
+    set_parm(xf, ["group"], "grow")
+    xf.parm("scale").setExpression("1 + 0.1 * ($FF - 1)", hou.exprLanguage.Hscript)
+    display(xf)
+    return xf.path(), names
+
+
+def test_animated_scale_follows_source():
+    """A kinematic piece whose source SOP grows (scale 1 + 0.1 a frame) follows it, as RBD Bullet Solver's does: its
+    shape grows (the bounds of the object reach -0.5 * scale) and pushes the free box beside it, which sits within 0.06 of
+    where Bullet puts it on frame 25 (scale 3.4)."""
+    runs = {}
+    for kind in ("box3d", "bullet"):
+        path, names = growing_source(f"grow_{kind}")
+        dop = new_dopnet(f"grow_{kind}")
+        if kind == "box3d":
+            finish(dop, box3d_solver(dop, box3d_packed_object(dop, "pieces", path), gravity=(0, 0, 0)))
+        else:
+            solver = create(dop, "bulletrbdsolver", "bullet_solver")
+            solver.setInput(0, packed_object(dop, "pieces", path))
+            finish(dop, solver)
+        runs[kind] = step(dop, 25, lambda sim, f: (packed_positions(sim, "pieces")[names[1]][0],
+                                                   object_bbox(sim, "pieces")[0][0]) if f == 25 else None)[25]
+    (box_x, box_min), (bullet_x, bullet_min) = runs["box3d"], runs["bullet"]
+    ok = close(box_min, -1.7, 0.01) and close(bullet_min, -1.7, 0.01) and close(box_x, bullet_x, 0.06) and box_x > 2.1
+    return [Result("animated_scale_follows_source", Result.PASS if ok else Result.FAIL,
+                   f"frame 25: object bounds start at x {box_min:.3f} (Bullet {bullet_min:.3f}; expected -1.7), the pushed "
+                   f"box is at x {box_x:.3f} (Bullet {bullet_x:.3f}; expected within 0.06, and above 2.1)")]
+
+
 def test_packed_object_hand_set_shape():
     """Box3D Data's hand-set shape (Box Size, Radius, Length, Offset, Rotation) and Rotational Stiffness, through
     the Box3D Packed Object: each changed setting becomes the point attribute of the same name (the others
@@ -1004,6 +1131,8 @@ TESTS = {
     "packed_object_initial_state": test_packed_object_initial_state,
     "packed_object_initial_bullet": test_packed_object_initial_bullet,
     "packed_object_deforming": test_packed_object_deforming,
+    "animated_follows_source": test_animated_follows_source,
+    "animated_scale_follows_source": test_animated_scale_follows_source,
     "packed_object_initial_type": test_packed_object_initial_type,
     "packed_object_hand_set_shape": test_packed_object_hand_set_shape,
     "default_shape_menus": test_default_shape_menus,

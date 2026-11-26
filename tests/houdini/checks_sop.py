@@ -134,6 +134,63 @@ def test_solver_sop_world_scale_forces():
                    + " (expected the same in each, both above 0)")]
 
 
+def test_solver_sop_moving_input():
+    """As RBD Bullet Solver SOP, the Geometry and Proxy outputs move the input as of the Start Frame by the pieces' motion
+    since: pieces whose input SOP rises 0.1 and turns 3 degrees a frame (a Transform SOP), kinematic (animated) and
+    dynamic with no gravity, come out where Bullet puts them (a kinematic piece at y 3 + 0.1 per frame, a dynamic one
+    where it started), not moved twice. The pieces are also the Proxy input."""
+    rows, ok = [], True
+    for label, attrs in (("kinematic", {"active": 0, "animated": 1}), ("dynamic", {"active": 1})):
+        got = {}
+        for kind, make in (("box3d", solver_sop), ("bullet", bullet_sop)):
+            pieces, names = packed_boxes(f"sop_moving_{label}_{kind}",
+                                         [{"size": (1, 1, 1), "center": (0, 3, 0), "attrs": attrs},
+                                          {"size": (1, 1, 1), "center": (3, 3, 0), "attrs": attrs}])
+            xf = create(hou.node(pieces).parent(), "xform", "move")
+            xf.setInput(0, hou.node(pieces))
+            xf.parm("ty").setExpression("($FF - 1) * 0.1", hou.exprLanguage.Hscript)
+            xf.parm("ry").setExpression("($FF - 1) * 3", hou.exprLanguage.Hscript)
+            display(xf)
+            sop = make(f"sop_moving_{label}_{kind}_sop", geometry=xf.path(), proxy=xf.path())
+            set_parm(sop, ["gravity"], (0.0, 0.0, 0.0))
+            got[kind] = play(sop, 13, lambda s, f: tuple(tuple(named_positions(s.geometry(i))[names[1]])
+                                                          for i in (0, 2)) if f == 13 else None)[13]
+        want_y = 4.2 if label == "kinematic" else 3.0
+        worst = max(abs(a - b) for g, p in zip(got["box3d"], got["bullet"]) for a, b in zip(g, p))
+        good = worst < 1e-3 and all(close(g[1], want_y, 1e-3) for g in got["box3d"])
+        ok = ok and good
+        rows.append(f"{label}: Geometry / Proxy y {[round(g[1], 3) for g in got['box3d']]} on frame 13 (expected "
+                    f"{want_y}), largest difference from Bullet {worst:.2e}")
+    return [Result("solver_sop_moving_input", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+def test_solver_sop_animated_scale():
+    """A kinematic piece whose source grows (scale 1 + 0.1 a frame) is drawn grown by the Solver SOP's Geometry output,
+    as RBD Bullet Solver SOP's: the pieces' bounds on frame 25 reach x = -1.7 in both, and the simulation points
+    carry `scale` 3.4 for it and 1 for the other piece."""
+    from checks_packed import growing_source
+
+    rows, ok = [], True
+    for kind, make in (("box3d", solver_sop), ("bullet", bullet_sop)):
+        path, names = growing_source(f"sop_grow_{kind}")
+        sop = make(f"sop_grow_{kind}_sop", geometry=path)
+        set_parm(sop, ["gravity"], (0.0, 0.0, 0.0))
+
+        def sample(s, f):
+            if f != 25:
+                return None
+            points = s.geometry(3)
+            scales = {pt.attribValue("name"): pt.attribValue("scale") for pt in points.points()}                 if points.findPointAttrib("scale") else {}
+            return s.geometry(0).boundingBox().minvec()[0], scales
+
+        low, scales = play(sop, 25, sample)[25]
+        good = close(low, -1.7, 0.01) and scales and close(scales[names[0]][0], 3.4, 1e-3)             and close(scales[names[1]][0], 1.0, 1e-3)
+        ok = ok and bool(good)
+        rows.append(f"{kind}: Geometry bounds start at x {low:.3f}, point scale {dict((n, round(v[0], 3)) for n, v in scales.items())}")
+    return [Result("solver_sop_animated_scale", Result.PASS if ok else Result.FAIL,
+                   "; ".join(rows) + " (expected -1.7 and scale 3.4 / 1.0 in both)")]
+
+
 def piece_bounds(geo):
     """{name: packed primitive bounds (xmin, xmax, ymin, ymax, zmin, zmax)} for packed pieces named
     on their points or primitives."""
@@ -1044,6 +1101,8 @@ TESTS = {
     "solver_sop_removed_pieces": test_solver_sop_removed_pieces,
     "solver_sop_world_scale": test_solver_sop_world_scale,
     "solver_sop_world_scale_forces": test_solver_sop_world_scale_forces,
+    "solver_sop_moving_input": test_solver_sop_moving_input,
+    "solver_sop_animated_scale": test_solver_sop_animated_scale,
     "solver_sop_animated_setting": test_solver_sop_animated_setting,
     "solver_sop_fast_transform": test_solver_sop_fast_transform,
     "solver_sop_impacts": test_solver_sop_impacts,

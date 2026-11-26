@@ -501,6 +501,64 @@ def test_other_solver():
     return results
 
 
+def affector_scene(kind, tag, rel_type, reverse, mutual):
+    """A packed box above a polygon Static Object ground that is not given to the solver: only the relationship
+    `rel_type` (a node type) links them, with the box affected by the ground (`reverse`: the other way round) and
+    Make Mutual as `mutual`. `kind`: box3d or bullet (with Gravity). Returns (dop, piece name)."""
+    path, names = packed_boxes(f"affector_{kind}_{tag}", [{"size": (1, 1, 1), "center": (0, 2, 0)}])
+    geo = new_geo(f"affector_ground_{kind}_{tag}")
+    slab = create(geo, "box", "ground")
+    set_parm(slab, ["size"], (20, 1, 20))
+    set_parm(slab, ["t"], (0, -0.5, 0))
+    display(slab)
+    dop = new_dopnet(f"affector_{kind}_{tag}")
+    static = create(dop, "staticobject", "ground")
+    set_parm(static, ["soppath"], slab.path())
+    if kind == "bullet":
+        piece = packed_object(dop, "box", path)
+        solver = create(dop, "bulletrbdsolver", "solver")
+        solver.setInput(0, piece)
+        gravity = create(dop, "gravity", "gravity")
+        gravity.setInput(0, solver)
+        solved = gravity
+    else:
+        solved = box3d_solver(dop, box3d_packed_object(dop, "box", path))
+    both = merge(dop, [solved, static], "both")
+    rel = create(dop, rel_type, "rel")
+    rel.setInput(0, both)
+    set_parm(rel, ["affected"], "ground" if reverse else "box")
+    set_parm(rel, ["affectors"], "box" if reverse else "ground")
+    if mutual:
+        set_parm(rel, ["makemutual"], 1)
+    finish(dop, rel)
+    return dop, names[0]
+
+
+def test_affector_relationships():
+    """RBD Bullet Solver and the Box3D Solver import affectors alike: a Static Object that is not given to the solver
+    holds a box up only through a Collide Relationship with the box affected by it (or Make Mutual on), and not through
+    any other relationship type (Source, Target, Group, Empty, Pump, Sink, Initial Overlap) nor a Collide
+    Relationship the other way round: both land on it (y 0.5) or both fall through (below -5), in each case."""
+    cases = [("colliderel", False, 0), ("colliderel", True, 0), ("colliderel", True, 1), ("colliderel", False, 1),
+             ("sourcerel", False, 0), ("targetrel", False, 0), ("grouprel", False, 0), ("emptyrel", False, 0),
+             ("pumprel", False, 0), ("sinkrel", False, 0), ("initialoverlaprel", False, 0), ("sourcerel", False, 1)]
+    rows, ok = [], True
+    for i, (rel_type, reverse, mutual) in enumerate(cases):
+        ends = {}
+        for kind in ("box3d", "bullet"):
+            dop, name = affector_scene(kind, str(i), rel_type, reverse, mutual)
+            y = step(dop, 48, lambda sim, f: (packed_positions(sim, "box") or {}).get(name))[48][1]
+            ends[kind] = "lands" if close(y, 0.5, 0.05) else ("falls" if y < -5.0 else f"y {y:.2f}")
+        want = "lands" if rel_type == "colliderel" and (not reverse or mutual) else "falls"
+        good = ends["box3d"] == ends["bullet"] == want
+        ok = ok and good
+        rows.append(f"{rel_type}{' reversed' if reverse else ''}{' mutual' if mutual else ''}: Box3D {ends['box3d']}, "
+                    f"Bullet {ends['bullet']}")
+    return [Result("affector_relationships", Result.PASS if ok else Result.FAIL,
+                   "; ".join(rows) + " (expected both to land with a Collide Relationship the box is affected by or "
+                   "Make Mutual, else both to fall)")]
+
+
 # ---------------------------------------------------------------------------
 # Attach Internal Constraints to Object (status: ConstraintGeometry on the object)
 # ---------------------------------------------------------------------------
@@ -887,6 +945,7 @@ TESTS = {
     "dead_with_network": test_dead_with_network,
     "animated_static": test_animated_static,
     "other_solver": test_other_solver,
+    "affector_relationships": test_affector_relationships,
     "internal_constraints": test_internal_constraints,
     "aging_vs_pop": test_aging_vs_pop,
     "aging_vs_pop_keep": test_aging_vs_pop_keep,

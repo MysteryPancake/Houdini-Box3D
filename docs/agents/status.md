@@ -41,9 +41,13 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   checked: a multi-name field toggling picks in and out (a click), the menus on the Solver SOP's nested nodes, and the
   node's output (Inspector Attributes).
 
-* Animated bodies following their source SOP (`followSourceSops`). Not checked: a source `orient` / `pscale` attribute
-  on the animated piece (only its packed transform is read), a Solver SOP whose collision path is a context geometry
-  rather than a SOP node, many animated pieces (one cook and one name pass per step), and a DOP Start Frame other than 1.
+* Animated bodies following their source SOP (`followSourceSops`; `animated_follows_source` matches Bullet with source
+  `orient` / `pscale`, 200 pieces and a Start Frame of 5). The Solver SOP's collider follows too: its context geometry
+  resolves to a SOP node inside the asset (`solver_sop_animated_collision`).
+* A Solver SOP piece whose input SOP moves: the Geometry and Proxy outputs match RBD Bullet Solver SOP for kinematic
+  and dynamic pieces (`solver_sop_moving_input`). Still different with a `deforming` attribute on the input: Bullet's
+  kinematic piece's body stays put and a dynamic one's follows the input, Box3D's kinematic one follows and a dynamic
+  one's stays (`deforming` rereads shapes only); the drawn geometry is the current input in both.
 
 * Overwrite Attributes from SOP as an Attribute Copy list (`copy_attribs`, `SIM_GEO` in the Packed Object stage): not
   checked is an animated collider (`reimportsop`) still moving.
