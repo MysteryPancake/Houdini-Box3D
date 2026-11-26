@@ -39,5 +39,9 @@ All are optional except `P`. A missing one uses the Box3D Data value. Every step
 | `deforming` | int | Nonzero = rebuild the collision shape every step |
 | `bullet_autofit_valid` | int | `0` = rebuild the collision shape once |
 | `force` / `torque` | vector | Applied for one step, then cleared |
+| `airresist`, `spinresist` | float | Drag on movement / spin (what POP Drag writes). One step, then cleared, so write them every step |
+| `targetv`, `targetw` | vector | The velocity / spin the drag slows the body towards. One step, then cleared |
+| `drag`, `dragexp` | float | `drag` multiplies both resists (default 1). `dragexp`: 1 is linear drag, 2 quadratic (default), clamped to 1 to 2 |
+| `speedmin`, `speedmax`, `spinmin`, `spinmax` | float | Limits on speed and spin. Below 0 or missing: none. A resting body is never started. Applied after each step, so a body can be a little over its limit within one |
 
 **Collision filtering.** Two bodies in the same nonzero `collision_group` always collide if it's positive, never if it's negative. Otherwise they collide when each one's `collision_mask` shares a bit with the other's `collision_category`. For example `i@collision_group = -1` for pieces that never hit each other, or `i@collision_category = 2` with `i@collision_mask = ~2` for debris that ignores other debris. Static Object colliders use every bit.

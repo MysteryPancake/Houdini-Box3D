@@ -86,6 +86,11 @@ std::vector<b3dop::GlueBond> glueBondList(const Box3DSharedState &st,
                                           bool withParams, bool blankBroken);
 void advanceGlue(Box3DSharedState &st, float dt);
 
+// Before the steps: the position-only SideFX joints whose rest anchors are
+// together (Box3DJointEntry::reaim) aim their shifted frame along the anchors'
+// current line again, as Bullet makes its constraints every frame.
+void reaimJoints(Box3DSharedState &st);
+
 // After the step: joints over their force / torque threshold are destroyed and
 // marked broken (`broken` primitive group, or switched to their
 // next_constraint_name), and the live frames and feedback attributes are

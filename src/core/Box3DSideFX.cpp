@@ -58,20 +58,23 @@ JointSettings springMotor(float linHz, float linRatio, float angHz,
   return s;
 }
 
-// Soft and Spring, once both are in Hz: by constraint_type.
+// Soft and Spring, once both are in Hz: by constraint_type. `apart`: the
+// anchors have a direction at rest (SideFXContext::anchorDistance).
 void mapSprings(SideFXJoint &j, ConstraintMode mode, float restLength,
-                float linHz, float linRatio, float angHz, float angRatio) {
+                bool apart, float linHz, float linRatio, float angHz,
+                float angRatio) {
   const bool hasRest = restLength > kSideFXMinRestLength;
   switch (mode) {
   case ConstraintMode::Position:
     if (hasRest) {
-      j.type = JointType::Distance;
-      j.settings = Box3DWorld::defaultJointSettings(JointType::Distance);
-      j.settings.restLength = restLength;
-      j.settings.enableSpring = true;
-      j.settings.stiffness = std::max(0.0f, linHz);
-      j.settings.dampingRatio = std::max(0.0f, linRatio);
-      j.settings.enableLimit = false;
+      // Bullet springs the anchors to a point the Rest Length from anchor A,
+      // along a direction fixed in A: a spring in all three axes there. With
+      // the anchors together the direction is the current one, every frame.
+      j.type = JointType::Motor;
+      j.settings = springMotor(linHz, linRatio, 0.0f, 0.0f);
+      j.separation = restLength;
+      j.offsetOnA = true;
+      j.reaim = !apart;
     } else {
       j.type = JointType::Motor;
       j.settings = springMotor(linHz, linRatio, 0.0f, 0.0f);
@@ -152,6 +155,8 @@ SideFXJoint mapSideFX(SideFXType t, const SideFXSettings &s,
                       ConstraintMode mode, const SideFXContext &c) {
   SideFXJoint j;
   const bool collide = s.disableCollisions == 0;
+  const bool apart = !(c.anchorDistance >= 0.0f &&
+                       c.anchorDistance <= kSideFXCoincidentAnchors);
   switch (t) {
   case SideFXType::Glue: {
     j.type = JointType::Weld;
@@ -184,11 +189,14 @@ SideFXJoint mapSideFX(SideFXType t, const SideFXSettings &s,
       break;
     case ConstraintMode::Position:
       if (s.restLength > kSideFXMinRestLength) {
-        j.type = JointType::Distance;
-        j.settings = Box3DWorld::defaultJointSettings(JointType::Distance);
-        j.settings.restLength = s.restLength;
-        j.settings.enableSpring = false; // rigid at the rest length
-        j.settings.enableLimit = false;
+        // Bullet pins anchor B to a point the Rest Length from anchor A, along
+        // a direction fixed in A: a ball joint there, not a distance. With the
+        // anchors together the direction is the current one, every frame.
+        j.type = JointType::Spherical;
+        j.settings = Box3DWorld::defaultJointSettings(JointType::Spherical);
+        j.separation = s.restLength;
+        j.offsetOnA = true;
+        j.reaim = !apart;
       } else {
         j.type = JointType::Spherical;
         j.settings = Box3DWorld::defaultJointSettings(JointType::Spherical);
@@ -204,7 +212,8 @@ SideFXJoint mapSideFX(SideFXType t, const SideFXSettings &s,
     const bool own = s.enableAngular != 0;
     const float angHz = own ? s.angularStiffness : s.stiffness;
     const float angZ = own ? s.angularDampingRatio : s.dampingRatio;
-    mapSprings(j, mode, s.restLength, s.stiffness, s.dampingRatio, angHz, angZ);
+    mapSprings(j, mode, s.restLength, apart, s.stiffness, s.dampingRatio, angHz,
+               angZ);
     break;
   }
   case SideFXType::Spring: {
@@ -213,7 +222,7 @@ SideFXJoint mapSideFX(SideFXType t, const SideFXSettings &s,
                   linHz, linZ);
     springToHertz(s.strength, s.damping,
                   effective(c.a, c.b, &SideFXBody::inertia), angHz, angZ);
-    mapSprings(j, mode, s.restLength, linHz, linZ, angHz, angZ);
+    mapSprings(j, mode, s.restLength, apart, linHz, linZ, angHz, angZ);
     break;
   }
   case SideFXType::ConeTwist: {
@@ -269,12 +278,15 @@ void sideFXFrameOffsets(const SideFXJoint &j, const JointFrame &anchorA,
     const float x[3] = {1, 0, 0};
     rotateVec(anchorA.rot, x, u);
   }
-  const float half = static_cast<float>(0.5 * sep);
+  if (j.reaim && dist <= kSideFXAimMinDistance)
+    return; // no direction yet: the frames stay on the anchors
+  const float half = static_cast<float>(j.offsetOnA ? sep : 0.5 * sep);
   float qa[4], qb[4];
   fromB3(b3Conjugate(toB3(anchorA.rot)), qa);
   fromB3(b3Conjugate(toB3(anchorB.rot)), qb);
   const float wa[3] = {u[0] * half, u[1] * half, u[2] * half};
-  const float wb[3] = {-wa[0], -wa[1], -wa[2]};
+  const float wb[3] = {j.offsetOnA ? 0.0f : -wa[0], j.offsetOnA ? 0.0f : -wa[1],
+                       j.offsetOnA ? 0.0f : -wa[2]};
   float la[3], lb[3];
   rotateVec(qa, wa, la);
   rotateVec(qb, wb, lb);

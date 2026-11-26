@@ -15,6 +15,7 @@
 
 #include "core/Box3DCompound.h"
 #include "core/Box3DGlue.h"
+#include "core/Box3DMotion.h"
 #include "core/Box3DShapes.h"
 #include "core/Box3DSideFX.h"
 #include "core/Box3DWorld.h"
@@ -475,6 +476,13 @@ struct Box3DSyncFingerprint {
   }
 };
 
+// One point's drag and speed limits (Box3DMotion.cpp), kept for the points that
+// have any.
+struct Box3DMotionEntry {
+  GA_Offset off = 0;
+  b3dop::MotionParams params;
+};
+
 // Per object. A skipped sync leaves its entries untouched, so "current" is the
 // object's liveStamp rather than the step's stamp.
 struct Box3DObjectSync {
@@ -503,6 +511,13 @@ struct Box3DObjectSync {
   // Some body has `pointForced`: the object is visited for forces even when it
   // has none this step.
   bool pointForcedAny = false;
+  // The points with a drag or a speed limit (airresist ... speedmax), sorted
+  // by offset, read again when the attributes' data ids change.
+  std::vector<Box3DMotionEntry> motion;
+  uint64_t motionSig = 0;
+  // Some point has a non-zero airresist, spinresist, targetv or targetw: they
+  // are inputs for one step, zeroed after it (as Bullet's clearForces).
+  bool motionInputs = false;
 
   // Bodies by their point's `name` (first point wins), for joint anchors.
   // Rebuilt by each full scan while some object has a joint network

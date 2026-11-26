@@ -510,6 +510,23 @@ bool Box3DWorld::bodyStateByHandle(BodyHandle h, BodyState &out) const {
   return true;
 }
 
+bool Box3DWorld::inertiaWorldByHandle(BodyHandle h, float out[6]) const {
+  if (!h)
+    return false;
+  freshenPose(h);
+  const b3BodyId id = b3LoadBodyId(h);
+  const b3Matrix3 r = b3MakeMatrixFromQuat(b3Body_GetRotation(id));
+  const b3Matrix3 i =
+      b3MulMM(r, b3MulMM(b3Body_GetMassData(id).inertia, b3Transpose(r)));
+  out[0] = i.cx.x;
+  out[1] = i.cy.y;
+  out[2] = i.cz.z;
+  out[3] = i.cy.x;
+  out[4] = i.cz.x;
+  out[5] = i.cz.y;
+  return true;
+}
+
 void Box3DWorld::applyForceByHandle(BodyHandle h, const float force[3],
                                     const float torque[3], bool wake) {
   if (!h)

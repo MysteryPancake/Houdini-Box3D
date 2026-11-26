@@ -1,6 +1,8 @@
 """The Box3D Solver SOP's constraints: Break Thresholds against RBD Bullet Solver, Export Broken Constraints, next
 constraints, constraint settings and guide, the constraint output, and Enable Aging."""
 
+import math
+
 import hou
 from b3dtest import append_sop, GROUND, Result, close, constraint_lines, packed_boxes, set_parm
 
@@ -487,9 +489,8 @@ def test_solver_sop_break_angle_torque_bullet():
     """Break Thresholds, Angle and Torque Threshold, against the RBD Bullet Solver SOP: a Soft constraint on a box
     spinning at 6 rad/s about z, its anchors at one point and Rest Length 0, thresholds from small to large. The frame
     it goes on is the same in both (within 1 frame; none in both for the largest). The second result is INFO: with the
-    default Rest Length of 1 and the anchors still together, the Soft joint holds the box differently in the two (the
-    Angle Threshold of 0.2 goes on frame 13 in Box3D and 3 in Bullet), though plain Soft springs agree (bullet_soft_spring_hz)
-    and so do the `angle` readings (bullet_joint_feedback): the trace gives the angle and the anchors' distance."""
+    default Rest Length of 1 and the anchors still together, the Angle Threshold of 0.2 goes on frame 3 in both (the
+    angle and the anchors' distance on frames 2, 5 and 8 are in the trace)."""
     rows, problems = [], []
     for key, values in (("angle", (0.01, 0.05, 0.2, 0.4)), ("torque", (100.0, 2000.0, 20000.0))):
         for value in values:
@@ -605,6 +606,32 @@ def test_solver_sop_constraint_guide_radius():
     return results
 
 
+def test_solver_sop_speed_limit_bullet():
+    """The speed and spin limits (speedmax, spinmax) on the input points reach the solver in both Solver SOPs: a box
+    falling freely with speedmax 3 falls at 3 m/s and one spinning at 6 rad/s with spinmax 2 turns at 2, in Box3D
+    and in Bullet (within 0.2 m/s and 0.1 rad/s: Box3D clamps after its step)."""
+    pieces, names = packed_boxes("sop_limit_pieces", [
+        {"size": (1, 1, 1), "center": (0, 1000, 0),
+         "attrs": {"active": 1, "speedmax": 3.0, "spinmax": -1.0, "w": (0.0, 0.0, 0.0)}},
+        {"size": (1, 1, 1), "center": (10, 1000, 0),
+         "attrs": {"active": 1, "speedmax": -1.0, "spinmax": 2.0, "w": (0.0, 0.0, 6.0)}}])
+    out = {}
+    for label, sop in _both_sops("sop_limit", geometry=pieces).items():
+        def sample(s, f):
+            geo = s.geometry(0)
+            return {pt.attribValue("name"): (pt.position()[1], pt.attribValue("w") if geo.findPointAttrib("w") else None)
+                    for pt in geo.points()}
+
+        track = play(sop, 36, sample)
+        fall = abs(track[36][names[0]][0] - track[35][names[0]][0]) * hou.fps()
+        spin = track[36][names[1]][1]
+        out[label] = (fall, spin and math.sqrt(sum(c * c for c in spin)))
+    ok = all(v[0] is not None and abs(v[0] - 3.0) < 0.2 and v[1] is not None and abs(v[1] - 2.0) < 0.1 for v in out.values())
+    return [Result("solver_sop_speed_limit_bullet", Result.PASS if ok else Result.FAIL,
+                   "; ".join(f"{k}: falls at {v[0]:.2f} m/s, spins at {v[1] if v[1] is None else round(v[1], 2)} rad/s"
+                             for k, v in out.items()) + " (expected 3 and 2)")]
+
+
 TESTS = {
     "solver_sop_keep_broken_bullet": test_solver_sop_keep_broken_bullet,
     "solver_sop_break_impact_bullet": test_solver_sop_break_impact_bullet,
@@ -620,6 +647,7 @@ TESTS = {
     "solver_sop_next_constraint_type": test_solver_sop_next_constraint_type,
     "solver_sop_active_age_bullet": test_solver_sop_active_age_bullet,
     "solver_sop_aging_bullet": test_solver_sop_aging_bullet,
+    "solver_sop_speed_limit_bullet": test_solver_sop_speed_limit_bullet,
     "solver_sop_constraint_aging_bullet": test_solver_sop_constraint_aging_bullet,
     "solver_sop_constraints": test_solver_sop_constraints,
 }

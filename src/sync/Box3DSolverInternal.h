@@ -672,8 +672,31 @@ struct PointForceCarry {
   std::unordered_map<int, ObjectForces> forcesOf;            // object id
 };
 
+// `dt`: the Box3D step the forces act over (the drag needs it).
 ForceStats applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects,
-                               bool wake, PointForceCarry *carry = nullptr);
+                               bool wake, float dt,
+                               PointForceCarry *carry = nullptr);
+
+// ---- drag and speed limits (Box3DMotion.cpp) ----
+
+// Reads each object's drag and speed limit attributes (airresist, spinresist,
+// drag, dragexp, targetv, targetw, speedmin, speedmax, spinmin, spinmax), when
+// they changed, into Box3DObjectSync::motion. Once a frame, after the sync.
+void refreshMotion(Box3DSharedState &st, SIM_ObjectArray &objects);
+
+// After the frame's steps: zeroes airresist, spinresist, targetv and targetw
+// on the objects that had some, as Bullet does after its solve (a POP Drag
+// writes them again every step; drag, dragexp and the limits stay).
+void clearMotionInputs(Box3DSharedState &st, SIM_ObjectArray &objects);
+
+// The point's entry, or null.
+const Box3DMotionEntry *findMotion(const Box3DObjectSync &os, GA_Offset off);
+
+// After a Box3D step: the moved bodies whose point has a speed or spin limit
+// get their velocity clamped, in the events (what is written back) and in the
+// body. Not for the pieces of a compound.
+void applySpeedLimits(Box3DSharedState &st,
+                      std::vector<b3dop::BodyMove> &events);
 
 // ---- guide geometry (Box3DGuide.cpp) ----
 

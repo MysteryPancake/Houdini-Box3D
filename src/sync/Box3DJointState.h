@@ -85,6 +85,11 @@ struct Box3DJointEntry {
   // (b3dop::sideFXFrameOffsets), so the anchors written back are the anchors,
   // not the frames. Identity for Box3D nodes.
   b3dop::JointFrame adjA, adjB;
+  // SideFXJoint::reaim: adjA's position is aimed again every frame
+  // (reaimJoints) along the anchors' current line, `reaimRest` long.
+  bool reaim = false;
+  bool reaimListed = false; // in Box3DSharedState::reaimEntries
+  float reaimRest = 0.0f;
 
   // Each body's rotation at rest (its restxform's, else its rotation when the
   // joint was made; identity for the world), for the `angle` reading: the

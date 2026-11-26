@@ -79,6 +79,13 @@
 
 namespace box3dsolver {
 
+// The drag and speed limit attributes (Box3DMotion.cpp), read per point for the
+// whole object when any of them changes: not prop markers, since a POP node may
+// write them every step.
+inline constexpr const char *kMotionAttribNames[] = {
+    "airresist", "spinresist", "drag",     "dragexp", "targetv",
+    "targetw",   "speedmin",   "speedmax", "spinmin", "spinmax"};
+
 // Names of the prop markers, in order (Box3DSyncFingerprint::propIds); the
 // count is derived.
 inline constexpr const char *kPropAttribNames[] = {

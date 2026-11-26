@@ -29,6 +29,10 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
   step it lands, where welds would have broken. Welds hold the beam at every Strength tried.
 * Box3D Configure has no Units (RBD Configure's Unit Mass and Unit Length, which scale Density by
   `unitlength / unitmass`, each over 1000).
+* Drag and speed limits (`Box3DMotion.cpp`, [body-features.md](body-features.md)): the pieces of a glued compound take
+  none (Bullet's chunk takes mass-weighted drag, the largest minimum and the smallest maximum), World Scale other than
+  1 does not scale the values, and Bullet's `accelmax` / `angaccelmax` (a limit on the constraint solver's change in
+  speed) are not read.
 * Quadric primitives (how they are sampled: [bodies.md](bodies.md)): a denser sphere mesh (Polygon Mesh, NURBS) rests
   at 0.46 to 0.48 where Bullet rests at 0.499, because a Box3D hull keeps about 44 vertices and loses the poles
   (keeping the farthest point per direction rested lower: a 38-vertex ball tips onto a face). Volumes: Bullet's packed
@@ -52,13 +56,9 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
     Disable Collisions on it reads the weight, and Bullet's reads the weight either way, being the pieces' net force
     (`bullet_hard_collisions`). The Angle and Torque thresholds of a Soft line on a spinning box break on the
     same frames in both with Rest Length 0, and Bullet's Soft Stiffness is the frequency in Hz that the mapping takes it
-    for (`bullet_soft_spring_hz`). They still differ with the default Rest Length of 1 and the anchors at one point (0.2 rad:
-    frame 13 in Box3D, 3 in Bullet): the spring has no direction while the anchors are exactly together, so Bullet
-    applies none on the first step and Box3D's sprung Distance joint does (0.62 m of the rest length closed by frame 2
-    against 0.00, at any Substeps), which holds the spinning box much tighter in the first frames (angle 0.05 against
-    0.19). Both settle at the rest length and nothing moves with Rest Length 0 (`bullet_soft_coincident_anchors`). Matching
-    it would mean leaving the spring out for the first step of a joint whose anchors coincide: not done, as it
-    only reproduces a one-frame lag. Untested: Variance, World Scale other than 1, and the cost on a large network with it on (the SOP
+    for (`bullet_soft_spring_hz`), and with the default Rest Length of 1 and the anchors at one point the Angle
+    Threshold of 0.2 goes on frame 3 in both (the anchors' shift is aimed again each frame as Bullet's is:
+    `bullet_soft_coincident_anchors`); the later frames' angle runs 0.50 / 0.42 on frame 5. Untested: Variance, World Scale other than 1, and the cost on a large network with it on (the SOP
     Solver rewrites the constraint geometry each step, so the solver reads the whole network again). Not there: the
     Force Threshold (Bullet's `force` of a Glue is the difference of its pieces' forces times their mean mass, Box3D's
     is the joint's), the Group parameter, plastic flow, the VEX snippet.

@@ -122,7 +122,9 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
           .subfolder("Force DOPs")
           .toggle("useforces", "Use Force DOPs", true,
                   "Apply Force DOPs connected to the objects (Wind, Fan, "
-                  "etc.). Set Gravity to 0 when using a Gravity Force.")
+                  "etc.), and the drag attributes (airresist, spinresist, "
+                  "targetv, targetw). Set Gravity to 0 when using a Gravity "
+                  "Force.")
           .toggle("forceswake", "Forces Wake Bodies", false,
                   "Let forces wake sleeping bodies, e.g. wind that should blow "
                   "resting pieces away.",
@@ -476,6 +478,8 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   const int n =
       st->stepDt > 0.0f ? std::max(static_cast<int>(getSubsteps()), 1) : 1;
   const float subDt = st->stepDt / static_cast<float>(n);
+  reaimJoints(*st); // joints whose anchors are together aim along their line
+  refreshMotion(*st, objects); // drag and speed limit attributes
 
   // From here the step runs to the end (the write-back is quick), so the cached
   // result is always a whole step.
@@ -492,7 +496,8 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
     if (getUseForces()) {
       UT_PerfMonAutoSolveEvent perf(this,
                                     "Stepping Simulation}/{Applying Forces");
-      const ForceStats fs = applyExternalForces(*st, objects, getForcesWake());
+      const ForceStats fs =
+          applyExternalForces(*st, objects, getForcesWake(), subDt);
       warnCount(objects, fs.nonFinite, kNonFiniteForce);
     }
     std::vector<b3dop::BodyMove> left; // pieces of a compound taken apart
@@ -511,6 +516,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
       collectGlueHits(*st);
     }
     st->world.getMoveEvents(st->moves); // read once: write-back and impacts
+    applySpeedLimits(*st, st->moves);
     // Before the step's own events: they carry the final poses.
     st->moves.insert(st->moves.begin(), left.begin(), left.end());
     {
@@ -543,7 +549,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
                                       "Stepping Simulation}/{Applying Forces");
         carry.replay = i > 0;
         const ForceStats fs =
-            applyExternalForces(*st, objects, getForcesWake(), &carry);
+            applyExternalForces(*st, objects, getForcesWake(), subDt, &carry);
         forceStats.nonFinite = std::max(forceStats.nonFinite, fs.nonFinite);
       }
       bool mayRepeat = false; // a body may be in `events` twice
@@ -565,6 +571,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
           collectGlueHits(*st);
         }
         st->world.getMoveEvents(events);
+        applySpeedLimits(*st, events);
         // Before the step's own events: they carry the final poses.
         events.insert(events.begin(), left.begin(), left.end());
         {
@@ -642,6 +649,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
       UT_PerfMonAutoSolveEvent e(
           this, "Post-Solve}/{Updating Points}/{Writing Attributes");
       queueCompoundIds(*st);
+      clearMotionInputs(*st, objects);
       writePointAttrs(*st, objects);
     }
     if (getEnableAging()) {

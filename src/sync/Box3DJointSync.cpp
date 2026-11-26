@@ -273,6 +273,8 @@ struct JointSpec {
   bool glue = false; // SideFX Glue: breaks on impact impulse (core/Box3DGlue.h)
   b3dop::GlueParams glueParams;
   bool massDependent = false;     // SideFX Spring: Hz from the bodies' masses
+  bool reaim = false;             // SideFXJoint::reaim
+  float reaimRest = 0.0f;         // its shift's length
   b3dop::SideFXBody bodyA, bodyB; // the masses it was converted with
 };
 
@@ -322,8 +324,9 @@ private:
   // The type, settings and frame offsets for the primitive.
   JointSpec specFor(const Box3DJointKind &kind, GA_Offset off,
                     b3dop::BodyHandle a, b3dop::BodyHandle b,
-                    const b3dop::JointFrame &fa,
-                    const b3dop::JointFrame &fb) const {
+                    const b3dop::JointFrame &fa, const b3dop::JointFrame &fb,
+                    const b3dop::JointFrame &authA,
+                    const b3dop::JointFrame &authB) const {
     JointSpec j;
     if (kind.sideFX) {
       // SideFX data: the primitive's overrides on its options, then mapped onto
@@ -333,12 +336,27 @@ private:
       b3dop::SideFXContext ctx;
       ctx.a = sideFXBody(myWorld, a);
       ctx.b = sideFXBody(myWorld, b);
+      // From the authored anchors (at rest), so the choice does not change as
+      // the pieces move.
+      ctx.anchorDistance = static_cast<float>(std::sqrt(
+          (authB.pos[0] - authA.pos[0]) * (authB.pos[0] - authA.pos[0]) +
+          (authB.pos[1] - authA.pos[1]) * (authB.pos[1] - authA.pos[1]) +
+          (authB.pos[2] - authA.pos[2]) * (authB.pos[2] - authA.pos[2])));
       const b3dop::SideFXJoint m =
           b3dop::mapSideFX(kind.sideFXType, sf, myRd.mode(off), ctx);
       j.type = m.type;
       j.s = m.settings;
       j.frameSig = sideFXFrameSignature(m);
-      b3dop::sideFXFrameOffsets(m, fa, fb, j.adjA, j.adjB);
+      j.reaim = m.reaim;
+      j.reaimRest = m.separation;
+      // The direction of a shift is fixed at rest (Bullet takes it from the
+      // rest transforms), so it comes from the authored anchors, not from where
+      // the pieces are now. A joint that holds the pieces where they are keeps
+      // the current distance, and one aimed again each frame starts from where
+      // the anchors are.
+      const bool live = m.holdSeparation || m.reaim;
+      b3dop::sideFXFrameOffsets(m, live ? fa : authA, live ? fb : authB, j.adjA,
+                                j.adjB);
       if (kind.sideFXType == b3dop::SideFXType::Spring) {
         j.massDependent = true;
         j.bodyA = ctx.a;
@@ -522,6 +540,12 @@ private:
   void noteKind(Box3DJointEntry &e, const JointSpec &j, GA_Offset off) {
     e.glue = j.glue;
     e.massDependent = j.massDependent;
+    e.reaim = j.reaim;
+    e.reaimRest = j.reaimRest;
+    if (j.reaim && !e.reaimListed) {
+      e.reaimListed = true;
+      mySt.reaimEntries.push_back(&e);
+    }
     if (j.glue || j.massDependent) {
       Box3DJointExtra &x = e.ensureExtra();
       if (j.glue)
@@ -586,7 +610,7 @@ private:
     const bool useLive = hasLive && !authoredEdited;
     const b3dop::JointFrame fa = useLive ? la : authA,
                             fb = useLive ? lb : authB;
-    const JointSpec j = specFor(*kind, off, a, b, fa, fb);
+    const JointSpec j = specFor(*kind, off, a, b, fa, fb, authA, authB);
     noteKind(e, j, off);
 
     const bool live = myNet.writable;
@@ -867,6 +891,10 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
         st.world.destroyJoint(e.handle);
         ++counts.removed;
       }
+      if (e.reaimListed)
+        st.reaimEntries.erase(
+            std::remove(st.reaimEntries.begin(), st.reaimEntries.end(), &e),
+            st.reaimEntries.end());
       it = st.joints.erase(it);
     }
     st.springEntries = springs;
@@ -875,4 +903,30 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
   for (auto it = st.jointNetworks.begin(); it != st.jointNetworks.end();)
     it = (it->second.visited == st.syncStamp) ? std::next(it)
                                               : st.jointNetworks.erase(it);
+}
+
+void reaimJoints(Box3DSharedState &st) {
+  // An entry whose joint is gone or no longer re-aimed leaves the list.
+  st.reaimEntries.erase(
+      std::remove_if(st.reaimEntries.begin(), st.reaimEntries.end(),
+                     [&](Box3DJointEntry *e) {
+                       const bool keep = e->reaim && !e->broken &&
+                                         st.world.isJointValid(e->handle);
+                       if (!keep && !e->reaim)
+                         e->reaimListed = false;
+                       return !e->reaim;
+                     }),
+      st.reaimEntries.end());
+  for (Box3DJointEntry *e : st.reaimEntries) {
+    if (e->broken || !st.world.isJointValid(e->handle))
+      continue;
+    // A joint nothing moves is left alone (moving its frame would wake it).
+    if (!((e->bodyA && st.world.isAwakeByHandle(e->bodyA)) ||
+          (e->bodyB && st.world.isAwakeByHandle(e->bodyB))))
+      continue;
+    double shift[3] = {e->adjA.pos[0], e->adjA.pos[1], e->adjA.pos[2]};
+    if (st.world.reaimJointFrameA(e->handle, e->reaimRest,
+                                  b3dop::kSideFXAimMinDistance, shift))
+      std::copy(shift, shift + 3, e->adjA.pos);
+  }
 }

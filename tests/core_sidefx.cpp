@@ -33,6 +33,10 @@ JointHandle make(Box3DWorld &w, SideFXType t, const SideFXSettings &s,
   SideFXContext c;
   c.a = bodyOf(w, a);
   c.b = bodyOf(w, b);
+  c.anchorDistance = static_cast<float>(
+      std::sqrt((fb.pos[0] - fa.pos[0]) * (fb.pos[0] - fa.pos[0]) +
+                (fb.pos[1] - fa.pos[1]) * (fb.pos[1] - fa.pos[1]) +
+                (fb.pos[2] - fa.pos[2]) * (fb.pos[2] - fa.pos[2])));
   const SideFXJoint j = mapSideFX(t, s, mode, c);
   JointFrame adjA, adjB;
   sideFXFrameOffsets(j, fa, fb, adjA, adjB);
@@ -122,9 +126,24 @@ int main() {
           mapSideFX(SideFXType::Hard, noRest, ConstraintMode::All, ctx);
       CHECK(h.type == JointType::Weld && h.holdSeparation);
     }
+    // Position with a rest length: Bullet pins anchor B to a point the rest
+    // length from anchor A along a direction fixed in A (a ball joint, anchor
+    // A's frame shifted); with the anchors on top of each other it has no
+    // direction and keeps the distance along the line.
     j = mapSideFX(SideFXType::Hard, s, ConstraintMode::Position, ctx);
-    CHECK(j.type == JointType::Distance && j.settings.restLength == 1.0f &&
-          !j.settings.enableSpring);
+    CHECK(j.type == JointType::Spherical && j.separation == 1.0f &&
+          j.offsetOnA);
+    {
+      SideFXContext together = ctx;
+      together.anchorDistance = 0.0f;
+      const SideFXJoint d =
+          mapSideFX(SideFXType::Hard, s, ConstraintMode::Position, together);
+      CHECK(d.type == JointType::Spherical && d.separation == 1.0f &&
+            d.offsetOnA && d.reaim);
+      together.anchorDistance = 2.0f;
+      CHECK(mapSideFX(SideFXType::Hard, s, ConstraintMode::Position, together)
+                .type == JointType::Spherical);
+    }
     s.restLength = 0.0f;
     s.disableCollisions = 1;
     j = mapSideFX(SideFXType::Hard, s, ConstraintMode::Position, ctx);
@@ -155,8 +174,16 @@ int main() {
     CHECK(j.settings.angularStiffness == 7.0f &&
           j.settings.angularDampingRatio == 0.25f);
     j = mapSideFX(SideFXType::Soft, s, ConstraintMode::Position, ctx);
-    CHECK(j.type == JointType::Distance && j.settings.enableSpring &&
-          j.settings.stiffness == 4.0f && j.settings.restLength == 1.0f);
+    CHECK(j.type == JointType::Motor && j.settings.linearStiffness == 4.0f &&
+          j.settings.angularStiffness == 0.0f && j.separation == 1.0f &&
+          j.offsetOnA);
+    {
+      SideFXContext together = ctx;
+      together.anchorDistance = 0.0f;
+      j = mapSideFX(SideFXType::Soft, s, ConstraintMode::Position, together);
+      CHECK(j.type == JointType::Motor && j.settings.linearStiffness == 4.0f &&
+            j.settings.angularStiffness == 0.0f && j.offsetOnA && j.reaim);
+    }
     s.restLength = 0.0f;
     j = mapSideFX(SideFXType::Soft, s, ConstraintMode::Position, ctx);
     CHECK(j.type == JointType::Motor && j.settings.linearStiffness == 4.0f &&
@@ -271,6 +298,30 @@ int main() {
     CHECK(near(dist(ka.pos, fa.pos), 1.0, 1e-5) &&
           near(dist(kb.pos, fb.pos), 1.0, 1e-5));
     CHECK(near(dist(ka.pos, kb.pos), 3.0, 1e-5));
+    // offsetOnA: anchor A's frame is shifted by all of the separation toward
+    // anchor B, anchor B's stays (a pin at a point fixed in A).
+    j = SideFXJoint();
+    j.separation = 2.0f;
+    j.offsetOnA = true;
+    sideFXFrameOffsets(j, fa, fb, adjA, adjB);
+    const JointFrame oa = applyFrameOffset(fa, adjA),
+                     ob = applyFrameOffset(fb, adjB);
+    CHECK(near(dist(oa.pos, fa.pos), 2.0, 1e-5) &&
+          near(dist(ob.pos, fb.pos), 0.0, 1e-6));
+    CHECK(near(dist(oa.pos, fb.pos), 3.0, 1e-4)); // 5 apart, 2 closer
+    j.offsetOnA = false;
+    // A re-aimed joint (the rest anchors together) has no shift while the
+    // anchors are together, and one along their line once they are apart.
+    j = SideFXJoint();
+    j.separation = 2.0f;
+    j.offsetOnA = true;
+    j.reaim = true;
+    sideFXFrameOffsets(j, frame(1, 1, 1), frame(1, 1, 1), adjA, adjB);
+    CHECK(isIdentityOffset(adjA) && isIdentityOffset(adjB));
+    sideFXFrameOffsets(j, frame(0, 0, 0), frame(0, -3, 0), adjA, adjB);
+    CHECK(near(adjA.pos[1], -2.0, 1e-6) && isIdentityOffset(adjB));
+    j.reaim = false;
+    j.offsetOnA = false;
     // Nothing to do: identity offsets.
     sideFXFrameOffsets(SideFXJoint(), fa, fb, adjA, adjB);
     CHECK(isIdentityOffset(adjA) && isIdentityOffset(adjB));
@@ -383,21 +434,89 @@ int main() {
     std::printf("spring: sag %.4f (m g / k %.4f)\n", 5.0 - p[1], sag);
   }
   {
-    // Hard "position" with a rest length: a rigid rod from a world pivot, free
-    // to swing.
+    // Hard "position" with a rest length, anchors apart: Bullet pins the box's
+    // anchor to a point 1.5 from the world anchor along +x, so a box hanging
+    // by its top face stays where it is (a distance joint would swing it round
+    // the world anchor).
     Box3DWorld w;
     CHECK(w.create(ws));
     const BodyHandle b = box(w, 1.5, 5, 0);
     SideFXSettings s;
     s.restLength = 1.5f;
     CHECK(make(w, SideFXType::Hard, s, ConstraintMode::Position, 0, b,
-               frame(0, 5, 0), frame(1.5, 5, 0)) != 0);
+               frame(0, 5.5, 0), frame(1.5, 5.5, 0)) != 0);
     steps(w, 45);
     double p[3];
     pos(w, b, p);
-    const double pivot[3] = {0, 5, 0};
-    CHECK(p[1] < 4.5 && near(dist(p, pivot), 1.5, 1e-2));
-    std::printf("hard position rod: %.4f from the pivot\n", dist(p, pivot));
+    const double pin[3] = {1.5, 5, 0};
+    CHECK(near(dist(p, pin), 0.0, 1e-2));
+    std::printf("hard position pin: %.4f from where it hangs\n", dist(p, pin));
+  }
+  {
+    // Hard "position" with a rest length and both anchors at one point: no
+    // direction at rest, so the pin is on the anchors until the box's weight
+    // opens a gap, and then (aimed again each frame) the Rest Length along
+    // that line: the anchor ends 1 below the world anchor and stays there.
+    Box3DWorld w;
+    CHECK(w.create(ws));
+    const BodyHandle b = box(w, 1, 5, 0);
+    SideFXSettings s;
+    s.restLength = 1.0f;
+    const JointHandle h = make(w, SideFXType::Hard, s, ConstraintMode::Position,
+                               0, b, frame(0, 5, 0), frame(0, 5, 0));
+    CHECK(h != 0);
+    double shift[3] = {0, 0, 0};
+    for (int i = 0; i < 90; ++i) {
+      w.reaimJointFrameA(h, 1.0f, kSideFXAimMinDistance, shift);
+      steps(w, 1);
+    }
+    JointFrame a, bf;
+    CHECK(w.jointWorldFrames(h, a, bf));
+    const double anchor[3] = {a.pos[0] - shift[0], a.pos[1] - shift[1],
+                              a.pos[2] - shift[2]};
+    // The box's anchor 1 below the world anchor, pinned to the shifted frame.
+    CHECK(near(dist(bf.pos, anchor), 1.0, 0.05) && bf.pos[1] < 4.1);
+    CHECK(dist(a.pos, bf.pos) < 0.05);
+    std::printf("hard position, anchors together: the anchor is %.3f from "
+                "where it began, shift (%.2f, %.2f, %.2f)\n",
+                dist(bf.pos, anchor), shift[0], shift[1], shift[2]);
+  }
+  {
+    // The same with turned frames: a static body turned 90 degrees about z for
+    // body A and both anchor frames turned 90 degrees about y, so the shift is
+    // in the frame's axes (not the body's or the world's) and has to be turned
+    // into the body's to move the pin. The anchor still ends 1 below.
+    Box3DWorld w;
+    CHECK(w.create(ws));
+    BodySettings fixed;
+    fixed.type = BodySettings::Type::Static;
+    const double pa[3] = {0, 5, 0};
+    const float qz[4] = {0, 0, 0.70710678f, 0.70710678f};
+    const BodyHandle a = w.createBody(fixed, pa, qz);
+    ShapeSpec spec;
+    spec.type = ShapeType::Box;
+    spec.halfExtents[0] = spec.halfExtents[1] = spec.halfExtents[2] = 0.25f;
+    w.createShape(a, fixed, spec);
+    const BodyHandle b = box(w, 1, 5, 0);
+    const float qy[4] = {0, 0.70710678f, 0, 0.70710678f};
+    SideFXSettings s;
+    s.restLength = 1.0f;
+    const JointHandle h = make(w, SideFXType::Hard, s, ConstraintMode::Position,
+                               a, b, frame(0, 5, 0, qy), frame(0, 5, 0, qy));
+    CHECK(h != 0);
+    double shift[3] = {0, 0, 0};
+    for (int i = 0; i < 90; ++i) {
+      w.reaimJointFrameA(h, 1.0f, kSideFXAimMinDistance, shift);
+      steps(w, 1);
+    }
+    JointFrame fa, fb;
+    CHECK(w.jointWorldFrames(h, fa, fb));
+    double turned[3];
+    quatRotate(fa.rot, shift, turned);
+    const double anchor[3] = {fa.pos[0] - turned[0], fa.pos[1] - turned[1],
+                              fa.pos[2] - turned[2]};
+    CHECK(near(dist(fb.pos, anchor), 1.0, 0.05) && fb.pos[1] < anchor[1] - 0.9);
+    CHECK(dist(fa.pos, fb.pos) < 0.05);
   }
   {
     // Cone twist hanging straight down (twist axis -y), kicked sideways: stops

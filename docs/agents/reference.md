@@ -58,6 +58,12 @@ during the step (`Box3DWorld::assertCount()` delta, reported by a scope guard in
 * Bullet's solver tuning (ERP, CFM, split impulse, iterations, solve tolerance, randomized order) is not mapped; Box3D's
   own settings are offered.
 * Bullet's two sleep thresholds, Sleeping Time and `deactivation_time` are replaced by Box3D's one threshold.
+* Bullet's cap on a SideFX Spring: its Spring limits the stiffness to m / (16 dt^2) and the damping to m / dt, dt
+  being the frame time over Bullet's Substeps (measured: `bullet_spring_cap`; Strength 1000 on 1 kg sags 0.27 m at
+  Substeps 1 and 0.017 at 4). `springToHertz` passes the full Hooke's constant: a Box3D spring is implicit and stable
+  at any frequency (only the rigid joint constraint is clamped, to a quarter of the solver step rate), and a cap taken
+  from our own Substeps (default 2) would be about 25 times softer than Bullet's at its default of 10. So a Spring
+  stiffer than that cap is stiffer here than in Bullet.
 * `min_activation_impulse` (inactive bodies that activate when hit): Box3D has no equivalent, and it would need a
   contact scan after every step.
 

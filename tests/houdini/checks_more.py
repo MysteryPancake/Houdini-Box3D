@@ -816,10 +816,66 @@ def test_duplicate_id_first_point_wins():
     return results
 
 
+def position_rest_scene(tag, conrel_type, parms, together=False):
+    """A free box swinging from a position-only SideFX line with a Rest Length of 2, the line starting at the free
+    box (its anchor is the shifted one, so the pin's direction is fixed in a piece that turns), the anchors 2 apart; with
+    `together` both anchors at one point and a Rest Length of 1 (the pin is aimed again each frame). Returns (dop, the
+    free box's name)."""
+    from checks_constraints import hanging_pair
+
+    pieces = [{"size": (1, 1, 1), "center": (2, 4, 0), "attrs": {"active": 1}},
+              {"size": (1, 1, 1), "center": (0, 4, 0), "attrs": {"active": 0}}]
+    dop, names = hanging_pair(tag, None, line_attrs={"constraint_type": "position"},
+                              conrels=[(conrel_type, dict(parms, restlength=1.0 if together else 2.0))], pieces=pieces,
+                              anchors=((1, 4, 0), (1, 4, 0)) if together else ((2, 4, 0), (0, 4, 0)),
+                              packed_parms={"computemass": 0, "mass": 1.0})
+    return dop, names[0]
+
+
+def test_position_rest_rebuild():
+    """A position-only SideFX joint with a Rest Length shifts its first anchor along the direction between the anchors at
+    rest, fixed in that piece. The world is rebuilt mid-simulation (a checkpoint written at frame 20, the scene saved and
+    reopened, played on to 48) while the box swings and turns: the joint made again from the live anchors must pin the
+    same point, so the box ends where a straight run's does (within 0.005; made from the live anchors it was 0.009 off for a
+    Soft and 0.018 for a Spring)."""
+    rows, ok = [], True
+    cases = (("hard", "hardconrel", {}), ("soft", "bulletsoftconrel", {"stiffness": 4.0, "dampingratio": 1.0}),
+             ("spring", "springconrel", {"strength": 400.0, "damping": 40.0}))
+    for label, conrel_type, parms, together in [(*c, t) for t in (False, True) for c in cases]:
+        label = label + (" (anchors together)" if together else "")
+        tag = label.split()[0] + ("_together" if together else "")
+        dop, name = position_rest_scene(f"rest_straight_{tag}", conrel_type, parms, together)
+        straight = step(dop, 48, lambda sim, f: packed_positions(sim, "pieces")[name])
+        folder = tempfile.mkdtemp(prefix="box3d_rest_")
+        dop2, name = position_rest_scene(f"rest_saved_{tag}", conrel_type, parms, together)
+        set_parm(dop2, ["explicitcache", "savecheckpoints"], 1)
+        set_parm(dop2, ["explicitcachename", "checkpointname"], os.path.join(folder, "ckpt.$SF.sim").replace("\\", "/"))
+        try:
+            set_parm(dop2, ["explicitcachensteps", "checkpointtrail"], 1)
+        except SetupError:
+            pass
+        step(dop2, 20, lambda sim, f: None)
+        hip = os.path.join(folder, "saved.hip")
+        hou.hipFile.save(hip)
+        hou.hipFile.load(hip, suppress_save_prompt=True)
+        dop2 = hou.node(f"/obj/rest_saved_{tag}")
+        resumed = {}
+        for f in range(20, 49):
+            hou.setFrame(f)
+            resumed[f] = packed_positions(dop2.simulation(), "pieces")[name]
+        moved = (straight[20] - straight[1]).length()
+        off = (resumed[48] - straight[48]).length()
+        ok = ok and off < 0.005 and moved > 0.5
+        rows.append(f"{label}: the box had moved {moved:.2f} by frame 20; frame 48 differs from the straight run by "
+                    f"{off:.3f} (at {tuple(round(v, 2) for v in resumed[48])})")
+    return [Result("position_rest_rebuild", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
 TESTS = {
     "name_fusion_probe": test_name_fusion_probe,
     "messages_clear": test_messages_clear,
     "saved_cache": test_saved_cache,
+    "position_rest_rebuild": test_position_rest_rebuild,
     "point_order": test_point_order,
     "duplicate_name_point_order": test_duplicate_name_point_order,
     "duplicate_id_first_point_wins": test_duplicate_id_first_point_wins,

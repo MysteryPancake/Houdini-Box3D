@@ -1,0 +1,128 @@
+// The drag and speed limits of RBD Bullet Solver's POP-style attributes
+// (core/Box3DMotion.h), and the world inertia the spin drag works on.
+#include "TestUtil.h"
+#include "WorldTestUtil.h"
+#include "core/Box3DMotion.h"
+
+#include <cmath>
+#include <cstdio>
+
+using namespace b3dop;
+
+namespace {
+
+float len(const float v[3]) {
+  return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+}
+
+} // namespace
+
+int main() {
+  const float zero[3] = {0, 0, 0};
+
+  // ---- implicit drag: the closed forms ----
+  {
+    // Quadratic: speed s decays as s / (1 + c dt s).
+    float v[3] = {4.0f, 0.0f, 0.0f};
+    applyImplicitDrag(2.0f, 0.5f, zero, 0.1f, 2.0f, v); // c = 0.5 * 2
+    CHECK(near(v[0], 4.0 / (1.0 + 1.0 * 0.1 * 4.0), 1e-5) && v[1] == 0.0f);
+    // Linear: exp(-c dt).
+    float w[3] = {3.0f, 4.0f, 0.0f};
+    applyImplicitDrag(1.0f, 0.5f, zero, 0.2f, 1.0f, w);
+    CHECK(near(w[0], 3.0 * std::exp(-0.1), 1e-5) &&
+          near(w[1], 4.0 * std::exp(-0.1), 1e-5));
+    // Between: slower than the quadratic case would be at a low speed, never
+    // past rest, and continuous in the exponent.
+    float a[3] = {2.0f, 0.0f, 0.0f}, b[3] = {2.0f, 0.0f, 0.0f},
+          c[3] = {2.0f, 0.0f, 0.0f};
+    applyImplicitDrag(1.999f, 1.0f, zero, 0.05f, 1.0f, a);
+    applyImplicitDrag(2.0f, 1.0f, zero, 0.05f, 1.0f, b);
+    applyImplicitDrag(1.5f, 1.0f, zero, 0.05f, 1.0f, c);
+    CHECK(near(a[0], b[0], 1e-3) && c[0] > 0.0f && c[0] < 2.0f);
+    // Towards a target: the relative velocity decays, the target stays.
+    float t[3] = {5.0f, 0.0f, 0.0f};
+    const float target[3] = {1.0f, 2.0f, 0.0f};
+    applyImplicitDrag(1.0f, 10.0f, target, 100.0f, 1.0f, t); // long: reaches it
+    CHECK(near(t[0], 1.0, 1e-4) && near(t[1], 2.0, 1e-4));
+    // A strong drag does not overshoot past the target (explicit would).
+    float s[3] = {10.0f, 0.0f, 0.0f};
+    applyImplicitDrag(2.0f, 1e6f, zero, 0.1f, 1.0f, s);
+    CHECK(s[0] >= 0.0f && s[0] < 1e-3);
+    // At rest relative to the target: nothing happens.
+    float r[3] = {1.0f, 2.0f, 0.0f};
+    applyImplicitDrag(1.7f, 3.0f, target, 0.1f, 1.0f, r);
+    CHECK(near(r[0], 1.0, 1e-6) && near(r[1], 2.0, 1e-6));
+  }
+
+  // ---- the exponent and the parameters ----
+  {
+    CHECK(clampDragExp(0.2f) == 1.0f && clampDragExp(5.0f) == 2.0f &&
+          clampDragExp(1.5f) == 1.5f);
+    CHECK(clampDragExp(std::nanf("")) == 2.0f);
+    MotionParams p;
+    CHECK(!p.any() && !p.hasDrag() && !p.hasLimits());
+    p.maxSpin = 0.0f; // a limit of 0 is a limit
+    CHECK(p.hasLimits() && p.any());
+    p = MotionParams();
+    p.spinResist = 0.1f;
+    CHECK(p.hasDrag() && !p.hasLimits());
+  }
+
+  // ---- the clamps ----
+  {
+    MotionParams p;
+    p.maxSpeed = 2.0f;
+    float lin[3] = {6.0f, 8.0f, 0.0f}, ang[3] = {1.0f, 0.0f, 0.0f};
+    CHECK(clampMotion(p, lin, ang) && near(len(lin), 2.0, 1e-5) &&
+          near(lin[0] / lin[1], 0.75, 1e-5) && ang[0] == 1.0f);
+    // A minimum raises a slow body, never a resting one.
+    p = MotionParams();
+    p.minSpeed = 3.0f;
+    float slow[3] = {0.0f, 0.5f, 0.0f}, rest[3] = {0, 0, 0};
+    CHECK(clampMotion(p, slow, ang) && near(slow[1], 3.0, 1e-5));
+    CHECK(!clampMotion(p, rest, rest));
+    // Spin limits are separate from speed limits.
+    p = MotionParams();
+    p.maxSpin = 1.0f;
+    float l2[3] = {9.0f, 0, 0}, a2[3] = {0.0f, 3.0f, 4.0f};
+    CHECK(clampMotion(p, l2, a2) && near(len(a2), 1.0, 1e-5) && l2[0] == 9.0f);
+    // Within the limits: unchanged.
+    p = MotionParams();
+    p.minSpeed = 1.0f;
+    p.maxSpeed = 5.0f;
+    float in[3] = {3.0f, 0, 0}, spin[3] = {0, 0, 0};
+    CHECK(!clampMotion(p, in, spin) && in[0] == 3.0f);
+  }
+
+  // ---- the world inertia the spin drag uses ----
+  {
+    WorldSettings ws;
+    ws.gravity[0] = ws.gravity[1] = ws.gravity[2] = 0.0f;
+    Box3DWorld w;
+    CHECK(w.create(ws));
+    // A 2 x 1 x 1 box turned 90 degrees about z: its long axis is world y.
+    BodySettings b;
+    const double p[3] = {0, 5, 0};
+    const float q[4] = {0, 0, 0.70710678f, 0.70710678f};
+    const BodyHandle h = w.createBody(b, p, q);
+    ShapeSpec s;
+    s.type = ShapeType::Box;
+    s.halfExtents[0] = 1.0f;
+    s.halfExtents[1] = s.halfExtents[2] = 0.5f;
+    w.createShape(h, b, s);
+    float i[6], mass, centre[3], local[3];
+    CHECK(w.inertiaWorldByHandle(h, i));
+    CHECK(w.getMassDataByHandle(h, mass, centre, local));
+    // About the long axis it is m / 12 (1 + 1), about the others m / 12 (4 +
+    // 1).
+    CHECK(near(i[1], mass / 6.0, 1e-3 * mass) &&
+          near(i[0], 5.0 * mass / 12.0, 1e-3 * mass) &&
+          near(i[2], 5.0 * mass / 12.0, 1e-3 * mass));
+    CHECK(near(i[3], 0.0, 1e-3 * mass) && near(i[4], 0.0, 1e-3 * mass) &&
+          near(i[5], 0.0, 1e-3 * mass));
+    CHECK(!w.inertiaWorldByHandle(0, i));
+  }
+
+  std::printf("OK\n");
+  return fails ? 1 : 0;
+}

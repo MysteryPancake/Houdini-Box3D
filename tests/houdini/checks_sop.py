@@ -4,7 +4,7 @@ frame, rest anchors, World Scale, Impacts and POP forces in FORCES."""
 import hou
 from b3dtest import GROUND, Result, close, constraint_lines, create, display, new_geo, packed_boxes, set_parm
 
-from checks_sop_common import _both_sops, named_positions, play, solver_sop
+from checks_sop_common import _both_sops, bullet_sop, named_positions, play, solver_sop
 
 
 def test_solver_sop_quadrics():
@@ -733,6 +733,41 @@ def test_solver_sop_fast_transform():
     return results
 
 
+def test_solver_sop_pop_drag_bullet():
+    """POP Drag (airresist) and POP Speed Limit (speedmax) in the FORCES subnet's PRESOLVE, in both Solver SOPs: a
+    box falling freely ends at the speed where the drag is its weight, and with a speed limit at that limit. POP Drag
+    writes `airresist` every step (Bullet zeroes it after each solve), so this is the path a POP network takes. The
+    speeds agree within 8 percent (each applies the drag as one implicit step of its own Substeps; Box3D clamps after
+    its step: 0.2 m/s)."""
+    results = []
+    for label, node_type, parms, want in (("POP Drag", "popdrag", {"airresist": 2.0}, 2.1),
+                                         ("POP Speed Limit", "popspeedlimit", {"dospeedmax": 1, "speedmax": 3.0}, 3.0)):
+        speeds = {}
+        for kind, factory in (("box3d", solver_sop), ("bullet", bullet_sop)):
+            pieces, names = packed_boxes(f"sop_pop_{node_type}_{kind}_pieces",
+                                         [{"size": (1, 1, 1), "center": (0, 1000, 0)}])
+            sop = factory(f"sop_pop_{node_type}_{kind}", geometry=pieces)
+            forces = sop.node("dopnet/FORCES") or sop.node("dopnet/forces")  # Bullet's is lower case
+            out = forces.node("PRESOLVE") if forces is not None else None
+            if out is None:
+                results.append(Result("solver_sop_pop_drag_bullet", Result.INFO, f"{kind}: no dopnet/FORCES/PRESOLVE"))
+                break
+            pop = create(forces, node_type, "limit")
+            for parm, value in parms.items():
+                set_parm(pop, [parm], value)
+            out.setInput(0, pop)
+            ys = play(sop, 72, lambda s, f: named_positions(s.geometry(0)).get(names[0]))
+            speeds[kind] = abs(ys[72][1] - ys[71][1]) * hou.fps()
+        if len(speeds) < 2:
+            continue
+        a, b = speeds["box3d"], speeds["bullet"]
+        ok = abs(a - b) < 0.08 * b + 0.2 and a < 5.0
+        results.append(Result("solver_sop_pop_drag_bullet", Result.PASS if ok else Result.FAIL,
+                              f"{label} on PRESOLVE: speed after 3 s Box3D {a:.2f}, Bullet {b:.2f} m/s (about {want:g} "
+                              "expected; a free fall is 29)"))
+    return results
+
+
 TESTS = {
     "solver_sop_quadrics": test_solver_sop_quadrics,
     "solver_sop_pieces": test_solver_sop_pieces,
@@ -749,6 +784,7 @@ TESTS = {
     "solver_sop_fast_transform": test_solver_sop_fast_transform,
     "solver_sop_impacts": test_solver_sop_impacts,
     "solver_sop_forces": test_solver_sop_forces,
+    "solver_sop_pop_drag_bullet": test_solver_sop_pop_drag_bullet,
     "solver_sop_layout": test_solver_sop_layout,
     "solver_sop_proxy": test_solver_sop_proxy,
 }

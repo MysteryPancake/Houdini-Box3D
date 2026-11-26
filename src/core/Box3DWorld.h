@@ -499,6 +499,9 @@ public:
   // massByHandle / getVelocityByHandle (the first two are in the test-only
   // section). False for no body (out untouched).
   bool bodyStateByHandle(BodyHandle h, BodyState &out) const;
+  // The body's inertia tensor about its centre of mass in world axes, as xx yy
+  // zz xy xz yz. False for no body.
+  bool inertiaWorldByHandle(BodyHandle h, float out[6]) const;
 
   // Set every shape's density (skipped with setShapeDensity = false, for shapes
   // just created with it) and apply the mass from the shapes; then, for dynamic
@@ -648,6 +651,12 @@ public:
                           JointFrame &b) const;
   // The joint's frames relative to its bodies, exactly as Box3D keeps them.
   bool jointLocalFrames(JointHandle h, JointFrame &a, JointFrame &b) const;
+  // Aims a joint's frame A again: it is its anchor shifted by `shift` (in the
+  // anchor's axes, which are the frame's), and the shift becomes `restLength`
+  // along the direction from the anchor to frame B now (none when they are
+  // closer than `minDistance`). `shift` is updated; true if the frame moved.
+  bool reaimJointFrameA(JointHandle h, float restLength, float minDistance,
+                        double shift[3]);
   // A body-relative frame in world space with the body's current pose (null
   // handle: the world).
   bool localToWorld(BodyHandle h, const JointFrame &local,

@@ -233,7 +233,18 @@ struct SideFXBody {
 
 struct SideFXContext {
   SideFXBody a, b;
+  // The distance between the anchors as authored (at rest); < 0 when unknown.
+  // Bullet shifts an anchor by the Rest Length along the direction between the
+  // anchors at rest, so with the anchors on top of each other it has no
+  // direction to shift along and takes the current one (a radial constraint).
+  float anchorDistance = -1.0f;
 };
+
+// Rest anchors closer than this have no direction (SideFXContext).
+constexpr float kSideFXCoincidentAnchors = 1e-4f;
+// Anchors closer than this have no direction for a re-aimed joint
+// (SideFXJoint::reaim), Bullet's SYSequalZero.
+constexpr float kSideFXAimMinDistance = 1e-5f;
 
 // The Box3D joint for one primitive, and how its frames sit relative to the
 // anchors.
@@ -251,6 +262,16 @@ struct SideFXJoint {
   // joint holds the pieces where they are).
   float separation = -1.0f;
   bool holdSeparation = false;
+  // The separation shifts anchor A's frame alone, by all of it (Bullet shifts
+  // one anchor, along a direction fixed in its piece), not half on each. A
+  // position-only joint needs this: the other piece may turn about its anchor,
+  // and the pin has to stay where it is in A.
+  bool offsetOnA = false;
+  // Position-only, with the rest anchors on top of each other: Bullet has no
+  // direction to shift anchor A along, so it takes the current one, every
+  // frame. The shift (offsetOnA) is then made from the anchors as they are
+  // now, and the sync aims it again each frame (Box3DWorld::reaimJointFrameA).
+  bool reaim = false;
 };
 
 // Below this a rest length counts as zero.

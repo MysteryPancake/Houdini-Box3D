@@ -794,6 +794,42 @@ bool Box3DWorld::jointLocalFrames(JointHandle h, JointFrame &a,
   return true;
 }
 
+bool Box3DWorld::reaimJointFrameA(JointHandle h, float restLength,
+                                  float minDistance, double shift[3]) {
+  JointFrame a, b;
+  if (!jointWorldFrames(h, a, b))
+    return false;
+  const b3Quat q = makeQuat(a.rot);
+  const b3Vec3 old{static_cast<float>(shift[0]), static_cast<float>(shift[1]),
+                   static_cast<float>(shift[2])};
+  const b3Vec3 oldWorld = b3RotateVector(q, old);
+  // Where the anchor is: frame A less its shift.
+  const double d[3] = {b.pos[0] - (a.pos[0] - oldWorld.x),
+                       b.pos[1] - (a.pos[1] - oldWorld.y),
+                       b.pos[2] - (a.pos[2] - oldWorld.z)};
+  const double len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+  b3Vec3 next{0.0f, 0.0f, 0.0f};
+  if (len > minDistance && std::isfinite(len)) {
+    const float s = restLength / static_cast<float>(len);
+    next = b3InvRotateVector(q, b3Vec3{static_cast<float>(d[0]) * s,
+                                       static_cast<float>(d[1]) * s,
+                                       static_cast<float>(d[2]) * s});
+  }
+  const b3Vec3 delta = b3Sub(next, old);
+  if (b3Dot(delta, delta) < 1e-12f)
+    return false;
+  const b3JointId id = b3LoadJointId(h);
+  b3Transform local = b3Joint_GetLocalFrameA(id);
+  // The frame's axes are the anchor's: the body-local move is the delta turned
+  // by the frame's local rotation.
+  local.p = b3Add(local.p, b3RotateVector(local.q, delta));
+  b3Joint_SetLocalFrameA(id, local);
+  shift[0] = next.x;
+  shift[1] = next.y;
+  shift[2] = next.z;
+  return true;
+}
+
 bool Box3DWorld::localToWorld(BodyHandle h, const JointFrame &local,
                               JointFrame &out) const {
   if (!isValid())

@@ -135,6 +135,13 @@ struct Box3DSharedState {
       jointNetworks; // key: relationship name (or object id)
   // some object has a constraint network: keep Box3DObjectSync::byName
   bool wantNames = false;
+  // Some object has a point with a drag or a speed limit (Box3DMotion.cpp): the
+  // step's speed clamp looks at its moved bodies.
+  bool anyMotion = false;
+  // The joints re-aimed each frame (Box3DJointEntry::reaim), for reaimJoints;
+  // entries are in the node-based `joints` map, so the pointers hold until an
+  // entry is erased (it leaves the list then).
+  std::vector<Box3DJointEntry *> reaimEntries;
   // solver Reap Dead Points: `dead` points are deleted (else kept, out of the
   // simulation)
   bool reapDead = true;

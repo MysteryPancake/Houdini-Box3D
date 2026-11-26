@@ -88,6 +88,7 @@ add_library(b3dop_core STATIC
     src/core/Box3DQuadrics.h
     src/core/Box3DJoints.h
     src/core/Box3DGlue.h
+    src/core/Box3DMotion.h
     src/core/Box3DCompound.h
     src/core/Box3DSideFX.h
     src/core/Box3DSideFX.cpp
@@ -167,6 +168,7 @@ b3dop_add_test(ground)
 b3dop_add_test(joints)
 b3dop_add_test(sidefx)
 b3dop_add_test(glue)
+b3dop_add_test(motion)
 b3dop_add_test(compound)
 b3dop_add_test(rbdobject)
 b3dop_add_test(threads)
@@ -225,6 +227,7 @@ add_library(Box3DDOP SHARED
     src/sync/Box3DWriteBack.cpp
     src/sync/Box3DImpacts.cpp
     src/sync/Box3DForces.cpp
+    src/sync/Box3DMotion.cpp
     src/sync/Box3DGuide.cpp
     src/sync/Box3DSourceSync.cpp
     src/sync/Box3DCompoundSync.h

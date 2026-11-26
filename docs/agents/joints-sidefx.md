@@ -57,17 +57,31 @@ Glue, Hard, Spring, Bullet Soft and Cone Twist mapped onto Box3D joints. Joint n
     iterations of any bond set the rounds.
   * Glue as One Body (`gluecompound`): [glue-compound.md](glue-compound.md).
   * Hard: all -> rigid weld with the anchors kept the rest length apart (as Bullet does; held where they are when there
-    is no rest length); position -> rigid distance joint at the
-    rest length, or spherical when it is ~0; rotation -> motor joint, angular spring only at 60 Hz / ratio 2 with
+    is no rest length); position -> spherical joint (Bullet's pin: see "Position with a rest length" below), or a rigid
+    distance joint at the rest length when the rest anchors coincide; rotation -> motor joint, angular spring only at 60 Hz / ratio 2 with
     unlimited torque (Box3D has no rigid rotation-only joint). CFM, ERP, iterations and the angular motors are ignored.
   * Bullet Soft: stiffness is already Hz. all -> motor joint with linear and angular springs (enableangular picks the
-    angular stiffness / damping), frames offset by the rest length; position -> sprung distance joint at the rest
-    length, or a linear-only motor joint when it is ~0; rotation -> angular-only motor joint. Plasticity is ignored.
+    angular stiffness / damping), frames offset by the rest length; position -> linear-only motor joint (offset as below; a sprung distance joint
+    when the rest anchors coincide, and a plain linear motor joint when the rest length is ~0); rotation -> angular-only motor joint. Plasticity is ignored.
   * Spring: as Soft, after converting Hooke's constant and absolute damping per joint: Hz = sqrt(k / m) / 2 pi,
     ratio = c / (2 sqrt(k m)), with m the reduced mass of the dynamic bodies (one dynamic body: its mass) for the
     linear spring, and the mean principal inertia the same way for the angular one. The masses it was made from are kept
     (`massDependent`, `massA` / `massB` on the entry); `syncJoints` compares them with the bodies' now each step and
     reprocesses a network whose Spring's masses changed, so its Hz and ratio follow (`sidefx_spring_mass`).
+  * Position with a rest length (Hard, Soft, Spring): Bullet shifts anchor A by the rest length along the direction
+    between the anchors at rest, fixed in A's frame (`simSetRestLength`), and pins (Hard) or springs (Soft, Spring) anchor
+    B to that point in all three axes, so it is not a distance: a box beside the fixed one with the rest length their
+    distance stays where it is (`bullet_position_rest_length`). `SideFXJoint::offsetOnA` shifts anchor A's frame by all
+    of the separation (the all mode splits it between both frames, which is the same while the pieces are locked to each
+    other, but a position-only joint lets B turn about its anchor). The rest anchors on top of each other have no
+    direction, and Bullet takes the current one, each frame, with its three rows holding the anchors' relative velocity: a
+    box hung from the shared point opens a gap under its weight and ends the rest length along it, not swinging
+    about the point. Those joints (`SideFXJoint::reaim`, from `SideFXContext::anchorDistance`, the authored anchors'
+    distance, so the choice does not change as the pieces move) are the same Spherical or linear Motor joint, with no shift
+    while the anchors are within `kSideFXAimMinDistance`, and `reaimJoints` (`Box3DJointSync.cpp`, before the steps;
+    `Box3DWorld::reaimJointFrameA`) aims frame A's shift along the anchors' line again each frame, updating the entry's
+    `adjA` so the written anchors stay the anchors. A joint made later (a rebuilt world) starts from the anchors as
+    they are (`bullet_soft_coincident_anchors`, `bullet_position_rest_length`, `position_rest_rebuild`).
   * Cone Twist: spherical joint. Box3D's cone is round: the smaller of Max Up / Max Out, clamped to Box3D's 90 degree
     maximum; 180 or more turns it off (Houdini's default). Twist limit +-Max Twist (180 or more: none). Bullet twists
     about x, Box3D about z, so each frame is turned so z = the twist axis and x = the up axis (constrained axes on

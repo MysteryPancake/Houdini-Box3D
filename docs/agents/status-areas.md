@@ -10,7 +10,7 @@ What is still to do: [todo.md](todo.md). Index and rules: [CLAUDE.md](../../CLAU
   `bullet_rest_convention`, `bullet_rest_rescan`).
 * Solve on Creation Frame on the SOP's collider (`solver_sop_solve_first_frame_bullet`): a box on a collider lifted
   0.5 a frame ends at 1.1 to 2.3 in Box3D (it clips into the collider: fork list) and at 1.0 in Bullet.
-* With both anchors at one point (`bullet_joint_rest`, INFO) the centres end 2.19 and 2.59 apart, past the 2.06
+* With both anchors at one point (`bullet_joint_rest`, INFO) the centres end 2.55 and 2.59 apart, past the 2.06
   possible.
 * Hand-set shapes: `bullet_primS`, `bullet_primR` (XYZ Euler degrees), `bullet_radius` and `bullet_length` match
   (`bullet_shape_attributes`, `bullet_primr_order`). Kept differences (`bullet_shape_position`, `bullet_shape_probe`):

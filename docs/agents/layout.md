@@ -21,6 +21,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
                         (mapping, frame offsets)
     Box3DGlue.h         Header-only: SideFX Glue's impulse model (spread over bonds, half-life, break on
                         strength or on a contact estimate)
+    Box3DMotion.h       Header-only: drag and speed limits of the POP-style attributes (implicit drag, clamps)
     Box3DGlueEstimate.h Header-only: the impulse estimate Bullet breaks glue on, per contact point
     Box3DCompound.h     Header-only: glue components (union-find), merging pieces into one body and splitting
                         its velocity
@@ -71,6 +72,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DImpacts.cpp       After the step: Impacts data (collectImpacts, recordImpacts)
     Box3DPostStep.cpp      After the step: queued point writes, merged move events, aging, dead points
     Box3DForces.cpp        Force DOPs and point force / torque
+    Box3DMotion.cpp        Drag and speed limit attributes: `refreshMotion`, `applySpeedLimits`, `clearMotionInputs`
     Box3DGuide.cpp         The solver's guide geometry: every body's collision shapes
     Box3DJointSync.*       Constraint networks -> Box3D joints: the pass that makes, updates and removes joints,
                            `syncJoints`, the Glue lists

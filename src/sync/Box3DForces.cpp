@@ -214,9 +214,14 @@ void addPointForce(const PointForce &pf, UT_Vector3 &force,
 // between them possibly in parallel.
 struct ForceJob {
   const Box3DBodyMirror *body = nullptr;
+  const Box3DMotionEntry *drag = nullptr; // the point's drag, if it has one
   b3dop::BodyState state;
   UT_Vector3 force{0.0f, 0.0f, 0.0f};
   UT_Vector3 torque{0.0f, 0.0f, 0.0f};
+  // The drag's own force and torque: applied without waking the body, so a
+  // resting body is not woken by a drag it does not need.
+  UT_Vector3 dragForce{0.0f, 0.0f, 0.0f};
+  UT_Vector3 dragTorque{0.0f, 0.0f, 0.0f};
 };
 
 using ResolverPtr = std::unique_ptr<SIM_ForceResolver>;
@@ -279,6 +284,58 @@ void evaluateResolvers(const std::vector<ResolverPtr> &resolvers,
                 });
 }
 
+// The drag of a body's point (airresist, spinresist, ...), as a force and a
+// torque of its own (`dragForce`, `dragTorque`). Bullet applies it implicitly
+// (a strong drag then cannot overshoot): the velocity the body would have after
+// the step under the other forces and gravity is slowed by the drag, and the
+// force that gives that change is the drag. `gravity`: the world's, and the
+// body's scale of it. The body's own linear and angular damping, which Box3D
+// applies in its integration, is not in the predicted velocity, so with damping
+// the end speed is a little lower than the drag solved for.
+void addDrag(const b3dop::Box3DWorld &world, const float gravity[3], float dt,
+             ForceJob &job) {
+  const b3dop::MotionParams &m = job.drag->params;
+  const float mass = job.state.mass;
+  if (!(dt > 0.0f) || !(mass > 0.0f) || !std::isfinite(mass))
+    return;
+  const float invMass = 1.0f / mass;
+  if (m.airResist > 0.0f) {
+    const float scale = job.body->props.gravityScale;
+    float before[3], after[3];
+    for (int k = 0; k < 3; ++k)
+      before[k] =
+          job.state.lin[k] + dt * (invMass * job.force[k] + gravity[k] * scale);
+    std::copy(before, before + 3, after);
+    b3dop::applyImplicitDrag(m.dragExp, m.airResist, m.targetV, dt, invMass,
+                             after);
+    for (int k = 0; k < 3; ++k)
+      job.dragForce[k] = (after[k] - before[k]) / (invMass * dt);
+  }
+  float inertia[6], inverse[6];
+  if (m.spinResist > 0.0f &&
+      world.inertiaWorldByHandle(job.body->handle, inertia) &&
+      b3dop::invertSymmetric3(inertia, inverse)) {
+    const auto mul = [](const float s[6], const float *v, float out[3]) {
+      out[0] = s[0] * v[0] + s[3] * v[1] + s[4] * v[2];
+      out[1] = s[3] * v[0] + s[1] * v[1] + s[5] * v[2];
+      out[2] = s[4] * v[0] + s[5] * v[1] + s[2] * v[2];
+    };
+    const float t[3] = {job.torque.x(), job.torque.y(), job.torque.z()};
+    float spin[3], before[3], after[3], change[3], twist[3];
+    mul(inverse, t, spin);
+    for (int k = 0; k < 3; ++k)
+      before[k] = job.state.ang[k] + dt * spin[k];
+    std::copy(before, before + 3, after);
+    b3dop::applyImplicitDrag(m.dragExp, m.spinResist, m.targetW, dt, 1.0f,
+                             after);
+    for (int k = 0; k < 3; ++k)
+      change[k] = after[k] - before[k];
+    mul(inertia, change, twist);
+    for (int k = 0; k < 3; ++k)
+      job.dragTorque[k] = twist[k] / dt;
+  }
+}
+
 // Force DOPs and point forces onto the object's dynamic bodies, in three
 // phases: the bodies' inputs are read (serial: it reads Box3D), the Force DOPs
 // are evaluated (the thread-safe ones in parallel when there are many bodies),
@@ -286,7 +343,7 @@ void evaluateResolvers(const std::vector<ResolverPtr> &resolvers,
 void applyToObjectBodies(Box3DSharedState &st, const SIM_Object &obj,
                          Box3DObjectSync &os, PointForceCarry::ObjectForces &of,
                          const std::vector<PointForce> &pointForces, bool wake,
-                         ForceStats &stats) {
+                         float dt, ForceStats &stats) {
   const std::vector<const SIM_Force *> &forces = of.forces;
   b3dop::Box3DWorld &world = st.world;
 
@@ -312,7 +369,15 @@ void applyToObjectBodies(Box3DSharedState &st, const SIM_Object &obj,
     // A piece of a compound (Box3DCompoundSync.h) is parked: its state is read
     // from the compound.
     const bool piece = e->inCompound;
-    if (!forces.empty()) {
+    // Drag: a compound's pieces are parked and the compound has no point, so
+    // only the other bodies take it.
+    if (!piece && !os.motion.empty() && !e->wholeObject) {
+      const Box3DMotionEntry *m =
+          findMotion(os, static_cast<GA_Offset>(e->pointOff));
+      if (m && m->params.hasDrag())
+        job.drag = m;
+    }
+    if (!forces.empty() || job.drag) {
       const bool read = piece ? compoundPieceState(st, *e, job.state)
                               : world.bodyStateByHandle(e->handle, job.state);
       if (!read)
@@ -333,7 +398,7 @@ void applyToObjectBodies(Box3DSharedState &st, const SIM_Object &obj,
                   [](const Box3DBodyMirror *e) { return e->pointForced; });
 
   // The Force DOPs.
-  if (!forces.empty()) {
+  if (!forces.empty() && !jobs.empty()) {
     // The split is made once per frame (the resolvers copy the forces' state
     // when made, which does not change between steps).
     const bool many = jobs.size() >= minParallelForces();
@@ -351,6 +416,15 @@ void applyToObjectBodies(Box3DSharedState &st, const SIM_Object &obj,
       }
   }
 
+  // Drag, last: it works on the sum of everything else.
+  if (std::any_of(jobs.begin(), jobs.end(),
+                  [](const ForceJob &j) { return j.drag != nullptr; })) {
+    const float *g = world.settings().gravity;
+    for (ForceJob &job : jobs)
+      if (job.drag)
+        addDrag(world, g, dt, job);
+  }
+
   for (const ForceJob &job : jobs) {
     float fv[3] = {static_cast<float>(job.force.x()),
                    static_cast<float>(job.force.y()),
@@ -358,18 +432,27 @@ void applyToObjectBodies(Box3DSharedState &st, const SIM_Object &obj,
     float tv[3] = {static_cast<float>(job.torque.x()),
                    static_cast<float>(job.torque.y()),
                    static_cast<float>(job.torque.z())};
-    if (!b3dop::finite3(fv) || !b3dop::finite3(tv)) {
+    float dfv[3] = {job.dragForce.x(), job.dragForce.y(), job.dragForce.z()};
+    float dtv[3] = {job.dragTorque.x(), job.dragTorque.y(), job.dragTorque.z()};
+    if (!b3dop::finite3(fv) || !b3dop::finite3(tv) || !b3dop::finite3(dfv) ||
+        !b3dop::finite3(dtv)) {
       ++stats.nonFinite;
       continue;
     }
-    if (fv[0] == 0.0f && fv[1] == 0.0f && fv[2] == 0.0f && tv[0] == 0.0f &&
-        tv[1] == 0.0f && tv[2] == 0.0f)
+    const auto zero = [](const float v[3]) {
+      return v[0] == 0.0f && v[1] == 0.0f && v[2] == 0.0f;
+    };
+    if (zero(fv) && zero(tv) && zero(dfv) && zero(dtv))
       continue;
     // A piece of a compound pushes its compound, about the compound's centre.
     b3dop::BodyHandle target = job.body->handle;
     if (job.body->inCompound)
       compoundPieceForce(st, *job.body, fv, tv, target);
-    world.applyForceByHandle(target, fv, tv, wake);
+    if (!zero(fv) || !zero(tv))
+      world.applyForceByHandle(target, fv, tv, wake);
+    // The drag never wakes a sleeping body.
+    if (!zero(dfv) || !zero(dtv))
+      world.applyForceByHandle(target, dfv, dtv, false);
     ++stats.bodies;
   }
 }
@@ -428,7 +511,7 @@ void recordClearedForces(Box3DSharedState &st,
 // set that to 0 when using one. Only the bodies of objects that have forces are
 // visited (Box3DObjectSync::bodies).
 ForceStats applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects,
-                               bool wake, PointForceCarry *carry) {
+                               bool wake, float dt, PointForceCarry *carry) {
   ForceStats stats;
   PointForceCarry::ObjectForces single; // without a carry: made for each call
   std::vector<PointForce> pointForces;
@@ -463,10 +546,11 @@ ForceStats applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects,
         carry->byObject[obj->getObjectId()] = pointForces;
     }
     // A body whose point force just ended is still visited (to wake it).
-    if (of.forces.empty() && applied->empty() && !os.pointForcedAny)
+    if (of.forces.empty() && applied->empty() && !os.pointForcedAny &&
+        os.motion.empty())
       continue;
 
-    applyToObjectBodies(st, *obj, os, of, *applied, wake, stats);
+    applyToObjectBodies(st, *obj, os, of, *applied, wake, dt, stats);
     if (!replay && !pointForces.empty() && clearPointForces(*obj, pointForces))
       cleared.push_back(obj);
   }

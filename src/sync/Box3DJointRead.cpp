@@ -401,7 +401,8 @@ uint64_t sideFXFrameSignature(const b3dop::SideFXJoint &m) {
   uint64_t h = b3dop::hashBytes(b3dop::kHashSeed, m.rotA, sizeof(m.rotA));
   h = b3dop::hashBytes(h, m.rotB, sizeof(m.rotB));
   h = b3dop::hashBytes(h, &m.separation, sizeof(m.separation));
-  return b3dop::mixHash(h, m.holdSeparation ? 1 : 0);
+  return b3dop::mixHash(h, (m.holdSeparation ? 1 : 0) | (m.offsetOnA ? 2 : 0) |
+                               (m.reaim ? 4 : 0));
 }
 
 // A joint frame from its anchor and offset, and back. Identity offsets (Box3D

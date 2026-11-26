@@ -1313,8 +1313,8 @@ def test_soft_coincident_anchors():
     """A Soft line whose anchors start at one point, with a Rest Length of 1, against Bullet. A hanging box falls until
     its anchor is the Rest Length below the fixed one and stays there (1.00 within 0.02 on frames 12 and 24 in both).
     The spring has no direction while the anchors are exactly together, so Bullet applies none on the first step and
-    the box gets there one frame later (INFO: 0.62 m below on frame 2 in Box3D against 0.00 in Bullet, whatever the
-    Substeps). With Rest Length 0 neither moves the anchors apart."""
+    the box gets there one frame later, in Box3D too: its joint is aimed along the anchors' line again each frame
+    (0.00 on frame 2 in both). With Rest Length 0 neither moves the anchors apart."""
     frames = (1, 2, 3, 4, 6, 8, 12, 24)
     got = {(kind, rest): soft_start_run(kind, rest) for kind in KINDS for rest in (1.0, 0.0)}
     ok = all(abs(got[kind, 1.0][i] - 1.0) < 0.02 for kind in KINDS for i in (6, 7)) and all(
@@ -1324,9 +1324,197 @@ def test_soft_coincident_anchors():
                    f"Rest Length 1, the box's anchor below the fixed one on frames {list(frames)}: Box3D "
                    f"{fmt(got['box3d', 1.0])}; Bullet {fmt(got['bullet', 1.0])} (expected 1.00 by frames 12 and 24); "
                    f"Rest Length 0: Box3D {fmt(got['box3d', 0.0])}; Bullet {fmt(got['bullet', 0.0])} (expected 0.00)"),
-            Result("bullet_soft_coincident_anchors", Result.INFO,
+            Result("bullet_soft_coincident_anchors", Result.PASS if all(abs(got[k, 1.0][1]) < 0.02 for k in KINDS)
+                   else Result.FAIL,
                    f"on frame 2 the box is {got['box3d', 1.0][1]:.2f} m below in Box3D and {got['bullet', 1.0][1]:.2f} in "
                    "Bullet (its spring has no direction on the first step)")]
+
+
+def position_rest_run(kind, conrel_type, conrel_parms, rest=2.0, reverse=False, together=False):
+    """A 1 m box beside a fixed one (their centres 2 apart along x, the anchors at the centres) on a position-only
+    SideFX line with a Rest Length of 2, so nothing pulls them together. Gravity is across the line, so a radial
+    spring or distance joint lets the box swing down, and a pin or spring at the offset point (Bullet's anchor
+    shifted by the Rest Length along a direction fixed in the fixed box) holds it there. The box's centre after 2 s."""
+    fixed = {"size": (1, 1, 1), "center": (0, 4, 0), "attrs": {"active": 0}}
+    free = {"size": (1, 1, 1), "center": (2, 4, 0), "attrs": {"active": 1}}
+    # reverse: the line starts at the free box (its anchor is the shifted one). together: both anchors at one point.
+    pieces, anchors = ([free, fixed], ((2, 4, 0), (0, 4, 0))) if reverse else ([fixed, free], ((0, 4, 0), (2, 4, 0)))
+    if together:
+        anchors = ((1, 4, 0), (1, 4, 0))
+    parms = dict(conrel_parms, restlength=rest)
+    tag = f"position_rest_{conrel_type}_{kind}_{int(rest * 10)}_{int(reverse)}{int(together)}"
+    dop, names = hanging_pair(tag, None, line_attrs={"constraint_type": "position"},
+                              conrels=[(conrel_type, parms)], solver_kind=kind, pieces=pieces, anchors=anchors,
+                              packed_parms={"computemass": 0, "mass": 1.0})
+    free_name = names[0] if reverse else names[1]
+
+    def sample(sim, f):
+        centre = packed_positions(sim, "pieces")[free_name]
+        if not together:
+            return centre
+        # The box's anchor (1 from its centre), where the line holds it: it swings about it.
+        return centre + hou.Vector3(-1, 0, 0) * hou.Matrix3(packed_transform(sim, "pieces", free_name))
+
+    return step(dop, 48, sample)[48]
+
+
+def test_bullet_position_rest_length():
+    """Position-only Hard, Soft and Spring lines with a Rest Length, against Bullet. Bullet shifts the anchor of
+    the first piece by the Rest Length along the direction between the anchors at rest, fixed in that piece's
+    frame (SIM_BulletConstraint's simSetRestLength), and pins or springs the other anchor to the shifted point in all
+    three axes. A box hanging beside a fixed one, anchors at the centres and the Rest Length their distance, stays
+    where it is; a distance joint or radial spring lets it swing under the fixed anchor. Passes when Box3D's
+    box is within 0.3 of Bullet's after 2 s."""
+    cases = (("hard", "hardconrel", {}),
+             ("soft", "bulletsoftconrel", {"stiffness": 4.0, "dampingratio": 1.0}),
+             ("spring", "springconrel", {"strength": 400.0, "damping": 40.0}))
+    # (label, Rest Length, the line starts at the free box, both anchors at one point): the rest length that holds
+    # the box where it is, and one that pulls it in, with the line either way round (the box ends at rest, so the
+    # positions are compared), and the anchors together (no direction at rest: the box hangs 1 below the anchor and
+    # swings about it, so its anchor's position is compared); then the line reversed with the rest length that holds it,
+    # which swings, as INFO.
+    settled = (("", 2.0, False, False), (", pulled in (1)", 1.0, False, False),
+               (", pulled in, line reversed", 1.0, True, False), (", anchors together (1)", 1.0, False, True))
+    swinging = ((", line reversed", 2.0, True, False),)
+
+    def run(conrel_type, parms, rest, reverse, together):
+        return {kind: position_rest_run(kind, conrel_type, parms, rest, reverse, together) for kind in KINDS}
+
+    def show(got):
+        return (f"box at {tuple(round(v, 2) for v in got['box3d'])} in Box3D, "
+                f"{tuple(round(v, 2) for v in got['bullet'])} in Bullet")
+
+    rows, info, ok = [], [], True
+    for label, conrel_type, parms in cases:
+        for extra, rest, reverse, together in settled:
+            got = run(conrel_type, parms, rest, reverse, together)
+            ok = ok and (got["box3d"] - got["bullet"]).length() < 0.3
+            rows.append(f"{label}{extra}: {show(got)}")
+        for extra, rest, reverse, together in swinging:
+            info.append(f"{label}{extra}: {show(run(conrel_type, parms, rest, reverse, together))}")
+    return [Result("bullet_position_rest_length", Result.PASS if ok else Result.FAIL,
+                   "; ".join(rows) + " (started at (2, 4, 0); expected within 0.3 of each other)"),
+            Result("bullet_position_rest_length", Result.INFO,
+                   "; ".join(info) + " (a swinging box, not compared)")]
+
+
+def spring_sag_run(kind, strength, damping, substeps):
+    """A 1 kg box hanging from a fixed one on a position-only SideFX Spring (rest length 0, both anchors at the point
+    between them): how far the box's centre sits below where it started (mean over the last second of 4)."""
+    pieces = [{"size": (1, 1, 1), "center": (0, 4, 0), "attrs": {"active": 0}},
+              {"size": (1, 1, 1), "center": (0, 2, 0), "attrs": {"active": 1}}]
+    anchor = (0, 3, 0)
+    dop, names = hanging_pair(f"spring_sag_{kind}_{int(strength)}_{substeps}", None,
+                              line_attrs={"constraint_type": "position"},
+                              conrels=[("springconrel", {"strength": strength, "damping": damping, "restlength": 0.0})],
+                              solver_kind=kind, pieces=pieces, anchors=(anchor, anchor),
+                              packed_parms={"computemass": 0, "mass": 1.0})
+    solver = next(n for n in dop.children() if n.type().name() in ("bulletrbdsolver", "box3d_solver", "box3dsolver"))
+    set_parm(solver, ["substeps"], substeps)
+    track = step(dop, 96, lambda sim, f: packed_positions(sim, "pieces")[names[1]][1])
+    return 2.0 - sum(track[f] for f in range(73, 97)) / 24.0
+
+
+def test_bullet_spring_cap():
+    """Bullet's Spring (btGeneric6DofSpring2Constraint) caps its stiffness at m / (16 dt^2) and its damping at m / dt,
+    dt being the frame time over Bullet's Substeps, and Box3D's mapping does not (a Box3D spring is implicit, stable at
+    any frequency, and a cap taken from our Substeps would be far softer than Bullet's at its default of 10). A 1 kg box
+    hangs on a Spring with Strength k and a critical Damping: the sag is m g / k below the cap, and m g / cap above it
+    (Substeps 1: cap 36, so a Strength of 1000 sags 0.27 m, not 0.0098; Substeps 4: cap 576, 0.017 m). Measured: Bullet
+    sags 0.26 and 0.017 there, Box3D 0.0098. INFO: the sag in each solver against Hooke's."""
+    rows = []
+    for substeps in (1, 4):
+        for k in (20.0, 1000.0):
+            c = 2.0 * math.sqrt(k)
+            got = {kind: spring_sag_run(kind, k, c, substeps) for kind in KINDS}
+            rows.append(f"Substeps {substeps}, Strength {k:g}, Damping {c:.1f}: sag Box3D {got['box3d']:.4f}, Bullet "
+                        f"{got['bullet']:.4f} (Hooke's {G / k:.4f})")
+    return [Result("bullet_spring_cap", Result.INFO, "; ".join(rows))]
+
+
+PER_STEP_MOTION = ("airresist", "spinresist", "targetv", "targetw")  # zeroed after each solve, as `force`
+
+
+def motion_run(kind, attrs, frames=72, spin=None, once=False):
+    """One 1 kg box falling freely (nothing under it) with the drag / limit point attributes `attrs` (and an initial
+    spin about z if `spin`), for `frames` frames at 24 per second: (its vertical speed, its spin about z) over the
+    last frame, both as magnitudes. airresist, spinresist, targetv and targetw are inputs for one step in Bullet (it
+    zeroes them after each solve, as `force`), so a SOP Solver writes them before the solver every frame, as a POP
+    Drag would; the others are on the point."""
+    # once: the attributes are on the point from the start and nothing writes them again.
+    stays = {k: v for k, v in attrs.items() if once or k not in PER_STEP_MOTION}
+    each = {k: v for k, v in attrs.items() if not once and k in PER_STEP_MOTION}
+    piece = {"size": (1, 1, 1), "center": (0, 1000, 0), "attrs": dict(stays, active=1)}
+    if spin is not None:
+        piece["attrs"]["w"] = (0.0, 0.0, spin)
+    path, names = packed_boxes(f"motion_{kind}_pieces", [piece])
+    dop = new_dopnet(f"motion_{kind}")
+    obj = packed_object(dop, "pieces", path, keep_velocity=spin is not None, computemass=0, mass=1.0)
+    if each:
+        vex = "".join(f"v@{k} = set({', '.join(str(c) for c in v)});" if isinstance(v, tuple) else f"f@{k} = {v};"
+                      for k, v in each.items())
+        writer = sop_solver(dop, vex)
+        if kind == "box3d":
+            last = multisolver(dop, obj, [writer, box3d_solver(dop, None)])
+        else:
+            last = create(dop, "gravity", "gravity")
+            last.setInput(0, multisolver(dop, obj, [writer, create(dop, "bulletrbdsolver", "bullet_solver")]))
+    else:
+        last = solver_for(kind, dop, obj)
+    finish(dop, last)
+
+    def sample(sim, f):
+        return packed_positions(sim, "pieces")[names[0]][1], packed_transform(sim, "pieces", names[0])
+
+    track = step(dop, frames, sample)
+    dy = abs(track[frames][0] - track[frames - 1][0]) * 24.0
+    turned = rotation_angle(track[frames - 1][1], track[frames][1]) * 24.0 * math.pi / 180.0
+    return dy, turned
+
+
+def test_bullet_drag_limits():
+    """The drag and speed limit point attributes (airresist, spinresist, drag, dragexp, targetv, speedmax, spinmax), as
+    RBD Bullet Solver reads them, in both solvers. A 1 kg box falling freely: quadratic drag (airresist 2) ends at the
+    speed where the drag is the weight, sqrt(g / 2); linear drag (dragexp 1, airresist 4) at g / 4; `drag` scales the
+    resist (airresist 2, drag 2: sqrt(g / 4)); a target velocity moves the end speed to it plus that; speedmax caps
+    the fall; a spinning box slowed by spinresist and capped by spinmax. airresist, spinresist, targetv and targetw are
+    one-step inputs (Bullet zeroes them after each solve, as `force`), written every frame. Both solvers apply the drag
+    as one implicit step of their own Substeps (Bullet 10, Box3D 2 here), so their end speeds differ by what that step
+    size gives (up to 6 percent here, both below the formula). speedmax is applied after Box3D's step, so the speed the
+    frame averages is a little over it (the gravity gained in a step, 0.2 m/s here). Passes when both solvers agree
+    within 5 percent (0.2 m/s for the cap, 0.1 rad/s for the spin) and Box3D is within 8 percent of the formula."""
+    g = G
+    cases = (
+        ("quadratic drag", {"airresist": 2.0}, None, math.sqrt(g / 2.0), "fall"),
+        ("linear drag", {"airresist": 4.0, "dragexp": 1.0}, None, g / 4.0, "fall"),
+        ("drag scales the resist", {"airresist": 2.0, "drag": 2.0}, None, math.sqrt(g / 4.0), "fall"),
+        ("target velocity", {"airresist": 2.0, "targetv": (0.0, -3.0, 0.0)}, None, 3.0 + math.sqrt(g / 2.0), "fall"),
+        ("speedmax", {"speedmax": 3.0}, None, 3.0, "fall"),
+        ("spin drag", {"spinresist": 3.0}, 6.0, None, "spin"),
+        ("spinmax", {"spinmax": 2.0}, 6.0, 2.0, "spin"),
+    )
+    rows, ok = [], True
+    for label, attrs, spin, want, kind_of in cases:
+        got = {kind: motion_run(kind, attrs, spin=spin) for kind in KINDS}
+        if kind_of == "spin":
+            a, b = got["box3d"][1], got["bullet"][1]
+            good = abs(a - b) < 0.1 and (want is None or abs(a - want) < 0.1)
+            rows.append(f"{label}: spin Box3D {a:.2f}, Bullet {b:.2f} rad/s" + (f" (expected {want:g})" if want else ""))
+        else:
+            a, b = got["box3d"][0], got["bullet"][0]
+            good = abs(a - b) < 0.05 * max(b, 1e-6) + (0.2 if label == "speedmax" else 0.02)
+            if kind_of == "fall" and want is not None:
+                good = good and abs(a - want) < 0.08 * want
+            rows.append(f"{label}: speed Box3D {a:.3f}, Bullet {b:.3f} m/s" + (f" (formula {want:.3f})" if want else ""))
+        ok = ok and good
+    # airresist on the point from the start, never written again: zeroed after the first solve in both, so the box
+    # falls freely (about g * 3 s = 29 m/s) but for the first frame.
+    once = {kind: motion_run(kind, {"airresist": 2.0}, once=True)[0] for kind in KINDS}
+    good = all(v > 20.0 for v in once.values())
+    ok = ok and good
+    rows.append(f"airresist set once: speed Box3D {once['box3d']:.1f}, Bullet {once['bullet']:.1f} m/s (free fall: it is "
+                "cleared after the first solve)")
+    return [Result("bullet_drag_limits", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
 
 
 PRIMR_THROUGH_CASES = ((30, 0, 60), (30, 0, 0), (0, 0, 60), (30, 0, 30), (0, 0, 30), (0, 0, 45), (0, 30, 0),
@@ -1561,6 +1749,9 @@ TESTS = {
     "bullet_primr_order": test_bullet_primr_order,
     "bullet_shape_probe": test_bullet_shape_probe,
     "bullet_joint_rest": test_bullet_joint_rest,
+    "bullet_drag_limits": test_bullet_drag_limits,
+    "bullet_spring_cap": test_bullet_spring_cap,
+    "bullet_position_rest_length": test_bullet_position_rest_length,
     "bullet_joint_rest_held": test_bullet_joint_rest_held,
     "bullet_rbd_box_settle": test_bullet_rbd_box_settle,
     "bullet_rbd_pivot": test_bullet_rbd_pivot,
