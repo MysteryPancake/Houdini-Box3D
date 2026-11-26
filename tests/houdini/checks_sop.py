@@ -1,6 +1,8 @@
 """The Box3D Solver SOP (tools/make_solver_sop.py): its layout, pieces and proxy, solving before and on the first
 frame, rest anchors, World Scale, Impacts and POP forces in FORCES."""
 
+import math
+
 import hou
 from b3dtest import GROUND, Result, close, constraint_lines, create, display, new_geo, packed_boxes, set_parm
 
@@ -95,6 +97,41 @@ def test_solver_sop_forces():
                               f"POP Force on {output}: box at {tuple(round(c, 4) for c in pos) if pos else None} "
                               f"after 1 s (expected x above 0, y 3: pushed sideways, no gravity)"))
     return results
+
+
+def test_solver_sop_world_scale_forces():
+    """A POP Wrangle on FORCES' PRESOLVE writing force and torque in real units (Gravity 0) moves and turns a box the
+    same under World Scale 1, 10 and 0.1 (`scale_forces`: forces follow the scale, torques its square), and the
+    asset's scale_forces node is skipped at World Scale 1."""
+    got = {}
+    for k in (1.0, 10.0, 0.1):
+        pieces, names = packed_boxes(f"sop_scale_force_pieces_{str(k).replace('.', '_')}",
+                                     [{"size": (1, 1, 1), "center": (0, 3, 0)}])
+        sop = solver_sop(f"sop_scale_force_{str(k).replace('.', '_')}", geometry=pieces)
+        set_parm(sop, ["gravity"], (0.0, 0.0, 0.0))
+        set_parm(sop, ["usescale"], 1 if k != 1.0 else 0)
+        set_parm(sop, ["scale"], k)
+        forces = sop.node("dopnet/FORCES")
+        wr = create(forces, "popwrangle", "push")
+        set_parm(wr, ["snippet"], "v@force = {5000, 0, 0}; v@torque = {0, 0, 300};")
+        forces.node("PRESOLVE").setInput(0, wr)
+
+        def sample(s, f):
+            if f != 24:
+                return None
+            pt = s.geometry(3).points()[0]
+            q = pt.attribValue("orient")
+            return pt.position()[0], 2.0 * math.degrees(math.acos(min(1.0, abs(q[3]))))
+
+        got[k] = play(sop, 24, sample)[24]
+    base = got[1.0]
+    ok = base is not None and base[0] > 0.01 and base[1] > 0.5 and all(
+        got[k] is not None and abs(got[k][0] - base[0]) < 0.01 * base[0] + 1e-3
+        and abs(got[k][1] - base[1]) < 0.02 * base[1] + 0.05 for k in (10.0, 0.1))
+    return [Result("solver_sop_world_scale_forces", Result.PASS if ok else Result.FAIL,
+                   "x moved and degrees turned after 1 s: " + ", ".join(
+                       f"World Scale {k}: {got[k][0]:.4f} / {got[k][1]:.3f}" if got[k] else f"{k}: None" for k in got)
+                   + " (expected the same in each, both above 0)")]
 
 
 def piece_bounds(geo):
@@ -1006,6 +1043,7 @@ TESTS = {
     "solver_sop_initial_bake": test_solver_sop_initial_bake,
     "solver_sop_removed_pieces": test_solver_sop_removed_pieces,
     "solver_sop_world_scale": test_solver_sop_world_scale,
+    "solver_sop_world_scale_forces": test_solver_sop_world_scale_forces,
     "solver_sop_animated_setting": test_solver_sop_animated_setting,
     "solver_sop_fast_transform": test_solver_sop_fast_transform,
     "solver_sop_impacts": test_solver_sop_impacts,

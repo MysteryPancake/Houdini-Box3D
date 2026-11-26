@@ -190,14 +190,10 @@ if (hasprimattrib(0, "auto_restlength")) {
 SCALE_FORCES_VEX = """\
 float s = chf("scale");
 if (s == 1) return;
-if (haspointattrib(0, "force")) {
-    vector f = point(0, "force", i@ptnum);
-    setpointattrib(0, "force", i@ptnum, f * s);
-}
-if (haspointattrib(0, "torque")) {
-    vector t = point(0, "torque", i@ptnum);
-    setpointattrib(0, "torque", i@ptnum, t * s * s);
-}
+// The bindings, not point(0, ...): a POP Wrangle has no first input, so a handle on 0 sees no points. They add
+// the two attributes when no force wrote them (zeros, which the solver reads and clears).
+v@force *= s;
+v@torque *= s * s;
 """
 # The pieces after packing (Transform scaled P, v, w and the packed transforms): Bullet's
 # scale_density_and_attribs (density / s^3, w back, as the Transform scaled it), plus the hand-set

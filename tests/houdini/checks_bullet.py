@@ -2017,6 +2017,112 @@ def test_bullet_computecom():
     return results
 
 
+def com_bar_scene(tag, extra=None):
+    """The offset bar (2 x 1 x 1, its point at the origin, its shape centred 1 m along x, named `bar` on its point),
+    merged with packed boxes `extra` (packed_boxes specs). Returns (sop path, the extra pieces' names)."""
+    geo = new_geo(tag)
+    box = create(geo, "box", "bar")
+    set_parm(box, ["size"], (2.0, 1.0, 1.0))
+    set_parm(box, ["t"], (1.0, 0.0, 0.0))
+    pack = create(geo, "pack", "pack")
+    pack.setInput(0, box)
+    set_parm(pack, ["pivot"], 0)  # origin: the point is not the shape's centre
+    wr = create(geo, "attribwrangle", "attributes")
+    wr.setInput(0, pack)
+    set_parm(wr, ["class"], 2)
+    set_parm(wr, ["snippet"], 's@name = "bar"; i@active = 1;')
+    last, names = wr, []
+    if extra:
+        path, names = packed_boxes(tag + "_extra", extra)
+        source = create(geo, "object_merge", "extra")
+        set_parm(source, ["objpath1"], path)
+        last = create(geo, "merge", "both")
+        last.setInput(0, wr)
+        last.setInput(1, source)
+    display(last)
+    return last.path(), names
+
+
+def com_bar_state(sim, f):
+    """The bar's packed transform (position, 3x3 rotation), where its geometry is, and its v and w."""
+    g = sim.findObject("pieces").geometry()
+    i = next(k for k, p in enumerate(g.points()) if p.attribValue("name") == "bar")
+    m = g.prims()[i].intrinsicValue("packedfulltransform")
+    a = point_attributes(sim, "pieces", "bar", ["v", "w"])
+    return hou.Vector3(m[12:15]), [[m[r * 4 + c] for c in range(3)] for r in range(3)], a["v"], a["w"]
+
+
+def com_bar_run(tag, kind, case):
+    """The offset bar with computecom on, in `case`: "spin" (3 rad/s about y and 1 m/s along x, no gravity), "pin"
+    (hanging from the world by a SideFX Hard pin at its far end), "glue" (glued to a box beside its point, dropped onto
+    the ground), "force" (point force (0, 20000, 0) and torque (0, 0, 2000) every frame, no gravity)."""
+    extra = None
+    if case == "glue":
+        extra = [{"size": (1, 1, 1), "center": (-0.5, 0, 0), "attrs": {"active": 1}},
+                 dict(GROUND, center=(0, -3.5, 0), attrs={"active": 0})]
+    path, names = com_bar_scene(tag + "_geo", extra)
+    dop = new_dopnet(tag)
+    spin = {"angvely": 171.887, "vel": (1.0, 0.0, 0.0)} if case == "spin" else {}
+    last = packed_object(dop, "pieces", path, computecom=1, **spin)
+    if case in ("pin", "glue"):
+        kind_node = create(dop, "hardconrel" if case == "pin" else "glueconrel", "joint")
+        set_parm(kind_node, ["restlength"] if case == "pin" else ["strength"], 0.0 if case == "pin" else 1e12)
+        net = create(dop, "constraintnetwork", "constraint_network")
+        net.setInput(0, last)
+        line = (("", (2, 0, 0), "bar", (2, 0, 0), "Hard", {"constraint_type": "position"}) if case == "pin"
+                else ("bar", (0, 0, 0), names[0], (0, 0, 0), "Glue"))
+        set_parm(net, ["soppath", "constraintsoppath", "geosoppath"], constraint_lines(tag + "_network", [line]))
+        net.setInput(1, kind_node)
+        last = net
+    gravity = case in ("pin", "glue")
+    writer = sop_solver(dop, "v@force = {0, 20000, 0}; v@torque = {0, 0, 2000};") if case == "force" else None
+    if kind == "box3d":
+        solver = box3d_solver(dop, None if writer else last, gravity=None if gravity else (0, 0, 0))
+        last = multisolver(dop, last, [writer, solver]) if writer else solver
+    else:
+        solver = create(dop, "bulletrbdsolver", "bullet_solver")
+        if writer:
+            last = multisolver(dop, last, [writer, solver])
+        else:
+            solver.setInput(0, last)
+            last = solver
+        if gravity:
+            pull = create(dop, "gravity", "gravity")
+            pull.setInput(0, last)
+            last = pull
+    finish(dop, last)
+    return step(dop, 36 if case == "glue" else 24, com_bar_state)
+
+
+def test_bullet_computecom_cases():
+    """computecom (on) with a velocity, a joint, Glue and forces, against Bullet: the offset bar (its point 1 m from its
+    shape's centre; Bullet moves the point to the centre of mass, Box3D keeps it on the body origin, so the packed
+    transform, which the geometry follows, is compared). Spinning at 3 rad/s while moving at 1 m/s: v and w are the
+    centre's in both. Hanging by a pin at its far end, swinging. Pushed by a point force and twisted by a point torque:
+    both act at the centre of mass. Glued to a box and dropped: the same through the fall. Passes when the transforms
+    are within 0.01 and 0.2 degrees and v / w within 0.05 on every frame (the glued chunk to frame 12; after its
+    landing within 0.15 and 1 degree: any box landing flat at speed tips slightly in Box3D, glued or not, see
+    status.md)."""
+    rows, ok = [], True
+    for case in ("spin", "pin", "force", "glue"):
+        got = {kind: com_bar_run(f"com_{case}_{kind}", kind, case) for kind in KINDS}
+        worst_p = worst_r = worst_v = 0.0
+        late_p = late_r = 0.0
+        for f in sorted(got["box3d"]):
+            a, b = got["box3d"][f], got["bullet"][f]
+            dp, dr = (a[0] - b[0]).length(), rotation_angle(a[1], b[1])
+            dv = max((hou.Vector3(a[2]) - hou.Vector3(b[2])).length(), (hou.Vector3(a[3]) - hou.Vector3(b[3])).length())
+            if case == "glue" and f > 12:
+                late_p, late_r = max(late_p, dp), max(late_r, dr)
+                continue
+            worst_p, worst_r, worst_v = max(worst_p, dp), max(worst_r, dr), max(worst_v, dv)
+        good = worst_p < 0.01 and worst_r < 0.2 and worst_v < 0.05 and late_p < 0.15 and late_r < 1.0
+        ok = ok and good
+        rows.append(f"{case}: largest differences {worst_p:.4f}, {worst_r:.2f} deg, v / w {worst_v:.3f}"
+                    + (f" (after landing {late_p:.3f}, {late_r:.2f} deg)" if case == "glue" else ""))
+    return [Result("bullet_computecom_cases", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
 # ---------------------------------------------------------------------------
 # bullet_georep plane on a packed piece
 # ---------------------------------------------------------------------------
@@ -2197,6 +2303,7 @@ def test_bullet_glue_materials():
 
 TESTS = {
     "bullet_computecom": test_bullet_computecom,
+    "bullet_computecom_cases": test_bullet_computecom_cases,
     "bullet_glue_materials": test_bullet_glue_materials,
     "bullet_force_sampling": test_bullet_force_sampling,
     "bullet_plane_piece": test_bullet_plane_piece,

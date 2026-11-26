@@ -8,7 +8,9 @@ is updated: [bodies.md](bodies.md). Index and rules: [CLAUDE.md](../../CLAUDE.md
 * **Centre of mass** (`computecom`, default on as Bullet's): `applyBodyMass` ->
   `applyMassByHandle(comAtOrigin = !computecom)` after creation, rebuild, retype to dynamic and mass changes. On,
   Box3D keeps the shapes' own centre of mass and the point (the body origin, a packed point's pivot) orbits it;
-  velocity is the centre's. Off, the centre is moved to the point. Whole objects always move it (`wholeObjectPose`
+  velocity is the centre's. Off, the centre is moved to the point. Bullet moves the point to the centre of mass and
+  writes `pivot` instead; the packed transform (where the geometry is), `v` and `w` agree, also with a joint, point
+  forces and Glue (`bullet_computecom`, `bullet_computecom_cases`). Whole objects always move it (`wholeObjectPose`
   handles RBD State's own `computecom`).
 * **Mass** (`computemass`, `density`, `inertialtensorstiffness`): `boxDensity` = density with computemass, else
   mass / volume. With computemass the mass is written to `mass` on creation, rebuild or change.

@@ -695,6 +695,51 @@ def test_configure_initial_state():
                    f"(expected 2), other {x1:.3f} (expected 0)")]
 
 
+def test_configure_use_bounds():
+    """Box3D Configure's Bounds and Use Bounds (RBD Configure's): Body Type Static with Use Bounds makes the pieces inside
+    the bounds static and the others Dynamic, as the Bounding Box (Size, Center) and as the Static Bounds Geometry input
+    (Bounding Geometry: its bounding box). Through the Box3D Solver SOP the pieces inside stay at y = 3 and the others
+    fall."""
+    pieces, names = packed_boxes("cfg_bounds_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0)},
+                                                       {"size": (1, 1, 1), "center": (3, 3, 0)}])
+    marker = new_geo("cfg_bounds_marker")
+    box = create(marker, "box", "box")
+    set_parm(box, ["size"], (1.5, 1.5, 1.5))
+    set_parm(box, ["t"], (3, 3, 0))
+    display(box)
+    rows, ok = [], True
+    for label, inside in (("Bounding Box", names[0]), ("Bounding Geometry", names[1])):
+        geo = new_geo(f"cfg_bounds_{label.split()[1].lower()}")
+        src = create(geo, "object_merge", "pieces")
+        set_parm(src, ["objpath1"], pieces)
+        cfg = create(geo, "box3d_configure", "configure")
+        cfg.setInput(0, src)
+        if label == "Bounding Box":
+            set_parm(cfg, ["boundingtype"], 0)
+            set_parm(cfg, ["bboxsize"], (1.5, 1.5, 1.5))
+            set_parm(cfg, ["bboxcenter"], (0, 3, 0))
+        else:
+            set_parm(cfg, ["boundingtype"], 1)
+            bounds = create(geo, "object_merge", "bounds")
+            set_parm(bounds, ["objpath1"], marker.path())
+            cfg.setInput(3, bounds)
+        for n, v in (("group1", ""), ("addbodytype1", 1), ("bodytype1", 0), ("usebodytypebounds1", 1)):
+            set_parm(cfg, [n], v)
+        g = cfg.geometry()
+        active = {p.attribValue("name"): p.attribValue("active") for p in g.points()} if g is not None else {}
+        solver = create(geo, "box3d_solver", "box3d_solver")
+        solver.setInput(0, cfg)
+        display(solver)
+        pos = play(solver, 24, lambda s, f: named_positions(s.geometry(0)) if f == 24 else None)[24]
+        other = names[1] if inside == names[0] else names[0]
+        good = (active.get(inside) == 0 and active.get(other) == 1 and close(pos[inside][1], 3.0, 1e-3)
+                and pos[other][1] < 2.0)
+        ok = ok and good
+        rows.append(f"{label}: active {active}, y inside {pos[inside][1]:.3f}, outside {pos[other][1]:.3f}")
+    return [Result("configure_use_bounds", Result.PASS if ok else Result.FAIL,
+                   "; ".join(rows) + " (expected the piece inside active 0 and at y 3, the other active 1 and fallen)")]
+
+
 def test_configure_speed_limit():
     """Box3D Configure's Speed Limit folder (RBD Configure's): Speed Max 3 and Acceleration Max 5 on the group's piece
     write speedmax and accelmax on its point only (the other piece gets none, or -1, no limit). Through the Box3D
@@ -800,6 +845,43 @@ def test_packed_object_overwrite_from_sop():
                    f"{off[0]:.3f} {off[1]:.3f} {off[2]:.3f} (expected still falling)")]
 
 
+def test_packed_object_display_geometry():
+    """The Box3D Packed Object's Display Geometry and Collider Label, as RBD Packed Object's: Simulation Geometry shows the
+    object's own geometry (Rendering Parameters Volatile on, the SOP Guide off), Render Geometry the reverse, and the
+    guide's Render SOP Path spheres (matched by `name`) follow the simulated boxes down; the Collider Label is
+    PackedObject, and the solver still moves the pieces one body per point."""
+    path, names = packed_boxes("display_pieces", [{"size": (1, 1, 1), "center": (0, 4, 0)},
+                                                  {"size": (1, 1, 1), "center": (3, 4, 0)}])
+    hires = new_geo("display_hires")
+    merge = create(hires, "merge", "merge")
+    for i, (name, x) in enumerate(zip(names, (0, 3))):
+        sphere = create(hires, "sphere", f"sphere{i}")
+        set_parm(sphere, ["t"], (x, 4, 0))
+        tag = create(hires, "attribwrangle", f"name{i}")
+        tag.setInput(0, sphere)
+        set_parm(tag, ["class"], 1)
+        set_parm(tag, ["snippet"], f's@name = "{name}";')
+        merge.setInput(i, tag)
+    display(merge)
+    dop = new_dopnet("display_geometry")
+    obj = box3d_packed_object(dop, "pieces", path, display=1, displaygeo=1, rendergeopath=hires.path())
+    finish(dop, solver_for("box3d", dop, obj))
+    ys = step(dop, 24, lambda sim, f: sorted(p[1] for p in packed_positions(sim, "pieces").values()))
+    guide, renderparms, label = obj.node("visualize_hires"), obj.node("renderparmsvolatile"), obj.node("colliderlabel")
+    points = guide.node("repeat_end1").geometry().points()
+    guide_y = sorted(pt.position()[1] for pt in points)
+    render = (renderparms.parm("display").eval(), guide.parm("showguide").eval())
+    set_menu_token(obj, ["displaygeo"], "simgeo")
+    simulation = (renderparms.parm("display").eval(), guide.parm("showguide").eval())
+    label_value = label.parm("colliderlabel").eval()
+    follows = len(guide_y) == 2 and len(ys[24]) == 2 and all(abs(a - b) < 1e-3 for a, b in zip(guide_y, ys[24]))
+    fell = bool(ys[24]) and ys[24][0] < 3.0
+    ok = follows and fell and render == (0, 1) and simulation == (1, 0) and label_value == "PackedObject"
+    return [Result("packed_object_display_geometry", Result.PASS if ok else Result.FAIL,
+                   f"piece heights {ys[24]}, guide heights {guide_y} (expected equal and below 3); (geometry shown, guide shown) "
+                   f"Render {render} Simulation {simulation} (expected (0, 1) / (1, 0)); Collider Label {label_value!r}")]
+
+
 # ---------------------------------------------------------------------------
 # The group / attribute menus beside the fields (MENU_SOURCE in tools/b3d_hda.py)
 # ---------------------------------------------------------------------------
@@ -879,7 +961,9 @@ def test_asset_menus():
 TESTS = {
     "asset_menus": test_asset_menus,
     "packed_object_overwrite_from_sop": test_packed_object_overwrite_from_sop,
+    "packed_object_display_geometry": test_packed_object_display_geometry,
     "configure_packs": test_configure_packs,
+    "configure_use_bounds": test_configure_use_bounds,
     "constraint_properties_scaling": test_constraint_properties_scaling,
     "constraint_properties_closest_surface": test_constraint_properties_closest_surface,
     "constraint_properties_proxy_transfer": test_constraint_properties_proxy_transfer,

@@ -48,13 +48,12 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * Overwrite Attributes from SOP as an Attribute Copy list (`copy_attribs`, `SIM_GEO` in the Packed Object stage): not
   checked is an animated collider (`reimportsop`) still moving.
 
-* `computecom` on points (default on, as Bullet; `bullet_computecom` matches). Bullet also moves the point to the
-  centre of mass and writes `pivot`, which Box3D does not. Not checked: `v` (the centre's velocity here), and joints,
-  Glue and forces with it on.
-* Box3D Packed Object's Display Geometry (`visualize_hires`) and Collider Label (`add_display`): checked against a
-  stand-in `hou` only. The build's `check` probes both.
-* Box3D Configure's Bounds / Use Bounds and World Scale on FORCES: no test, only the builders' `check`s (Use Bounds, the
-  joint scaling).
+* A box landing flat at speed tips slightly in Box3D and Bullet's does not: a 1 m cube dropped 2.5 (about 7 m/s)
+  tilts up to 0.95 degrees on the bounce and ends about 0.1 to the side (Bullet: 0.32 degrees, 0.002), glued or not,
+  packed or RBD Object, any thread count, with or without bounce, Continuous Collision or contact recycling; dropped
+  0.1 it lands level in both. It grows with the overlap a fast landing makes (a lower Overlap Push Speed halves it), so
+  it is Box3D's contact solve, which works a manifold's points one after another (`contact_solver_wide.inl`), not the
+  wrapper. `bullet_computecom_cases`' glue case allows for it after the landing.
 
 **Build**
 * Linux plugin build (only the core builds in CI): `build.sh`, gcc warnings in `src/dop` / `src/sync`, the dso and

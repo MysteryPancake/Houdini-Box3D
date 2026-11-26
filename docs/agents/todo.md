@@ -83,6 +83,9 @@ Features to add in the fork. Once one exists, the wrapper maps it and the entry 
 * **Parallel joint orbit.** A parallel joint with a twist limit orbited at about 72°: not understood.
 * **Clipping into a fast kinematic collider.** A box resting on a collider lifted 0.5 a frame sinks into it instead of
   riding on top (`solver_sop_solve_first_frame_bullet`, INFO).
+* **Level landings.** A box landing flat at speed tips up to about a degree, where Bullet's stays level (status.md):
+  the manifold's points are solved in order. Alternating the order each pass, or solving a face contact's points
+  together, would keep it level.
 * **Wide and elliptical cones.** `b3SphericalJoint_SetConeLimit` asserts the angle is at most 90°, and the cone is
   round. Cone Twist's wider and elliptical cones (unmapped above) need both lifted.
 

@@ -51,7 +51,8 @@ and forces: [solver-sop.md](solver-sop.md). Index and rules: [CLAUDE.md](../../C
   (`linear_velocity`) and `auto_restlength`. FORCES: `scale_forces`, a POP Wrangle behind `enable_scale_forces` (only
   while World Scale is on and not 1: it costs a step even when it returns at once) after PRESOLVE in the Multiple
   Solver, scales `force` and `torque` (`SCALE_FORCES_VEX`), so POP force values are real units. POSTSOLVE is not
-  scaled.
+  scaled. It uses the `@` bindings: a POP Wrangle has no first input, so `point(0, ...)` / `haspointattrib(0, ...)`
+  see no points (test `solver_sop_world_scale_forces`).
 * Constraints output: DOP Import of the pieces object, Geometry Data Path `ConstraintGeometry`, nothing transformed,
   packed or tagged (`CONSTRAINTS_TOGGLES`), so it carries `broken`, `force` and the rest. The solver does not move its
   points, so a Transform Pieces onto the simulation points carries them with their pieces; world-anchored points
