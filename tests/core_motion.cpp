@@ -123,6 +123,77 @@ int main() {
     CHECK(!w.inertiaWorldByHandle(0, i));
   }
 
+  // ---- the inertia of the box over a hull (Bullet's convex hulls) ----
+  {
+    float inv[6], turned[6];
+    const float ext[3] = {2.0f, 1.0f, 1.0f};
+    // About x: m (1 + 1) / 12 = 2, about y and z: m (4 + 1) / 12 = 5.
+    CHECK(boundsInverseInertia(ext, 12.0f, inv));
+    CHECK(near(inv[0], 0.5, 1e-6) && near(inv[1], 0.2, 1e-6) &&
+          near(inv[2], 0.2, 1e-6));
+    // The rest axes turned 90 degrees about z from the body's: the long axis is
+    // the body's y.
+    const float q90z[4] = {0, 0, 0.70710678f, 0.70710678f};
+    CHECK(boundsInverseInertiaIn(ext, 12.0f, q90z, turned));
+    CHECK(near(turned[0], 0.2, 1e-5) && near(turned[1], 0.5, 1e-5) &&
+          near(turned[2], 0.2, 1e-5) && near(turned[3], 0.0, 1e-5));
+    // 45 degrees about z: the long axis is between x and y, so xy is
+    // (0.5 - 0.2) / 2 in size.
+    const float q45z[4] = {0, 0, 0.38268343f, 0.92387953f};
+    CHECK(boundsInverseInertiaIn(ext, 12.0f, q45z, turned));
+    CHECK(near(std::fabs(turned[3]), 0.15, 1e-4) &&
+          near(turned[0], 0.35, 1e-4));
+    CHECK(!boundsInverseInertiaIn(ext, 0.0f, nullptr, turned));
+
+    WorldSettings ws;
+    Box3DWorld w;
+    CHECK(w.create(ws));
+    const auto hullBody = [&](const float *pts, int n, double y) {
+      BodySettings b;
+      const double p[3] = {0, y, 0};
+      const BodyHandle h = w.createBody(b, p, kQid);
+      const HullId id = w.createHull(pts, n);
+      CHECK(id != 0 && w.createHullShape(h, b, id));
+      return h;
+    };
+    // A tetrahedron: a hull that is not a box.
+    const float tetra[12] = {1, 1, 1, 1, -1, -1, -1, 1, -1, -1, -1, 1};
+    const BodyHandle t = hullBody(tetra, 4, 5);
+    float e[3] = {0, 0, 0};
+    CHECK(w.boundsInertiaExtentsByHandle(t, nullptr, 0.0f, e));
+    CHECK(near(e[0], 2.0, 1e-3) && near(e[1], 2.0, 1e-3) &&
+          near(e[2], 2.0, 1e-3));
+    CHECK(w.boundsInertiaExtentsByHandle(t, nullptr, 0.08f, e));
+    CHECK(near(e[0], 2.08, 1e-3));
+    // A box hull, upright and turned: exact already.
+    const float cube[24] = {-1, -1, -1, 1, -1, -1, -1, 1, -1, 1, 1, -1,
+                            -1, -1, 1,  1, -1, 1,  -1, 1, 1,  1, 1, 1};
+    CHECK(!w.boundsInertiaExtentsByHandle(hullBody(cube, 8, 10), nullptr, 0.0f,
+                                          e));
+    const float c = 0.70710678f; // the cube turned 45 degrees about z
+    const float turnedCube[24] = {-c, -c, -1, c, -c, -1, -c, c, -1, c, c, -1,
+                                  -c, -c, 1,  c, -c, 1,  -c, c, 1,  c, c, 1};
+    CHECK(!w.boundsInertiaExtentsByHandle(hullBody(turnedCube, 8, 15), nullptr,
+                                          0.0f, e));
+    // No shape, one sphere: not. Two spheres 4 apart: the box over them.
+    BodySettings b;
+    const double p0[3] = {0, 20, 0};
+    const BodyHandle two = w.createBody(b, p0, kQid);
+    CHECK(!w.boundsInertiaExtentsByHandle(two, nullptr, 0.0f, e));
+    ShapeSpec ball;
+    ball.type = ShapeType::Sphere;
+    ball.radius = 0.5f;
+    CHECK(w.createShape(two, b, ball));
+    CHECK(!w.boundsInertiaExtentsByHandle(two, nullptr, 0.0f, e));
+    ball.center[0] = 4.0f;
+    CHECK(w.createShape(two, b, ball));
+    CHECK(w.boundsInertiaExtentsByHandle(two, nullptr, 0.0f, e));
+    CHECK(near(e[0], 5.0, 1e-3) && near(e[1], 1.0, 1e-3));
+    // The rest frame turned 90 degrees about z: the long side is y.
+    CHECK(w.boundsInertiaExtentsByHandle(two, q90z, 0.0f, e));
+    CHECK(near(e[0], 1.0, 1e-3) && near(e[1], 5.0, 1e-3));
+  }
+
   std::printf("OK\n");
   return fails ? 1 : 0;
 }

@@ -145,6 +145,8 @@ struct Box3DSharedState {
   // solver Reap Dead Points: `dead` points are deleted (else kept, out of the
   // simulation)
   bool reapDead = true;
+  // solver Bounding Box Inertia (BodyProps::shapeBoundsInertia)
+  bool shapeBoundsInertia = true;
   // solver Reap At Frame End: points that die during the step (aging) are
   // deleted at its end; else kept this frame and deleted by the next step
   bool reapAtFrameEnd = true;

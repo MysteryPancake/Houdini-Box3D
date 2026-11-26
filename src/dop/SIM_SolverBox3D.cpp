@@ -181,12 +181,23 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                   "moving ones, for Box3D Data's Fast Object).")
           .number("maxlinearspeed", "Max Linear Speed", 400.0, R{0, 1000},
                   "Speed limit for every body, in units per second.")
-          .number("isotropicinertia", "Isotropic Inertia Tolerance", 0.2,
-                  R{0, 1, true},
-                  "Treats nearly spherical bodies as spheres for spin. Applies "
-                  "to new bodies and mass changes.")
-          .subfolder("Ground Box")
-          .vector("groundsize", "Ground Box Size", {1000, 10, 1000},
+          .subfolder("Mass & Inertia")
+          .toggle(
+              "boundsinertia", "Bounding Box Inertia", true,
+              "Give a convex hull (or a body of several shapes) the "
+              "inertia of the solid box around it, as Bullet does, so "
+              "pieces spin as they do there: harder than their true shape "
+              "implies. Off uses the shape's own inertia. A single box, "
+              "sphere or capsule keeps its own either way, and an RBD Object "
+              "keeps its own Compute Inertial Tensor choice. Applies to new "
+              "bodies and mass changes.")
+          .number(
+              "isotropicinertia", "Near-Sphere Tolerance", 0.2, R{0, 1, true},
+              "How close to a sphere a body's inertia must be to be treated "
+              "as one for spin (isotropic inertia). Applies to new bodies "
+              "and mass changes.")
+          .subfolder("Ground")
+          .vector("groundsize", "Box Size", {1000, 10, 1000},
                   "The box a Ground Plane DOP or a static plane piece makes: "
                   "its width "
                   "along x, its depth below the surface (y) and its length "
@@ -740,6 +751,7 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
   st->fullScans = 0;
   st->wantNames = anyJointNetwork(objects);
   st->reapDead = getReapDead();
+  st->shapeBoundsInertia = getBoundsInertia();
   st->reapAtFrameEnd = getReapAtFrameEnd();
   st->glueCompounds = getGlueCompound();
   st->compoundIds = getCompoundIds();

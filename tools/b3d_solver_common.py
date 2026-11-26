@@ -40,8 +40,8 @@ PIECES_DROPPED = {"enablesleep"}
 # (tab, [(folder label, members by parameter name or label)]); a parameter in none stays loose.
 TAB_GROUPS = {
     # Solver has no folders (World Scale, Time Scale, Substeps ... loose), and Gravity is a folder in Forces with Add Gravity as its header checkbox.
-    "Advanced": [("Stability", ["enablewarmstarting", "enablecontinuous", "maxlinearspeed",
-                                "isotropicinertia"]),
+    "Advanced": [("Stability", ["enablewarmstarting", "enablecontinuous", "maxlinearspeed"]),
+                 ("Mass & Inertia", ["boundsinertia", "isotropicinertia"]),
                  # Cache Simulation / Cache Memory (MB) join this folder first (make_solver_sop.py).
                  ("Performance", ["autothreads", "threads"])],
 }

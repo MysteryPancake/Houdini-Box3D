@@ -76,14 +76,14 @@ state and messages. Its network: [solver-sop.md](solver-sop.md). Index and rules
   colouring and the constraint guide folders have no counterpart), then Advanced and Output always last; the solver's
   parameters are regrouped by name (`SOLVER_FOLDERS`, `IMPACT_SPEED`, `SHAPES_TOGGLE`, pulled with `pull`), whichever
   DOP tab holds them: the DOP's tabs and folders follow this layout (Contacts, Sleeping and Aging folders on the
-  Solver tab, Force DOPs, Bounce / Friction and Glue on Forces, Stability and Performance on Advanced), so only
+  Solver tab, Force DOPs, Bounce / Friction and Glue on Forces, Stability, Mass & Inertia and Performance on Advanced), so only
   Contacts and Sleeping are rebuilt (Sleeping closed), Aging is pulled (`AGING_PARMS`) into Output's Attributes
   folder, Forces keeps the DOP's folders as they are, Advanced is flattened and regrouped by `TAB_GROUPS`, and DOP
   tabs left empty (Visualization, Output) are dropped. Solver: a General folder (World Scale, Time Scale), a
   Simulation folder (the solver's own settings, Solve on Creation Frame, Cache Simulation with its label hidden,
   joined to Cache Memory (MB), which it disables when off), then Contacts and Sleeping. Cache Memory is the inner DOP
   network's value with the parameters on its row (`row_of`, `CACHE_MEMORY`). Advanced is Stability (warm starting,
-  continuous, speed limit, inertia), Performance (threads), Collision (the collider's Solve on Creation Frame) and
+  continuous, speed limit), Mass & Inertia (bounding box inertia, near-sphere tolerance), Performance (threads), Collision (the collider's Solve on Creation Frame) and
   Constraints (a closed folder per joint type). Collision: one Collision Geometry folder whose header checkbox is Use
   External Collisions (`usecollisions`, placed just before the folder, as RBD Bullet Solver's), holding Collision Type
   and the collision object's Shape, Material and CCD & Contacts folders (`COLLIDER_FOLDERS`, all named `collision_*`),

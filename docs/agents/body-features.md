@@ -12,6 +12,16 @@ is updated: [bodies.md](bodies.md). Index and rules: [CLAUDE.md](../../CLAUDE.md
   handles RBD State's own `computecom`).
 * **Mass** (`computemass`, `density`, `inertialtensorstiffness`): `boxDensity` = density with computemass, else
   mass / volume. With computemass the mass is written to `mass` on creation, rebuild or change.
+* **Bounding Box Inertia** (solver parameter `boundsinertia`, `Box3DSharedState::shapeBoundsInertia` ->
+  `BodyProps::shapeBoundsInertia`, Advanced › Mass & Inertia, on by default in the DOP and the Solver SOP): Bullet takes a convex hull's inertia
+  from the solid box over its bounding box plus the collision margin, which is much larger than the hull's own, so
+  its pieces spin more slowly. With the toggle on `applyBodyMass` gives a body whose shapes are hulls (or several
+  shapes) that box's inertia: `Box3DWorld::boundsInertiaExtentsByHandle` measures the shapes' extents in the rest
+  frame (`restRot`) plus `kBulletInertiaPad`, and `boundsInverseInertiaIn` turns the box's tensor back into the
+  body's axes. Whole objects are left out (RBD State's own Compute Inertial Tensor decides theirs, `whole-object.md`), as are a
+  body of one box (a hull of six perpendicular faces), sphere or capsule, a mesh, and bodies with a custom inertia. Measured against Bullet in `bullet_hull_inertia` (a tetrahedron
+  within 1%, an icosahedron within 4%). The pieces of a Glue as One Body compound keep the true inertia of the
+  merged shapes (`compoundsync::eligible` does not look at the flag), where Bullet sums its pieces' box inertias.
 * **CCD threshold** (`ccdthreshold`) -> `b3BodyDef::safetyFactor` (Box3D's name; negatives keep the default).
 * **Fast rotation** (`fastrotation`) -> `allowFastRotation`; without it Box3D caps spin at `B3_MAX_ROTATION` per Box3D
   step (the DOP step over Substeps).

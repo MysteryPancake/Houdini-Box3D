@@ -5,7 +5,7 @@ Plane DOP and a Static Object DOP, what joins the pieces. The Ground Box (the Gr
 Rotation and Size.
 The Static Object takes the geometry of a Height Field node, through a HeightField Transform for World
 Scale, and Use Deforming Geometry. A Box3D Data after the Switch gives either one its friction, bounce,
-rolling resistance and conveyor velocity. Size is the solver's Ground Box Size."""
+rolling resistance and conveyor velocity. Size is the solver's Box Size."""
 
 import hou
 
@@ -24,7 +24,7 @@ from b3d_solver_common import (
 
 GROUND_POS = "ground_pos"
 GROUND_ROT = "ground_rot"
-GROUND_SIZE = "groundsize"  # the solver's Ground Box Size, pulled from its tab into this folder (make_solver_sop.py)
+GROUND_SIZE = "groundsize"  # the solver's Box Size, pulled from its tab into this folder (make_solver_sop.py)
 GROUND_HEIGHTFIELD = "groundheightfield"  # the Height Field node's path (a node reference)
 GROUND_DEFORMING = "ground_animategeo"
 GROUND_MERGE = "ground_heightfield_in"  # reads the Height Field parameter (see finish_ground)

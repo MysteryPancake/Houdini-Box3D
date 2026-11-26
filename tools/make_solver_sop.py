@@ -429,7 +429,7 @@ def build(out_path, packed_hda=None):
             folder_items.append(collapsible(f"b3dsop_{label.lower()}", label, got, open_folder=is_open))
     aging = take(AGING_PARMS)
     speed = take((IMPACT_SPEED,))
-    # The ground box's Size is the solver's Ground Box Size, shown in Ground Collision for a Ground Box.
+    # The ground box's Size is the solver's Box Size, shown in Ground Collision for a Ground Box.
     size = take((GROUND_SIZE,))
     if size:
         for pt in size:

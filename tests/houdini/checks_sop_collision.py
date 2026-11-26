@@ -452,7 +452,7 @@ def test_solver_sop_ground():
         near_y, far_y = (track[96][edge_names[i]][1] for i in (0, 1))
         results.append(Result("solver_sop_ground", Result.PASS if close(near_y, 0.5, 0.05) and far_y < -1.0
                               else Result.FAIL,
-                              f"Ground Box Size x 10{label}: box at x=2 at y={near_y:.3f} (expected 0.5), box at x=8 at "
+                              f"Box Size x 10{label}: box at x=2 at y={near_y:.3f} (expected 0.5), box at x=8 at "
                               f"y={far_y:.3f} (expected below -1: past the edge at 5)"))
 
     # Size is in the Ground Collision folder, labelled Size, and the Ground Type's plane item is the Ground Box.

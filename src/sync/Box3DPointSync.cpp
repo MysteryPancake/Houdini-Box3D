@@ -381,7 +381,7 @@ bool rebuildPointShapes(ScanContext &ctx, const Box3DPointSlot &s,
     else
       noShape = true;
   }
-  applyBodyMass(world, h, p, plan.shapes().totalVolume,
+  applyBodyMass(world, h, p, plan.shapes().totalVolume, entry.restRot,
                 false);  // even with no shapes: clears Box3D's dirty mass
   world.wakeByHandle(h); // let it re-settle
   B3D_DEBUG_LOG_VERBOSE("  body id=%lld: collision shape rebuilt",
@@ -1108,8 +1108,9 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
   const int objectId = obj.getObjectId();
   const SIM_Box3DData *dataNode =
       SIM_DATA_GETCONST(obj, kBox3DDataName, SIM_Box3DData);
-  const b3dop::BodySettings node =
+  b3dop::BodySettings node =
       dataNode ? dataNode->toBodySettings() : b3dop::nodeBodyDefaults();
+  node.props.shapeBoundsInertia = st.shapeBoundsInertia;
   const bool addImpact = dataNode && dataNode->getAddImpact();
 
   // ---- unchanged since we last finished with it? ---------------------------

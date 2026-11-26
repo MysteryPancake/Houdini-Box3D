@@ -385,7 +385,7 @@ def ground_plane_scene(name, planes, pieces, frames=120):
 
 
 def test_ground_plane_size():
-    """The solver's Ground Box Size (x, depth, z) on a Ground Plane DOP: with an x of 10 a box over it rests, one past its
+    """The solver's Box Size (x, depth, z) on a Ground Plane DOP: with an x of 10 a box over it rests, one past its
     edge (5 from the position) falls; the default ground holds both. The same for a static `plane` piece."""
     pieces = [{"size": (1, 1, 1), "center": (2, 3, 0)}, {"size": (1, 1, 1), "center": (8, 3, 0)}]
     rows, ok = [], True
@@ -402,7 +402,7 @@ def test_ground_plane_size():
         near, far = track[names[0]][1], track[names[1]][1]
         good = close(near, 0.5, 0.05) and (close(far, 0.5, 0.05) if width is None else far < -1.0)
         ok = ok and good
-        rows.append(f"Ground Box Size x {width or 'default'}: box at x=2 rests at y={near:.3f}, box at x=8 at y={far:.3f}")
+        rows.append(f"Box Size x {width or 'default'}: box at x=2 rests at y={near:.3f}, box at x=8 at y={far:.3f}")
     # A static `plane` piece takes the size from the Box3D Data on its object the same way.
     attrs = {"bullet_autofit": 1}
     path, names = packed_boxes("ground_size_piece", [
@@ -417,7 +417,7 @@ def test_ground_plane_size():
     near, far = track[names[1]][1], track[names[2]][1]
     good = close(near, 0.5, 0.05) and far < -1.0
     ok = ok and good
-    rows.append(f"plane piece with Ground Box Size x 10: box at x=2 rests at y={near:.3f}, box at x=8 at y={far:.3f}")
+    rows.append(f"plane piece with Box Size x 10: box at x=2 rests at y={near:.3f}, box at x=8 at y={far:.3f}")
     return [Result("ground_plane_size", Result.PASS if ok else Result.FAIL,
                    "; ".join(rows) + " (expected 0.5 and 0.5 by default, 0.5 and fell past the edge at 10)")]
 

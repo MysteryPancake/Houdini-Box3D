@@ -107,7 +107,7 @@ fields are quantised to 16 bits over their own height range; `holes` become `B3_
 `Box3DShapes.h`: `GroundSize` (x, depth, z), its top face the plane y = 0 of the static body that holds it (a dynamic
 body is refused). `groundSpec(size)` is a `ShapeSpec` of type Plane whose half extents carry the clamped size
 (`kMinGroundSize`, `kMaxGroundSize`; a non-finite value is the default), so a new size is a new shape.
-`WorldSettings::ground` holds it (the solver's Ground Box Size, applied each step with the rest of the tuning, read
+`WorldSettings::ground` holds it (the solver's Box Size, applied each step with the rest of the tuning, read
 when a ground is built). It is an ordinary hull, so it has Box3D's hull contacts and continuous collision; nothing
 collides past its edge. The fork has no plane shape (a hull sometimes clipped through it and stuck). Covered by
 `tests/core_ground.cpp`.

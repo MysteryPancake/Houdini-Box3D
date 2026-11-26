@@ -237,6 +237,13 @@ struct BodyProps {
   // computed one. Ignored when customInertia is set.
   bool boundsInertia = false;
   float boundsExtents[3] = {0, 0, 0};
+  // The solver's Bounding Box Inertia, for packed pieces (not whole
+  // objects, which have their own inertia choice): a body whose shapes are
+  // hulls (or several shapes) gets the inertia of the solid box over them, as
+  // Bullet's convex hulls and compounds do (boundsInertiaExtentsByHandle); a
+  // single box, sphere or capsule keeps its own. Ignored when customInertia or
+  // boundsInertia is set.
+  bool shapeBoundsInertia = false;
   float friction = 0.6f;
   float restitution = 0.0f; // `bounce`
   // `rollingresistance`: 0 .. 1, slows rolling (see b3SurfaceMaterial)
@@ -269,6 +276,8 @@ struct BodyProps {
 
   // The custom inertia matches: both off, or both on with the same tensor.
   bool sameInertia(const BodyProps &o) const {
+    if (shapeBoundsInertia != o.shapeBoundsInertia)
+      return false;
     if (boundsInertia != o.boundsInertia)
       return false;
     if (boundsInertia)
@@ -502,6 +511,14 @@ public:
   // The body's inertia tensor about its centre of mass in world axes, as xx yy
   // zz xy xz yz. False for no body.
   bool inertiaWorldByHandle(BodyHandle h, float out[6]) const;
+  // The full side lengths, plus `pad`, of the box over the body's shapes in the
+  // frame the body is at rest in (`restRot`: x, y, z, w, taking body space into
+  // it; null: the body's axes), for the inertia of that box (Bullet's for a
+  // convex hull or a compound). False, `extents` untouched, for a body with one
+  // box (found as a hull of six perpendicular faces), sphere or capsule, whose
+  // own inertia is exact, for a mesh, and for no shape.
+  bool boundsInertiaExtentsByHandle(BodyHandle h, const float *restRot,
+                                    float pad, float extents[3]) const;
 
   // Set every shape's density (skipped with setShapeDensity = false, for shapes
   // just created with it) and apply the mass from the shapes; then, for dynamic

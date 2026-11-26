@@ -115,6 +115,42 @@ inline bool boundsInverseInertia(const float extents[3], float mass,
   return true;
 }
 
+// What Bullet adds to a hull's bounding box before taking the inertia of the
+// box (the collision margin, counted on both sides and again by the inertia
+// itself; 0.08 for its 0.02 default, as measured: bullet_hull_inertia).
+constexpr float kBulletInertiaPad = 0.08f;
+
+// boundsInverseInertia for a box whose sides lie along a frame turned by `rot`
+// (x, y, z, w) from the body's: the frame the extents are measured in is the
+// rest frame, and `rot` takes body-space vectors into it. The tensor comes out
+// in the body's axes (symmetric: xx yy zz xy xz yz). Null `rot`: the same axes.
+inline bool boundsInverseInertiaIn(const float extents[3], float mass,
+                                   const float *rot, float out[6]) {
+  float diag[6];
+  if (!boundsInverseInertia(extents, mass, diag))
+    return false;
+  if (!rot) {
+    std::copy(diag, diag + 6, out);
+    return true;
+  }
+  // Rows of the rotation matrix: the rest axes in body coordinates.
+  const double x = rot[0], y = rot[1], z = rot[2], w = rot[3];
+  const double r[3][3] = {
+      {1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)},
+      {2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)},
+      {2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)}};
+  const int pair[6][2] = {{0, 0}, {1, 1}, {2, 2}, {0, 1}, {0, 2}, {1, 2}};
+  for (int n = 0; n < 6; ++n) {
+    double v = 0.0;
+    for (int k = 0; k < 3; ++k)
+      v += diag[k] * r[k][pair[n][0]] * r[k][pair[n][1]];
+    out[n] = static_cast<float>(v);
+    if (!std::isfinite(out[n]))
+      return false;
+  }
+  return true;
+}
+
 // Inverse of a symmetric 3x3 matrix stored as xx, yy, zz, xy, xz, yz (the
 // layout of BodyProps::inverseInertia). False, `out` untouched, if the matrix
 // is not finite or not positive definite (an inertia tensor and its inverse

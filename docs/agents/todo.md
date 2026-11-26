@@ -33,6 +33,9 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
   none (Bullet's chunk takes mass-weighted drag, the largest minimum and the smallest maximum), World Scale other than
   1 does not scale the values, and Bullet's `accelmax` / `angaccelmax` (a limit on the constraint solver's change in
   speed) are not read.
+* Bounding Box Inertia ([body-features.md](body-features.md)): a Glue as One Body compound takes the true inertia of
+  its merged shapes, where Bullet's chunk sums the pieces' box inertias, so a glued group spins more freely than
+  Bullet's. `kBulletInertiaPad` was fitted on 1 m pieces (a tetrahedron and an icosahedron); other scales are unchecked.
 * Quadric primitives (how they are sampled: [bodies.md](bodies.md)): a denser sphere mesh (Polygon Mesh, NURBS) rests
   at 0.46 to 0.48 where Bullet rests at 0.499, because a Box3D hull keeps about 44 vertices and loses the poles
   (keeping the farthest point per direction rested lower: a 38-vertex ball tips onto a face). Volumes: Bullet's packed

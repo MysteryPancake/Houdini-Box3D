@@ -26,7 +26,7 @@ inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry, Con
   folder (`ground_*`, templates cloned from the node, Conveyor Velocity scaled by World Scale). Both go through a
   Merge with the pieces (mutual affectors) and arrive as affectors ([forces-affectors.md](forces-affectors.md)): the
   Ground Box (a Ground Plane DOP) as a ground box, the Static Object as a height field. The box's Size is the solver's
-  `groundsize` (Ground Box Size), pulled out of the DOP's Advanced tab into this folder after Rotation (`take` in
+  `groundsize` (Box Size), pulled out of the DOP's Advanced tab into this folder after Rotation (`take` in
   `make_solver_sop.py`, shown for Ground Box) and scaled by World Scale (`SCALED_SETTINGS`). The guide (RBD Bullet
   Solver's, read from its dump; `build_ground_guide`): a Ground Box is the Ground Plane DOP's display grid (DOP Import
   `import_ground_plane` of the object `groundplane`, Geometry Data Path `DisplayGeometry`, scaled back by

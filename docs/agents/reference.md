@@ -81,7 +81,7 @@ builder uses one kind, except `subfolder()`: a simple folder inside a tab (`<pre
 parameter of the tab. The solver uses tabs by subject, laid out like the Box3D Solver SOP's (same tab order and folder
 names): Solver (time scale, Substeps, Constraint Iterations; simple folders Contacts, Sleeping, Aging), Forces
 (gravity; folders Force DOPs, Bounce / Friction, Glue), Visualization (folder Geometry: Export Collision Shapes),
-Advanced (folders Stability, Ground Box: Ground Box Size, and Performance) and Output (folder Impact Data); its guide
+Advanced (folders Stability, Mass & Inertia, Ground: Box Size, and Performance) and Output (folder Impact Data); its guide
 parameters are a plain list on Houdini's own Guide Options tab (so the solver's tabs sit inside Data Options). Box3D
 Data and the joint nodes use simple folders: Box3D Data's are Shape, Body, Material, CCD & Contacts (CCD Threshold,
 Fast Object, Contact Recycling, Add Impact Data) and Sleep (Allow Sleeping, Start Asleep, Sleep Threshold). A

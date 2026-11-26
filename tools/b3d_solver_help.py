@@ -129,7 +129,7 @@ the Ground Collision.
 
 == Advanced ==
 
-Stability and Performance settings: warm starting, continuous collision, speed limits and threads. Collision has Solve on Creation Frame for the colliders, which follows the Solver tab's until changed.
+Stability, Mass & Inertia and Performance settings: warm starting, continuous collision, the speed limit, how pieces' inertia is worked out and threads. Collision has Solve on Creation Frame for the colliders, which follows the Solver tab's until changed.
 Constraints:
     The settings of each constraint type: a closed folder per joint. A float primitive attribute on the constraint
     lines multiplies the value here, so set the typical value here and vary it per constraint with an attribute. Each

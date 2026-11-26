@@ -270,8 +270,8 @@ def test_glue_group_contacts():
 def test_glue_compound_sleep():
     """Glued pieces run as one body sleep and wake as the pieces do with the switch off. A row of 3 boxes with an
     `awake` attribute, a box dropped on the first: with a Strength that never breaks them, the `awake` values over the
-    first 72 frames are the same with the switch on and off, give or take 3 frames (asleep before the box lands, awake on
-    landing). With a
+    first 72 frames are the same with the switch on and off, give or take 6 frames (asleep before the box lands, awake on
+    landing, asleep again once settled). With a
     Strength of 1000 that breaks the bonds, all 3 are asleep before the landing, the first is awake after it and all
     are asleep again by frame 160 in both (the pieces of a dissolved or split compound can sleep again)."""
     def awake_track(compound, strength, frames):
@@ -286,10 +286,10 @@ def test_glue_compound_sleep():
 
     rows, ok = [], True
     held = {c: awake_track(c, 1e12, 72) for c in (True, False)}
-    # The switch changes when a body falls asleep by a frame or two, so a frame only differs when the other run
-    # has no such value within 3 frames.
+    # One rigid body settles a few frames sooner than glued pieces, which wobble first, so the final sleep comes a
+    # few frames apart: a frame only differs when the other run has no such value within 6 frames.
     differ = [f for f in range(1, 73)
-              if not any(held[False].get(g) == held[True][f] for g in range(f - 3, f + 4))]
+              if not any(held[False].get(g) == held[True][f] for g in range(f - 6, f + 7))]
     cycles = any(held[True][f] == (0, 0, 0) for f in range(1, 73)) and held[True][26] == (1, 1, 1)
     ok = ok and not differ and cycles
     rows.append(f"no break: frames where on and off differ {differ}, asleep then awake on landing: {cycles}")

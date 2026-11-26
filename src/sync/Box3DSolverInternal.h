@@ -490,9 +490,11 @@ float effectiveMass(const b3dop::BodyProps &p, float volume);
 b3dop::BodySettings::Type wantedType(const b3dop::BodySettings &node,
                                      bool active, bool animated,
                                      bool shapeless);
+// `restRot`: the rotation of the body's rest frame (Box3DBodyMirror::restRot),
+// for the bounding box inertia.
 void applyBodyMass(b3dop::Box3DWorld &world, b3dop::BodyHandle h,
                    const b3dop::BodyProps &p, float volume,
-                   bool setShapeDensity = true);
+                   const float *restRot = nullptr, bool setShapeDensity = true);
 // Sets the body's type to `want` if it differs (a dynamic body gets its mass
 // back: a type change recomputes it from the shapes). True if it changed.
 bool retypeBody(b3dop::Box3DWorld &world, Box3DBodyMirror &entry,

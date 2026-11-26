@@ -640,6 +640,96 @@ int Box3DWorld::destroyShapeRangesByHandle(
   return static_cast<int>(ids.size());
 }
 
+namespace {
+
+// A convex hull that is a box: six faces of four vertices, eight vertices, the
+// faces' normals along three perpendicular axes.
+bool isBoxOutline(const Box3DWorld::ShapeOutline &o) {
+  if (o.kind != Box3DWorld::ShapeOutline::Hull || o.verts.size() != 8 * 3)
+    return false;
+  float normals[6][3];
+  int faces = 0;
+  for (size_t at = 0; at < o.loops.size();) {
+    const int n = o.loops[at];
+    if (n != 4 || faces >= 6 ||
+        at + 1 + static_cast<size_t>(n) > o.loops.size())
+      return false;
+    const float *p[3];
+    for (int k = 0; k < 3; ++k)
+      p[k] = &o.verts[static_cast<size_t>(
+                          o.loops[at + 1 + static_cast<size_t>(k)]) *
+                      3];
+    const float a[3] = {p[1][0] - p[0][0], p[1][1] - p[0][1],
+                        p[1][2] - p[0][2]};
+    const float b[3] = {p[2][0] - p[1][0], p[2][1] - p[1][1],
+                        p[2][2] - p[1][2]};
+    cross3(a, b, normals[faces]);
+    const float len = length3(normals[faces]);
+    if (!(len > 0.0f))
+      return false;
+    for (float &c : normals[faces])
+      c /= len;
+    ++faces;
+    at += 5;
+  }
+  if (faces != 6)
+    return false;
+  for (int i = 0; i < 6; ++i)
+    for (int j = i + 1; j < 6; ++j) {
+      const float d = std::fabs(dot3(normals[i], normals[j]));
+      if (d > 1e-3f && d < 1.0f - 1e-3f)
+        return false;
+    }
+  return true;
+}
+
+} // namespace
+
+bool Box3DWorld::boundsInertiaExtentsByHandle(BodyHandle h,
+                                              const float *restRot, float pad,
+                                              float extents[3]) const {
+  std::vector<ShapeOutline> shapes;
+  if (!bodyShapeOutlines(h, shapes) || shapes.empty())
+    return false;
+  if (shapes.size() == 1 &&
+      (shapes[0].kind != ShapeOutline::Hull || isBoxOutline(shapes[0])))
+    return false; // one sphere, capsule or box: its own inertia is exact
+  float lo[3] = {FLT_MAX, FLT_MAX, FLT_MAX},
+        hi[3] = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
+  const auto add = [&](const float p[3], float radius) {
+    float q[3] = {p[0], p[1], p[2]};
+    if (restRot)
+      quatRotate(restRot, p, q);
+    for (int k = 0; k < 3; ++k) {
+      lo[k] = std::min(lo[k], q[k] - radius);
+      hi[k] = std::max(hi[k], q[k] + radius);
+    }
+  };
+  for (const ShapeOutline &o : shapes) {
+    switch (o.kind) {
+    case ShapeOutline::Hull:
+      for (size_t i = 0; i + 2 < o.verts.size(); i += 3)
+        add(&o.verts[i], 0.0f);
+      break;
+    case ShapeOutline::Sphere:
+      add(o.c1, o.radius);
+      break;
+    case ShapeOutline::Capsule:
+      add(o.c1, o.radius);
+      add(o.c2, o.radius);
+      break;
+    case ShapeOutline::Mesh:
+      return false;
+    }
+  }
+  for (int k = 0; k < 3; ++k) {
+    extents[k] = hi[k] - lo[k] + pad;
+    if (!(extents[k] > 0.0f) || !std::isfinite(extents[k]))
+      return false;
+  }
+  return true;
+}
+
 bool Box3DWorld::extentByHandle(BodyHandle h, float out[3]) const {
   if (!h || b3Body_GetShapeCount(b3LoadBodyId(h)) == 0)
     return false;

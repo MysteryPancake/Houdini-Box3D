@@ -124,7 +124,7 @@ b3dop::BodySettings::Type wantedType(const b3dop::BodySettings &node,
 // created with boxDensity(p, volume).
 void applyBodyMass(b3dop::Box3DWorld &world, b3dop::BodyHandle h,
                    const b3dop::BodyProps &p, float volume,
-                   bool setShapeDensity) {
+                   const float *restRot, bool setShapeDensity) {
   float boxInverse[6];
   const float *inverse = nullptr;
   if (p.customInertia)
@@ -133,6 +133,15 @@ void applyBodyMass(b3dop::Box3DWorld &world, b3dop::BodyHandle h,
            b3dop::boundsInverseInertia(p.boundsExtents,
                                        effectiveMass(p, volume), boxInverse))
     inverse = boxInverse;
+  else if (p.shapeBoundsInertia) {
+    // Bullet's convex hulls and compounds: the inertia of the box over them.
+    float extents[3];
+    if (world.boundsInertiaExtentsByHandle(h, restRot, b3dop::kBulletInertiaPad,
+                                           extents) &&
+        b3dop::boundsInverseInertiaIn(extents, effectiveMass(p, volume),
+                                      restRot, boxInverse))
+      inverse = boxInverse;
+  }
   world.applyMassByHandle(h, boxDensity(p, volume), !p.computeCom,
                           p.inertiaScale, setShapeDensity, inverse);
 }
@@ -153,7 +162,8 @@ bool retypeBody(b3dop::Box3DWorld &world, Box3DBodyMirror &entry,
   entry.driven = false;
   // The mass comes back from the shapes: centre back to the point.
   if (entry.dynamic())
-    applyBodyMass(world, entry.handle, entry.props, entry.volume);
+    applyBodyMass(world, entry.handle, entry.props, entry.volume,
+                  entry.restRot);
   return true;
 }
 
@@ -210,7 +220,7 @@ createBodyWithShapes(b3dop::Box3DWorld &world, const b3dop::BodySettings &b,
     world.destroyBody(h);
     return 0;
   }
-  applyBodyMass(world, h, p, shapes.totalVolume, false);
+  applyBodyMass(world, h, p, shapes.totalVolume, entry.restRot, false);
   const bool hasVel =
       !std::all_of(pose.lin, pose.lin + 3, [](float v) { return v == 0.0f; }) ||
       !std::all_of(pose.ang, pose.ang + 3, [](float v) { return v == 0.0f; });
@@ -245,7 +255,7 @@ unsigned applyPropChanges(b3dop::Box3DWorld &world, Box3DBodyMirror &e,
     apply(p.friction != o.friction || p.restitution != o.restitution,
           [&] { world.setMaterialByHandle(h, p.friction, p.restitution); });
     if (massChanged) {
-      applyBodyMass(world, h, p, e.volume);
+      applyBodyMass(world, h, p, e.volume, e.restRot);
       changed |= kPropsChanged | kMassChanged;
     }
     apply(p.filter != o.filter, [&] { world.setFilterByHandle(h, p.filter); });

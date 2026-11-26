@@ -43,6 +43,7 @@ from b3dtest import (
     whole_object_points,
 )
 from checks_constraints import hanging_pair
+from checks_sop_common import solver_sop
 from checks_output import impact_records
 
 KINDS = ("box3d", "bullet")
@@ -1517,6 +1518,73 @@ def test_bullet_drag_limits():
     return [Result("bullet_drag_limits", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
 
 
+def hull_spin_run(kind, sop_path, name, frames=12, bounds=True):
+    """A 1 kg piece in free fall (gravity gives no torque) given a torque of (0, 0, 1) every frame by a SOP Solver, as
+    a POP Force would: the spin it has about z on the last frame, from how far it turned over that frame (rad/s).
+    `bounds`: the Box3D Solver's Bounding Box Inertia."""
+    dop = new_dopnet(f"hull_spin_{name}_{kind}_{int(bounds)}")
+    obj = packed_object(dop, "pieces", sop_path, computemass=0, mass=1.0)
+    writer = sop_solver(dop, "v@torque = {0, 0, 1};")
+    if kind == "box3d":
+        solver = box3d_solver(dop, None)
+        set_parm(solver, ["boundsinertia"], int(bounds))
+        last = multisolver(dop, obj, [writer, solver])
+    else:
+        last = create(dop, "gravity", "gravity")
+        last.setInput(0, multisolver(dop, obj, [writer, create(dop, "bulletrbdsolver", "bullet_solver")]))
+    finish(dop, last)
+    track = step(dop, frames, lambda sim, f: packed_transform(sim, "pieces"))
+    return rotation_angle(track[frames - 1], track[frames]) * math.pi / 180.0 * 24.0
+
+
+def hull_piece_sop(label):
+    """A packed piece far above the origin: a box, or the platonic solid `label` (tetra, icosa)."""
+    if label == "box":
+        return packed_boxes("hull_spin_box_pieces", [{"size": (1, 1, 1), "center": (0, 1000, 0)}])[0]
+    geo = new_geo(f"hull_spin_{label}")
+    src = create(geo, "platonic")
+    set_parm(src, ["solidtype", "type"], {"tetra": 0, "icosa": 4}[label])
+    nm = create(geo, "attribwrangle", "name")
+    nm.setInput(0, src)
+    set_parm(nm, ["class"], 1)
+    set_parm(nm, ["snippet"], 's@name = "piece";')
+    asm = create(geo, "assemble")
+    asm.setInput(0, nm)
+    set_parm(asm, ["pack_geo", "packgeo", "pack"], 1)
+    xf = create(geo, "xform")
+    xf.setInput(0, asm)
+    set_parm(xf, ["t"], (0.0, 1000.0, 0.0))
+    display(xf)
+    return xf.path()
+
+
+def test_bullet_hull_inertia():
+    """A unit torque on a 1 kg box, tetrahedron and icosahedron for 0.5 s, spin in Bullet against Box3D. Bullet takes a
+    hull's inertia from the box over it (plus its margin), which the default Bounding Box Inertia does too: PASS
+    when the spins agree within 8% and a box (its own inertia is exact) within 3%, and with the toggle off the
+    tetrahedron's spin differs from Bullet's by over 15% (a Box3D hull's own inertia is much smaller). The Solver SOP's
+    Bounding Box Inertia is on by default."""
+    rows, ok, off_apart = [], True, True
+    for label in ("box", "tetra", "icosa"):
+        sop_path = hull_piece_sop(label)
+        bullet = hull_spin_run("bullet", sop_path, label)
+        ours = hull_spin_run("box3d", sop_path, label)
+        tol = 0.03 if label == "box" else 0.08
+        ok = ok and abs(ours - bullet) <= tol * bullet
+        text = f"{label} Bullet {bullet:.3f} Box3D {ours:.3f}"
+        if label == "tetra":
+            off = hull_spin_run("box3d", sop_path, label, bounds=False)
+            off_apart = abs(off - bullet) > 0.15 * bullet
+            text += f" (toggle off {off:.3f})"
+        rows.append(text)
+    sop = solver_sop("hull_inertia_sop")
+    parm = sop.parm("boundsinertia")
+    on_by_default = parm is not None and parm.eval() == 1
+    rows.append(f"Solver SOP Bounding Box Inertia {'on' if on_by_default else 'missing or off'}")
+    good = ok and off_apart and on_by_default
+    return [Result("bullet_hull_inertia", Result.PASS if good else Result.FAIL, "spin about z in rad/s: " + "; ".join(rows))]
+
+
 PRIMR_THROUGH_CASES = ((30, 0, 60), (30, 0, 0), (0, 0, 60), (30, 0, 30), (0, 0, 30), (0, 0, 45), (0, 30, 0),
                        (0, 60, 0))
 
@@ -1749,6 +1817,7 @@ TESTS = {
     "bullet_primr_order": test_bullet_primr_order,
     "bullet_shape_probe": test_bullet_shape_probe,
     "bullet_joint_rest": test_bullet_joint_rest,
+    "bullet_hull_inertia": test_bullet_hull_inertia,
     "bullet_drag_limits": test_bullet_drag_limits,
     "bullet_spring_cap": test_bullet_spring_cap,
     "bullet_position_rest_length": test_bullet_position_rest_length,
