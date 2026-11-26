@@ -164,7 +164,7 @@ int main() {
 
   // ---- the inertia of the box over a hull (Bullet's convex hulls) ----
   {
-    float inv[6], turned[6];
+    float inv[6] = {}, turned[6] = {};
     const float ext[3] = {2.0f, 1.0f, 1.0f};
     // About x: m (1 + 1) / 12 = 2, about y and z: m (4 + 1) / 12 = 5.
     CHECK(boundsInverseInertia(ext, 12.0f, inv));

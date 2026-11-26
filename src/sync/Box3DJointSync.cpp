@@ -374,7 +374,9 @@ private:
                     b3dop::BodyHandle a, b3dop::BodyHandle b,
                     const b3dop::JointFrame &fa, const b3dop::JointFrame &fb,
                     const b3dop::JointFrame &authA,
-                    const b3dop::JointFrame &authB) const {
+                    const b3dop::JointFrame &authB,
+                    const b3dop::JointFrame &nowA,
+                    const b3dop::JointFrame &nowB) const {
     JointSpec j;
     if (kind.sideFX) {
       // SideFX data: the primitive's overrides on its options, then mapped onto
@@ -401,9 +403,14 @@ private:
       // rest transforms), so it comes from the authored anchors, not from where
       // the pieces are now. A joint that holds the pieces where they are keeps
       // the current distance, and one aimed again each frame starts from where
-      // the anchors are.
+      // the anchors are. Glue holds the pieces where they are when it is made,
+      // so a Glue whose network turns on after its pieces moved takes the
+      // anchors from there (nowA / nowB); Hard (all) with no rest length takes
+      // them at rest and pulls the pieces back to it, as Bullet's does.
       const bool live = m.holdSeparation || m.reaim;
-      b3dop::sideFXFrameOffsets(m, live ? fa : authA, live ? fb : authB, j.adjA,
+      const bool glue = kind.sideFXType == b3dop::SideFXType::Glue;
+      b3dop::sideFXFrameOffsets(m, live ? (glue ? nowA : fa) : authA,
+                                live ? (glue ? nowB : fb) : authB, j.adjA,
                                 j.adjB);
       if (kind.sideFXType == b3dop::SideFXType::Spring) {
         j.massDependent = true;
@@ -435,7 +442,7 @@ private:
         b3dop::SideFXJoint m;
         m.holdSeparation = true;
         j.frameSig = sideFXFrameSignature(m);
-        b3dop::sideFXFrameOffsets(m, fa, fb, j.adjA, j.adjB);
+        b3dop::sideFXFrameOffsets(m, nowA, nowB, j.adjA, j.adjB);
       }
     }
     return j;
@@ -658,7 +665,12 @@ private:
     const bool useLive = hasLive && !authoredEdited;
     const b3dop::JointFrame fa = useLive ? la : authA,
                             fb = useLive ? lb : authB;
-    const JointSpec j = specFor(*kind, off, a, b, fa, fb, authA, authB);
+    // Where the anchors are now: the live ones, else the authored (at rest)
+    // ones moved with their pieces.
+    const b3dop::JointFrame nowA = useLive ? fa : restToNow(myWorld, ab, fa),
+                            nowB = useLive ? fb : restToNow(myWorld, bb, fb);
+    const JointSpec j =
+        specFor(*kind, off, a, b, fa, fb, authA, authB, nowA, nowB);
     noteKind(e, j, off);
 
     const bool live = myNet.writable;

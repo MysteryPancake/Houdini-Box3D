@@ -50,7 +50,9 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
   scale the values.
 * Bounding Box Inertia ([body-features.md](body-features.md)): a Glue as One Body compound takes the true inertia of
   its merged shapes, where Bullet's chunk sums the pieces' box inertias, so a glued group spins more freely than
-  Bullet's. `kBulletInertiaPad` was fitted on 1 m pieces (a tetrahedron and an icosahedron); other scales are unchecked.
+  Bullet's. `kBulletInertiaPad` is a fixed length, as Bullet's margin is: a tetrahedron matches at 0.2, 1 and 5 times the
+  size (within 1.2%), but the pad that would match an icosahedron is 0.115 against the tetrahedron's 0.08, so it is 14%
+  off at 0.2 m, 3% at 1 m and 1% at 5 m (`bullet_hull_inertia`); what sets the difference between hulls is not known.
 * Quadric primitives (how they are sampled: [bodies.md](bodies.md)): a denser sphere mesh (Polygon Mesh, NURBS) rests
   at 0.46 to 0.48 where Bullet rests at 0.499, because a Box3D hull keeps about 44 vertices and loses the poles
   (keeping the farthest point per direction rested lower: a 38-vertex ball tips onto a face). Volumes: Bullet's packed

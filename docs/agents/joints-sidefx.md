@@ -15,12 +15,15 @@ Glue, Hard, Spring, Bullet Soft and Cone Twist mapped onto Box3D joints. Joint n
   Glue's `strength`, which follows Bullet's `getStrength`: a negative node Strength takes the attribute as it is, a
   negative attribute wins, `combineGlueStrength`; our `jointParams` overrides are not applied), `constraint_type` is read (missing, empty or unknown: position, as
   SideFX's help says and Bullet does: `sidefx_hard_untyped`), then `mapSideFX` picks the joint:
-  * Glue: rigid weld holding the pieces where they are, never colliding, never broken by force or torque. It breaks on
+  * Glue: rigid weld holding the pieces where they are (when it is made: a network that turns on after its pieces
+    moved holds them there, its frame offsets taken from the anchors moved with their pieces, `nowA` / `nowB` in
+    `specFor`; Hard (all) takes the authored anchors at rest instead and pulls the pieces back, as Bullet's:
+    `bullet_late_joint`), never colliding, never broken by force or torque. It breaks on
     the impulse of the hits it takes, as the Glue help describes Bullet's (`core/Box3DGlue.h`, Houdini-free,
     `tests/core_glue.cpp`): after every Box3D step `collectGlueHits` adds the normal impulse of each glued body's
     contacts (not its glued neighbours', nor its own glue group's: see `glueSameGroup`,
-    [glue-compound.md](glue-compound.md); nor a kinematic body's, `glueIgnoresContact`: Bullet's Glue counts nothing of a
-    SOP Solver's pusher at any speed, the bond of a pair it hits holding from the same Strength at 3 and at 6 m/s, so
+    [glue-compound.md](glue-compound.md); nor a moving kinematic body's, `glueIgnoresContact`: Bullet's Glue counts nothing of a
+    SOP Solver's pusher at any speed (a kinematic body at rest is a ground, as the Solver SOP's collision pieces are), the bond of a pair it hits holding from the same Strength at 3 and at 6 m/s, so
     neither the hits nor the estimate take it, `glue_kinematic_hit`) to its hits; at the end of the frame `advanceGlue` spreads them over the
     bonds (`impulse` shares: itself 1, each bond its Propagation Rate, `propagationiterations` rounds), adds the two
     bodies' results to the bond's `impact` after it decayed by `impulse_halflife`, and queues a bond over its Strength
@@ -62,8 +65,8 @@ Glue, Hard, Spring, Bullet Soft and Cone Twist mapped onto Box3D joints. Joint n
       each compound of it that average, in both modes; a piece that leaves every group gets its own back. It runs only
       when the bonds, the compounds or the bodies changed (`bullet_glue_materials`).
   * Glue as One Body (`gluecompound`): [glue-compound.md](glue-compound.md).
-  * Hard: all -> rigid weld with the anchors kept the rest length apart (as Bullet does; held where they are when there
-    is no rest length); position -> spherical joint (Bullet's pin: see "Position with a rest length" below), or a rigid
+  * Hard: all -> rigid weld with the anchors kept the rest length apart (as Bullet does; with none, 0 or below, the anchors are
+    brought together: `bullet_hard_rest_zero`); position -> spherical joint (Bullet's pin: see "Position with a rest length" below), or a rigid
     distance joint at the rest length when the rest anchors coincide; rotation -> motor joint, angular spring only at 60 Hz / ratio 2 with
     unlimited torque (Box3D has no rigid rotation-only joint). CFM, ERP, iterations and the angular motors are ignored.
   * Bullet Soft: stiffness is already Hz. all -> motor joint with linear and angular springs (enableangular picks the
@@ -99,7 +102,7 @@ Glue, Hard, Spring, Bullet Soft and Cone Twist mapped onto Box3D joints. Joint n
 * **Frame offsets**: a SideFX joint's frames need not sit on its anchors. `sideFXFrameOffsets` gives each anchor an
   offset in its own axes (`adjA` / `adjB` on `Box3DJointEntry`): a rotation (cone twist) and/or a shift along the
   anchor line so the frames meet when the anchors are `separation` apart (Soft / Spring / Hard all with a rest
-  length), or are as far apart as now (`holdSeparation`: Glue, Hard all without one; anchors from Connect Adjacent
+  length), or are as far apart as now (`holdSeparation`: Glue; anchors from Connect Adjacent
   Pieces sit at the centroids, and a plain weld there would pull the pieces together). The joint is made from
   `applyFrameOffset(anchor, adj)`; `writeLiveFrames` and the `next_constraint_name` switch write
   `removeFrameOffset(frame, adj)` back as `current_P` / `current_orient`, so the anchors stay anchors, and `local_P` /

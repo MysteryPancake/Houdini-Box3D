@@ -112,7 +112,7 @@ int main() {
     const double m[16] = {sx * c, sx * sn, 0,  0, -sy * sn, sy * c, 0, 0,
                           0,      0,       sz, 0, 1,        2,      3, 1};
     double pos[3];
-    float quat[4], sc[3];
+    float quat[4] = {}, sc[3] = {};
     CHECK(decomposeScaledRigid(m, pos, quat, sc));
     CHECK(std::fabs(sc[0] - 2) < 1e-5 && std::fabs(sc[1] - 3) < 1e-5 &&
           std::fabs(sc[2] - 0.5) < 1e-5);

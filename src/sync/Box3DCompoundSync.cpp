@@ -38,8 +38,20 @@ bool glueSameGroup(const Box3DSharedState &st, b3dop::BodyHandle body,
 
 bool glueIgnoresContact(const Box3DSharedState &st, b3dop::BodyHandle other,
                         int group) {
-  return glueSameGroup(st, other, group) ||
-         st.world.typeByHandle(other) == b3dop::BodySettings::Type::Kinematic;
+  if (glueSameGroup(st, other, group))
+    return true;
+  if (st.world.typeByHandle(other) != b3dop::BodySettings::Type::Kinematic)
+    return false;
+  // A kinematic body at rest (the Solver SOP's collision pieces) is a ground
+  // like any other: a landing on it is a hit. Only one that is moving is not.
+  b3dop::BodyState state;
+  if (!st.world.bodyStateByHandle(other, state))
+    return false;
+  const float speed2 =
+      state.lin[0] * state.lin[0] + state.lin[1] * state.lin[1] +
+      state.lin[2] * state.lin[2] + state.ang[0] * state.ang[0] +
+      state.ang[1] * state.ang[1] + state.ang[2] * state.ang[2];
+  return speed2 > kMovingKinematicSpeed2;
 }
 
 int compoundGlueGroup(const Box3DSharedState &st, const Box3DCompound &c) {

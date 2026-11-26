@@ -55,10 +55,15 @@ bool glueSameGroup(const Box3DSharedState &st, b3dop::BodyHandle body,
                    int group);
 
 // Whether a glued body's contact with `other` is no hit: `other` is of the glue
-// group `group` (glueSameGroup), or kinematic. RBD Bullet Solver's Glue counts
-// nothing of a kinematic body's push (a piece moved by a SOP Solver), however
+// group `group` (glueSameGroup), or a kinematic body that is moving (squared
+// speed over kMovingKinematicSpeed2). RBD Bullet Solver's Glue counts nothing
+// of a moving kinematic body's push (a piece moved by a SOP Solver), however
 // fast, where a dynamic body's hit counts: a lone glued pair holds at the same
 // Strength at 3 and at 6 m/s (`glue_compound_kinematic`, `glue_kinematic_hit`).
+// A kinematic body at rest is a ground: the Solver SOP's collision pieces are
+// kinematic, and a pair landing on them breaks
+// (`solver_sop_break_impact_bullet`).
+inline constexpr float kMovingKinematicSpeed2 = 1e-4f;
 bool glueIgnoresContact(const Box3DSharedState &st, b3dop::BodyHandle other,
                         int group);
 

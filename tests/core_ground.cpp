@@ -191,7 +191,7 @@ int main() {
       }
       std::printf("hull %2d lowest vertex y=%.4f\n", trial, low);
       CHECK(low > -0.02 && low < 0.05);
-      float lin[3], ang[3];
+      float lin[3] = {}, ang[3] = {};
       CHECK(w.getVelocityByHandle(h, lin, ang));
       CHECK(std::fabs(lin[1]) < 0.05f);
     }

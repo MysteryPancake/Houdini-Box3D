@@ -18,7 +18,7 @@ namespace {
 
 SideFXBody bodyOf(const Box3DWorld &w, BodyHandle h) {
   SideFXBody b;
-  float c[3], inertia[3];
+  float c[3] = {}, inertia[3] = {};
   if (h && w.getMassDataByHandle(h, b.mass, c, inertia)) {
     b.dynamic = true;
     b.inertia = (inertia[0] + inertia[1] + inertia[2]) / 3.0f;
@@ -121,10 +121,12 @@ int main() {
           j.separation == 1.0f && j.settings.collideConnected);
     {
       SideFXSettings noRest;
-      noRest.restLength = 0.0f; // no rest length: held where the anchors are
+      noRest.restLength =
+          0.0f; // no rest length: the anchors are brought together
       const SideFXJoint h =
           mapSideFX(SideFXType::Hard, noRest, ConstraintMode::All, ctx);
-      CHECK(h.type == JointType::Weld && h.holdSeparation);
+      CHECK(h.type == JointType::Weld && !h.holdSeparation &&
+            h.separation < 0.0f); // frames on the anchors
     }
     // Position with a rest length: Bullet pins anchor B to a point the rest
     // length from anchor A along a direction fixed in A (a ball joint, anchor
@@ -241,7 +243,7 @@ int main() {
     // Bullet's twist axis (x by default) becomes Box3D's z; the up axis becomes
     // x.
     const float zAxis[3] = {0, 0, 1}, xAxis[3] = {1, 0, 0};
-    float tz[3], tx[3];
+    float tz[3] = {}, tx[3] = {};
     quatRotate(j.rotA, zAxis, tz);
     quatRotate(j.rotA, xAxis, tx);
     CHECK(near(tz[0], 1, 1e-5) && near(tz[1], 0, 1e-5) && near(tz[2], 0, 1e-5));

@@ -75,7 +75,7 @@ void testBodyBasics() {
     CHECK(h != 0);
     CHECK(w.bodyHandle(9999) == 0);
     double hp[3];
-    float hq[4], hlin[3], hang[3];
+    float hq[4] = {}, hlin[3] = {}, hang[3] = {};
     CHECK(w.getTransformByHandle(h, hp, hq));
     CHECK(w.getTransform(2, outP, outQ));
     CHECK(hp[0] == outP[0] && hp[1] == outP[1] && hp[2] == outP[2] &&

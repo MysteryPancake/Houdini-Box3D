@@ -49,8 +49,12 @@ What is still to do: [todo.md](todo.md). Index and rules: [CLAUDE.md](../../CLAU
   tolerates being re-applied each step.
 * The Solver SOP's Override Attributes from SOP (the pieces' `overwritefromsop`) is checked for its link, not for
   changed attributes reaching the solver.
-* `anchor_id`: untested are other ids (a fragment's points are taken in source order, its vertices in primitive
-  order), a piece that has moved before its joint is made (`nowToRest`), and non-fragment packed pieces.
+* `anchor_id`: matches Bullet for ids 0 to 7 and vertex ids up to 23, on Assemble's fragments and the Pack SOP's own
+  geometry, with a piece turned before the start (`bullet_anchor_id_cases`). A joint made after its piece fell or spun
+  (the network's activation) acts as Bullet's: Hard pulls the piece back to its rest anchors and Glue holds it where it
+  is (`bullet_late_joint`), also Glue with an `anchor_id` (`bullet_late_joint_anchor_id`). Not understood: Hard (all) with an
+  `anchor_id` on a free box, made on frame 1 or later, settles at (1.25, 4.25) in Bullet and (1.5, 4.5) in Box3D (ids 0
+  and 3 against an anchor at the shared face), where P anchors agree.
 * Glue's break estimate (`core/Box3DGlueEstimate.h`, `Box3DGlueEstimate.cpp`, tests `glue_break_match`,
   `glue_break_substeps`, `glue_fracture_vs_bullet`): Bullet breaks glue before its step on an impulse estimate at every contact point of the
   glued body ([joints-sidefx.md](joints-sidefx.md)), the HDK's `SIM_BulletState` (`preBreakGlue`, `updateGlue`).

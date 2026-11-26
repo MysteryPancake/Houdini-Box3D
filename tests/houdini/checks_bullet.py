@@ -451,6 +451,223 @@ def test_bullet_anchor_id():
     return results
 
 
+_ANCHOR_RUNS = [0]
+
+
+def pack_sop_boxes(name, rotates):
+    """Two fixed 1 m boxes at (0, 4, 0) and (2, 4, 0) packed by the Pack SOP (each its own packed geometry, not the
+    fragments of one source that Assemble makes), turned by `rotates`, named piece0 and piece1."""
+    geo = new_geo(name)
+    both = create(geo, "merge")
+    for i, (centre, rotate) in enumerate(zip(((0, 4, 0), (2, 4, 0)), rotates)):
+        box = create(geo, "box", f"box{i}")
+        set_parm(box, ["size"], (1, 1, 1))
+        pack = create(geo, "pack", f"pack{i}")
+        pack.setInput(0, box)
+        move = create(geo, "xform", f"move{i}")
+        move.setInput(0, pack)
+        set_parm(move, ["r"], tuple(rotate))
+        set_parm(move, ["t"], centre)
+        tag = create(geo, "attribwrangle", f"name{i}")
+        tag.setInput(0, move)
+        set_parm(tag, ["class"], 2)
+        set_parm(tag, ["snippet"], f's@name = "piece{i}"; i@active = 0;')
+        both.setInput(i, tag)
+    display(both)
+    return both.path(), ["piece0", "piece1"]
+
+
+def anchor_gap(kind, k, anchor_type, packing="assemble", rotates=((0, 0, 0), (0, 0, 0))):
+    """anchor_id_run's scene with the pieces packed by `packing` (assemble: fragments of one source; pack: the Pack
+    SOP's own geometry) and turned by `rotates` before the start: the `distance` between the two anchors on frame 2."""
+    _ANCHOR_RUNS[0] += 1
+    tag = f"anchor_cases_{_ANCHOR_RUNS[0]}"
+    if packing == "assemble":
+        pieces = [{"size": (1, 1, 1), "center": (0, 4, 0), "rotate": rotates[0], "attrs": {"active": 0}},
+                  {"size": (1, 1, 1), "center": (2, 4, 0), "rotate": rotates[1], "attrs": {"active": 0}}]
+        path, names = packed_boxes(tag + "_pieces", pieces)
+    else:
+        path, names = pack_sop_boxes(tag + "_pieces", rotates)
+    dop = new_dopnet(tag)
+    obj = packed_object(dop, "pieces", path)
+    joint = create(dop, "hardconrel", "joint0")
+    network = constraint_lines(tag + "_network", [(names[0], (0, 4, 0), names[1], (3, 4, 1), "Hard",
+                                                   {"constraint_type": "position"})])
+    ids = create(hou.node(network).parent(), "attribwrangle", "anchor_ids")
+    ids.setInput(0, hou.node(network))
+    set_parm(ids, ["class"], 0)
+    code = f'addpointattrib(0, "anchor_id", -1); setpointattrib(0, "anchor_id", 1, {k});'
+    if anchor_type:
+        code += f' addpointattrib(0, "anchor_type", ""); setpointattrib(0, "anchor_type", 1, "{anchor_type}");'
+    set_parm(ids, ["snippet"], code)
+    display(ids)
+    net = create(dop, "constraintnetwork", "constraint_network")
+    net.setInput(0, obj)
+    set_parm(net, ["soppath", "constraintsoppath", "geosoppath"], ids.path())
+    net.setInput(1, joint)
+    if kind == "box3d":
+        last = box3d_solver(dop, net, gravity=(0, 0, 0))
+    else:
+        last = create(dop, "bulletrbdsolver", "bullet_solver")
+        last.setInput(0, net)
+    finish(dop, last)
+
+    def gap(sim, f):
+        geo = find_network_geometry(sim)
+        prims = list(geo.prims()) if geo is not None else []
+        return prims[0].attribValue("distance") if prims and geo.findPrimAttrib("distance") else None
+
+    return step(dop, 2, gap)[2]
+
+
+def test_bullet_anchor_id_cases():
+    """`anchor_id` beyond bullet_anchor_id's ids 0 and 5, against Bullet: each point id 1 to 7 (but 5) and vertex ids 1, 3, 12 and
+    23 on boxes packed by Assemble; ids on boxes packed by the Pack SOP (not fragments of one source), as points 0, 3 and
+    7 and as vertex 5; and B turned 45 degrees about z and (30, 20, 10), A turned 45, both packings, before the start
+    (the anchor is authored at the rest pose, so the piece having moved is a conversion, `nowToRest`). The `distance`
+    between the two anchors on frame 2 agrees within 0.05 in every case (it ranges 1.66 to 2.60 with the id and 1.90
+    to 2.18 once B has turned)."""
+    cases = [(f"Assemble point {k}", dict(k=k, anchor_type=None)) for k in (1, 2, 3, 4, 6, 7)]
+    cases += [(f"Assemble vertex {k}", dict(k=k, anchor_type="vertex")) for k in (1, 3, 12, 23)]
+    cases += [(f"Pack SOP point {k}", dict(k=k, anchor_type=None, packing="pack")) for k in (0, 3, 7)]
+    cases += [("Pack SOP vertex 5", dict(k=5, anchor_type="vertex", packing="pack"))]
+    turned = ((0, 0, 0), (0, 0, 45))
+    cases += [(f"Assemble point {k}, B turned 45", dict(k=k, anchor_type=None, rotates=turned)) for k in (0, 3, 5)]
+    cases += [("Assemble point 3, B turned (30, 20, 10)", dict(k=3, anchor_type=None, rotates=((0, 0, 0), (30, 20, 10)))),
+              ("Pack SOP point 3, B turned 45", dict(k=3, anchor_type=None, packing="pack", rotates=turned)),
+              ("Assemble point 3, A turned 45", dict(k=3, anchor_type=None, rotates=((0, 0, 45), (0, 0, 0))))]
+    rows, bad = [], []
+    for label, kw in cases:
+        got = {kind: anchor_gap(kind, **kw) for kind in KINDS}
+        same = all(v is not None for v in got.values()) and abs(got["box3d"] - got["bullet"]) < 0.05
+        rows.append(f"{label} {got['box3d']:.3f} / {got['bullet']:.3f}" if all(v is not None for v in got.values())
+                    else f"{label} {got}")
+        if not same:
+            bad.append(label)
+    return [Result("bullet_anchor_id_cases", Result.PASS if not bad else Result.FAIL,
+                   "anchor gap, Box3D / Bullet: " + "; ".join(rows) + (f". Differing: {bad}" if bad else ""))]
+
+
+def late_joint_run(kind, conrel, line_type, start, spin=(0.0, 0.0, 0.0), parms=None, frames=36, anchor_id=None):
+    """A fixed box at (0, 4, 0) and a free one at (1, 4, 0) (falling, and spinning at `spin`) joined at their shared face by a
+    constraint network that only turns on at frame `start` (its activation): where the free box is on frames `start` and
+    `start` + 25 and the last frame. `line_type`: the line's constraint_type (None for Glue). `anchor_id`: on the free box's
+    anchor (a point of its own geometry; its P then at (3, 4, 1), a decoy)."""
+    tag = f"late_joint_{kind}_{conrel}_{start}_{abs(hash((spin, anchor_id))) % 999}"
+    pieces = [{"size": (1, 1, 1), "center": (0, 4, 0), "attrs": {"active": 0, "w": (0.0, 0.0, 0.0)}},
+              {"size": (1, 1, 1), "center": (1, 4, 0), "attrs": {"active": 1, "w": tuple(spin)}}]
+    path, names = packed_boxes(tag + "_pieces", pieces)
+    dop = new_dopnet(tag)
+    obj = packed_object(dop, "pieces", path, keep_velocity=True)
+    joint = create(dop, conrel, "joint0")
+    for name, value in (parms or {}).items():
+        set_parm(joint, [name], value)
+    line = (names[0], (1, 4, 0), names[1], (3, 4, 1) if anchor_id is not None else (1, 4, 0),
+            "Hard" if conrel == "hardconrel" else "Glue")
+    if line_type:
+        line += ({"constraint_type": line_type},)
+    network = constraint_lines(tag + "_network", [line])
+    if anchor_id is not None:
+        ids = create(hou.node(network).parent(), "attribwrangle", "anchor_ids")
+        ids.setInput(0, hou.node(network))
+        set_parm(ids, ["class"], 0)
+        set_parm(ids, ["snippet"], f'addpointattrib(0, "anchor_id", -1); setpointattrib(0, "anchor_id", 1, {anchor_id});')
+        display(ids)
+        network = ids.path()
+    net = create(dop, "constraintnetwork", "constraint_network")
+    net.setInput(0, obj)
+    set_parm(net, ["soppath", "constraintsoppath", "geosoppath"], network)
+    net.setInput(1, joint)
+    net.parm("activation").setExpression(f"$FF >= {start}", hou.exprLanguage.Hscript)
+    if kind == "box3d":
+        last = box3d_solver(dop, net)
+    else:
+        solver = create(dop, "bulletrbdsolver", "bullet_solver")
+        solver.setInput(0, net)
+        last = create(dop, "gravity", "gravity")
+        last.setInput(0, solver)
+    finish(dop, last)
+    track = step(dop, frames, lambda sim, f: packed_positions(sim, "pieces")[names[1]])
+    return [(track[f][0], track[f][1]) for f in (start, start + 25, frames)]
+
+
+def hard_rest_run(kind, rest, anchors, frames=48):
+    """A fixed box at (0, 4, 0) and a free one at (1, 4, 0), no gravity, joined by SideFX Hard (all) with Rest Length
+    `rest` between `anchors`: where the free box is on the last frame."""
+    dop, names = hanging_pair(
+        f"hard_rest_zero_{kind}_{str(rest).replace('.', '_').replace('-', 'm')}", "Hard",
+        conrels=[("hardconrel", {"restlength": rest})], solver_kind=kind, anchors=anchors,
+        line_attrs={"constraint_type": "all"}, gravity=(0, 0, 0),
+        pieces=[{"size": (1, 1, 1), "center": (0, 4, 0), "attrs": {"active": 0}},
+                {"size": (1, 1, 1), "center": (1, 4, 0), "attrs": {"active": 1}}])
+    if kind == "bullet" and dop.node("gravity") is not None:
+        set_parm(dop.node("gravity"), ["force"], (0, 0, 0))
+    return tuple(step(dop, frames, lambda sim, f: packed_positions(sim, "pieces")[names[1]])[frames])
+
+
+def test_bullet_hard_rest_zero():
+    """SideFX Hard (all) with a Rest Length of 0 (or below it) brings its anchors together, as a small positive one brings
+    them that far apart: anchors 0.87 apart (the fixed box's at (1, 4, 0), the free box's at its corner (0.5, 3.5, -0.5))
+    end on top of each other, the free box moving to (1.5, 4.5, 0.5), in Bullet and in Box3D, for Rest Lengths 0 and -1.
+    A Rest Length of 0.3 ends 0.3 apart (the box at (1.3, 4.3, 0.3)). Box3D held the anchors where they were for a Rest
+    Length of 0, which Bullet does not. Passes when the box is within 0.05 of Bullet's."""
+    rows, ok = [], True
+    apart = ((1, 4, 0), (0.5, 3.5, -0.5))
+    for rest, want in ((0.0, (1.5, 4.5, 0.5)), (-1.0, (1.5, 4.5, 0.5)), (0.3, (1.3, 4.3, 0.3))):
+        got = {kind: hard_rest_run(kind, rest, apart) for kind in KINDS}
+        good = all(max(abs(a - b) for a, b in zip(v, want)) < 0.05 for v in got.values())
+        ok = ok and good
+        fmt = lambda p: "(%.2f, %.2f, %.2f)" % p  # noqa: E731
+        rows.append(f"Rest Length {rest:g}: Box3D {fmt(got['box3d'])}, Bullet {fmt(got['bullet'])} (expected {fmt(want)})")
+    return [Result("bullet_hard_rest_zero", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+def test_bullet_late_joint():
+    """A joint made after its pieces moved, against Bullet: a free box falling for 9 frames (and spinning) before a network
+    that turns on at frame 10 joins it to a fixed one at their shared face. SideFX Hard (all and position, Rest Length 0)
+    takes its anchors as authored, at rest, so the box is pulled back to y 4 within a few frames in both (the anchors are
+    on the piece's rest pose: `nowToRest` / `restToNow`); SideFX Glue holds the pieces where they are when it is made, so
+    the box stays at y 3.45 in both (3.54 and x 1.2 when spinning). Passes when each box's place is within 0.06 of
+    Bullet's on frames 10 and 35."""
+    cases = (
+        ("Hard all, Rest Length 0", dict(conrel="hardconrel", line_type="all", parms={"restlength": 0.0})),
+        ("Hard position, Rest Length 0", dict(conrel="hardconrel", line_type="position", parms={"restlength": 0.0})),
+        ("Hard all, spinning", dict(conrel="hardconrel", line_type="all", parms={"restlength": 0.0}, spin=(0, 0, 3))),
+        ("Glue", dict(conrel="glueconrel", line_type=None, parms={"strength": 1e12})),
+        ("Glue, spinning", dict(conrel="glueconrel", line_type=None, parms={"strength": 1e12}, spin=(0, 0, 3))),
+    )
+    rows, ok = [], True
+    for label, kw in cases:
+        got = {kind: late_joint_run(kind, start=10, **kw) for kind in KINDS}
+        worst = max(abs(a - b) for pa, pb in zip(got["box3d"], got["bullet"]) for a, b in zip(pa, pb))
+        ok = ok and worst < 0.06
+        fmt = lambda track: " ".join(f"({x:.2f}, {y:.2f})" for x, y in track)  # noqa: E731
+        rows.append(f"{label}: frames 10, 35, 36 Box3D {fmt(got['box3d'])}, Bullet {fmt(got['bullet'])}")
+    return [Result("bullet_late_joint", Result.PASS if ok else Result.FAIL, "; ".join(rows) + " (expected within 0.06)")]
+
+
+def test_bullet_late_joint_anchor_id():
+    """`anchor_id` on a Glue made after its piece moved, against Bullet: bullet_late_joint's scene (a free box falling, and
+    spinning, until a network turns on at frame 10) with the box's anchor on a point of its own geometry (ids 0, 3 and 5,
+    its P a decoy at (3, 4, 1)). Glue holds the box where it is, whichever point the anchor is: within 0.06 of Bullet's
+    on frames 10 and 35. Hard (all) is not compared: with an `anchor_id` on a free box even a Hard made on frame 1 ends
+    at (1.25, 4.25) in Bullet (ids 0 and 3) and (1.5, 4.5) in Box3D, where the anchors' own P agree (bullet_hard_rest_zero)."""
+    cases = [(f"Glue, id {k}", dict(conrel="glueconrel", line_type=None, parms={"strength": 1e12}, anchor_id=k))
+             for k in (0, 3, 5)]
+    cases.append(("Glue, spinning, id 3", dict(conrel="glueconrel", line_type=None, parms={"strength": 1e12},
+                                               spin=(0, 0, 3), anchor_id=3)))
+    rows, ok = [], True
+    for label, kw in cases:
+        got = {kind: late_joint_run(kind, start=10, **kw) for kind in KINDS}
+        worst = max(abs(a - b) for pa, pb in zip(got["box3d"], got["bullet"]) for a, b in zip(pa, pb))
+        ok = ok and worst < 0.06
+        fmt = lambda track: " ".join(f"({x:.2f}, {y:.2f})" for x, y in track)  # noqa: E731
+        rows.append(f"{label}: frames 10, 35, 36 Box3D {fmt(got['box3d'])}, Bullet {fmt(got['bullet'])}"
+                    f"{'' if worst < 0.06 else ' (DIFFERENT)'}")
+    return [Result("bullet_late_joint_anchor_id", Result.PASS if ok else Result.FAIL,
+                   "; ".join(rows) + " (expected within 0.06)")]
+
+
 # ---------------------------------------------------------------------------
 # Joints on a piece that has already turned, and Cone Twist's goal end
 # ---------------------------------------------------------------------------
@@ -1719,7 +1936,10 @@ def glued_motion_run(tag, kind, a, b, spin=None, frames=96):
     set_parm(net, ["soppath", "constraintsoppath", "geosoppath"],
              constraint_lines(tag + "_network", [(names[0], (0, 1000, 0), names[1], (0, 1000, 0), "Glue")]))
     net.setInput(1, glue)
-    vex = "".join(f'if (s@name == "{n}") {{ ' + "".join(f"f@{k} = {v}; " for k, v in d.items()) + "}\n"
+    def assign(k, v):
+        return f"v@{k} = set({', '.join(str(c) for c in v)}); " if isinstance(v, tuple) else f"f@{k} = {v}; "
+
+    vex = "".join(f'if (s@name == "{n}") {{ ' + "".join(assign(k, v) for k, v in d.items()) + "}\n"
                   for n, d in ((names[0], each_a), (names[1], each_b)) if d)
     if kind == "box3d":
         solver = box3d_solver(dop, None if vex else net, gravity=(0, 0, 0) if spin is not None else None)
@@ -1748,7 +1968,12 @@ def test_bullet_glue_drag_limits():
     side, 1000 and 3000 kg, each with its own values. Bullet's chunk takes the drag weighted by mass, the smallest
     maximum and the largest minimum (airresist 4000 on the light box ends the fall at sqrt(4000 g / 1000), on the heavy
     one at sqrt(4000 g / 3000); speedmax 3 and 6 cap it at 3 either way; spinmax 1 and 3 at 1; spinmin 2 and 4 hold
-    it at 4). Box3D's Glue as One Body compound takes the same. Passes when Box3D is within 5 percent of Bullet's end
+    it at 4; dragexp, drag, targetv, targetw and spinresist are weighted by mass: dragexp 1 and 2 with airresist 4000 on
+    both, drag 2 on the light box, a target velocity on the light box and 3 and 6, spinresist on the light and the heavy
+    box, a target spin on the heavy box and 1 and 3 and 3 and 1). Box3D's Glue as One Body compound takes the same.
+    A combined spinresist of 0.6 or more (1 and 0.5 give 0.625) leaves Bullet's spin all but gone after 4 s (0.008)
+    and Box3D's at 0.355, the implicit step being Bullet's 10 Substeps against Box3D's 2, so the values keep it lighter.
+    Passes when Box3D is within 5 percent of Bullet's end
     fall speed under drag, 0.2 of its capped speed (speedmax is applied after Box3D's step, as in bullet_drag_limits)
     and 0.1 rad/s of its spin."""
     cases = (
@@ -1758,6 +1983,24 @@ def test_bullet_glue_drag_limits():
         ("speedmax 6 and 3", {"speedmax": 6.0}, {"speedmax": 3.0}, None, "cap"),
         ("spinmax 1 and 3", {"spinmax": 1.0}, {"spinmax": 3.0}, 6.0, "spin"),
         ("spinmin 2 and 4", {"spinmin": 2.0}, {"spinmin": 4.0}, 0.5, "spin"),
+        ("dragexp 1 on the light box, 2 on the heavy", {"airresist": 4000.0, "dragexp": 1.0},
+         {"airresist": 4000.0, "dragexp": 2.0}, None, "drag"),
+        ("dragexp 1 on both", {"airresist": 4000.0, "dragexp": 1.0}, {"airresist": 4000.0, "dragexp": 1.0}, None,
+         "drag"),
+        ("drag 2 on the light box only", {"airresist": 4000.0, "drag": 2.0}, {"airresist": 4000.0, "drag": 1.0}, None,
+         "drag"),
+        ("targetv on the light box", {"airresist": 4000.0, "targetv": (0.0, -3.0, 0.0)}, {"airresist": 4000.0}, None,
+         "drag"),
+        ("targetv 3 and 6", {"airresist": 4000.0, "targetv": (0.0, -3.0, 0.0)},
+         {"airresist": 4000.0, "targetv": (0.0, -6.0, 0.0)}, None, "drag"),
+        ("spinresist 1 on the light box", {"spinresist": 1.0}, {}, 6.0, "spin"),
+        ("spinresist 0.25 on the heavy box", {}, {"spinresist": 0.25}, 6.0, "spin"),
+        ("targetw on the heavy box", {"spinresist": 300.0}, {"spinresist": 300.0, "targetw": (0.0, 2.0, 0.0)}, 6.0,
+         "spin"),
+        ("targetw 1 and 3", {"spinresist": 300.0, "targetw": (0.0, 1.0, 0.0)},
+         {"spinresist": 300.0, "targetw": (0.0, 3.0, 0.0)}, 6.0, "spin"),
+        ("targetw 3 and 1", {"spinresist": 300.0, "targetw": (0.0, 3.0, 0.0)},
+         {"spinresist": 300.0, "targetw": (0.0, 1.0, 0.0)}, 6.0, "spin"),
     )
     rows, ok = [], True
     for i, (label, a, b, spin, what) in enumerate(cases):
@@ -1774,13 +2017,13 @@ def test_bullet_glue_drag_limits():
     return [Result("bullet_glue_drag_limits", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
 
 
-def hull_spin_run(kind, sop_path, name, frames=12, bounds=True):
-    """A 1 kg piece in free fall (gravity gives no torque) given a torque of (0, 0, 1) every frame by a SOP Solver, as
-    a POP Force would: the spin it has about z on the last frame, from how far it turned over that frame (rad/s).
-    `bounds`: the Box3D Solver's Bounding Box Inertia."""
+def hull_spin_run(kind, sop_path, name, frames=12, bounds=True, scale=1.0):
+    """A 1 kg piece in free fall (gravity gives no torque) given a torque of (0, 0, scale squared) every frame by a SOP
+    Solver, as a POP Force would (its inertia goes with the square of its size): the spin it has about z on the last
+    frame, from how far it turned over that frame (rad/s). `bounds`: the Box3D Solver's Bounding Box Inertia."""
     dop = new_dopnet(f"hull_spin_{name}_{kind}_{int(bounds)}")
     obj = packed_object(dop, "pieces", sop_path, computemass=0, mass=1.0)
-    writer = sop_solver(dop, "v@torque = {0, 0, 1};")
+    writer = sop_solver(dop, f"v@torque = {{0, 0, {scale * scale}}};")
     if kind == "box3d":
         solver = box3d_solver(dop, None)
         set_parm(solver, ["boundsinertia"], int(bounds))
@@ -1793,15 +2036,19 @@ def hull_spin_run(kind, sop_path, name, frames=12, bounds=True):
     return rotation_angle(track[frames - 1], track[frames]) * math.pi / 180.0 * 24.0
 
 
-def hull_piece_sop(label):
-    """A packed piece far above the origin: a box, or the platonic solid `label` (tetra, icosa)."""
+def hull_piece_sop(label, scale=1.0):
+    """A packed piece far above the origin: a box, or the platonic solid `label` (tetra, icosa), `scale` times its size."""
+    tag = f"{label}_{str(scale).replace('.', '_')}"
     if label == "box":
-        return packed_boxes("hull_spin_box_pieces", [{"size": (1, 1, 1), "center": (0, 1000, 0)}])[0]
-    geo = new_geo(f"hull_spin_{label}")
+        return packed_boxes(f"hull_spin_box_pieces_{tag}", [{"size": (scale, scale, scale), "center": (0, 1000, 0)}])[0]
+    geo = new_geo(f"hull_spin_{tag}")
     src = create(geo, "platonic")
     set_parm(src, ["solidtype", "type"], {"tetra": 0, "icosa": 4}[label])
+    size = create(geo, "xform")
+    size.setInput(0, src)
+    set_parm(size, ["scale"], scale)
     nm = create(geo, "attribwrangle", "name")
-    nm.setInput(0, src)
+    nm.setInput(0, size)
     set_parm(nm, ["class"], 1)
     set_parm(nm, ["snippet"], 's@name = "piece";')
     asm = create(geo, "assemble")
@@ -1815,24 +2062,28 @@ def hull_piece_sop(label):
 
 
 def test_bullet_hull_inertia():
-    """A unit torque on a 1 kg box, tetrahedron and icosahedron for 0.5 s, spin in Bullet against Box3D. Bullet takes a
+    """A torque on a 1 kg box, tetrahedron and icosahedron for 0.5 s, spin in Bullet against Box3D. Bullet takes a
     hull's inertia from the box over it (plus its margin), which the default Bounding Box Inertia does too: PASS
     when the spins agree within 8% and a box (its own inertia is exact) within 3%, and with the toggle off the
     tetrahedron's spin differs from Bullet's by over 15% (a Box3D hull's own inertia is much smaller). The Solver SOP's
-    Bounding Box Inertia is on by default."""
+    Bounding Box Inertia is on by default. The same at 0.2 and 5 times the size (the torque goes with the square): the
+    pad (`kBulletInertiaPad`) is a fixed length, as Bullet's margin is, and the tetrahedron stays within 8% at both
+    sizes. The icosahedron's implied Bullet pad is 0.115 where the tetrahedron's is 0.08, so it is 3% off at 1 m and 1% at
+    5 m, but 14% at 0.2 m: allowed up to 16% there."""
     rows, ok, off_apart = [], True, True
-    for label in ("box", "tetra", "icosa"):
-        sop_path = hull_piece_sop(label)
-        bullet = hull_spin_run("bullet", sop_path, label)
-        ours = hull_spin_run("box3d", sop_path, label)
-        tol = 0.03 if label == "box" else 0.08
-        ok = ok and abs(ours - bullet) <= tol * bullet
-        text = f"{label} Bullet {bullet:.3f} Box3D {ours:.3f}"
-        if label == "tetra":
-            off = hull_spin_run("box3d", sop_path, label, bounds=False)
-            off_apart = abs(off - bullet) > 0.15 * bullet
-            text += f" (toggle off {off:.3f})"
-        rows.append(text)
+    for scale in (1.0, 0.2, 5.0):
+        for label in ("box", "tetra", "icosa"):
+            sop_path = hull_piece_sop(label, scale)
+            bullet = hull_spin_run("bullet", sop_path, label, scale=scale)
+            ours = hull_spin_run("box3d", sop_path, label, scale=scale)
+            tol = 0.03 if label == "box" else (0.16 if label == "icosa" and scale < 0.5 else 0.08)
+            ok = ok and abs(ours - bullet) <= tol * bullet
+            text = f"{label} x{scale:g} Bullet {bullet:.3f} Box3D {ours:.3f}"
+            if label == "tetra" and scale == 1.0:
+                off = hull_spin_run("box3d", sop_path, label, bounds=False)
+                off_apart = abs(off - bullet) > 0.15 * bullet
+                text += f" (toggle off {off:.3f})"
+            rows.append(text)
     sop = solver_sop("hull_inertia_sop")
     parm = sop.parm("boundsinertia")
     on_by_default = parm is not None and parm.eval() == 1
@@ -2324,6 +2575,10 @@ TESTS = {
     "bullet_shape_position": test_bullet_shape_position,
     "bullet_cylinder": test_bullet_cylinder,
     "bullet_anchor_id": test_bullet_anchor_id,
+    "bullet_anchor_id_cases": test_bullet_anchor_id_cases,
+    "bullet_hard_rest_zero": test_bullet_hard_rest_zero,
+    "bullet_late_joint": test_bullet_late_joint,
+    "bullet_late_joint_anchor_id": test_bullet_late_joint_anchor_id,
     "bullet_primr_order": test_bullet_primr_order,
     "bullet_shape_probe": test_bullet_shape_probe,
     "bullet_joint_rest": test_bullet_joint_rest,

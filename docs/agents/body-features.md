@@ -22,7 +22,8 @@ is updated: [bodies.md](bodies.md). Index and rules: [CLAUDE.md](../../CLAUDE.md
   frame (`restRot`) plus `kBulletInertiaPad`, and `boundsInverseInertiaIn` turns the box's tensor back into the
   body's axes. Whole objects are left out (RBD State's own Compute Inertial Tensor decides theirs, `whole-object.md`), as are a
   body of one box (a hull of six perpendicular faces), sphere or capsule, a mesh, and bodies with a custom inertia. Measured against Bullet in `bullet_hull_inertia` (a tetrahedron
-  within 1%, an icosahedron within 4%). The pieces of a Glue as One Body compound keep the true inertia of the
+  within 1% and an icosahedron within 4% at 1 m, the tetrahedron within 1.2% from 0.2 to 5 times that size and the
+  icosahedron 14% off at 0.2). The pieces of a Glue as One Body compound keep the true inertia of the
   merged shapes (`compoundsync::eligible` does not look at the flag), where Bullet sums its pieces' box inertias.
 * **CCD threshold** (`ccdthreshold`) -> `b3BodyDef::safetyFactor` (Box3D's name; negatives keep the default).
 * **Fast rotation** (`fastrotation`) -> `allowFastRotation`; without it Box3D caps spin at `B3_MAX_ROTATION` per Box3D

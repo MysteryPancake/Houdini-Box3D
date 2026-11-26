@@ -721,14 +721,34 @@ def test_packed_object_initial_bullet():
     return results
 
 
+def rbd_initial_attributes(token, path):
+    """`active`, `animated` and `deforming` on the first point of an RBD Packed Object's object (frame 1) made with the
+    Initial Object Type `token`: RBD Packed Object stamps all three, with their defaults where the type leaves them."""
+    dop = new_dopnet(f"po_initial_rbd_{token}")
+    obj = create(dop, "rbdpackedobject", "pieces")
+    set_parm(obj, ["soppath"], path)
+    set_parm(obj, ["initialstate"], token)
+    solver = create(dop, "bulletrbdsolver", "bullet_solver")
+    solver.setInput(0, obj)
+    finish(dop, solver)
+    hou.setFrame(1)
+    sim = dop.simulation()
+    sim.objects()
+    geo = sim.findObject("pieces").geometry()
+    pt = geo.points()[0]
+    return {n: pt.attribValue(n) for n in ("active", "animated", "deforming") if geo.findPointAttrib(n) is not None}
+
+
 def test_packed_object_initial_type():
     """The Box3D Packed Object's Initial Object Type, as RBD Packed Object's: Body Type and Deforming follow it. Active
     writes neither active nor deforming; Static active 0; Animated Static active 0 and animated 1; Deforming Static
     active 0 and deforming 1; Deforming Active deforming 1 only. With Custom they are the object's own (Body Type
-    Kinematic: active 0 and animated 1)."""
+    Kinematic: active 0 and animated 1). RBD Packed Object stamps all three attributes on every point, with 1, 0 and 0
+    where the type leaves them: the same values as ours once a missing attribute reads as its default."""
     path, _ = packed_boxes("po_initial_type", [{"size": (1, 1, 1), "center": (0, 3, 0)}])
     want = {"active": {}, "static": {"active": 0}, "animatedstatic": {"active": 0, "animated": 1},
             "deformingstatic": {"active": 0, "deforming": 1}, "deformingactive": {"deforming": 1}}
+    defaults = {"active": 1, "animated": 0, "deforming": 0}
     rows, ok = [], True
     for token, expected in list(want.items()) + [("custom", {"active": 0, "animated": 1})]:
         obj = box3d_packed_object(new_dopnet(f"po_initial_{token}"), "pieces", path)
@@ -739,8 +759,14 @@ def test_packed_object_initial_type():
         got = {"active": attrs["active"]} if "active" in attrs else {}
         got.update({k: attrs[k] for k in ("animated", "deforming") if attrs.get(k)})
         good = got == expected
+        text = f"{token}: {got}"
+        if token != "custom":
+            rbd = rbd_initial_attributes(token, path)
+            same = {**defaults, **got} == {**defaults, **rbd}
+            good = good and same
+            text += f" (RBD Packed Object {rbd}{'' if same else ', DIFFERENT'})"
         ok = ok and good
-        rows.append(f"{token}: {got}")
+        rows.append(text)
     return [Result("packed_object_initial_type", Result.PASS if ok else Result.FAIL,
                    "attributes written per Initial Object Type: " + "; ".join(rows))]
 

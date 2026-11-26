@@ -20,13 +20,9 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   [joints-sidefx.md](joints-sidefx.md)). Not checked: other scenes, a slow heavy body, bridges of bonds remade while
   pieces are held, and `clang-tidy` on the HDK files (`src/sync`, `src/dop`).
 
-* Glue as One Body drag and speed limits (`refreshCompoundMotion`, [motion-limits.md](motion-limits.md)):
-  `bullet_glue_drag_limits` checks `airresist`, `speedmax`, `spinmax` and `spinmin` against Bullet. Not checked:
-  `dragexp`, `targetv` / `targetw` and `spinresist` on a chunk (weighted by mass, as `airresist`).
-
-* Packed Object Initial Object Type (`initialstate`): not checked are the Solver SOP's collision object (Custom), the
+* Packed Object Initial Object Type (`initialstate`): not checked are the Solver SOP's collision object (Custom) and the
   Pieces tab's Body Type greying out with the menu (hython's `Parm.isDisabled()` never evaluates conditionals: Auto
-  Fit's reads False too, so only the UI shows it), and Deforming Static / Active against RBD Packed Object.
+  Fit's reads False too, so only the UI shows it).
 
 * Constraint Properties Use VEXpressions (`run_vexpressions`): not checked are the snippet menu
   (`vexpressionmenu.buildSnippetMenu` with our own key lists nothing unless snippets are saved under it) and the type

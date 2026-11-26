@@ -396,7 +396,7 @@ int main() {
     for (int i = 0; i < 30; ++i)
       ++steps, w.step(kDt);
     double pm[3], pc[3];
-    float qm[4], qc[4], lin[3], spin[3];
+    float qm[4] = {}, qc[4] = {}, lin[3] = {}, spin[3] = {};
     CHECK(w.getTransformByHandle(mover, pm, qm));
     CHECK(w.getTransformByHandle(compound, pc, qc));
     CHECK(w.getVelocityByHandle(mover, lin, spin));
@@ -765,7 +765,7 @@ int main() {
       pieceVelocity(whole, p.pos, p.lin, p.ang);
     const MergedBody rest = mergePieces({three[0], three[2]});
     CHECK(rest.ok);
-    float lin[3], ang[3];
+    float lin[3] = {}, ang[3] = {};
     pieceVelocity(whole, rest.com, lin, ang);
     for (int i = 0; i < 3; ++i) {
       CHECK(near(rest.lin[i], lin[i], 1e-4));
@@ -901,7 +901,7 @@ int main() {
     CHECK(body.ok && near(body.mass, 4.0, 1e-5));
     CHECK(near(body.com[0], 0.0) && near(body.lin[1], 1.0, 1e-5) &&
           near(body.ang[2], 2.4, 1e-4) && near(body.ang[0], 0.0, 1e-6));
-    float lin[3], ang[3];
+    float lin[3] = {}, ang[3] = {};
     pieceVelocity(body, pieces[0].pos, lin, ang);
     CHECK(near(lin[1], 0.4, 1e-4) && near(ang[2], 2.4, 1e-4));
     pieceVelocity(body, pieces[1].pos, lin, ang);
@@ -972,7 +972,7 @@ int main() {
     CHECK(w.setVelocityByHandle(spun, none, spin));
     w.step(kDt);
     double pos[3];
-    float rot[4], lin[3], ang[3];
+    float rot[4] = {}, lin[3] = {}, ang[3] = {};
     CHECK(w.getTransformByHandle(spun, pos, rot));
     const double theta = 2.0 * kDt;
     CHECK(near(pos[1], -kHalf * std::sin(theta), 2e-4));

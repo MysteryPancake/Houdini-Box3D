@@ -191,7 +191,7 @@ int main() {
   // ---- invertSymmetric3 ----
   {
     const float m[6] = {2, 3, 4, 0.5f, 0.25f, -0.5f};
-    float inv[6], back[6];
+    float inv[6] = {}, back[6] = {};
     CHECK(invertSymmetric3(m, inv) && invertSymmetric3(inv, back));
     for (int i = 0; i < 6; ++i)
       CHECK(near(back[i], m[i], 1e-5));

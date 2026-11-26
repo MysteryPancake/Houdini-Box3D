@@ -309,7 +309,7 @@ int main() {
     double p[3], q3[3];
     pos(w, slide, p);
     CHECK(std::fabs(p[1] - 5.0) < 1e-3 && p[0] > 1.5); // slid along x only
-    float rot[4], lin[3], ang[3];
+    float rot[4] = {}, lin[3] = {}, ang[3] = {};
     CHECK(w.getVelocityByHandle(spin, lin, ang));
     CHECK(std::fabs(ang[0]) < 0.05f && std::fabs(ang[1]) < 0.05f &&
           std::fabs(ang[2]) > 1.0f); // only the spin about z is left
@@ -398,7 +398,7 @@ int main() {
                                         frame(0, 0, 0), frame(0, 0, 0), s);
     CHECK(j != 0);
     steps(w, 60);
-    float v[3], av[3];
+    float v[3] = {}, av[3] = {};
     w.getVelocityByHandle(b, v, av);
     CHECK(std::fabs(av[2] - 1.0f) < 0.02f && std::fabs(av[0]) < 1e-3f);
     JointFeedback fb;
@@ -473,7 +473,7 @@ int main() {
     CHECK(w.createJoint(JointType::Wheel, 0, e, frame(9, 5, 0), frame(9, 5, 0),
                         wh) != 0);
     steps(w, 60);
-    float v[3], av[3];
+    float v[3] = {}, av[3] = {};
     w.getVelocityByHandle(c, v, av);
     std::printf("motor joint: v=(%.3f, %.3f)\n", v[0], v[1]);
     CHECK(std::fabs(v[0] - 1.0f) < 0.05f); // driven along x
@@ -561,7 +561,7 @@ int main() {
     // Box3D's angular separation compares the bodies' rotations, not the joint
     // frames, so it reports their 45 degree difference although the joint holds
     // exactly. The rotation held:
-    float qa[4], qb[4];
+    float qa[4] = {}, qb[4] = {};
     double tmp[3];
     w.getTransformByHandle(a, tmp, qa);
     w.getTransformByHandle(b, tmp, qb);
@@ -607,7 +607,8 @@ int main() {
     // A fresh world with the bodies where they are now, joints made from the
     // live frames.
     double pa[3], pb[3];
-    float qa[4], qb[4], va[3], wa[3], vb[3], wb[3];
+    float qa[4] = {}, qb[4] = {}, va[3] = {}, wa[3] = {}, vb[3] = {},
+          wb[3] = {};
     w.getTransformByHandle(a, pa, qa);
     w.getTransformByHandle(b, pb, qb);
     w.getVelocityByHandle(a, va, wa);
@@ -666,7 +667,7 @@ int main() {
           wl.pos[0] == la.pos[0]); // the world: unchanged
 
     double pa[3], pb[3];
-    float qa[4], qb[4];
+    float qa[4] = {}, qb[4] = {};
     w.getTransformByHandle(a, pa, qa);
     w.getTransformByHandle(b, pb, qb);
     Box3DWorld r;
