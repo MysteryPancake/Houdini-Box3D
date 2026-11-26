@@ -350,7 +350,7 @@ struct BodySettings {
 // solver's fallback, and the base RBD Object values are read over). Bullet's
 // RBD Object defaults where Box3D has the setting (Houdini 22.0): mass from
 // density 1000, friction 1, bounce 0.5. The solver's mixing defaults (multiply
-// friction, minimum bounce) are Bullet's too, measured in Houdini (test
+// friction and bounce) are Bullet's too, measured in Houdini (test
 // bullet_mixing). BodySettings() itself keeps the core's values
 // (mass 1, friction 0.6, bounce 0) for direct use of Box3DWorld.
 inline BodySettings nodeBodyDefaults() {

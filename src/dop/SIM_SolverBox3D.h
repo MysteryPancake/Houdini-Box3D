@@ -65,7 +65,7 @@ public:
                                        // average, 4 multiply (default)
   GETSET_DATA_FUNCS_I(
       "restitutionmixing",
-      RestitutionMixing); // same order as friction (1 min is the default)
+      RestitutionMixing); // same order as friction (4 multiply is the default)
   GETSET_DATA_FUNCS_B("enableaging",
                       EnableAging); // age += dt; dead = 1 once age > life
   GETSET_DATA_FUNCS_B(

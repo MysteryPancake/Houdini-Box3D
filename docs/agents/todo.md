@@ -44,6 +44,9 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
   `constraint_type` is `position` for Hard, Soft and Spring (`sidefx_hard_untyped`).
 * SideFX constraint data not mapped: Soft plasticity, Cone Twist's elliptical and wide
   cones, softness, motors and translation ranges, Hard's angular motors.
+* Slider Constraint Relationship (`sliderconrel`, Bullet's `btSliderConstraint`: a slide range along the first anchor's x and
+  a rotation limit about it, nothing else free) is not read. A slide range of 0 is a revolute joint and a rotation limit
+  of 0 a prismatic one; both free (a cylinder) has no Box3D joint. Nothing in Houdini creates one but the node itself.
 * Force DOPs: parallel evaluation of circle / sphere sampled forces (the resolver has only the point call).
 * Sticky collisions. Box3D's contact begin / end and sensor events: Houdini has no output for them (Bullet has none), so
   nothing reads them beyond Impacts. Sensors (trigger zones) would be the useful part.

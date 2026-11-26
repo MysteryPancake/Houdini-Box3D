@@ -140,12 +140,12 @@ const SIM_DopDescription *SIM_SolverBox3D::getDescription() {
                    "better bounce on stacked pieces.")
           // Both menus list the rules in the same order (currentWorldSettings);
           // the stored value is the menu index. Defaults are Bullet's rules as
-          // measured in Houdini (test bullet_mixing): multiply friction, take
-          // the smaller bounce.
+          // measured in Houdini (test bullet_mixing): multiply friction and
+          // bounce.
           .menu("frictionmixing", "Friction Mixing", 4,
                 {"Geometric Mean", "Minimum", "Maximum", "Average", "Multiply"},
                 "How the friction of two touching bodies is combined.")
-          .menu("restitutionmixing", "Bounce Mixing", 1,
+          .menu("restitutionmixing", "Bounce Mixing", 4,
                 {"Geometric Mean", "Minimum", "Maximum", "Average", "Multiply"},
                 "How the bounce of two touching bodies is combined.")
           .subfolder("Glue")
@@ -325,7 +325,7 @@ b3dop::WorldSettings SIM_SolverBox3D::currentWorldSettings() const {
   const int fm = static_cast<int>(getFrictionMixing()),
             rm = static_cast<int>(getRestitutionMixing());
   s.frictionMixing = (fm >= 0 && fm < 5) ? kFriction[fm] : FM::Multiply;
-  s.restitutionMixing = (rm >= 0 && rm < 5) ? kRestitution[rm] : RM::Minimum;
+  s.restitutionMixing = (rm >= 0 && rm < 5) ? kRestitution[rm] : RM::Multiply;
   return s;
 }
 

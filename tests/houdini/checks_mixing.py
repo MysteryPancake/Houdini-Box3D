@@ -101,7 +101,11 @@ def test_bounce_mixing():
 def test_bullet_mixing():
     """How Houdini's Bullet combines two bodies' friction and bounce, to choose Box3D's mixing
     defaults: a box (friction 0.2, bounce 0.2) sliding on and dropped onto ground with 0.8, in
-    Bullet; the measured values against each Box3D mixing rule. INFO."""
+    Bullet; the measured values against each Box3D mixing rule. INFO. Bullet multiplies bounce, as its
+    SIM_BulletState::simResolveCollision does, but 0.2 with 0.8 (0.16 multiplied, 0.20 as a minimum)
+    is too close to tell by the rebound (which reads a little over the rule), so the second result drops
+    a box of 0.5 and 0.8 on ground of 0.5, where the rules are far apart, in Bullet and in Box3D with its
+    default Bounce Mixing: PASS when the two rebounds agree within 0.08 (multiply 0.25 and 0.40, minimum 0.5)."""
     rules = ("Geometric Mean", "Minimum", "Maximum", "Average", "Multiply")
     v0 = 3.0
     x, _ = slide_distance("bullet_mix_slide", 0.2, 0.8, v0=v0, solver_kind="bullet")
@@ -112,14 +116,24 @@ def test_bullet_mixing():
         return min(rules, key=lambda r: abs(mix(r, 0.2, 0.8) - measured))
 
     table = ", ".join(f"{r} {mix(r, 0.2, 0.8):.2f}" for r in rules)
-    return [Result("bullet_mixing", Result.INFO,
-                   f"Bullet friction: slid {x:.3f} from 3 m/s, so friction {mu:.3f}, nearest rule {nearest(mu)}; "
-                   f"bounce {e:.3f}, nearest rule {nearest(e)} (0.2 with 0.8 under each rule: {table})")]
+    results = [Result("bullet_mixing", Result.INFO,
+                      f"Bullet friction: slid {x:.3f} from 3 m/s, so friction {mu:.3f}, nearest rule {nearest(mu)}; "
+                      f"bounce {e:.3f}, nearest rule {nearest(e)} (0.2 with 0.8 under each rule: {table})")]
+    rows, ok = [], True
+    for e_box, e_ground in ((0.5, 0.5), (0.8, 0.5)):
+        tag = f"{int(e_box * 10)}_{int(e_ground * 10)}"
+        bullet, _ = bounce_drop(f"bullet_mix_bounce_{tag}", e_box, e_ground, solver_kind="bullet")
+        ours, _ = bounce_drop(f"box3d_mix_bounce_{tag}", e_box, e_ground)
+        ok = ok and abs(bullet - ours) < 0.08
+        rows.append(f"box {e_box} on ground {e_ground}: Bullet {bullet:.3f}, Box3D {ours:.3f} (multiply "
+                    f"{e_box * e_ground:.2f}, minimum {min(e_box, e_ground):.2f})")
+    results.append(Result("bullet_mixing", Result.PASS if ok else Result.FAIL, "default Bounce Mixing: " + "; ".join(rows)))
+    return results
 
 
 def test_bounce_heights():
     """Boxes with bounce 0.3, 0.6 and 0.9 dropped 2 m onto ground with bounce 1 (default mixing,
-    Minimum, so the box's own bounce is used): each rebounds to bounce^2 x 2 m."""
+    Multiply, so the box's own bounce is used): each rebounds to bounce^2 x 2 m."""
     rows, ok = [], True
     for e in (0.3, 0.6, 0.9):
         got, _ = bounce_drop(f"bounce_height_{int(e * 10)}", e, 1.0)

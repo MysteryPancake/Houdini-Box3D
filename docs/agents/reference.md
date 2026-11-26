@@ -64,6 +64,9 @@ during the step (`Box3DWorld::assertCount()` delta, reported by a scope guard in
   at any frequency (only the rigid joint constraint is clamped, to a quarter of the solver step rate), and a cap taken
   from our own Substeps (default 2) would be about 25 times softer than Bullet's at its default of 10. So a Spring
   stiffer than that cap is stiffer here than in Bullet.
+* Bullet's restitution velocity threshold is 0 (any approach speed bounces); the solver's Bounce Threshold defaults to
+  Box3D's, so slow collisions settle instead of jittering. The bounce itself is Bullet's: the two bounces multiplied
+  (`bullet_mixing`).
 * `min_activation_impulse` (inactive bodies that activate when hit): Box3D has no equivalent, and it would need a
   contact scan after every step.
 
