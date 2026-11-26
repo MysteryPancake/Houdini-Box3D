@@ -31,6 +31,19 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
   Collide Relationship the box affects), which Box3D does not, and its box ends slower than ours after a row of moving
   particles hits it (`point_affectors`: 5.1 m against 7.5 m): Bullet's particles are not infinite mass. Particles with
   thousands of points are a body each, untimed.
+* Glue's break timing against Bullet's (breaks before the step, Box3D after it; `glue_row_scene`, Glue as One Body on).
+  A pair landing from 1, 3 or 6 breaks on the same frame in both, at every Strength tried, and its pose shows nothing of
+  the late break (two free boxes sink into the ground just as far). A box dropped 4 on a pair or a row of 4 breaks one
+  frame later in Box3D at Substeps 2 (24 against 23 at Strengths 1.2e4 and 2.4e4) and on the same frame at Substeps 4
+  for the pair at 1.2e4 (not at 2.4e4, nor for the row). The cause is not where in the frame the bond breaks: the
+  falling box is still in free fall (v.y -9.0) at the end of frame 23 with its bottom 0.14 into the pair, Box3D making no
+  contact between two dynamic bodies until the next step's pair update, so no hit exists to break on before frame 24
+  (Substeps 4 gets within the contact margin one substep earlier). Breaking between substeps would not move it; the
+  contact has to be predicted before the step (a shape cast of each moving glued body, as `holdCompoundsForApproach`
+  finds a fast body's path) or found by an overlap query after it. At Strengths so low that the weight breaks the bonds
+  (3e3), Bullet breaks them on frame 2 to 4 and Box3D on 7 to 10, a different cause: Bullet estimates every contact of
+  the group each frame (a resting body's gravity step is its speed), where Box3D estimates only hits and counts the rest by
+  their real impulse.
 * Box3D Configure has no Units (RBD Configure's Unit Mass and Unit Length, which scale Density by
   `unitlength / unitmass`, each over 1000).
 * Drag and speed limits (`Box3DMotion.cpp`, [motion-limits.md](motion-limits.md)): World Scale other than 1 does not
@@ -123,6 +136,17 @@ Workarounds in the wrapper that the engine could own, roughly by value:
   [joints-sidefx.md](joints-sidefx.md)): Hard's rotation is a motor joint with a stiff angular spring because Box3D
   has no rigid rotation-only joint, and Cone Twist loses its translation ranges and motors. One joint with per-axis
   settings would remove the mapping and the unmapped list above.
+* **Anchor DOF attributes.** RBD Bullet Solver reads two point attributes of a constraint network's anchors, `condof`
+  (an int: the number of DOFs the anchor constrains, 3 a point, 2 a line, 1 a plane, 0 none) and `condir` (a vector: the
+  line's direction or the plane's normal), and Box3D ignores both (every case below is a plain point joint). On a Hard
+  `position` line with the attribute on both points, a box hung from a pivot 0.5 from its centre: `condof` 2 with `condir`
+  y falls straight (a line along y), with x slides along x (y and z held) and with z hangs; 1 with y slides in the plane
+  (x to 27 in 2 s, y held), with x falls; 0 falls. Only the second anchor's counts when the first is a point (first 2,
+  second 3 hangs as with none; first 3, second 2 slides). With one point carrying `condof` and the other not the
+  missing one reads 0, so the joint is free. `all` with `condof` 2 on `condir` z swings (the rotation about z freed) and
+  the `rotation` type holds nothing in either: not worked out. No Box3D joint is a line or a plane (a prismatic one also
+  locks the turn, a point joint turns freely), so this needs the generic joint above; `condof` 3 and a hinge about an axis
+  (revolute) are already joints. Probes only, no test.
 * **Joints to the world.** `b3CreateJoint` needs two valid, different bodies, so a null `BodyHandle` uses
   `Impl::anchor`, a shapeless static body at the origin made on first use. Wanted: a null body means the world.
 * **Checks that survive Release.** Box3D checks most inputs with asserts, which a Release build compiles out, so every

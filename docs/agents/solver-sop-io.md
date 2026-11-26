@@ -17,9 +17,12 @@ and forces: [solver-sop.md](solver-sop.md). Index and rules: [CLAUDE.md](../../C
   Unused Groups (on, as RBD Configure's; `remove_unused_groups`).
 * Simulation Points: DOP Import of the pieces object, Fetch Geometry (`POINTS_TOGGLES`), primitives removed (an Add
   SOP's Delete Geometry But Keep the Points, found by `POINTS_ONLY_PARM`; a `removeprim` wrangle only if not), point
-  attributes cut to `POINTS_KEEP` (with `scale`, which only an animated piece whose source scale changes has) plus the asset's `transferattributes`. Not Create Points to Represent Objects: that
-  makes a point per packed primitive only for SideFX's RBD Packed Object, one per DOP object for ours, so this is
-  the one place the asset does not copy RBD Bullet Solver (its `dopimport` uses that style). The points carry
+  attributes cut to `POINTS_KEEP` (with `scale`, which only an animated piece whose source scale changes has) plus the asset's `transferattributes`. Not Create Points to Represent Objects, which
+  RBD Bullet Solver's `dopimport` uses and which does make a point per piece for ours too, with Bullet's `P`, `v`,
+  `w`, `orient`, `pivot`, `name` and `scale`: it drops `restxform` and `id`, and is no faster. The fetch is a shared copy
+  of the object's geometry (0.02 ms for 10000 pieces, the points_only step after it nothing), where the points import
+  builds them (1.4 ms), and the whole asset frame of 10000 falling pieces took 12.2 ms with the fetch and 13.6 with the
+  points (with `scale` kept, 32 ms: it turns off the fast Transform Pieces path). So the asset does not copy it. The points carry
   Bullet's rest convention ([bodies.md](bodies.md), "Rest transform").
 * Geometry and Proxy outputs: Transform Pieces of the named Geometry / simulated source onto the simulation points by
   `name`, no rest input, the source as of the Start Frame (`rest_source`: a Time Shift and a Switch If that takes the

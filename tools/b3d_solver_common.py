@@ -107,9 +107,10 @@ TRANSFER_TO = {"transform_geometry": ("transfertogeo", "Transfer to Geometry"),
                "transform_proxy": ("transfertoproxy", "Transfer to Proxy Geometry")}
 TRANSFER_ATTRIBUTES_DEFAULT = "age w"  # RBD Bullet Solver's default
 ATTRIBS_TO_COPY = "attribstocopy"  # Transform Pieces' Attributes to Copy list
-# Simulation points: Fetch Geometry of the pieces, not Create Points to Represent Objects (that makes
-# one point per piece only for SideFX's RBD Packed Object; for ours it makes one point per DOP
-# object). The pieces are in SOP space, so nothing is transformed.
+# Simulation points: Fetch Geometry of the pieces, not Create Points to Represent Objects (which does
+# give a point per piece for our objects, but keeps only P, v, w, orient, pivot, name and scale, and
+# costs more than the fetch: see solver-sop-io.md). The pieces are in SOP space, so nothing is
+# transformed.
 POINTS_TOGGLES = {"pack": False,  # Pack Geometry Before Merging
                   "adddopobjectpath": False,
                   "doposxform": False,  # Transform Geometry With Position Data
