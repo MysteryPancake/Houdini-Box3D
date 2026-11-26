@@ -67,7 +67,9 @@ through. No Bullet settings, no Proxy attribute transfer.
   of the Geometry (else Proxy) pieces its two points' `name`s stand for, averaged over the ends. The Geometry
   Attribute Transfer folder (`clusterattrib`, default `parentpiece`; `transfermode`: Closest 0, Min 1, Max 3, Average
   2, as Bullet's tokens) picks the pieces: those whose Cluster Attribute equals the name, else the one named so;
-  Closest is the nearest by point position (packed pieces are one point), the others combine them. A piece that is not
+  Closest is the nearest to the anchor's surface (one `xyzdist` over the primitives of those pieces, as Bullet's, so a
+  packed piece is measured by its geometry; a piece with no primitive by its point; a packed primitive gives its
+  point's value, any other is interpolated with `primuv`), the others combine them. A piece that is not
   found leaves the value alone. Set also writes a scaled setting whatever its value. Each of these settings also has
   `<name>randomize` (a joined checkbox) and `<name>variance` (default 0.8): after the scaling the value is times
   `fit01(rand(constraint number, seed), max(0, 1 - variance), 1 + variance)` when it is not negative, the seed from

@@ -126,7 +126,8 @@ def collect(dopnet):
 SCALE_VEX = """\
 #define NONE -1e38
 // The value of `attr` on the piece(s) anchor `name` stands for in geometry `input`: NONE if there is no such piece.
-// mode: 0 the piece nearest `P`, 1 Min, 2 Average, 3 Max.
+// mode: 0 the piece nearest `P` (to its surface, as RBD Constraint Properties does: a packed primitive is measured
+// by its geometry, a piece with no primitive by its point), 1 Min, 2 Average, 3 Max.
 float anchorvalue(int input; string attr; string cluster; string name; vector P; int mode)
 {
     string key = "name";
@@ -136,20 +137,35 @@ float anchorvalue(int input; string attr; string cluster; string name; vector P;
     int n = findattribvalcount(input, "point", key, name);
     float result = NONE;
     float total = 0;
-    float nearest = 1e30;
+    string prims = "";
+    float nearest = 1e30;  // squared distance to the nearest piece that has no primitive
     for (int i = 0; i < n; i++) {
         int pt = findattribval(input, "point", key, name, i);
         float v = point(input, attr, pt);
         total += v;
         if (mode == 0) {
-            vector at = point(input, "P", pt);
-            float d = distance2(P, at);
-            if (d < nearest) { nearest = d; result = v; }
+            int pts[] = pointprims(input, pt);
+            if (len(pts) > 0) {
+                foreach (int pr; pts) prims += itoa(pr) + " ";
+            } else {
+                float d = distance2(P, point(input, "P", pt));
+                if (d < nearest) { nearest = d; result = v; }
+            }
         } else if (i == 0) result = v;
         else if (mode == 1) result = min(result, v);
         else if (mode == 3) result = max(result, v);
     }
     if (n > 0 && mode == 2) result = total / n;
+    if (mode == 0 && prims != "") {
+        int pr;
+        vector uv;
+        float d = xyzdist(input, prims, P, pr, uv);
+        if (pr >= 0 && d * d < nearest) {
+            // A packed primitive has one point and so one value; any other is interpolated at the nearest spot.
+            if (primvertexcount(input, pr) == 1) result = point(input, attr, primpoint(input, pr, 0));
+            else result = primuv(input, attr, pr, uv);
+        }
+    }
     return result;
 }
 

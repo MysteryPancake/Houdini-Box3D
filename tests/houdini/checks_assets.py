@@ -80,6 +80,50 @@ def test_constraint_properties_scaling():
     return results
 
 
+def test_constraint_properties_closest_surface():
+    """Transfer Mode Closest measures to the pieces' surfaces, as RBD Constraint Properties does, not to their points.
+    Packed pieces A1 (weight 1, a box of size 10 at the origin) and A2 (weight 3, a box of size 1 at x=8) share
+    parentpiece A, and B (weight 5) is at x=20. A Revolute line from x=6 (anchor A) to x=20 (anchor B), Stiffness 10
+    scaled by `weight`: A2's point is nearer the anchor (2 against 6) but A1's surface is (1 against 1.5), so the
+    average of the ends is (1 + 5) / 2 * 10 = 30, not 40."""
+    geo = new_geo("cp_closest_surface")
+    packed = []
+    for name, parent, weight, size, x in (("A1", "A", 1.0, 10, 0), ("A2", "A", 3.0, 1, 8), ("B", "", 5.0, 1, 20)):
+        box = create(geo, "box", f"box_{name}")
+        for axis in "xyz":
+            set_parm(box, [f"size{axis}"], size)
+        set_parm(box, ["tx"], x)
+        attribs = create(geo, "attribwrangle", f"attribs_{name}")
+        attribs.setInput(0, box)
+        set_parm(attribs, ["class"], 2)
+        set_parm(attribs, ["snippet"], f's@name = "{name}"; s@parentpiece = "{parent}"; f@weight = {weight};')
+        pack = create(geo, "pack", f"pack_{name}")
+        pack.setInput(0, attribs)
+        set_parm(pack, ["nameattribute"], "name")
+        set_parm(pack, ["transfer_attributes"], "name parentpiece weight")
+        packed.append(pack)
+    pieces = create(geo, "merge", "pieces")
+    for i, pack in enumerate(packed):
+        pieces.setInput(i, pack)
+    lines = create(geo, "attribwrangle", "lines")
+    set_parm(lines, ["class"], 0)
+    set_parm(lines, ["snippet"], 'addpointattrib(0, "name", ""); addprimattrib(0, "constraint_name", ""); '
+             'int a = addpoint(0, set(6, 0, 0)); int b = addpoint(0, set(20, 0, 0)); '
+             'setpointattrib(0, "name", a, "A"); setpointattrib(0, "name", b, "B"); '
+             'int pr = addprim(0, "polyline", a, b); setprimattrib(0, "constraint_name", pr, "Revolute");')
+    cp = create(geo, "box3d_constraint_properties", "props")
+    cp.setInput(0, pieces)
+    cp.setInput(1, lines)
+    for name, value in (("action", 0), ("doconstrainttype", 1), ("addrevolute_stiffness", 1),
+                        ("revolute_stiffness", 10.0), ("revolute_stiffnessattribute", "weight"),
+                        ("revolute_stiffnessscaling", 1), ("transfermode", 0)):
+        set_parm(cp, [name], value)
+    g = cp.geometry(1)
+    got = round(g.prims()[0].attribValue("stiffness"), 3) if g and g.findPrimAttrib("stiffness") else None
+    return [Result("constraint_properties_closest_surface", Result.PASS if got == 30.0 else Result.FAIL,
+                   f"Closest stiffness over packed pieces {got} (expected 30: the surface-nearest piece A1, not 40)")]
+
+
 def test_constraint_properties_next():
     """Switch Constraint Type When Broken and the next settings. A Revolute line: with the switch off, Next Constraint
     Name and a next Revolute Stiffness (99) write nothing; with it on, Edit writes next_constraint_name Weld and
@@ -728,6 +772,7 @@ TESTS = {
     "packed_object_overwrite_from_sop": test_packed_object_overwrite_from_sop,
     "configure_packs": test_configure_packs,
     "constraint_properties_scaling": test_constraint_properties_scaling,
+    "constraint_properties_closest_surface": test_constraint_properties_closest_surface,
     "constraint_properties_next": test_constraint_properties_next,
     "constraint_properties_vexpressions": test_constraint_properties_vexpressions,
     "constraint_properties_collisions": test_constraint_properties_collisions,

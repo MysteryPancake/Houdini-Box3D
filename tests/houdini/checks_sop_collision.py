@@ -11,8 +11,8 @@ from checks_sop_common import _both_sops, bullet_sop, named_positions, play, sol
 
 def test_solver_sop_collision():
     """A packed box dropped onto a ground box on the Collision input rests on it (y = 0.5) after 2 s;
-    the proxy output equals the geometry output and carries w (Transfer to Geometry), and the
-    simulation points output has one point per piece, on the geometry's piece.
+    the proxy output is empty (no proxy input, as RBD Bullet Solver's), the geometry carries w (Transfer to
+    Geometry), and the simulation points output has one point per piece, on the geometry's piece.
     With Enable Collision Geometry off the box falls through the ground."""
     pieces, names = packed_boxes("sop_drop_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0)}])
     ground, _ = packed_boxes("sop_drop_ground", [GROUND])
@@ -27,12 +27,12 @@ def test_solver_sop_collision():
 
     geo_pos, proxy_pos, sim_pos, sim_prims, geo_w = play(sop, 48, sample)[48]
     y = geo_pos.get(names[0], hou.Vector3(0, 99, 0))[1]
-    same = names[0] in proxy_pos and (proxy_pos[names[0]] - geo_pos[names[0]]).length() < 1e-6
+    same = not proxy_pos
     pts_ok = (len(sim_pos) == 1 and sim_prims == 0 and names[0] in sim_pos
               and (sim_pos[names[0]] - geo_pos.get(names[0], hou.Vector3(0, 99, 0))).length() < 1e-4)
     ok = close(y, 0.5, 0.03) and same and pts_ok and geo_w
     results = [Result("solver_sop_collision", Result.PASS if ok else Result.FAIL,
-                      f"box at y={y:.3f} after 2 s (expected 0.5); proxy output equals geometry output: {same}; "
+                      f"box at y={y:.3f} after 2 s (expected 0.5); proxy output empty: {same}; "
                       f"w transferred to Geometry: {geo_w}; "
                       f"simulation points: {len(sim_pos)} point(s), {sim_prims} primitive(s), on the piece: {pts_ok} "
                       f"(expected 1 point, 0 primitives, True)")]

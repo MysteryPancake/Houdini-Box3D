@@ -81,5 +81,6 @@ and forces: [solver-sop.md](solver-sop.md). Index and rules: [CLAUDE.md](../../C
   `switch_show_collision_geo` (`usecollisions` && Show Geometry, `SHOW_COLLISION`, on) ->
   `switchif_beforestart_collision_geo`. `merge_guide` -> `guide_wireframe` (`gl_wireframe`) -> `GUIDE_GEO`.
 * Before the Start Frame the Geometry, Constraints and Proxy outputs are the inputs (`before_start`, RBD Bullet
-  Solver's `switchif_beforestart`; the proxy output shows the simulated source). A Switch-If takes its second input
-  while its expression is true.
+  Solver's `switchif_beforestart`). A Switch-If takes its second input while its expression is true. With no Proxy
+  input the Proxy output is empty at every frame, as RBD Bullet Solver's (`switch_proxy_connected`, on
+  `npoints` of the input; the geometry is simulated then but not repeated there).

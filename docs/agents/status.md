@@ -27,7 +27,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   (`vexpressionmenu.buildSnippetMenu` with our own key lists nothing unless snippets are saved under it) and the type
   folders' layout.
 * Constraint Properties scaling and Geometry Attribute Transfer (`SCALE_VEX`). Not checked against RBD Constraint
-  Properties: Closest uses piece point positions (Bullet uses the nearest surface point), a piece that is missing
+  Properties: a piece that is missing
   leaves the value unscaled (Bullet skips the setting), integers, toggles and vectors have no scaling, and there is no
   Next Constraint scaling. Randomize and Variance are on every number setting here (Bullet: Glue Strength only),
   seeded per setting.

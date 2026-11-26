@@ -41,7 +41,8 @@ Inside:
     import_constraints (DOP Import of the pieces' ConstraintGeometry) -> switchif_keepbroken (broken
       removed unless Export Broken Constraints) -> Transform Pieces onto the simulation points (world
       anchors reset) -> constraints output
-    Geometry, constraints and proxy outputs: the inputs before the Start Frame (switchif_beforestart*)
+    Geometry, constraints and proxy outputs: the inputs before the Start Frame (switchif_beforestart*); the
+      proxy output is empty with no Proxy input (switch_proxy_connected)
     import_impacts (DOP Import Records of the pieces' Impacts) -> IMPACTS null, merged out by Fetch Impacts
     import_shapes (DOP Import of the objects' Box3DShapes data, written by the solver's Export Collision
       Shapes) -> tint_shapes (Shape Color) -> switch_show_shapes -> GUIDE_GEO

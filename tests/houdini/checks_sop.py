@@ -306,7 +306,8 @@ def test_solver_sop_initial_bake():
 
 def test_solver_sop_removed_pieces():
     """As RBD Bullet Solver (remove_deleted): a piece the solver deletes (dead, Reap Dead Points on)
-    leaves the Geometry and Proxy outputs instead of staying behind untransformed."""
+    leaves the Geometry output, and the Proxy output when one is connected, instead of staying behind untransformed.
+    With no proxy input the Proxy output is empty."""
     pieces, names = packed_boxes("sop_removed_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0), "attrs": {"dead": 0}},
                                                         {"size": (1, 1, 1), "center": (3, 3, 0), "attrs": {"dead": 1}}])
     sop = solver_sop("sop_removed_pieces", geometry=pieces)
@@ -314,10 +315,15 @@ def test_solver_sop_removed_pieces():
     track = play(sop, 6, lambda s, f: (len(s.geometry(0).prims()), len(s.geometry(2).prims()),
                                        len(s.geometry(3).points())) if f == 6 else None)
     geo_n, proxy_n, pts_n = track[6]
-    ok = (geo_n, proxy_n, pts_n) == (1, 1, 1)
+    # The same pieces as the Proxy: the dead one leaves the proxy output too.
+    with_proxy = solver_sop("sop_removed_pieces_proxy", geometry=pieces, proxy=pieces)
+    set_parm(with_proxy, ["reapdead"], 1)
+    proxy_track = play(with_proxy, 6, lambda s, f: len(s.geometry(2).prims()) if f == 6 else None)
+    ok = (geo_n, proxy_n, pts_n) == (1, 0, 1) and proxy_track[6] == 1
     return [Result("solver_sop_removed_pieces", Result.PASS if ok else Result.FAIL,
-                   f"on frame 6: {geo_n} geometry piece(s), {proxy_n} proxy piece(s), {pts_n} simulation point(s) "
-                   f"(expected 1, 1, 1: the dead piece {names[1]} gone from all three)")]
+                   f"on frame 6: {geo_n} geometry piece(s), {proxy_n} proxy piece(s) without a proxy input and "
+                   f"{proxy_track[6]} with one, {pts_n} simulation point(s) (expected 1, 0, 1 and 1: the dead piece "
+                   f"{names[1]} gone from the geometry, the proxy and the points; no proxy input, no proxy output)")]
 
 
 def test_solver_sop_world_scale():
@@ -396,8 +402,7 @@ def test_solver_sop_before_start_bullet():
     """Before the Start Frame, against the RBD Bullet Solver SOP: the same pieces, a constraint line and a
     collision ground, Start Frame 6. On frame 3 the box is still at its input height in both, and every
     output (geometry, constraints, proxy, simulation points) has the same number of points and
-    primitives (not the proxy output, which Box3D fills from the geometry and Bullet leaves empty with no proxy
-    input); on frame 12 both have dropped it."""
+    primitives (the proxy output is empty in both, there being no proxy input); on frame 12 both have dropped it."""
     pieces, names = packed_boxes("sop_before_b_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0), "attrs": {"active": 1}},
                                                          {"size": (1, 1, 1), "center": (0, 4, 0), "attrs": {"active": 1}}])
     ground, _ = packed_boxes("sop_before_b_ground", [GROUND])
@@ -414,16 +419,12 @@ def test_solver_sop_before_start_bullet():
         got[kind] = track
     early = {k: got[k][3][0] for k in got}
     late = {k: got[k][12][0] for k in got}
-    # The proxy output (index 2) is left out: with no proxy input Box3D passes the geometry through it and
-    # Bullet gives nothing.
-    keep = (0, 1, 3)
-    same_counts = all(got["box3d"][3][1][i] == got["bullet"][3][1][i] for i in keep)
+    same_counts = got["box3d"][3][1] == got["bullet"][3][1]
     ok = (all(e is not None and close(e[1], 3.0, 1e-4) for e in early.values())
           and all(l is not None and l[1] < 2.9 for l in late.values()) and same_counts)
     return [Result("solver_sop_before_start_bullet", Result.PASS if ok else Result.FAIL,
                    f"frame 3 (before Start Frame 6): box y {[early[k][1] if early[k] else None for k in got]}, "
-                   f"output (points, prims) Box3D {got['box3d'][3][1]}, Bullet {got['bullet'][3][1]} (the proxy, third, is "
-                   f"not compared); frame 12 box y "
+                   f"output (points, prims) Box3D {got['box3d'][3][1]}, Bullet {got['bullet'][3][1]}; frame 12 box y "
                    f"{[late[k][1] if late[k] else None for k in got]} (kinds: {list(got)})")]
 
 

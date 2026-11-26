@@ -636,11 +636,6 @@ def build_network(sub):
     sim_source.setInput(0, scaled[GEO])
     sim_source.setInput(1, scaled[PROXY])
     switch_on_spare_input(sim_source, nulls[PROXY])
-    # The same choice unscaled, for the Proxy output before the Start Frame.
-    sim_input = create(sub, "switch", "sim_source_unscaled")
-    sim_input.setInput(0, nulls[GEO])
-    sim_input.setInput(1, nulls[PROXY])
-    switch_on_spare_input(sim_input, nulls[PROXY])
     sim_prepared = prepare_input(sub, sim_source, "prepare_pieces", pack=True)
     # Collision: packed and named, rest from the start frame.
     collision_prepared = prepare_input(sub, scaled[COLLISION], "prepare_collision", pack=True, collision=True)
@@ -902,11 +897,19 @@ def build_network(sub):
     wire.parm("value1v1").set(-1)
     create(sub, "null", GUIDE_GEO).setInput(0, wire)
 
-    # Before the Start Frame the inputs pass through, as RBD Bullet Solver (the proxy output shows what
-    # is simulated: the proxy, else the geometry).
+    # Before the Start Frame the inputs pass through, as RBD Bullet Solver (the proxy output shows the simulated
+    # proxy and the Proxy input before it).
     geo_out = before_start(sub, dopnet, "switchif_beforestart", geo_out, nulls[GEO])
     con_out = before_start(sub, dopnet, "switchif_beforestart_constraints", con_out, nulls[CONSTRAINTS])
-    proxy_out = before_start(sub, dopnet, "switchif_beforestart_proxy", proxy_out, sim_input)
+    proxy_out = before_start(sub, dopnet, "switchif_beforestart_proxy", proxy_out, nulls[PROXY])
+    # With no Proxy input the Proxy output is empty, as RBD Bullet Solver's (the geometry is simulated then, but is
+    # not repeated there).
+    no_proxy = create(sub, "null", "no_proxy")  # nothing wired: empty geometry
+    proxy_shown = create(sub, "switch", "switch_proxy_connected")
+    proxy_shown.setInput(0, no_proxy)
+    proxy_shown.setInput(1, proxy_out)
+    switch_on_spare_input(proxy_shown, nulls[PROXY])
+    proxy_out = proxy_shown
     points_out = scale_wrangle(sub, "unscale_points", sim_points, UNSCALE_POINTS_VEX, inverse=True)
     for idx, src in enumerate([geo_out, con_out, proxy_out, points_out]):
         out = create(sub, "output", f"OUT_{['geometry', 'constraints', 'proxy', 'points'][idx]}")
