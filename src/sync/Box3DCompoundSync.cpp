@@ -36,6 +36,12 @@ bool glueSameGroup(const Box3DSharedState &st, b3dop::BodyHandle body,
   return g != st.compoundGroup.end() && g->second == group;
 }
 
+bool glueIgnoresContact(const Box3DSharedState &st, b3dop::BodyHandle other,
+                        int group) {
+  return glueSameGroup(st, other, group) ||
+         st.world.typeByHandle(other) == b3dop::BodySettings::Type::Kinematic;
+}
+
 int compoundGlueGroup(const Box3DSharedState &st, const Box3DCompound &c) {
   for (const Box3DCompoundMember &m : c.members) {
     const auto n = st.glueNodeOf.find(m.body);

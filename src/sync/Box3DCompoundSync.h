@@ -54,6 +54,14 @@ int compoundGlueGroup(const Box3DSharedState &st, const Box3DCompound &c);
 bool glueSameGroup(const Box3DSharedState &st, b3dop::BodyHandle body,
                    int group);
 
+// Whether a glued body's contact with `other` is no hit: `other` is of the glue
+// group `group` (glueSameGroup), or kinematic. RBD Bullet Solver's Glue counts
+// nothing of a kinematic body's push (a piece moved by a SOP Solver), however
+// fast, where a dynamic body's hit counts: a lone glued pair holds at the same
+// Strength at 3 and at 6 m/s (`glue_compound_kinematic`, `glue_kinematic_hit`).
+bool glueIgnoresContact(const Box3DSharedState &st, b3dop::BodyHandle other,
+                        int group);
+
 // Destroys the bridges whose bond's joint is gone (broke mid-frame).
 void pruneCompoundBridges(Box3DSharedState &st);
 

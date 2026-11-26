@@ -240,7 +240,7 @@ void collectGlueHits(Box3DSharedState &st) {
   int group = -1;
   const std::function<bool(b3dop::BodyHandle)> sameGroup =
       [&st, &group](b3dop::BodyHandle other) {
-        return glueSameGroup(st, other, group);
+        return glueIgnoresContact(st, other, group);
       };
   // The impulse each glued body's contacts carried, from the step's impulse
   // events: one pass over the contact points, where asking each of thousands
@@ -277,7 +277,7 @@ void collectGlueHits(Box3DSharedState &st) {
       // One glued body, and what it touches (not a glued body, but maybe the
       // body of a compound of its group).
       const size_t i = static_cast<size_t>((aNode ? na : nb)->second);
-      if (glueSameGroup(st, aNode ? e.b : e.a, st.glueGroup[i]))
+      if (glueIgnoresContact(st, aNode ? e.b : e.a, st.glueGroup[i]))
         continue;
       eventHits[i] += e.impulse;
     }

@@ -235,8 +235,8 @@ void Estimator::run(const std::vector<b3dop::ContactImpulse> &events,
       continue;
     // A body of the other side's own group (a compound's body against a held
     // piece of it) is no contact either.
-    if ((a.node >= 0 && glueSameGroup(st, b.body, groupA)) ||
-        (b.node >= 0 && glueSameGroup(st, a.body, groupB)))
+    if ((a.node >= 0 && glueIgnoresContact(st, b.body, groupA)) ||
+        (b.node >= 0 && glueIgnoresContact(st, a.body, groupB)))
       continue;
     const b3dop::GlueBody *bodyA =
         a.node >= 0 ? groupBody(groupA) : plainBody(a);

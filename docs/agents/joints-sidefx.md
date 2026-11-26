@@ -19,7 +19,9 @@ Glue, Hard, Spring, Bullet Soft and Cone Twist mapped onto Box3D joints. Joint n
     the impulse of the hits it takes, as the Glue help describes Bullet's (`core/Box3DGlue.h`, Houdini-free,
     `tests/core_glue.cpp`): after every Box3D step `collectGlueHits` adds the normal impulse of each glued body's
     contacts (not its glued neighbours', nor its own glue group's: see `glueSameGroup`,
-    [glue-compound.md](glue-compound.md)) to its hits; at the end of the frame `advanceGlue` spreads them over the
+    [glue-compound.md](glue-compound.md); nor a kinematic body's, `glueIgnoresContact`: Bullet's Glue counts nothing of a
+    SOP Solver's pusher at any speed, the bond of a pair it hits holding from the same Strength at 3 and at 6 m/s, so
+    neither the hits nor the estimate take it, `glue_kinematic_hit`) to its hits; at the end of the frame `advanceGlue` spreads them over the
     bonds (`impulse` shares: itself 1, each bond its Propagation Rate, `propagationiterations` rounds), adds the two
     bodies' results to the bond's `impact` after it decayed by `impulse_halflife`, and queues a bond over its Strength
     (< 0 never) for `jointsAfterStep`, which breaks it with the force ones (the `broken` group,

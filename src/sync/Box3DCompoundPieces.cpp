@@ -119,7 +119,7 @@ bool compoundGlueHits(Box3DSharedState &st, BodyHandle body, float &hits) {
       const int group = compoundGlueGroup(st, c);
       const std::function<bool(BodyHandle)> sameGroup =
           [&st, group](BodyHandle other) {
-            return glueSameGroup(st, other, group);
+            return glueIgnoresContact(st, other, group);
           };
       st.world.contactImpulsesByShape(c.body, c.shapeImpulse,
                                       group >= 0 ? &sameGroup : nullptr);

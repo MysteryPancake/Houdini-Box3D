@@ -140,9 +140,8 @@ def test_glue_compound_kinematic():
     modes. (2) Two boxes glued in a row to a kinematic piece: a bond to a body that does not simulate has a side that
     never moves, so the group is not made one body, and the boxes are carried: the first is 1 m and the second 2 m from
     the kinematic piece (within 0.3), nothing breaks. (3) The piece hits the top of a column of 4 glued boxes (a Strength
-    of 1e4, which the standing column holds: Box3D breaks Glue from about half of Bullet's Strength here, which breaks one bond of
-    the column at 1e4 and none at 2e4, and Box3D breaks all 3 at 1e4 and one at 2e4): none is broken on frame 2, all 3 are
-    on frame 24, and the boxes are in the same place in both modes within 0.1."""
+    of 5e3, which the standing column holds; RBD Bullet Solver breaks 2 of the 3 bonds by frame 24 and the third later):
+    none is broken on frame 2, all 3 are on frame 24, and the boxes are in the same place in both modes within 0.1."""
     original = hou.fps()
     hou.setFps(24)
     results = []
@@ -206,7 +205,7 @@ def test_glue_compound_kinematic():
         lines = [(1 + i, (0.0, 1.0 + i, 0.0), 2 + i, (0.0, 1.0 + i, 0.0)) for i in range(3)]
         got = {}
         for compound in (True, False):
-            dop, names = glue_scene(tag("glue_topple"), pieces, lines, 1e4, compound=compound)
+            dop, names = glue_scene(tag("glue_topple"), pieces, lines, 5e3, compound=compound)
             move_piece(dop, f'if (s@name == "{names[5]}") @P.x = -2.5 + {speed} * @Time;')
 
             def look(sim, f, names=names):
@@ -227,6 +226,58 @@ def test_glue_compound_kinematic():
     finally:
         hou.setFps(original)
     return results
+
+
+def kinematic_hit_broken(kind, strength, speed):
+    """Glue bonds broken on frame 40 when a kinematic piece (animated, moved along x at `speed` by a SOP Solver) pushes two
+    glued boxes standing in a row (1 kg each) end-on, in Box3D (`kind` box3d, Glue as One Body on) or RBD Bullet Solver."""
+    pieces = [dict(GROUND, attrs={"active": 0, "animated": 0}),
+              {"size": (1, 1, 1), "center": (0.0, 0.5, 0), "attrs": {"active": 1, "animated": 0}},
+              {"size": (1, 1, 1), "center": (1.0, 0.5, 0), "attrs": {"active": 1, "animated": 0}},
+              {"size": (1, 1, 1), "center": (-2.5, 0.5, 0), "attrs": {"active": 0, "animated": 1}}]
+    name = tag(f"glue_kinhit_{kind}")
+    dop = new_dopnet(name)
+    path, names = packed_boxes(name + "_pieces", pieces)
+    obj = packed_object(dop, "pieces", path)
+    glue = create(dop, "glueconrel", "glue")
+    set_parm(glue, ["strength"], strength)
+    net = create(dop, "constraintnetwork", "constraint_network")
+    net.setInput(0, obj)
+    set_parm(net, ["soppath", "constraintsoppath", "geosoppath"],
+             constraint_lines(name + "_network", [(names[1], (0.5, 0.5, 0.0), names[2], (0.5, 0.5, 0.0), "Glue")]))
+    net.setInput(1, glue)
+    mover = sop_solver(dop, f'if (s@name == "{names[3]}") @P.x = -2.5 + {speed} * @Time;')
+    if kind == "box3d":
+        solver = solver_for("box3d", dop, None)
+        set_parm(solver, ["gluecompound"], 1)
+        last = multisolver(dop, net, [mover, solver])
+    else:
+        last = create(dop, "gravity", "gravity")
+        last.setInput(0, multisolver(dop, net, [create(dop, "bulletrbdsolver", "bullet_solver"), mover]))
+    finish(dop, last)
+    return step(dop, 40, lambda sim, f: (broken_count(sim) or 0) if f == 40 else None)[40]
+
+
+def test_glue_kinematic_hit():
+    """RBD Bullet Solver's Glue counts nothing of a kinematic piece's push, however fast: a piece moved along x by a SOP Solver
+    into two glued boxes (1 kg each) breaks their bond at a Strength of 4e3 and not at 8e3, at 3 and at 6 m/s alike. Box3D
+    does the same (it leaves a kinematic body's contacts out of the hits and the estimate), where counting them broke
+    the bond up to 2e4 at 3 m/s and up to 1e5 at 6."""
+    original = hou.fps()
+    hou.setFps(24)
+    rows, ok = [], True
+    try:
+        for speed in (3.0, 6.0):
+            for strength, want in ((4e3, 1), (8e3, 0)):
+                got = {kind: kinematic_hit_broken(kind, strength, speed) for kind in ("box3d", "bullet")}
+                good = got["box3d"] == want and got["bullet"] == want
+                ok = ok and good
+                rows.append(f"{speed:g} m/s, Strength {strength:g}: broken Box3D {got['box3d']}, Bullet {got['bullet']}"
+                            f"{'' if good else ' (WRONG)'}")
+    finally:
+        hou.setFps(original)
+    return [Result("glue_kinematic_hit", Result.PASS if ok else Result.FAIL,
+                   "; ".join(rows) + " (expected 1 at 4e3 and 0 at 8e3 in both)")]
 
 
 def test_glue_compound_many_groups():
@@ -365,5 +416,6 @@ TESTS = {
     "glue_compound_impacts": test_glue_compound_impacts,
     "glue_compound_id": test_glue_compound_id,
     "glue_compound_kinematic": test_glue_compound_kinematic,
+    "glue_kinematic_hit": test_glue_kinematic_hit,
     "glue_compound_many_groups": test_glue_compound_many_groups,
 }
