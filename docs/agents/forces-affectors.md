@@ -45,7 +45,8 @@ the object, summed, and the sum goes in through `applyForceByHandle` (`b3Body_Ap
   body's bounding box. Circle: the force's direction comes from a point sample, then `getForceOnCircle` with the
   radius of a circle of the same area as the box seen along that direction. The box is `Box3DWorld::extentByHandle`
   (world axes, so a turned body counts larger; read only when a force asks). A body with no shapes falls back to the
-  point sample. Not used: `getPointForces`.
+  point sample. Not used: `getPointForces`. RBD Bullet Solver ignores Sample Mode and samples every force at a point,
+  so a force set to Circle or Sphere is stronger here than in Bullet (`bullet_force_sampling`).
 * `useforces` / `forceswake` are plain options read each step; nothing is stored in the world, so they need no rebuild.
 
 ## Force and torque point attributes

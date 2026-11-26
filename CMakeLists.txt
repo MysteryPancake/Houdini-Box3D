@@ -244,6 +244,7 @@ add_library(Box3DDOP SHARED
     src/sync/Box3DJointNetwork.h
     src/sync/Box3DJointBreak.cpp
     src/sync/Box3DGlueEstimate.cpp
+    src/sync/Box3DGlueMaterial.cpp
     src/sync/Box3DAffectors.h
     src/sync/Box3DAffectors.cpp
     src/sync/Box3DHoudiniTasks.h
@@ -310,7 +311,8 @@ add_custom_command(TARGET Box3DDOP POST_BUILD
 
 # The digital assets, built with hython into houdiniX.Y/otls next to dso/ by tools/make_assets.py (one
 # hython session: Box3D Packed Object, Box3D Configure, Box3D Constraint Properties, then the Box3D Solver
-# SOP, which contains the Packed Object). All copy parameters from the plugin just built, so they are remade whenever the
+# SOP, which contains the Packed Object), then the compiled DOP nodes' help cards into houdiniX.Y/help/nodes/dop
+# (tools/make_dop_help.py). All copy parameters from the plugin just built, so they are remade whenever the
 # plugin is relinked or any script in tools/ changes. Problems print a warning and never fail the build.
 option(BOX3DDOP_MAKE_HDA "Build the Box3D digital assets (Packed Object, Configure, Constraint Properties, Solver SOP) with hython after the plugin" ON)
 if(BOX3DDOP_MAKE_HDA)
@@ -348,7 +350,7 @@ endif()
 # ---------------------------------------------------------------------------
 # Houdini package. `cmake --build build --target package` (or `cpack -G ZIP` in the build folder)
 # makes a zip to extract into houdiniX.Y/packages: Box3D.json plus the Box3D/ folder with
-# dso/ and config/Icons/. The plugin only loads in the Houdini version it was built against,
+# dso/, config/Icons/, otls/ and help/. The plugin only loads in the Houdini version it was built against,
 # so the JSON is enabled for that version only.
 # ---------------------------------------------------------------------------
 string(REGEX MATCH "^[0-9]+\\.[0-9]+" BOX3DDOP_HOUDINI_VERSION "${Houdini_VERSION}")
@@ -370,6 +372,13 @@ if(BOX3DDOP_MAKE_HDA AND BOX3DDOP_HYTHON)
     # The assets the build step made (absent if one failed: OPTIONAL).
     foreach(hda IN LISTS BOX3DDOP_HDAS)
         install(FILES "${BOX3DDOP_OTLS_DIR}/${hda}" DESTINATION Box3D/otls OPTIONAL)
+    endforeach()
+    # The compiled DOP nodes' help cards (the Packed Object is an asset: its help is inside it).
+    foreach(node IN LISTS BOX3DDOP_NODES)
+        if(NOT node STREQUAL "box3d_packedobject")
+            install(FILES "${BOX3DDOP_OTLS_DIR}/../help/nodes/dop/${node}.txt" DESTINATION Box3D/help/nodes/dop
+                    OPTIONAL)
+        endif()
     endforeach()
 endif()
 

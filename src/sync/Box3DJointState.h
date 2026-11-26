@@ -39,6 +39,12 @@ struct Box3DJointExtra {
   // A joint that broke: its local frames at the break, so a next constraint can
   // start from them (switchFrames).
   b3dop::JointFrame brokeLocalA, brokeLocalB;
+  // A world end whose authored anchor moves (animated constraint geometry): the
+  // shapeless kinematic body the joint holds instead of the world, which end it
+  // is, and where the body goes this frame (driveWorldAnchors). 0: none.
+  b3dop::BodyHandle anchorBody = 0;
+  bool anchorOnA = false;
+  b3dop::JointFrame anchorTarget;
 };
 
 // One joint made from a primitive of a constraint network (Box3DJointSync.cpp).

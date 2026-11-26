@@ -60,6 +60,28 @@ inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry, Con
   Every relationship in `RELATIONSHIPS` (ours and SideFX's) is merged into it with default Data Names, so any
   `constraint_name` finds one. Their parameters are not promoted: set values per primitive (floats multiply the
   node's).
+* Emit RBDs (`useemission`, Solver tab after Solve on Creation Frame; `b3d_solver_emit.py`, whose docstring has the
+  scheme), as RBD Bullet Solver's: every step adds the input pieces again, renamed with the frame (`SUFFIX`), unless
+  their `rbdbullet_emit` is 0. SOP side, `emit_flag` / `rename_emitted` before the age stage (the creation frame's
+  pieces are renamed too) and `rename_emitted_constraints`. In the DOP network four SOP Solvers on the pieces object
+  (`group` pieces) merge this step's additions into Geometry (`EMIT_PIECES_VEX`: `b3d_settings.REST_VEX`, a new `id`
+  past the largest when the pieces have ids), ConstraintGeometry (`EMIT_CONSTRAINTS_VEX`: constraints whose two points
+  name a piece emitted this step) and EmittedGeometry / EmittedProxy, the render pieces as they were when emitted (from the `EMIT_GEOMETRY`
+  / `EMIT_PROXY` nulls; SOP Geometry DOPs `emitted_*` attach the creation frame's), each skipping what is already
+  there. Each solver has an Enable Solver in `emission_before` (Multiple Solver input 1, before PRESOLVE: Solve on
+  Creation Frame on) and in `emission_after` (after Add Active Age: off), as Bullet's pre- and post-solve emission.
+  The Geometry / Proxy outputs merge the non-emitting render pieces with the stored ones (`switch_emit_*`) before
+  `remove_deleted_*`. As Bullet's, Overwrite with SOP, Enable Attribute Update and the breaks' Update from Input are
+  greyed out while it is on, and their expressions in the network ignore them then (a value already on stays set).
+  Override Attributes from SOP is off then too, unlike Bullet's: it matches the pieces by name, which emission
+  changes every frame. Not built: Emission Cache Memory. Test `solver_sop_emit_bullet`.
+* Replicate RBDs (`replicate`, on Emit RBDs' row; same module), as RBD Bullet Solver's, for pieces copied during the
+  simulation: output side only. `set_sourcename` writes `__sourcename` before the DOP network; the simulation points
+  keep it and `__restxform`, then `rename_copies` names the n-th point sharing a name `<name>_r<n>` (the Simulation
+  Points output and every Transform Pieces use these). `replica_points` makes a point per copy, named after its source,
+  at the origin with `__restxform` (else identity) as `transform`; `replicate_<kind>` (Copy to Points, Piece Attribute
+  `name`) copies the source's render piece onto it, renamed by `rename_replicas_<kind>`, before `remove_deleted_*`.
+  Test `solver_sop_replicate_bullet`.
 * Forces: a DOP subnet `FORCES` (the asset's dive target and an editable node: the `DiveTarget` and `EditableNodes`
   sections) with `subnetoutput` nodes `PRESOLVE` and `POSTSOLVE` (Output Index 0 and 1), nothing wired in, PRESOLVE
   left and POSTSOLVE right with a sticky note on each outer side (`FORCES_NOTES`), the subnet's inputs moved above.

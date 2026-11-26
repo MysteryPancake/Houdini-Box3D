@@ -483,6 +483,18 @@ struct Box3DMotionEntry {
   b3dop::MotionParams params;
 };
 
+// A body with accelmax / angaccelmax (Box3DMotion.cpp), for one frame: its
+// limits, and for the Box3D step being taken its velocity before it and the
+// forces and torques put on it (about its centre of mass), which the clamp
+// takes out of the change.
+struct Box3DAccelSlot {
+  b3dop::BodyHandle body = 0;
+  float maxAccel = -1.0f, maxAngAccel = -1.0f;
+  float gravityScale = 1.0f;
+  float lin0[3] = {0, 0, 0}, ang0[3] = {0, 0, 0};
+  float force[3] = {0, 0, 0}, torque[3] = {0, 0, 0};
+};
+
 // Per object. A skipped sync leaves its entries untouched, so "current" is the
 // object's liveStamp rather than the step's stamp.
 struct Box3DObjectSync {
@@ -518,6 +530,8 @@ struct Box3DObjectSync {
   // Some point has a non-zero airresist, spinresist, targetv or targetw: they
   // are inputs for one step, zeroed after it (as Bullet's clearForces).
   bool motionInputs = false;
+  // Some point has accelmax or angaccelmax (refreshAccelLimits looks at it).
+  bool motionAccel = false;
 
   // Bodies by their point's `name` (first point wins), for joint anchors.
   // Rebuilt by each full scan while some object has a joint network

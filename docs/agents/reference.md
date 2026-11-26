@@ -33,8 +33,8 @@ Written: `P`, `orient`, `v`, `w` and packed transforms (awake dynamic bodies), `
 `pivot` / `orient` on new packed bodies without a rest ([bodies.md](bodies.md)), `bullet_autofit_valid`, `mass`
 (computemass), `age` / `dead` (aging), `compound_id` (Write Compound IDs: `queueCompoundIds`), `force` / `torque`
 zeroed once applied; `dead` points lose their body, and are deleted with `reapdead` (on by default) or kept, frozen.
-Constraint networks get `broken`, feedback and live frames ([joint-networks.md](joint-networks.md)); whole objects their `Position`
-data ([whole-object.md](whole-object.md)).
+Constraint networks get `broken`, feedback ([joint-networks.md](joint-networks.md)) and live frames
+([joint-live-frames.md](joint-live-frames.md)); whole objects their `Position` data ([whole-object.md](whole-object.md)).
 
 ## Warnings surfaced on the node
 

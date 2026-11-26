@@ -16,6 +16,7 @@ from b3dtest import (
     box3d_solver,
     centroid,
     close,
+    constraint_lines,
     create,
     display,
     find_network_geometry,
@@ -1518,6 +1519,132 @@ def test_bullet_drag_limits():
     return [Result("bullet_drag_limits", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
 
 
+def accel_run(tag, kind, attrs, spin=False, frames=9):
+    """A 1 m box with `attrs` (accelmax / angaccelmax) on ground of friction 1 and no bounce: landing (moving down at
+    10 m/s from just above it) or, with `spin`, resting on it and spinning at 20 rad/s about y. Each frame's v.y and
+    y (landing) or w.y (spinning) as the solver writes them."""
+    box = {"size": (1, 1, 1), "center": (0, 0.5 if spin else 0.6, 0),
+           "attrs": dict(attrs, active=1, bounce=0.0, friction=1.0 if spin else 0.5,
+                         **({"w": (0.0, 20.0, 0.0)} if spin else {"v": (0.0, -10.0, 0.0)}))}
+    ground = dict(GROUND, attrs=dict({k: -1.0 for k in attrs}, active=0, bounce=0.0, friction=1.0))
+    path, names = packed_boxes(tag + "_pieces", [box, ground])
+    dop = new_dopnet(tag)
+    finish(dop, solver_for(kind, dop, packed_object(dop, "pieces", path, keep_velocity=True)))
+
+    def sample(sim, f):
+        a = point_attributes(sim, "pieces", names[0], ["v", "w"])
+        return a["w"][1] if spin else (a["v"][1], packed_positions(sim, "pieces")[names[0]][1])
+
+    return step(dop, frames, sample)
+
+
+def test_bullet_accel_limits():
+    """accelmax and angaccelmax (the most the constraints may change a body's velocity / spin, per second), as RBD
+    Bullet Solver: after the step, so the step's motion is kept and only the velocity carried on is changed. A box
+    landing at 10 m/s with accelmax 1, 10 and 100: the ground still holds it (y 0.5), but its v.y loses at most
+    accelmax / 24 per frame to the contact (with 1 it keeps falling faster on paper; with 100 it reaches 0 within a few
+    frames). A box spinning at 20 rad/s on rough ground with angaccelmax 1 and 10: friction slows it by at most
+    angaccelmax / 24 per frame (without a limit it loses about 1.7 a frame). Passes when Box3D's v.y on frames 6 and 8
+    is within 0.15 of Bullet's, its box within 0.01 of y 0.5 on frame 8, and its w.y on frame 9 within 0.1 (0.3 without
+    a limit, the control: plain friction, which differs a little between the solvers)."""
+    rows, ok = [], True
+    for limit in (1.0, 10.0, 100.0):
+        got = {kind: accel_run(f"accel_land_{int(limit)}_{kind}", kind, {"accelmax": limit}) for kind in KINDS}
+        a, b = got["box3d"], got["bullet"]
+        good = all(abs(a[f][0] - b[f][0]) < 0.15 for f in (6, 8)) and abs(a[8][1] - 0.5) < 0.01
+        ok = ok and good
+        rows.append(f"landing, accelmax {limit:g}: v.y on frames 6 and 8 Box3D {a[6][0]:.2f} {a[8][0]:.2f}, Bullet "
+                    f"{b[6][0]:.2f} {b[8][0]:.2f}; Box3D's box at y {a[8][1]:.3f}")
+    for limit in (None, 1.0, 10.0):
+        attrs = {} if limit is None else {"angaccelmax": limit}
+        got = {kind: accel_run(f"accel_spin_{int(limit or 0)}_{kind}", kind, attrs, spin=True) for kind in KINDS}
+        a, b = got["box3d"][9], got["bullet"][9]
+        ok = ok and abs(a - b) < (0.3 if limit is None else 0.1)
+        rows.append(f"spinning, angaccelmax {'none' if limit is None else f'{limit:g}'}: w.y on frame 9 Box3D {a:.2f}, "
+                    f"Bullet {b:.2f}")
+    return [Result("bullet_accel_limits", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+def glued_motion_run(tag, kind, a, b, spin=None, frames=96):
+    """Two 1 m boxes glued side by side (a Strength nothing breaks: in Box3D one Glue as One Body compound), the first
+    1000 kg, the second 3000 kg, with the drag / limit point attributes `a` and `b`. Falling freely, or with `spin`
+    about y and no gravity: (the fall speed, the spin) over the last frame. The one-step inputs are written every
+    frame by a SOP Solver, as in motion_run."""
+    def split(attrs):
+        return ({k: v for k, v in attrs.items() if k not in PER_STEP_MOTION},
+                {k: v for k, v in attrs.items() if k in PER_STEP_MOTION})
+    (stay_a, each_a), (stay_b, each_b) = split(a), split(b)
+    base = {"active": 1, "density": 1000.0}
+    pieces = [{"size": (1, 1, 1), "center": (-0.5, 1000, 0), "attrs": dict(base, **stay_a)},
+              {"size": (1, 1, 1), "center": (0.5, 1000, 0), "attrs": dict(base, **stay_b, density=3000.0)}]
+    if spin is not None:
+        for p in pieces:
+            p["attrs"]["w"] = (0.0, spin, 0.0)
+    path, names = packed_boxes(tag + "_pieces", pieces)
+    dop = new_dopnet(tag)
+    obj = packed_object(dop, "pieces", path, keep_velocity=spin is not None)
+    glue = create(dop, "glueconrel", "glue")
+    set_parm(glue, ["strength"], 1e12)
+    net = create(dop, "constraintnetwork", "constraint_network")
+    net.setInput(0, obj)
+    set_parm(net, ["soppath", "constraintsoppath", "geosoppath"],
+             constraint_lines(tag + "_network", [(names[0], (0, 1000, 0), names[1], (0, 1000, 0), "Glue")]))
+    net.setInput(1, glue)
+    vex = "".join(f'if (s@name == "{n}") {{ ' + "".join(f"f@{k} = {v}; " for k, v in d.items()) + "}\n"
+                  for n, d in ((names[0], each_a), (names[1], each_b)) if d)
+    if kind == "box3d":
+        solver = box3d_solver(dop, None if vex else net, gravity=(0, 0, 0) if spin is not None else None)
+        last = multisolver(dop, net, [sop_solver(dop, vex), solver]) if vex else solver
+    else:
+        solver = create(dop, "bulletrbdsolver", "bullet_solver")
+        if vex:
+            last = multisolver(dop, net, [sop_solver(dop, vex), solver])
+        else:
+            solver.setInput(0, net)
+            last = solver
+        if spin is None:
+            gravity = create(dop, "gravity", "gravity")
+            gravity.setInput(0, last)
+            last = gravity
+    finish(dop, last)
+    track = step(dop, frames, lambda sim, f: (packed_positions(sim, "pieces")[names[0]],
+                                              packed_transform(sim, "pieces", names[0])))
+    fall = abs(track[frames][0][1] - track[frames - 1][0][1]) * 24.0
+    turned = rotation_angle(track[frames - 1][1], track[frames][1]) * 24.0 * math.pi / 180.0
+    return fall, turned
+
+
+def test_bullet_glue_drag_limits():
+    """The drag and speed limit attributes on a glued chunk, which Bullet runs as one body: two boxes glued side by
+    side, 1000 and 3000 kg, each with its own values. Bullet's chunk takes the drag weighted by mass, the smallest
+    maximum and the largest minimum (airresist 4000 on the light box ends the fall at sqrt(4000 g / 1000), on the heavy
+    one at sqrt(4000 g / 3000); speedmax 3 and 6 cap it at 3 either way; spinmax 1 and 3 at 1; spinmin 2 and 4 hold
+    it at 4). Box3D's Glue as One Body compound takes the same. Passes when Box3D is within 5 percent of Bullet's end
+    fall speed under drag, 0.2 of its capped speed (speedmax is applied after Box3D's step, as in bullet_drag_limits)
+    and 0.1 rad/s of its spin."""
+    cases = (
+        ("airresist on the light box", {"airresist": 4000.0}, {}, None, "drag"),
+        ("airresist on the heavy box", {}, {"airresist": 4000.0}, None, "drag"),
+        ("speedmax 3 and 6", {"speedmax": 3.0}, {"speedmax": 6.0}, None, "cap"),
+        ("speedmax 6 and 3", {"speedmax": 6.0}, {"speedmax": 3.0}, None, "cap"),
+        ("spinmax 1 and 3", {"spinmax": 1.0}, {"spinmax": 3.0}, 6.0, "spin"),
+        ("spinmin 2 and 4", {"spinmin": 2.0}, {"spinmin": 4.0}, 0.5, "spin"),
+    )
+    rows, ok = [], True
+    for i, (label, a, b, spin, what) in enumerate(cases):
+        got = {kind: glued_motion_run(f"glue_motion_{i}_{kind}", kind, a, b, spin=spin) for kind in KINDS}
+        if what == "spin":
+            x, y = got["box3d"][1], got["bullet"][1]
+            good = abs(x - y) < 0.1
+            rows.append(f"{label}: spin Box3D {x:.3f}, Bullet {y:.3f} rad/s")
+        else:
+            x, y = got["box3d"][0], got["bullet"][0]
+            good = abs(x - y) < (0.05 * y if what == "drag" else 0.2)
+            rows.append(f"{label}: fall Box3D {x:.3f}, Bullet {y:.3f} m/s")
+        ok = ok and good
+    return [Result("bullet_glue_drag_limits", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
 def hull_spin_run(kind, sop_path, name, frames=12, bounds=True):
     """A 1 kg piece in free fall (gravity gives no torque) given a torque of (0, 0, 1) every frame by a SOP Solver, as
     a POP Force would: the spin it has about z on the last frame, from how far it turned over that frame (rad/s).
@@ -1794,8 +1921,155 @@ def test_bullet_plane_piece():
     return results
 
 
+def test_bullet_force_sampling():
+    """A Force DOP's Sample Mode in both solvers. A Drag Force DOP on a 2 x 2 x 2 box going 10 m/s along x, once per
+    mode: RBD Bullet Solver samples every force at a point, so it slows the box the same with Point, Circle and Sphere;
+    the Box3D Solver uses the mode, so Circle and Sphere (the force over the body's size) slow it more than Point, and
+    its Point matches Bullet's. Passes when Bullet's three agree within 1 percent, the two Points within 5 percent, and
+    Box3D's Circle and Sphere are more than 1.5 times its Point (the ratios in the message)."""
+    lost = {}
+    for kind in KINDS:
+        for mode, label in ((1, "Point"), (2, "Circle"), (3, "Sphere")):
+            tag = f"force_sampling_{kind}_{label.lower()}"
+            path, names = packed_boxes(tag, [{"size": (2, 2, 2), "center": (0, 50, 0),
+                                              "attrs": {"v": (10.0, 0.0, 0.0)}}])
+            dop = new_dopnet(tag)
+            obj = packed_object(dop, "piece", path, keep_velocity=True)
+            solver = box3d_solver(dop, obj, gravity=(0, 0, 0)) if kind == "box3d" else solver_for(kind, dop, obj)
+            drag = create(dop, "drag", "drag_force")
+            drag.setInput(0, solver)
+            set_parm(drag, ["samplemode"], mode)
+            finish(dop, drag)
+            vx = step(dop, 7, lambda sim, f: point_attributes(sim, "piece", names[0], ["v"]))[7]["v"][0]
+            lost[kind, label] = 10.0 - vx
+    point = {kind: lost[kind, "Point"] for kind in KINDS}
+    if min(point.values()) <= 1e-6:
+        return [Result("bullet_force_sampling", Result.FAIL,
+                       f"the drag barely slowed the box at Point: Box3D {point['box3d']:.2e}, "
+                       f"Bullet {point['bullet']:.2e} m/s")]
+    ratio = {(kind, label): lost[kind, label] / point[kind] for kind in KINDS for label in ("Circle", "Sphere")}
+    bullet_same = all(abs(ratio["bullet", label] - 1.0) < 0.01 for label in ("Circle", "Sphere"))
+    points_match = abs(point["box3d"] - point["bullet"]) < 0.05 * point["bullet"]
+    box3d_sampled = all(ratio["box3d", label] > 1.5 for label in ("Circle", "Sphere"))
+    ok = bullet_same and points_match and box3d_sampled
+    return [Result("bullet_force_sampling", Result.PASS if ok else Result.FAIL,
+                   f"speed lost at Point: Box3D {point['box3d']:.5f}, Bullet {point['bullet']:.5f} m/s; "
+                   f"Circle and Sphere over Point: Bullet {ratio['bullet', 'Circle']:.2f} and "
+                   f"{ratio['bullet', 'Sphere']:.2f} (expected 1), Box3D {ratio['box3d', 'Circle']:.2f} and "
+                   f"{ratio['box3d', 'Sphere']:.2f} (expected over 1.5)")]
+
+
+def glued_slabs_run(tag, kind, compound, bottom, top, ground, lift=0.0, v0=0.0, frames=72):
+    """Two 2 x 0.5 x 2 slabs stacked and glued (a Strength nothing breaks), so only the bottom one touches the
+    ground; `bottom`, `top`, `ground`: point attributes. Starts `lift` above the ground moving at v0 along x. The
+    bottom slab's position per frame. compound: the Box3D Solver's Glue as One Body."""
+    slab = (2.0, 0.5, 2.0)
+    pieces = [{"size": slab, "center": (0, 0.25 + lift, 0), "attrs": dict(bottom, active=1, v=(v0, 0.0, 0.0))},
+              {"size": slab, "center": (0, 0.75 + lift, 0), "attrs": dict(top, active=1, v=(v0, 0.0, 0.0))},
+              dict(GROUND, attrs=dict(ground, active=0))]
+    path, names = packed_boxes(tag + "_pieces", pieces)
+    dop = new_dopnet(tag)
+    obj = packed_object(dop, "pieces", path, keep_velocity=True)
+    glue = create(dop, "glueconrel", "glue")
+    set_parm(glue, ["strength"], 1e12)
+    net = create(dop, "constraintnetwork", "constraint_network")
+    net.setInput(0, obj)
+    mid = (0, 0.5 + lift, 0)
+    set_parm(net, ["soppath", "constraintsoppath", "geosoppath"],
+             constraint_lines(tag + "_network", [(names[0], mid, names[1], mid, "Glue")]))
+    net.setInput(1, glue)
+    solver = solver_for(kind, dop, net)
+    if kind == "box3d":
+        set_parm(solver, ["gluecompound"], int(compound))
+        set_parm(solver, ["bouncethreshold"], 0.1)
+    finish(dop, solver)
+    return step(dop, frames, lambda sim, f: packed_positions(sim, "pieces")[names[0]])
+
+
+def test_bullet_glue_materials():
+    """A glued chunk's friction and bounce. Bullet runs a glue cluster as one body with the pieces' friction and bounce
+    weighted by their mass, so a chunk of two stacked slabs (bottom friction 0.2 / bounce 0.2, top 1.0 / 0.8 and 3
+    times as dense) slides and bounces with 0.8 and 0.65, not with the bottom slab's values, though only that one
+    touches the ground. Friction from how far it slides from 3 m/s on ground of friction 1, bounce from its rebound
+    dropped 2 m on ground of bounce 1. Box3D, with Glue as One Body on and off, gives every piece of the group that
+    average. Then two slabs side by side, glued, sliding, with the bond taken out of the network mid-slide: each slab
+    goes back to its own friction (the slippery one slides on, the grippy one stops), so they end where Bullet's do.
+    Passes when each Box3D run is within 0.05 of Bullet's friction, 0.08 of its bounce (Bullet's bounce reads a little
+    over the rule, as in bullet_mixing) and 0.05 of where its slabs end."""
+    runs = (("bullet", False), ("box3d", True), ("box3d", False))
+    base = {"density": 1000.0}
+    bottom, top = dict(base, friction=0.2, bounce=0.2), dict(base, friction=1.0, bounce=0.8, density=3000.0)
+    v0, height = 3.0, 2.0
+
+    def friction(kind, compound):
+        t = glued_slabs_run(f"glue_mat_slide_{kind}_{int(compound)}", kind, compound, dict(bottom, bounce=0.0),
+                            dict(top, bounce=0.0), dict(base, friction=1.0, bounce=0.0), v0=v0)
+        d = t[72][0]
+        return v0 * v0 / (2 * G * d) if d > 1e-6 else float("inf")
+
+    def bounce(kind, compound):
+        t = glued_slabs_run(f"glue_mat_drop_{kind}_{int(compound)}", kind, compound, dict(bottom, friction=0.5),
+                            dict(top, friction=0.5), dict(base, friction=0.5, bounce=1.0), lift=height)
+        y = {f: p[1] - 0.25 for f, p in t.items()}
+        frames = sorted(y)
+        impact = next((f for f in frames[1:] if y[f] > y[f - 1] + 1e-5), None)
+        if impact is None:
+            return 0.0
+        return math.sqrt(max(max(y[f] for f in frames if impact <= f <= impact + 40), 0.0) / height)
+
+    def apart(kind, compound):
+        """Two slabs side by side, glued, sliding along +x at 4 m/s (friction 0.2 in front, 1.0 and 3 times as dense
+        behind), the bond taken out of the network from frame 7: where each ends on frame 48."""
+        tag = f"glue_mat_apart_{kind}_{int(compound)}"
+        slab = (1.0, 0.5, 2.0)
+        moving = dict(base, bounce=0.0, active=1, v=(4.0, 0.0, 0.0))
+        path, names = packed_boxes(tag + "_pieces", [
+            {"size": slab, "center": (0.5, 0.25, 0), "attrs": dict(moving, friction=0.2)},
+            {"size": slab, "center": (-0.5, 0.25, 0), "attrs": dict(moving, friction=1.0, density=3000.0)},
+            dict(GROUND, attrs=dict(base, bounce=0.0, friction=1.0, active=0, v=(0.0, 0.0, 0.0)))])
+        dop = new_dopnet(tag)
+        obj = packed_object(dop, "pieces", path, keep_velocity=True)
+        glue = create(dop, "glueconrel", "glue")
+        set_parm(glue, ["strength"], 1e12)
+        lines = hou.node(constraint_lines(tag + "_network", [(names[0], (0, 0.25, 0), names[1], (0, 0.25, 0), "Glue")]))
+        cut = lines.parent().createNode("attribwrangle", "cut")
+        cut.setInput(0, lines)
+        set_parm(cut, ["class"], 1)
+        set_parm(cut, ["snippet"], "if (@Frame >= 7) removeprim(0, @primnum, 1);")
+        display(cut)
+        net = create(dop, "constraintnetwork", "constraint_network")
+        net.setInput(0, obj)
+        set_parm(net, ["soppath", "constraintsoppath", "geosoppath"], cut.path())
+        net.setInput(1, glue)
+        solver = solver_for(kind, dop, net)
+        if kind == "box3d":
+            set_parm(solver, ["gluecompound"], int(compound))
+        finish(dop, solver)
+        end = step(dop, 48, lambda sim, f: packed_positions(sim, "pieces") if f == 48 else None)[48]
+        return end[names[0]][0], end[names[1]][0]
+
+    mu = {(k, c): friction(k, c) for k, c in runs}
+    e = {(k, c): bounce(k, c) for k, c in runs}
+    x = {(k, c): apart(k, c) for k, c in runs}
+    ref = ("bullet", False)
+    ok = all(abs(mu[r] - mu[ref]) < 0.05 and abs(e[r] - e[ref]) < 0.08
+             and all(abs(a - b) < 0.05 for a, b in zip(x[r], x[ref])) for r in runs[1:])
+
+    def name(r):
+        return "Bullet" if r == ref else f"Box3D {'compound' if r[1] else 'welds'}"
+
+    return [Result("bullet_glue_materials", Result.PASS if ok else Result.FAIL,
+                   "friction " + ", ".join(f"{name(r)} {mu[r]:.3f}" for r in runs) + " (mass-weighted 0.80); bounce "
+                   + ", ".join(f"{name(r)} {e[r]:.3f}" for r in runs) + " (mass-weighted 0.65); bond removed "
+                   "mid-slide, where the slippery and grippy slabs end: "
+                   + ", ".join(f"{name(r)} {x[r][0]:.2f} and {x[r][1]:.2f}" for r in runs)
+                   + " (expected within 0.05 of Bullet: each slab back on its own friction)")]
+
+
 TESTS = {
     "bullet_computecom": test_bullet_computecom,
+    "bullet_glue_materials": test_bullet_glue_materials,
+    "bullet_force_sampling": test_bullet_force_sampling,
     "bullet_plane_piece": test_bullet_plane_piece,
     "bullet_rest_rescan": test_bullet_rest_rescan,
     "bullet_mirror_flip": test_bullet_mirror_flip,
@@ -1819,6 +2093,8 @@ TESTS = {
     "bullet_joint_rest": test_bullet_joint_rest,
     "bullet_hull_inertia": test_bullet_hull_inertia,
     "bullet_drag_limits": test_bullet_drag_limits,
+    "bullet_glue_drag_limits": test_bullet_glue_drag_limits,
+    "bullet_accel_limits": test_bullet_accel_limits,
     "bullet_spring_cap": test_bullet_spring_cap,
     "bullet_position_rest_length": test_bullet_position_rest_length,
     "bullet_joint_rest_held": test_bullet_joint_rest_held,

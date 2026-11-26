@@ -43,6 +43,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import b3d_hda  # noqa: E402  (beside this script)
 import b3d_materials  # noqa: E402
+from b3d_configure_help import HELP_CARD  # noqa: E402
 from b3d_layouts import CONFIGURE_LAYOUT  # noqa: E402
 import b3d_prepare  # noqa: E402
 import b3d_settings  # noqa: E402
@@ -917,6 +918,7 @@ def build(out_path):
         "table": b3d_materials.table(), "bounces": b3d_materials.bounces()})
     definition.setComment("Sets Box3D body settings as point attributes on the pieces in a group, "
                           "like RBD Configure. Point attributes win over Box3D Data.")
+    definition.addSection("Help", HELP_CARD)  # the help card (F1 on the node)
     b3d_hda.add_viewer_state(definition, STATE_NAME, STATE_FILE)
     definition.updateFromNode(asset)
     definition.save(out_path, asset)

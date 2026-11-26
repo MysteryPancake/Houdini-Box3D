@@ -88,6 +88,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DCompoundInternal.h  What those four share (namespace `compoundsync`); only they include it
     Box3DJointBreak.cpp    After the step: Glue, breaking, feedback and live frames written onto the networks
     Box3DGlueEstimate.cpp  Glue's break estimate for a step's contacts (what Bullet breaks glue on)
+    Box3DGlueMaterial.cpp  A glue group's mass-weighted friction and bounce, as Bullet's (`applyGlueMaterials`)
     Box3DJointNetwork.h    What those two share: attribute names, network geometry and fingerprint helpers
     Box3DAffectors.*       Affector objects (Static Object DOP etc.) -> static colliders
     Box3DHoudiniUtil.h     Shared Houdini helpers: writable geometry, object by id, 4x4 to array, Euler to
@@ -99,7 +100,8 @@ package/              Box3D.json.in: the Houdini package file the build configur
 tools/                make_assets.py (the four asset builders in one hython, as the build does),
                       make_packed_object.py, make_configure_sop.py, make_constraint_properties_sop.py and
                       make_solver_sop.py (the assets; its inner builders are b3d_solver_*.py, the SOPs' viewer
-                      states b3d_*_state.py, read as text by the builders), b3d.py (finds Houdini; runs the
+                      states b3d_*_state.py, read as text by the builders, the assets' help cards
+                      b3d_*_help.py, and make_dop_help.py for the compiled DOP nodes), b3d.py (finds Houdini; runs the
                       checks, examples, benchmarks or ctest on any OS), b3d_hda.py (helpers the builders share),
                       b3d_prepare.py (input packing), b3d_materials.py, b3d_settings.py, b3d_layouts.py (node
                       placement), find_houdini.bat, check_docs.py, houdini_network_dump.py (dumps a node's

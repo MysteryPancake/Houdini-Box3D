@@ -292,39 +292,42 @@ void evaluateResolvers(const std::vector<ResolverPtr> &resolvers,
 // body's scale of it. The body's own linear and angular damping, which Box3D
 // applies in its integration, is not in the predicted velocity, so with damping
 // the end speed is a little lower than the drag solved for.
-void addDrag(const b3dop::Box3DWorld &world, const float gravity[3], float dt,
-             ForceJob &job) {
-  const b3dop::MotionParams &m = job.drag->params;
-  const float mass = job.state.mass;
+// The drag of `m` on body `h` over `dt`, as the force and torque that give it
+// (`dragForce`, `dragTorque`), from its state `s` and the other forces on it
+// this step (`force`, `torque`, about its centre of mass): the velocity the
+// body would have after the step, with gravity, slowed by applyImplicitDrag.
+void dragOn(const b3dop::Box3DWorld &world, const float gravity[3], float dt,
+            b3dop::BodyHandle h, float gravityScale,
+            const b3dop::MotionParams &m, const b3dop::BodyState &s,
+            const float force[3], const float torque[3], float dragForce[3],
+            float dragTorque[3]) {
+  const float mass = s.mass;
   if (!(dt > 0.0f) || !(mass > 0.0f) || !std::isfinite(mass))
     return;
   const float invMass = 1.0f / mass;
   if (m.airResist > 0.0f) {
-    const float scale = job.body->props.gravityScale;
     float before[3], after[3];
     for (int k = 0; k < 3; ++k)
       before[k] =
-          job.state.lin[k] + dt * (invMass * job.force[k] + gravity[k] * scale);
+          s.lin[k] + dt * (invMass * force[k] + gravity[k] * gravityScale);
     std::copy(before, before + 3, after);
     b3dop::applyImplicitDrag(m.dragExp, m.airResist, m.targetV, dt, invMass,
                              after);
     for (int k = 0; k < 3; ++k)
-      job.dragForce[k] = (after[k] - before[k]) / (invMass * dt);
+      dragForce[k] = (after[k] - before[k]) / (invMass * dt);
   }
   float inertia[6], inverse[6];
-  if (m.spinResist > 0.0f &&
-      world.inertiaWorldByHandle(job.body->handle, inertia) &&
+  if (m.spinResist > 0.0f && world.inertiaWorldByHandle(h, inertia) &&
       b3dop::invertSymmetric3(inertia, inverse)) {
-    const auto mul = [](const float s[6], const float *v, float out[3]) {
-      out[0] = s[0] * v[0] + s[3] * v[1] + s[4] * v[2];
-      out[1] = s[3] * v[0] + s[1] * v[1] + s[5] * v[2];
-      out[2] = s[4] * v[0] + s[5] * v[1] + s[2] * v[2];
+    const auto mul = [](const float sym[6], const float *v, float out[3]) {
+      out[0] = sym[0] * v[0] + sym[3] * v[1] + sym[4] * v[2];
+      out[1] = sym[3] * v[0] + sym[1] * v[1] + sym[5] * v[2];
+      out[2] = sym[4] * v[0] + sym[5] * v[1] + sym[2] * v[2];
     };
-    const float t[3] = {job.torque.x(), job.torque.y(), job.torque.z()};
     float spin[3], before[3], after[3], change[3], twist[3];
-    mul(inverse, t, spin);
+    mul(inverse, torque, spin);
     for (int k = 0; k < 3; ++k)
-      before[k] = job.state.ang[k] + dt * spin[k];
+      before[k] = s.ang[k] + dt * spin[k];
     std::copy(before, before + 3, after);
     b3dop::applyImplicitDrag(m.dragExp, m.spinResist, m.targetW, dt, 1.0f,
                              after);
@@ -332,7 +335,41 @@ void addDrag(const b3dop::Box3DWorld &world, const float gravity[3], float dt,
       change[k] = after[k] - before[k];
     mul(inertia, change, twist);
     for (int k = 0; k < 3; ++k)
-      job.dragTorque[k] = twist[k] / dt;
+      dragTorque[k] = twist[k] / dt;
+  }
+}
+
+void addDrag(const b3dop::Box3DWorld &world, const float gravity[3], float dt,
+             ForceJob &job) {
+  const float f[3] = {job.force.x(), job.force.y(), job.force.z()};
+  const float t[3] = {job.torque.x(), job.torque.y(), job.torque.z()};
+  float df[3] = {0, 0, 0}, dt3[3] = {0, 0, 0};
+  dragOn(world, gravity, dt, job.body->handle, job.body->props.gravityScale,
+         job.drag->params, job.state, f, t, df, dt3);
+  job.dragForce = UT_Vector3(df[0], df[1], df[2]);
+  job.dragTorque = UT_Vector3(dt3[0], dt3[1], dt3[2]);
+}
+
+// The drag of the Glue as One Body compounds (their combined drag,
+// refreshCompoundMotion), on the forces their pieces put on them this step.
+// Never wakes one.
+void applyCompoundDrag(Box3DSharedState &st, float dt) {
+  b3dop::Box3DWorld &world = st.world;
+  const float *g = world.settings().gravity;
+  for (const auto &cp : st.compounds) {
+    Box3DCompound &c = *cp;
+    if (!c.hasMotion || !c.motion.hasDrag() || c.members.empty())
+      continue;
+    b3dop::BodyState s;
+    if (!world.bodyStateByHandle(c.body, s) || !s.awake)
+      continue;
+    float df[3] = {0, 0, 0}, dtq[3] = {0, 0, 0};
+    dragOn(world, g, dt, c.body, c.members[0].props.gravityScale, c.motion, s,
+           c.pieceForce, c.pieceTorque, df, dtq);
+    if (b3dop::finite3(df) && b3dop::finite3(dtq)) {
+      world.applyForceByHandle(c.body, df, dtq, false);
+      noteAccelForce(st, c.body, df, dtq);
+    }
   }
 }
 
@@ -369,8 +406,8 @@ void applyToObjectBodies(Box3DSharedState &st, const SIM_Object &obj,
     // A piece of a compound (Box3DCompoundSync.h) is parked: its state is read
     // from the compound.
     const bool piece = e->inCompound;
-    // Drag: a compound's pieces are parked and the compound has no point, so
-    // only the other bodies take it.
+    // Drag: a compound's pieces are parked and the compound has no point: its
+    // combined drag is applied to it (applyCompoundDrag), not theirs.
     if (!piece && !os.motion.empty() && !e->wholeObject) {
       const Box3DMotionEntry *m =
           findMotion(os, static_cast<GA_Offset>(e->pointOff));
@@ -450,9 +487,24 @@ void applyToObjectBodies(Box3DSharedState &st, const SIM_Object &obj,
       compoundPieceForce(st, *job.body, fv, tv, target);
     if (!zero(fv) || !zero(tv))
       world.applyForceByHandle(target, fv, tv, wake);
+    // What the pieces put on their compound, for its drag.
+    if (job.body->inCompound && target != job.body->handle) {
+      const auto c = st.compoundOf.find(job.body->handle);
+      if (c != st.compoundOf.end())
+        for (int k = 0; k < 3; ++k) {
+          c->second.first->pieceForce[k] += fv[k];
+          c->second.first->pieceTorque[k] += tv[k];
+        }
+    }
     // The drag never wakes a sleeping body.
     if (!zero(dfv) || !zero(dtv))
       world.applyForceByHandle(target, dfv, dtv, false);
+    // accelmax / angaccelmax take the forces out of the step's change.
+    if (!st.accelSlots.empty()) {
+      const float f[3] = {fv[0] + dfv[0], fv[1] + dfv[1], fv[2] + dfv[2]};
+      const float t[3] = {tv[0] + dtv[0], tv[1] + dtv[1], tv[2] + dtv[2]};
+      noteAccelForce(st, target, f, t);
+    }
     ++stats.bodies;
   }
 }
@@ -518,6 +570,9 @@ ForceStats applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects,
   const std::vector<PointForce> noForces;
   std::vector<SIM_Object *> cleared;
   const bool replay = carry && carry->replay;
+  for (const auto &c : st.compounds)
+    for (int k = 0; k < 3; ++k)
+      c->pieceForce[k] = c->pieceTorque[k] = 0.0f;
 
   for (int i = 0; i < objects.entries(); ++i) {
     SIM_Object *obj = objects(i);
@@ -555,6 +610,7 @@ ForceStats applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects,
       cleared.push_back(obj);
   }
 
+  applyCompoundDrag(st, dt);
   recordClearedForces(st, cleared);
   return stats;
 }

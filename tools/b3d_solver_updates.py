@@ -18,6 +18,7 @@ from b3d_solver_common import (
     CONSTRAINT_RELOAD,
     create,
     DOP_CONSTRAINTS,
+    EMIT,
     ENABLE_CONSTRAINT_UPDATES,
     set_named,
     warn,
@@ -38,7 +39,8 @@ def update_folder():
         help="Copies the listed attributes from the live Constraints input onto the simulation's constraints every "
              "step, so ones that change over time reach it.")
     enable.hideLabel(True)
-    enable.setConditional(hou.parmCondType.DisableWhen, f"{{ {CONSTRAINT_RELOAD} == 1 }}")
+    # Off while emitting, as RBD Bullet Solver's (the emitted constraints are renamed copies of the input's).
+    enable.setConditional(hou.parmCondType.DisableWhen, f"{{ {CONSTRAINT_RELOAD} == 1 }} {{ {EMIT} == 1 }}")
     attributes = hou.StringParmTemplate(
         CONSTRAINT_ATTRIBUTES, "Attributes", 1, default_value=("",),
         help="The primitive attributes to copy each step, matched by name. Wildcards work.")
@@ -71,6 +73,8 @@ def reload_template():
         CONSTRAINT_RELOAD, "Overwrite with SOP", default_value=False,
         help="Reads the whole Constraints input again every step. Constraints that broke come back, so use it only "
              "when the input changes over time.")
+    # Off while emitting, as RBD Bullet Solver's: reading the input again would drop the emitted constraints.
+    reload.setConditional(hou.parmCondType.DisableWhen, f"{{ {EMIT} == 1 }}")
     return reload
 
 
@@ -101,6 +105,7 @@ def build_constraint_updates(dopnet):
     enable = create(dopnet, "enablesolver", UPDATE_ENABLE)
     enable.setInput(0, solver)
     erel = enable.relativePathTo(dopnet.parent())
-    enable.parm("enable").setExpression(f'ch("{erel}/{ENABLE_CONSTRAINT_UPDATES}") && ch("{erel}/{CONSTRAINT_RELOAD}") == 0',
-                                        hou.exprLanguage.Hscript)
+    # Not while emitting either: the asset greys the toggle out then, but one already on would still apply.
+    enable.parm("enable").setExpression(f'ch("{erel}/{ENABLE_CONSTRAINT_UPDATES}") && ch("{erel}/{CONSTRAINT_RELOAD}") == 0 '
+                                        f'&& ch("{erel}/{EMIT}") == 0', hou.exprLanguage.Hscript)
     return enable

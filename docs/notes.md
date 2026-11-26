@@ -2,6 +2,7 @@
 
 [Back to the README](../README.md)
 
+- Drag and speed limit attributes on glued pieces run as one body (Glue as One Body) act as in Bullet: the chunk takes its pieces' drag averaged by mass, the lowest of their speed caps and the highest of their minimum speeds.
 - Bullet's `collisiongroup` and `collisionignore` work on the Box3D Solver SOP, for up to 30 groups, as in Bullet: two pieces collide unless each ignores the other's group. Ignoring a single piece by name is not supported.
 - Glue Inertial Load (Forces tab, Glue folder, off by default) breaks glue bonds farther from a hit too. Raise it if a glued object only breaks at the point it lands on.
 - Bullet's collision padding and solver settings (ERP, CFM, iterations) are ignored. Use Substeps and the contact settings instead. Substeps 1 at 24 fps gives soft contacts.
@@ -14,6 +15,7 @@
 - The Box3D Solver SOP's Ground Collision makes a Ground Box, a very wide and deep box (Position, Rotation, Size), or a Height Field ground (with Use Deforming Geometry). Friction, Bounce, Rolling Resistance and Conveyor Velocity are under Physical. Show Ground on the Visualization tab draws it, solid or wireframe.
 - An unpacked collider that turns or scales during the simulation needs Collision Type Deforming on the Box3D Solver SOP. Animated keeps its first shape, as with Bullet.
 - The Box3D Solver SOP's Advanced tab sets each constraint type's values, under Constraints.
+- A constraint anchored to the world can be animated: its piece is carried along smoothly at the anchor's speed. Bullet drags it behind instead.
 - Break Thresholds on the Box3D Solver SOP's Constraints tab break constraints past an `angle`, `distance`, `impact` or `torque`, or at a chosen frame, as in RBD Bullet Solver. Only SideFX Glue has an `impact`, and there is no Force Threshold.
 - On the Box3D Solver SOP, Collide As Static Object makes the Collision input one static mesh, or a height field. It uses the Material settings.
 - On the Box3D Solver SOP, Override Attributes from SOP (Properties tab) copies the listed attributes (active, animated and deforming by default) from the pieces every step, so changes to them reach the simulation. It costs time, so it is off by default.

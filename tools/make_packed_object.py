@@ -53,6 +53,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import b3d_hda  # noqa: E402  (beside this script)
 import b3d_settings  # noqa: E402
+from b3d_packed_object_help import HELP_CARD  # noqa: E402
 from b3d_hda import labels, pull, value_templates, without_parmops  # noqa: E402
 
 TYPE_NAME = "box3d_packedobject"
@@ -582,6 +583,7 @@ def build(out_path):
     b3d_hda.add_python_module(definition)
     definition.setComment("Packed geometry as a Box3D object, like RBD Packed Object: settings that differ "
                           "from Box3D Data's defaults become point attributes; a point's own attribute wins.")
+    definition.addSection("Help", HELP_CARD)  # the help card (F1 on the node)
 
     asset.allowEditingOfContents()
     wire_stage(asset, EFFECTIVE_SOP, transform_parm, OBJECT_NAME)

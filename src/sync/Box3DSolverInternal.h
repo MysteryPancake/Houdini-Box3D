@@ -686,6 +686,29 @@ ForceStats applyExternalForces(Box3DSharedState &st, SIM_ObjectArray &objects,
 // they changed, into Box3DObjectSync::motion. Once a frame, after the sync.
 void refreshMotion(Box3DSharedState &st, SIM_ObjectArray &objects);
 
+// Each Glue as One Body compound's drag and speed limits from its pieces', as
+// Bullet's glue cluster takes them (measured: bullet_glue_drag_limits): drag,
+// exponent and targets weighted by mass, the largest minimum and the smallest
+// maximum. Once a frame, after refreshMotion and syncCompounds.
+void refreshCompoundMotion(Box3DSharedState &st);
+
+// accelmax / angaccelmax, as Bullet: the change in velocity and spin a Box3D
+// step's constraints (contacts and joints) make is limited, after the step, so
+// the velocity carried on is changed and the step's motion is not. The change
+// is the velocity after the step less the one before it, gravity and the forces
+// put on the body (Box3D has no separate constraint change), so damping counts
+// as part of it. refreshAccelLimits: once a frame, after refreshCompoundMotion,
+// the bodies with a limit (a compound by its combined one). beginAccelLimits:
+// before each step's forces, their velocities. noteAccelForce: the force pass
+// adds what it puts on one. applyAccelLimits: after the step, before
+// applySpeedLimits, in the events and the bodies.
+void refreshAccelLimits(Box3DSharedState &st);
+void beginAccelLimits(Box3DSharedState &st);
+void noteAccelForce(Box3DSharedState &st, b3dop::BodyHandle body,
+                    const float force[3], const float torque[3]);
+void applyAccelLimits(Box3DSharedState &st,
+                      std::vector<b3dop::BodyMove> &events, float dt);
+
 // After the frame's steps: zeroes airresist, spinresist, targetv and targetw
 // on the objects that had some, as Bullet does after its solve (a POP Drag
 // writes them again every step; drag, dragexp and the limits stay).
@@ -696,7 +719,8 @@ const Box3DMotionEntry *findMotion(const Box3DObjectSync &os, GA_Offset off);
 
 // After a Box3D step: the moved bodies whose point has a speed or spin limit
 // get their velocity clamped, in the events (what is written back) and in the
-// body. Not for the pieces of a compound.
+// body. A compound is clamped by its combined limits (refreshCompoundMotion),
+// its pieces not on their own.
 void applySpeedLimits(Box3DSharedState &st,
                       std::vector<b3dop::BodyMove> &events);
 

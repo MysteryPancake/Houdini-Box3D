@@ -17,8 +17,8 @@ import hou
 
 import b3d_hda
 from b3d_hda import collapsible
-from b3d_solver_common import (create, DOP_CONSTRAINTS, GLOBAL_SUBSTEPS, RELATIONSHIPS, set_named, START_FRAME,
-                               WORLD_SCALE,
+from b3d_solver_common import (create, DOP_CONSTRAINTS, EMIT, GLOBAL_SUBSTEPS, RELATIONSHIPS, set_named,
+                               START_FRAME, WORLD_SCALE,
                                WORLD_SCALE_TOGGLE, warn)
 from b3d_solver_constraints import node_settings
 
@@ -234,6 +234,7 @@ def break_items():
                              help="Read the attribute from the live Constraints input every step, so one that changes "
                                   "over time moves the threshold. Off: its value when the constraint was made."),
                       off, f"constraint_scale{key}# == 0", kind=hou.parmCondType.HideWhen)
+        when(update, f"{EMIT} == 1")  # off while emitting, as RBD Bullet Solver's
         items += [use, threshold, scaling, use_var, variance, attrib, update]
 
     block = hou.FolderParmTemplate(BREAKS, "Number of Breaks", items,
@@ -285,9 +286,11 @@ def break_spare_parms(wrangle, rel, meta):
         numbers[f"constraint_use{key}"] = asset(f"constraint_use{key}")
         threshold = asset(f"constraint_{key}threshold")
         numbers[f"constraint_{key}threshold"] = threshold + (' * ch("worldscale")' if scaled else "")
-        for name in (f"constraint_use{key}var", f"constraint_{key}var", f"constraint_scale{key}",
-                     f"constraint_{key}attribupdate"):
+        for name in (f"constraint_use{key}var", f"constraint_{key}var", f"constraint_scale{key}"):
             numbers[name] = asset(name)
+        # Update from Input never while emitting: the asset greys it out then, but one already on would still apply.
+        update = f"constraint_{key}attribupdate"
+        numbers[update] = f'{asset(update)} * (ch("{rel}/{EMIT}") == 0)'
         strings[f"constraint_{key}attrib"] = f'`chs("{rel}/constraint_{key}attrib" + {entry})`'
     group = wrangle.parmTemplateGroup()
     group.append(hou.StringParmTemplate("spare_input0", "Spare Input 0", 1, string_type=hou.stringParmType.NodeReference,

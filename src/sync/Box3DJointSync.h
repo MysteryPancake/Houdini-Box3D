@@ -79,6 +79,25 @@ void estimateGlueHits(Box3DSharedState &st);
 // changed since: pieces of one group are what contacts inside it (weight) are
 // told from real hits by.
 void refreshGlueGroups(Box3DSharedState &st);
+// Moving world anchors (Box3DJointExtra::anchorBody): before the steps, each
+// anchor body is given its target for the frame, so Box3D moves it there over
+// the frame's steps with the velocity that takes, as Bullet moves its anchor
+// body. A body whose joint is gone is destroyed.
+void driveWorldAnchors(Box3DSharedState &st);
+// Destroys the joint's moving world anchor body, if it has one (with it any
+// joint still on it), and takes the entry off the list.
+void releaseWorldAnchor(Box3DSharedState &st, Box3DJointEntry &e);
+// The joint's local frames, as jointLocalFrames gives them, with an end on a
+// moving world anchor's body relative to the world, as a world end's is.
+bool jointLocalFramesOf(const b3dop::Box3DWorld &world,
+                        const Box3DJointEntry &e, b3dop::JointFrame &a,
+                        b3dop::JointFrame &b);
+// Gives every dynamic piece of a glue group, and each compound of it, the
+// group's mass-weighted friction and bounce, as Bullet's glue clusters have;
+// a piece no longer in a group gets its own back. Does nothing unless the
+// bonds, the compounds or (`bodiesChanged`) the bodies changed since it last
+// ran. Box3DGlueMaterial.cpp.
+void applyGlueMaterials(Box3DSharedState &st, bool bodiesChanged);
 // The live bonds as glueAdvance / glueComponents take them, in the order of
 // `glueBonds`. `withParams` adds each bond's strength settings and impact;
 // `blankBroken` turns a broken bond into one that joins nothing.

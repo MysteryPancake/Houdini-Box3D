@@ -55,6 +55,10 @@ Glue, Hard, Spring, Bullet Soft and Cone Twist mapped onto Box3D joints. Joint n
     * A negative iteration count is the global one (the `propagate_iteration`
     detail attribute of the network, read by `NetworkReader::glueIterations`; one round without it); the most
     iterations of any bond set the rounds.
+    * Material: Bullet runs a glue group as one body with the pieces' friction and bounce weighted by their mass, so
+      `applyGlueMaterials` (`Box3DGlueMaterial.cpp`, after `syncCompounds`) gives every dynamic piece of a group and
+      each compound of it that average, in both modes; a piece that leaves every group gets its own back. It runs only
+      when the bonds, the compounds or the bodies changed (`bullet_glue_materials`).
   * Glue as One Body (`gluecompound`): [glue-compound.md](glue-compound.md).
   * Hard: all -> rigid weld with the anchors kept the rest length apart (as Bullet does; held where they are when there
     is no rest length); position -> spherical joint (Bullet's pin: see "Position with a rest length" below), or a rigid

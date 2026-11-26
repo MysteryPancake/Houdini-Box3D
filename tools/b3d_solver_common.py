@@ -55,6 +55,10 @@ SOLVER_FOLDERS = [("Contacts", ("contactstiffness", "contactdamping", "contactpu
 # (b3d_solver_updates.py).
 ENABLE_CONSTRAINT_UPDATES, CONSTRAINT_ATTRIBUTES = "enable_constraintupdates", "constraint_attributes"
 CONSTRAINT_ATTRIB_GROUP, CONSTRAINT_RELOAD = "constraint_attribgroup", "constraint_reloadfromsops"
+# Emit RBDs on the Solver tab, as RBD Bullet Solver's (b3d_solver_emit.py).
+EMIT = "useemission"
+# Replicate RBDs beside it, as RBD Bullet Solver's: duplicated pieces get render geometry of their own.
+REPLICATE = "replicate"
 ENABLE_AGING = "enableaging"
 AGING_PARMS = (ENABLE_AGING, "reapdead", "reapatframeend")
 # Add Active Age Attribute and Just Activated (with its Type), after them (b3d_solver_activeage.py).

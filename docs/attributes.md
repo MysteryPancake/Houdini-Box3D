@@ -18,6 +18,7 @@ All are optional except `P`. A missing one uses the Box3D Data value. Every step
 | `dead` | int | Nonzero = remove the body. With Reap Dead Points (on by default), the point is deleted too |
 | `age` / `life` | float | With Enable Aging: `dead` once `age` passes `life`, so a `life` of 0 dies on the first step. No `life` attribute never dies |
 | `active_age` | float | Solver SOP with Add Active Age Attribute: the time the piece has been active, 0 while it is not |
+| `rbdbullet_emit` | int | Solver SOP with Emit RBDs: `0` = simulate the piece once instead of adding it again every frame |
 | `mass`, `computemass`, `density` | float / int | Mass, or `computemass` = 1 for `density` × volume |
 | `computecom` | int | 1 spins a piece about its shape's centre of mass, 0 about its point |
 | `inertialtensorstiffness` | float | Scales how hard the body is to spin |
@@ -43,5 +44,6 @@ All are optional except `P`. A missing one uses the Box3D Data value. Every step
 | `targetv`, `targetw` | vector | The velocity / spin the drag slows the body towards. One step, then cleared |
 | `drag`, `dragexp` | float | `drag` multiplies both resists (default 1). `dragexp`: 1 is linear drag, 2 quadratic (default), clamped to 1 to 2 |
 | `speedmin`, `speedmax`, `spinmin`, `spinmax` | float | Limits on speed and spin. Below 0 or missing: none. A resting body is never started. Applied after each step, so a body can be a little over its limit within one |
+| `accelmax`, `angaccelmax` | float | The most collisions and constraints may change the velocity / spin, per second. Below 0 or missing: none. As in Bullet, only the velocity carried on is limited: a landing piece still stops, but keeps its downward `v` |
 
 **Collision filtering.** Two bodies in the same nonzero `collision_group` always collide if it's positive, never if it's negative. Otherwise they collide when each one's `collision_mask` shares a bit with the other's `collision_category`. For example `i@collision_group = -1` for pieces that never hit each other, or `i@collision_category = 2` with `i@collision_mask = ~2` for debris that ignores other debris. Static Object colliders use every bit.

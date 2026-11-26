@@ -307,6 +307,54 @@ private:
   void dropJoint(Box3DJointEntry &e) {
     myWorld.destroyJoint(e.handle); // harmless when already gone with a body
     e.handle = 0;
+    releaseWorldAnchor(mySt, e);
+  }
+
+  // The world end of `e` follows its authored anchor to `now` (an animated
+  // constraint geometry) instead of the joint being remade there, which would
+  // jump it once a frame with no velocity. The first time, the joint is moved
+  // onto a kinematic body of its own, made where the anchor was (`was`); then
+  // driveWorldAnchors moves that body to `now` over the frame. False, with
+  // nothing changed, if the body or the joint could not be made.
+  bool followWorldAnchor(Box3DJointEntry &e, bool onA,
+                         const b3dop::JointFrame &was,
+                         const b3dop::JointFrame &now) {
+    Box3DJointExtra &x = e.ensureExtra();
+    if (!x.anchorBody) {
+      b3dop::BodySettings bs = b3dop::nodeBodyDefaults();
+      bs.type = b3dop::BodySettings::Type::Kinematic;
+      const b3dop::BodyHandle h = myWorld.createBody(bs, was.pos, was.rot);
+      if (!h)
+        return false;
+      // The joint as it is now, on the new body: its frames where they are,
+      // and a distance joint that measured its own rest length keeps the
+      // length it took at rest (makeJoint).
+      b3dop::JointSettings s = e.settings;
+      if (e.type == b3dop::JointType::Distance && !(s.restLength >= 0.0f)) {
+        const double dx = e.authB.pos[0] - e.authA.pos[0],
+                     dy = e.authB.pos[1] - e.authA.pos[1],
+                     dz = e.authB.pos[2] - e.authA.pos[2];
+        s.restLength =
+            static_cast<float>(std::sqrt(dx * dx + dy * dy + dz * dz));
+      }
+      b3dop::JointFrame wa, wb;
+      b3dop::JointHandle j = 0;
+      if (myWorld.jointWorldFrames(e.handle, wa, wb))
+        j = myWorld.createJoint(e.type, onA ? h : e.bodyA, onA ? e.bodyB : h,
+                                wa, wb, s, &e);
+      if (!j) {
+        myWorld.destroyBody(h);
+        return false;
+      }
+      myWorld.destroyJoint(e.handle);
+      e.handle = j;
+      e.writeLocal = true;
+      x.anchorBody = h;
+      x.anchorOnA = onA;
+      mySt.anchorEntries.push_back(&e);
+    }
+    x.anchorTarget = now;
+    return true;
   }
 
   // The joint entry of a primitive (made on first sight).
@@ -618,14 +666,28 @@ private:
     if (j.frameSig)
       sig = b3dop::mixHash(sig, j.frameSig) | 1;
     const bool edited = live && (authoredEdited || liveEdited);
+    // Only a world end's authored anchor moved (an animated constraint
+    // geometry): the joint follows it (followWorldAnchor) and is not remade.
+    // Written networks only: the others keep the frames in the signature.
+    const bool movedA = frameEdited(authA, e.authA),
+               movedB = frameEdited(authB, e.authB);
+    const bool worldEndMoved =
+        live && authoredEdited && !liveEdited && a != b &&
+        ((!a && movedA && !movedB) || (!b && movedB && !movedA));
+    const bool same =
+        myWorld.isJointValid(e.handle) && e.sig == sig && e.type == j.type;
 
-    if (myWorld.isJointValid(e.handle) && e.sig == sig && e.type == j.type &&
-        !edited) {
+    if (same && (!edited || (worldEndMoved &&
+                             followWorldAnchor(e, !a, !a ? e.authA : e.authB,
+                                               !a ? authA : authB)))) {
       if (!b3dop::sameJointSettings(j.type, j.s, e.settings)) {
         myWorld.updateJoint(e.handle, j.type, j.s);
         e.settings = j.s;
         ++myCounts.updated;
       }
+      // The moved world end is compared with where it went from now on.
+      if (edited)
+        (!a ? e.authA : e.authB) = !a ? authA : authB;
     } else {
       makeJoint(e, j, ab, bb, p0, p1, fa, fb, sig, edited, useLive);
       e.authA = authA;
@@ -891,6 +953,7 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
         st.world.destroyJoint(e.handle);
         ++counts.removed;
       }
+      releaseWorldAnchor(st, e);
       if (e.reaimListed)
         st.reaimEntries.erase(
             std::remove(st.reaimEntries.begin(), st.reaimEntries.end(), &e),
@@ -903,6 +966,62 @@ void syncJoints(Box3DSharedState &st, SIM_ObjectArray &objects,
   for (auto it = st.jointNetworks.begin(); it != st.jointNetworks.end();)
     it = (it->second.visited == st.syncStamp) ? std::next(it)
                                               : st.jointNetworks.erase(it);
+}
+
+void releaseWorldAnchor(Box3DSharedState &st, Box3DJointEntry &e) {
+  if (!e.extra || !e.extra->anchorBody)
+    return;
+  st.world.destroyBody(e.extra->anchorBody);
+  e.extra->anchorBody = 0;
+  st.anchorEntries.erase(
+      std::remove(st.anchorEntries.begin(), st.anchorEntries.end(), &e),
+      st.anchorEntries.end());
+}
+
+void driveWorldAnchors(Box3DSharedState &st) {
+  b3dop::Box3DWorld &w = st.world;
+  // A joint that broke (or went with a body) leaves its anchor body behind.
+  for (size_t i = st.anchorEntries.size(); i-- > 0;) {
+    Box3DJointEntry &e = *st.anchorEntries[i];
+    if (e.broken || !w.isJointValid(e.handle))
+      releaseWorldAnchor(st, e);
+  }
+  for (Box3DJointEntry *e : st.anchorEntries) {
+    const Box3DJointExtra &x = *e->extra;
+    b3dop::JointFrame now;
+    if (!w.getTransformByHandle(x.anchorBody, now.pos, now.rot))
+      continue;
+    float q[4] = {x.anchorTarget.rot[0], x.anchorTarget.rot[1],
+                  x.anchorTarget.rot[2], x.anchorTarget.rot[3]};
+    b3dop::sanitizeQuat(q);
+    // An anchor that stays put is stopped without waking its body (a target
+    // wakes it, which would keep it and its piece awake for good).
+    if (!frameEdited(x.anchorTarget, now) || !(st.stepDt > 0.0f)) {
+      const float zero[3] = {0.0f, 0.0f, 0.0f};
+      w.setVelocityByHandle(x.anchorBody, zero, zero);
+      continue;
+    }
+    // Reached by the end of the frame.
+    w.setTargetTransformByHandle(x.anchorBody, x.anchorTarget.pos, q,
+                                 st.stepDt);
+    const b3dop::BodyHandle other = x.anchorOnA ? e->bodyB : e->bodyA;
+    if (other)
+      w.wakeByHandle(other);
+  }
+}
+
+bool jointLocalFramesOf(const b3dop::Box3DWorld &world,
+                        const Box3DJointEntry &e, b3dop::JointFrame &a,
+                        b3dop::JointFrame &b) {
+  if (!world.jointLocalFrames(e.handle, a, b))
+    return false;
+  if (e.extra && e.extra->anchorBody) {
+    b3dop::JointFrame &f = e.extra->anchorOnA ? a : b;
+    b3dop::JointFrame inWorld;
+    if (world.localToWorld(e.extra->anchorBody, f, inWorld))
+      f = inWorld;
+  }
+  return true;
 }
 
 void reaimJoints(Box3DSharedState &st) {

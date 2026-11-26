@@ -80,6 +80,8 @@ from b3d_solver_common import (  # noqa: E402
     GLOBAL_SUBSTEPS,
     RELATIONSHIPS,
     CACHE_ENABLED,
+    EMIT,
+    REPLICATE,
     OVERWRITE_FROM_SOP,
     OVERWRITE_ATTRIBS,
     OVERWRITE_DEFAULT,
@@ -305,7 +307,17 @@ def build(out_path, packed_hda=None):
             warn(f"{dopnet.path()}/{obj_name} has no {SOLVE_FIRST_PARM}: {outer} does nothing there")
         else:
             links.append((sub.relativePathTo(obj), SOLVE_FIRST_PARM, outer))
-    solver_first = [solve_first] + cache_items
+    # Emit RBDs, as RBD Bullet Solver's, after Solve on Creation Frame (b3d_solver_emit.py).
+    emit = hou.ToggleParmTemplate(
+        EMIT, "Emit RBDs", default_value=False, join_with_next=True,
+        help="Adds the input pieces again every frame, renamed with the frame. Pieces whose rbdbullet_emit "
+             "attribute is 0 are added once.")
+    # Replicate RBDs on its row, as RBD Bullet Solver's.
+    replicate = hou.ToggleParmTemplate(
+        REPLICATE, "Replicate RBDs", default_value=False,
+        help="Gives pieces copied during the simulation their own geometry in the outputs. A copy sharing a name "
+             "gets _r and a number.")
+    solver_first = [solve_first, emit, replicate] + cache_items
     # World Scale, first on the Solver tab (RBD Bullet Solver's usescale / Bullet World Scale).
     use_scale = hou.ToggleParmTemplate(WORLD_SCALE_TOGGLE, "Use World Scale", default_value=False,
                                        join_with_next=True,
@@ -525,6 +537,7 @@ def build(out_path, packed_hda=None):
     # The Pieces tab: the Box3D Data folders (Shape, Body, Material, CCD & Contacts, Sleep), each an open
     # collapsible folder (the folder Add Impact Data came out of may be left empty: dropped).
     pieces_items = [as_collapsible(f) for f in folders if f.parmTemplates()]
+    overrides = None  # the Packed Object Override Attributes from SOP is linked to, when it has the toggle
     # Override Attributes from SOP, as RBD Bullet Solver's Pieces tab has it: the Packed Object's toggle that reads
     # the SOP again every step (linked by name, off by default as the Packed Object's).
     if pieces.parm(OVERWRITE_FROM_SOP) is None:
@@ -532,11 +545,13 @@ def build(out_path, packed_hda=None):
     else:
         override = hou.ToggleParmTemplate(
             OVERWRITE_FROM_SOP, "Override Attributes from SOP", default_value=False,
+            disable_when=f"{{ {EMIT} == 1 }}",
             help="Copies the listed attributes from the pieces every step, so ones that change over time (such as "
-                 "active) reach the simulation. Off: read once when a piece appears. Costs time every step.")
+                 "active) reach the simulation. Off: read once when a piece appears. Costs time every step. Off "
+                 "while emitting.")
         override_attribs = hou.StringParmTemplate(
             OVERWRITE_ATTRIBS, "Attributes", 1, default_value=(OVERWRITE_DEFAULT,),
-            disable_when=f"{{ {OVERWRITE_FROM_SOP} == 0 }}",
+            disable_when=f"{{ {OVERWRITE_FROM_SOP} == 0 }} {{ {EMIT} == 1 }}",
             help="The point attributes copied each step, matched by name. Wildcards work.")
         b3d_hda.attrib_menu(override_attribs, 0, "point")
         # A simple folder, the toggle's label hidden and joined to the attributes, as RBD Bullet Solver's
@@ -544,7 +559,8 @@ def build(out_path, packed_hda=None):
         override.setJoinWithNext(True)
         pieces_items.append(hou.FolderParmTemplate("b3dsop_override", "Override Attributes",
                                                    [override, override_attribs], folder_type=hou.folderType.Simple))
-        links.append((sub.relativePathTo(pieces), OVERWRITE_FROM_SOP, OVERWRITE_FROM_SOP))
+        overrides = sub.relativePathTo(pieces)
+        links.append((overrides, OVERWRITE_FROM_SOP, OVERWRITE_FROM_SOP))
         links.append((sub.relativePathTo(pieces), OVERWRITE_ATTRIBS, OVERWRITE_ATTRIBS))
     output_items = output_tab(impact, speed, aging)
     vis_items = visualization_tab(shapes)
@@ -587,6 +603,12 @@ def build(out_path, packed_hda=None):
     wire_constraint_updates(asset)
     for inner_path, inner_name, outer_name in links:
         link(asset.node(inner_path), inner_name, asset, outer_name)
+    # Override Attributes from SOP matches the pieces by name, and Emit RBDs renames the input's every frame, so nothing
+    # would match: off while emitting, whatever the greyed-out toggle holds.
+    if overrides is not None:
+        parm = asset.node(overrides).parm(OVERWRITE_FROM_SOP)
+        rel = parm.node().relativePathTo(asset)
+        parm.setExpression(f'ch("{rel}/{OVERWRITE_FROM_SOP}") && !ch("{rel}/{EMIT}")', hou.exprLanguage.Hscript)
     # The solver exports the shapes while either Show Collision Shape is on (the pieces' or the collider's).
     export = asset.node("dopnet/box3d_solver").parm(SHAPES_TOGGLE)
     if export is None:

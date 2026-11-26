@@ -354,10 +354,14 @@ void Box3DWorld::setMaterialByHandle(BodyHandle h, float friction,
     return;
   const int n = bodyShapes(b3LoadBodyId(h), tShapes);
   for (int i = 0; i < n; ++i) {
-    if (b3Shape_GetType(tShapes[static_cast<size_t>(i)]) == b3_compoundShape)
+    const b3ShapeId s = tShapes[static_cast<size_t>(i)];
+    if (b3Shape_GetType(s) == b3_compoundShape)
       continue; // never made here; Box3D asserts on it
-    b3Shape_SetFriction(tShapes[static_cast<size_t>(i)], friction);
-    b3Shape_SetRestitution(tShapes[static_cast<size_t>(i)], restitution);
+    // A set drops the shape's recycled contacts, so only what changes is set.
+    if (b3Shape_GetFriction(s) != friction)
+      b3Shape_SetFriction(s, friction);
+    if (b3Shape_GetRestitution(s) != restitution)
+      b3Shape_SetRestitution(s, restitution);
   }
 }
 

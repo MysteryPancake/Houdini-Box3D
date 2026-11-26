@@ -46,6 +46,9 @@ from b3d_solver_common import (
     VISUALIZE,
     USE_GROUND,
     FETCH_GEOMETRY,
+    FORCES,
+    FORCES_OUTPUTS,
+    REPLICATE,
     set_toggles,
     STATIC_NULL,
     switch_on_spare_input,
@@ -57,6 +60,8 @@ from b3d_solver_common import (
     WORLD_SCALE_TOGGLE,
     warn,
 )
+from b3d_solver_emit import (emit_constraints, emit_pieces, emit_render, replicate_points, replicate_render,
+                             replicate_source)
 from b3d_solver_ground import build_ground_sops
 from b3d_solver_dops import build_dops
 
@@ -587,7 +592,15 @@ def scale_forces(dopnet):
         f'ch("{enable.relativePathTo(dopnet.parent())}/{WORLD_SCALE_TOGGLE}") && '
         f'ch("{enable.relativePathTo(dopnet.parent())}/{WORLD_SCALE}") != 1', hou.exprLanguage.Hscript)
     wired = {c.inputIndex(): (c.inputNode(), c.outputIndex()) for c in multi.inputConnections()}
-    presolve = 1  # inputs: objects, PRESOLVE, Box3D Solver, POSTSOLVE
+    # The input PRESOLVE is wired to (objects, emission before the step, PRESOLVE, Box3D Solver, POSTSOLVE, ...).
+    forces = dopnet.node(FORCES)
+    presolve = next((i for i, (node, out) in wired.items()
+                     if node == forces and out == FORCES_OUTPUTS.index("PRESOLVE")), None)
+    if presolve is None:
+        warn("World Scale: FORCES' PRESOLVE is not wired into the multisolver; FORCES are not scaled")
+        enable.destroy()
+        wr.destroy()
+        return
     for i in sorted((i for i in wired if i > presolve), reverse=True):
         node, out = wired[i]
         multi.setInput(i + 1, node, out)
@@ -644,16 +657,20 @@ def build_network(sub):
     collision_pieces = b3d_prepare.collision_names(sub, "collision_names_collision", collision_prepared,
                                                    sim_prepared, warn)
     sim_scaled = scale_wrangle(sub, "scale_attributes", sim_pieces, SCALE_ATTRIBS_VEX, inverse=False)
+    # Emit RBDs: the emitting pieces renamed with the frame (b3d_solver_emit.py); emit_flags looks them up.
+    sim_emitted, emit_flags = emit_pieces(sub, sim_scaled)
+    # Replicate RBDs: each piece's name as __sourcename, which copies made in the simulation carry.
+    sim_emitted = replicate_source(sub, sim_emitted)
 
     # Ground Collision: the Height Field chain (the DOP network reads its end).
     build_ground_sops(sub)
 
     # The DOP network, its context geometry three streams (read inside by Geometry Source, CONTEXT_GEOMETRY).
     dopnet = create(sub, "dopnet", "dopnet")
-    dopnet.setInput(DOP_PIECES, build_active_age_sop(sub, build_age_sop(sub, sim_scaled)))
-    dopnet.setInput(DOP_CONSTRAINTS, build_constraint_age_sop(sub, scale_wrangle(
+    dopnet.setInput(DOP_PIECES, build_active_age_sop(sub, build_age_sop(sub, sim_emitted)))
+    dopnet.setInput(DOP_CONSTRAINTS, build_constraint_age_sop(sub, emit_constraints(sub, scale_wrangle(
         sub, "scale_constraint_attribs", scaled[CONSTRAINTS], SCALE_CONSTRAINTS_VEX, inverse=False,
-        run_over="primitive")))
+        run_over="primitive"), emit_flags)))
     # Collision Type Deforming: the colliders' `deforming`, so the solver rebuilds their shapes every step.
     deforming = b3d_hda.attribute_create(sub, "collision_deforming", [
         ("deforming", "int", [f'ch("../{COLLISION_TYPE}") == 2'])], warn)
@@ -689,17 +706,23 @@ def build_network(sub):
         points_only.parm("snippet").set(POINTS_ONLY_VEX)
     sim_points = create(sub, "attribdelete", "sim_points")
     sim_points.setInput(0, points_only)
-    sim_points.parm("ptdel").set(f'{POINTS_KEEP} `chs("../{TRANSFER_ATTRIBUTES}")`')
+    sim_points.parm("ptdel").set(f'{POINTS_KEEP} `chs("../{TRANSFER_ATTRIBUTES}")` '
+                                 f'`ifs(ch("../{REPLICATE}"), "__sourcename __restxform", "")`')
     if not set_named(sim_points, "negate", 1):  # Delete Non Selected
         # Without the inverse toggle the list would delete exactly what must stay: keep everything.
         sim_points.parm("ptdel").set("")
+    # Replicate RBDs: the copies made in the simulation renamed <name>_r<n>, and a point per copy for its render piece.
+    sim_points, replicas = replicate_points(sub, sim_points)
 
     # Geometry and proxy follow the simulation points, as RBD Bullet Solver: Transform Pieces by name
     # with no rest input, each point's transform being its motion since rest (pivot, orient, P). Each
     # output keeps its input's packing (names mode).
     pieces_out = []
     for name, src in (("transform_geometry", scaled[GEO]), ("transform_proxy", sim_source)):
-        named = prepare_input(sub, src, f"names_{name[len('transform_'):]}", pack=False)
+        kind = name[len('transform_'):]
+        # Emit RBDs: the emitting render pieces are the ones the simulation stored when each was emitted.
+        named = emit_render(sub, prepare_input(sub, src, f"names_{kind}", pack=False), emit_flags, kind)
+        named = replicate_render(sub, named, replicas, kind)  # a render piece per copy
         removed = create(sub, "attribwrangle", f"remove_deleted_{name[len('transform_'):]}")
         removed.setInput(0, named)
         removed.setInput(1, sim_points)

@@ -29,10 +29,8 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
   step it lands, where welds would have broken. Welds hold the beam at every Strength tried.
 * Box3D Configure has no Units (RBD Configure's Unit Mass and Unit Length, which scale Density by
   `unitlength / unitmass`, each over 1000).
-* Drag and speed limits (`Box3DMotion.cpp`, [body-features.md](body-features.md)): the pieces of a glued compound take
-  none (Bullet's chunk takes mass-weighted drag, the largest minimum and the smallest maximum), World Scale other than
-  1 does not scale the values, and Bullet's `accelmax` / `angaccelmax` (a limit on the constraint solver's change in
-  speed) are not read.
+* Drag and speed limits (`Box3DMotion.cpp`, [motion-limits.md](motion-limits.md)): World Scale other than 1 does not
+  scale the values. Box3D Configure has no Acceleration Max / Angular Acceleration Max (RBD Configure's).
 * Bounding Box Inertia ([body-features.md](body-features.md)): a Glue as One Body compound takes the true inertia of
   its merged shapes, where Bullet's chunk sums the pieces' box inertias, so a glued group spins more freely than
   Bullet's. `kBulletInertiaPad` was fitted on 1 m pieces (a tetrahedron and an icosahedron); other scales are unchecked.
@@ -54,6 +52,9 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
 * Sticky collisions. Box3D's contact begin / end and sensor events: Houdini has no output for them (Bullet has none), so
   nothing reads them beyond Impacts. Sensors (trigger zones) would be the useful part.
 * Box3D Solver SOP:
+  * Emit RBDs (`b3d_solver_emit.py`): untested with World Scale, Global Substeps and
+    Deforming pieces (whose Packed Object reads the whole SOP every step, which would drop the emitted pieces), and
+    its cost on many pieces. Replicate RBDs is untested with Emit RBDs on and with World Scale.
   * Break Thresholds (`b3d_solver_breaks.py`): `angle` matches Bullet's for a freely spinning piece, and `torque` is
     Bullet's quantity (the force's moment about the first piece's centre, `bullet_joint_feedback`), so the Torque
     Threshold breaks on the same frames (`solver_sop_break_angle_torque_bullet`, INFO). A Hard (all) line reads only

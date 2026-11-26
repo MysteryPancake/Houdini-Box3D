@@ -50,10 +50,12 @@ Load only the file for the area you are changing.
 | [docs/agents/solver-sync.md](docs/agents/solver-sync.md) | `syncObject`, the skip fingerprint, write-back, threading |
 | [docs/agents/bodies.md](docs/agents/bodies.md) | Mid-simulation updates, building shapes |
 | [docs/agents/body-features.md](docs/agents/body-features.md) | Per-attribute features: sleep, CCD, locks, filters, impacts, ... |
+| [docs/agents/motion-limits.md](docs/agents/motion-limits.md) | Drag, speed and acceleration limit attributes, and on Glue as One Body |
 | [docs/agents/forces-affectors.md](docs/agents/forces-affectors.md) | Force DOPs, point `force` / `torque`, Static Object colliders |
 | [docs/agents/whole-object.md](docs/agents/whole-object.md) | RBD Object style bodies (one body per DOP object) |
 | [docs/agents/joints.md](docs/agents/joints.md) | Joint types, settings table, `Box3DWorld` joint API |
-| [docs/agents/joint-networks.md](docs/agents/joint-networks.md) | Constraint relationship nodes, networks, break and write-back, live frames |
+| [docs/agents/joint-networks.md](docs/agents/joint-networks.md) | Constraint relationship nodes, networks, break and write-back |
+| [docs/agents/joint-live-frames.md](docs/agents/joint-live-frames.md) | Live and local frames on the networks, upstream edits, moving world anchors |
 | [docs/agents/joints-sidefx.md](docs/agents/joints-sidefx.md) | SideFX data (Glue, Hard, Spring, Soft, Cone Twist) mapped to joints |
 | [docs/agents/glue-compound.md](docs/agents/glue-compound.md) | Glue as One Body (`gluecompound`) |
 | [docs/agents/reference.md](docs/agents/reference.md) | Parameters, point attributes, node warnings, unsupported features |

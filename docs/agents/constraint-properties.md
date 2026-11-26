@@ -87,4 +87,6 @@ through. No Bullet settings.
   the red / green / blue frame onto them by `orient` and `pscale`, behind `switch_guides` -> `GUIDES`; `glow_lines` is
   a primitive wrangle). The state reads `CONSTRAINT`, `HANDLE`, `GUIDES`, `GLOW` and `widgets` (the layout's Viewer
   box); its helpers (`set_edits`, `selected_ids`, ...) are plain functions, so a check calls them without a viewport.
+* Help card: `HELP_CARD` (`b3d_constraint_properties_help.py`, Houdini wiki markup) as the definition's `Help`
+  section.
 * The build probes the asset (`probe`); the tests are `constraint_properties` and `constraint_properties_edit`.

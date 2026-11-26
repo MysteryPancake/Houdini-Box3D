@@ -140,4 +140,4 @@ them): `BOX3DDOP_REQUESTED_CACHE` (what `getRequestedCacheSubclass` returns) and
 ## Package
 
 `install()` rules and CPack (zip) lay out a Houdini package: `Box3D.json` (from `package/Box3D.json.in`, enabled only
-for the Houdini major.minor it was built with) and `Box3D/dso`, `Box3D/config/Icons`, `Box3D/otls`.
+for the Houdini major.minor it was built with) and `Box3D/dso`, `Box3D/config/Icons`, `Box3D/otls`, `Box3D/help`.

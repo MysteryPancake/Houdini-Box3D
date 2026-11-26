@@ -94,6 +94,33 @@ int main() {
     CHECK(!clampMotion(p, in, spin) && in[0] == 3.0f);
   }
 
+  // ---- the limit on the constraints' change (accelmax / angaccelmax) ----
+  {
+    MotionParams p;
+    CHECK(!p.hasAccelLimits());
+    p.maxAccel = 0.0f;
+    CHECK(p.hasAccelLimits() && p.any() && !p.hasLimits());
+    // A landing: falling at 10, stopped by the ground, with gravity's -0.4 in
+    // the step. The constraints made +9.6 of change; a limit of 24 per second
+    // over 1/24 s lets 1 of it through.
+    const float expected[3] = {0.0f, -10.4f, 0.0f};
+    float v[3] = {0.0f, 0.0f, 0.0f};
+    CHECK(clampConstraintChange(24.0f, 1.0f / 24.0f, expected, v) &&
+          near(v[1], -9.4, 1e-5) && v[0] == 0.0f);
+    // Within the limit, or no limit: unchanged.
+    float small[3] = {0.0f, -10.0f, 0.0f};
+    CHECK(!clampConstraintChange(24.0f, 1.0f / 24.0f, expected, small) &&
+          small[1] == -10.0f);
+    float none[3] = {0.0f, 0.0f, 0.0f};
+    CHECK(!clampConstraintChange(-1.0f, 1.0f / 24.0f, expected, none) &&
+          none[1] == 0.0f);
+    // The change keeps its direction: shortened along it.
+    const float e2[3] = {0, 0, 0};
+    float diag[3] = {3.0f, 4.0f, 0.0f};
+    CHECK(clampConstraintChange(1.0f, 1.0f, e2, diag) &&
+          near(len(diag), 1.0, 1e-5) && near(diag[0] / diag[1], 0.75, 1e-5));
+  }
+
   // ---- the world inertia the spin drag uses ----
   {
     WorldSettings ws;

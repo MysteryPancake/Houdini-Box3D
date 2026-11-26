@@ -31,6 +31,7 @@ from b3dtest import (
     packed_object,
     packed_positions,
     parm_value,
+    point_attributes,
     rbd_object,
     Result,
     set_expression,
@@ -828,8 +829,59 @@ def test_constraint_type_ignored_warning():
     return results
 
 
+def test_moving_world_anchor():
+    """A world anchor that moves (the constraint geometry's world point animated): the joint is not remade, its
+    world end goes onto a kinematic body moved there over the frame, with the velocity that takes. A packed box
+    welded (Box3D Weld) to a world anchor 1 above it that moves along x at 2 m/s for 1 s, then stops, under gravity,
+    with Substeps 1 and 4: the box keeps pace (within 0.02 of the anchor, v.x 2 within 0.05 at frame 24), stops with
+    it (v.x within 0.05 of 0 and within 0.02 of x 2 at frame 48), falls asleep once it has stopped (`awake` 0 at
+    frame 72: a still anchor's body is not woken every frame), and the two Substeps agree within 0.01."""
+    rows, ok, ends = [], True, {}
+    for substeps in (1, 4):
+        tag = f"moving_world_anchor_{substeps}"
+        path, names = packed_boxes(tag + "_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0),
+                                                          "attrs": {"active": 1, "awake": 1}}])
+        dop = new_dopnet(tag)
+        obj = packed_object(dop, "pieces", path)
+        node = create(dop, "box3d_weldconrel", "weld")
+        lines = hou.node(constraint_lines(tag + "_network", [("", (0, 4, 0), names[0], (0, 4, 0),
+                                                              parm_value(node, ["dataname", "data_name"]))]))
+        mover = lines.parent().createNode("attribwrangle", "move_world_anchor")
+        mover.setInput(0, lines)
+        set_parm(mover, ["snippet"], 'if (s@name == "") @P.x += 2.0 * min(@Time, 1.0);')
+        display(mover)
+        net = create(dop, "constraintnetwork", "constraint_network")
+        net.setInput(0, obj)
+        set_parm(net, ["soppath", "constraintsoppath", "geosoppath"], mover.path())
+        net.setInput(1, node)
+        solver = box3d_solver(dop, net)
+        set_parm(solver, ["substeps"], substeps)
+        finish(dop, solver)
+
+        def sample(sim, f):
+            g = find_network_geometry(sim)
+            ax = next((pt.position()[0] for pt in g.points() if pt.attribValue("name") == ""), float("nan"))
+            x = packed_positions(sim, "pieces")[names[0]][0]
+            attrs = point_attributes(sim, "pieces", names[0], ["v", "awake"])
+            return x, x - ax, attrs["v"][0], attrs["awake"]
+
+        t = step(dop, 72, sample)
+        good = (abs(t[13][1]) < 0.02 and abs(t[24][1]) < 0.02 and abs(t[24][2] - 2.0) < 0.05
+                and abs(t[48][2]) < 0.05 and abs(t[48][0] - 2.0) < 0.02 and t[72][3] == 0)
+        ok = ok and good
+        ends[substeps] = (t[24][0], t[48][0])
+        rows.append(f"Substeps {substeps}: box less anchor x {t[13][1]:+.3f} and {t[24][1]:+.3f} at frames 13 and 24, "
+                    f"v.x {t[24][2]:.3f} at 24; at 48 x {t[48][0]:.3f}, v.x {t[48][2]:+.3f}; awake {t[72][3]} at 72")
+    same = all(abs(a - b) < 0.01 for a, b in zip(ends[1], ends[4]))
+    ok = ok and same
+    rows.append(f"Substeps 1 and 4 agree: {same}")
+    return [Result("moving_world_anchor", Result.PASS if ok else Result.FAIL,
+                   "; ".join(rows) + " (expected within 0.02 of the anchor, v.x 2 while it moves, 0 at x 2 after and asleep by 72)")]
+
+
 TESTS = {
     "breaking": test_breaking,
+    "moving_world_anchor": test_moving_world_anchor,
     "anchor_id": test_anchor_id,
     "sidefx_spring_mass": test_sidefx_spring_mass,
     "attribute_multiplies": test_attribute_multiplies,

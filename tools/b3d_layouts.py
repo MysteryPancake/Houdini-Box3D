@@ -16,9 +16,11 @@ SOLVER_LAYOUT = [
       {"color": INPUTS})],
     [("Geometry", ["world_scale_geometry", "switch_world_scale_geometry", "world_scale_proxy", "switch_world_scale_proxy", "sim_source",
                    "prepare_pieces", "collision_names_pieces", "scale_attributes", "switch_scale_attributes",
+                   "emit_flag", "rename_emitted", "switch_emit_pieces", "set_sourcename", "switch_set_sourcename",
                    "create_age", "switch_create_age", "set_active_age_prepare", "set_active_age",
                    "switch_active_age"], {"color": PREPARE}),
      ("Constraints", ["world_scale_constraints", "switch_world_scale_constraints", "scale_constraint_attribs", "switch_scale_constraint_attribs",
+                     "rename_emitted_constraints", "switch_emit_constraints",
                      "create_constraint_age", "switch_create_constraint_age", "store_primid"],
       {"color": PREPARE}),
      ("Collision", ["world_scale_collision", "switch_world_scale_collision", "prepare_collision", "collision_names_collision", "collision_at_start", "collision_rest",
@@ -26,11 +28,12 @@ SOLVER_LAYOUT = [
      ("Ground", ["ground_heightfield_in", "ground_heightfield_scale", "switch_ground_scale", "GROUND_HEIGHTFIELD"],
       {"color": GROUND})],
     [("Simulation", ["dopnet"], {"color": SIMULATION})],
-    [("Simulation Points", ["import_points", "points_only", "sim_points", "unscale_points",
+    [("Simulation Points", ["import_points", "points_only", "sim_points", "rename_copies", "drop_sourcename", "switch_rename_copies", "replica_attribs",
+                            "replica_points", "unscale_points",
                             "switch_unscale_points", "OUT_points"], {"color": OUTPUT}),
-     ("Geometry Output", ["names_geometry", "remove_deleted_geometry", "transform_geometry", "move_pieces_geometry", "move_pieces_normals_geometry", "switch_fast_transform", "unscale_geometry", "switch_unscale_geometry",
+     ("Geometry Output", ["names_geometry", "emit_flag_geometry", "emit_keep_geometry", "rename_emit_geometry", "emit_attrib_geometry", "EMIT_GEOMETRY", "emit_rest_geometry", "import_emitted_geometry", "merge_emitted_geometry", "emit_clean_geometry", "switch_emit_geometry", "replicate_geometry", "rename_replicas_geometry", "merge_replicas_geometry", "replica_clean_geometry", "switch_replicate_geometry", "remove_deleted_geometry", "transform_geometry", "move_pieces_geometry", "move_pieces_normals_geometry", "switch_fast_transform", "unscale_geometry", "switch_unscale_geometry",
                           "switchif_beforestart", "OUT_geometry"], {"color": OUTPUT}),
-     ("Proxy Output", ["names_proxy", "remove_deleted_proxy", "transform_proxy", "unscale_proxy", "switch_unscale_proxy",
+     ("Proxy Output", ["names_proxy", "emit_flag_proxy", "emit_keep_proxy", "rename_emit_proxy", "emit_attrib_proxy", "EMIT_PROXY", "emit_rest_proxy", "import_emitted_proxy", "merge_emitted_proxy", "emit_clean_proxy", "switch_emit_proxy", "replicate_proxy", "rename_replicas_proxy", "merge_replicas_proxy", "replica_clean_proxy", "switch_replicate_proxy", "remove_deleted_proxy", "transform_proxy", "unscale_proxy", "switch_unscale_proxy",
                        "switchif_beforestart_proxy", "no_proxy", "switch_proxy_connected", "OUT_proxy"],
       {"color": OUTPUT}),
      ("Constraints Output", ["import_constraints", "blast_broken", "switchif_keepbroken", "transform_constraints",
@@ -55,7 +58,7 @@ SOLVER_LAYOUT = [
 RELATIONSHIP_NAMES = ["weld", "spherical", "revolute", "prismatic", "distance", "motor", "parallel", "wheel",
                       "filter", "motionlock", "glue", "hard", "spring", "soft", "conetwist"]
 DOP_LAYOUT = [
-    [("Objects", ["pieces", "collision", "collision_static", "collision_static_data", "collision_source"],
+    [("Objects", ["pieces", "emitted_geometry", "emitted_proxy", "use_emission", "collision", "collision_static", "collision_static_data", "collision_source"],
       {"color": PREPARE}),
      ("Relationships", RELATIONSHIP_NAMES, {"grid": 5, "color": EXTRA})],
     [("Constraints", ["no_relationship"] + [f"switch_use_{n}" for n in RELATIONSHIP_NAMES]
@@ -64,7 +67,12 @@ DOP_LAYOUT = [
      ("Ground", ["ground_none", "groundplane", "ground_heightfield", "switch_ground", "ground_data"],
       {"color": GROUND}),
      ("Forces", ["FORCES", "scale_forces", "enable_scale_forces"], {"color": EXTRA})],
-    [("Solve", ["objects_and_ground", "box3d_solver", "add_active_age", "enable_active_age", "constraint_updates", "enable_constraint_updates", "constraint_breaks", "enable_constraint_breaks", "multisolver",
+    # Emit RBDs: four SOP Solvers, each behind an Enable Solver for before and for after the step.
+    [("Emission", ["emit_pieces", "emit_constraints", "emit_geometry", "emit_proxy"]
+                  + [f"enable_emit_{n}_{w}" for w in ("before", "after")
+                     for n in ("pieces", "constraints", "geometry", "proxy")]
+                  + ["emission_before", "emission_after"], {"color": PREPARE}),
+     ("Solve", ["objects_and_ground", "box3d_solver", "add_active_age", "enable_active_age", "constraint_updates", "enable_constraint_updates", "constraint_breaks", "enable_constraint_breaks", "multisolver",
                  "output"], {"color": SIMULATION})],
 ]
 

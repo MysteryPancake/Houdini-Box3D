@@ -48,6 +48,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import b3d_hda  # noqa: E402  (beside this script)
 from b3d_hda import without_parmops  # noqa: E402
 from b3d_settings import num  # noqa: E402
+from b3d_constraint_properties_help import HELP_CARD  # noqa: E402
 from b3d_layouts import CONSTRAINT_PROPERTIES_LAYOUT  # noqa: E402
 
 TYPE_NAME = "box3d_constraint_properties"
@@ -925,6 +926,7 @@ def build(out_path):
     b3d_hda.set_message_nodes(asset, MESSAGE_NODES, warn)
     definition.setComment("Sets Box3D constraint settings as primitive attributes on the constraints in a "
                           "group, like RBD Constraint Properties.")
+    definition.addSection("Help", HELP_CARD)  # the help card (F1 on the node)
     definition.updateFromNode(asset)
     definition.save(out_path, asset)
     b3d_hda.edit_dialog_script(definition, LABELS, LABELS, warn)  # labels last, saved without the node (see make_solver_sop.py)

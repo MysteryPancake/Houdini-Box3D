@@ -504,7 +504,7 @@ def test_solver_sop_layout():
     Constraints, Visualization, Advanced, Output (no Misc); Collision Geometry's header checkbox is Enable Collision Geometry, which sits just before it
     (as RBD Bullet Solver's); the Pieces tab is Shape, Body, Material, CCD & Contacts, Sleep (Start
     Asleep first), Override Attributes (Override Attributes from SOP); the Solver tab holds Cache Simulation
-    (label hidden, joined to Cache Memory) right after Solve on Creation Frame and ends with Contacts and Sleeping
+    (label hidden, joined to Cache Memory) after Solve on Creation Frame, Emit RBDs and Replicate RBDs and ends with Contacts and Sleeping
     (the solver's Allow Sleeping); Advanced ends with a Constraints folder holding a closed folder per joint type;
     the Output tab has Impact Data, Attributes (Aging) and Attribute Transfer;
     Visualization is the Visualize Geometries folder (Geometry, Ground, Collision Geometry) then the Inspector folder; no Detach Faces; every collapsible folder open but Impact Data,
@@ -601,10 +601,10 @@ def test_solver_sop_layout():
     simulation = by_path.get(("Setup", "Simulation"))
     solver_names = [pt.name() for pt in simulation.parmTemplates()] if simulation else []
     cache = next((pt for pt in simulation.parmTemplates() if pt.name() == "cacheenabled"), None) if simulation else None
-    expect("Cache Simulation (label hidden, joined) in Solver / Simulation, after Solve on Creation Frame",
-           (cache.isLabelHidden(), cache.joinsWithNext(),
-            solver_names.index("cacheenabled") == solver_names.index("solvefirstframe") + 1) if cache else None,
-           (True, True, True))
+    expect("Emit RBDs joined to Replicate RBDs, then Cache Simulation (label hidden, joined) in Solver / Simulation, "
+           "after Solve on Creation Frame", (cache.isLabelHidden(), cache.joinsWithNext(),
+                                             solver_names[solver_names.index("solvefirstframe"):][:4]) if cache else None,
+           (True, True, ["solvefirstframe", "useemission", "replicate", "cacheenabled"]))
     vis_tab = by_path.get(("Visualization",))
     expect("Visualization tab", [pt.name() for pt in vis_tab.parmTemplates()] if vis_tab else None,
            ["visualizegeometries", "b3dsop_visualize_geometries", "b3dsop_inspector"])
@@ -768,7 +768,233 @@ def test_solver_sop_pop_drag_bullet():
     return results
 
 
+def test_solver_sop_emit_bullet():
+    """Emit RBDs, against the RBD Bullet Solver SOP, with Solve on Creation Frame off and on: two glued boxes that emit,
+    thrown sideways by their `v` fast enough to clear the spot before the next copy appears there, and one with
+    `rbdbullet_emit` 0, played 5 frames. Both give the same simulation
+    point names every frame (a copy per frame, `<name>_<frame * 100>`, the non-emitting box once), the same number of
+    constraints and positions within 0.05; an emitted copy keeps its `v`. The Geometry output has one piece per point
+    (Bullet's has one more with Solve on Creation Frame, so that is not compared). With a Proxy input too, the Geometry
+    and Proxy outputs of Box3D have one piece per point, each Geometry piece where its point is."""
+    pieces, names = packed_boxes("sop_emit_pieces", [
+        {"size": (1, 1, 1), "center": (0, 5, 0), "attrs": {"v": (30, 0, 0), "rbdbullet_emit": 1}},
+        {"size": (1, 1, 1), "center": (0, 6, 0), "attrs": {"v": (30, 0, 0), "rbdbullet_emit": 1}},
+        {"size": (1, 1, 1), "center": (0, 5, 5), "attrs": {"rbdbullet_emit": 0}}])
+    lines = constraint_lines("sop_emit_network", [(names[0], (0, 5.5, 0), names[1], (0, 5.5, 0), "Glue")])
+    frames = 5
+    results = []
+
+    def sample(s, f):
+        pts = s.geometry(3)
+        return {"points": {p.attribValue("name"): (p.position(), p.attribValue("v")) for p in pts.points()},
+                "geometry": len(s.geometry(0).prims()), "constraints": len(s.geometry(1).prims()),
+                "moved": named_positions(s.geometry(0)),
+                "proxy": len(s.geometry(2).prims())}
+
+    for first in (0, 1):
+        sops = _both_sops(f"sop_emit_{first}", geometry=pieces, constraints=lines)
+        got = {}
+        for kind, sop in sops.items():
+            set_parm(sop, ["useemission"], 1)
+            set_parm(sop, ["solvefirstframe"], first)
+            got[kind] = play(sop, frames, sample)
+        box3d, bullet = got["box3d"], got["bullet"]
+        problems = []
+        for f in range(1, frames + 1):
+            a, b = box3d[f], bullet[f]
+            if sorted(a["points"]) != sorted(b["points"]):
+                problems.append(f"frame {f} names Box3D {sorted(a['points'])}, Bullet {sorted(b['points'])}")
+                continue
+            far = [n for n in a["points"] if (a["points"][n][0] - b["points"][n][0]).length() > 0.05]
+            if far:
+                problems.append(f"frame {f}: {far} more than 0.05 from Bullet's")
+            if a["constraints"] != b["constraints"]:
+                problems.append(f"frame {f} constraints Box3D {a['constraints']}, Bullet {b['constraints']}")
+            if a["geometry"] != len(a["points"]):
+                problems.append(f"frame {f} Box3D geometry has {a['geometry']} pieces for {len(a['points'])} points")
+        last = box3d[frames]["points"]
+        emitted = f"{names[0]}_{frames * 100}"
+        v = last.get(emitted, (None, None))[1]
+        if v is None or abs(v[0] - 30.0) > 1e-3:
+            problems.append(f"{emitted}'s v {v}, expected x 30")
+        want = 2 * frames + 1
+        if len(last) != want:
+            problems.append(f"{len(last)} points on frame {frames}, expected {want}")
+        results.append(Result("solver_sop_emit_bullet", Result.FAIL if problems else Result.PASS,
+                              f"Solve on Creation Frame {first}: " + ("; ".join(problems) if problems else
+                              f"{len(last)} points and {box3d[frames]['constraints']} constraints on frame "
+                              f"{frames}, as Bullet's")))
+
+    sop = solver_sop("sop_emit_proxy", geometry=pieces, constraints=lines, proxy=pieces)
+    set_parm(sop, ["useemission"], 1)
+    track = play(sop, frames, sample)
+    bad = [f"frame {f}: {track[f]['geometry']} geometry, {track[f]['proxy']} proxy pieces for "
+           f"{len(track[f]['points'])} points" for f in track
+           if not track[f]["geometry"] == track[f]["proxy"] == len(track[f]["points"])]
+    # Each Geometry piece where its simulation point is (packed boxes: the piece's point is its centre).
+    bad += [f"frame {f}: {n} at {track[f]['moved'].get(n)}, its point at {p[0]}" for f in track
+            for n, p in track[f]["points"].items()
+            if n not in track[f]["moved"] or (track[f]["moved"][n] - p[0]).length() > 1e-3]
+    results.append(Result("solver_sop_emit_bullet", Result.FAIL if bad else Result.PASS,
+                          "with a Proxy input: " + ("; ".join(bad) if bad else
+                                                    "Geometry and Proxy outputs have one piece per point, "
+                                                    "each where its point is")))
+
+    # A glued pair that emits, one of them also held by a Hard constraint to a box that is not emitted, the pair
+    # moving 3 along x a frame so each copy appears clear of the last. Constraint names per frame as Bullet's: a copy
+    # brings the glue between the two, not the Hard one (it stays with the first frame's pieces). Again with Overwrite
+    # with SOP left on, which emission turns off in both (it would drop the emitted glue). (A Hard constraint to the
+    # world is left out: Bullet drops one on a glued piece after the first frame, emitting or not.)
+    anchored, (box, mate, kept) = packed_boxes("sop_emit_anchored_pieces", [
+        {"size": (1, 1, 1), "center": (0, 5, 0), "attrs": {"rbdbullet_emit": 1}},
+        {"size": (1, 1, 1), "center": (0, 6, 0), "attrs": {"rbdbullet_emit": 1}},
+        {"size": (1, 1, 1), "center": (0, 5, -3), "attrs": {"rbdbullet_emit": 0}}])
+    anchor_lines = constraint_lines("sop_emit_anchored_network", [
+        (box, (0, 5.5, 0), mate, (0, 5.5, 0), "Glue"),
+        (box, (0, 5, -1.5), kept, (0, 5, -1.5), "Hard")])
+    moving = []
+    for path in (anchored, anchor_lines):
+        src = hou.node(path)
+        mover = src.parent().createNode("attribwrangle", "move_emitter")
+        mover.setInput(0, src)
+        mover.parm("class").set(2)  # points
+        mover.parm("snippet").set(f'if (s@name != "{kept}") @P.x += 3 * @Frame;')
+        display(mover)
+        moving.append(mover.path())
+
+    def constraint_names(s, f):
+        g = s.geometry(1)
+        return sorted(tuple(sorted(p.attribValue("name") for p in pr.points())) for pr in g.prims())
+
+    for reload in (0, 1):
+        got = {}
+        for kind, sop in _both_sops(f"sop_emit_anchored_{reload}", geometry=moving[0],
+                                    constraints=moving[1]).items():
+            set_parm(sop, ["useemission"], 1)
+            set_parm(sop, ["constraint_reloadfromsops"], reload)
+            got[kind] = play(sop, 4, constraint_names)
+        differ = [f for f in range(1, 5) if got["box3d"][f] != got["bullet"][f]]
+        glued = sum(1 for pair in got["box3d"][4] if kept not in pair)
+        ok = not differ and glued == 4
+        results.append(Result("solver_sop_emit_bullet", Result.PASS if ok else Result.FAIL,
+                              f"Overwrite with SOP {reload}, an emitting glued pair held to a piece that is not "
+                              f"emitted: constraints differ from Bullet's on frames {differ}, "
+                              f"{glued} glue constraints on frame 4 (expected none differ and 4); "
+                              f"Box3D's on frame 4: {got['box3d'][4]}"
+                              + (f", Bullet's: {got['bullet'][4]}" if differ else "")))
+    return results
+
+
+def _duplicate_in_postsolve(sop, forces, name, frame, offset):
+    """A SOP Solver on the FORCES subnet's POSTSOLVE (`forces`: its name in the SOP's DOP network) that copies the
+    piece `name` once, on `frame`, moved by `offset`: a piece duplicated during the simulation."""
+    sop.allowEditingOfContents()
+    subnet = sop.node(f"dopnet/{forces}")
+    solver = subnet.createNode("sopsolver", "duplicate")
+    out = [c for c in solver.children() if c.type().name() == "output"][0]
+    src = out.inputs()[0]
+    pick = solver.createNode("blast", "pick")
+    pick.setInput(0, src)
+    set_parm(pick, ["group"], f"@name={name}")
+    set_parm(pick, ["grouptype"], "points")
+    set_parm(pick, ["negate"], 1)
+    move = solver.createNode("attribwrangle", "move")
+    move.setInput(0, pick)
+    set_parm(move, ["snippet"], "v@P += {%g, %g, %g};" % offset)
+    both = solver.createNode("merge", "with_copy")
+    both.setInput(0, src)
+    both.setInput(1, move)
+    once = solver.createNode("switch", "once")
+    once.setInput(0, src)
+    once.setInput(1, both)
+    once.parm("input").setExpression(f'$F == {frame} && npoints("../pick") == 1', hou.exprLanguage.Hscript)
+    out.setInput(0, once)
+    subnet.node("POSTSOLVE").setInput(0, solver)
+
+
+def _piece_centres(geo):
+    """{name: centre of its bounding box} of the pieces of `geo`, named on their primitives, else their points."""
+    prim_name = geo.findPrimAttrib("name") is not None
+    points = {}
+    for prim in geo.prims():
+        name = prim.attribValue("name") if prim_name else prim.vertices()[0].point().attribValue("name")
+        # (A packed piece's one point is its centre.)
+        points.setdefault(name, []).extend(v.point().position() for v in prim.vertices())
+    return {n: hou.Vector3([(min(p[i] for p in ps) + max(p[i] for p in ps)) / 2 for i in range(3)])
+            for n, ps in points.items()}
+
+
+def test_solver_sop_replicate_bullet():
+    """Replicate RBDs, against the RBD Bullet Solver SOP: a SOP Solver in FORCES' POSTSOLVE copies one of two boxes on
+    frame 3, 3 units aside. With Replicate RBDs on, both name the copy's simulation point `<name>_r1` and give it a
+    Geometry piece of its own, where its point is; off, Box3D's copy has none (as Bullet's). Then Box3D alone with
+    unpacked Geometry named on its primitives: the copy's piece is made from the polygons the same way. (Bullet's
+    original stops moving once copied, so only the copy is compared for position.)"""
+    pieces, names = packed_boxes("sop_replicate_pieces", [{"size": (1, 1, 1), "center": (0, 5, 0)},
+                                                          {"size": (1, 1, 1), "center": (3, 5, 0)}])
+    copy = f"{names[0]}_r1"
+    frames = 5
+    results = []
+
+    def sample(s, f):
+        return {"points": {p.attribValue("name"): p.position() for p in s.geometry(3).points()},
+                "pieces": _piece_centres(s.geometry(0))}
+
+    got = {}
+    for replicate in (0, 1):
+        sops = _both_sops(f"sop_replicate_{replicate}", geometry=pieces)
+        for kind, sop in sops.items():
+            set_parm(sop, ["replicate"], replicate)
+            _duplicate_in_postsolve(sop, "FORCES" if kind == "box3d" else "forces", names[0], 3, (0, 0, 3))
+            got[(kind, replicate)] = play(sop, frames, sample)
+    problems = []
+    for kind in ("box3d", "bullet"):
+        last = got[(kind, 1)][frames]
+        if sorted(last["points"]) != sorted([names[0], names[1], copy]):
+            problems.append(f"{kind} points {sorted(last['points'])}")
+        elif sorted(last["pieces"]) != sorted(last["points"]):
+            problems.append(f"{kind} Geometry pieces {sorted(last['pieces'])}")
+        elif (last["pieces"][copy] - last["points"][copy]).length() > 1e-3:
+            problems.append(f"{kind} {copy}'s piece at {last['pieces'][copy]}, its point at {last['points'][copy]}")
+    b, u = got[("box3d", 1)][frames], got[("bullet", 1)][frames]
+    if copy in b["points"] and copy in u["points"] and (b["points"][copy] - u["points"][copy]).length() > 0.05:
+        problems.append(f"{copy} at {b['points'][copy]} in Box3D, {u['points'][copy]} in Bullet")
+    off = got[("box3d", 0)][frames]["pieces"]
+    if len(off) != 2:
+        problems.append(f"Replicate off: Box3D Geometry pieces {sorted(off)}, expected the two of the input")
+    results.append(Result("solver_sop_replicate_bullet", Result.FAIL if problems else Result.PASS,
+                          "; ".join(problems) if problems else
+                          f"{copy} has its own Geometry piece at its point in both, none with Replicate RBDs off"))
+
+    # Unpacked Geometry named on its primitives (the Solver SOP packs it for the simulation).
+    geo = new_geo("sop_replicate_polys")
+    merge = create(geo, "merge", "boxes")
+    for i, x in enumerate((0, 3)):
+        box = create(geo, "box", f"box{i}")
+        set_parm(box, ["t"], (x, 5, 0))
+        merge.setInput(i, box)
+    name = create(geo, "attribwrangle", "name")
+    name.setInput(0, merge)
+    set_parm(name, ["class"], 1)
+    set_parm(name, ["snippet"], 's@name = "piece" + itoa(i@primnum / 6);')
+    display(name)
+    sop = solver_sop("sop_replicate_polys_box3d", geometry=name.path())
+    set_parm(sop, ["replicate"], 1)
+    _duplicate_in_postsolve(sop, "FORCES", "piece0", 3, (0, 0, 3))
+    last = play(sop, frames, sample)[frames]
+    polys = len(sop.geometry(0).prims())
+    ok = (sorted(last["pieces"]) == sorted(last["points"]) == ["piece0", "piece0_r1", "piece1"] and polys == 18
+          and (last["pieces"]["piece0_r1"] - last["points"]["piece0_r1"]).length() < 1e-3)
+    results.append(Result("solver_sop_replicate_bullet", Result.PASS if ok else Result.FAIL,
+                          f"unpacked Geometry: pieces {sorted(last['pieces'])}, {polys} polygons (expected 18), points "
+                          f"{sorted(last['points'])}; piece0_r1's piece at {last['pieces'].get('piece0_r1')}, its "
+                          f"point at {last['points'].get('piece0_r1')}"))
+    return results
+
+
 TESTS = {
+    "solver_sop_replicate_bullet": test_solver_sop_replicate_bullet,
+    "solver_sop_emit_bullet": test_solver_sop_emit_bullet,
     "solver_sop_quadrics": test_solver_sop_quadrics,
     "solver_sop_pieces": test_solver_sop_pieces,
     "solver_sop_global_substeps": test_solver_sop_global_substeps,

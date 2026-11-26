@@ -6,12 +6,14 @@ import b3d_hda
 from b3d_hda import labels
 from b3d_solver_activeage import build_active_age_dop
 from b3d_solver_breaks import build_breaks
+from b3d_solver_emit import build_emission, emission_objects
 from b3d_solver_updates import build_constraint_updates
 from b3d_solver_ground import build_ground_dops, setp
 from b3d_solver_common import (
     COLLISION_SOURCE,
     COLLISION_TYPE,
     CONSTRAINT_RELOAD,
+    EMIT,
     CONTEXT_GEOMETRY,
     create,
     DOP_COLLISION,
@@ -76,7 +78,8 @@ def animate_collision(collision):
 
 
 def build_dops(dopnet):
-    pieces = packed_object(dopnet, "pieces", DOP_PIECES, "pieces")
+    # Emit RBDs: the pieces object carries the emitted pieces' render geometry from its creation frame.
+    pieces = emission_objects(dopnet, packed_object(dopnet, "pieces", DOP_PIECES, "pieces"))
 
     # Collision: packed colliders as convex hulls unless a point sets bullet_georep. Collision
     # Type Animated / Deforming: Kinematic (the solver moves each body to its new pose) and the SOP re-imported
@@ -137,8 +140,10 @@ def build_dops(dopnet):
         warn(f"{network.path()} has no Reload from SOPs: the constraints may be read again every step")
     else:
         reload.deleteAllKeyframes()
-        reload.setExpression(f'ch("{reload.node().relativePathTo(dopnet.parent())}/{CONSTRAINT_RELOAD}")',
-                             hou.exprLanguage.Hscript)
+        # Never while emitting (as RBD Bullet Solver's): reading the input again drops the emitted constraints. The
+        # asset greys the toggle out then, but one already on would still apply.
+        rel = reload.node().relativePathTo(dopnet.parent())
+        reload.setExpression(f'ch("{rel}/{CONSTRAINT_RELOAD}") && !ch("{rel}/{EMIT}")', hou.exprLanguage.Hscript)
     constrained = create(dopnet, "switch", "use_constraints")
     constrained.setInput(0, pieces)
     constrained.setInput(1, network)
@@ -170,13 +175,17 @@ def build_dops(dopnet):
     with_ground = create(dopnet, "merge", "objects_and_ground")
     with_ground.setInput(0, objects)
     with_ground.setInput(1, build_ground_dops(dopnet))
-    multi.setInput(0, with_ground)
-    multi.setInput(1, forces, FORCES_OUTPUTS.index("PRESOLVE"))
-    multi.setInput(2, solver)
-    multi.setInput(3, forces, FORCES_OUTPUTS.index("POSTSOLVE"))
-    multi.setInput(4, build_active_age_dop(dopnet, "pieces"))  # Add Active Age Attribute, Just Activated
-    multi.setInput(5, build_constraint_updates(dopnet))  # Enable Attribute Update from SOPs, before the breaks
-    multi.setInput(6, build_breaks(dopnet))  # Break Thresholds, after everything else
+    # Emit RBDs: the new pieces join before the step with Solve on Creation Frame (so forces act on them too), else
+    # after it (b3d_solver_emit.py).
+    emit_before, emit_after = build_emission(dopnet)
+    for i, (node, out) in enumerate([
+            (with_ground, 0), (emit_before, 0), (forces, FORCES_OUTPUTS.index("PRESOLVE")), (solver, 0),
+            (forces, FORCES_OUTPUTS.index("POSTSOLVE")),
+            (build_active_age_dop(dopnet, "pieces"), 0),  # Add Active Age Attribute, Just Activated
+            (emit_after, 0),
+            (build_constraint_updates(dopnet), 0),  # Enable Attribute Update from SOPs, before the breaks
+            (build_breaks(dopnet), 0)]):  # Break Thresholds, after everything else
+        multi.setInput(i, node, out)
     out = create(dopnet, "output", "output")
     out.setInput(0, multi)
     out.setDisplayFlag(True)

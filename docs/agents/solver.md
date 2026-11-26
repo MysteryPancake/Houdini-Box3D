@@ -27,7 +27,7 @@ worldData = findOrCreateWorldData(objects)     first object carrying "Box3DWorld
 rebuild if invalid / thread count changed / stamp mismatch -> createFreshWorld
 lock st->mutex
 stepDt = dt * timescale; world.applyTuning(currentWorldSettings())   (stepDt stays the whole frame's time)
-syncFromGeometry   per object syncObject(); syncAffectorBodies (Static Objects); remove gone bodies; syncJoints; syncCompounds;
+syncFromGeometry   per object syncObject(); syncAffectorBodies (Static Objects); remove gone bodies; syncJoints; syncCompounds; applyGlueMaterials;
                    pruneHulls; warnings
 world.step         n = Substeps (`substeps`, at least 1; 1 when stepDt is 0). Each of the n steps: applyExternalForces (Box3D clears
                    forces every step), b3World_Step(stepDt / n, subSteps = Constraint Iterations), then its move events are merged
@@ -36,7 +36,7 @@ world.step         n = Substeps (`substeps`, at least 1; 1 when stepDt is 0). Ea
                    centre of mass, plus point force / torque -> applyForceByHandle
 expandCompoundMoves  Glue as One Body: a move event per piece of a moved compound (glue-compound.md)
 writeResultsBack   awake dynamic bodies (move events): P / orient / v / w / packed transform / awake
-jointsAfterStep    broken joints, feedback and live frames onto the networks (joint-networks.md)
+jointsAfterStep    broken joints, feedback and live frames onto the networks (joint-networks.md, joint-live-frames.md)
 recordImpacts      Add Impact Data -> SIM_Impacts (only on steps with an impact)
 writePointAttrs    queued point writes: bullet_autofit_valid = 1, computed mass, rest attributes
 ageObjects         Enable Aging only

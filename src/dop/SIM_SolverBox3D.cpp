@@ -490,7 +490,10 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
       st->stepDt > 0.0f ? std::max(static_cast<int>(getSubsteps()), 1) : 1;
   const float subDt = st->stepDt / static_cast<float>(n);
   reaimJoints(*st); // joints whose anchors are together aim along their line
+  driveWorldAnchors(*st);      // world anchors that move, over the frame
   refreshMotion(*st, objects); // drag and speed limit attributes
+  refreshCompoundMotion(*st);  // ... combined for Glue as One Body
+  refreshAccelLimits(*st);     // the bodies with accelmax / angaccelmax
 
   // From here the step runs to the end (the write-back is quick), so the cached
   // result is always a whole step.
@@ -504,6 +507,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
   // Hit events: only the Impact Min Speed filter reads them.
   const bool wantHits = st->world.settings().impactMinSpeed > 0.0f;
   if (n == 1) { // one step, nothing to merge
+    beginAccelLimits(*st);
     if (getUseForces()) {
       UT_PerfMonAutoSolveEvent perf(this,
                                     "Stepping Simulation}/{Applying Forces");
@@ -527,6 +531,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
       collectGlueHits(*st);
     }
     st->world.getMoveEvents(st->moves); // read once: write-back and impacts
+    applyAccelLimits(*st, st->moves, subDt);
     applySpeedLimits(*st, st->moves);
     // Before the step's own events: they carry the final poses.
     st->moves.insert(st->moves.begin(), left.begin(), left.end());
@@ -555,6 +560,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
       // Force DOPs go into the bodies for one Box3D step only (it clears them
       // afterwards), so every step applies them again, the point forces (read
       // and cleared by the first) from `carry`.
+      beginAccelLimits(*st);
       if (getUseForces()) {
         UT_PerfMonAutoSolveEvent perf(this,
                                       "Stepping Simulation}/{Applying Forces");
@@ -582,6 +588,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass(
           collectGlueHits(*st);
         }
         st->world.getMoveEvents(events);
+        applyAccelLimits(*st, events, subDt);
         applySpeedLimits(*st, events);
         // Before the step's own events: they carry the final poses.
         events.insert(events.begin(), left.begin(), left.end());
@@ -839,6 +846,8 @@ bool SIM_SolverBox3D::syncFromGeometry(SIM_Box3DWorld &worldData,
     syncJoints(*st, objects, jointCounts);
     releaseExpiredHolds(*st, st->stepDt);
     syncCompounds(*st); // glued groups as one body (off by default)
+    applyGlueMaterials(*st, counts.added || counts.updated || counts.rebuilt ||
+                                counts.retyped || removed);
   }
   {
     warnCount(objects, jointCounts.unknown,

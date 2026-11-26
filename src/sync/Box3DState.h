@@ -138,10 +138,17 @@ struct Box3DSharedState {
   // Some object has a point with a drag or a speed limit (Box3DMotion.cpp): the
   // step's speed clamp looks at its moved bodies.
   bool anyMotion = false;
+  // The bodies with accelmax / angaccelmax this frame (refreshAccelLimits), and
+  // each one's slot by body.
+  std::vector<Box3DAccelSlot> accelSlots;
+  std::unordered_map<b3dop::BodyHandle, size_t> accelSlotOf;
   // The joints re-aimed each frame (Box3DJointEntry::reaim), for reaimJoints;
   // entries are in the node-based `joints` map, so the pointers hold until an
   // entry is erased (it leaves the list then).
   std::vector<Box3DJointEntry *> reaimEntries;
+  // The joints on a moving world anchor's body (Box3DJointExtra::anchorBody),
+  // for driveWorldAnchors.
+  std::vector<Box3DJointEntry *> anchorEntries;
   // solver Reap Dead Points: `dead` points are deleted (else kept, out of the
   // simulation)
   bool reapDead = true;
@@ -226,6 +233,13 @@ struct Box3DSharedState {
   uint64_t glueGroupSignature = 0;
   size_t glueGroupNodes = 0;
   bool glueGroupKnown = false;
+  // applyGlueMaterials: the glue state it last ran for, and the pieces it gave
+  // a group's material (mirror keys, sorted).
+  uint64_t glueMaterialSignature = 0;
+  size_t glueMaterialNodes = 0;
+  size_t glueMaterialCompounds = 0;
+  bool glueMaterialKnown = false;
+  std::vector<uint64_t> glueMaterialKeys;
   // The glue groups that have their frame's break estimate (estimateGlueHits
   // takes a group's from the first step that has one); cleared by advanceGlue.
   std::unordered_set<int> glueEstimated;

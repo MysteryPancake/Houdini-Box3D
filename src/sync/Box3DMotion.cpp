@@ -5,6 +5,7 @@
 // change, the drag added to the force pass (Box3DForces.cpp), the limits
 // applied to the moved bodies after every Box3D step.
 #include "Box3DSolverInternal.h"
+#include "core/Box3DMath.h"
 
 #include <GA/GA_Handle.h>
 #include <GA/GA_SplittableRange.h>
@@ -12,6 +13,7 @@
 #include <algorithm>
 #include <cmath>
 #include <mutex>
+#include <unordered_map>
 
 namespace box3dsolver {
 
@@ -29,6 +31,12 @@ uint64_t motionSignature(const GU_Detail *gdp) {
   return h;
 }
 
+bool hasAccel(const std::vector<Box3DMotionEntry> &entries) {
+  return std::any_of(
+      entries.begin(), entries.end(),
+      [](const Box3DMotionEntry &e) { return e.params.hasAccelLimits(); });
+}
+
 bool hasAnyMotionAttrib(const GU_Detail *gdp) {
   for (const char *name : kMotionAttribNames)
     if (gdp->findPointAttribute(name))
@@ -37,11 +45,12 @@ bool hasAnyMotionAttrib(const GU_Detail *gdp) {
 }
 
 // `inputs`: some point has a non-zero one-step input (see
-// Box3DObjectSync::motionInputs).
+// Box3DObjectSync::motionInputs); `accel`: some point has an accel limit.
 void readMotion(const GU_Detail *gdp, std::vector<Box3DMotionEntry> &out,
-                bool &inputs) {
+                bool &inputs, bool &accel) {
   out.clear();
   inputs = false;
+  accel = false;
   if (!hasAnyMotionAttrib(gdp))
     return;
   const GA_ROHandleF airresist(gdp, GA_ATTRIB_POINT, "airresist"),
@@ -51,7 +60,9 @@ void readMotion(const GU_Detail *gdp, std::vector<Box3DMotionEntry> &out,
       speedmin(gdp, GA_ATTRIB_POINT, "speedmin"),
       speedmax(gdp, GA_ATTRIB_POINT, "speedmax"),
       spinmin(gdp, GA_ATTRIB_POINT, "spinmin"),
-      spinmax(gdp, GA_ATTRIB_POINT, "spinmax");
+      spinmax(gdp, GA_ATTRIB_POINT, "spinmax"),
+      accelmax(gdp, GA_ATTRIB_POINT, "accelmax"),
+      angaccelmax(gdp, GA_ATTRIB_POINT, "angaccelmax");
   const GA_ROHandleV3 targetv(gdp, GA_ATTRIB_POINT, "targetv"),
       targetw(gdp, GA_ATTRIB_POINT, "targetw");
   const auto num = [](float v, float fallback) {
@@ -88,6 +99,10 @@ void readMotion(const GU_Detail *gdp, std::vector<Box3DMotionEntry> &out,
       p.minSpin = num(spinmin.get(off), -1.0f);
     if (spinmax.isValid())
       p.maxSpin = num(spinmax.get(off), -1.0f);
+    if (accelmax.isValid())
+      p.maxAccel = num(accelmax.get(off), -1.0f);
+    if (angaccelmax.isValid())
+      p.maxAngAccel = num(angaccelmax.get(off), -1.0f);
     anyInput = anyInput || p.airResist > 0.0f || p.spinResist > 0.0f ||
                p.targetV[0] != 0.0f || p.targetV[1] != 0.0f ||
                p.targetV[2] != 0.0f || p.targetW[0] != 0.0f ||
@@ -99,6 +114,7 @@ void readMotion(const GU_Detail *gdp, std::vector<Box3DMotionEntry> &out,
   if (static_cast<size_t>(range.getEntries()) < minParallelPoints()) {
     for (GA_Iterator it(range); !it.atEnd(); ++it)
       collect(*it, out, inputs);
+    accel = hasAccel(out);
     return;
   }
   // Read-only: each range gathers its own points, merged under a lock and
@@ -121,6 +137,7 @@ void readMotion(const GU_Detail *gdp, std::vector<Box3DMotionEntry> &out,
             [](const Box3DMotionEntry &a, const Box3DMotionEntry &b) {
               return a.off < b.off;
             });
+  accel = hasAccel(out);
 }
 
 } // namespace
@@ -135,6 +152,7 @@ void refreshMotion(Box3DSharedState &st, SIM_ObjectArray &objects) {
     Box3DObjectSync &os = osIt->second;
     if (os.wholeObject) { // Bullet gives an RBD Object no drag or limits
       os.motion.clear();
+      os.motionAccel = false;
       continue;
     }
     const SIM_Geometry *geo =
@@ -147,12 +165,67 @@ void refreshMotion(Box3DSharedState &st, SIM_ObjectArray &objects) {
       continue;
     const uint64_t sig = motionSignature(gdp);
     if (sig != os.motionSig) {
-      readMotion(gdp, os.motion, os.motionInputs);
+      readMotion(gdp, os.motion, os.motionInputs, os.motionAccel);
       os.motionSig = sig;
     }
     any = any || !os.motion.empty();
   }
   st.anyMotion = any;
+}
+
+void refreshCompoundMotion(Box3DSharedState &st) {
+  for (const auto &cp : st.compounds) {
+    Box3DCompound &c = *cp;
+    b3dop::MotionParams sum;
+    sum.dragExp = 0.0f;
+    double mass = 0.0;
+    double air = 0.0, spin = 0.0, exp = 0.0, tv[3] = {}, tw[3] = {};
+    const auto lower = [](float &into, float v) { // the smallest limit set
+      if (v >= 0.0f)
+        into = into >= 0.0f ? std::min(into, v) : v;
+    };
+    const auto raise = [](float &into, float v) { // the largest limit set
+      if (v >= 0.0f)
+        into = std::max(into, v);
+    };
+    if (st.anyMotion)
+      for (const Box3DCompoundMember &m : c.members) {
+        const Box3DBodyMirror *e = m.entry;
+        const double w = m.mass > 0.0f ? m.mass : 0.0;
+        mass += w;
+        const Box3DMotionEntry *me =
+            e && e->sync && !e->sync->motion.empty() && e->pointOff >= 0
+                ? findMotion(*e->sync, static_cast<GA_Offset>(e->pointOff))
+                : nullptr;
+        const b3dop::MotionParams p = me ? me->params : b3dop::MotionParams();
+        air += w * p.airResist;
+        spin += w * p.spinResist;
+        exp += w * p.dragExp;
+        for (int k = 0; k < 3; ++k) {
+          tv[k] += w * p.targetV[k];
+          tw[k] += w * p.targetW[k];
+        }
+        raise(sum.minSpeed, p.minSpeed);
+        lower(sum.maxSpeed, p.maxSpeed);
+        raise(sum.minSpin, p.minSpin);
+        lower(sum.maxSpin, p.maxSpin);
+        lower(sum.maxAccel, p.maxAccel);
+        lower(sum.maxAngAccel, p.maxAngAccel);
+      }
+    if (mass > 0.0) {
+      sum.airResist = static_cast<float>(air / mass);
+      sum.spinResist = static_cast<float>(spin / mass);
+      sum.dragExp = b3dop::clampDragExp(static_cast<float>(exp / mass));
+      for (int k = 0; k < 3; ++k) {
+        sum.targetV[k] = static_cast<float>(tv[k] / mass);
+        sum.targetW[k] = static_cast<float>(tw[k] / mass);
+      }
+    } else {
+      sum = b3dop::MotionParams();
+    }
+    c.motion = sum;
+    c.hasMotion = sum.any();
+  }
 }
 
 const Box3DMotionEntry *findMotion(const Box3DObjectSync &os, GA_Offset off) {
@@ -178,6 +251,129 @@ void applySpeedLimits(Box3DSharedState &st,
       continue;
     if (b3dop::clampMotion(m->params, mv.lin, mv.ang))
       st.world.setVelocityByHandle(mv.handle, mv.lin, mv.ang);
+  }
+  // The compounds with limits: their bodies have no entry (their pieces'
+  // velocities are worked out from them afterwards, expandCompoundMoves).
+  thread_local std::unordered_map<b3dop::BodyHandle, const Box3DCompound *>
+      limited;
+  limited.clear();
+  for (const auto &c : st.compounds)
+    if (c->hasMotion && c->motion.hasLimits())
+      limited.emplace(c->body, c.get());
+  if (limited.empty())
+    return;
+  for (b3dop::BodyMove &mv : events) {
+    if (mv.userData || mv.fellAsleep)
+      continue;
+    const auto it = limited.find(mv.handle);
+    if (it != limited.end() &&
+        b3dop::clampMotion(it->second->motion, mv.lin, mv.ang))
+      st.world.setVelocityByHandle(mv.handle, mv.lin, mv.ang);
+  }
+}
+
+void refreshAccelLimits(Box3DSharedState &st) {
+  st.accelSlots.clear();
+  st.accelSlotOf.clear();
+  if (!st.anyMotion)
+    return;
+  const auto add = [&st](b3dop::BodyHandle h, const b3dop::MotionParams &p,
+                         float gravityScale) {
+    Box3DAccelSlot s;
+    s.body = h;
+    s.maxAccel = p.maxAccel;
+    s.maxAngAccel = p.maxAngAccel;
+    s.gravityScale = gravityScale;
+    st.accelSlotOf.emplace(h, st.accelSlots.size());
+    st.accelSlots.push_back(s);
+  };
+  for (const auto &kv : st.objectSync) {
+    const Box3DObjectSync &os = kv.second;
+    if (!os.motionAccel || os.visited != st.syncStamp)
+      continue;
+    for (const Box3DBodyMirror *e : os.bodies) {
+      if (!e->handle || !e->dynamic() || e->inCompound || e->pointOff < 0)
+        continue;
+      const Box3DMotionEntry *m =
+          findMotion(os, static_cast<GA_Offset>(e->pointOff));
+      if (m && m->params.hasAccelLimits())
+        add(e->handle, m->params, e->props.gravityScale);
+    }
+  }
+  for (const auto &c : st.compounds)
+    if (c->hasMotion && c->motion.hasAccelLimits() && !c->members.empty())
+      add(c->body, c->motion, c->members[0].props.gravityScale);
+}
+
+void beginAccelLimits(Box3DSharedState &st) {
+  for (Box3DAccelSlot &s : st.accelSlots) {
+    if (!st.world.getVelocityByHandle(s.body, s.lin0, s.ang0)) {
+      std::fill(s.lin0, s.lin0 + 3, 0.0f);
+      std::fill(s.ang0, s.ang0 + 3, 0.0f);
+    }
+    std::fill(s.force, s.force + 3, 0.0f);
+    std::fill(s.torque, s.torque + 3, 0.0f);
+  }
+}
+
+void noteAccelForce(Box3DSharedState &st, b3dop::BodyHandle body,
+                    const float force[3], const float torque[3]) {
+  if (st.accelSlots.empty())
+    return;
+  const auto it = st.accelSlotOf.find(body);
+  if (it == st.accelSlotOf.end())
+    return;
+  Box3DAccelSlot &s = st.accelSlots[it->second];
+  for (int k = 0; k < 3; ++k) {
+    s.force[k] += force[k];
+    s.torque[k] += torque[k];
+  }
+}
+
+void applyAccelLimits(Box3DSharedState &st,
+                      std::vector<b3dop::BodyMove> &events, float dt) {
+  if (st.accelSlots.empty() || !(dt > 0.0f))
+    return;
+  b3dop::Box3DWorld &w = st.world;
+  const float *g = w.settings().gravity;
+  for (b3dop::BodyMove &mv : events) {
+    if (mv.fellAsleep)
+      continue;
+    const auto it = st.accelSlotOf.find(mv.handle);
+    if (it == st.accelSlotOf.end())
+      continue;
+    const Box3DAccelSlot &s = st.accelSlots[it->second];
+    bool changed = false;
+    if (s.maxAccel >= 0.0f) {
+      // What gravity and the step's forces alone make of the velocity.
+      const float mass = w.massByHandle(mv.handle);
+      const float invMass = mass > 0.0f ? 1.0f / mass : 0.0f;
+      float expected[3];
+      for (int k = 0; k < 3; ++k)
+        expected[k] =
+            s.lin0[k] + dt * (g[k] * s.gravityScale + invMass * s.force[k]);
+      changed |= b3dop::clampConstraintChange(s.maxAccel, dt, expected, mv.lin);
+    }
+    if (s.maxAngAccel >= 0.0f) {
+      // The torque's change, on the inertia the body has now.
+      float expected[3] = {s.ang0[0], s.ang0[1], s.ang0[2]};
+      float inertia[6], inverse[6];
+      if ((s.torque[0] != 0.0f || s.torque[1] != 0.0f || s.torque[2] != 0.0f) &&
+          w.inertiaWorldByHandle(mv.handle, inertia) &&
+          b3dop::invertSymmetric3(inertia, inverse)) {
+        const float *t = s.torque;
+        expected[0] +=
+            dt * (inverse[0] * t[0] + inverse[3] * t[1] + inverse[4] * t[2]);
+        expected[1] +=
+            dt * (inverse[3] * t[0] + inverse[1] * t[1] + inverse[5] * t[2]);
+        expected[2] +=
+            dt * (inverse[4] * t[0] + inverse[5] * t[1] + inverse[2] * t[2]);
+      }
+      changed |=
+          b3dop::clampConstraintChange(s.maxAngAccel, dt, expected, mv.ang);
+    }
+    if (changed)
+      w.setVelocityByHandle(mv.handle, mv.lin, mv.ang);
   }
 }
 

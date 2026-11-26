@@ -111,7 +111,7 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, const Box3DSharedState &st,
 
     if (e->writeLocal) {
       b3dop::JointFrame la, lb;
-      if (world.jointLocalFrames(e->handle, la, lb)) {
+      if (jointLocalFramesOf(world, *e, la, lb)) {
         if (!localPH.isValid()) {
           ensure("local_P", 3, false, created);
           ensure("local_orient", 4, true, created);
@@ -204,7 +204,7 @@ namespace {
 void destroyBrokenJoint(b3dop::Box3DWorld &world, Box3DJointEntry &e) {
   Box3DJointExtra &x = e.ensureExtra();
   e.brokeLocalKnown =
-      world.jointLocalFrames(e.handle, x.brokeLocalA, x.brokeLocalB);
+      jointLocalFramesOf(world, e, x.brokeLocalA, x.brokeLocalB);
   world.destroyJoint(e.handle);
   e.handle = 0;
   e.broken = true;

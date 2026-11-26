@@ -10,6 +10,7 @@
 
 #include "core/Box3DCompound.h"
 #include "core/Box3DGlue.h"
+#include "core/Box3DMotion.h"
 #include "core/Box3DShapes.h"
 #include "core/Box3DSideFX.h"
 #include "core/Box3DWorld.h"
@@ -72,4 +73,12 @@ struct Box3DCompound {
   bool stepPreOk = false;
   b3dop::BodyPose postPose;
   uint64_t loadTick = 0;
+  // Drag and speed limits (refreshCompoundMotion): its pieces' combined, as
+  // Bullet's glue cluster takes them, and whether there are any. pieceForce /
+  // pieceTorque: the forces its pieces put on it in this Box3D step (about its
+  // centre), which its drag works on (applyExternalForces).
+  b3dop::MotionParams motion;
+  bool hasMotion = false;
+  float pieceForce[3] = {0, 0, 0};
+  float pieceTorque[3] = {0, 0, 0};
 };

@@ -15,6 +15,12 @@ Constraint Names and Scale by Attribute, each type's Data Name; Configure's Grou
 Group and Collision Ignore (both list the input's `collisiongroup` values and the other enabled entries' Collision
 Groups; Ignore leaves out its own entry's); Constraint Properties' Constraint Group, Group 1 and Group 2.
 
+Every asset has a help card (F1 on the node): `HELP_CARD` in `tools/b3d_<asset>_help.py` (Houdini wiki markup),
+added by its builder as the definition's `Help` section. The compiled DOP nodes (Box3D Solver, Box3D Data, the
+constraint relationships) have no definition to hold one: `tools/make_dop_help.py`, run by `make_assets.py` after the
+assets, writes `help/nodes/dop/<node>.txt` next to `otls/`, where Houdini looks on HOUDINI_PATH. Only the intros are
+written there (`SOLVER`, `DATA`, `JOINTS`); the parameters, folders and help come from the registered node types.
+
 Every SOP asset gets a `PythonModule` (`b3d_hda.add_python_module`) that starts with RBD's network editor hooks
 (`nodegraphvellumutils`, imported when the UI is available) and defines `isVellumNode()` returning true, which the
 viewer reads to connect a new node's inputs automatically, as RBD's SOPs do.

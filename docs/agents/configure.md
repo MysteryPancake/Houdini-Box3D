@@ -75,5 +75,6 @@ as RBD Configure's); each Box3D Data folder and Constraints in an entry is an op
   `constraint_type`, so a Soft pin holds position only, as in Bullet). The marker and group are stripped.
 * It uses `setpointattrib`, never `@` bindings: a binding creates its attribute on every point at compile time, even
   inside an `if` that never runs.
+* Help card: `HELP_CARD` (`b3d_configure_help.py`, Houdini wiki markup) as the definition's `Help` section.
 * The build checks a fresh instance: two unpacked boxes come out as two packed pieces named on their points, the
   group's piece gets friction and Static, the other keeps defaults; with a proxy only the proxy gets them.

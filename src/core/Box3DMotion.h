@@ -2,9 +2,10 @@
 //
 // Header-only, Houdini-free: the per-point drag and speed limits RBD Bullet
 // Solver reads from POP-style attributes (airresist, spinresist, drag,
-// dragexp, targetv, targetw, speedmin, speedmax, spinmin, spinmax), as
-// SIM_BulletRigidBody applies them: a drag that slows the body towards a
-// target velocity, and clamps on its speed and spin.
+// dragexp, targetv, targetw, speedmin, speedmax, spinmin, spinmax, accelmax,
+// angaccelmax), as SIM_BulletRigidBody applies them: a drag that slows the body
+// towards a target velocity, clamps on its speed and spin, and on the change in
+// them the constraints make.
 #pragma once
 
 #include <algorithm>
@@ -22,13 +23,19 @@ struct MotionParams {
   float targetW[3] = {0.0f, 0.0f, 0.0f};
   float minSpeed = -1.0f, maxSpeed = -1.0f;
   float minSpin = -1.0f, maxSpin = -1.0f;
+  // accelmax / angaccelmax: the most the constraints (contacts and joints) may
+  // change the velocity / spin, per second.
+  float maxAccel = -1.0f, maxAngAccel = -1.0f;
 
   bool hasDrag() const { return airResist > 0.0f || spinResist > 0.0f; }
   bool hasLimits() const {
     return minSpeed >= 0.0f || maxSpeed >= 0.0f || minSpin >= 0.0f ||
            maxSpin >= 0.0f;
   }
-  bool any() const { return hasDrag() || hasLimits(); }
+  bool hasAccelLimits() const {
+    return maxAccel >= 0.0f || maxAngAccel >= 0.0f;
+  }
+  bool any() const { return hasDrag() || hasLimits() || hasAccelLimits(); }
 };
 
 // Bullet's: the exponent stays between linear and quadratic drag.
@@ -94,6 +101,29 @@ inline bool clampMotion(const MotionParams &m, float lin[3], float ang[3]) {
   clampOne(lin, m.minSpeed, m.maxSpeed);
   clampOne(ang, m.minSpin, m.maxSpin);
   return changed;
+}
+
+// Bullet's accelmax / angaccelmax on one velocity: `v` after a step of `dt`
+// and `expected`, what the step's forces and gravity alone would have made of
+// the velocity before it. Their difference, the change the constraints made, is
+// shortened to at most `maxAccel * dt` (a negative `maxAccel`: no limit), so
+// the velocity carried on is changed and the step's motion is not. True if `v`
+// changed.
+inline bool clampConstraintChange(float maxAccel, float dt,
+                                  const float expected[3], float v[3]) {
+  if (!(maxAccel >= 0.0f) || !(dt > 0.0f) || !std::isfinite(maxAccel))
+    return false;
+  const double d[3] = {static_cast<double>(v[0]) - expected[0],
+                       static_cast<double>(v[1]) - expected[1],
+                       static_cast<double>(v[2]) - expected[2]};
+  const double len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+  const double cap = static_cast<double>(maxAccel) * dt;
+  if (!(len > cap) || !std::isfinite(len))
+    return false;
+  const double scale = cap / len;
+  for (int k = 0; k < 3; ++k)
+    v[k] = static_cast<float>(expected[k] + d[k] * scale);
+  return true;
 }
 
 } // namespace b3dop
