@@ -11,8 +11,9 @@ Glue, Hard, Spring, Bullet Soft and Cone Twist mapped onto Box3D joints. Joint n
   through its virtual destructor, and `importOption`, else `SIM_Query::getFieldFloat("Options", 0, name)`, scalars
   only), per option in `sideFXParams()`. Option names are the node
   parameter names, from the same probe. `Box3DJointKind` holds the SideFX type and options instead of a joint type.
-* Per primitive: matching primitive attributes modify the options (floats multiply, ints / vectors replace; our
-  `jointParams` overrides are not applied), `constraint_type` is read (missing, empty or unknown: position, as
+* Per primitive: matching primitive attributes modify the options (floats multiply, ints / vectors replace, except
+  Glue's `strength`, which follows Bullet's `getStrength`: a negative node Strength takes the attribute as it is, a
+  negative attribute wins, `combineGlueStrength`; our `jointParams` overrides are not applied), `constraint_type` is read (missing, empty or unknown: position, as
   SideFX's help says and Bullet does: `sidefx_hard_untyped`), then `mapSideFX` picks the joint:
   * Glue: rigid weld holding the pieces where they are, never colliding, never broken by force or torque. It breaks on
     the impulse of the hits it takes, as the Glue help describes Bullet's (`core/Box3DGlue.h`, Houdini-free,
@@ -43,9 +44,11 @@ Glue, Hard, Spring, Bullet Soft and Cone Twist mapped onto Box3D joints. Joint n
       plus the step's gravity; e is the two restitutions multiplied; d is the group's impulse denominator at the point
       (`GlueBody`, from `mergePieces` of the pieces' poses and mass data, so a compound and welds are the same) plus the
       other body's. A contact is looked up by its shape pair (an exact key: a hashed one collided). A compound's
-      body has no entry, so its shapes' owners come from `shapeKeysByHandle` and the members' shape ranges. A group
-      takes its estimate from the first step of the frame that has one (`glueEstimated`), as Bullet makes one from the
-      speeds the frame begins with; later steps' contacts move because of the earlier ones. Landings match Bullet's
+      body has no entry, so its shapes' owners come from `shapeKeysByHandle` and the members' shape ranges; a contact
+      with a dynamic body that is neither a piece nor has an entry is left to its real impulse. A group takes its
+      estimate from the first step of the frame that has one (`glueEstimated`), as Bullet makes one from the speeds the
+      frame begins with; later steps' contacts move because of the earlier ones (the largest of the steps' held a box
+      dropped on a row 1.7x to 2x looser than Bullet). Nothing is estimated when no bond can still break. Landings match Bullet's
       hold Strength within about 15%, and a box dropped on a group within 1.0x to 1.3x (`glue_break_match`); an edge
       landing of a fractured block holds 4 to 7 times better than Bullet's, whose trial moves it a step forward into the
       ground, so more pieces have points (`glue_fracture_vs_bullet`).

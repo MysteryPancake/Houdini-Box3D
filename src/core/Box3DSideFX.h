@@ -114,6 +114,17 @@ inline SideFXSettings defaultSideFXSettings(SideFXType t) {
   return s;
 }
 
+// A Glue's Strength with the primitive's `strength` attribute on top, as
+// Bullet's SIM_BulletGlueConstraintParms::getStrength: a negative node value
+// takes the attribute as it is (so the attribute can set absolute strengths), a
+// negative attribute wins over any node value (never breaks), otherwise the two
+// multiply. Spring's Strength is a plain multiply.
+inline float combineGlueStrength(float node, float attribute) {
+  if (node < 0.0f || attribute < 0.0f)
+    return attribute;
+  return node * attribute;
+}
+
 // One option: its name on the data (also the primitive attribute that modifies
 // it), kind and the types that have it.
 struct SideFXParam {

@@ -223,7 +223,7 @@ def test_solver_sop_collider_group_names():
         ("ground_without_names", None, ("debris", "floor"), False),
         ("ground_without_names_box_ignores_all", None, ("debris", "*"), False),
     ]
-    results, bullet_notes = [], []
+    results = []
     for tag, ground_names, (g1, i1), through in cases:
         attrs = {"active": 0}
         if ground_names is not None:

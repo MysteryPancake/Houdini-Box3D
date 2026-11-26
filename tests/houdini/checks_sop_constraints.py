@@ -488,7 +488,7 @@ def test_solver_sop_break_angle_torque_bullet():
     spinning at 6 rad/s about z, its anchors at one point and Rest Length 0, thresholds from small to large. The frame
     it goes on is the same in both (within 1 frame; none in both for the largest). The second result is INFO: with the
     default Rest Length of 1 and the anchors still together, the Soft joint holds the box differently in the two (the
-    Angle Threshold of 0.2 goes on frame 13 in Box3D and 3 in Bullet), though plain Soft springs agree (soft_spring_hz)
+    Angle Threshold of 0.2 goes on frame 13 in Box3D and 3 in Bullet), though plain Soft springs agree (bullet_soft_spring_hz)
     and so do the `angle` readings (bullet_joint_feedback): the trace gives the angle and the anchors' distance."""
     rows, problems = [], []
     for key, values in (("angle", (0.01, 0.05, 0.2, 0.4)), ("torque", (100.0, 2000.0, 20000.0))):

@@ -1282,7 +1282,7 @@ def test_soft_spring_hz():
             rows.append(f"Stiffness {hz:g}, {mass:g} kg: " + ", ".join(
                 f"{kind} {seen[kind][0]:.2f} s / {seen[kind][1]:.2f} m" if seen[kind][0] is not None
                 else f"{kind} no oscillation" for kind in KINDS) + f" (expected {want_period:.2f} s / {want_length:.2f} m)")
-    return [Result("soft_spring_hz", Result.PASS if ok else Result.FAIL, "period / mean length: " + "; ".join(rows))]
+    return [Result("bullet_soft_spring_hz", Result.PASS if ok else Result.FAIL, "period / mean length: " + "; ".join(rows))]
 
 
 def soft_start_run(kind, rest):
@@ -1320,11 +1320,11 @@ def test_soft_coincident_anchors():
     ok = all(abs(got[kind, 1.0][i] - 1.0) < 0.02 for kind in KINDS for i in (6, 7)) and all(
         abs(v) < 0.01 for kind in KINDS for v in got[kind, 0.0])
     fmt = lambda values: ", ".join(f"{v:.2f}" for v in values)
-    return [Result("soft_coincident_anchors", Result.PASS if ok else Result.FAIL,
+    return [Result("bullet_soft_coincident_anchors", Result.PASS if ok else Result.FAIL,
                    f"Rest Length 1, the box's anchor below the fixed one on frames {list(frames)}: Box3D "
                    f"{fmt(got['box3d', 1.0])}; Bullet {fmt(got['bullet', 1.0])} (expected 1.00 by frames 12 and 24); "
                    f"Rest Length 0: Box3D {fmt(got['box3d', 0.0])}; Bullet {fmt(got['bullet', 0.0])} (expected 0.00)"),
-            Result("soft_coincident_anchors", Result.INFO,
+            Result("bullet_soft_coincident_anchors", Result.INFO,
                    f"on frame 2 the box is {got['box3d', 1.0][1]:.2f} m below in Box3D and {got['bullet', 1.0][1]:.2f} in "
                    "Bullet (its spring has no direction on the first step)")]
 
@@ -1546,8 +1546,8 @@ TESTS = {
     "bullet_joint_angle": test_bullet_joint_angle,
     "bullet_joint_feedback": test_bullet_joint_feedback,
     "bullet_hard_collisions": test_bullet_hard_collisions,
-    "soft_spring_hz": test_soft_spring_hz,
-    "soft_coincident_anchors": test_soft_coincident_anchors,
+    "bullet_soft_spring_hz": test_soft_spring_hz,
+    "bullet_soft_coincident_anchors": test_soft_coincident_anchors,
     "bullet_cone_twist_goal_apart": test_bullet_cone_twist_goal_apart,
     "bullet_primr_through": test_bullet_primr_through,
     "bullet_primt_primr": test_bullet_primt_primr,

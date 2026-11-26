@@ -84,6 +84,45 @@ def test_glue_impact():
                    "; ".join(rows) + " (expected Box3D: broken at 1, none at 1e7)")]
 
 
+def glue_strength_run(kind, node_strength, attribute):
+    """glue_pair_run with a `strength` primitive attribute on the Glue line: broken lines on frame 48."""
+    height = 3.0
+    pieces = [{"size": (1, 1, 1), "center": (0, height, 0), "attrs": {"active": 1}},
+              {"size": (1, 1, 1), "center": (1, height, 0), "attrs": {"active": 1}},
+              dict(GROUND, attrs={"active": 0})]
+
+    def add_strength(network):
+        wr = hou.node(network).parent().createNode("attribwrangle", "line_strength")
+        wr.setInput(0, hou.node(network))
+        set_parm(wr, ["class"], 1)
+        set_parm(wr, ["snippet"], f"f@strength = {attribute!r};")
+        display(wr)
+        return wr.path()
+
+    tag = f"glue_strength_{kind}_{next(_GLUE_RUNS)}"
+    dop, names = hanging_pair(tag, None, conrels=[("glueconrel", {"strength": node_strength})], solver_kind=kind,
+                              pieces=pieces, anchors=((0, height, 0), (1, height, 0)), network_edit=add_strength)
+    return step(dop, 48, lambda sim, f: broken_count(sim) if f == 48 else None)[48]
+
+
+def test_glue_strength_attribute():
+    """A Glue line's `strength` attribute against the node's Strength, as Bullet's getStrength: a negative node
+    Strength takes the attribute as it is (-1 with 1 breaks a landing pair, as Strength 1 does), a negative
+    attribute never breaks (even over a Strength of 1), and two negatives never break (not the positive product).
+    Box3D must match the expectation; Bullet's outcome is reported beside it."""
+    cases = (("node -1, attribute 1", -1.0, 1.0, True),
+             ("node 1e7, attribute -1", 1e7, -1.0, False),
+             ("node -1, attribute -1", -1.0, -1.0, False))
+    rows, ok = [], True
+    for label, node, attribute, breaks in cases:
+        b3d = glue_strength_run("box3d", node, attribute)
+        bullet = glue_strength_run("bullet", node, attribute)
+        good = b3d is not None and (b3d >= 1) == breaks
+        ok = ok and good
+        rows.append(f"{label}: Box3D broken {b3d}, Bullet broken {bullet} (expected {'broken' if breaks else 'none'})")
+    return [Result("glue_strength_attribute", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
 def test_glue_compound_break():
     """A row of 4 glued boxes (run as one body) dropped onto the ground with a Strength of 1: every bond
     breaks on the landing, and with a Strength of 1e7 none does."""
@@ -424,7 +463,7 @@ def test_glue_fracture_vs_bullet():
     unbroken after the landing (frame 24) as Bullet does at 100, 300 and 1000. Reported as Box3D's
     equivalent / Bullet's, both with Glue as One Body off (a weld per bond) and on (its default): a ratio of 1 is
     the same stiffness, below 1 is Box3D stiffer (it needs less Strength to hold as much). Passes (per mode) when all
-    three are within 0.1 to 4. It sits at 0.14 to 0.27: the cube lands on an edge, and Bullet's trial step (the
+    three are within 0.1 to 0.4. It sits at 0.14 to 0.27: the cube lands on an edge, and Bullet's trial step (the
     estimate Glue breaks on) moves it a whole step forward, so the edge sinks into the ground and many more pieces
     have contact points than Box3D's, which stops at touching. A flat landing has the same points either way
     (glue_break_match)."""
@@ -442,12 +481,12 @@ def test_glue_fracture_vs_bullet():
                 rows.append(f"Bullet {s:g} leaves {left}: Box3D never does (curve {[l for _, l in curve]})")
                 continue
             ratio = equivalent / s
-            ok = ok and 0.1 <= ratio <= 4.0
+            ok = ok and 0.1 <= ratio <= 0.4
             rows.append(f"Bullet {s:g} leaves {left}, Box3D does at {equivalent:.0f} (Box3D / Bullet {ratio:.2f})")
         label = "glue_fracture_vs_bullet" + ("" if compound else "_welds")
         results.append(Result(label, Result.PASS if ok else Result.FAIL,
                               f"Glue as One Body {'on' if compound else 'off'}: " + "; ".join(rows) +
-                              " (expected Box3D / Bullet within 0.1 to 4)"))
+                              " (expected Box3D / Bullet within 0.1 to 0.4)"))
     return results
 
 
@@ -504,12 +543,13 @@ _GLUE_RUNS = itertools.count()
 
 
 def glue_row_scene(tag, kind, strength, n=2, height=3.0, drop=None, bounce=None, iterations=None,
-                   global_iterations=None, column=False, load=None, compound=None, awake=False):
+                   global_iterations=None, column=False, load=None, compound=None, awake=False, substeps=None):
     """n glued boxes side by side. With drop=None they fall from `height` onto the ground (the landing is the hit).
     Otherwise they rest on it and a box is dropped from `drop` above the first one. bounce: RBD Packed Object's.
     iterations: the Glue's Propagation Iterations. global_iterations: the network's propagate_iteration detail attribute.
     column: the boxes stand one on another instead (the first lowest). load: the solver's Glue Inertial Load.
-    compound: the solver's Glue as One Body (None: its default). awake: the pieces carry an `awake` point attribute."""
+    compound: the solver's Glue as One Body (None: its default). awake: the pieces carry an `awake` point attribute.
+    substeps: the solver's Substeps (None: its default)."""
     dop = new_dopnet(tag)
     y = height if drop is None else 0.5
     at = (lambda i: (0, y + i, 0)) if column else (lambda i: (i, y, 0))
@@ -543,6 +583,9 @@ def glue_row_scene(tag, kind, strength, n=2, height=3.0, drop=None, bounce=None,
         set_parm(solver, ["gluecompoundload"], load)
     if compound is not None:
         set_parm(solver, ["gluecompound"], 1 if compound else 0)
+    if substeps is not None:
+        target = solver if kind == "box3d" else next(n for n in dop.children() if n.type().name() == "bulletrbdsolver")
+        set_parm(target, ["substeps"], substeps)
     finish(dop, solver)
     return dop
 
@@ -651,6 +694,27 @@ def test_glue_break_match():
                    "from 0.7 to 1.5 times)")]
 
 
+def test_glue_break_substeps():
+    """The Strength at which Glue stops breaking at Substeps 4 and 8, in Box3D and in Bullet (which estimates once a
+    frame whatever the substeps are, SIM_BulletState::preBreakGlue): a landing and a box dropped on a row. The
+    Strengths Box3D holds from must stay within 0.7 to 1.5 times Bullet's, as at the default (glue_break_match)."""
+    scenes = [("landing from 3", dict(n=2, height=3.0), 48),
+              ("row of 4 landing from 3", dict(n=4, height=3.0), 48),
+              ("box dropped 1 on a pair", dict(n=2, drop=1.0), 72)]
+    rows, ok = [], True
+    for label, scene, frames in scenes:
+        for substeps in (4, 8):
+            held = {kind: glue_row_threshold(kind, frames, substeps=substeps, **scene) for kind in ("bullet", "box3d")}
+            ratio = held["box3d"] / held["bullet"] if held["bullet"] and held["box3d"] else None
+            ok = ok and ratio is not None and 0.7 <= ratio <= 1.5
+            peaks = {kind: glue_row_run(kind, 1e12, frames, substeps=substeps, **scene)[1] for kind in held}
+            rows.append(f"{label}, Substeps {substeps}: impact Bullet {peaks['bullet']:.0f}, Box3D {peaks['box3d']:.0f}; "
+                        f"holds from Bullet {held['bullet']:.0f}, Box3D {held['box3d']:.0f}"
+                        + ("" if ratio is None else f" ({ratio:.2f}x)"))
+    return [Result("glue_break_substeps", Result.PASS if ok else Result.FAIL,
+                   "; ".join(rows) + " (expected Box3D from 0.7 to 1.5 times Bullet's)")]
+
+
 def test_sidefx_hard_untyped():
     """SideFX Hard, Bullet Soft and Spring constraints with no constraint_type attribute (taken as 'position', as Bullet
     does), piece spinning at the start: distance and rotation after 2 s in Box3D and in Bullet. PASS if they agree, and
@@ -676,6 +740,7 @@ def test_sidefx_hard_untyped():
 TESTS = {
     "sidefx_glue": test_sidefx_glue,
     "glue_impact": test_glue_impact,
+    "glue_strength_attribute": test_glue_strength_attribute,
     "glue_compound_break": test_glue_compound_break,
     "glue_compound_load": test_glue_compound_load,
     "glue_compound_vs_welds": test_glue_compound_vs_welds,
@@ -686,6 +751,7 @@ TESTS = {
     "glue_global_iterations": test_glue_global_iterations,
     "glue_impact_trace": test_glue_impact_trace,
     "glue_fracture_vs_bullet": test_glue_fracture_vs_bullet,
+    "glue_break_substeps": test_glue_break_substeps,
     "glue_compound_bridges": test_glue_compound_bridges,
     "glue_break_match": test_glue_break_match,
     "sidefx_hard_untyped": test_sidefx_hard_untyped,

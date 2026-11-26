@@ -117,8 +117,7 @@ string names[] = sort(used);
 s[]@__used = names;
 int allows[];
 resize(allows, len(names) + 1);
-string seen[];
-int seenBits[];
+dict seen = {};
 for (int src = 0; src < 2; src++) {
     int hasGroup = haspointattrib(src, "collisiongroup");
     int hasIgnore = haspointattrib(src, "collisionignore");
@@ -137,13 +136,11 @@ for (int src = 0; src < 2; src++) {
         }
         int bits = -1;
         if (group != "" || ignore != "") {
-            int at = find(seen, ignore);
-            if (at < 0) {
-                bits = ~ignoredBits(ignore, names);
-                append(seen, ignore);
-                append(seenBits, bits);
+            if (isvalidindex(seen, ignore)) {
+                bits = seen[ignore];
             } else {
-                bits = seenBits[at];
+                bits = ~ignoredBits(ignore, names);
+                seen[ignore] = bits;
             }
         }
         allows[slot] |= bits;

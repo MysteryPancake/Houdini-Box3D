@@ -344,7 +344,13 @@ void applySideFXOverrides(const std::vector<SideFXReader> &readers,
       // "Not set" (Box3D Constraint Properties writes it on lines it does not
       // edit, under names both tables share): leave the option alone.
       const float value = r.f.get(prim);
-      if (!b3dop::isUnsetFloat(value))
+      if (b3dop::isUnsetFloat(value))
+        break;
+      // Glue's Strength has its own rule for negative values.
+      if (type == b3dop::SideFXType::Glue &&
+          p.f == &b3dop::SideFXSettings::strength)
+        s.strength = b3dop::combineGlueStrength(s.strength, value);
+      else
         s.*p.f *= value;
       break;
     }

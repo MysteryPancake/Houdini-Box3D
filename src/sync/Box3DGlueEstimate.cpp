@@ -15,6 +15,7 @@
 #include "core/Box3DMath.h"
 
 #include <algorithm>
+#include <cmath>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -62,7 +63,12 @@ private:
   // kinematic piece, a piece that is not finite) has none.
   std::unordered_map<int, b3dop::GlueBody> myGroups;
   std::unordered_map<int, bool> myGroupBad;
+  // The glue nodes of each group, made on the first group body asked for.
+  std::unordered_map<int, std::vector<size_t>> myGroupNodes;
+  bool myGroupNodesMade = false;
   std::unordered_map<BodyHandle, b3dop::GlueBody> myBodies;
+  // Dynamic bodies that have no usable rigid body (not a glued piece).
+  std::unordered_set<BodyHandle> myBodyBad;
   std::vector<uint64_t> myKeys;
 };
 
@@ -143,10 +149,13 @@ const b3dop::GlueBody *Estimator::groupBody(int group) {
   if (myGroupBad.count(group))
     return nullptr;
   myGroupBad[group] = true;
+  if (!myGroupNodesMade) {
+    myGroupNodesMade = true;
+    for (size_t i = 0; i < myState.glueNodes.size(); ++i)
+      myGroupNodes[myState.glueGroup[i]].push_back(i);
+  }
   std::vector<b3dop::RigidPiece> pieces;
-  for (size_t i = 0; i < myState.glueNodes.size(); ++i) {
-    if (myState.glueGroup[i] != group)
-      continue;
+  for (const size_t i : myGroupNodes[group]) {
     const BodyHandle h = myState.glueNodes[i].body;
     const Box3DBodyMirror *e = static_cast<const Box3DBodyMirror *>(
         myState.world.bodyUserDataByHandle(h));
@@ -164,16 +173,25 @@ const b3dop::GlueBody *Estimator::groupBody(int group) {
 }
 
 // A body that is not glued: its own rigid body if it is dynamic, else one that
-// takes no impulse.
+// takes no impulse. A dynamic body that is not known as a body (a compound's
+// body whose shape belongs to no piece) has none: nullptr, so the contact is
+// left to its real impulse.
 const b3dop::GlueBody *Estimator::plainBody(const Side &s) {
   const auto known = myBodies.find(s.body);
   if (known != myBodies.end())
     return &known->second;
+  if (myBodyBad.count(s.body))
+    return nullptr;
   b3dop::GlueBody body;
-  b3dop::RigidPiece p;
-  if (s.entry && s.entry->type == b3dop::BodySettings::Type::Dynamic &&
-      rigidPiece(s.body, p))
+  if (myState.world.typeByHandle(s.body) ==
+      b3dop::BodySettings::Type::Dynamic) {
+    b3dop::RigidPiece p;
+    if (!s.entry || !rigidPiece(s.body, p)) {
+      myBodyBad.insert(s.body);
+      return nullptr;
+    }
     body = b3dop::glueBodyOf(b3dop::mergePieces({p}));
+  }
   return &(myBodies[s.body] = body);
 }
 
@@ -250,7 +268,9 @@ void Estimator::run(const std::vector<b3dop::ContactImpulse> &events,
   // One estimate for the frame, as Bullet makes one from the speeds the frame
   // begins with: a group takes the first step that has one. A later step's
   // contacts are moving because of what the earlier ones did (a row a hit has
-  // pushed into the ground), which Bullet's trial does not see.
+  // pushed into the ground), which Bullet's trial does not see. Taking the
+  // largest of the steps' instead holds a box dropped on a row 1.7x to 2x
+  // looser than Bullet (`glue_break_match`).
   for (const int i : touched) {
     Box3DGlueNode &n = st.glueNodes[static_cast<size_t>(i)];
     n.estimate += n.estimateStep;
@@ -263,6 +283,15 @@ void Estimator::run(const std::vector<b3dop::ContactImpulse> &events,
 
 void estimateGlueHits(Box3DSharedState &st) {
   if (st.glueNodes.empty() || st.glueGroup.size() != st.glueNodes.size())
+    return;
+  // No bond that can still break (all broken, or none with a finite Strength):
+  // the estimate would be read by nothing.
+  const bool canBreak = std::any_of(
+      st.glueBonds.begin(), st.glueBonds.end(), [](const Box3DJointEntry *e) {
+        const float s = e->extra->glueParams.strength;
+        return !e->broken && s >= 0.0f && std::isfinite(s);
+      });
+  if (!canBreak)
     return;
   // Nothing came together fast this step (a body at rest): nothing to estimate.
   thread_local std::vector<b3dop::HitContact> hits;

@@ -73,6 +73,11 @@ int main() {
           constraintModeFromString("both") == ConstraintMode::Position);
     CHECK(defaultSideFXSettings(SideFXType::Glue).strength == 10000.0f);
     CHECK(defaultSideFXSettings(SideFXType::Spring).strength == 1.0f);
+    // Glue Strength with a `strength` attribute (Bullet's getStrength).
+    CHECK(combineGlueStrength(10000.0f, 0.5f) == 5000.0f); // both positive
+    CHECK(combineGlueStrength(-1.0f, 5000.0f) == 5000.0f); // node < 0: as is
+    CHECK(combineGlueStrength(10000.0f, -1.0f) < 0.0f);    // attribute < 0
+    CHECK(combineGlueStrength(-1.0f, -1.0f) < 0.0f);       // never positive
     SideFXSettings a, b;
     b.maxTwist = 5.0f;
     CHECK(sameSideFXSettings(SideFXType::Glue, a, b) &&

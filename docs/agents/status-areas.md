@@ -52,17 +52,23 @@ What is still to do: [todo.md](todo.md). Index and rules: [CLAUDE.md](../../CLAU
 * `anchor_id`: untested are other ids (a fragment's points are taken in source order, its vertices in primitive
   order), a piece that has moved before its joint is made (`nowToRest`), and non-fragment packed pieces.
 * Glue's break estimate (`core/Box3DGlueEstimate.h`, `Box3DGlueEstimate.cpp`, tests `glue_break_match`,
-  `glue_fracture_vs_bullet`): Bullet breaks glue before its step on an impulse estimate at every contact point of the
+  `glue_break_substeps`, `glue_fracture_vs_bullet`): Bullet breaks glue before its step on an impulse estimate at every contact point of the
   glued body ([joints-sidefx.md](joints-sidefx.md)), the HDK's `SIM_BulletState` (`preBreakGlue`, `updateGlue`).
   Box3D's, from the step's contacts, holds from the same Strength as Bullet's in the landing and dropped-box scenes
   (within about 15%, a row of 4 hit by a box 1.3x). Not matched: Bullet's trial moves the body a whole step
   forward, so an edge landing sinks into the ground and more pieces have points than Box3D's contacts after the step: a
   fractured block holds 4 to 7 times better here (`glue_fracture_vs_bullet`). Only contacts above Box3D's hit
-  threshold (1 m/s by default) are estimated; slower ones count by their real impulse, as a resting body's weight
-  does. A kinematic piece in a group, or one whose mass is not finite, leaves its group out of the estimate. The hold
-  that frees pieces for a fast body (`kGlueHoldBreakScale`, 5.3) is a heuristic of its own and frees pieces
-  at Strengths where the estimate would not break the bond (a row of 4 hit by a box). Unchecked: the cost of
-  estimating on a large network, and Substeps above 2.
+  threshold (`impactMinSpeed`, else Box3D's default) are estimated; slower ones count by their real impulse, as a
+  resting body's weight does. A kinematic piece in a group, or one whose mass is not finite, leaves its group out of the
+  estimate. The hold that frees pieces for a fast body (`kGlueHoldBreakScale`) is a heuristic of its own and frees pieces
+  at Strengths where the estimate would not break the bond (a row of 4 hit by a box). Cost (`wall` of 4000 bricks,
+  `bench.py`): the estimate adds 0.4 to 0.8 ms to a 11 to 14 ms frame while the wall is hit or falling apart (one glued
+  block, or groups of 5), and nothing when no contact is fast. Substeps 4 and 8 (`glue_break_substeps`): Bullet makes
+  one estimate a frame whatever the Substeps, and Box3D's first estimate is the same at 2 and 4 (a box landing on a row:
+  about 5.4k a contact point); the landing and dropped-box scenes hold from 0.9x to 1.1x of Bullet's Strength. Not
+  matched: a box dropped 4 m on a row of 4 holds from 1.2x (Substeps 8) to 1.7x (4) of Bullet's. The peak impacts agree
+  and the first estimates are the same, so it comes from the later contacts at 1 to 4 m/s that follow the hit (a
+  second estimate on a bond that still carries the first's impact); not traced further.
 * What the precompiled headers (`BOX3DDOP_PCH`) save: not measured.
 * Transform Pieces with packed transforms that carry scale or shear.
 * Constraints output through Transform Pieces: constraints between collision pieces (not in the simulation points, so

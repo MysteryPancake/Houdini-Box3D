@@ -52,11 +52,11 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
     Disable Collisions on it reads the weight, and Bullet's reads the weight either way, being the pieces' net force
     (`bullet_hard_collisions`). The Angle and Torque thresholds of a Soft line on a spinning box break on the
     same frames in both with Rest Length 0, and Bullet's Soft Stiffness is the frequency in Hz that the mapping takes it
-    for (`soft_spring_hz`). They still differ with the default Rest Length of 1 and the anchors at one point (0.2 rad:
+    for (`bullet_soft_spring_hz`). They still differ with the default Rest Length of 1 and the anchors at one point (0.2 rad:
     frame 13 in Box3D, 3 in Bullet): the spring has no direction while the anchors are exactly together, so Bullet
     applies none on the first step and Box3D's sprung Distance joint does (0.62 m of the rest length closed by frame 2
     against 0.00, at any Substeps), which holds the spinning box much tighter in the first frames (angle 0.05 against
-    0.19). Both settle at the rest length and nothing moves with Rest Length 0 (`soft_coincident_anchors`). Matching
+    0.19). Both settle at the rest length and nothing moves with Rest Length 0 (`bullet_soft_coincident_anchors`). Matching
     it would mean leaving the spring out for the first step of a joint whose anchors coincide: not done, as it
     only reproduces a one-frame lag. Untested: Variance, World Scale other than 1, and the cost on a large network with it on (the SOP
     Solver rewrites the constraint geometry each step, so the solver reads the whole network again). Not there: the
