@@ -52,9 +52,15 @@ What is still to do: [todo.md](todo.md). Index and rules: [CLAUDE.md](../../CLAU
 * `anchor_id`: matches Bullet for ids 0 to 7 and vertex ids up to 23, on Assemble's fragments and the Pack SOP's own
   geometry, with a piece turned before the start (`bullet_anchor_id_cases`). A joint made after its piece fell or spun
   (the network's activation) acts as Bullet's: Hard pulls the piece back to its rest anchors and Glue holds it where it
-  is (`bullet_late_joint`), also Glue with an `anchor_id` (`bullet_late_joint_anchor_id`). Not understood: Hard (all) with an
-  `anchor_id` on a free box, made on frame 1 or later, settles at (1.25, 4.25) in Bullet and (1.5, 4.5) in Box3D (ids 0
-  and 3 against an anchor at the shared face), where P anchors agree.
+  is (`bullet_late_joint`), also Glue with an `anchor_id` (`bullet_late_joint_anchor_id`). A known difference (`bullet_anchor_id_settle`, INFO): Hard (all, Rest Length 0)
+  with an `anchor_id` on a free box's end brings the anchors only half way together in Bullet (B at (1, 4, 0) with A's
+  anchor there ends at (1.25, 4.25, 0.25), not (1.5, 4.5, 0.5)), where Box3D goes all the way; P anchors, and an
+  `anchor_id` on the fixed end, agree. It fits Bullet moving the id anchor with the piece twice over, the anchor at
+  its point's rest position plus twice the piece's displacement, so a pure shift settles where
+  (anchor A + the piece's start - the id point's offset from it) / 2 is (checked for ids 0 and 7, three starts and A
+  anchors, within 0.02 where nothing collides; from frame 2 the piece swings back and forth before it settles). That is
+  not physical, so Box3D's anchor, which follows the piece, is left as it is. Collisions between the pair muddle it
+  (disable them to see it).
 * Glue's break estimate (`core/Box3DGlueEstimate.h`, `Box3DGlueEstimate.cpp`, tests `glue_break_match`,
   `glue_break_substeps`, `glue_fracture_vs_bullet`): Bullet breaks glue before its step on an impulse estimate at every contact point of the
   glued body ([joints-sidefx.md](joints-sidefx.md)), the HDK's `SIM_BulletState` (`preBreakGlue`, `updateGlue`).

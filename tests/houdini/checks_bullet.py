@@ -622,6 +622,66 @@ def test_bullet_hard_rest_zero():
     return [Result("bullet_hard_rest_zero", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
 
 
+def anchor_id_settle(kind, id_a, id_b, a_pos, b_pos, b_centre, frames=80):
+    """Where a free box B ends when SideFX Hard (all, Rest Length 0, collisions disabled, no gravity) joins it to a fixed box A
+    at (0, 4, 0), the anchors being `a_pos` / `b_pos` (a decoy where an `anchor_id` is set on that end)."""
+    tag = f"anchor_settle_{kind}_{id_a}_{id_b}_{abs(hash((a_pos, b_pos, b_centre))) % 9999}"
+    pieces = [{"size": (1, 1, 1), "center": (0, 4, 0), "attrs": {"active": 0}},
+              {"size": (1, 1, 1), "center": b_centre, "attrs": {"active": 1}}]
+    path, names = packed_boxes(tag + "_pieces", pieces)
+    dop = new_dopnet(tag)
+    joint = create(dop, "hardconrel", "joint0")
+    set_parm(joint, ["restlength"], 0.0)
+    set_parm(joint, ["disablecollisions"], 1)
+    network = constraint_lines(tag + "_network", [(names[0], a_pos, names[1], b_pos, "Hard",
+                                                   {"constraint_type": "all"})])
+    ids = create(hou.node(network).parent(), "attribwrangle", "anchor_ids")
+    ids.setInput(0, hou.node(network))
+    set_parm(ids, ["class"], 0)
+    code = 'addpointattrib(0, "anchor_id", -1);'
+    for point, value in ((0, id_a), (1, id_b)):
+        if value is not None:
+            code += f' setpointattrib(0, "anchor_id", {point}, {value});'
+    set_parm(ids, ["snippet"], code)
+    display(ids)
+    net = create(dop, "constraintnetwork", "constraint_network")
+    net.setInput(0, packed_object(dop, "pieces", path))
+    set_parm(net, ["soppath", "constraintsoppath", "geosoppath"], ids.path())
+    net.setInput(1, joint)
+    if kind == "box3d":
+        last = box3d_solver(dop, net, gravity=(0, 0, 0))
+    else:
+        last = create(dop, "bulletrbdsolver", "bullet_solver")
+        last.setInput(0, net)
+    finish(dop, last)
+    return tuple(step(dop, frames, lambda sim, f: packed_positions(sim, "pieces")[names[1]])[frames])
+
+
+def test_bullet_anchor_id_settle():
+    """Where a free box ends when its anchor has an `anchor_id`, against Bullet (INFO: it differs). A fixed box A and a free
+    box B joined by SideFX Hard (all, Rest Length 0, collisions off, no gravity). With plain P anchors both bring the anchors
+    together: A's at its corner (-0.5, 3.5, -0.5) and B's at B's corner (1.5, 3.5, -0.5) leave B at (0, 4, 0), and an
+    `anchor_id` 0 on A's end (B's P at its centre) leaves it at A's corner (-0.5, 3.5, -0.5): they agree. An `anchor_id` 0 on
+    B's end (A's anchor at the box centre it starts from or from 2 away) leaves Bullet's B only half way: (1.25, 4.25, 0.25)
+    for B at (1, 4, 0) and A's anchor (1, 4, 0), against the full (1.5, 4.5, 0.5) of Box3D (the anchor on B's corner at the
+    other's anchor). Seen for ids 0 and 7, sizes 0.5 to 2 and a turned B. It fits Bullet moving the id anchor with the piece
+    twice over (its point's rest position plus twice the piece's displacement): the box settles at (A's anchor + where it
+    started - the id point's offset from its centre) / 2, which Box3D's anchor following the piece does not do."""
+    cases = (
+        ("P anchors at the corners", dict(id_a=None, id_b=None, a_pos=(-0.5, 3.5, -0.5), b_pos=(1.5, 3.5, -0.5),
+                                          b_centre=(2, 4, 0))),
+        ("id 0 on A, B's P at its centre", dict(id_a=0, id_b=None, a_pos=(9, 9, 9), b_pos=(2, 4, 0), b_centre=(2, 4, 0))),
+        ("id 0 on B, B at (1, 4, 0)", dict(id_a=None, id_b=0, a_pos=(1, 4, 0), b_pos=(9, 9, 9), b_centre=(1, 4, 0))),
+        ("id 0 on B, B at (2, 4, 0)", dict(id_a=None, id_b=0, a_pos=(0, 4, 0), b_pos=(9, 9, 9), b_centre=(2, 4, 0))),
+    )
+    rows = []
+    for label, kw in cases:
+        got = {kind: anchor_id_settle(kind, **kw) for kind in KINDS}
+        fmt = lambda p: "(%.2f, %.2f, %.2f)" % p  # noqa: E731
+        rows.append(f"{label}: Box3D {fmt(got['box3d'])}, Bullet {fmt(got['bullet'])}")
+    return [Result("bullet_anchor_id_settle", Result.INFO, "; ".join(rows))]
+
+
 def test_bullet_late_joint():
     """A joint made after its pieces moved, against Bullet: a free box falling for 9 frames (and spinning) before a network
     that turns on at frame 10 joins it to a fixed one at their shared face. SideFX Hard (all and position, Rest Length 0)
@@ -2577,6 +2637,7 @@ TESTS = {
     "bullet_anchor_id": test_bullet_anchor_id,
     "bullet_anchor_id_cases": test_bullet_anchor_id_cases,
     "bullet_hard_rest_zero": test_bullet_hard_rest_zero,
+    "bullet_anchor_id_settle": test_bullet_anchor_id_settle,
     "bullet_late_joint": test_bullet_late_joint,
     "bullet_late_joint_anchor_id": test_bullet_late_joint_anchor_id,
     "bullet_primr_order": test_bullet_primr_order,
