@@ -27,6 +27,10 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
   3 left in the compound are held up by one bridge weld and creep off the block; a halo of 1 fixes that but the ball
   bounces back in `glue_compound_hit`. At 3e5 the beam tilts: a bridge weld carries the hit into the compound in the
   step it lands, where welds would have broken. Welds hold the beam at every Strength tried.
+* Point affectors answer nothing back: Bullet writes `Feedback` impacts onto the particles (a POP object with a
+  Collide Relationship the box affects), which Box3D does not, and its box ends slower than ours after a row of moving
+  particles hits it (`point_affectors`: 5.1 m against 7.5 m): Bullet's particles are not infinite mass. Particles with
+  thousands of points are a body each, untimed.
 * Box3D Configure has no Units (RBD Configure's Unit Mass and Unit Length, which scale Density by
   `unitlength / unitmass`, each over 1000).
 * Drag and speed limits (`Box3DMotion.cpp`, [motion-limits.md](motion-limits.md)): World Scale other than 1 does not

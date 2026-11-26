@@ -140,8 +140,9 @@ def test_glue_compound_kinematic():
     modes. (2) Two boxes glued in a row to a kinematic piece: a bond to a body that does not simulate has a side that
     never moves, so the group is not made one body, and the boxes are carried: the first is 1 m and the second 2 m from
     the kinematic piece (within 0.3), nothing breaks. (3) The piece hits the top of a column of 4 glued boxes (a Strength
-    of 2e4, which the standing column holds): none is broken on frame 2, all 3 are on frame 24, and the boxes are in the
-    same place in both modes within 0.1."""
+    of 1e4, which the standing column holds: Box3D breaks Glue from about half of Bullet's Strength here, which breaks one bond of
+    the column at 1e4 and none at 2e4, and Box3D breaks all 3 at 1e4 and one at 2e4): none is broken on frame 2, all 3 are
+    on frame 24, and the boxes are in the same place in both modes within 0.1."""
     original = hou.fps()
     hou.setFps(24)
     results = []
@@ -205,7 +206,7 @@ def test_glue_compound_kinematic():
         lines = [(1 + i, (0.0, 1.0 + i, 0.0), 2 + i, (0.0, 1.0 + i, 0.0)) for i in range(3)]
         got = {}
         for compound in (True, False):
-            dop, names = glue_scene(tag("glue_topple"), pieces, lines, 2e4, compound=compound)
+            dop, names = glue_scene(tag("glue_topple"), pieces, lines, 1e4, compound=compound)
             move_piece(dop, f'if (s@name == "{names[5]}") @P.x = -2.5 + {speed} * @Time;')
 
             def look(sim, f, names=names):

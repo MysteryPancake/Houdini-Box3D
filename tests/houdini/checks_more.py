@@ -559,6 +559,88 @@ def test_affector_relationships():
                    "Make Mutual, else both to fall)")]
 
 
+def particle_scene(kind, tag, points, gravity, life=100.0, box_y=3.0):
+    """A packed box (`box`, at `box_y`) and a POP object (`particles`) born on the first frame from `points` (a SOP
+    path), in a Merge whose default Left Inputs Affect Right Inputs makes the particles affect the box: the box is
+    solved by the Box3D Solver (`kind` box3d) or RBD Bullet Solver (with Gravity when `gravity`; the Box3D solver's
+    gravity is off otherwise). Returns (dop, the box's name)."""
+    path, names = packed_boxes(f"particle_box_{kind}_{tag}", [{"size": (1, 1, 1), "center": (0, box_y, 0)}])
+    dop = new_dopnet(f"particle_{kind}_{tag}")
+    if kind == "bullet":
+        solver = create(dop, "bulletrbdsolver", "rbd")
+        solver.setInput(0, packed_object(dop, "box", path))
+        solved = solver
+        if gravity:
+            pull = create(dop, "gravity", "gravity")
+            pull.setInput(0, solver)
+            solved = pull
+    else:
+        solved = box3d_solver(dop, box3d_packed_object(dop, "box", path), gravity=None if gravity else (0, 0, 0))
+    particles = create(dop, "popobject", "particles")
+    pop = create(dop, "popsolver", "pop_solver")
+    pop.setInput(0, particles)
+    source = create(dop, "popsource", "source")
+    set_menu_token(source, ["emittype"], "allpoint")
+    try:
+        set_menu_token(source, ["usecontextgeo"], "none")
+    except SetupError:
+        pass
+    set_parm(source, ["soppath"], points)
+    set_parm(source, ["life"], life)
+    set_parm(source, ["lifevar"], 0.0)
+    set_menu_token(source, ["jitterbirthtime"], "none")
+    set_parm(source, ["constantactivate"], 0)
+    set_expression(source, ["impulseactiveate"], "$SF == 1")
+    set_parm(source, ["inheritattrib"], "v pscale")
+    pop.setInput(1, source)
+    finish(dop, merge(dop, [pop, solved], "both"))
+    return dop, names[0]
+
+
+def test_point_affectors():
+    """POP particles, which are points with no primitives, are spheres of radius `pscale` (a piece of 0.005 without
+    one; `scale` is ignored) to the Box3D Solver as to RBD Bullet Solver, through the Merge's Collide relationship: a
+    box dropped on a layer of them comes to rest where Bullet's does (within 0.02, on a layer with and without `pscale`),
+    falls through it once the particles have died (both below y = -5 by frame 72), and a row of them moving at 6 m/s
+    pushes a box along x (more than 0.5 by frame 30, in both)."""
+    results = []
+    layers = (("pscale 0.25", -0.25, 0.25, 0.5), ("pscale 0.5", -0.5, 0.5, 0.5), ("no pscale", -1.0, None, -0.5))
+    for label, y, pscale, want in layers:
+        ends = {}
+        for kind in ("box3d", "bullet"):
+            grid = [{"P": (0.3 * i - 1.5, y, 0.3 * j - 1.5), **({"pscale": pscale} if pscale else {})}
+                    for i in range(11) for j in range(11)]
+            dop, name = particle_scene(kind, f"layer{abs(hash(label)) % 1000}", plain_points(
+                f"particle_layer_{kind}_{abs(hash(label)) % 1000}", grid), True)
+            ends[kind] = step(dop, 120, lambda sim, f: packed_positions(sim, "box")[name][1] if f == 120 else None)[120]
+        ok = close(ends["box3d"], ends["bullet"], 0.02) and close(ends["bullet"], want, 0.02)
+        results.append(Result("point_affectors", Result.PASS if ok else Result.FAIL,
+                               f"{label}: box rests at y {ends['box3d']:.3f} in Box3D, {ends['bullet']:.3f} in Bullet "
+                               f"(expected {want}, within 0.02 of each other)"))
+    falls = {}
+    for kind in ("box3d", "bullet"):
+        grid = [{"P": (0.3 * i - 1.5, -0.25, 0.3 * j - 1.5), "pscale": 0.25} for i in range(11) for j in range(11)]
+        dop, name = particle_scene(kind, "dies", plain_points(f"particle_dies_{kind}", grid), True, life=1.0)
+        falls[kind] = step(dop, 72, lambda sim, f: packed_positions(sim, "box")[name][1])
+    held = all(falls[k][18] > 0.0 for k in falls)
+    gone = all(falls[k][72] < -5.0 for k in falls)
+    results.append(Result("point_affectors", Result.PASS if held and gone else Result.FAIL,
+                          f"particles that live 1 s: box y on frame 18 Box3D {falls['box3d'][18]:.2f}, Bullet "
+                          f"{falls['bullet'][18]:.2f} (expected above 0, held up); on frame 72 Box3D "
+                          f"{falls['box3d'][72]:.1f}, Bullet {falls['bullet'][72]:.1f} (expected below -5: they died)"))
+    pushed = {}
+    for kind in ("box3d", "bullet"):
+        row = [{"P": (-3, 0.1 * i - 0.3, 0.0), "v": (6.0, 0.0, 0.0), "pscale": 0.1} for i in range(7)]
+        dop, name = particle_scene(kind, "push", plain_points(f"particle_push_{kind}", row), False, box_y=0.0)
+        pushed[kind] = step(dop, 30, lambda sim, f: packed_positions(sim, "box")[name][0] if f == 30 else None)[30]
+    ok = all(v > 0.5 for v in pushed.values())
+    results.append(Result("point_affectors", Result.PASS if ok else Result.FAIL,
+                          f"particles moving at 6 m/s: box x after 30 frames Box3D {pushed['box3d']:.2f}, Bullet "
+                          f"{pushed['bullet']:.2f} (expected more than 0.5 in both: Box3D's moving spheres carry it at "
+                          f"their speed, Bullet's end slower)"))
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Attach Internal Constraints to Object (status: ConstraintGeometry on the object)
 # ---------------------------------------------------------------------------
@@ -946,6 +1028,7 @@ TESTS = {
     "animated_static": test_animated_static,
     "other_solver": test_other_solver,
     "affector_relationships": test_affector_relationships,
+    "point_affectors": test_point_affectors,
     "internal_constraints": test_internal_constraints,
     "aging_vs_pop": test_aging_vs_pop,
     "aging_vs_pop_keep": test_aging_vs_pop_keep,

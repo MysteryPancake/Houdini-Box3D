@@ -24,9 +24,26 @@ struct Box3DAffectorCounts {
   int noGeo = 0;  // no Geometry data: skipped
   int baked =
       0; // built with a scaled / sheared transform baked into the vertices
-  int heightFields = 0; // of `added`: built from a height field
-  int planes = 0;       // of `added`: grounds (Ground Plane DOP)
+  int heightFields = 0;  // of `added`: built from a height field
+  int planes = 0;        // of `added`: grounds (Ground Plane DOP)
+  int spheres = 0;       // particle spheres built (point-only affectors)
+  int failedSpheres = 0; // particle spheres Box3D refused
 };
+
+// An affector with points and no primitives (POP particles): a kinematic sphere
+// of radius `pscale` per point, `m` the object's world transform
+// (Box3DPointAffectors.cpp). `counts.moved` and `counts.removed` count spheres
+// too.
+class GU_Detail;
+struct Box3DAffectorBody;
+namespace b3dop {
+struct BodySettings;
+}
+void syncPointSpheres(Box3DSharedState &st, Box3DAffectorBody &ab,
+                      const GU_Detail *gdp, const double m[16],
+                      const b3dop::BodySettings &material,
+                      Box3DAffectorCounts &counts);
+void clearPointSpheres(Box3DSharedState &st, Box3DAffectorBody &ab);
 
 // `objects` are the objects being solved (their affectors are gathered here).
 // Objects that are themselves in `objects` are never affectors: they are

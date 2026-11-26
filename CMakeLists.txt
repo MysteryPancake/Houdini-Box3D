@@ -247,6 +247,7 @@ add_library(Box3DDOP SHARED
     src/sync/Box3DGlueMaterial.cpp
     src/sync/Box3DAffectors.h
     src/sync/Box3DAffectors.cpp
+    src/sync/Box3DPointAffectors.cpp
     src/sync/Box3DHoudiniTasks.h
     src/sync/Box3DHoudiniUtil.h
 )

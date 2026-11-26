@@ -221,6 +221,7 @@ void destroyAffector(Box3DSharedState &st, Box3DAffectorBody &ab) {
   if (ab.handle)
     st.world.destroyBody(ab.handle);
   ab.handle = 0;
+  clearPointSpheres(st, ab);
 }
 
 // ---- gather: every affector of a solved object, once, that we do not solve
@@ -659,6 +660,7 @@ void removeStaleAffectors(Box3DSharedState &st, Box3DAffectorCounts &counts) {
     if (it->second.stamp != st.syncStamp) {
       if (it->second.handle)
         ++counts.removed;
+      counts.removed += static_cast<int>(it->second.spheres.size());
       destroyAffector(st, it->second);
       it = st.affectors.erase(it);
     } else
@@ -728,6 +730,18 @@ void syncAffectorBodies(Box3DSharedState &st, SIM_ObjectArray &objects,
                       counts);
       continue;
     }
+
+    // Points and no primitives (particles): a sphere per point.
+    if (gdp->getNumPrimitives() == 0 && gdp->getNumPoints() > 0) {
+      if (ab.handle) { // it was a mesh before
+        destroyAffector(st, ab);
+        ab.poseKnown = false;
+      }
+      syncPointSpheres(st, ab, gdp, in.m, in.body, counts);
+      continue;
+    }
+    if (!ab.spheres.empty()) // it was particles before
+      clearPointSpheres(st, ab);
 
     // A height layer makes the affector a height field (its other primitives
     // are ignored); otherwise its polygons are a mesh.

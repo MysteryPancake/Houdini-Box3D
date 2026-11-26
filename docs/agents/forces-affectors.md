@@ -111,6 +111,15 @@ named `height` that is one voxel thick (with no `name` attribute, the first such
 * Box3D quantises heights to 16 bits over the field's own range (1.5 cm steps over 1000 m). `holes` exists in the core
   but is unused here.
 
+**Point affectors** (`syncPointSpheres`, Box3DPointAffectors.cpp). An affector with points and no primitives (POP
+particles) is a kinematic sphere per point, keyed by `id` (else the point number) in `Box3DAffectorBody::spheres`: at the
+point's position through the object's transform, radius `pscale` (`kMinPointRadius` when it has none or less; `scale` is
+ignored), as RBD Bullet Solver sizes them. A moved particle gets `setTargetTransformByHandle` over the step, so it pushes
+what it touches, a stopped one its velocity cleared; a new `pscale` rebuilds the sphere, and a dead particle (`dead`, or
+gone from the geometry) loses its body. Material as for any affector. One way: the particles are infinite mass, so a box
+they hit is carried at their speed (Bullet's ends slower: 7.5 m against 5.1 m in `point_affectors`), and nothing is
+written back to them (Bullet writes `Feedback` impacts onto them). Test `point_affectors`.
+
 **Ground planes** (`isGroundPlane`). An affector whose `Volume` data is a `SIM_SDF` in Implicit Plane mode
 (`kImplicitPlaneMode`, the SDF Representation menu's index, which a Ground Plane DOP sets) becomes a static ground box
 (`groundSpec(settings.ground)`, the solver's Box Size) whose top is the object's own `y = 0`, facing +y,

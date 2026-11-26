@@ -550,6 +550,16 @@ struct Box3DObjectSync {
 // A static collider made from an affector object (an object that is not solved
 // by us but affects our objects through a collision relationship, e.g. a Static
 // Object DOP). One body, one triangle mesh.
+// One particle of a point affector (Box3DPointAffectors.cpp): a kinematic
+// sphere at its position.
+struct Box3DPointSphere {
+  b3dop::BodyHandle handle = 0;
+  uint64_t stamp = 0; // Box3DAffectorBody::sphereStamp that last saw the point
+  double pos[3] = {0, 0, 0}; // as last given to Box3D
+  float radius = 0.0f;
+  bool driven = false; // given a target last step (velocity to clear)
+};
+
 struct Box3DAffectorBody {
   b3dop::BodyHandle handle =
       0; // 0: the last build failed (not retried until the signature changes)
@@ -577,4 +587,8 @@ struct Box3DAffectorBody {
   uint64_t heightSource = 0;
   uint64_t heightHash = 0;
   bool heightsKnown = false;
+  // A point-only affector (particles): a sphere per point, by `id` (else the
+  // point number).
+  std::unordered_map<int64_t, Box3DPointSphere> spheres;
+  uint64_t sphereStamp = 0;
 };

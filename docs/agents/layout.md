@@ -91,6 +91,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DGlueMaterial.cpp  A glue group's mass-weighted friction and bounce, as Bullet's (`applyGlueMaterials`)
     Box3DJointNetwork.h    What those two share: attribute names, network geometry and fingerprint helpers
     Box3DAffectors.*       Affector objects (Static Object DOP etc.) -> static colliders
+    Box3DPointAffectors.cpp Affectors that are points only (POP particles) -> a kinematic sphere per point
     Box3DHoudiniUtil.h     Shared Houdini helpers: writable geometry, object by id, 4x4 to array, Euler to
                            quaternion, options of SIM data by name (box3dDataOption), the threaded loop
                            (box3dParallelFor)
