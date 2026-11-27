@@ -1,4 +1,4 @@
-"""The Box3D Solver SOP (tools/make_solver_sop.py): its layout, pieces and proxy, solving before and on the first
+"""The Box3D Solver SOP (tools/assets/make_solver_sop.py): its layout, pieces and proxy, solving before and on the first
 frame, rest anchors, World Scale, Impacts and POP forces in FORCES."""
 
 import math

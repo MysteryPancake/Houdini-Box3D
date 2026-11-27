@@ -14,10 +14,10 @@ body engine, C17, a git submodule in `extern/box3d`). It registers these `SIM_Da
 | Box3D Data | `SIM_Box3DData` | Per-object defaults (fallbacks for missing point attributes) |
 | (hidden) Box3D World | `SIM_Box3DWorld` | Holds the live Box3D world; not a DOP node |
 | Box3D <Type> Constraint Relationship | `SIM_Box3DConRel<Type>` | One per joint type: the joint's settings, named by `constraint_name` in a Constraint Network |
-| Box3D Packed Object | (digital asset) | RBD Packed Object for Box3D: a SOP stage writes its settings as point attributes, built by `tools/make_packed_object.py` |
-| Box3D Solver (SOP) | (digital asset) | SOP wrapping a DOP network with the nodes above, built by `tools/make_solver_sop.py` |
-| Box3D Configure (SOP) | (digital asset) | Box3D Data's settings as point attributes, built by `tools/make_configure_sop.py` |
-| Box3D Constraint Properties (SOP) | (digital asset) | Joint settings as primitive attributes, built by `tools/make_constraint_properties_sop.py` |
+| Box3D Packed Object | (digital asset) | RBD Packed Object for Box3D: a SOP stage writes its settings as point attributes, built by `tools/assets/make_packed_object.py` |
+| Box3D Solver (SOP) | (digital asset) | SOP wrapping a DOP network with the nodes above, built by `tools/assets/make_solver_sop.py` |
+| Box3D Configure (SOP) | (digital asset) | Box3D Data's settings as point attributes, built by `tools/assets/make_configure_sop.py` |
+| Box3D Constraint Properties (SOP) | (digital asset) | Joint settings as primitive attributes, built by `tools/assets/make_constraint_properties_sop.py` |
 
 Design goals: Box3D's native performance (handle-based hot paths, no per-body hash lookups, threaded per-point passes
 where safe) and Houdini Bullet behaviour (same attribute names and rules, as documented on the RBD Packed Object
@@ -68,11 +68,12 @@ Load only the file for the area you are changing.
 | [docs/agents/configure.md](docs/agents/configure.md) | Box3D Configure asset |
 | [docs/agents/status.md](docs/agents/status.md), [status-areas.md](docs/agents/status-areas.md) | Unverified |
 | [docs/agents/todo.md](docs/agents/todo.md) | TODO, features to add to the Box3D fork |
+| [docs/agents/sample-port-plan.md](docs/agents/sample-port-plan.md), [table a](docs/agents/sample-port-table-a.md), [b](docs/agents/sample-port-table-b.md) | Porting Box3D's samples to example scenes: plan, verdict per sample |
 
 **Values that live in code stay in code.** Defaults, counts, thresholds and sizes are not copied into the docs: name
 the constant or table and its file (`kMinParallelPoints` in `Box3DSolverInternal.h`, `kPropAttribNames` in
 `Box3DAttribNames.h`). A number in a doc is only for a measurement or a fact about Box3D / Houdini that the code does
-not hold. `python tools/check_docs.py` checks that the `k...` constants and the relative links the docs mention exist.
+not hold. `python tools/dev/check_docs.py` checks that the `k...` constants and the relative links the docs mention exist.
 
 ## Layout
 
@@ -82,7 +83,10 @@ The full file-by-file map is [docs/agents/layout.md](docs/agents/layout.md). In 
 * `src/dop/` holds the `SIM_Data` classes: the solver node, Box3D Data, the constraint relationship nodes.
 * `src/sync/` moves Houdini data into the world each step: point and object sync, shapes, joints, compounds, forces,
   affectors, write-back. `Box3DState.h` is the shared state; `Box3DSolverInternal.h` what the solver's parts share.
-* `tools/make_*.py` build the four digital assets; `tools/check_docs.py` checks the docs against the code.
+* `tools/` holds a folder per job, with the `.bat` / `.sh` helpers beside them: `assets/` (`make_*.py` build the four
+  digital assets), `examples/` (`make_examples.py`, with `scene_kit.py` and `box3d_samples/`, builds the example scenes
+  into `examples/`, a git-ignored folder holding only its output) and `dev/` (`check_docs.py` checks the docs against
+  the code; `b3d.py` is the cross-platform launcher).
 * `tests/core_*.cpp` are the C++ tests (`ctest`); `tests/houdini/` the Houdini checks (`test.bat`, `run_tests.py`)
   and the benchmarks (`bench.py`).
 
@@ -101,15 +105,15 @@ Layering (keep it):
 * C++ tests: `ctest --test-dir build -C Release`.
 * Houdini checks: `test.bat <names>` (`test.bat --list` for the names; with none it runs everything, which is slow).
   `python -I tests/python/test_harness.py` needs no Houdini.
-* Benchmarks: `python tools/b3d.py bench <scenario>[:key=value,...] --kinds box3d` (scenarios and options: build.md).
-* Docs: `python tools/check_docs.py`.
+* Benchmarks: `python tools/dev/b3d.py bench <scenario>[:key=value,...] --kinds box3d` (scenarios and options: build.md).
+* Docs: `python tools/dev/check_docs.py`.
 
 **`HOME` decides where Houdini looks.** On Windows Houdini uses `%HOME%` as its preferences folder when it is set, and
 Git Bash sets it. Then Houdini (the plugin install, `hython`) uses `C:\Users\<you>\houdini22.0`, where the plugin is
 not, and creates that folder. The symptoms are a plugin built into `C:\Users\<you>\houdini22.0` instead of
 `Documents\houdini22.0`, `hython` failing with "Invalid node type name" for `box3d_*` nodes, and the asset build
 warning that no node types exist. `CMakeLists.txt` (configure and the asset step), `build.bat`, `test.bat` and
-`tools/b3d.py` drop `HOME` themselves, so use them. Never start `hython` directly from Git Bash: run
+`tools/dev/b3d.py` drop `HOME` themselves, so use them. Never start `hython` directly from Git Bash: run
 `env -u HOME hython ...`, or `subprocess` with `HOME` removed from the environment. If a `C:\Users\<you>\houdini22.0`
 folder appears, something ran Houdini with `HOME` set: delete the folder and find what did.
 
@@ -140,5 +144,5 @@ folder appears, something ran Houdini with `HOME` set: delete the folder and fin
 * Casts: `static_cast<T>(x)`, never `T(x)` or `(T)x` (clang-tidy's `google-readability-casting`).
 * Before finishing a change: the core builds with no warnings (`-Wall -Wextra -Wshadow -Wconversion`, MSVC `/W4`),
   `ctest` passes, `clang-tidy -p build` is clean on the files you touched (`.clang-tidy`), and
-  `python tools/check_docs.py` passes. CI (`.github/workflows/ci.yml`) runs the same checks except clang-tidy. Text
+  `python tools/dev/check_docs.py` passes. CI (`.github/workflows/ci.yml`) runs the same checks except clang-tidy. Text
   files are UTF-8 with LF line endings (`.editorconfig`).

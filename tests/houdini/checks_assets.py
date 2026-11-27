@@ -302,7 +302,7 @@ def test_constraint_properties_collisions():
 
 
 def test_configure_material_preset():
-    """Material Preset on a Box3D Configure entry, with RBD Configure's presets (the table is tools/b3d_materials.py):
+    """Material Preset on a Box3D Configure entry, with RBD Configure's presets (the table is tools/assets/b3d_materials.py):
     Metal and Steel fill Density 8050, Bounce 0.5 and Friction 0.45 (dry and clean surfaces) and tick them; the
     lubricated and greasy State gives friction 0.15; Glass resets the Material to Default (density 1000, bounce 0.2,
     friction 1). The pieces carry them."""
@@ -430,7 +430,7 @@ def test_configure_packs():
 
 
 def test_configure():
-    """Box3D Configure (tools/make_configure_sop.py) writes ticked settings onto the pieces in its
+    """Box3D Configure (tools/assets/make_configure_sop.py) writes ticked settings onto the pieces in its
     group only: Body Type Static and Friction 0.25 on one of two boxes. Into the Box3D Solver SOP,
     that box stays put and the other falls (it keeps active 1, not the 0 VEX would give it)."""
     pieces, names = packed_boxes("cfg_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0)},
@@ -491,7 +491,7 @@ def test_configure_group_patterns():
 
 
 def test_constraint_properties():
-    """Box3D Constraint Properties (tools/make_constraint_properties_sop.py) writes ticked settings onto the
+    """Box3D Constraint Properties (tools/assets/make_constraint_properties_sop.py) writes ticked settings onto the
     constraints in its group only: on two lines, one in a group, Revolute Stiffness 7 and Enable Spring land
     on the first, the other keeps the "not set" values the solver skips."""
     geo = new_geo("conprops")
@@ -523,7 +523,7 @@ def test_constraint_properties():
 
 
 def test_constraint_properties_edit():
-    """Box3D Constraint Properties' viewport edits (tools/b3d_constraint_properties_state.py): three lines, two in
+    """Box3D Constraint Properties' viewport edits (tools/assets/b3d_constraint_properties_state.py): three lines, two in
     a group, the stash rotating the anchors of the selected one (what the handle writes) lands as `orient` on that
     line's two points only; Set mode writes every Revolute setting and the name, without any checkbox; the output has
     no `__idx`; the state's sections and the toolbar parameters are in the asset."""
@@ -883,7 +883,7 @@ def test_packed_object_display_geometry():
 
 
 # ---------------------------------------------------------------------------
-# The group / attribute menus beside the fields (MENU_SOURCE in tools/b3d_hda.py)
+# The group / attribute menus beside the fields (MENU_SOURCE in tools/assets/b3d_hda.py)
 # ---------------------------------------------------------------------------
 
 

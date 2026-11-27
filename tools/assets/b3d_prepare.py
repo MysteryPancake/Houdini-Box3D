@@ -1,6 +1,6 @@
 """Input preparation shared by make_solver_sop.py and make_configure_sop.py, copied from RBD Bullet
 Solver's Housekeeping, Housecleaning and Collisions boxes and RBD Configure's packing (read with
-tools/houdini_network_dump.py): packed primitives are found (one point, not a polygon, alone in its
+tools/dev/houdini_network_dump.py): packed primitives are found (one point, not a polygon, alone in its
 connectivity class) and split from the rest.
 
 Pack mode (Housekeeping, RBD Configure): packed pieces get a point `name` (the point's, else the

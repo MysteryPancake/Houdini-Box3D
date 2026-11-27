@@ -23,7 +23,7 @@ jobs:
           find src tests \( -name '*.cpp' -o -name '*.h' \) -print0 \
             | xargs -0 clang-format --dry-run -Werror --style=file
       - name: Check docs
-        run: python tools/check_docs.py
+        run: python tools/dev/check_docs.py
 
   python:
     # The Houdini checks import `hou`, so this runs them against a stand-in: registration, naming, pyflakes.

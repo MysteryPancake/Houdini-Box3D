@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Cross-platform launcher: finds Houdini, then runs the Houdini checks, the example scenes or the core tests.
 
-    python tools/b3d.py hfs                    print the Houdini install used
-    python tools/b3d.py test [args]            hython tests/houdini/run_tests.py [args]   (test.bat on Windows)
-    python tools/b3d.py examples [args]        hython examples/make_examples.py [args]    (make_examples.bat)
-    python tools/b3d.py bench [args]           hython tests/houdini/bench.py [args]       (timings, Box3D vs Bullet)
-    python tools/b3d.py ctest [args]           ctest --test-dir build [args] (-C Release is added on Visual Studio)
+    python tools/dev/b3d.py hfs                    print the Houdini install used
+    python tools/dev/b3d.py test [args]            hython tests/houdini/run_tests.py [args]   (test.bat on Windows)
+    python tools/dev/b3d.py examples [args]        hython tools/examples/make_examples.py [args] (make_examples.bat)
+    python tools/dev/b3d.py bench [args]           hython tests/houdini/bench.py [args]       (timings, Box3D vs Bullet)
+    python tools/dev/b3d.py ctest [args]           ctest --test-dir build [args] (-C Release is added on Visual Studio)
 
 Houdini is found as build.sh / build.bat do: $HFS if it has the HDK (toolkit/cmake), else the registry's
 ActiveVersion (Windows), else the newest install in the usual places (Windows: Program Files\\Side Effects
@@ -20,7 +20,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]  # this file is tools/dev/b3d.py
 
 
 def is_hfs(path):
@@ -111,7 +111,7 @@ def main(argv):
         print(f"ERROR: hython not found in {hfs}/bin", file=sys.stderr)
         return 1
     script = {"test": "tests/houdini/run_tests.py", "bench": "tests/houdini/bench.py"}.get(
-        cmd, "examples/make_examples.py")
+        cmd, "tools/examples/make_examples.py")
     return run([exe, script, *rest])
 
 

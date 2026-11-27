@@ -2,7 +2,7 @@
 
 Index and rules: [CLAUDE.md](../../CLAUDE.md).
 
-`tools/make_configure_sop.py <out.hda>` builds `box3d_configure` (SOP): Box3D Data's settings, copied from the node
+`tools/assets/make_configure_sop.py <out.hda>` builds `box3d_configure` (SOP): Box3D Data's settings, copied from the node
 (labels, defaults, ranges, conditions), written as point attributes. Laid out as RBD Configure: a tabbed multiparm
 (`MULTIPARM`, Number of Attributes) of entries, each with Enable (`enable#`), Group (`group#`) and Box3D Data's
 folders (`b3dcfg_folder<i>_#`), every setting `<name>#` with an `add<name>#` checkbox (`toggle_name`, label hidden). A
@@ -14,7 +14,7 @@ Attributes folder with them. Var (`VAR_SETTINGS`: Density, Bounce, Friction, Rot
 Material folder, above Bounce and Friction: `materialtype#` None / Concrete / Glass / Wood / Metal, `materialpreset#`
 the material, `materialstate#` dry and clean or lubricated and greasy surfaces, Type and Material joined) fills the
 entry's `density#`, `bounce#` and `friction#` and ticks their `add...#` boxes, as RBD Configure's Physical Attributes
-does. The table is `tools/b3d_materials.py`: RBD Configure's presets (materials, densities, the two frictions, Bounce
+does. The table is `tools/assets/b3d_materials.py`: RBD Configure's presets (materials, densities, the two frictions, Bounce
 by type) typed in, so nothing is read from its node, put into this asset's Python Module (`MATERIAL_MODULE`:
 `buildMaterialMenu`, `typeChanged`, `materialPresetCallback`, set off the menus' script callbacks, so a script that
 sets them calls the functions). Names map one to one except `MAPPING`: Default Shape -> `bullet_georep`
@@ -24,7 +24,7 @@ need the referenced setting ticked (`rewrite_condition`). Bounds and Attributes 
 as RBD Configure's); each Box3D Data folder and Constraints in an entry is an open collapsible folder
 (`b3d_hda.collapsible`).
 * Geometry and Proxy are packed first, as RBD Configure does, by the chain the Box3D Solver SOP runs
-  (`tools/b3d_prepare.py`, `prepare_input` in pack mode without the rest attributes): packed primitives kept, the rest
+  (`tools/assets/b3d_prepare.py`, `prepare_input` in pack mode without the rest attributes): packed primitives kept, the rest
   assembled into packed pieces named on their points. RBD Configure's packing parameters drive the Assembles (Name
   Prefix, Transfer Simulation / Render Geo Attributes, Create Path Attribute, Path Attribute, Create Packed Fragments;
   `packing_templates`), and Transfer Groups is RBD Configure's (`TRANSFER_GROUPS`) so Group still finds the pieces.
@@ -53,7 +53,7 @@ as RBD Configure's); each Box3D Data folder and Constraints in an entry is an op
   Exploded View node. RBD shows it from a viewer state that sets the node's output-for-view flag to -1; here each of
   the two parameters' callback (`VIEW_CALLBACK`) sets the flag to -1 while either is on, else 0. Nothing downstream
   sees the colours. RBD's Collision Padding is not copied (In Bounds takes the place of the last).
-* Viewer state (`tools/b3d_configure_state.py`, installed as the definition's `ViewerStateModule` / `DefaultState` /
+* Viewer state (`tools/assets/b3d_configure_state.py`, installed as the definition's `ViewerStateModule` / `DefaultState` /
   `ViewerStateInstall` / `ViewerStateUninstall` / `ViewerStateName.orig` sections by `add_viewer_state`, with a
   `PythonModule` whose `enterState` the Visualization callbacks call to re-enter the state), RBD Configure's trimmed:
   for Bounce, Density, Friction and Rotational Stiffness it draws a histogram of the pieces' values at the lower left

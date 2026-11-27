@@ -1,6 +1,6 @@
 """Builds the Box3D Solver SOP digital asset (a SOP, like RBD Bullet Solver) with hython.
 
-    hython tools/make_solver_sop.py <output .hda> [<box3d_packedobject .hda>]
+    hython tools/assets/make_solver_sop.py <output .hda> [<box3d_packedobject .hda>]
 
 The build runs this after make_packed_object.py (CMakeLists.txt, BOX3DDOP_MAKE_HDA), writing
 houdiniX.Y/otls/box3d_solver_sop.hda. The plugin and the Box3D Packed Object asset must exist: the

@@ -6,7 +6,7 @@ Where each file lives and what it holds. Index and rules: [CLAUDE.md](../../CLAU
 CMakeLists.txt        Targets: b3dop_core, the core test exes, Box3DDOP (plugin)
 build.sh / build.bat  Convenience wrappers (HFS discovery, submodule fetch, stale build/ reset)
 test.bat              Runs the Houdini checks (tests/houdini/run_tests.py) with hython (Windows)
-make_examples.bat     Builds the example scenes (examples/make_examples.py) with hython (Windows)
+make_examples.bat     Builds the example scenes (tools/examples/make_examples.py) with hython (Windows)
 extern/box3d/         Box3D submodule, the author's fork (MysteryPancake/Box3D-Fork; static lib, EXCLUDE_FROM_ALL)
 icons/box3d.svg       Node icon; the build copies it to config/Icons as DOP_<node name>.svg for every node
 src/                  The include root: includes are written "core/Box3DWorld.h" (bare name within a folder)
@@ -97,17 +97,20 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
                            quaternion, options of SIM data by name (box3dDataOption), the threaded loop
                            (box3dParallelFor)
     Box3DHoudiniTasks.h    TaskRunner on Houdini's TBB pool (UT_TaskGroup). Only SIM_Box3DWorld.cpp includes it
-examples/             make_examples.py: builds demo scenes into examples/scenes (git-ignored)
+examples/             Not in git: made by make_examples.py, holding only the example scenes it builds and cache/
 package/              Box3D.json.in: the Houdini package file the build configures
-tools/                make_assets.py (the four asset builders in one hython, as the build does),
+tools/                A folder per job, and beside them find_houdini.bat (the .bat and .sh helpers):
+  assets/             make_assets.py (the four asset builders in one hython, as the build does),
                       make_packed_object.py, make_configure_sop.py, make_constraint_properties_sop.py and
                       make_solver_sop.py (the assets; its inner builders are b3d_solver_*.py, the SOPs' viewer
                       states b3d_*_state.py, read as text by the builders, the assets' help cards
-                      b3d_*_help.py, and make_dop_help.py for the compiled DOP nodes), b3d.py (finds Houdini; runs the
-                      checks, examples, benchmarks or ctest on any OS), b3d_hda.py (helpers the builders share),
-                      b3d_prepare.py (input packing), b3d_materials.py, b3d_settings.py, b3d_layouts.py (node
-                      placement), find_houdini.bat, check_docs.py, houdini_network_dump.py (dumps a node's
-                      networks to text)
+                      b3d_*_help.py, and make_dop_help.py for the compiled DOP nodes), b3d_hda.py (helpers the
+                      builders share), b3d_prepare.py (input packing), b3d_materials.py, b3d_settings.py,
+                      b3d_layouts.py (node placement)
+  examples/           make_examples.py (the example scenes; its helpers scene_kit.py, and box3d_samples/: Box3D's
+                      samples as scenes, --samples, a module per sample file)
+  dev/                b3d.py (finds Houdini; runs the checks, examples, benchmarks or ctest on any OS),
+                      check_docs.py, houdini_network_dump.py (dumps a node's networks to text)
 docs/agents/          Technical notes by area; CLAUDE.md is the index ("Where to look")
 tests/
   core_*.cpp          One exe per area: smoke, physics (with physics_shapes.cpp and physics_bodies.cpp), mesh,

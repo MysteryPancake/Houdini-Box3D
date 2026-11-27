@@ -311,11 +311,11 @@ add_custom_command(TARGET Box3DDOP POST_BUILD
     ${BOX3DDOP_ICON_COPIES}
     VERBATIM)
 
-# The digital assets, built with hython into houdiniX.Y/otls next to dso/ by tools/make_assets.py (one
+# The digital assets, built with hython into houdiniX.Y/otls next to dso/ by tools/assets/make_assets.py (one
 # hython session: Box3D Packed Object, Box3D Configure, Box3D Constraint Properties, then the Box3D Solver
 # SOP, which contains the Packed Object), then the compiled DOP nodes' help cards into houdiniX.Y/help/nodes/dop
-# (tools/make_dop_help.py). All copy parameters from the plugin just built, so they are remade whenever the
-# plugin is relinked or any script in tools/ changes. Problems print a warning and never fail the build.
+# (tools/assets/make_dop_help.py). All copy parameters from the plugin just built, so they are remade whenever the
+# plugin is relinked or any script in tools/assets/ changes. Problems print a warning and never fail the build.
 option(BOX3DDOP_MAKE_HDA "Build the Box3D digital assets (Packed Object, Configure, Constraint Properties, Solver SOP) with hython after the plugin" ON)
 if(BOX3DDOP_MAKE_HDA)
     find_program(BOX3DDOP_HYTHON NAMES hython
@@ -325,7 +325,7 @@ if(BOX3DDOP_MAKE_HDA)
         set(BOX3DDOP_HDAS box3d_packedobject.hda box3d_configure.hda box3d_constraint_properties.hda
             box3d_solver_sop.hda)
         file(GLOB BOX3DDOP_TOOL_SCRIPTS CONFIGURE_DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/tools/make_*.py" "${CMAKE_CURRENT_SOURCE_DIR}/tools/b3d_*.py")
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/assets/make_*.py" "${CMAKE_CURRENT_SOURCE_DIR}/tools/assets/b3d_*.py")
         # OUTPUT cannot hold generator expressions (the otls folder depends on the Houdini install), so
         # a stamp file in the build folder records that the assets are up to date.
         set(BOX3DDOP_ASSET_STAMP "${CMAKE_BINARY_DIR}/box3d_assets.stamp")
@@ -338,7 +338,7 @@ if(BOX3DDOP_MAKE_HDA)
             set(BOX3DDOP_HYTHON_ENV ${CMAKE_COMMAND} -E env --unset=HOME)
         endif()
         add_custom_command(OUTPUT "${BOX3DDOP_ASSET_STAMP}"
-            COMMAND ${BOX3DDOP_HYTHON_ENV} "${BOX3DDOP_HYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/make_assets.py" "${BOX3DDOP_OTLS_DIR}"
+            COMMAND ${BOX3DDOP_HYTHON_ENV} "${BOX3DDOP_HYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/assets/make_assets.py" "${BOX3DDOP_OTLS_DIR}"
             COMMAND ${CMAKE_COMMAND} -E touch "${BOX3DDOP_ASSET_STAMP}"
             DEPENDS Box3DDOP ${BOX3DDOP_TOOL_SCRIPTS}
             COMMENT "Building the Box3D digital assets"
@@ -346,7 +346,7 @@ if(BOX3DDOP_MAKE_HDA)
         add_custom_target(Box3DAssets ALL DEPENDS "${BOX3DDOP_ASSET_STAMP}")
     else()
         message(WARNING "hython not found next to the Houdini toolkit: the Box3D digital assets will not "
-                        "be built (run hython tools/make_assets.py <otls folder> yourself)")
+                        "be built (run hython tools/assets/make_assets.py <otls folder> yourself)")
     endif()
 endif()
 

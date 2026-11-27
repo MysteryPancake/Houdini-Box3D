@@ -15,11 +15,11 @@ How the project is built, tested and packaged. The digital assets' own notes are
     default icon name is `<TABLE>_<name>`; renaming a node means renaming its icon). The three SOP assets reuse DOP
     icons (`ICON` in their scripts), so they are not in the list.
   * The digital assets (`BOX3DDOP_MAKE_HDA`, default ON), with hython (found at `${Houdini_DIR}/../../bin` or
-    `$HFS/bin`), into `<dso>/../otls/`: one `tools/make_assets.py` run (one hython session) builds
-    `tools/make_packed_object.py` (`box3d_packedobject.hda`), `tools/make_configure_sop.py` (`box3d_configure.hda`),
-    `tools/make_constraint_properties_sop.py` (`box3d_constraint_properties.hda`), then `tools/make_solver_sop.py`
+    `$HFS/bin`), into `<dso>/../otls/`: one `tools/assets/make_assets.py` run (one hython session) builds
+    `tools/assets/make_packed_object.py` (`box3d_packedobject.hda`), `tools/assets/make_configure_sop.py` (`box3d_configure.hda`),
+    `tools/assets/make_constraint_properties_sop.py` (`box3d_constraint_properties.hda`), then `tools/assets/make_solver_sop.py`
     (`box3d_solver_sop.hda`, which contains the Packed Object). It is the custom target `Box3DAssets` (part of ALL),
-    re-run when the plugin relinks or any `tools/make_*.py` / `b3d_*.py` changes; a stamp file in the build folder
+    re-run when the plugin relinks or any `tools/assets/make_*.py` / `b3d_*.py` changes; a stamp file in the build folder
     records it (OUTPUT cannot hold the dso-relative path). Without hython a configure warning names the command to run
     by hand. The assets copy parameters from the plugin just built ([assets.md](assets.md)).
 * Warnings: `b3dop_warnings(target)` adds `-Wall -Wextra -Wshadow -Wconversion` (`/W4` on MSVC) to our targets, never to
@@ -31,7 +31,7 @@ How the project is built, tested and packaged. The digital assets' own notes are
 * `CMAKE_EXPORT_COMPILE_COMMANDS` feeds clang-tidy (`.clang-tidy`); the plugin's files only appear in it after an HDK
   build. `format` / `format-check` targets run clang-format; `.githooks/pre-commit` checks staged files once enabled
   (`git config core.hooksPath .githooks`).
-* CI (`.github/workflows/ci.yml`): format check (clang-format 18.1.3), `tools/check_docs.py`, core-only build and
+* CI (`.github/workflows/ci.yml`): format check (clang-format 18.1.3), `tools/dev/check_docs.py`, core-only build and
   `ctest` on Linux and Windows. No HDK, so no plugin build.
 * `BOX3DDOP_DEBUG` (default OFF) defines `BOX3DDOP_DEBUG=1` for the plugin and `b3dop_core`; with it off nothing writes
   to stdout / stderr. The value is cached in `build/`: reconfigure or delete `build/` to clear a stale ON.
@@ -52,16 +52,19 @@ How the project is built, tested and packaged. The digital assets' own notes are
   build). `build.sh` finds `HFS` (env var, else the newest `/opt/hfs*` or macOS `/Applications/Houdini` install);
   `build.bat` (env var, then the registry's ActiveVersion, then the newest `Program Files\Side Effects Software\Houdini
   X.Y.Z`, in `tools\find_houdini.bat`, which `test.bat` and `make_examples.bat` share).
-* `python tools/b3d.py test|examples|ctest|hfs` is the cross-platform launcher (`tools/b3d.py`: the same HFS search
-  for Windows, Linux and macOS, then hython on `tests/houdini/run_tests.py` or `examples/make_examples.py`, or
+* `python tools/dev/b3d.py test|examples|ctest|hfs` is the cross-platform launcher (`tools/dev/b3d.py`: the same HFS search
+  for Windows, Linux and macOS, then hython on `tests/houdini/run_tests.py` or `tools/examples/make_examples.py`, or
   `ctest`). Its search duplicates `find_houdini.bat` and `build.sh`: change all three together.
 
 
 ## Example scenes
 
-`examples/make_examples.py` (or `make_examples.bat`; `--check` also simulates each and prints timings) builds the demo
-scenes listed in its docstring into `examples/scenes/<number>_<name>.hip` (git-ignored), each from ordinary SOPs and one
-Box3D Packed Object, with a sticky note saying what to try. Not part of the build or the tests.
+`tools/examples/make_examples.py` (or `make_examples.bat`; `--check` also simulates each and prints timings) builds the demo
+scenes listed in its docstring into `examples/<number>_<name>.hip` (`examples/` is git-ignored and holds only what it builds), each from ordinary SOPs and one
+Box3D Packed Object, with a sticky note saying what to try. Not part of the build or the tests. `--samples` builds the
+ports of Box3D's own samples instead (`tools/examples/box3d_samples/`, into `examples/<category>/`;
+names pick a category or `category/sample`): [sample-port-plan.md](sample-port-plan.md). The helpers both share are in
+`tools/examples/scene_kit.py`.
 
 ## Tests
 
@@ -69,7 +72,9 @@ Houdini checks: `hython tests/houdini/run_tests.py` (test names, `--list`, `--fa
 `--update-baseline`), or `test.bat` on Windows. Each test builds its scene from scratch in its own hython process (a
 crash, or no result after 30 minutes, is reported as CRASH; an exception as ERROR), prints PASS / FAIL / INFO, and
 saves the scene to `tests/houdini/out/` tidied for opening by hand (`review.py`, with a sticky
-note holding the test's docstring and results, so write docstrings for a reader of the scene). A test that clears or
+note holding the test's docstring and results, so write docstrings for a reader of the scene, and the solvers' collision
+shape guides on). `packed_boxes` draws a piece whose collider is a sphere or capsule fitted to its box as that shape
+(`fitted_round_shape`); hand-set shapes (`bullet_autofit` 0) stay boxes, shown by the guide. A test that clears or
 deletes its scene when done (several runs, or a large one) calls `b3dtest.keep_scene()` first: the first copy it keeps,
 on its first frame, is the scene saved. SETUP means the script
 guessed a node or parameter name wrong; the message lists the real ones. The last status of each test is in
@@ -100,7 +105,7 @@ differ by more than 1e-4). The file's header comment says what it covers. The ph
 
 ## Benchmarks
 
-`hython tests/houdini/bench.py` (or `python tools/b3d.py bench`) times scenes in Box3D and RBD Bullet Solver; it is
+`hython tests/houdini/bench.py` (or `python tools/dev/b3d.py bench`) times scenes in Box3D and RBD Bullet Solver; it is
 not part of `run_tests.py` and nothing in it passes or fails. `--list` names the scenarios (`bench_scenes.py`: pile,
 edit, collider, animated, joints, wall, fracture, objects, static, churn, solversop, hulls, features), each with
 parameters (`name:key=value,...`) and a default sweep.

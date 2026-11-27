@@ -8,7 +8,7 @@
 //
 // Each entry is X(member, "attribute", Tag): `member` is the PointAttrs handle,
 // Tag the GA_ROHandle suffix (F, I, V3, ID, S, Q). The attribute table in
-// docs/attributes.md is prose; tools/check_docs.py checks that every name here
+// docs/attributes.md is prose; tools/dev/check_docs.py checks that every name here
 // is mentioned in the user docs.
 #pragma once
 

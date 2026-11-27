@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 
-rem Builds the example scenes (examples\make_examples.py) with hython, into examples\scenes.
+rem Builds the example scenes (tools\examples\make_examples.py) with hython, into examples\.
 rem   make_examples.bat                   every scene
 rem   make_examples.bat building shapes   some scenes
 rem   make_examples.bat --check           also simulate each scene and print timings
@@ -19,5 +19,5 @@ if not exist "!HYTHON!" (
 echo Using Houdini: !HFS!
 
 cd /d "%~dp0"
-"!HYTHON!" "examples\make_examples.py" %*
+"!HYTHON!" "tools\examples\make_examples.py" %*
 exit /b %errorlevel%

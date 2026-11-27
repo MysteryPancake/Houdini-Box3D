@@ -6,7 +6,7 @@ break thresholds and viewer state: [solver-sop-ui.md](solver-sop-ui.md). The Pac
 
 ## Box3D Solver SOP asset
 
-`tools/make_solver_sop.py <out.hda> [<packedobject.hda>]` builds `box3d_solver` in the SOP table (the DOP of the same
+`tools/assets/make_solver_sop.py <out.hda> [<packedobject.hda>]` builds `box3d_solver` in the SOP table (the DOP of the same
 name is another table), after the Packed Object, which it installs first. The module docstring draws the network. Four
 inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry, Constraints, Proxy, Simulation Points).
 * A SOP-level DOP network whose inputs 0-2 are the simulated pieces (Geometry, or Proxy when connected), Constraints

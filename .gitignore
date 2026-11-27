@@ -61,8 +61,8 @@ venv/
 # --- Houdini checks (tests/houdini): each test's saved scene ----------------
 tests/houdini/out/
 
-# --- Example scenes (examples/make_examples.py builds them) ------------------
-examples/scenes/
+# --- Example scenes (tools/examples/make_examples.py builds them; not tools/examples/) ---
+/examples/
 
 # --- Houdini ---------------------------------------------------------------
 *.hip.bak

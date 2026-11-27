@@ -1,6 +1,6 @@
 """Builds the Box3D Configure digital asset (a SOP, like RBD Configure) with hython.
 
-    hython tools/make_configure_sop.py <output .hda>
+    hython tools/assets/make_configure_sop.py <output .hda>
 
 The build runs this after the plugin (CMakeLists.txt, BOX3DDOP_MAKE_HDA), writing
 houdiniX.Y/otls/box3d_configure.hda. The plugin must be installed: the settings, their labels,

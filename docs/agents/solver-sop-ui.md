@@ -3,7 +3,7 @@
 The Solver SOP's parameter tabs, joint settings, Break Thresholds, constraint attribute updates, Output tab, viewer
 state and messages. Its network: [solver-sop.md](solver-sop.md). Index and rules: [CLAUDE.md](../../CLAUDE.md).
 
-`tools/make_solver_sop.py` and the `b3d_solver_*.py` modules build these.
+`tools/assets/make_solver_sop.py` and the `b3d_solver_*.py` modules build these.
 
 * Advanced > Constraints (`b3d_solver_constraints.py`, as RBD Bullet Solver's joint settings): every relationship in
   `RELATIONSHIPS` gets a closed folder with its settings (those in the node's parameter folders, else all but
@@ -51,7 +51,7 @@ state and messages. Its network: [solver-sop.md](solver-sop.md). Index and rules
   `solver_sop_break_attrib_update_bullet`, `solver_sop_break_variance_bullet`, `solver_sop_break_scale_bullet` (against
   the RBD Bullet Solver SOP), `solver_sop_break_next_settings` and
   the INFO `solver_sop_break_angle_torque_bullet`.
-* Constraint attribute updates (`tools/b3d_solver_updates.py`, as RBD Bullet Solver's): the Constraints tab's Override
+* Constraint attribute updates (`tools/assets/b3d_solver_updates.py`, as RBD Bullet Solver's): the Constraints tab's Override
   Attributes folder (`enable_constraintupdates` with its label hidden, joined to `constraint_attributes`, then
   `constraint_attribgroup`) runs a SOP Solver DOP (`constraint_updates`) over the ConstraintGeometry behind an Enable
   Solver DOP, before the breaks: an Attribute Copy SOP copies the listed attributes from `live_constraints` (an Object
@@ -105,7 +105,7 @@ state and messages. Its network: [solver-sop.md](solver-sop.md). Index and rules
   Enable Collision Geometry off), Pieces is Shape, Body, Material, CCD & Contacts and Sleep (the Packed Object's Start
   Asleep, taken out of its Sleep tab and put first, `moved_settings`), and Add Impact Data (taken out of its Shape
   tab) is on Output. Test `solver_sop_layout`.
-* Viewer state (`tools/b3d_solver_state.py`, `STATE_NAME` / `STATE_FILE`, installed by `b3d_hda.add_viewer_state`),
+* Viewer state (`tools/assets/b3d_solver_state.py`, `STATE_NAME` / `STATE_FILE`, installed by `b3d_hda.add_viewer_state`),
   RBD Bullet Solver's trimmed: an Option Menu with Output for View Flags (Geometry / Constraint / Proxy,
   `setOutputForViewFlag`) and an inspector, hotkeys 1 to 5 and the HUD lines for them. The inspector prints the
   attributes of the primitive under the cursor (`inspectorattribs`, `inspectorfontsize`, `inspectorprecision` in the

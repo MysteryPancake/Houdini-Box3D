@@ -104,7 +104,7 @@ class Lint(unittest.TestCase):
     def test_pyflakes(self):
         if importlib.util.find_spec("pyflakes") is None:
             self.skipTest("pyflakes is not installed (pip install pyflakes)")
-        files = sorted(glob.glob(os.path.join(HOUDINI_TESTS, "*.py")) + glob.glob(os.path.join(ROOT, "tools", "*.py"))
+        files = sorted(glob.glob(os.path.join(HOUDINI_TESTS, "*.py")) + glob.glob(os.path.join(ROOT, "tools", "**", "*.py"), recursive=True)
                        + glob.glob(os.path.join(ROOT, "tests", "python", "*.py")))
         # The viewer states run inside Houdini, which provides `hou` and `kwargs`.
         files = [f for f in files if not f.endswith("_state.py")]
@@ -212,7 +212,7 @@ class Files(unittest.TestCase):
 
     def test_text_files_end_with_a_newline(self):
         bad = []
-        for pattern in ("tests/**/*.py", "tools/*.py", "docs/**/*.md"):
+        for pattern in ("tests/**/*.py", "tools/**/*.py", "docs/**/*.md"):
             for path in glob.glob(os.path.join(ROOT, pattern), recursive=True):
                 with open(path, "rb") as f:
                     data = f.read()

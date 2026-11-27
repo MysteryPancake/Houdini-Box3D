@@ -97,6 +97,31 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
 * Slider Constraint Relationship (`sliderconrel`, Bullet's `btSliderConstraint`: a slide range along the first anchor's x and
   a rotation limit about it, nothing else free) is not read. A slide range of 0 is a revolute joint and a rotation limit
   of 0 a prismatic one; both free (a cylinder) has no Box3D joint. Nothing in Houdini creates one but the node itself.
+* Box3D's samples as example scenes ([sample-port-plan.md](sample-port-plan.md)): Stacking, Shapes, Restitution and
+  Robustness are built. Left, in order:
+  1. Static meshes and height fields: Mesh, Continuous, the portable Issues.
+  2. Joints (portable now), then Benchmark's portable ones (pyramids, Convex Pile, Joint Grid, Spinner), timed with
+     `--check` a few at a time.
+  3. Animated pieces and step scripts: Bodies, Kinematic, Rolling Deck, Turning Platform, Motor Joint, Junkyard,
+     Washer, Static Invoke, Disable.
+  4. The ragdoll: Ragdoll, then Rain and the Determinism scenes.
+  5. Multi-shape bodies and per-material meshes: Compound, Class Ring, Falling Trees, Village (benchmark), Gear Lift,
+     Ghost, Conveyor Mesh; then the wind approximations.
+
+  Helpers these need in `tools/examples/box3d_samples/common.py`:
+  * Static meshes as SOP networks: `grid_mesh`, `wave_mesh` and `wave_heightfield` (the formulas of `b3CreateGridMesh`,
+    `b3CreateWaveMesh`, `b3CreateWave`), `torus_mesh`, `box_mesh` (inward faces: Reverse), `hollow_box_mesh`,
+    `obj_mesh(file)` (copies `extern/box3d/data/meshes` files to `examples/cache/`, read with
+    `$HIP`-relative paths); all `concave` on a static piece, height fields on a Static Object.
+  * `animated_piece(vex)`: `active 0`, `animated 1`, `P` / `orient` driven by a wrangle on `@Time` (kinematic bodies).
+  * `step_script(vex)`: a SOP Solver in a Multiple Solver after the Box3D Solver, writing `force`, `v`, `enabled`,
+    `awake` or `dead` on given frames, for samples whose `Step()` does that.
+  * `multi_shape_body(parts)`: several shapes as one body. Without other joints: glued pieces, Glue as One Body on
+    (keeps sphere and capsule shapes). With joints (a glued group with another joint stays on welds,
+    [glue-compound.md](glue-compound.md)): one piece, `compound` with Box3D Data's Hull per Connected.
+  * `human(name, position, friction_torque, hertz, damping)`: `human.c`'s ragdoll: capsule pieces, revolute and
+    spherical joints with its limits, springs and friction motors (motor speed 0), filter joints; shin and foot as one
+    `multi_shape_body`.
 * Force DOPs: parallel evaluation of circle / sphere sampled forces (the resolver has only the point call).
 * Sticky collisions. Box3D's contact begin / end and sensor events: Houdini has no output for them (Bullet has none), so
   nothing reads them beyond Impacts. Sensors (trigger zones) would be the useful part.

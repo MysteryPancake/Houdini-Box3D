@@ -15,9 +15,9 @@ Constraint Names and Scale by Attribute, each type's Data Name; Configure's Grou
 Group and Collision Ignore (both list the input's `collisiongroup` values and the other enabled entries' Collision
 Groups; Ignore leaves out its own entry's); Constraint Properties' Constraint Group, Group 1 and Group 2.
 
-Every asset has a help card (F1 on the node): `HELP_CARD` in `tools/b3d_<asset>_help.py` (Houdini wiki markup),
+Every asset has a help card (F1 on the node): `HELP_CARD` in `tools/assets/b3d_<asset>_help.py` (Houdini wiki markup),
 added by its builder as the definition's `Help` section. The compiled DOP nodes (Box3D Solver, Box3D Data, the
-constraint relationships) have no definition to hold one: `tools/make_dop_help.py`, run by `make_assets.py` after the
+constraint relationships) have no definition to hold one: `tools/assets/make_dop_help.py`, run by `make_assets.py` after the
 assets, writes `help/nodes/dop/<node>.txt` next to `otls/`, where Houdini looks on HOUDINI_PATH. Only the intros are
 written there (`SOLVER`, `DATA`, `JOINTS`); the parameters, folders and help come from the registered node types.
 
@@ -28,14 +28,14 @@ viewer reads to connect a new node's inputs automatically, as RBD's SOPs do.
 Node layout: small networks (the packing subnets, the Packed Object's stage) use `b3d_hda.tidy` (rows by longest path
 from the inputs, hidden stops for wires that skip rows, barycenter ordering plus adjacent swaps to cut crossings,
 columns centred under the inputs with room for each name, unwired nodes in a column on the right). The Box3D Solver
-SOP, its DOP network and Box3D Configure use `b3d_hda.layout` with the tables in `tools/b3d_layouts.py`: rows of
+SOP, its DOP network and Box3D Configure use `b3d_hda.layout` with the tables in `tools/assets/b3d_layouts.py`: rows of
 labelled network boxes, flow down the page, each box laid out by `tidy` (or a grid). A node the table does not name
 goes in an "Other" box and the build prints it, so a new node needs a line there. The FORCES subnet keeps its own
 layout (`layout_forces`).
 
 ## Box3D Packed Object asset
 
-`tools/make_packed_object.py` builds it from the plugin just compiled, so it always matches Box3D Data. It copies RBD
+`tools/assets/make_packed_object.py` builds it from the plugin just compiled, so it always matches Box3D Data. It copies RBD
 Packed Object (read from `houdini_network_dump.py` dumps of RBD Bullet Solver and RBD Packed Object): Empty Object ->
 SOP Geometry (data name `Geometry`) -> Box3D Data -> `visualize_hires` -> Collider Label, the output (no input); SOP
 Geometry reads a SOP stage inside the asset (`STAGE`, RBD Packed Object's `create_or_overwrite_attributes`): Object
@@ -125,7 +125,7 @@ Traps it handles:
 
 ## Network dump
 
-`tools/houdini_network_dump.py` is not part of the build: run it in Houdini (Python Source Editor, a shelf tool, or
+`tools/dev/houdini_network_dump.py` is not part of the build: run it in Houdini (Python Source Editor, a shelf tool, or
 `main(node_path, out_path)` in hython) to write a node and everything inside it to a text file: the HDA's interface
 and text sections, a hierarchy tree, and per network an ASCII layout, boxes, notes, wiring and each node's
 non-default parameters (VEX, expressions, references). It dumps an unlocked temporary copy (`WORK_ON_COPY`), so the

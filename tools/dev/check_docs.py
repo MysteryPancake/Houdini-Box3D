@@ -10,13 +10,13 @@ For CLAUDE.md and docs/agents/*.md:
 Links are also checked in README.md and docs/*.md.
 
 Docs name constants instead of copying their values, so a rename in code shows up here.
-Usage: python tools/check_docs.py   (exit code 1 on any problem)
+Usage: python tools/dev/check_docs.py   (exit code 1 on any problem)
 """
 import re
 import sys
 from pathlib import Path
 
-root = Path(__file__).resolve().parent.parent
+root = Path(__file__).resolve().parents[2]  # this file is tools/dev/check_docs.py
 agent_docs = [root / "CLAUDE.md", *sorted((root / "docs" / "agents").glob("*.md"))]
 user_docs = [root / "README.md", *sorted((root / "docs").glob("*.md"))]
 docs = agent_docs + user_docs

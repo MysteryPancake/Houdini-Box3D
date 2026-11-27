@@ -3,7 +3,7 @@
 Input preparation, the outputs, World Scale, Solve on Creation Frame and the guide geometry. The inner network, collision, ground
 and forces: [solver-sop.md](solver-sop.md). Index and rules: [CLAUDE.md](../../CLAUDE.md).
 
-* Input preparation (`tools/b3d_prepare.py`, shared with Box3D Configure): node for node RBD Bullet Solver's
+* Input preparation (`tools/assets/b3d_prepare.py`, shared with Box3D Configure): node for node RBD Bullet Solver's
   Housekeeping (pack mode, `prepare_pieces` after `sim_source`), Collisions (collision mode, `prepare_collision`) and
   Housecleaning (names mode, `names_geometry` / `names_proxy`) boxes, read from a `houdini_network_dump.py` dump.
   Packed primitives are found by shape (one point, not a polygon, alone in its connectivity class: SideFX's own test)

@@ -1,6 +1,6 @@
 """Builds the Box3D Packed Object digital asset (a DOP) with hython.
 
-    hython tools/make_packed_object.py <output .hda>
+    hython tools/assets/make_packed_object.py <output .hda>
 
 The build runs this after compiling the plugin (CMakeLists.txt, BOX3DDOP_MAKE_HDA), writing
 houdiniX.Y/otls/box3d_packedobject.hda next to the plugin's dso folder. The plugin must already be

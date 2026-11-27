@@ -183,16 +183,73 @@ def new_geo(name):
 ATTR_DEFAULTS = {"active": 1, "animated": 0, "v": (0.0, 0.0, 0.0), "w": (0.0, 0.0, 0.0), "life": 0.0, "age": 0.0}
 
 
+def fitted_round_shape(pc):
+    """What a box piece's sphere or capsule collider is when fitted to the box (bullet_georep sphere or capsule, Auto Fit
+    on, as a missing bullet_autofit is): ("sphere", radius) or ("capsule", radius, half length of its straight part,
+    box axis it runs along), else None. The fit (docs/agents/bodies.md, AutoFit): a sphere is centred on the bounds,
+    through the farthest point (a corner); a capsule runs along the box axis nearest +Y, its radius through the
+    farthest point from that axis, its caps ending at the bounds."""
+    attrs = pc.get("attrs", {})
+    rep, size = attrs.get("bullet_georep"), [0.5 * float(v) for v in pc["size"]]
+    if rep not in ("sphere", "capsule") or not attrs.get("bullet_autofit", 1):
+        return None
+    if rep == "sphere":
+        return ("sphere", math.sqrt(sum(v * v for v in size)))
+    turn = hou.hmath.buildRotate(tuple(pc.get("rotate", (0, 0, 0))))
+    axis = max(range(3), key=lambda k: abs(turn.at(k, 1)))
+    radius = math.sqrt(sum(size[k] ** 2 for k in range(3) if k != axis))
+    return ("capsule", radius, max(size[axis] - radius, 0.0), axis)
+
+
+def _piece_geometry(geo, i, pc):
+    """A piece's geometry: its box, or for a fitted sphere or capsule collider (fitted_round_shape) a mesh of that
+    shape, which fits to the same collider, so the scene shows what the piece collides as."""
+    shape = fitted_round_shape(pc)
+    if shape is None:
+        box = create(geo, "box", f"box{i}")
+        set_parm(box, ["size"], tuple(pc["size"]))
+        return box
+    ball = create(geo, "sphere", f"{shape[0]}{i}")
+    set_menu_token(ball, ["type"], "polymesh")
+    # Few points, so the fit's hull of them is exact: cols a multiple of 4 puts points on the box's axes.
+    set_parm(ball, ["cols"], 16)
+    if shape[0] == "sphere":
+        # Odd rows: the poles and the equator are on the sphere, so it fits to the same radius.
+        set_parm(ball, ["rad"], (shape[1],) * 3)
+        set_parm(ball, ["rows"], 25)
+        return ball
+    # Even rows, so no ring is on the equator and the two halves move apart alike. The rings nearest it are the
+    # farthest from the axis: the sphere is sized for them to be at the radius, and moved apart for the caps to end
+    # where the fitted capsule's do.
+    rows = 10
+    near = math.pi / (2 * (rows - 1))
+    rad = shape[1] / math.cos(near)
+    shift = max(shape[1] + shape[2] - rad, 0.0)
+    set_parm(ball, ["rad"], (rad,) * 3)
+    set_parm(ball, ["rows"], rows)
+    stretch = create(geo, "attribwrangle", f"capsule_length{i}")
+    stretch.setInput(0, ball)
+    # The sphere's poles are on y: turned onto the capsule's axis (axes in cyclic order, a rotation, so the faces
+    # still face out), each half moved out and the poles held at the caps' ends (for a short capsule the sized
+    # sphere alone would reach past them).
+    axis = "xyz"[shape[3]]
+    end = shape[1] + shape[2]
+    set_parm(stretch, ["snippet"], f"vector p = @P; @P = set(0, 0, 0); "
+                                   f"@P.{axis} = sign(p.y) * min(abs(p.y) + {shift!r}, {end!r}); "
+                                   f"@P.{'xyz'[(shape[3] + 1) % 3]} = p.z; @P.{'xyz'[(shape[3] + 2) % 3]} = p.x;")
+    return stretch
+
+
 def packed_boxes(name, pieces):
     """A SOP object of packed boxes, one packed primitive (and point) per piece.
     pieces: list of dicts with size (x, y, z), center (x, y, z), optional rotate (degrees) and
-    attrs {point attribute: value}. Returns (sop_path, piece_names) with piece_names[i] the
-    `name` of pieces[i]."""
+    attrs {point attribute: value}. A piece whose collider is a sphere or capsule fitted to its box is drawn as that
+    shape (fitted_round_shape), which fits to the same collider. Returns (sop_path, piece_names) with piece_names[i]
+    the `name` of pieces[i]."""
     geo = new_geo(name)
     merge = create(geo, "merge")
     for i, pc in enumerate(pieces):
-        box = create(geo, "box", f"box{i}")
-        set_parm(box, ["size"], tuple(pc["size"]))
+        box = _piece_geometry(geo, i, pc)
         xf = create(geo, "xform", f"place{i}")
         xf.setInput(0, box)
         set_parm(xf, ["r"], tuple(pc.get("rotate", (0, 0, 0))))
@@ -362,7 +419,7 @@ def ground_object(dop, name="ground", **parms):
 
 
 def box3d_packed_object(dop, name, sop_path, **parms):
-    """A Box3D Packed Object (the asset tools/make_packed_object.py builds): the packed geometry
+    """A Box3D Packed Object (the asset tools/assets/make_packed_object.py builds): the packed geometry
     without RBD Packed Object's stamped attributes; parms: its parameters (Box3D Data's, e.g.
     friction=0.0). Inherit Velocity is off on the asset, so it is switched on here (the points' own v / w are
     used, as the tests that give points a velocity expect) unless `parms` sets it. SetupError if the asset

@@ -196,7 +196,7 @@ def test_glue_compound_hit():
     building before it has settled, and the two modes then differ by a few m/s. Each run is a new scene, as the scene is
     large."""
     here = os.path.dirname(os.path.abspath(__file__))
-    spec = importlib.util.spec_from_file_location("make_examples", os.path.join(here, "..", "..", "examples", "make_examples.py"))
+    spec = importlib.util.spec_from_file_location("make_examples", os.path.join(here, "..", "..", "tools", "examples", "make_examples.py"))
     examples = importlib.util.module_from_spec(spec)
     sys.modules["make_examples"] = examples
     spec.loader.exec_module(examples)

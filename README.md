@@ -63,7 +63,7 @@ In a DOP network, add a **Box3D Solver** and wire your objects into it like any 
 
 Like Houdini's RBD solvers, every point is one rigid body and the point is its **centre of mass** (for packed pieces, the pivot, which the Pack SOP puts at the centroid). Objects from **RBD Object** and similar nodes are one body each instead, with their results in the object's Position data.
 
-Example scenes: run `make_examples.bat` (Linux: `hython examples/make_examples.py`) and open `examples/scenes`.
+Example scenes: run `make_examples.bat` (Linux: `hython tools/examples/make_examples.py`) and open `examples`.
 
 ## Nodes
 

@@ -1,12 +1,12 @@
 """Builds the Box3D digital assets in one hython session.
 
-    hython tools/make_assets.py <otls folder>
+    hython tools/assets/make_assets.py <otls folder>
 
 Writes box3d_packedobject.hda, box3d_configure.hda, box3d_constraint_properties.hda and
 box3d_solver_sop.hda into the folder, in that order (the Solver SOP contains the Packed Object, so it
 comes last), then the plugin's DOP nodes' help cards into help/ beside the folder (make_dop_help.py).
 One process, so Houdini starts and checks out its license once. The build runs this (CMakeLists.txt, BOX3DDOP_MAKE_HDA) whenever the
-plugin or any script in tools/ changes.
+plugin or any script in tools/assets/ changes.
 
 Never fails the build: each asset's problems are printed as warnings and the script exits 0, as
 the make_*.py scripts do on their own.

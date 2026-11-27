@@ -39,7 +39,7 @@ no TODO or "unverified" notes in code comments, the README or other docs.
   todo.md rather than marking it done.
 - One fact in one place: link to the file that owns it instead of repeating it.
 - Wrap lines at about 120 characters: one fact or sentence per line where it reads well. A bullet's continuation lines
-  are indented two spaces. Never break a line inside a backtick span (`tools/check_docs.py` reads spans line by line).
+  are indented two spaces. Never break a line inside a backtick span (`tools/dev/check_docs.py` reads spans line by line).
 - Keep each file under about 12 KB. Split by topic when one grows past that, and update the index in CLAUDE.md.
 
 ## Tooltips

@@ -80,7 +80,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   grounds with the default friction wedges slightly high (`ground_plane`: 0.82 against 0.71), and sits flat with a
   friction of 0.2.
 
-**Box3D Configure** (`tools/make_configure_sop.py`, tests `configure`, `configure_packs`)
+**Box3D Configure** (`tools/assets/make_configure_sop.py`, tests `configure`, `configure_packs`)
 * The packing (`b3d_prepare.py`): Transfer Groups carrying primitive groups onto the pieces, the Assembles' path /
   fragment parameters from the asset, geometry-only and proxy-only inputs.
 * The group selection button, labels hidden on the checkboxes.
@@ -92,7 +92,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   whether a hint on one type is also found for a subclass, so a Static Object's or another cached Geometry may need its
   own.
 
-**Box3D Constraint Properties** (`tools/make_constraint_properties_sop.py`, test `constraint_properties`)
+**Box3D Constraint Properties** (`tools/assets/make_constraint_properties_sop.py`, test `constraint_properties`)
 * The viewer state (`b3d_constraint_properties_state.py`: selector, rotation handle, hotkeys, HUD, guides) is written
   from a dump of RBD Constraint Properties and never run in a viewport. Only its stash and network are checked
   (`constraint_properties_edit`). Not known: whether the selector picks a line with a click and with a box, whether the

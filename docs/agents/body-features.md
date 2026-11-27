@@ -88,7 +88,7 @@ is updated: [bodies.md](bodies.md). Index and rules: [CLAUDE.md](../../CLAUDE.md
   before the first step. Constraint primitives age too (`ageConstraints` in `Box3DJointBreak.cpp` adds the time step
   to their `age`, `create_constraint_age` makes it 0 on the first frame, `life` is ignored:
   `solver_sop_constraint_aging_bullet`). Parallel past `kMinParallelPoints`.
-* **Active age** (Solver SOP only, `tools/b3d_solver_activeage.py`; Add Active Age Attribute and Just Activated under
+* **Active age** (Solver SOP only, `tools/assets/b3d_solver_activeage.py`; Add Active Age Attribute and Just Activated under
   Output > Attributes, on while Enable Aging is): RBD Bullet Solver's two wranglers, not C++. A SOP stage before the
   DOP network gives the pieces their first `active_age` (one time step if active) and Just Activated group or attribute;
   a Geometry Wrangle DOP behind an Enable Solver DOP in the Multiple Solver, bound to its own geometry, adds the time

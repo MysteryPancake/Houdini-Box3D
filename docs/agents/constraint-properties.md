@@ -2,7 +2,7 @@
 
 Index and rules: [CLAUDE.md](../../CLAUDE.md).
 
-`tools/make_constraint_properties_sop.py <out.hda>` builds `box3d_constraint_properties` (SOP), like RBD Constraint
+`tools/assets/make_constraint_properties_sop.py <out.hda>` builds `box3d_constraint_properties` (SOP), like RBD Constraint
 Properties: the settings of every joint type as primitive attributes on the Constraint Geometry's lines. Inputs and
 outputs are Geometry, Constraint Geometry (pink), Proxy Geometry; only the constraints are edited, the others pass
 through. No Bullet settings.
@@ -26,7 +26,7 @@ through. No Bullet settings.
   multiply or zero a value the node holds, and a value cannot be set back to its default with Set.
 * Anchor Rotation (`anchorrotate`, in the Joint folder, written in both modes when ticked): Euler degrees turned into
   the `orient` point attribute of both anchors of each line in the group.
-* Viewport editing, RBD Constraint Properties' state adapted (`tools/b3d_constraint_properties_state.py`, installed by
+* Viewport editing, RBD Constraint Properties' state adapted (`tools/assets/b3d_constraint_properties_state.py`, installed by
   `b3d_hda.add_viewer_state`, state name `STATE_NAME`): pick constraint lines (a geometry selector on the viewer-only
   `widgets` output) and turn a rotation handle to rotate the frames of their two anchors; hotkeys U reset, A align the
   frame's X axis to the line, Ctrl+A select all, Ctrl+C / Ctrl+V copy / paste, M Toggle Motor, P Edit Parms. RBD's

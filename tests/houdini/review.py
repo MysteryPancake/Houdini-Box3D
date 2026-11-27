@@ -6,7 +6,9 @@ saving tests/houdini/out/<test>.hip):
   and the visible objects (DOP networks, and geometry that reads a simulation back, such as a DOP
   Import) are spaced out left to right along +X so they do not overlap;
 * a sticky note at /obj says what the test checks and expects (its docstring), what this run gave,
-  and which network is which; each DOP network gets a short note saying where it sits.
+  and which network is which; each DOP network gets a short note saying where it sits;
+* every solver draws its collision shapes (show_collision_shapes), so a piece whose collider is not its
+  geometry (a sphere fitted to a box) shows what it collides as.
 
 Only object-level translations change, and a DOP network moves all of its objects alike, so the
 simulations behave the same. Nothing here may change a result: run_tests.py ignores any error.
@@ -151,7 +153,7 @@ def _wrap(text):
 def place_note_left(net, note, gap=1.0):
     """Puts a sticky note to the left of every node in net, its top level with the highest node.
     Uses the bounding box of all the nodes, so it never lands on one (children()[0] is not the
-    leftmost node). Also used by examples/make_examples.py."""
+    leftmost node). Also used by tools/examples/scene_kit.py (the example scenes)."""
     nodes = net.children()
     if not nodes:
         note.setPosition(hou.Vector2(-gap - note.size()[0], 0))
@@ -172,9 +174,37 @@ def _sticky(net, name, lines):
     return note
 
 
+# Collision shape guides, per node type: (category, type name): toggles to turn on. Box3D's solvers draw the shapes
+# Box3D simulates; in a DOP network with no Box3D Solver, Bullet's objects draw Bullet's.
+BOX3D_SHAPE_GUIDES = {("Dop", "box3d_solver"): ("showguide",), ("Sop", "box3d_solver"): ("exportshapes",)}
+BULLET_SHAPE_GUIDES = {("Dop", "rbdpackedobject"): ("showguide",), ("Dop", "rbdobject"): ("bullet_showguide",),
+                       ("Sop", "rbdbulletsolver"): ("showgeorep",)}
+
+
+def show_collision_shapes(obj):
+    """Turns on the collision shape guides: Box3D's, and Bullet's where no Box3D Solver DOP shares its network.
+    Guides draw only, so the simulations do not change."""
+    nodes = obj.allSubChildren()
+    box3d_nets = {n.parent().path() for n in nodes if n.type().name() == "box3d_solver"}
+    for n in nodes:
+        key = (n.type().category().name(), n.type().name())
+        names = BOX3D_SHAPE_GUIDES.get(key, ())
+        if not names and n.parent().path() not in box3d_nets:
+            names = BULLET_SHAPE_GUIDES.get(key, ())
+        for name in names:
+            parm = n.parm(name)
+            if parm is None:
+                continue
+            try:
+                parm.set(1)
+            except hou.Error:
+                continue
+
+
 def tidy_for_review(test_name, test_fn, results):
     """Lays out, spaces and annotates the current scene. results: [(status, message)]."""
     obj = hou.node("/obj")
+    show_collision_shapes(obj)
     tops = sorted(obj.children(), key=lambda n: n.sessionId())
     dopnets = [n for n in tops if n.type().name() == "dopnet"]
 

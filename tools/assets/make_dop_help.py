@@ -1,6 +1,6 @@
 """Help cards for the plugin's own DOP nodes (F1 on the node).
 
-    hython tools/make_dop_help.py <help folder>
+    hython tools/assets/make_dop_help.py <help folder>
 
 Writes `<help folder>/nodes/dop/<node>.txt` in Houdini's wiki markup for Box3D Solver, Box3D Data and every Box3D
 constraint relationship node. Houdini finds help for a compiled node there on HOUDINI_PATH (the digital assets carry
