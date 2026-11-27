@@ -78,6 +78,7 @@ for module in MODULES:
 def run_child(name, out_dir, result_file):
     """Runs one test in this process and writes its results to result_file (JSON)."""
     hou.hipFile.clear(suppress_save_prompt=True)
+    b3dtest.KEPT.clear()
     try:
         got = TESTS[name]()
     except SetupError as e:
@@ -90,6 +91,12 @@ def run_child(name, out_dir, result_file):
             got.append(Result(name, Result.INFO, "disabled parameters set by the test (Houdini ignores them): "
                               + ", ".join(ignored)))
     except Exception:
+        traceback.print_exc()
+    try:
+        # A test that cleared its scene kept a copy of it (b3dtest.keep_scene): that is the one saved.
+        if b3dtest.KEPT:
+            hou.hipFile.load(b3dtest.KEPT[0], suppress_save_prompt=True, ignore_load_warnings=True)
+    except hou.OperationFailed:
         traceback.print_exc()
     try:
         # Laid out, spaced and annotated for a person to open; never allowed to affect the result.

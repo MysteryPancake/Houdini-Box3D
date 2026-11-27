@@ -3,6 +3,8 @@ read results back. Runs inside hython (Houdini's Python); needs the Box3D plugin
 folder (build.bat puts it there)."""
 
 import math
+import os
+import tempfile
 
 import hou
 
@@ -138,6 +140,31 @@ def vex_value(v):
     if isinstance(v, (tuple, list)) and len(v) == 3:
         return "v", "set(%r, %r, %r)" % tuple(float(x) for x in v)
     raise ValueError(f"unsupported attribute value {v!r}")
+
+
+# ---------------------------------------------------------------------------
+# The scene saved for review
+# ---------------------------------------------------------------------------
+
+
+# The copy keep_scene made in this test, else empty: run_tests.py saves it as the test's .hip.
+KEPT = []
+
+
+def keep_scene():
+    """For a test that clears or deletes its scene when done (several runs, or a large one): keeps a copy of the scene
+    now, on its first frame (reopened, it cooks no further), as the .hip run_tests.py saves for review. The first copy
+    in a test is the one kept; an empty scene is not kept."""
+    if KEPT or not hou.node("/obj").children():
+        return
+    path = os.path.join(tempfile.mkdtemp(prefix="box3d_kept_"), "kept.hip")
+    frame = hou.frame()
+    hou.setFrame(hou.playbar.frameRange()[0])
+    try:
+        hou.hipFile.save(path, save_to_recent_files=False)
+        KEPT.append(path)
+    finally:
+        hou.setFrame(frame)
 
 
 # ---------------------------------------------------------------------------

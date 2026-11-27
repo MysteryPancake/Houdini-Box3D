@@ -69,7 +69,9 @@ Houdini checks: `hython tests/houdini/run_tests.py` (test names, `--list`, `--fa
 `--update-baseline`), or `test.bat` on Windows. Each test builds its scene from scratch in its own hython process (a
 crash, or no result after 30 minutes, is reported as CRASH; an exception as ERROR), prints PASS / FAIL / INFO, and
 saves the scene to `tests/houdini/out/` tidied for opening by hand (`review.py`, with a sticky
-note holding the test's docstring and results, so write docstrings for a reader of the scene). SETUP means the script
+note holding the test's docstring and results, so write docstrings for a reader of the scene). A test that clears or
+deletes its scene when done (several runs, or a large one) calls `b3dtest.keep_scene()` first: the first copy it keeps,
+on its first frame, is the scene saved. SETUP means the script
 guessed a node or parameter name wrong; the message lists the real ones. The last status of each test is in
 `tests/houdini/out/last_results.json`.
 

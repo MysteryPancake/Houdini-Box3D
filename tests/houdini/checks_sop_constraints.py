@@ -4,7 +4,7 @@ constraints, constraint settings and guide, the constraint output, and Enable Ag
 import math
 
 import hou
-from b3dtest import append_sop, GROUND, Result, close, constraint_lines, packed_boxes, set_parm
+from b3dtest import append_sop, GROUND, Result, close, constraint_lines, keep_scene, packed_boxes, set_parm
 
 from checks_sop_common import _both_sops, bullet_sop, named_positions, play, solver_sop
 
@@ -394,6 +394,7 @@ def _first_break(kind, tag, cname, anchors, hang=None, enable=(), parms=None, na
         set_parm(sop, [name], value)
     gone = []
     play(sop, frames, lambda s, f: None if s.geometry(1).prims() else gone.append(f))
+    keep_scene()
     for node in [n for n in hou.node("/obj").children() if n.name().startswith(tag)]:
         node.destroy()
     return gone[0] if gone else None

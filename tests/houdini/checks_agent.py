@@ -6,7 +6,7 @@ import os
 import tempfile
 
 import hou
-from b3dtest import Result, SetupError, set_parm
+from b3dtest import Result, SetupError, keep_scene, set_parm
 
 import agent_oracle
 
@@ -118,6 +118,7 @@ def test_agent_partial_bullet():
         for solver in ("bullet", "box3d"):
             arrays, _ = agent_arrays("PartialRagdolls", solver, frame)
             found[solver] = [bodies(a) for a in arrays]
+            keep_scene()
             hou.hipFile.clear(suppress_save_prompt=True)
         gaps = [(b[t][1] - o[t][1]).length() for b, o in zip(found["bullet"], found["box3d"]) for t in b if t in o]
         mean = sum(gaps) / len(gaps) if gaps else float("inf")
@@ -144,6 +145,7 @@ def test_agent_joints_bullet():
             found[solver] = [bodies(a) for a in arrays]
             if solver == "box3d" and node is not None and node.warnings():
                 problems.append(f"solver warnings: {list(node.warnings())[:2]}")
+            keep_scene()
             hou.hipFile.clear(suppress_save_prompt=True)
         if frames == 6:
             gaps = [(b[t][1] - o[t][1]).length() for b, o in zip(found["bullet"], found["box3d"]) for t in b if t in o]
@@ -178,22 +180,34 @@ def agent_point_arrays(sim):
              if geo.findPointAttrib(a) is not None} for pt in geo.points()]
 
 
+def spread_agents(crowd):
+    """PinnedRagdolls' five agents 2 apart instead of 1.375 (still over the box their hands are pinned to, which spans
+    -5 to 5 in x): they never swing into each other, so a change to one leaves the others' paths alone."""
+    line = crowd.node("line1")
+    line.parm("originx").set(-4.0)
+    line.parm("dist").set(8.0)
+
+
 def test_agent_rebuild():
     """PinnedRagdolls in the Box3D Solver, its world rebuilt mid-simulation (a checkpoint written at frame 15, the scene
-    saved and reopened, played on to 30) against a straight run. The rebuilt bodies take their rest from the agent
-    points' arrays, so pivot_agent stays what it was (within 1e-4) and the bodies on frame 30 are on average within
-    0.05 of the straight run's (warm starting and contacts start again, so not exactly)."""
+    saved and reopened, played on to 30) against a straight run, the agents spread apart (spread_agents: else they
+    swing into each other, which makes any difference grow). The rebuilt bodies take their rest from the agent points'
+    arrays, so pivot_agent stays what it was (within 1e-4) and the bodies on frame 30 are on average within 0.05 of the
+    straight run's (warm starting and contacts start again, so not exactly)."""
     try:
         crowd, sim = agent_oracle.load("PinnedRagdolls", "box3d")
     except (StopIteration, hou.OperationFailed, hou.LoadWarning) as e:
         raise SetupError(f"the PinnedRagdolls example could not be loaded: {e}")
+    spread_agents(crowd)
     for f in range(1, 31):
         hou.setFrame(f)
         sim.simulation().objects()
     straight = agent_point_arrays(sim)
+    keep_scene()
     hou.hipFile.clear(suppress_save_prompt=True)
 
     crowd, sim = agent_oracle.load("PinnedRagdolls", "box3d")
+    spread_agents(crowd)
     folder = tempfile.mkdtemp(prefix="box3d_agent_")
     set_parm(sim, ["explicitcache", "savecheckpoints"], 1)
     set_parm(sim, ["explicitcachename", "checkpointname"], os.path.join(folder, "ckpt.$SF.sim").replace("\\", "/"))
@@ -213,6 +227,7 @@ def test_agent_rebuild():
         hou.setFrame(f)
         sim.simulation().objects()
     resumed = agent_point_arrays(sim)
+    keep_scene()
     hou.hipFile.clear(suppress_save_prompt=True)
 
     pivot_off, gaps = 0.0, []
@@ -292,6 +307,7 @@ def edited_ragdolls(solver, frames, snippet=None, pin_to=None):
         obj = next(o for o in objects if o.geometry() is not None and o.geometry().prims()
                    and o.geometry().prims()[0].type().name() == "Agent")
         found[f] = {i: centre for i, (mass, centre) in bodies(agent_point_arrays_of(obj.geometry())[0]).items()}
+    keep_scene()
     hou.hipFile.clear(suppress_save_prompt=True)
     return found, warnings
 
@@ -392,6 +408,7 @@ def agent1_not_ragdoll_run(pin):
                and o.geometry().prims()[0].type().name() == "Agent")
     arrays = agent_point_arrays_of(obj.geometry())
     hand = bodies(arrays[0]).get(4, (0.0, hou.Vector3()))[1]  # LeftFingerBase_To_LeftHandIndex1
+    keep_scene()
     hou.hipFile.clear(suppress_save_prompt=True)
     return hand, len(bodies(arrays[1])), warnings
 
@@ -430,7 +447,7 @@ def after_crowd_solver(sim, name, snippet):
 def agent_bodies_off_pose(geo, point=0):
     """The mean distance of an agent's bodies (pivot_agent + trans_agent) from their shapes in its pose now, and its
     arrays."""
-    pt, prim = geo.points()[point], geo.prims()[point]
+    prim = geo.prims()[point]
     arrays = agent_point_arrays_of(geo)[point]
     full = prim.fullTransform()
     offs = []
@@ -470,6 +487,7 @@ def test_agent_update_xform():
         hips = prim.rig().findTransform("Hips")
         pose = hou.Vector3((prim.worldTransform(hips) * prim.fullTransform()).extractTranslates())
         hips_gap = (bodies(arrays)[hips][1] - pose).length()
+    keep_scene()
     hou.hipFile.clear(suppress_save_prompt=True)
     ok = moved is not None and moved < 1e-5 and hips_gap < 0.1
     return [Result("agent_update_xform", Result.PASS if ok else Result.FAIL,
@@ -502,6 +520,7 @@ def test_agent_leave_ragdoll():
             obj = next(o for o in objects if o.geometry() is not None and o.geometry().prims()
                        and o.geometry().prims()[0].type().name() == "Agent")
             seen[f] = agent_bodies_off_pose(obj.geometry())
+        keep_scene()
         hou.hipFile.clear(suppress_save_prompt=True)
         if mode == "zero":
             off = max(seen[46][0], seen[50][0])
@@ -516,12 +535,14 @@ def test_agent_leave_ragdoll():
                         f"{'GIVEN' if warned else 'none'}")
     return [Result("agent_leave_ragdoll", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
 
-def crowd_change_run(solver, change):
-    """PinnedRagdolls played to frame 30 with the crowd changed from frame 20: `leave` removes agent 2's point (a Geometry
-    Wrangle after the Crowd Solver), `join` has the crowd source emit the agents again (renamed `late_*`, 3 higher),
-    None changes nothing. Body centres per agent name on frame 30, body counts per name on frame 20, and the solver's
-    warnings from frame 20 on."""
+def crowd_change_run(solver, change, spread=False):
+    """PinnedRagdolls played to frame 30 with the crowd changed from frame 20: `leave` removes agent 2's point (a
+    Geometry Wrangle after the Crowd Solver), `join` has the crowd source emit the agents again (renamed `late_*`, 3
+    higher), None changes nothing; `spread`: the agents spread apart (spread_agents). Body centres per agent name on
+    frame 30, body counts per name on frame 20, and the solver's warnings from frame 20 on."""
     crowd, sim = agent_oracle.load("PinnedRagdolls", solver)
+    if spread:
+        spread_agents(crowd)
     if change == "leave":
         after_crowd_solver(sim, "leave_crowd", 'if (@Frame >= 20 && s@name == "mocapbiped3_2") removepoint(0, @ptnum);')
     elif change == "join":
@@ -545,19 +566,21 @@ def crowd_change_run(solver, change):
                      for pt, a in zip(geo.points(), agent_point_arrays_of(geo))}
             if f == 20:
                 counts = {n: len(b) for n, b in found.items()}
+    keep_scene()
     hou.hipFile.clear(suppress_save_prompt=True)
     return found, counts, warnings
 
 
 def test_agent_crowd_changes():
     """Agents leaving and joining the crowd mid-simulation (PinnedRagdolls, from frame 20), as RBD Bullet Solver handles
-    them. An agent removed: its bodies go, the others carry on exactly as without the change (frame 30, within 1e-9),
-    and its ragdoll's constraints are dropped without a warning. A second batch of agents emitted: each gets its 15
+    them. An agent removed: its bodies go, the others carry on exactly as without the change (frame 30, within 1e-9, the
+    agents spread apart so that it would not have hit them), and its ragdoll's constraints are dropped without a
+    warning. A second batch of agents emitted: each gets its 15
     bodies on the frame it joins, and on frame 30 they are where Bullet's are (within 0.02 on average; 0.002 measured),
     with no warning."""
     rows, ok = [], True
-    base, _, _ = crowd_change_run("box3d", None)
-    left, _, warned = crowd_change_run("box3d", "leave")
+    base, _, _ = crowd_change_run("box3d", None, spread=True)
+    left, _, warned = crowd_change_run("box3d", "leave", spread=True)
     same = all(max((left[n][t] - base[n][t]).length() for t in left[n]) < 1e-9 for n in left)
     gone = "mocapbiped3_2" not in left
     ok = ok and same and gone and not warned
@@ -572,6 +595,71 @@ def test_agent_crowd_changes():
     rows.append(f"joined: {len(late)} agents with {[counts.get(n) for n in late]} bodies on frame 20, {mean:.3f} from "
                 f"Bullet's on frame 30, warnings {warned[:1] or 'none'}")
     return [Result("agent_crowd_changes", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+def shaped_ragdolls(solver, kind):
+    """PinnedRagdolls with every collision shape of the Agent Collision Layer set to `kind`: box, capsule, sphere, or a
+    Custom shape from a SOP, `tetra` (a Platonic Solids tetrahedron of radius 5, centred on its centroid) or `cone` (a
+    polygon tube of radius 4 narrowing to a point, 12 high, its centroid 3 off its bounding box centre). Agent 0's
+    {transform: (mass_agent, pivot_agent)} on frame 1."""
+    crowd, sim = agent_oracle.load("PinnedRagdolls", solver)
+    layer = next(n for n in crowd.parent().allSubChildren() if n.type().name() == "agentcollisionlayer")
+    sop = None
+    if kind == "tetra":
+        sop = layer.parent().createNode("platonic", "custom_shape")
+        sop.parm("radius").set(5.0)
+    elif kind == "cone":
+        sop = layer.parent().createNode("tube", "custom_shape")
+        for name, value in (("type", "poly"), ("rad1", 4.0), ("rad2", 0.0), ("height", 12.0), ("cols", 12),
+                            ("cap", True), ("ty", 3.0)):
+            sop.parm(name).set(value)
+    i = 0
+    while layer.parm(f"shape{i}") is not None:
+        if sop is None:
+            layer.parm(f"shape{i}").set(kind)
+        else:
+            layer.parm(f"shape{i}").set("custom")
+            layer.parm(f"soppath{i}").set(sop.path())
+            # Unset (0) when the type is set from a script.
+            layer.parmTuple(f"customshapes{i}").set((1.0, 1.0, 1.0))
+        i += 1
+    hou.setFrame(1)
+    objects = sim.simulation().objects()
+    obj = next(o for o in objects if o.geometry() is not None and o.geometry().prims()
+               and o.geometry().prims()[0].type().name() == "Agent")
+    arrays = agent_point_arrays_of(obj.geometry())[0]
+    found = {t: (m, hou.Vector3(arrays["pivot_agent"][3 * t:3 * t + 3]))
+             for t, m in enumerate(arrays.get("mass_agent", [])) if m > 0.0}
+    keep_scene()
+    hou.hipFile.clear(suppress_save_prompt=True)
+    return found
+
+
+def test_agent_shapes_bullet():
+    """Collision shapes other than capsules against RBD Bullet Solver (PinnedRagdolls with every shape a box, a sphere,
+    then a Custom tetrahedron and cone): a body's centre (`pivot_agent`) is a one-point primitive's point, else the
+    centroid of the shape's convex hull, and its mass the density times the shape's volume with no factor
+    (kAgentMassScale is a capsule's). Bullet's are the same for the box and sphere; for a custom shape it samples the
+    volume, so its mass is off by up to 10% (the tetrahedron 9% light, the cone 1 to 8% heavy, measured) and the
+    cone's centre is 0.03 from the centroid (its tetrahedron's is exact)."""
+    # kind: (lowest and highest mass ratio, largest centre gap)
+    limits = {"box": (0.99, 1.01, 0.005), "sphere": (0.99, 1.01, 0.005), "tetra": (1.0, 1.15, 0.005),
+              "cone": (0.9, 1.05, 0.04)}
+    rows, ok = [], True
+    for kind, (lo, hi, most) in limits.items():
+        ours, theirs = shaped_ragdolls("box3d", kind), shaped_ragdolls("bullet", kind)
+        both = [t for t in theirs if t in ours]
+        ratio = [ours[t][0] / theirs[t][0] for t in both if theirs[t][0] > 0]
+        if not ratio:
+            ok = False
+            rows.append(f"{kind}: no bodies")
+            continue
+        gap = max((ours[t][1] - theirs[t][1]).length() for t in both)
+        ok = ok and len(both) == len(theirs) and lo < min(ratio) and max(ratio) < hi and gap < most
+        rows.append(f"{kind}: {len(both)} bodies, mass ratio {min(ratio):.3f} to {max(ratio):.3f}, centres within "
+                    f"{gap:.4f}")
+    return [Result("agent_shapes_bullet", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
 
 def test_agent_pose_box3d():
     """PinnedRagdolls with the Box3D Solver, frames 12 and 36: the agents' own pose follows their bodies. Every body's
@@ -633,4 +721,5 @@ TESTS = {
     "agent_update_xform": test_agent_update_xform,
     "agent_leave_ragdoll": test_agent_leave_ragdoll,
     "agent_crowd_changes": test_agent_crowd_changes,
+    "agent_shapes_bullet": test_agent_shapes_bullet,
 }

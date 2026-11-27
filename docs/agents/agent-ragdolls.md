@@ -13,16 +13,22 @@ the rest are not ([todo.md](todo.md), "Agent ragdolls"). Index and rules: [CLAUD
   one that is not gets no bodies at all, and its name goes in `Box3DObjectSync::agentsNotRagdoll`.
 * `syncAgentBodies` runs after the apply pass of `syncObject`. For each ragdoll agent it takes the first collision layer's
   shape bindings (`GU_AgentLayer::ShapeBinding`, one body per transform that has one) and makes the body once: a hull of
-  the shape's geometry (a Tube primitive on one point, in the transform's own space, so the point is the centre of mass)
-  scaled by the rows of the transform's world matrix (the agent's units), posed at that matrix times the agent
-  primitive's own transform, origin at the shape's point. Its rest (`pivot`, `restRot`, what the arrays and the pose
-  measure from) is the rig's at rest: `Box3DAgentRest`, made once per agent by `restOfAgent` from the pose when its
+  the shape's geometry (in the transform's own space) through the transform's world matrix M times the transpose of the
+  body's rotation R (`splitPackedMatrix`'s), so the hull keeps the matrix's scale (the agent's units), shear and
+  mirroring (a Sphere primitive stays round, sized by the matrix's first row), posed at R and the agent primitive's
+  own transform, origin at the shape's centre as Bullet puts `pivot_agent` (`shapeCentre`): the point of a lone Tube
+  or Sphere primitive (a capsule, a sphere), else the centroid of the convex hull of its points, packed geometry
+  unpacked (`geometryCentreOfMass`: a box's centre; a Custom shape's), else, flat, its bounding box centre. The
+  centres are found once per agent, with its rest. Its rest (`pivot`, `restRot`, what the arrays and the pose measure
+  from) is the rig's at rest: `Box3DAgentRest`, made once per agent by `restOfAgent` from the pose when its
   first bodies are made, or, when the point's arrays describe the pose it has now (a reloaded or rebuilt simulation),
   by moving each transform back by its body's motion since rest (the inverse of `writeAgentPose`); the bodies then also
   start at `v_agent` / `w_agent`. An agent that stops being a ragdoll loses its rest. Its `BodyProps` are the agent
   point's (`readDynamicProps`),
-  with the mass the density times the shape's own volume (`calcVolume`, times `kAgentMassScale`, which is what Bullet's
-  `mass_agent` comes to on the mocap biped of the examples) spread over the hull.
+  with the mass the density times the shape's own volume (the primitives' `calcVolume` summed, so a closed polygon
+  mesh's faces add up to its volume, times M's determinant; the hull's when that is not within `kMinVolumeOfHull` to
+  `kMaxVolumeOfHull` of it, as for faces that close no volume or wind both ways; for the layer's capsule, a Tube with a
+  `tubeCapt` attribute, times `kAgentMassScale`, which is what Bullet's `mass_agent` comes to) spread over the hull.
 * Bodies are mirror entries with `agentBody` set, no point (`pointOff` -1) and the id `kAgentIdBase + point id *
   kAgentTransforms + transform` in the object's key space. Each scan stamps them, so they go when their agent does, and
   retypes a body when its `active_agent` element flips. A 0 is a transform that follows the animation: a kinematic
@@ -56,7 +62,10 @@ the rest are not ([todo.md](todo.md), "Agent ragdolls"). Index and rules: [CLAUD
   after the step, not used to remake the joint). A mirrored rig transform (the mocap biped's left arm: a negative
   determinant) is that rotation with its z row negated (`Box3DAgentFrame::mirrored`, `AnchorBody::mirrored`), so the
   `local_orient` turn is mirrored to (-x, -y, z, w) and `specFor` negates the z of that end's Cone Twist axes, which
-  are in the transform's own space. The Cone Twist data
+  are in the transform's own space. A ragdoll's first step solves none of its joints, as Bullet's: a joint with
+  an end on a body made this step (`Box3DBodyMirror::agentFreshStamp`, not one rebuilt from its arrays) is a Filter
+  joint for that step, so the two bodies, which may overlap, do not push apart, and the network is read again on the
+  next (`Box3DJointNetwork::retryNextStep`), which makes the real joint. The Cone Twist data
   then maps as for any anchors ([joints-sidefx.md](joints-sidefx.md)), and a Pin
   from a transform to a Static Object is an ordinary Hard line. The two ends of a joint are bodies of one ragdoll, so
   their collisions follow the data's Disable Collisions.
@@ -95,6 +104,8 @@ the rest are not ([todo.md](todo.md), "Agent ragdolls"). Index and rules: [CLAUD
 agent for either solver (the Box3D Solver takes the place of the example's Bullet solver in its Multiple Solver,
 with its own Gravity at 0: the example's Gravity DOP is the gravity). Tests (their limits are in `checks_agent.py`):
 `agent_bodies_bullet` (frame 1: the same rig transforms have bodies, with Bullet's masses and centres of mass),
+`agent_shapes_bullet` (the same with every shape a box, a sphere, then a Custom tetrahedron and cone: Bullet samples a
+custom shape's volume, so its masses and the cone's centre are only near ours),
 `agent_bodies_partial` (40 frames: 15 bodies an agent throughout, the flips of `active_agent` do not break it),
 `agent_joints_bullet` (PinnedRagdolls: the bodies near Bullet's on frame 6; on frames 24 and 48 the pinned hand, the
 ragdoll's centre and its spread against Bullet's), `agent_pose_box3d` (the posed joints are where the arrays say, the

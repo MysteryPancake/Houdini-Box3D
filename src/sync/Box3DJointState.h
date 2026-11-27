@@ -195,6 +195,9 @@ struct Box3DJointNetwork {
   // (Box3DObjectSync::agentsGone): their constraints are dropped without a
   // warning. Bounded by the agents its geometry names.
   std::unordered_set<std::string> agentsGone;
+  // Some constraint waits for the next step (a ragdoll made fresh this step):
+  // read the network again then.
+  bool retryNextStep = false;
 };
 
 // What one bond adds to the signature of the bond list (kGlueCountSalt for the

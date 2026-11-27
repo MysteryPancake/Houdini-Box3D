@@ -482,6 +482,11 @@ void updateWholeObjectBody(Box3DBodyMirror &entry, const WholeObjectScan &s) {
 
 } // namespace
 
+void geometryCentreOfMass(const GU_Detail *gdp, const double m[16],
+                          double centre[3]) {
+  objectCentreOfMass(gdp, m, centre);
+}
+
 // Sync an object that is one body (isWholeObject): its geometry gives the
 // shapes, its Position data (RBD State for an RBD Object) the pose, pivot and
 // velocities, Box3D Data the settings (there are no point attributes). Without

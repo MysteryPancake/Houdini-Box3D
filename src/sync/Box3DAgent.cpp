@@ -9,7 +9,9 @@
 
 #include <functional>
 #include <unordered_set>
+#include <vector>
 
+#include <GA/GA_PrimitiveTypes.h>
 #include <GEO/GEO_Primitive.h>
 #include <GU/GU_Agent.h>
 #include <GU/GU_AgentDefinition.h>
@@ -29,11 +31,19 @@ namespace {
 constexpr int64_t kAgentIdBase = static_cast<int64_t>(1) << 40;
 constexpr int64_t kAgentTransforms = 4096;
 
-// Bullet's `mass_agent` is this times the density times the shape's volume (a
-// Tube's `measuredvolume`, its cylinder, in the agent's units): measured on the
-// mocap biped of the PinnedRagdolls and PartialRagdolls examples, the same for
-// every shape of it. Not derived; other kinds of shape are unchecked.
+// Bullet's `mass_agent` for the Agent Collision Layer's capsule shape (a Tube
+// primitive with a `tubeCapt` attribute) is this times the density times its
+// volume (the Tube's `measuredvolume`, its cylinder, in the agent's units):
+// measured on the mocap biped of the PinnedRagdolls and PartialRagdolls
+// examples, the same for every shape of it and for capsules twice as long; not
+// derived. For a sphere, box or Custom shape (a Tube in one included) it is the
+// density times the volume (measured the same way).
 constexpr double kAgentMassScale = 5.0 / 3.0;
+
+// The shape's own volume is used for its mass while it is within these of its
+// hull's (planBody), else the hull's.
+constexpr double kMinVolumeOfHull = 0.05;
+constexpr double kMaxVolumeOfHull = 1.5;
 
 const GU_Agent *agentOf(const GU_PrimPacked *prim) {
   return prim ? dynamic_cast<const GU_Agent *>(prim->sharedImplementation())
@@ -84,38 +94,87 @@ struct BodyPlan {
   Box3DBodyPose pose;
   BuiltShapes shapes;
   // The shape's own volume (a Tube's, exactly, not its sampled hull's) in the
-  // body's units: Bullet's `mass_agent` is the density times this.
+  // body's units, and what Bullet's `mass_agent` is of the density times it.
   double volume = 0.0;
+  double massScale = 1.0;
 };
 
+// Where the body's centre is in the shape's own space, as Bullet has it: the
+// point of a lone Tube or Sphere primitive, else the centroid of the convex
+// hull of the shape's points, packed geometry unpacked as its hull is built (a
+// box's centre; Bullet samples a Custom shape's and lands near it), else, for
+// a flat shape, the centre of its bounding box.
+void shapeCentre(const GU_Detail &sgdp, double out[3]) {
+  if (sgdp.getNumPrimitives() == 1 && sgdp.getNumPoints() == 1 &&
+      sgdp.countPrimitiveType(GA_PRIMTUBE) +
+              sgdp.countPrimitiveType(GA_PRIMSPHERE) ==
+          1) {
+    const UT_Vector3 p = sgdp.getPos3(*GA_Iterator(sgdp.getPointRange()));
+    out[0] = p.x();
+    out[1] = p.y();
+    out[2] = p.z();
+    return;
+  }
+  static const double kIdentity[16] = {1, 0, 0, 0, 0, 1, 0, 0,
+                                       0, 0, 1, 0, 0, 0, 0, 1};
+  geometryCentreOfMass(&sgdp, kIdentity, out);
+}
+
+// The Agent Collision Layer's capsule shape: a Tube with a `tubeCapt`
+// attribute (a Tube in a Custom shape has none).
+bool layerCapsule(const GU_Detail &sgdp) {
+  return sgdp.countPrimitiveType(GA_PRIMTUBE) > 0 &&
+         sgdp.findPrimitiveAttribute("tubeCapt") != nullptr;
+}
+
+// The body of a shape at its transform's world matrix `world4`, centred on
+// `pivot` (shapeCentre's, in the shape's own space).
 bool planBody(b3dop::Box3DWorld &world, const TransformShape &shape,
-              const double world4[16], BodyPlan &out) {
+              const double world4[16], const double pivot[3], BodyPlan &out) {
   GU_DetailHandleAutoReadLock lock(shape.geometry);
   const GU_Detail *sgdp = lock.getGdp();
   if (!sgdp || sgdp->getNumPoints() == 0)
     return false;
-  const GA_Iterator first(sgdp->getPointRange());
-  const UT_Vector3 p = sgdp->getPos3(*first);
-  const double pivot[3] = {p.x(), p.y(), p.z()};
-  // The transform's world matrix carries the agent's units: a rotation, with
-  // each row scaled. The shape's points are in the transform's own space, so
-  // the body-local points are those scaled (the rotation is the body's own).
+  // The transform's world matrix M carries the agent's units: the body's
+  // rotation R (splitPackedMatrix's) times a scale, and any shear or mirroring.
+  // The shape's points are in the transform's own space, so the body-local
+  // points are those times M times R transposed, which keeps all of it (but a
+  // Sphere primitive, which stays round, sized by M's first row).
   double m3[9], scale[3];
   b3dop::upper3x3(world4, m3);
   if (!splitPackedMatrix(m3, out.pose.rot, scale))
     return false;
-  const double scaling[16] = {scale[0], 0, 0,        0, 0, scale[1], 0, 0,
-                              0,        0, scale[2], 0, 0, 0,        0, 1};
-  const double scaledPivot[3] = {pivot[0] * scale[0], pivot[1] * scale[1],
-                                 pivot[2] * scale[2]};
-  out.shapes = buildWholeObjectShapes(world, sgdp, scaling, scaledPivot,
+  UT_DMatrix3 rot;
+  UT_QuaternionD(out.pose.rot[0], out.pose.rot[1], out.pose.rot[2],
+                 out.pose.rot[3])
+      .getRotationMatrix(rot);
+  double toBody[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 3; ++j)
+      for (int k = 0; k < 3; ++k)
+        toBody[i * 4 + j] += m3[i * 3 + k] * rot(static_cast<unsigned>(j),
+                                                 static_cast<unsigned>(k));
+  double bodyPivot[3];
+  b3dop::xformPoint(toBody, pivot, bodyPivot);
+  out.shapes = buildWholeObjectShapes(world, sgdp, toBody, bodyPivot,
                                       b3dop::ShapeType::Convex, false);
   if (out.shapes.pieces.empty())
     return false;
+  // Each primitive's volume about one point: a closed polygon mesh's faces sum
+  // to its volume, a Tube's or Sphere's is its own. Faces that do not close a
+  // volume, or close it with mixed winding, sum to something far from the
+  // hull's (at most it, a sampled Tube's a little less): then the hull's.
   for (GA_Iterator it(sgdp->getPrimitiveRange()); !it.atEnd(); ++it)
-    out.volume +=
-        std::fabs(sgdp->getGEOPrimitive(*it)->calcVolume(UT_Vector3(0, 0, 0)));
-  out.volume *= std::fabs(scale[0] * scale[1] * scale[2]);
+    out.volume += sgdp->getGEOPrimitive(*it)->calcVolume(UT_Vector3(0, 0, 0));
+  const double det = m3[0] * (m3[4] * m3[8] - m3[5] * m3[7]) -
+                     m3[1] * (m3[3] * m3[8] - m3[5] * m3[6]) +
+                     m3[2] * (m3[3] * m3[7] - m3[4] * m3[6]);
+  out.volume = std::fabs(out.volume * det);
+  const double hull = out.shapes.totalVolume;
+  if (!(out.volume > kMinVolumeOfHull * hull &&
+        out.volume < kMaxVolumeOfHull * hull))
+    out.volume = hull;
+  out.massScale = layerCapsule(*sgdp) ? kAgentMassScale : 1.0;
   b3dop::xformPoint(world4, pivot, out.pose.pos);
   return true;
 }
@@ -137,10 +196,7 @@ bool shapePivot(const TransformShape &shape, double out[3]) {
   const GU_Detail *sgdp = lock.getGdp();
   if (!sgdp || sgdp->getNumPoints() == 0)
     return false;
-  const UT_Vector3 p = sgdp->getPos3(*GA_Iterator(sgdp->getPointRange()));
-  out[0] = p.x();
-  out[1] = p.y();
-  out[2] = p.z();
+  shapeCentre(*sgdp, out);
   return true;
 }
 
@@ -174,6 +230,14 @@ bool restOfAgent(const GU_Detail *gdp, GA_Offset off, const GU_AgentRig &rig,
                  Box3DAgentRest &rest) {
   rest.world = now;
   const size_t n = now.size();
+  // Each shape's centre, once for the agent (a hull for most shapes).
+  rest.pivots.assign(n, {0.0, 0.0, 0.0});
+  rest.hasPivot.assign(n, 0);
+  for (const TransformShape &shape : shapes) {
+    const size_t t = static_cast<size_t>(shape.transform);
+    if (t < n && shapePivot(shape, rest.pivots[t].data()))
+      rest.hasPivot[t] = 1;
+  }
   const auto arrayOf = [&](const char *name, UT_Fpreal32Array &out) {
     const GA_ROHandleFA h(gdp->findFloatArray(GA_ATTRIB_POINT, name));
     if (h.isValid())
@@ -191,11 +255,11 @@ bool restOfAgent(const GU_Detail *gdp, GA_Offset off, const GU_AgentRig &rig,
   bool any = false;
   for (const TransformShape &shape : shapes) {
     const size_t t = static_cast<size_t>(shape.transform);
-    double local[3], centre[3];
+    double centre[3];
     if (!arrays || t >= n || !(mass(static_cast<exint>(t)) > 0.0f) ||
-        !shapePivot(shape, local))
+        !rest.hasPivot[t])
       continue;
-    b3dop::xformPoint(now[t].data(), local, centre);
+    b3dop::xformPoint(now[t].data(), rest.pivots[t].data(), centre);
     double d2 = 0.0, scale = 1.0;
     for (int k = 0; k < 3; ++k) {
       const double at =
@@ -397,13 +461,6 @@ void syncAgentBodies(Box3DSharedState &st, Box3DObjectSync &os, int objectId,
       made.frames.resize(n);
       for (size_t t = 0; t < n; ++t)
         made.frames[t] = frameOf(made.world[t].data());
-      made.pivots.assign(n, {0.0, 0.0, 0.0});
-      made.hasPivot.assign(n, 0);
-      for (const TransformShape &shape : shapes) {
-        const size_t t = static_cast<size_t>(shape.transform);
-        if (t < n && shapePivot(shape, made.pivots[t].data()))
-          made.hasPivot[t] = 1;
-      }
       restIt = os.agentRestWorld.emplace(s.bid, std::move(made)).first;
     }
     const Box3DAgentRest &rest = restIt->second;
@@ -434,7 +491,9 @@ void syncAgentBodies(Box3DSharedState &st, Box3DObjectSync &os, int objectId,
         // rig's at rest, which the arrays and the pose measure from.
         const size_t ti = static_cast<size_t>(t);
         BodyPlan plan;
-        if (!planBody(world, shape, now[ti].data(), plan) ||
+        if (!rest.hasPivot[ti] ||
+            !planBody(world, shape, now[ti].data(), rest.pivots[ti].data(),
+                      plan) ||
             ti >= rest.hasPivot.size() || !rest.hasPivot[ti]) {
           ++c.agentFailed;
           continue;
@@ -445,7 +504,7 @@ void syncAgentBodies(Box3DSharedState &st, Box3DObjectSync &os, int objectId,
         if (plan.volume > 0.0) {
           bodyProps.computeMass = false;
           bodyProps.mass =
-              static_cast<float>(props.density * plan.volume * kAgentMassScale);
+              static_cast<float>(props.density * plan.volume * plan.massScale);
         }
         const Box3DMirrorMap::Ref res = st.mirror.tryEmplace(key);
         entry = res.entry;
@@ -467,6 +526,7 @@ void syncAgentBodies(Box3DSharedState &st, Box3DObjectSync &os, int objectId,
         entry->handle = h;
         entry->type = want;
         entry->agentBody = true;
+        entry->agentFreshStamp = restored ? 0 : st.syncStamp;
         b3dop::xformPoint(rest.world[ti].data(), rest.pivots[ti].data(),
                           entry->pivot);
         b3dop::copy4(entry->restRot, rest.frames[ti].rot.data());

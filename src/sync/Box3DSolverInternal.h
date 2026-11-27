@@ -400,6 +400,11 @@ BuiltShapes buildWholeObjectShapes(b3dop::Box3DWorld &world,
                                    const double pivot[3], b3dop::ShapeType type,
                                    bool hullPerConnected,
                                    bool staticMesh = false);
+// The centroid of the convex hull of the geometry's points through `m`, packed
+// primitives unpacked as buildWholeObjectShapes takes them; the bounding box
+// centre when no hull can be made.
+void geometryCentreOfMass(const GU_Detail *gdp, const double m[16],
+                          double centre[3]);
 
 // A point's `bullet_georep` via the shared-string handle (an int read), each
 // distinct handle parsed once per scan (handles are per attribute table, so the

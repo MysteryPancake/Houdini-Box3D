@@ -81,6 +81,9 @@ struct Box3DBodyMirror : Box3DBodyPose {
   // One rig transform of a crowd agent ragdoll (Box3DAgent.cpp): no point of
   // its own (pointOff is -1); the agent's point is `pointId` / 4096.
   bool agentBody = false;
+  // The sync that made this agent body fresh (from the pose, not restored from
+  // the arrays): its joints wait a step, as Bullet's (0: none).
+  uint64_t agentFreshStamp = 0;
   // Glued into a compound body (Box3DCompoundSync.cpp): this entry's own body
   // is disabled and the compound moves it. glueEdited: another node changed
   // the point's pose, so the compound is dissolved before the next step.

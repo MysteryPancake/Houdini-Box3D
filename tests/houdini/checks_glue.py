@@ -12,6 +12,7 @@ from b3dtest import (
     close,
     constraint_lines,
     create,
+    keep_scene,
     display,
     find_network_geometry,
     finish,
@@ -221,7 +222,9 @@ def test_glue_compound_hit():
         try:
             xs = step(dop, frames, ball_x)
         finally:
-            # The runner lays the scene out for review after the test, which takes over 10 GB for this one.
+            # The runner lays the scene out for review after the test, which takes over 10 GB cooked this far: the
+            # copy it saves is kept on the first frame.
+            keep_scene()
             hou.hipFile.clear(suppress_save_prompt=True)
         speed = (xs[hit_frame] - xs[hit_frame - 1]) * hou.fps()
         return speed, xs[frames]
@@ -440,6 +443,7 @@ def fracture_glue_left(kind, strength, frames=24, sep=0.15, tag="frac", **solver
             set_parm(sop, [parm], value)
         counts = play(sop, frames, lambda s, f: len(s.geometry(1).prims()) if f in (1, frames) else None)
     finally:
+        keep_scene()
         geo.destroy()
     return counts[frames], counts[1]
 
@@ -604,8 +608,9 @@ def glue_row_run(kind, strength, frames, **scene):
         return broken_count(sim) if f == frames else None
 
     track = step(dop, frames, sample)
+    keep_scene()  # the first run is the one saved for review
     for node in [n for n in hou.node("/obj").children() if n.name().startswith(tag)]:
-        node.destroy()  # keeps the saved scene small
+        node.destroy()
     return track[frames], peak[0]
 
 

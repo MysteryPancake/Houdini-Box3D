@@ -609,9 +609,11 @@ private:
     const bool noBodyB =
         myRd.anchorKind(p1) == AnchorKind::Agent &&
         myAnchors.agentWithoutBody(myRd.anchorName(p1), expectedB);
+    // Retried when bodies come (the agent turned ragdoll).
     if (noBodyA || noBodyB) {
       if ((noBodyA && !expectedA) || (noBodyB && !expectedB))
         ++myCounts.agentAnchors;
+      myNet.needsBodies = true;
       dropJoint(e);
       return false;
     }
@@ -643,6 +645,7 @@ private:
     if ((agentA && !(ab.entry && ab.entry->agentBody)) ||
         (agentB && !(bb.entry && bb.entry->agentBody))) {
       ++myCounts.agentAnchors;
+      myNet.needsBodies = true;
       dropJoint(e);
       return false;
     }
@@ -781,8 +784,21 @@ private:
     // ones moved with their pieces.
     const b3dop::JointFrame nowA = useLive ? fa : restToNow(myWorld, ab, fa),
                             nowB = useLive ? fb : restToNow(myWorld, bb, fb);
-    const JointSpec j =
-        specFor(*kind, off, ab, bb, fa, fb, authA, authB, nowA, nowB);
+    // A ragdoll made fresh this step: its joints come on the next, as RBD
+    // Bullet Solver's (its first step solves none: every body falls freely).
+    // Until then each is a Filter joint, so the two bodies, which may overlap,
+    // do not push apart. Rebuilt from its arrays it carries on with them at
+    // once.
+    const bool fresh =
+        (e.agentEndA && ab.entry->agentFreshStamp == mySt.syncStamp) ||
+        (e.agentEndB && bb.entry->agentFreshStamp == mySt.syncStamp);
+    if (fresh)
+      myNet.retryNextStep = true;
+    JointSpec j =
+        fresh ? JointSpec{}
+              : specFor(*kind, off, ab, bb, fa, fb, authA, authB, nowA, nowB);
+    if (fresh)
+      j.type = b3dop::JointType::Filter;
     noteKind(e, j, off);
 
     const bool live = myNet.writable;
@@ -868,9 +884,10 @@ bool processNetwork(Box3DSharedState &st, const NetworkRef &ref,
   const bool bodiesMatter =
       st.allNetworksDirty || bodyRemoved ||
       (net.needsBodies && (st.bodiesAdded || !st.removedBodies.empty())) ||
-      net.nameVersion != st.nameVersion;
+      net.nameVersion != st.nameVersion || net.retryNextStep;
   if (fp == net.fingerprint && !bodiesMatter && !kindsChanged && !massChanged)
     return false;
+  net.retryNextStep = false;
   net.fingerprint = fp;
   net.nameVersion = st.nameVersion;
   net.liveStamp = st.syncStamp;
