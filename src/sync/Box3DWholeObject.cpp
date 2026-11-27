@@ -9,7 +9,8 @@
 #include <cctype>
 #include <type_traits>
 
-namespace box3dsolver {
+namespace box3dsolver
+{
 
 // ---------------------------------------------------------------------------
 // Whole-object bodies (RBD Object, RBD Point Object, ...)
@@ -19,14 +20,13 @@ namespace box3dsolver {
 // point: it has a collider label (Colliders data, as RBD Object and its
 // relatives attach) other than PackedObject (RBD Packed Object). An object
 // without one (an Empty Object with a SOP Geometry) keeps its points as bodies.
-bool isWholeObject(const SIM_Object &obj) {
-  const SIM_ColliderLabel *label =
-      SIM_DATA_GETCONST(obj, SIM_COLLIDERS_DATANAME, SIM_ColliderLabel);
-  if (!label)
-    return false;
-  const UT_StringHolder name = label->getColliderLabel();
-  return !(name.isstring() &&
-           std::strcmp(name.c_str(), SIM_COLLIDERLABEL_PACKEDOBJECT) == 0);
+bool isWholeObject( const SIM_Object& obj )
+{
+	const SIM_ColliderLabel* label = SIM_DATA_GETCONST( obj, SIM_COLLIDERS_DATANAME, SIM_ColliderLabel );
+	if ( !label )
+		return false;
+	const UT_StringHolder name = label->getColliderLabel();
+	return !( name.isstring() && std::strcmp( name.c_str(), SIM_COLLIDERLABEL_PACKEDOBJECT ) == 0 );
 }
 
 // The body's pose from the object's Position data: the world position of the
@@ -35,122 +35,132 @@ bool isWholeObject(const SIM_Object &obj) {
 // untouched then). `forcePivot` (object space) replaces the data's pivot: the
 // pose is the same transform, the pivot only picks which point of the object
 // the body origin is.
-bool readWholePose(const SIM_Object &obj, double pivot[3], Box3DBodyPose &out,
-                   const double *forcePivot) {
-  const SIM_Position *pos =
-      SIM_DATA_GETCONST(obj, SIM_POSITION_DATANAME, SIM_Position);
-  if (!pos)
-    return false;
-  UT_Vector3 pv(0.0f, 0.0f, 0.0f);
-  pos->getPivot(pv);
-  UT_DMatrix4 xf;
-  pos->getTransform(xf);
-  double m[16];
-  box3dToArray(xf, m);
-  const double pvd[3] = {forcePivot ? forcePivot[0] : pv.x(),
-                         forcePivot ? forcePivot[1] : pv.y(),
-                         forcePivot ? forcePivot[2] : pv.z()};
-  double wp[3];
-  b3dop::xformPoint(m, pvd, wp);
-  if (!b3dop::finite3(wp))
-    return false;
-  for (int i = 0; i < 3; ++i) {
-    pivot[i] = pvd[i];
-    out.pos[i] = wp[i];
-  }
-  UT_Quaternion q;
-  pos->getOrientation(q);
-  out.rot[0] = static_cast<float>(q.x());
-  out.rot[1] = static_cast<float>(q.y());
-  out.rot[2] = static_cast<float>(q.z());
-  out.rot[3] = static_cast<float>(q.w());
-  b3dop::sanitizeQuat(out.rot);
-  for (int i = 0; i < 3; ++i)
-    out.lin[i] = out.ang[i] = 0.0f;
-  if (const SIM_Motion *mo =
-          SIM_DATA_GETCONST(obj, SIM_POSITION_DATANAME, SIM_Motion)) {
-    const UT_Vector3 v = mo->getVelocity();
-    const UT_Vector3 w = mo->getAngularVelocity(); // radians per second
-    const float lin[3] = {v.x(), v.y(), v.z()}, ang[3] = {w.x(), w.y(), w.z()};
-    if (b3dop::finite3(lin) && b3dop::finite3(ang))
-      for (int i = 0; i < 3; ++i) {
-        out.lin[i] = lin[i];
-        out.ang[i] = ang[i];
-      }
-  }
-  return true;
+bool readWholePose( const SIM_Object& obj, double pivot[3], Box3DBodyPose& out, const double* forcePivot )
+{
+	const SIM_Position* pos = SIM_DATA_GETCONST( obj, SIM_POSITION_DATANAME, SIM_Position );
+	if ( !pos )
+		return false;
+	UT_Vector3 pv( 0.0f, 0.0f, 0.0f );
+	pos->getPivot( pv );
+	UT_DMatrix4 xf;
+	pos->getTransform( xf );
+	double m[16];
+	box3dToArray( xf, m );
+	const double pvd[3] = { forcePivot ? forcePivot[0] : pv.x(), forcePivot ? forcePivot[1] : pv.y(),
+							forcePivot ? forcePivot[2] : pv.z() };
+	double wp[3];
+	b3dop::xformPoint( m, pvd, wp );
+	if ( !b3dop::finite3( wp ) )
+		return false;
+	for ( int i = 0; i < 3; ++i )
+	{
+		pivot[i] = pvd[i];
+		out.pos[i] = wp[i];
+	}
+	UT_Quaternion q;
+	pos->getOrientation( q );
+	out.rot[0] = static_cast<float>( q.x() );
+	out.rot[1] = static_cast<float>( q.y() );
+	out.rot[2] = static_cast<float>( q.z() );
+	out.rot[3] = static_cast<float>( q.w() );
+	b3dop::sanitizeQuat( out.rot );
+	for ( int i = 0; i < 3; ++i )
+		out.lin[i] = out.ang[i] = 0.0f;
+	if ( const SIM_Motion* mo = SIM_DATA_GETCONST( obj, SIM_POSITION_DATANAME, SIM_Motion ) )
+	{
+		const UT_Vector3 v = mo->getVelocity();
+		const UT_Vector3 w = mo->getAngularVelocity(); // radians per second
+		const float lin[3] = { v.x(), v.y(), v.z() }, ang[3] = { w.x(), w.y(), w.z() };
+		if ( b3dop::finite3( lin ) && b3dop::finite3( ang ) )
+			for ( int i = 0; i < 3; ++i )
+			{
+				out.lin[i] = lin[i];
+				out.ang[i] = ang[i];
+			}
+	}
+	return true;
 }
 
-namespace {
+namespace
+{
 
 // RBD State's inertia options: `computeinertialtensor` (off keeps the computed
 // inertia) and `computeinertialtensortype` (Use Volume / Use Bounding Box, an
 // index or a token naming the box).
-void readInertiaType(const SIM_Data *state, b3dop::RbdObjectSettings &r) {
-  if (!state)
-    return;
-  const SIM_Options *opts = box3dDataOptions(*state);
-  fpreal64 v = 0.0;
-  if (box3dDataOption(*state, opts, "computeinertialtensor", v)) {
-    r.hasComputeInertia = true;
-    r.computeInertia = v != 0.0;
-  }
-  UT_StringHolder token;
-  if (box3dDataOption(*state, opts, "computeinertialtensortype", v)) {
-    r.hasInertiaType = true;
-    r.boundsInertiaType = static_cast<int>(v) == b3dop::kRbdInertiaTypeBounds;
-  } else if (box3dDataOption(*state, opts, "computeinertialtensortype",
-                             token) &&
-             token.isstring()) {
-    std::string t(token.c_str());
-    std::transform(t.begin(), t.end(), t.begin(), [](unsigned char ch) {
-      return static_cast<char>(std::tolower(ch));
-    });
-    r.hasInertiaType = true;
-    r.boundsInertiaType = t.find("box") != std::string::npos ||
-                          t.find("bound") != std::string::npos;
-  }
+void readInertiaType( const SIM_Data* state, b3dop::RbdObjectSettings& r )
+{
+	if ( !state )
+		return;
+	const SIM_Options* opts = box3dDataOptions( *state );
+	fpreal64 v = 0.0;
+	if ( box3dDataOption( *state, opts, "computeinertialtensor", v ) )
+	{
+		r.hasComputeInertia = true;
+		r.computeInertia = v != 0.0;
+	}
+	UT_StringHolder token;
+	if ( box3dDataOption( *state, opts, "computeinertialtensortype", v ) )
+	{
+		r.hasInertiaType = true;
+		r.boundsInertiaType = static_cast<int>( v ) == b3dop::kRbdInertiaTypeBounds;
+	}
+	else if ( box3dDataOption( *state, opts, "computeinertialtensortype", token ) && token.isstring() )
+	{
+		std::string t( token.c_str() );
+		std::transform( t.begin(), t.end(), t.begin(),
+						[]( unsigned char ch ) { return static_cast<char>( std::tolower( ch ) ); } );
+		r.hasInertiaType = true;
+		r.boundsInertiaType = t.find( "box" ) != std::string::npos || t.find( "bound" ) != std::string::npos;
+	}
 }
 
 // The points of the geometry's pieces in object space (`m` applied), as xyz
 // triples.
-std::vector<double> objectPoints(const GU_Detail *gdp, const double m[16]) {
-  PieceGroup g;
-  collectPieces(gdp, g);
-  std::vector<double> out;
-  for (const NamedPiece &np : g.pieces)
-    for (size_t k = 0; k + 2 < np.xyz.size(); k += 3) {
-      const double p[3] = {np.xyz[k], np.xyz[k + 1], np.xyz[k + 2]};
-      double o[3];
-      b3dop::xformPoint(m, p, o);
-      out.insert(out.end(), o, o + 3);
-    }
-  return out;
+std::vector<double> objectPoints( const GU_Detail* gdp, const double m[16] )
+{
+	PieceGroup g;
+	collectPieces( gdp, g );
+	std::vector<double> out;
+	for ( const NamedPiece& np : g.pieces )
+		for ( size_t k = 0; k + 2 < np.xyz.size(); k += 3 )
+		{
+			const double p[3] = { np.xyz[k], np.xyz[k + 1], np.xyz[k + 2] };
+			double o[3];
+			b3dop::xformPoint( m, p, o );
+			out.insert( out.end(), o, o + 3 );
+		}
+	return out;
 }
 
 // Full side lengths of the geometry's bounding box in object space.
-void objectBoundsExtents(const GU_Detail *gdp, const double m[16],
-                         float extents[3]) {
-  double lo[3] = {1e300, 1e300, 1e300}, hi[3] = {-1e300, -1e300, -1e300};
-  const std::vector<double> pts = objectPoints(gdp, m);
-  for (size_t k = 0; k + 2 < pts.size(); k += 3)
-    for (int c = 0; c < 3; ++c) {
-      lo[c] = std::min(lo[c], pts[k + static_cast<size_t>(c)]);
-      hi[c] = std::max(hi[c], pts[k + static_cast<size_t>(c)]);
-    }
-  for (int c = 0; c < 3; ++c)
-    extents[c] = hi[c] >= lo[c] ? static_cast<float>(hi[c] - lo[c]) : 0.0f;
+void objectBoundsExtents( const GU_Detail* gdp, const double m[16], float extents[3] )
+{
+	double lo[3] = { 1e300, 1e300, 1e300 }, hi[3] = { -1e300, -1e300, -1e300 };
+	const std::vector<double> pts = objectPoints( gdp, m );
+	for ( size_t k = 0; k + 2 < pts.size(); k += 3 )
+		for ( int c = 0; c < 3; ++c )
+		{
+			lo[c] = std::min( lo[c], pts[k + static_cast<size_t>( c )] );
+			hi[c] = std::max( hi[c], pts[k + static_cast<size_t>( c )] );
+		}
+	for ( int c = 0; c < 3; ++c )
+		extents[c] = hi[c] >= lo[c] ? static_cast<float>( hi[c] - lo[c] ) : 0.0f;
 }
 
 // One data with its options looked up once (each read would cast again).
-struct Source {
-  const SIM_Data *data;
-  const SIM_Options *opts;
-  explicit Source(const SIM_Data *d)
-      : data(d), opts(d ? box3dDataOptions(*d) : nullptr) {}
-  template <class T> bool get(const char *name, T &out) const {
-    return data && box3dDataOption(*data, opts, name, out);
-  }
+struct Source
+{
+	const SIM_Data* data;
+	const SIM_Options* opts;
+	explicit Source( const SIM_Data* d )
+		: data( d )
+		, opts( d ? box3dDataOptions( *d ) : nullptr )
+	{
+	}
+	template <class T> bool get( const char* name, T& out ) const
+	{
+		return data && box3dDataOption( *data, opts, name, out );
+	}
 };
 
 // The RBD Object's own settings (used without Box3D Data): mass and inertia
@@ -158,333 +168,346 @@ struct Source {
 // friction and bounce from PhysicalParms, the shape from its geometry's
 // BulletData. Each option is read if the data has it
 // (b3dop::RbdObjectSettings names them).
-b3dop::RbdObjectSettings readRbdObjectSettings(const SIM_Object &obj,
-                                               const SIM_Geometry &geo) {
-  b3dop::RbdObjectSettings r;
-  auto number = [](const Source &d, const char *name, bool &has, auto &out) {
-    fpreal64 v = 0.0;
-    if (d.get(name, v) && std::isfinite(v)) {
-      has = true;
-      out = static_cast<std::remove_reference_t<decltype(out)>>(v);
-    }
-  };
-  auto toggle = [](const Source &d, const char *name, bool &has, bool &out) {
-    fpreal64 v = 0.0;
-    if (d.get(name, v)) {
-      has = true;
-      out = v != 0.0;
-    }
-  };
-  auto vec = [](const Source &d, const char *name, float out[3]) {
-    UT_Vector3D v;
-    if (d.get(name, v) && std::isfinite(v.x()) && std::isfinite(v.y()) &&
-        std::isfinite(v.z()))
-      for (unsigned i = 0; i < 3; ++i)
-        out[i] = static_cast<float>(v(i));
-  };
+b3dop::RbdObjectSettings readRbdObjectSettings( const SIM_Object& obj, const SIM_Geometry& geo )
+{
+	b3dop::RbdObjectSettings r;
+	auto number = []( const Source& d, const char* name, bool& has, auto& out ) {
+		fpreal64 v = 0.0;
+		if ( d.get( name, v ) && std::isfinite( v ) )
+		{
+			has = true;
+			out = static_cast<std::remove_reference_t<decltype( out )>>( v );
+		}
+	};
+	auto toggle = []( const Source& d, const char* name, bool& has, bool& out ) {
+		fpreal64 v = 0.0;
+		if ( d.get( name, v ) )
+		{
+			has = true;
+			out = v != 0.0;
+		}
+	};
+	auto vec = []( const Source& d, const char* name, float out[3] ) {
+		UT_Vector3D v;
+		if ( d.get( name, v ) && std::isfinite( v.x() ) && std::isfinite( v.y() ) && std::isfinite( v.z() ) )
+			for ( unsigned i = 0; i < 3; ++i )
+				out[i] = static_cast<float>( v( i ) );
+	};
 
-  const SIM_Data *stateData = obj.getConstNamedSubData(SIM_POSITION_DATANAME);
-  const Source state(stateData);
-  toggle(state, "computemass", r.hasComputeMass, r.computeMass);
-  number(state, "density", r.hasDensity, r.density);
-  number(state, "mass", r.hasMass, r.mass);
-  number(state, "inertialtensorstiffness", r.hasInertia, r.inertiaStiffness);
-  readInertiaType(stateData, r);
+	const SIM_Data* stateData = obj.getConstNamedSubData( SIM_POSITION_DATANAME );
+	const Source state( stateData );
+	toggle( state, "computemass", r.hasComputeMass, r.computeMass );
+	number( state, "density", r.hasDensity, r.density );
+	number( state, "mass", r.hasMass, r.mass );
+	number( state, "inertialtensorstiffness", r.hasInertia, r.inertiaStiffness );
+	readInertiaType( stateData, r );
 
-  // Create Active Object
-  toggle(Source(obj.getConstNamedSubData("SolverParms")), "ActiveValue",
-         r.hasActive, r.active);
+	// Create Active Object
+	toggle( Source( obj.getConstNamedSubData( "SolverParms" ) ), "ActiveValue", r.hasActive, r.active );
 
-  const Source phys(obj.getConstNamedSubData("PhysicalParms"));
-  number(phys, "friction", r.hasFriction, r.friction);
-  number(phys, "bounce", r.hasBounce, r.bounce);
+	const Source phys( obj.getConstNamedSubData( "PhysicalParms" ) );
+	number( phys, "friction", r.hasFriction, r.friction );
+	number( phys, "bounce", r.hasBounce, r.bounce );
 
-  const Source bullet(geo.getConstNamedSubData("BulletData"));
-  if (bullet.data) {
-    UT_StringHolder georep;
-    if (bullet.get("bullet_georep", georep) && georep.isstring()) {
-      r.hasGeorep = true;
-      r.georep = std::string(georep.c_str());
-    }
-    toggle(bullet, "bullet_autofit", r.hasAutofit, r.autofit);
-    toggle(bullet, "bullet_groupconnected", r.hasGroupConnected,
-           r.groupConnected);
-    vec(bullet, "bullet_primS", r.primS);
-    vec(bullet, "bullet_primT", r.primT);
-    float deg[3] = {0, 0, 0};
-    vec(bullet, "bullet_primR", deg);
-    box3dEulerToQuat(deg, r.primRot); // Euler XYZ degrees, as for points
-    bool unused = false;
-    number(bullet, "bullet_radius", unused, r.radius);
-    number(bullet, "bullet_length", unused, r.length);
-  }
-  return r;
+	const Source bullet( geo.getConstNamedSubData( "BulletData" ) );
+	if ( bullet.data )
+	{
+		UT_StringHolder georep;
+		if ( bullet.get( "bullet_georep", georep ) && georep.isstring() )
+		{
+			r.hasGeorep = true;
+			r.georep = std::string( georep.c_str() );
+		}
+		toggle( bullet, "bullet_autofit", r.hasAutofit, r.autofit );
+		toggle( bullet, "bullet_groupconnected", r.hasGroupConnected, r.groupConnected );
+		vec( bullet, "bullet_primS", r.primS );
+		vec( bullet, "bullet_primT", r.primT );
+		float deg[3] = { 0, 0, 0 };
+		vec( bullet, "bullet_primR", deg );
+		box3dEulerToQuat( deg, r.primRot ); // Euler XYZ degrees, as for points
+		bool unused = false;
+		number( bullet, "bullet_radius", unused, r.radius );
+		number( bullet, "bullet_length", unused, r.length );
+	}
+	return r;
 }
 
 // A whole object's shapes: the hand-set box / sphere / capsule (Bullet Data
 // with AutoFit off), else built from the geometry.
-BuiltShapes wholeObjectShapes(b3dop::Box3DWorld &world, const GU_Detail *gdp,
-                              const double m[16], const double pivot[3],
-                              const b3dop::WholeObjectSetup &setup) {
-  if (setup.explicitShape) {
-    BuiltShapes out;
-    Piece pc;
-    pc.spec = setup.spec;
-    pc.volume = b3dop::shapeVolume(pc.spec);
-    out.totalVolume = pc.volume;
-    out.pieces.push_back(pc);
-    return out;
-  }
-  return buildWholeObjectShapes(world, gdp, m, pivot, setup.node.defaultShape,
-                                setup.node.hullPerConnectedSet,
-                                setup.node.type ==
-                                    b3dop::BodySettings::Type::Static);
+BuiltShapes wholeObjectShapes( b3dop::Box3DWorld& world, const GU_Detail* gdp, const double m[16],
+							   const double pivot[3], const b3dop::WholeObjectSetup& setup )
+{
+	if ( setup.explicitShape )
+	{
+		BuiltShapes out;
+		Piece pc;
+		pc.spec = setup.spec;
+		pc.volume = b3dop::shapeVolume( pc.spec );
+		out.totalVolume = pc.volume;
+		out.pieces.push_back( pc );
+		return out;
+	}
+	return buildWholeObjectShapes( world, gdp, m, pivot, setup.node.defaultShape, setup.node.hullPerConnectedSet,
+								   setup.node.type == b3dop::BodySettings::Type::Static );
 }
 
 // What a whole object's shapes are built from: the geometry, its own transform,
 // the pivot and the shape settings (Box3D Data's, or the RBD Object's Bullet
 // Data). Equal: nothing to rebuild.
-uint64_t wholeObjectShapeSig(const GU_Detail *gdp, const double m[16],
-                             const double pivot[3],
-                             const b3dop::WholeObjectSetup &setup) {
-  const b3dop::BodySettings &node = setup.node;
-  using b3dop::mixHash;
-  uint64_t h = geometryIdentity(gdp);
-  for (int i = 0; i < 16; ++i)
-    h = b3dop::mixDouble(h, m[i]);
-  for (int i = 0; i < 3; ++i)
-    h = b3dop::mixDouble(h, pivot[i]);
-  h = mixHash(h, static_cast<uint64_t>(node.defaultShape));
-  h = mixHash(h, node.hullPerConnectedSet ? 1u : 2u);
-  // A static concave object is a triangle mesh, so the shapes depend on it.
-  h = mixHash(h, node.type == b3dop::BodySettings::Type::Static ? 4u : 5u);
-  if (setup.explicitShape) {
-    h = mixHash(mixHash(h, 3u), b3dop::hashShapeSpec(setup.spec));
-  }
-  return h ? h : 1;
+uint64_t wholeObjectShapeSig( const GU_Detail* gdp, const double m[16], const double pivot[3],
+							  const b3dop::WholeObjectSetup& setup )
+{
+	const b3dop::BodySettings& node = setup.node;
+	using b3dop::mixHash;
+	uint64_t h = geometryIdentity( gdp );
+	for ( int i = 0; i < 16; ++i )
+		h = b3dop::mixDouble( h, m[i] );
+	for ( int i = 0; i < 3; ++i )
+		h = b3dop::mixDouble( h, pivot[i] );
+	h = mixHash( h, static_cast<uint64_t>( node.defaultShape ) );
+	h = mixHash( h, node.hullPerConnectedSet ? 1u : 2u );
+	// A static concave object is a triangle mesh, so the shapes depend on it.
+	h = mixHash( h, node.type == b3dop::BodySettings::Type::Static ? 4u : 5u );
+	if ( setup.explicitShape )
+	{
+		h = mixHash( mixHash( h, 3u ), b3dop::hashShapeSpec( setup.spec ) );
+	}
+	return h ? h : 1;
 }
 
 // The object's record, reset for a whole-object sync (nothing is skipped;
 // anchors name the object).
-Box3DObjectSync &beginWholeObjectSync(Box3DSharedState &st, int objectId,
-                                      bool addImpact) {
-  Box3DObjectSync &os = st.objectSync[objectId];
-  os.visited = st.syncStamp;
-  os.liveStamp = st.syncStamp;
-  os.addImpact = addImpact;
-  os.wholeObject = true;
-  os.canSkip = false;
-  os.propsKnown = false;
-  os.entryCount = 0;
-  os.bodies.clear();
-  os.byName.clear(); // anchors name the object itself (Anchors: one body)
-  os.nameSig = 0;
-  os.namesKnown = st.wantNames;
-  return os;
+Box3DObjectSync& beginWholeObjectSync( Box3DSharedState& st, int objectId, bool addImpact )
+{
+	Box3DObjectSync& os = st.objectSync[objectId];
+	os.visited = st.syncStamp;
+	os.liveStamp = st.syncStamp;
+	os.addImpact = addImpact;
+	os.wholeObject = true;
+	os.canSkip = false;
+	os.propsKnown = false;
+	os.entryCount = 0;
+	os.bodies.clear();
+	os.byName.clear(); // anchors name the object itself (Anchors: one body)
+	os.nameSig = 0;
+	os.namesKnown = st.wantNames;
+	return os;
 }
 
 // The centre of the geometry's bounding box in object space (the pivot of an
 // object without Position data).
-void boundsCentre(const GU_Detail *gdp, const double m[16], double centre[3]) {
-  double lo[3] = {0, 0, 0}, hi[3] = {0, 0, 0};
-  bool any = false;
-  for (GA_Iterator it(gdp->getPointRange()); !it.atEnd(); ++it) {
-    const UT_Vector3 p = gdp->getPos3(*it);
-    const double pd[3] = {p.x(), p.y(), p.z()};
-    double o[3];
-    b3dop::xformPoint(m, pd, o);
-    for (int i = 0; i < 3; ++i) {
-      lo[i] = any ? std::min(lo[i], o[i]) : o[i];
-      hi[i] = any ? std::max(hi[i], o[i]) : o[i];
-    }
-    any = true;
-  }
-  for (int i = 0; i < 3; ++i)
-    centre[i] = 0.5 * (lo[i] + hi[i]);
+void boundsCentre( const GU_Detail* gdp, const double m[16], double centre[3] )
+{
+	double lo[3] = { 0, 0, 0 }, hi[3] = { 0, 0, 0 };
+	bool any = false;
+	for ( GA_Iterator it( gdp->getPointRange() ); !it.atEnd(); ++it )
+	{
+		const UT_Vector3 p = gdp->getPos3( *it );
+		const double pd[3] = { p.x(), p.y(), p.z() };
+		double o[3];
+		b3dop::xformPoint( m, pd, o );
+		for ( int i = 0; i < 3; ++i )
+		{
+			lo[i] = any ? std::min( lo[i], o[i] ) : o[i];
+			hi[i] = any ? std::max( hi[i], o[i] ) : o[i];
+		}
+		any = true;
+	}
+	for ( int i = 0; i < 3; ++i )
+		centre[i] = 0.5 * ( lo[i] + hi[i] );
 }
 
 // The centroid of the convex hull of the geometry's points in object space
 // (the centre of mass of a uniform solid, as Bullet takes it); the bounding box
 // centre when no hull can be made (flat or fewer than four points).
-void objectCentreOfMass(const GU_Detail *gdp, const double m[16],
-                        double centre[3]) {
-  const std::vector<double> all = objectPoints(gdp, m);
-  std::vector<float> pts;
-  pts.reserve(all.size());
-  for (const double d : all)
-    pts.push_back(static_cast<float>(d));
-  if (!b3dop::Box3DWorld::hullCentroid(
-          pts.data(), static_cast<int>(pts.size() / 3), centre))
-    boundsCentre(gdp, m, centre);
+void objectCentreOfMass( const GU_Detail* gdp, const double m[16], double centre[3] )
+{
+	const std::vector<double> all = objectPoints( gdp, m );
+	std::vector<float> pts;
+	pts.reserve( all.size() );
+	for ( const double d : all )
+		pts.push_back( static_cast<float>( d ) );
+	if ( !b3dop::Box3DWorld::hullCentroid( pts.data(), static_cast<int>( pts.size() / 3 ), centre ) )
+		boundsCentre( gdp, m, centre );
 }
 
 // The body's pose and pivot: Position data, else (no write-back yet) the object
 // where its geometry is, about the centre of its bounding box (an existing body
 // keeps its pivot). `pivotKey` is set when the pivot was computed from the
 // geometry (see below), so the next sync can reuse it.
-void wholeObjectPose(const SIM_Object &obj, const GU_Detail *gdp,
-                     const double m[16], const Box3DBodyMirror *entry,
-                     double pivot[3], Box3DBodyPose &cur, uint64_t &pivotKey) {
-  pivotKey = 0;
-  // RBD State with Compute Center of Mass on: Houdini's solvers fill its pivot
-  // `p` in themselves and it is (0, 0, 0) until then, so the pivot is the
-  // centre of the geometry's convex hull instead. It only changes with the
-  // geometry, so the last one is reused until then.
-  fpreal64 computeCom = 0.0;
-  const SIM_Data *state = obj.getConstNamedSubData(SIM_POSITION_DATANAME);
-  if (state && box3dDataOption(*state, "computecom", computeCom) &&
-      computeCom != 0.0) {
-    uint64_t key = geometryIdentity(gdp);
-    for (int i = 0; i < 16; ++i)
-      key = b3dop::mixDouble(key, m[i]);
-    pivotKey = key ? key : 1;
-    double centre[3];
-    if (entry && entry->pivotKey == pivotKey)
-      std::copy(entry->pivot, entry->pivot + 3, centre);
-    else
-      objectCentreOfMass(gdp, m, centre);
-    if (readWholePose(obj, pivot, cur, centre))
-      return;
-  } else if (readWholePose(obj, pivot, cur))
-    return;
-  if (entry)
-    std::copy(entry->pivot, entry->pivot + 3, pivot);
-  else
-    boundsCentre(gdp, m, pivot);
-  cur = Box3DBodyPose();
-  std::copy(pivot, pivot + 3, cur.pos);
+void wholeObjectPose( const SIM_Object& obj, const GU_Detail* gdp, const double m[16], const Box3DBodyMirror* entry,
+					  double pivot[3], Box3DBodyPose& cur, uint64_t& pivotKey )
+{
+	pivotKey = 0;
+	// RBD State with Compute Center of Mass on: Houdini's solvers fill its pivot
+	// `p` in themselves and it is (0, 0, 0) until then, so the pivot is the
+	// centre of the geometry's convex hull instead. It only changes with the
+	// geometry, so the last one is reused until then.
+	fpreal64 computeCom = 0.0;
+	const SIM_Data* state = obj.getConstNamedSubData( SIM_POSITION_DATANAME );
+	if ( state && box3dDataOption( *state, "computecom", computeCom ) && computeCom != 0.0 )
+	{
+		uint64_t key = geometryIdentity( gdp );
+		for ( int i = 0; i < 16; ++i )
+			key = b3dop::mixDouble( key, m[i] );
+		pivotKey = key ? key : 1;
+		double centre[3];
+		if ( entry && entry->pivotKey == pivotKey )
+			std::copy( entry->pivot, entry->pivot + 3, centre );
+		else
+			objectCentreOfMass( gdp, m, centre );
+		if ( readWholePose( obj, pivot, cur, centre ) )
+			return;
+	}
+	else if ( readWholePose( obj, pivot, cur ) )
+		return;
+	if ( entry )
+		std::copy( entry->pivot, entry->pivot + 3, pivot );
+	else
+		boundsCentre( gdp, m, pivot );
+	cur = Box3DBodyPose();
+	std::copy( pivot, pivot + 3, cur.pos );
 }
 
 // What one whole-object sync works from, for the create and update paths.
-struct WholeObjectScan {
-  b3dop::Box3DWorld &world;
-  const GU_Detail *gdp;
-  const double *m; // geometry -> object space
-  const double *pivot;
-  const b3dop::WholeObjectSetup &setup;
-  const b3dop::BodyProps &p;
-  uint64_t sig; // wholeObjectShapeSig
-  const Box3DBodyPose &cur;
-  float stepDt; // a kinematic body reaches its new pose in this time
-  SyncCounts &c;
+struct WholeObjectScan
+{
+	b3dop::Box3DWorld& world;
+	const GU_Detail* gdp;
+	const double* m; // geometry -> object space
+	const double* pivot;
+	const b3dop::WholeObjectSetup& setup;
+	const b3dop::BodyProps& p;
+	uint64_t sig; // wholeObjectShapeSig
+	const Box3DBodyPose& cur;
+	float stepDt; // a kinematic body reaches its new pose in this time
+	SyncCounts& c;
 
-  const b3dop::BodySettings &node() const { return setup.node; }
+	const b3dop::BodySettings& node() const
+	{
+		return setup.node;
+	}
 };
 
 // A new body for the object. Null (and counted) if it could not be made.
-Box3DBodyMirror *createWholeObjectBody(Box3DSharedState &st, uint64_t key,
-                                       const WholeObjectScan &s) {
-  const b3dop::BodySettings &node = s.node();
-  BuiltShapes shapes = wholeObjectShapes(s.world, s.gdp, s.m, s.pivot, s.setup);
-  const Box3DMirrorMap::Ref res = st.mirror.tryEmplace(key);
-  Box3DBodyMirror *entry = res.entry;
-  entry->props = s.p;
-  entry->volume = shapes.totalVolume;
-  entry->shapeSig = s.sig;
-  entry->shapeless = shapes.pieces.empty();
-  entry->meshShapes = shapes.mesh;
-  entry->wholeObject = true;
-  std::copy(s.pivot, s.pivot + 3, entry->pivot);
+Box3DBodyMirror* createWholeObjectBody( Box3DSharedState& st, uint64_t key, const WholeObjectScan& s )
+{
+	const b3dop::BodySettings& node = s.node();
+	BuiltShapes shapes = wholeObjectShapes( s.world, s.gdp, s.m, s.pivot, s.setup );
+	const Box3DMirrorMap::Ref res = st.mirror.tryEmplace( key );
+	Box3DBodyMirror* entry = res.entry;
+	entry->props = s.p;
+	entry->volume = shapes.totalVolume;
+	entry->shapeSig = s.sig;
+	entry->shapeless = shapes.pieces.empty();
+	entry->meshShapes = shapes.mesh;
+	entry->wholeObject = true;
+	std::copy( s.pivot, s.pivot + 3, entry->pivot );
 
-  const b3dop::BodySettings::Type type =
-      entry->shapeless ? b3dop::BodySettings::Type::Static : node.type;
-  b3dop::BodySettings b = node;
-  b.type = type;
-  b.props = s.p;
-  b.props.density = boxDensity(s.p, shapes.totalVolume);
-  b.startAwake = node.startAwake;
-  entry->awake = b.startAwake;
-  const b3dop::BodyHandle h = createBodyWithShapes(
-      s.world, b, s.cur, shapes, entry->shapeless, s.p, true, *entry);
-  if (!h) {
-    st.mirror.erase(res.index);
-    ++s.c.failedObjects;
-    return nullptr;
-  }
-  if (shapes.note)
-    ++s.c.objectFallbacks[shapes.note];
-  entry->setPose(s.cur);
-  entry->handle = h;
-  entry->type = type;
-  ++s.c.added;
-  return entry;
+	const b3dop::BodySettings::Type type = entry->shapeless ? b3dop::BodySettings::Type::Static : node.type;
+	b3dop::BodySettings b = node;
+	b.type = type;
+	b.props = s.p;
+	b.props.density = boxDensity( s.p, shapes.totalVolume );
+	b.startAwake = node.startAwake;
+	entry->awake = b.startAwake;
+	const b3dop::BodyHandle h = createBodyWithShapes( s.world, b, s.cur, shapes, entry->shapeless, s.p, true, *entry );
+	if ( !h )
+	{
+		st.mirror.erase( res.index );
+		++s.c.failedObjects;
+		return nullptr;
+	}
+	if ( shapes.note )
+		++s.c.objectFallbacks[shapes.note];
+	entry->setPose( s.cur );
+	entry->handle = h;
+	entry->type = type;
+	++s.c.added;
+	return entry;
 }
 
 // The existing body follows what changed: shapes, settings, type, then Position
 // data edited by another node.
-void updateWholeObjectBody(Box3DBodyMirror &entry, const WholeObjectScan &s) {
-  b3dop::Box3DWorld &world = s.world;
-  const b3dop::BodySettings &node = s.node();
-  const b3dop::BodyProps &p = s.p;
+void updateWholeObjectBody( Box3DBodyMirror& entry, const WholeObjectScan& s )
+{
+	b3dop::Box3DWorld& world = s.world;
+	const b3dop::BodySettings& node = s.node();
+	const b3dop::BodyProps& p = s.p;
 
-  // Geometry, transform, pivot or shape settings changed: new shapes on the
-  // same body.
-  bool rebuilt = false;
-  if (entry.shapeSig != s.sig) {
-    // A mesh needs a static body: retype first when it becomes static. Leaving
-    // static, the shapes are rebuilt (as hulls) before the retype below.
-    if (node.type == b3dop::BodySettings::Type::Static &&
-        entry.type != b3dop::BodySettings::Type::Static) {
-      world.setTypeByHandle(entry.handle, b3dop::BodySettings::Type::Static);
-      entry.type = b3dop::BodySettings::Type::Static;
-      ++s.c.retyped;
-    }
-    BuiltShapes shapes = wholeObjectShapes(world, s.gdp, s.m, s.pivot, s.setup);
-    world.destroyShapesByHandle(entry.handle);
-    b3dop::BodySettings b = node;
-    b.type = entry.type;
-    b.props = p;
-    b.props.density = boxDensity(p, shapes.totalVolume);
-    entry.shapeless = !addAllShapes(world, entry.handle, b, shapes);
-    applyBodyMass(world, entry.handle, p, shapes.totalVolume, nullptr,
-                  false); // even with none: clears Box3D's dirty mass
-    entry.volume = shapes.totalVolume;
-    entry.meshShapes = shapes.mesh;
-    entry.shapeSig = s.sig;
-    std::copy(s.pivot, s.pivot + 3, entry.pivot);
-    world.wakeByHandle(entry.handle);
-    if (shapes.note)
-      ++s.c.objectFallbacks[shapes.note];
-    rebuilt = true;
-    ++s.c.rebuilt;
-  }
-  if (applyPropChanges(world, entry, p, rebuilt))
-    ++s.c.updated;
+	// Geometry, transform, pivot or shape settings changed: new shapes on the
+	// same body.
+	bool rebuilt = false;
+	if ( entry.shapeSig != s.sig )
+	{
+		// A mesh needs a static body: retype first when it becomes static. Leaving
+		// static, the shapes are rebuilt (as hulls) before the retype below.
+		if ( node.type == b3dop::BodySettings::Type::Static && entry.type != b3dop::BodySettings::Type::Static )
+		{
+			world.setTypeByHandle( entry.handle, b3dop::BodySettings::Type::Static );
+			entry.type = b3dop::BodySettings::Type::Static;
+			++s.c.retyped;
+		}
+		BuiltShapes shapes = wholeObjectShapes( world, s.gdp, s.m, s.pivot, s.setup );
+		world.destroyShapesByHandle( entry.handle );
+		b3dop::BodySettings b = node;
+		b.type = entry.type;
+		b.props = p;
+		b.props.density = boxDensity( p, shapes.totalVolume );
+		entry.shapeless = !addAllShapes( world, entry.handle, b, shapes );
+		applyBodyMass( world, entry.handle, p, shapes.totalVolume, nullptr,
+					   false ); // even with none: clears Box3D's dirty mass
+		entry.volume = shapes.totalVolume;
+		entry.meshShapes = shapes.mesh;
+		entry.shapeSig = s.sig;
+		std::copy( s.pivot, s.pivot + 3, entry.pivot );
+		world.wakeByHandle( entry.handle );
+		if ( shapes.note )
+			++s.c.objectFallbacks[shapes.note];
+		rebuilt = true;
+		++s.c.rebuilt;
+	}
+	if ( applyPropChanges( world, entry, p, rebuilt ) )
+		++s.c.updated;
 
-  const b3dop::BodySettings::Type wantType =
-      entry.shapeless ? b3dop::BodySettings::Type::Static : node.type;
-  if (retypeBody(world, entry, wantType))
-    ++s.c.retyped;
+	const b3dop::BodySettings::Type wantType = entry.shapeless ? b3dop::BodySettings::Type::Static : node.type;
+	if ( retypeBody( world, entry, wantType ) )
+		++s.c.retyped;
 
-  // Position data edited by another node (keyframes, a Position DOP set to Set
-  // Always). A kinematic body drives to the new pose in this step, pushing what
-  // it touches, and its velocity is cleared once the edits stop; any other
-  // body is teleported.
-  if (entry.type == b3dop::BodySettings::Type::Kinematic) {
-    if (poseDiffers(s.cur, entry)) {
-      world.setTargetTransformByHandle(entry.handle, s.cur.pos, s.cur.rot,
-                                       s.stepDt);
-      entry.setPose(s.cur);
-      entry.driven = true;
-      ++s.c.edited;
-    } else if (entry.driven) {
-      const float zero[3] = {0.0f, 0.0f, 0.0f};
-      world.setVelocityByHandle(entry.handle, zero, zero);
-      entry.driven = false;
-    }
-  } else if (poseDiffers(s.cur, entry)) {
-    world.setTransformByHandle(entry.handle, s.cur.pos, s.cur.rot);
-    world.setVelocityByHandle(entry.handle, s.cur.lin, s.cur.ang);
-    entry.setPose(s.cur);
-    ++s.c.edited;
-  }
+	// Position data edited by another node (keyframes, a Position DOP set to Set
+	// Always). A kinematic body drives to the new pose in this step, pushing what
+	// it touches, and its velocity is cleared once the edits stop; any other
+	// body is teleported.
+	if ( entry.type == b3dop::BodySettings::Type::Kinematic )
+	{
+		if ( poseDiffers( s.cur, entry ) )
+		{
+			world.setTargetTransformByHandle( entry.handle, s.cur.pos, s.cur.rot, s.stepDt );
+			entry.setPose( s.cur );
+			entry.driven = true;
+			++s.c.edited;
+		}
+		else if ( entry.driven )
+		{
+			const float zero[3] = { 0.0f, 0.0f, 0.0f };
+			world.setVelocityByHandle( entry.handle, zero, zero );
+			entry.driven = false;
+		}
+	}
+	else if ( poseDiffers( s.cur, entry ) )
+	{
+		world.setTransformByHandle( entry.handle, s.cur.pos, s.cur.rot );
+		world.setVelocityByHandle( entry.handle, s.cur.lin, s.cur.ang );
+		entry.setPose( s.cur );
+		++s.c.edited;
+	}
 }
 
 } // namespace
 
-void geometryCentreOfMass(const GU_Detail *gdp, const double m[16],
-                          double centre[3]) {
-  objectCentreOfMass(gdp, m, centre);
+void geometryCentreOfMass( const GU_Detail* gdp, const double m[16], double centre[3] )
+{
+	objectCentreOfMass( gdp, m, centre );
 }
 
 // Sync an object that is one body (isWholeObject): its geometry gives the
@@ -494,149 +517,139 @@ void geometryCentreOfMass(const GU_Detail *gdp, const double m[16],
 // are used (readRbdObjectSettings). Without Position data the object stays
 // where its geometry is, about the centre of its bounding box, until the
 // write-back creates the data.
-void syncWholeObject(Box3DSharedState &st, const SIM_Object &obj,
-                     const SIM_Geometry &geo, const GU_Detail *gdp,
-                     SyncCounts &c) {
-  const int objectId = obj.getObjectId();
-  const SIM_Box3DData *dataNode =
-      SIM_DATA_GETCONST(obj, kBox3DDataName, SIM_Box3DData);
-  // Box3D Data wins whenever it is attached; otherwise the RBD Object's own
-  // settings.
-  b3dop::WholeObjectSetup setup;
-  if (dataNode)
-    setup.node = dataNode->toBodySettings();
-  else
-    setup = b3dop::rbdObjectSetup(readRbdObjectSettings(obj, geo));
+void syncWholeObject( Box3DSharedState& st, const SIM_Object& obj, const SIM_Geometry& geo, const GU_Detail* gdp,
+					  SyncCounts& c )
+{
+	const int objectId = obj.getObjectId();
+	const SIM_Box3DData* dataNode = SIM_DATA_GETCONST( obj, kBox3DDataName, SIM_Box3DData );
+	// Box3D Data wins whenever it is attached; otherwise the RBD Object's own
+	// settings.
+	b3dop::WholeObjectSetup setup;
+	if ( dataNode )
+		setup.node = dataNode->toBodySettings();
+	else
+		setup = b3dop::rbdObjectSetup( readRbdObjectSettings( obj, geo ) );
 
-  Box3DObjectSync &os =
-      beginWholeObjectSync(st, objectId, dataNode && dataNode->getAddImpact());
+	Box3DObjectSync& os = beginWholeObjectSync( st, objectId, dataNode && dataNode->getAddImpact() );
 
-  // Geometry -> object space.
-  UT_DMatrix4 own;
-  geo.getTransform(own);
-  double m[16];
-  box3dToArray(own, m);
-  for (double d : m)
-    if (!std::isfinite(d)) {
-      ++c.failedObjects;
-      return;
-    }
+	// Geometry -> object space.
+	UT_DMatrix4 own;
+	geo.getTransform( own );
+	double m[16];
+	box3dToArray( own, m );
+	for ( double d : m )
+		if ( !std::isfinite( d ) )
+		{
+			++c.failedObjects;
+			return;
+		}
 
-  const uint64_t key = b3dop::makeBodyKey(objectId, kWholeObjectId);
-  Box3DBodyMirror *entry = st.mirror.find(key);
+	const uint64_t key = b3dop::makeBodyKey( objectId, kWholeObjectId );
+	Box3DBodyMirror* entry = st.mirror.find( key );
 
-  double pivot[3] = {0, 0, 0};
-  Box3DBodyPose cur;
-  uint64_t pivotKey = 0;
-  wholeObjectPose(obj, gdp, m, entry, pivot, cur, pivotKey);
+	double pivot[3] = { 0, 0, 0 };
+	Box3DBodyPose cur;
+	uint64_t pivotKey = 0;
+	wholeObjectPose( obj, gdp, m, entry, pivot, cur, pivotKey );
 
-  PointAttrs none(gdp); // build attributes left unbound: Box3D Data values only
-  b3dop::BodyProps p =
-      readDynamicProps(setup.node, none, static_cast<GA_Offset>(0));
-  // The pivot is the centre of mass (wholeObjectPose handles RBD State's own).
-  p.computeCom = false;
-  // The solver's Bounding Box Inertia (Bullet's inertia for hulls and
-  // compounds); RBD State's own Use Bounding Box inertia, set below, wins.
-  p.shapeBoundsInertia = st.shapeBoundsInertia;
-  // The bounding box only changes with the geometry or its transform.
-  uint64_t boundsKey = 0;
-  if (setup.boundsInertia) {
-    p.boundsInertia = true;
-    boundsKey = geometryIdentity(gdp);
-    for (const double d : m)
-      boundsKey = b3dop::mixDouble(boundsKey, d);
-    boundsKey = boundsKey ? boundsKey : 1;
-    if (entry && entry->boundsKey == boundsKey)
-      b3dop::copy3(p.boundsExtents, entry->boundsExtents);
-    else
-      objectBoundsExtents(gdp, m, p.boundsExtents);
-  }
-  const WholeObjectScan scan{st.world,
-                             gdp,
-                             m,
-                             pivot,
-                             setup,
-                             p,
-                             wholeObjectShapeSig(gdp, m, pivot, setup),
-                             cur,
-                             st.stepDt,
-                             c};
+	PointAttrs none( gdp ); // build attributes left unbound: Box3D Data values only
+	b3dop::BodyProps p = readDynamicProps( setup.node, none, static_cast<GA_Offset>( 0 ) );
+	// The pivot is the centre of mass (wholeObjectPose handles RBD State's own).
+	p.computeCom = false;
+	// The solver's Bounding Box Inertia (Bullet's inertia for hulls and
+	// compounds); RBD State's own Use Bounding Box inertia, set below, wins.
+	p.shapeBoundsInertia = st.shapeBoundsInertia;
+	// The bounding box only changes with the geometry or its transform.
+	uint64_t boundsKey = 0;
+	if ( setup.boundsInertia )
+	{
+		p.boundsInertia = true;
+		boundsKey = geometryIdentity( gdp );
+		for ( const double d : m )
+			boundsKey = b3dop::mixDouble( boundsKey, d );
+		boundsKey = boundsKey ? boundsKey : 1;
+		if ( entry && entry->boundsKey == boundsKey )
+			b3dop::copy3( p.boundsExtents, entry->boundsExtents );
+		else
+			objectBoundsExtents( gdp, m, p.boundsExtents );
+	}
+	const WholeObjectScan scan{ st.world, gdp,		 m, pivot, setup, p, wholeObjectShapeSig( gdp, m, pivot, setup ),
+								cur,	  st.stepDt, c };
 
-  if (entry)
-    updateWholeObjectBody(*entry, scan);
-  else {
-    entry = createWholeObjectBody(st, key, scan);
-    if (!entry)
-      return;
-  }
+	if ( entry )
+		updateWholeObjectBody( *entry, scan );
+	else
+	{
+		entry = createWholeObjectBody( st, key, scan );
+		if ( !entry )
+			return;
+	}
 
-  entry->pivotKey = pivotKey;
-  entry->boundsKey = boundsKey;
-  if (boundsKey)
-    b3dop::copy3(entry->boundsExtents, p.boundsExtents);
-  entry->pointOff = -1;
-  entry->pointId = kWholeObjectId;
-  entry->pointIndex = -1;
-  entry->objectId = objectId;
-  entry->stamp = st.syncStamp;
-  entry->sync = &os;
-  entry->packed = false;
-  ++st.stampedCount;
-  os.entryCount = 1;
-  os.bodies.push_back(entry);
+	entry->pivotKey = pivotKey;
+	entry->boundsKey = boundsKey;
+	if ( boundsKey )
+		b3dop::copy3( entry->boundsExtents, p.boundsExtents );
+	entry->pointOff = -1;
+	entry->pointId = kWholeObjectId;
+	entry->pointIndex = -1;
+	entry->objectId = objectId;
+	entry->stamp = st.syncStamp;
+	entry->sync = &os;
+	entry->packed = false;
+	++st.stampedCount;
+	os.entryCount = 1;
+	os.bodies.push_back( entry );
 }
 
 // After the step: a whole object's pose and velocities into its Position data,
 // which its geometry follows (positionpath ../Position). Missing data is
 // created as a SIM_Motion; Position data that is not a SIM_PositionSimple is
 // left alone (false). The mirror records what the next sync reads.
-bool writeWholeObject(SIM_Object &obj, Box3DBodyMirror &e, const double pos[3],
-                      const float rot[4], const float lin[3],
-                      const float ang[3]) {
-  SIM_PositionSimple *ps =
-      SIM_DATA_GET(obj, SIM_POSITION_DATANAME, SIM_PositionSimple);
-  if (!ps) {
-    if (obj.getConstNamedSubData(SIM_POSITION_DATANAME))
-      return false;
-    ps = SIM_DATA_CREATE(obj, SIM_POSITION_DATANAME, SIM_Motion, 0);
-    if (!ps)
-      return false;
-  }
-  ps->setPivot(UT_Vector3D(e.pivot[0], e.pivot[1], e.pivot[2]));
-  ps->setOrientation(UT_QuaternionF(rot[0], rot[1], rot[2], rot[3]));
-  // SIM_PositionSimple rotates about the pivot and then translates, so the
-  // translation is the pivot's displacement. Checked against Houdini's own
-  // transform: if the pivot does not land on the body, `position` must be the
-  // pivot's world position instead.
-  ps->setPosition(UT_Vector3D(pos[0] - e.pivot[0], pos[1] - e.pivot[1],
-                              pos[2] - e.pivot[2]));
-  {
-    UT_DMatrix4 xf;
-    ps->getTransform(xf);
-    double m[16], wp[3];
-    box3dToArray(xf, m);
-    b3dop::xformPoint(m, e.pivot, wp);
-    bool lands = true;
-    for (int i = 0; i < 3; ++i)
-      lands = lands && std::fabs(wp[i] - pos[i]) <=
-                           1e-4 * std::max(1.0, std::fabs(pos[i]));
-    if (!lands)
-      ps->setPosition(UT_Vector3D(pos[0], pos[1], pos[2]));
-  }
-  SIM_Motion *mo = SIM_DATA_CAST(ps, SIM_Motion);
-  if (mo) {
-    mo->setVelocity(UT_Vector3(lin[0], lin[1], lin[2]));
-    mo->setAngularVelocity(
-        UT_Vector3(ang[0], ang[1], ang[2])); // radians per second
-  }
+bool writeWholeObject( SIM_Object& obj, Box3DBodyMirror& e, const double pos[3], const float rot[4], const float lin[3],
+					   const float ang[3] )
+{
+	SIM_PositionSimple* ps = SIM_DATA_GET( obj, SIM_POSITION_DATANAME, SIM_PositionSimple );
+	if ( !ps )
+	{
+		if ( obj.getConstNamedSubData( SIM_POSITION_DATANAME ) )
+			return false;
+		ps = SIM_DATA_CREATE( obj, SIM_POSITION_DATANAME, SIM_Motion, 0 );
+		if ( !ps )
+			return false;
+	}
+	ps->setPivot( UT_Vector3D( e.pivot[0], e.pivot[1], e.pivot[2] ) );
+	ps->setOrientation( UT_QuaternionF( rot[0], rot[1], rot[2], rot[3] ) );
+	// SIM_PositionSimple rotates about the pivot and then translates, so the
+	// translation is the pivot's displacement. Checked against Houdini's own
+	// transform: if the pivot does not land on the body, `position` must be the
+	// pivot's world position instead.
+	ps->setPosition( UT_Vector3D( pos[0] - e.pivot[0], pos[1] - e.pivot[1], pos[2] - e.pivot[2] ) );
+	{
+		UT_DMatrix4 xf;
+		ps->getTransform( xf );
+		double m[16], wp[3];
+		box3dToArray( xf, m );
+		b3dop::xformPoint( m, e.pivot, wp );
+		bool lands = true;
+		for ( int i = 0; i < 3; ++i )
+			lands = lands && std::fabs( wp[i] - pos[i] ) <= 1e-4 * std::max( 1.0, std::fabs( pos[i] ) );
+		if ( !lands )
+			ps->setPosition( UT_Vector3D( pos[0], pos[1], pos[2] ) );
+	}
+	SIM_Motion* mo = SIM_DATA_CAST( ps, SIM_Motion );
+	if ( mo )
+	{
+		mo->setVelocity( UT_Vector3( lin[0], lin[1], lin[2] ) );
+		mo->setAngularVelocity( UT_Vector3( ang[0], ang[1], ang[2] ) ); // radians per second
+	}
 
-  // What the next sync reads back (float storage), so our write is not seen as
-  // an edit.
-  double pv[3];
-  Box3DBodyPose back;
-  if (readWholePose(obj, pv, back))
-    e.setPose(back);
-  return true;
+	// What the next sync reads back (float storage), so our write is not seen as
+	// an edit.
+	double pv[3];
+	Box3DBodyPose back;
+	if ( readWholePose( obj, pv, back ) )
+		e.setPose( back );
+	return true;
 }
 
 } // namespace box3dsolver

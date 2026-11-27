@@ -8,6 +8,8 @@ CMakeFiles/
 CMakeUserPresets.json
 cmake_install.cmake
 compile_commands.json
+# clangd's index (it reads compile_commands.json)
+.cache/
 Testing/
 _deps/
 

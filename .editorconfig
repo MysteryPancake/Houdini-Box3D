@@ -1,4 +1,4 @@
-# Editor defaults. C/C++ layout itself is clang-format's job (.clang-format, LLVM style).
+# Editor defaults. C/C++ layout itself is clang-format's job (.clang-format, Box3D's style).
 root = true
 
 [*]
@@ -8,9 +8,13 @@ insert_final_newline = true
 trim_trailing_whitespace = true
 
 [*.{c,cc,cpp,h,hpp}]
-indent_style = space
-indent_size = 2
-max_line_length = 80
+indent_style = tab
+indent_size = 4
+tab_width = 4
+max_line_length = 120
+# A ruler at the limit in Visual Studio (Editor Guidelines extension), as Box3D's .editorconfig has.
+guidelines = 120
+guidelines_style = 1px dotted gray
 
 [{CMakeLists.txt,*.cmake}]
 indent_style = space
@@ -19,10 +23,13 @@ indent_size = 4
 [*.py]
 indent_style = space
 indent_size = 4
+guidelines = 120
 
 [*.md]
 # Two trailing spaces are a line break in Markdown.
 trim_trailing_whitespace = false
+# docs/agents/doc-rules.md wraps lines at about 120.
+guidelines = 120
 
 [*.bat]
 end_of_line = crlf

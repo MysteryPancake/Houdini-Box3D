@@ -46,7 +46,7 @@ for doc in docs:
 # Attribute names: from the table in code, each must be documented for users (README.md or docs/*.md).
 names_h = "\n".join(line for line in (root / "src" / "sync" / "Box3DAttribNames.h").read_text(encoding="utf-8").splitlines()
                     if not line.lstrip().startswith("//"))     # the layout is described in comments
-code_names = re.findall(r'\bX\(\s*\w+\s*,\s*"([^"]+)"', names_h) + re.findall(r'\bY\("([^"]+)"\)', names_h)
+code_names = re.findall(r'\bX\(\s*\w+\s*,\s*"([^"]+)"', names_h) + re.findall(r'\bY\(\s*"([^"]+)"\s*\)', names_h)
 if not code_names:
     problems.append("src/sync/Box3DAttribNames.h: no attribute names found (did its X(...) layout change?)")
 user_text = "\n".join(d.read_text(encoding="utf-8") for d in user_docs)

@@ -10,52 +10,54 @@
 // the old one.
 #pragma once
 
-#include <SIM/SIM_Data.h>
-#include <SIM/SIM_DataUtils.h>
-
-#include <memory>
-
 #include "core/Box3DWorld.h"
 #include "sync/Box3DState.h"
 
-class SIM_Box3DWorld : public SIM_Data {
+#include <SIM/SIM_Data.h>
+#include <SIM/SIM_DataUtils.h>
+#include <memory>
+
+class SIM_Box3DWorld : public SIM_Data
+{
 public:
-  Box3DSharedState *state() const {
-    return myState.get();
-  } // null: no world yet
+	Box3DSharedState* state() const
+	{
+		return myState.get();
+	} // null: no world yet
 
-  // Same state, shared: for readers on other threads (the viewport's guide)
-  // that must outlive a rebuild of this data's world.
-  std::shared_ptr<Box3DSharedState> sharedState() const { return myState; }
+	// Same state, shared: for readers on other threads (the viewport's guide)
+	// that must outlive a rebuild of this data's world.
+	std::shared_ptr<Box3DSharedState> sharedState() const
+	{
+		return myState;
+	}
 
-  // A new shared state with a fresh world, for this data only.
-  bool createWorld(const b3dop::WorldSettings &settings);
+	// A new shared state with a fresh world, for this data only.
+	bool createWorld( const b3dop::WorldSettings& settings );
 
-  // After a solve: this copy now reports the state's size to the cache.
-  void claimMemory();
+	// After a solve: this copy now reports the state's size to the cache.
+	void claimMemory();
 
 protected:
-  explicit SIM_Box3DWorld(const SIM_DataFactory *factory);
-  ~SIM_Box3DWorld() override;
+	explicit SIM_Box3DWorld( const SIM_DataFactory* factory );
+	~SIM_Box3DWorld() override;
 
-  void initializeSubclass() override;
+	void initializeSubclass() override;
 
-  void
-  makeEqualSubclass(const SIM_Data *source) override; // copies share the state
+	void makeEqualSubclass( const SIM_Data* source ) override; // copies share the state
 
-  // The state's estimated size (Box3DSharedState::estimatedBytes), from the one
-  // copy that stepped it last: otherwise every sharing copy counts the whole
-  // world against the cache. The others report only themselves.
-  int64 getMemorySizeSubclass() const override;
+	// The state's estimated size (Box3DSharedState::estimatedBytes), from the one
+	// copy that stepped it last: otherwise every sharing copy counts the whole
+	// world against the cache. The others report only themselves.
+	int64 getMemorySizeSubclass() const override;
 
-  // No save / load: a reloaded sim rebuilds its world.
+	// No save / load: a reloaded sim rebuilds its world.
 
 private:
-  std::shared_ptr<Box3DSharedState> myState;
+	std::shared_ptr<Box3DSharedState> myState;
 
-  static const SIM_DopDescription *getDescription();
+	static const SIM_DopDescription* getDescription();
 
-  DECLARE_STANDARD_GETCASTTOTYPE();
-  DECLARE_DATAFACTORY(SIM_Box3DWorld, SIM_Data, "Box3D World",
-                      getDescription());
+	DECLARE_STANDARD_GETCASTTOTYPE();
+	DECLARE_DATAFACTORY( SIM_Box3DWorld, SIM_Data, "Box3D World", getDescription() );
 };

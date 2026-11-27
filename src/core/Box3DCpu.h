@@ -5,7 +5,8 @@
 // (SMT siblings) and efficiency cores on hybrid CPUs slow its spin-waiting
 // solver stages down rather than help.
 
-namespace b3dop {
+namespace b3dop
+{
 
 // Physical performance cores on this machine: hyper-threads not counted, and
 // on hybrid CPUs (Intel P/E cores, Apple Silicon, ARM big.LITTLE) only the

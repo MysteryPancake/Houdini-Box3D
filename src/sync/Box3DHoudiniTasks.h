@@ -24,46 +24,56 @@
 #include <UT/UT_TaskGroup.h>
 #include <UT/UT_TaskScope.h>
 #include <UT/UT_Thread.h>
-
 #include <oneapi/tbb/task_arena.h>
 
 // One per world. Never share one between worlds: wait() waits for every task in
 // the group.
-class Box3DHoudiniTasks final : public b3dop::TaskRunner {
+class Box3DHoudiniTasks final : public b3dop::TaskRunner
+{
 public:
-  // noexcept to match ~TaskRunner: UT_TaskGroup's destructor
-  // (tbb::task_group's) is noexcept(false), which would otherwise make this one
-  // less strict than the base's and fail to compile on MSVC. A task_group must
-  // be waited before it is destroyed.
-  ~Box3DHoudiniTasks() noexcept override {
-    try {
-      (void)myGroup.wait();
-    } catch (...) {
-    }
-  }
+	// noexcept to match ~TaskRunner: UT_TaskGroup's destructor
+	// (tbb::task_group's) is noexcept(false), which would otherwise make this one
+	// less strict than the base's and fail to compile on MSVC. A task_group must
+	// be waited before it is destroyed.
+	~Box3DHoudiniTasks() noexcept override
+	{
+		try
+		{
+			(void)myGroup.wait();
+		}
+		catch ( ... )
+		{
+		}
+	}
 
-  bool run(void (*fn)(void *), void *ctx) override {
-    if (!UT_Thread::isThreadingEnabled()) {
-      fn(ctx); // threading is off on this thread: run inline
-      return false;
-    }
-    // UT_TaskGroup does not carry the UT_TaskScope over (see UT_TaskList.h).
-    const UT_TaskScope *parent = UT_TaskScope::getCurrent();
-    myGroup.run([fn, ctx, parent]() {
-      UT_TaskScope scope(parent);
-      fn(ctx);
-    });
-    return true;
-  }
+	bool run( void ( *fn )( void* ), void* ctx ) override
+	{
+		if ( !UT_Thread::isThreadingEnabled() )
+		{
+			fn( ctx ); // threading is off on this thread: run inline
+			return false;
+		}
+		// UT_TaskGroup does not carry the UT_TaskScope over (see UT_TaskList.h).
+		const UT_TaskScope* parent = UT_TaskScope::getCurrent();
+		myGroup.run( [fn, ctx, parent]() {
+			UT_TaskScope scope( parent );
+			fn( ctx );
+		} );
+		return true;
+	}
 
-  void wait() override { (void)myGroup.wait(); }
+	void wait() override
+	{
+		(void)myGroup.wait();
+	}
 
-  // Waiting threads then only run this step's tasks, not unrelated Houdini work
-  // (another cook, another world's spinning solver task).
-  void isolate(void (*fn)(void *), void *ctx) override {
-    tbb::this_task_arena::isolate([&] { fn(ctx); });
-  }
+	// Waiting threads then only run this step's tasks, not unrelated Houdini work
+	// (another cook, another world's spinning solver task).
+	void isolate( void ( *fn )( void* ), void* ctx ) override
+	{
+		tbb::this_task_arena::isolate( [&] { fn( ctx ); } );
+	}
 
 private:
-  UT_TaskGroup myGroup;
+	UT_TaskGroup myGroup;
 };

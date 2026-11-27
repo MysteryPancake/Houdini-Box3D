@@ -58,7 +58,7 @@ endfunction()
 
 # ---------------------------------------------------------------------------
 # Formatting: `cmake --build build --target format` rewrites our sources with
-# clang-format (LLVM style, .clang-format); `format-check` only reports.
+# clang-format (Box3D's style, .clang-format); `format-check` only reports.
 # ---------------------------------------------------------------------------
 find_program(CLANG_FORMAT_EXE NAMES clang-format)
 if(CLANG_FORMAT_EXE)
@@ -143,12 +143,12 @@ endfunction()
 function(b3dop_add_test_cases name)
     set(source "${CMAKE_CURRENT_SOURCE_DIR}/tests/core_${name}.cpp")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${source}")
-    file(STRINGS "${source}" case_lines REGEX "^ *{\"[a-z0-9_]+\", *test[A-Za-z0-9_]+},")
+    file(STRINGS "${source}" case_lines REGEX "^[ \t]*{ *\"[a-z0-9_]+\", *test[A-Za-z0-9_]+ *},")
     if(NOT case_lines)
         message(FATAL_ERROR "No {\"case\", function} lines found in ${source}")
     endif()
     foreach(line IN LISTS case_lines)
-        string(REGEX REPLACE "^ *{\"([a-z0-9_]+)\".*" "\\1" case "${line}")
+        string(REGEX REPLACE "^[ \t]*{ *\"([a-z0-9_]+)\".*" "\\1" case "${line}")
         add_test(NAME b3dop_core_${name}.${case} COMMAND b3dop_core_${name} ${case})
     endforeach()
 endfunction()

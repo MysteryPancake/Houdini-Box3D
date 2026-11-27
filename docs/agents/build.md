@@ -31,7 +31,7 @@ How the project is built, tested and packaged. The digital assets' own notes are
 * `CMAKE_EXPORT_COMPILE_COMMANDS` feeds clang-tidy (`.clang-tidy`); the plugin's files only appear in it after an HDK
   build. `format` / `format-check` targets run clang-format; `.githooks/pre-commit` checks staged files once enabled
   (`git config core.hooksPath .githooks`).
-* CI (`.github/workflows/ci.yml`): format check (clang-format 18.1.3), `tools/dev/check_docs.py`, core-only build and
+* CI (`.github/workflows/ci.yml`): format check (clang-format 19.1.5, Visual Studio 2022's), `tools/dev/check_docs.py`, core-only build and
   `ctest` on Linux and Windows. No HDK, so no plugin build.
 * `BOX3DDOP_DEBUG` (default OFF) defines `BOX3DDOP_DEBUG=1` for the plugin and `b3dop_core`; with it off nothing writes
   to stdout / stderr. The value is cached in `build/`: reconfigure or delete `build/` to clear a stale ON.

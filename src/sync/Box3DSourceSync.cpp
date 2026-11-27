@@ -18,304 +18,297 @@
 #include <OP/OP_Node.h>
 #include <SOP/SOP_Node.h>
 #include <UT/UT_StringHolder.h>
-
 #include <cmath>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
-namespace box3dsolver {
+namespace box3dsolver
+{
 
-namespace {
+namespace
+{
 
-constexpr const char *kSourceDataName = "SourceObject";
+constexpr const char* kSourceDataName = "SourceObject";
 
 // The source SOP of `obj`, or null; `useTransform` is whether the SOP's object
 // transform applies (the data's `usetransform`, written by the Box3D Packed
 // Object).
-SOP_Node *findSourceSop(const SIM_Object &obj, bool &useTransform) {
-  const SIM_Data *source = obj.getConstNamedSubData(kSourceDataName);
-  if (!source)
-    return nullptr;
-  UT_StringHolder path;
-  if (!box3dDataOption(*source, "objpath", path) || !path.isstring())
-    return nullptr;
-  fpreal64 use = 0.0;
-  useTransform = box3dDataOption(*source, "usetransform", use) && use != 0.0;
-  OP_Node *node = OPgetDirector()->findNode(path.c_str());
-  return node ? node->castToSOPNode() : nullptr;
+SOP_Node* findSourceSop( const SIM_Object& obj, bool& useTransform )
+{
+	const SIM_Data* source = obj.getConstNamedSubData( kSourceDataName );
+	if ( !source )
+		return nullptr;
+	UT_StringHolder path;
+	if ( !box3dDataOption( *source, "objpath", path ) || !path.isstring() )
+		return nullptr;
+	fpreal64 use = 0.0;
+	useTransform = box3dDataOption( *source, "usetransform", use ) && use != 0.0;
+	OP_Node* node = OPgetDirector()->findNode( path.c_str() );
+	return node ? node->castToSOPNode() : nullptr;
 }
 
 // The pose a source piece has: its position and rotation through `xf` (the
 // SOP object's world transform, or identity).
-bool sourcePose(const GU_Detail *src, GA_Offset off, const UT_Matrix4D &xf,
-                double pos[3], float rot[4], double scale[3]) {
-  const PackedInfo pk = getPackedInfo(src, off);
-  if (!pk.prim)
-    return false;
-  UT_Matrix4D m;
-  for (unsigned r = 0; r < 4; ++r)
-    for (unsigned c = 0; c < 4; ++c)
-      m(r, c) = pk.m4[r * 4 + c];
-  m *= xf;
-  UT_Vector3D p(pk.P[0], pk.P[1], pk.P[2]);
-  p *= xf;
-  pos[0] = p.x();
-  pos[1] = p.y();
-  pos[2] = p.z();
-  double m3[9];
-  for (unsigned r = 0; r < 3; ++r)
-    for (unsigned c = 0; c < 3; ++c)
-      m3[r * 3 + c] = m(r, c);
-  return splitPackedMatrix(m3, rot, scale);
+bool sourcePose( const GU_Detail* src, GA_Offset off, const UT_Matrix4D& xf, double pos[3], float rot[4],
+				 double scale[3] )
+{
+	const PackedInfo pk = getPackedInfo( src, off );
+	if ( !pk.prim )
+		return false;
+	UT_Matrix4D m;
+	for ( unsigned r = 0; r < 4; ++r )
+		for ( unsigned c = 0; c < 4; ++c )
+			m( r, c ) = pk.m4[r * 4 + c];
+	m *= xf;
+	UT_Vector3D p( pk.P[0], pk.P[1], pk.P[2] );
+	p *= xf;
+	pos[0] = p.x();
+	pos[1] = p.y();
+	pos[2] = p.z();
+	double m3[9];
+	for ( unsigned r = 0; r < 3; ++r )
+		for ( unsigned c = 0; c < 3; ++c )
+			m3[r * 3 + c] = m( r, c );
+	return splitPackedMatrix( m3, rot, scale );
 }
 
 // The poses the pieces in `names` (a subset of cache.wanted) have in `sop` at
 // global time `t`, by name. The source's points are walked only when its point
 // count or `name` attribute changed since the cache's index was made.
-void readSourcePoses(SOP_Node &sop, double t, bool useTransform,
-                     Box3DSourceCache &cache,
-                     const std::unordered_map<std::string, bool> &names,
-                     std::unordered_map<std::string, Box3DSourcePose> &out) {
-  OP_Context context(t);
-  const GU_Detail *src = sop.getCookedGeo(context);
-  if (!src)
-    return;
-  UT_Matrix4D xf(1.0);
-  if (useTransform && sop.getCreator())
-    sop.getCreator()->getWorldTransform(xf, context);
-  GA_ROHandleS srcNames(src, GA_ATTRIB_POINT, "name");
-  if (!srcNames.isValid())
-    return;
-  const uint64_t key = b3dop::mixHash(
-      b3dop::mixHash(b3dop::mixHash(b3dop::kHashSeed,
-                                    static_cast<uint64_t>(src->getNumPoints())),
-                     static_cast<uint64_t>(src->getNumPointOffsets())),
-      static_cast<uint64_t>(srcNames.getAttribute()->getDataId()));
-  if (!cache.indexKnown || cache.indexKey != key) {
-    cache.index.clear();
-    GA_Offset off;
-    GA_FOR_ALL_PTOFF(src, off) {
-      const std::string name = srcNames.get(off).c_str();
-      if (cache.wanted.find(name) != cache.wanted.end())
-        cache.index[name] = off; // the last point of a name, as a scan finds
-    }
-    cache.indexKey = key;
-    cache.indexKnown = true;
-  }
-  for (const auto &kv : names) {
-    const auto it = cache.index.find(kv.first);
-    if (it == cache.index.end())
-      continue;
-    Box3DSourcePose pose;
-    if (sourcePose(src, it->second, xf, pose.pos, pose.rot, pose.scale))
-      out[kv.first] = pose;
-  }
+void readSourcePoses( SOP_Node& sop, double t, bool useTransform, Box3DSourceCache& cache,
+					  const std::unordered_map<std::string, bool>& names,
+					  std::unordered_map<std::string, Box3DSourcePose>& out )
+{
+	OP_Context context( t );
+	const GU_Detail* src = sop.getCookedGeo( context );
+	if ( !src )
+		return;
+	UT_Matrix4D xf( 1.0 );
+	if ( useTransform && sop.getCreator() )
+		sop.getCreator()->getWorldTransform( xf, context );
+	GA_ROHandleS srcNames( src, GA_ATTRIB_POINT, "name" );
+	if ( !srcNames.isValid() )
+		return;
+	const uint64_t key = b3dop::mixHash(
+		b3dop::mixHash( b3dop::mixHash( b3dop::kHashSeed, static_cast<uint64_t>( src->getNumPoints() ) ),
+						static_cast<uint64_t>( src->getNumPointOffsets() ) ),
+		static_cast<uint64_t>( srcNames.getAttribute()->getDataId() ) );
+	if ( !cache.indexKnown || cache.indexKey != key )
+	{
+		cache.index.clear();
+		GA_Offset off;
+		GA_FOR_ALL_PTOFF( src, off )
+		{
+			const std::string name = srcNames.get( off ).c_str();
+			if ( cache.wanted.find( name ) != cache.wanted.end() )
+				cache.index[name] = off; // the last point of a name, as a scan finds
+		}
+		cache.indexKey = key;
+		cache.indexKnown = true;
+	}
+	for ( const auto& kv : names )
+	{
+		const auto it = cache.index.find( kv.first );
+		if ( it == cache.index.end() )
+			continue;
+		Box3DSourcePose pose;
+		if ( sourcePose( src, it->second, xf, pose.pos, pose.rot, pose.scale ) )
+			out[kv.first] = pose;
+	}
 }
 
-bool samePose(const Box3DSourcePose &a, const Box3DSourcePose &b) {
-  for (int i = 0; i < 3; ++i)
-    if (std::fabs(a.pos[i] - b.pos[i]) > 1e-6)
-      return false;
-  for (int i = 0; i < 3; ++i)
-    if (std::fabs(a.scale[i] - b.scale[i]) > 1e-6 * std::fabs(b.scale[i]))
-      return false;
-  return !b3dop::quatsDiffer(a.rot, b.rot, 1e-6);
+bool samePose( const Box3DSourcePose& a, const Box3DSourcePose& b )
+{
+	for ( int i = 0; i < 3; ++i )
+		if ( std::fabs( a.pos[i] - b.pos[i] ) > 1e-6 )
+			return false;
+	for ( int i = 0; i < 3; ++i )
+		if ( std::fabs( a.scale[i] - b.scale[i] ) > 1e-6 * std::fabs( b.scale[i] ) )
+			return false;
+	return !b3dop::quatsDiffer( a.rot, b.rot, 1e-6 );
 }
 
 } // namespace
 
-void followSourceSops(Box3DSharedState &st, SIM_ObjectArray &objects,
-                      double now, double dt) {
-  for (int i = 0; i < objects.entries(); ++i) {
-    SIM_Object &obj = *objects(i);
-    bool useTransform = false;
-    SOP_Node *sop = findSourceSop(obj, useTransform);
-    if (!sop)
-      continue;
+void followSourceSops( Box3DSharedState& st, SIM_ObjectArray& objects, double now, double dt )
+{
+	for ( int i = 0; i < objects.entries(); ++i )
+	{
+		SIM_Object& obj = *objects( i );
+		bool useTransform = false;
+		SOP_Node* sop = findSourceSop( obj, useTransform );
+		if ( !sop )
+			continue;
 
-    // The pieces that move: with `animated`, or all of a Kinematic Box3D Data.
-    const SIM_Box3DData *dataNode =
-        SIM_DATA_GETCONST(obj, kBox3DDataName, SIM_Box3DData);
-    const bool allKinematic =
-        dataNode && static_cast<int>(dataNode->getBodyType()) == 1;
-    Box3DSourceCache &cache = st.sourceCaches[obj.getObjectId()];
-    {
-      const SIM_Geometry *geo =
-          SIM_DATA_GETCONST(obj, SIM_GEOMETRY_DATANAME, SIM_Geometry);
-      if (!geo)
-        continue;
-      SIM_GeometryAutoReadLock lock(geo);
-      const GU_Detail *gdp = lock.getGdp();
-      if (!gdp)
-        continue;
-      GA_ROHandleS names(gdp, GA_ATTRIB_POINT, "name");
-      GA_ROHandleI animated(gdp, GA_ATTRIB_POINT, "animated");
-      GA_ROHandleM4 restxform(gdp, GA_ATTRIB_POINT, "restxform");
-      GA_ROHandleQ orient(gdp, GA_ATTRIB_POINT, "orient");
-      if (!names.isValid() || !restxform.isValid() || !orient.isValid() ||
-          (!allKinematic && !animated.isValid()))
-        continue;
-      // The followers depend on these markers only (P and orient change every
-      // step: the solver writes them), so an unchanged object is not walked.
-      const auto idOf = [](const GA_ROHandleS &h) {
-        return h.isValid()
-                   ? static_cast<uint64_t>(h.getAttribute()->getDataId())
-                   : ~0ull;
-      };
-      uint64_t key = b3dop::kHashSeed;
-      key = b3dop::mixHash(key, static_cast<uint64_t>(gdp->getNumPoints()));
-      key =
-          b3dop::mixHash(key, static_cast<uint64_t>(gdp->getNumPointOffsets()));
-      key = b3dop::mixHash(key, idOf(names));
-      key = b3dop::mixHash(
-          key, static_cast<uint64_t>(restxform.getAttribute()->getDataId()));
-      key = b3dop::mixHash(
-          key, animated.isValid()
-                   ? static_cast<uint64_t>(animated.getAttribute()->getDataId())
-                   : ~0ull);
-      key = b3dop::mixHash(
-          key, gdp->getNumPrimitives() > 0
-                   ? static_cast<uint64_t>(gdp->getPrimitiveList().getDataId())
-                   : ~0ull);
-      key = b3dop::mixHash(key, allKinematic ? 1 : 2);
-      if (!cache.followersKnown || cache.followersKey != key) {
-        cache.followers.clear();
-        cache.wanted.clear();
-        GA_Offset off;
-        GA_FOR_ALL_PTOFF(gdp, off) {
-          if (!allKinematic && animated.get(off) == 0)
-            continue;
-          Box3DSourceFollower f;
-          f.off = off;
-          f.name = names.get(off).c_str();
-          const UT_Matrix4F rx = restxform.get(off);
-          if (!restRotation(rx, f.rest))
-            continue;
-          for (unsigned r = 0; r < 3; ++r)
-            f.restScale[r] =
-                std::sqrt(static_cast<double>(rx(r, 0)) * rx(r, 0) +
-                          static_cast<double>(rx(r, 1)) * rx(r, 1) +
-                          static_cast<double>(rx(r, 2)) * rx(r, 2));
-          cache.wanted.emplace(f.name, true);
-          cache.followers.push_back(std::move(f));
-        }
-        cache.followersKey = key;
-        cache.followersKnown = true;
-        cache.indexKnown = false; // the wanted names changed
-      }
-    }
-    const std::vector<Box3DSourceFollower> &followers = cache.followers;
-    if (followers.empty())
-      continue;
-    const std::unordered_map<std::string, bool> &wanted = cache.wanted;
+		// The pieces that move: with `animated`, or all of a Kinematic Box3D Data.
+		const SIM_Box3DData* dataNode = SIM_DATA_GETCONST( obj, kBox3DDataName, SIM_Box3DData );
+		const bool allKinematic = dataNode && static_cast<int>( dataNode->getBodyType() ) == 1;
+		Box3DSourceCache& cache = st.sourceCaches[obj.getObjectId()];
+		{
+			const SIM_Geometry* geo = SIM_DATA_GETCONST( obj, SIM_GEOMETRY_DATANAME, SIM_Geometry );
+			if ( !geo )
+				continue;
+			SIM_GeometryAutoReadLock lock( geo );
+			const GU_Detail* gdp = lock.getGdp();
+			if ( !gdp )
+				continue;
+			GA_ROHandleS names( gdp, GA_ATTRIB_POINT, "name" );
+			GA_ROHandleI animated( gdp, GA_ATTRIB_POINT, "animated" );
+			GA_ROHandleM4 restxform( gdp, GA_ATTRIB_POINT, "restxform" );
+			GA_ROHandleQ orient( gdp, GA_ATTRIB_POINT, "orient" );
+			if ( !names.isValid() || !restxform.isValid() || !orient.isValid() ||
+				 ( !allKinematic && !animated.isValid() ) )
+				continue;
+			// The followers depend on these markers only (P and orient change every
+			// step: the solver writes them), so an unchanged object is not walked.
+			const auto idOf = []( const GA_ROHandleS& h ) {
+				return h.isValid() ? static_cast<uint64_t>( h.getAttribute()->getDataId() ) : ~0ull;
+			};
+			uint64_t key = b3dop::kHashSeed;
+			key = b3dop::mixHash( key, static_cast<uint64_t>( gdp->getNumPoints() ) );
+			key = b3dop::mixHash( key, static_cast<uint64_t>( gdp->getNumPointOffsets() ) );
+			key = b3dop::mixHash( key, idOf( names ) );
+			key = b3dop::mixHash( key, static_cast<uint64_t>( restxform.getAttribute()->getDataId() ) );
+			key = b3dop::mixHash(
+				key, animated.isValid() ? static_cast<uint64_t>( animated.getAttribute()->getDataId() ) : ~0ull );
+			key = b3dop::mixHash( key, gdp->getNumPrimitives() > 0
+										   ? static_cast<uint64_t>( gdp->getPrimitiveList().getDataId() )
+										   : ~0ull );
+			key = b3dop::mixHash( key, allKinematic ? 1 : 2 );
+			if ( !cache.followersKnown || cache.followersKey != key )
+			{
+				cache.followers.clear();
+				cache.wanted.clear();
+				GA_Offset off;
+				GA_FOR_ALL_PTOFF( gdp, off )
+				{
+					if ( !allKinematic && animated.get( off ) == 0 )
+						continue;
+					Box3DSourceFollower f;
+					f.off = off;
+					f.name = names.get( off ).c_str();
+					const UT_Matrix4F rx = restxform.get( off );
+					if ( !restRotation( rx, f.rest ) )
+						continue;
+					for ( unsigned r = 0; r < 3; ++r )
+						f.restScale[r] = std::sqrt( static_cast<double>( rx( r, 0 ) ) * rx( r, 0 ) +
+													static_cast<double>( rx( r, 1 ) ) * rx( r, 1 ) +
+													static_cast<double>( rx( r, 2 ) ) * rx( r, 2 ) );
+					cache.wanted.emplace( f.name, true );
+					cache.followers.push_back( std::move( f ) );
+				}
+				cache.followersKey = key;
+				cache.followersKnown = true;
+				cache.indexKnown = false; // the wanted names changed
+			}
+		}
+		const std::vector<Box3DSourceFollower>& followers = cache.followers;
+		if ( followers.empty() )
+			continue;
+		const std::unordered_map<std::string, bool>& wanted = cache.wanted;
 
-    // What each piece had when last read; pieces seen for the first time take
-    // the SOP a step earlier.
-    const SIM_Engine &engine = obj.getEngine();
-    auto &known = st.sourcePoses[obj.getObjectId()];
-    std::unordered_map<std::string, bool> unseen;
-    for (const Box3DSourceFollower &f : followers)
-      if (known.find(f.name) == known.end())
-        unseen.emplace(f.name, true);
-    if (!unseen.empty()) {
-      std::unordered_map<std::string, Box3DSourcePose> before;
-      readSourcePoses(*sop, engine.getGlobalTime(SIM_Time(now - dt)),
-                      useTransform, cache, unseen, before);
-      for (const auto &kv : before)
-        known[kv.first] = kv.second;
-    }
-    std::unordered_map<std::string, Box3DSourcePose> current;
-    readSourcePoses(*sop, engine.getGlobalTime(SIM_Time(now)), useTransform,
-                    cache, wanted, current);
+		// What each piece had when last read; pieces seen for the first time take
+		// the SOP a step earlier.
+		const SIM_Engine& engine = obj.getEngine();
+		auto& known = st.sourcePoses[obj.getObjectId()];
+		std::unordered_map<std::string, bool> unseen;
+		for ( const Box3DSourceFollower& f : followers )
+			if ( known.find( f.name ) == known.end() )
+				unseen.emplace( f.name, true );
+		if ( !unseen.empty() )
+		{
+			std::unordered_map<std::string, Box3DSourcePose> before;
+			readSourcePoses( *sop, engine.getGlobalTime( SIM_Time( now - dt ) ), useTransform, cache, unseen, before );
+			for ( const auto& kv : before )
+				known[kv.first] = kv.second;
+		}
+		std::unordered_map<std::string, Box3DSourcePose> current;
+		readSourcePoses( *sop, engine.getGlobalTime( SIM_Time( now ) ), useTransform, cache, wanted, current );
 
-    // The pieces whose pose changed, and of those the ones whose scale did.
-    struct Move {
-      const Box3DSourceFollower *follower;
-      const Box3DSourcePose *pose;
-      bool scaled;
-    };
-    std::vector<Move> moves;
-    for (const Box3DSourceFollower &f : followers) {
-      auto it = current.find(f.name);
-      if (it == current.end())
-        continue;
-      auto was = known.find(f.name);
-      const bool moved =
-          was != known.end() && !samePose(was->second, it->second);
-      bool scaled = false;
-      if (moved)
-        for (int k = 0; k < 3; ++k)
-          scaled =
-              scaled || std::fabs(was->second.scale[k] - it->second.scale[k]) >
-                            1e-6 * std::fabs(it->second.scale[k]);
-      known[f.name] = it->second;
-      if (moved)
-        moves.push_back({&f, &it->second, scaled});
-    }
-    if (moves.empty())
-      continue;
+		// The pieces whose pose changed, and of those the ones whose scale did.
+		struct Move
+		{
+			const Box3DSourceFollower* follower;
+			const Box3DSourcePose* pose;
+			bool scaled;
+		};
+		std::vector<Move> moves;
+		for ( const Box3DSourceFollower& f : followers )
+		{
+			auto it = current.find( f.name );
+			if ( it == current.end() )
+				continue;
+			auto was = known.find( f.name );
+			const bool moved = was != known.end() && !samePose( was->second, it->second );
+			bool scaled = false;
+			if ( moved )
+				for ( int k = 0; k < 3; ++k )
+					scaled = scaled || std::fabs( was->second.scale[k] - it->second.scale[k] ) >
+										   1e-6 * std::fabs( it->second.scale[k] );
+			known[f.name] = it->second;
+			if ( moved )
+				moves.push_back( { &f, &it->second, scaled } );
+		}
+		if ( moves.empty() )
+			continue;
 
-    SIM_GeometryCopy *geoCopy =
-        box3dWritableGeometry(obj, SIM_GEOMETRY_DATANAME);
-    if (!geoCopy)
-      continue;
-    SIM_GeometryAutoWriteLock lock(geoCopy);
-    GU_Detail *gdp = &lock.getGdp();
-    GA_RWHandleQ orient(gdp, GA_ATTRIB_POINT, "orient");
-    if (!orient.isValid())
-      continue;
-    bool wrotePacked = false;
-    // `scale` on the points, as RBD Bullet Solver writes it: the piece's scale
-    // against its rest, which Transform Pieces applies to the piece (added at
-    // 1 for every point the first time a piece's scale changes).
-    GA_RWHandleV3 scaleAttr(gdp, GA_ATTRIB_POINT, "scale");
-    for (const Move &mv : moves) {
-      const Box3DSourceFollower &f = *mv.follower;
-      const Box3DSourcePose &pose = *mv.pose;
-      float since[4];
-      box3dAbsoluteToRest(f.rest, pose.rot, since);
-      b3dop::sanitizeQuat(since);
-      gdp->setPos3(f.off, UT_Vector3(static_cast<float>(pose.pos[0]),
-                                     static_cast<float>(pose.pos[1]),
-                                     static_cast<float>(pose.pos[2])));
-      orient.set(f.off, UT_QuaternionF(since[0], since[1], since[2], since[3]));
-      if (!mv.scaled)
-        continue;
-      // The source's scale reaches the piece's packed transform, whose row
-      // lengths the sync sizes the shapes by (a convex or concave piece is
-      // rebuilt when they change). Its rotation stays: the pose rotation is
-      // `orient` since rest.
-      const PackedInfo pk = getPackedInfo(gdp, f.off);
-      if (!pk.prim)
-        continue;
-      double m3[9];
-      composePackedMatrix(pk.rot, pose.scale, m3);
-      b3dop::keepMirror(pk.m3, m3);
-      setLocal3(*static_cast<GU_PrimPacked *>(gdp->getPrimitive(pk.primOff)),
-                m3);
-      wrotePacked = true;
-      if (!scaleAttr.isValid()) {
-        const GA_Defaults ones(1.0);
-        scaleAttr = GA_RWHandleV3(gdp->addFloatTuple(GA_ATTRIB_POINT, "scale",
-                                                     3, ones, nullptr, nullptr,
-                                                     GA_STORE_REAL32));
-      }
-      if (scaleAttr.isValid())
-        scaleAttr.set(
-            f.off,
-            UT_Vector3(static_cast<float>(pose.scale[0] / f.restScale[0]),
-                       static_cast<float>(pose.scale[1] / f.restScale[1]),
-                       static_cast<float>(pose.scale[2] / f.restScale[2])));
-    }
-    if (scaleAttr.isValid())
-      scaleAttr.getAttribute()->bumpDataId();
-    if (wrotePacked)
-      gdp->getPrimitiveList().bumpDataId();
-    if (GA_Attribute *p = gdp->getP())
-      p->bumpDataId();
-    orient.getAttribute()->bumpDataId();
-  }
+		SIM_GeometryCopy* geoCopy = box3dWritableGeometry( obj, SIM_GEOMETRY_DATANAME );
+		if ( !geoCopy )
+			continue;
+		SIM_GeometryAutoWriteLock lock( geoCopy );
+		GU_Detail* gdp = &lock.getGdp();
+		GA_RWHandleQ orient( gdp, GA_ATTRIB_POINT, "orient" );
+		if ( !orient.isValid() )
+			continue;
+		bool wrotePacked = false;
+		// `scale` on the points, as RBD Bullet Solver writes it: the piece's scale
+		// against its rest, which Transform Pieces applies to the piece (added at
+		// 1 for every point the first time a piece's scale changes).
+		GA_RWHandleV3 scaleAttr( gdp, GA_ATTRIB_POINT, "scale" );
+		for ( const Move& mv : moves )
+		{
+			const Box3DSourceFollower& f = *mv.follower;
+			const Box3DSourcePose& pose = *mv.pose;
+			float since[4];
+			box3dAbsoluteToRest( f.rest, pose.rot, since );
+			b3dop::sanitizeQuat( since );
+			gdp->setPos3( f.off, UT_Vector3( static_cast<float>( pose.pos[0] ), static_cast<float>( pose.pos[1] ),
+											 static_cast<float>( pose.pos[2] ) ) );
+			orient.set( f.off, UT_QuaternionF( since[0], since[1], since[2], since[3] ) );
+			if ( !mv.scaled )
+				continue;
+			// The source's scale reaches the piece's packed transform, whose row
+			// lengths the sync sizes the shapes by (a convex or concave piece is
+			// rebuilt when they change). Its rotation stays: the pose rotation is
+			// `orient` since rest.
+			const PackedInfo pk = getPackedInfo( gdp, f.off );
+			if ( !pk.prim )
+				continue;
+			double m3[9];
+			composePackedMatrix( pk.rot, pose.scale, m3 );
+			b3dop::keepMirror( pk.m3, m3 );
+			setLocal3( *static_cast<GU_PrimPacked*>( gdp->getPrimitive( pk.primOff ) ), m3 );
+			wrotePacked = true;
+			if ( !scaleAttr.isValid() )
+			{
+				const GA_Defaults ones( 1.0 );
+				scaleAttr = GA_RWHandleV3(
+					gdp->addFloatTuple( GA_ATTRIB_POINT, "scale", 3, ones, nullptr, nullptr, GA_STORE_REAL32 ) );
+			}
+			if ( scaleAttr.isValid() )
+				scaleAttr.set( f.off, UT_Vector3( static_cast<float>( pose.scale[0] / f.restScale[0] ),
+												  static_cast<float>( pose.scale[1] / f.restScale[1] ),
+												  static_cast<float>( pose.scale[2] / f.restScale[2] ) ) );
+		}
+		if ( scaleAttr.isValid() )
+			scaleAttr.getAttribute()->bumpDataId();
+		if ( wrotePacked )
+			gdp->getPrimitiveList().bumpDataId();
+		if ( GA_Attribute* p = gdp->getP() )
+			p->bumpDataId();
+		orient.getAttribute()->bumpDataId();
+	}
 }
 
 } // namespace box3dsolver

@@ -5,7 +5,7 @@
 #pragma once
 
 // Identity orientation (x, y, z, w) shared by the cases.
-inline const float qIdentity[4] = {0, 0, 0, 1};
+inline const float qIdentity[4] = { 0, 0, 0, 1 };
 
 void testBodyBasics();
 void testPointMapping();
