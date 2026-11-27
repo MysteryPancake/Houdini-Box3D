@@ -418,28 +418,46 @@ v@v = cross(w, v@P - point(1, "pivot", pt) * xf) + point(1, "v", pt);
 # wrangle, not a bound attribute left out of Attributes to Create: that list also decides what may be written, so N
 # would be made on pieces that have none.
 MOVE_NORMALS_VEX = MOVE_PIECES_VEX + "v@N = normalize(v@N * transpose(invert(matrix3(xf))));\n"
+# Packed pieces: a packed primitive's rotation, scale and shear are its transform (a 3x3 intrinsic), which the point
+# wrangle would leave alone, so its own wrangle turns it too: the transform times the motion matrix's 3x3, the
+# same product Transform Pieces makes (a sheared piece tells the order apart). `setprimintrinsic` on the point's own
+# primitive does not stop it running in parallel.
+MOVE_PACKED_VEX = MOVE_PIECES_VEX + """int prims[] = pointprims(0, @ptnum);
+if (len(prims) > 0)
+{
+    matrix3 m = primintrinsic(0, "transform", prims[0]);
+    setprimintrinsic(0, "transform", prims[0], m * matrix3(xf));
+}
+"""
 # Whether the fast path does what Transform Pieces would: the pieces carry `name` on their points and no age, the
-# simulation points carry no age and no scale (an animated piece's, which the wrangle does not apply), the attributes to copy are no more than age and w, and no point attribute besides
-# P, N, w and v has a type Transform by Attribute would move. 0: Transform Pieces, 1: the wrangle, 2: the one with
-# normals (the pieces have N).
+# simulation points carry no age and no scale (an animated piece's, which the wrangle does not apply), the attributes to
+# copy are no more than age and w, and no point attribute besides P, N, w and v has a type Transform by Attribute would
+# move. Then by what the primitives are: all polygons (a Mesh or a volume would need more) take the wrangle; all packed
+# (PackedGeometry or PackedFragment) and without N, the packed one; else Transform Pieces. 0: Transform Pieces, 1: the
+# wrangle, 2: the one with normals (the polygons have N), 3: the packed one.
 FAST_TRANSFORM_EXPR = (
-    '(lambda n, g, s: int(g is not None and s is not None and g.findPointAttrib("name") is not None '
+    '(lambda n, g, s: (lambda ok, has_n, polys, packed: ((1 + has_n) if polys else (3 if packed and not has_n else 0)) '
+    'if ok else 0)('
+    'g is not None and s is not None and g.findPointAttrib("name") is not None '
     'and g.findPointAttrib("age") is None and s.findPointAttrib("age") is None '
     'and s.findPointAttrib("scale") is None '
     'and set(n.parm("{attribs}").eval().split()) <= {{"age", "w"}} '
     'and all(a.qualifier() not in ("Position", "Vector", "Quaternion", "Normal", "Matrix") '
-    'or a.name() in ("P", "N", "v", "w") for a in g.pointAttribs())) '
-    '* (1 + int(g.findPointAttrib("N") is not None)))'
+    'or a.name() in ("P", "N", "v", "w") for a in g.pointAttribs()), '
+    'g is not None and g.findPointAttrib("N") is not None, '
+    'g is not None and g.primCount() == g.countPrimType("Poly"), '
+    'g is not None and g.primCount() == g.countPrimType("PackedGeometry") + g.countPrimType("PackedFragment")))'
     '(hou.pwd().parent(), hou.pwd().parent().node("{removed}").geometry(), '
     'hou.pwd().parent().node("{points}").geometry())')
 
 
 def fast_transform(sub, removed, sim_points, xform):
-    """The Geometry output's Transform Pieces with the faster path beside it: a Switch picking one of the two (the other
-    does not cook). Returns the Switch."""
+    """The Geometry output's Transform Pieces with the faster paths beside it: a Switch picking one of the four (the
+    others do not cook). Returns the Switch."""
     moves = []
     for name, snippet, writes in (("move_pieces_geometry", MOVE_PIECES_VEX, "P w v"),
-                                  ("move_pieces_normals_geometry", MOVE_NORMALS_VEX, "P N w v")):
+                                  ("move_pieces_normals_geometry", MOVE_NORMALS_VEX, "P N w v"),
+                                  ("move_pieces_packed_geometry", MOVE_PACKED_VEX, "P w v")):
         move = create(sub, "attribwrangle", name)
         move.setInput(0, removed)
         move.setInput(1, sim_points)

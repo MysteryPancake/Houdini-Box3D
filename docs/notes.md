@@ -15,6 +15,7 @@
 - The Box3D Solver SOP's Ground Collision makes a Ground Box, a very wide and deep box (Position, Rotation, Size), or a Height Field ground (with Use Deforming Geometry). Friction, Bounce, Rolling Resistance and Conveyor Velocity are under Physical. Show Ground on the Visualization tab draws it, solid or wireframe.
 - An unpacked collider that turns or scales during the simulation needs Collision Type Deforming on the Box3D Solver SOP. Animated keeps its first shape, as with Bullet.
 - The Box3D Solver SOP's Advanced tab sets each constraint type's values, under Constraints.
+- A constraint line that names a piece of the Collision input holds on the Box3D Solver SOP, and its Break Thresholds read it. Bullet ignores such a line.
 - A constraint anchored to the world can be animated: its piece is carried along smoothly at the anchor's speed. Bullet drags it behind instead.
 - Break Thresholds on the Box3D Solver SOP's Constraints tab break constraints past an `angle`, `distance`, `impact` or `torque`, or at a chosen frame, as in RBD Bullet Solver. Only SideFX Glue has an `impact`, and there is no Force Threshold.
 - On the Box3D Solver SOP, Collide As Static Object makes the Collision input one static mesh, or a height field. It uses the Material settings.

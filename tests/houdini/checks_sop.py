@@ -77,8 +77,23 @@ def test_solver_sop_forces():
     """A POP Force inside the FORCES subnet (the asset's dive target and an editable node, so the
     asset stays locked) wired to PRESOLVE pushes a
     box sideways (Gravity 0): the Multiple Solver runs it before the Box3D Solver, which applies its
-    `force`. Wired to POSTSOLVE instead it still pushes, a step later."""
+    `force`. Wired to POSTSOLVE instead it still pushes, a step later. With nothing wired into either (the usual
+    case) the box simply falls and neither the Solver SOP, its DOP network nor any DOP node inside has a warning or an error."""
     results = []
+    pieces, names = packed_boxes("sop_force_none_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0)}])
+    sop = solver_sop("sop_force_none", geometry=pieces)
+    pos = play(sop, 12, lambda s, f: named_positions(s.geometry(0)).get(names[0]) if f == 12 else None)[12]
+    dopnet = sop.node("dopnet")
+    inside = list(dopnet.allSubChildren()) if dopnet is not None else []
+    messages = [(n.path(), text) for n in [sop] + ([dopnet] if dopnet is not None else []) + inside
+                for text in n.warnings() + n.errors()]
+    forces = sop.node("dopnet/FORCES")
+    wired = [n.name() for n in (forces.node("PRESOLVE"), forces.node("POSTSOLVE")) if forces and n and n.inputs()]
+    ok = pos is not None and pos[1] < 2.9 and not messages and not wired
+    results.append(Result("solver_sop_forces", Result.PASS if ok else Result.FAIL,
+                          f"nothing wired into PRESOLVE / POSTSOLVE (wired: {wired or 'none'}): the box fell to "
+                          f"y {pos[1] if pos else None} after 0.5 s (expected under 2.9); warnings and errors on the asset, "
+                          f"its DOP network and its {len(inside)} DOP nodes: {messages[:3] or 'none'}"))
     for output in ("PRESOLVE", "POSTSOLVE"):
         pieces, names = packed_boxes(f"sop_force_pieces_{output}", [{"size": (1, 1, 1), "center": (0, 3, 0)}])
         sop = solver_sop(f"sop_force_{output}", geometry=pieces)
@@ -783,7 +798,11 @@ def test_solver_sop_fast_transform():
     """The Geometry output's faster path (one wrangle) against Transform Pieces, for unpacked pieces that fall and tumble
     onto the ground: without normals, with normals, and with a point attribute of vector type, which the wrangle does not
     move, so Transform Pieces must be taken. P, w, v and N must differ by under 1e-5 between the two, and the Switch
-    must pick path 1, 2 and 0."""
+    must pick path 1, 2 and 0. Then pieces that carry a shear or a scale: polygons sheared in their SOP (the wrangle
+    moves their points as Transform Pieces does: path 1, under 1e-5), and packed pieces (plain, scaled 1.5, sheared),
+    whose rotation is their packed transform: the packed wrangle (path 3) must give Transform Pieces' packed transform and
+    points to under 1e-5, turned, with the scale and shear kept (a sheared piece tells the order of the product apart),
+    and the Geometry output must be the same; packed pieces with a vector point attribute take Transform Pieces."""
     ground, _ = packed_boxes("sop_fast_ground", [GROUND])
     results = []
     for label, normals, extra, want_path in (("no normals", False, "", 1), ("normals", True, "", 2),
@@ -824,6 +843,77 @@ def test_solver_sop_fast_transform():
         results.append(Result("solver_sop_fast_transform", Result.PASS if ok else Result.FAIL,
                               f"{label}: path {path} (expected {want_path}); largest difference from Transform Pieces "
                               f"{ {k: f'{v:.1e}' for k, v in worst.items()} }"))
+
+    # Pieces with a shear or a scale: sheared polygons, and packed pieces (their rotation, scale and shear are the packed
+    # transform, which only Transform Pieces moves).
+    shear, scale = (0.4, 0.2, 0.3), 1.5
+    for label, packed, extra, want_path in (("sheared polygons", False, {"shear": shear}, 1),
+                                            ("packed", True, {}, 3),
+                                            ("packed, scaled", True, {"scale": scale}, 3),
+                                            ("packed, sheared", True, {"shear": shear}, 3),
+                                            ("packed, typed vector", True, {"vector": True}, 0)):
+        tag = label.replace(", ", "_").replace(" ", "_")
+        if packed:
+            path_in, _ = packed_boxes(f"sop_fast_{tag}_pieces", [{"size": (1, 1, 1), "center": (0.3, 2.5, 0.2),
+                                                                    "rotate": (25, 10, 35)}])
+            src = hou.node(path_in)
+            last = src
+            if extra.get("vector"):
+                last = src.parent().createNode("attribwrangle", "typed_vector")
+                last.setInput(0, src)
+                set_parm(last, ["class"], "point")
+                set_parm(last, ["snippet"], 'v@up = {0, 1, 0}; setattribtypeinfo(0, "point", "up", "vector");')
+            elif extra:
+                last = src.parent().createNode("xform", "packed_xform")
+                last.setInput(0, src)
+                for parm, value in extra.items():
+                    set_parm(last, [parm], value)
+            display(last)
+        else:
+            raw = new_geo(f"sop_fast_{tag}")
+            last = create(raw, "box", "box")
+            set_parm(last, ["t"], (0.3, 2.5, 0.2))
+            set_parm(last, ["r"], (25, 10, 35))
+            sheared = create(raw, "xform", "shear")
+            sheared.setInput(0, last)
+            set_parm(sheared, ["shear"], extra["shear"])
+            wr = create(raw, "attribwrangle", "name")
+            set_parm(wr, ["class"], "point")
+            set_parm(wr, ["snippet"], 's@name = "piece0";')
+            wr.setInput(0, sheared)
+            display(wr)
+            last = wr
+        sop = solver_sop(f"sop_fast_{tag}_solver", geometry=last.path(), collision=ground)
+        play(sop, 20, lambda s, f: None)
+        path = sop.node("switch_fast_transform").parm("input").eval()
+        reference = sop.node("transform_geometry").geometry()
+        result = sop.geometry(0)
+        if packed:
+            # The output's packed transform against Transform Pieces' (the 3x3 turned by the fall, scale and shear in it).
+            ref_t = reference.prims()[0].intrinsicValue("transform")
+            out_t = result.prims()[0].intrinsicValue("transform")
+            diff = max(abs(a - b) for a, b in zip(ref_t, out_t))
+            identity = max(abs(a - b) for a, b in zip(out_t, (1, 0, 0, 0, 1, 0, 0, 0, 1)))
+            turned = max(abs(a - b) for a, b in zip(ref_t, (scale if "scaled" in label else 1.0, 0, 0, 0,
+                                                            scale if "scaled" in label else 1.0, 0, 0, 0,
+                                                            scale if "scaled" in label else 1.0))) > 0.05
+            moved = sop.node("move_pieces_packed_geometry").geometry()
+            wrangle_t = max(abs(a - b) for a, b in zip(ref_t, moved.prims()[0].intrinsicValue("transform")))
+            wrangle_p = max(abs(a - b) for a, b in zip(reference.points()[0].position(), moved.points()[0].position()))
+            ok = path == want_path and diff < 1e-5 and turned and (want_path == 0 or max(wrangle_t, wrangle_p) < 1e-5)
+            text = (f"output's packed transform differs from Transform Pieces' by {diff:.1e}, the packed wrangle's by "
+                    f"{wrangle_t:.1e} (point {wrangle_p:.1e}), the output's from the input's unturned one by {identity:.2f}")
+        else:
+            worst = 0.0
+            for attrib in ("P", "w", "v"):
+                for a, b in zip(reference.points(), sop.node("move_pieces_geometry").geometry().points()):
+                    va = tuple(a.position()) if attrib == "P" else a.attribValue(attrib)
+                    vb = tuple(b.position()) if attrib == "P" else b.attribValue(attrib)
+                    worst = max(worst, max(abs(x - y) for x, y in zip(va, vb)))
+            ok = path == want_path and worst < 1e-5
+            text = f"largest difference from Transform Pieces {worst:.1e}"
+        results.append(Result("solver_sop_fast_transform", Result.PASS if ok else Result.FAIL,
+                              f"{label}: path {path} (expected {want_path}); {text}"))
     return results
 
 

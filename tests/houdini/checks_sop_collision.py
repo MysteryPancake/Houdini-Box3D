@@ -101,19 +101,25 @@ def test_solver_sop_collision_static():
     return results
 
 
+def tag_name(kind):
+    return {0: "Static", 1: "Animated", 2: "Deforming"}[kind]
+
+
 def test_solver_sop_animated_collision():
     """A ground box on the Collision input rising 0.5 m/s (keyed on its Transform SOP) lifts the box
-    resting on it: with Collision Type Animated (the default) the box ends 1 m higher after 2 s; off,
-    the ground stays where it started and the box stays at y = 0.5."""
+    resting on it: with Collision Type Animated (the default) or Deforming the box ends 1 m higher after 2 s; Static,
+    the ground stays where it started and the box stays at y = 0.5. The collision Packed Object's Read SOP Every Step
+    (`reimportsop`) is on only for Deforming (an Animated collider follows through its SourceObject instead)."""
     results = []
-    for animated in (1, 0):
-        tag = "on" if animated else "off"
+    for kind in (1, 0, 2):  # Animated, Static, Deforming
+        animated = kind != 0
+        tag = {1: "on", 0: "off", 2: "deforming"}[kind]
         pieces, names = packed_boxes(f"sop_lift_pieces_{tag}", [{"size": (1, 1, 1), "center": (0, 0.5, 0)}])
         ground, _ = packed_boxes(f"sop_lift_ground_{tag}", [GROUND])
         place = hou.node(ground).parent().node("place0")
         place.parm("ty").setExpression("-0.5 + 0.5 * $T", hou.exprLanguage.Hscript)
         sop = solver_sop(f"sop_lift_{tag}", geometry=pieces, collision=ground)
-        set_parm(sop, ["collisiontype"], 1 if animated else 0)  # Animated / Static
+        set_parm(sop, ["collisiontype"], kind)  # Static / Animated / Deforming
         track = play(sop, 49, lambda s, f: named_positions(s.geometry(0)).get(names[0]) if f in (1, 49) else None)
         y0 = track[1][1] if track[1] else None
         y1 = track[49][1] if track[49] else None
@@ -125,9 +131,12 @@ def test_solver_sop_animated_collision():
         source_path = source.record("Options", 0).field("objpath") if source is not None else None
         source_node = hou.node(source_path) if source_path else None
         source_ok = source_node is not None and isinstance(source_node, hou.SopNode)
-        ok = ok and source_ok
+        reimport = sop.node("dopnet/collision").parm("reimportsop").eval()
+        reimport_ok = reimport == (1 if kind == 2 else 0)
+        ok = ok and source_ok and reimport_ok
         results.append(Result("solver_sop_animated_collision", Result.PASS if ok else Result.FAIL,
-                              f"Collision Type {'Animated' if animated else 'Static'}: box y {y0} on frame 1, {y1} on frame 49 "
+                              f"Collision Type {tag_name(kind)}: reimportsop {reimport} (expected "
+                              f"{1 if kind == 2 else 0}); box y {y0} on frame 1, {y1} on frame 49 "
                               f"(expected about {want}; the ground's top rises from 0 to 1); the collider's source path "
                               f"{source_path} is {'a SOP node' if source_ok else 'not a SOP node'} (expected one)"))
     return results
@@ -361,6 +370,82 @@ def test_solver_sop_world_anchor():
                    f"its end at {tuple(round(v, 3) for v in mine) if mine else None} (expected at the box)")]
 
 
+def test_solver_sop_constraints_collision_bullet():
+    """The constraints output (Transform Pieces onto the simulation points) for constraints that name collision pieces,
+    against the RBD Bullet Solver SOP: Soft lines (Rest Length 0) from a dynamic piece to a collision piece and from one
+    collision piece to a second that moves 0.5 along x a frame. The collision pieces are not simulation points, so their
+    ends stay where the lines put them (the same in both), while the dynamic piece's end follows it. Both keep both
+    lines for 8 frames."""
+    pieces, names = packed_boxes("sop_cc_pieces", [{"size": (1, 1, 1), "center": (0, 3, 0)}])
+    coll, _ = packed_boxes("sop_cc_coll", [{"size": (1, 1, 1), "center": (0, 6, 0), "attrs": {"active": 0}},
+                                           {"size": (1, 1, 1), "center": (4, 6, 0), "attrs": {"active": 0}}])
+    src = hou.node(coll)
+    mover = src.parent().createNode("attribwrangle", "move_second")
+    mover.setInput(0, src)
+    mover.parm("class").set(2)  # points: named after their position in the input, the second one moves
+    mover.parm("snippet").set('s@name = "coll" + itoa(@ptnum); if (@ptnum == 1) @P.x += 0.5 * @Frame;')
+    display(mover)
+    lines = constraint_lines("sop_cc_network", [
+        (names[0], (0, 4.5, 0), "coll0", (0, 4.5, 0), "Soft", {"restlength": 0.0}),
+        ("coll0", (0, 6, 0), "coll1", (4, 6, 0), "Soft", {"restlength": 0.0})])
+    authored = {"coll0": [(0, 4.5, 0), (0, 6, 0)], "coll1": [(4, 6, 0)]}
+    frames = 8
+
+    def sample(s_, f):
+        con = s_.geometry(1)
+        ends = {}
+        for pt in con.points():
+            ends.setdefault(pt.attribValue("name"), []).append(pt.position())
+        return len(con.prims()), ends, named_positions(s_.geometry(3)).get(names[0])
+
+    problems, rows = [], []
+    for kind, sop in _both_sops("sop_cc", geometry=pieces, constraints=lines, collision=mover.path()).items():
+        set_parm(sop, ["enable_constraintbreaks"], 0)  # the default thresholds are not what is compared
+        track = play(sop, frames, sample)
+        for f, (count, ends, box) in track.items():
+            if count != 2:
+                problems.append(f"{kind} frame {f}: {count} constraints")
+                continue
+            for name, want in authored.items():
+                got = sorted(tuple(round(c, 3) for c in p) for p in ends.get(name, []))
+                if got != sorted(want):
+                    problems.append(f"{kind} frame {f}: {name} ends at {got}, expected {sorted(want)}")
+            mine = ends.get(names[0], [None])[0]
+            if mine is None or box is None or (mine - box - hou.Vector3(0, 1.5, 0)).length() > 0.1:
+                problems.append(f"{kind} frame {f}: the piece's end at {mine}, the piece at {box}")
+        rows.append(f"{kind} frame {frames}: {track[frames][0]} constraints, piece at "
+                    f"{tuple(round(c, 2) for c in track[frames][2])}")
+    results = [Result("solver_sop_constraints_collision_bullet", Result.FAIL if problems else Result.PASS,
+                      "; ".join(rows) + (f"; PROBLEMS: {'; '.join(problems[:6])}" if problems else
+                                         " (the collision pieces' ends stay as authored in both)"))]
+
+    # What the lines do: a piece clear of the colliders, its anchor 4 along x from the collision piece's, Soft line between them, against the same scene
+    # without the line.
+    free, free_names = packed_boxes("sop_cc_free", [{"size": (1, 1, 1), "center": (0, 12, 0)}])
+    held_lines = constraint_lines("sop_cc_held_network", [
+        (free_names[0], (0, 12, 0), "coll0", (4, 12, 0), "Soft", {"restlength": 0.0})])
+    seen = {}
+    for label, constraints in (("with the line", held_lines), ("without", None)):
+        inputs = {"constraints": constraints} if constraints else {}
+        for kind, sop in _both_sops(f"sop_cc_held_{label.split()[0]}", geometry=free, collision=mover.path(),
+                                    **inputs).items():
+            set_parm(sop, ["enable_constraintbreaks"], 0)
+            track = play(sop, 12, lambda s_, f: (named_positions(s_.geometry(3)).get(free_names[0]),
+                                                 s_.geometry(1).findPrimAttrib("distance") is not None))
+            seen[kind, label] = track[12]
+    text = []
+    for kind in ("box3d", "bullet"):
+        (held, feedback), (loose, _) = seen[kind, "with the line"], seen[kind, "without"]
+        text.append(f"{kind}: piece at {tuple(round(c, 2) for c in held)} with the line, "
+                    f"{tuple(round(c, 2) for c in loose)} without, feedback on the line: {feedback}")
+    results.append(Result("solver_sop_constraints_collision_bullet", Result.INFO,
+                          "a Soft line from a piece to a collision piece 4 away, frame 12: " + "; ".join(text)
+                          + ". Bullet leaves the piece as if there were no line and gives the line no feedback "
+                          "(no distance, force, angle or torque), so its Break Thresholds never read it; Box3D holds "
+                          "the piece and reads the line."))
+    return results
+
+
 def test_unpacked_turning_collider():
     """Compares the Box3D Solver SOP with RBD Bullet Solver for an unpacked collider that turns: a
     4 x 1 x 1 polygon bar along x, turned 90 degrees about y (a Transform SOP on the polygons) from
@@ -585,6 +670,7 @@ TESTS = {
     "solver_sop_collision_group_names_bullet": test_solver_sop_collision_group_names_bullet,
     "solver_sop_collision_rest": test_solver_sop_collision_rest,
     "solver_sop_world_anchor": test_solver_sop_world_anchor,
+    "solver_sop_constraints_collision_bullet": test_solver_sop_constraints_collision_bullet,
     "unpacked_turning_collider": test_unpacked_turning_collider,
     "solver_sop_animated_collision": test_solver_sop_animated_collision,
 }

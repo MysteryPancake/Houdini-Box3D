@@ -53,7 +53,8 @@ once the asset exists (`wire_stage`).
   `overwriteattributes` list copied from the SOP by point name (`copy_attribs`, Attribute Copy, points); SOP Geometry
   runs Set Always while it, Deforming or `reimportsop` is on (`REIMPORT`). Deforming, or `reimportsop` (set by the
   Solver SOP for a Deforming collider), outputs the whole SOP instead (`switch_reimport`): changing shapes need the
-  full re-import. Poses do not: an Animated collider follows through `SourceObject`.
+  full re-import. Poses do not: an Animated collider follows through `SourceObject`
+  (`reimportsop` is 0 for it, 1 for Deforming; both lift a box 1 m in `solver_sop_animated_collision`).
 * `initial_transform` (point wrangle, `INITIAL_XFORM_VEX`) writes the point matrix `__initialxform`: Position and
   Rotation about the pivot (the point's own `pivot` from before `set_rest`, which writes P there: its input 1; else P
   while Inherit Pivot is on, else Pivot), applied by `apply_initial_xform` (Transform by Attribute: a primitive

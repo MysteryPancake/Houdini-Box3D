@@ -45,9 +45,6 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   kinematic piece's body stays put and a dynamic one's follows the input, Box3D's kinematic one follows and a dynamic
   one's stays (`deforming` rereads shapes only); the drawn geometry is the current input in both.
 
-* Overwrite Attributes from SOP as an Attribute Copy list (`copy_attribs`, `SIM_GEO` in the Packed Object stage): not
-  checked is an animated collider (`reimportsop`) still moving.
-
 * A box landing flat at speed tips slightly in Box3D and Bullet's does not: a 1 m cube dropped 2.5 (about 7 m/s)
   tilts up to 0.95 degrees on the bounce and ends about 0.1 to the side (Bullet: 0.32 degrees, 0.002), glued or not,
   packed or RBD Object, any thread count, with or without bounce, Continuous Collision or contact recycling; dropped

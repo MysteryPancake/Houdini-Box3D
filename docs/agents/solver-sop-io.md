@@ -35,13 +35,20 @@ and forces: [solver-sop.md](solver-sop.md). Index and rules: [CLAUDE.md](../../C
   name matching), so the Geometry output has a faster path beside it (`fast_transform`, `switch_fast_transform`): one
   point wrangle (`move_pieces_geometry`, `MOVE_PIECES_VEX`) finds each point's simulation point once, moves `P` by its
   motion matrix and writes `w` and `v` as Transform Pieces does; `move_pieces_normals_geometry` also moves `N` by the
-  inverse transpose. Two wranglers, because Attributes to Create decides what may be written, and a bound `N` left out
+  inverse transpose, and `move_pieces_packed_geometry` (`MOVE_PACKED_VEX`) is for packed pieces, whose rotation, scale
+  and shear are the packed primitive's 3x3 transform: it also sets it to the transform times the matrix's 3x3 with
+  `setprimintrinsic` on the point's own primitive (the order matters for a sheared piece; it still runs in parallel).
+  Separate wranglers, because Attributes to Create decides what may be written, and a bound `N` left out
   of it errors, while one in it is made on pieces that have none. Only attribute bindings are written, never
   `setpointattrib` and the like, whose queue stops a wrangle running in parallel. The Python expression of the Switch
-  (`FAST_TRANSFORM_EXPR`, Python because HScript cannot read an attribute's type) picks 1 or 2 only when the pieces
-  carry `name` on their points, neither they nor the simulation points carry `age`, the simulation points carry no `scale` (an animated piece's), the attributes to copy are no more
-  than `age` and `w`, and no point attribute besides `P`, `N`, `w` and `v` is a position, vector, quaternion, normal
-  or matrix; else Transform Pieces. Test `solver_sop_fast_transform` (differences from Transform Pieces under 1e-5).
+  (`FAST_TRANSFORM_EXPR`, Python because HScript cannot read an attribute's type) picks one only when the pieces
+  carry `name` on their points, neither they nor the simulation points carry `age`, the simulation points carry no
+  `scale` (an animated piece's), the attributes to copy are no more than `age` and `w`, and no point attribute besides
+  `P`, `N`, `w` and `v` is a position, vector, quaternion, normal or matrix; then 1 or 2 when the primitives are all
+  polygons, 3 when all are packed (PackedGeometry or PackedFragment) and the pieces have no `N`; else Transform Pieces.
+  Test `solver_sop_fast_transform` (differences from Transform Pieces under 1e-5, also for sheared polygons and for
+  packed pieces, plain, scaled and sheared). Timed on the `solversop` benchmark scene (packed pieces): the packed
+  wrangle's frame is 15.7 ms at 10,000 pieces and 45 ms at 30,000, Transform Pieces' 32 ms and 88 ms.
 * World Scale (`WORLD_SCALE_TOGGLE` / `WORLD_SCALE`, first on the Solver tab; Bullet's usescale / Bullet World Scale):
   Transform SOPs scale every input (`world_scale_*`; the before-start outputs pass the unscaled inputs), each behind a
   Switch (`switch_<name>`) that takes it only while scaling (a Transform by 1 still copies every point);
@@ -62,7 +69,8 @@ and forces: [solver-sop.md](solver-sop.md). Index and rules: [CLAUDE.md](../../C
 * Constraints output: DOP Import of the pieces object, Geometry Data Path `ConstraintGeometry`, nothing transformed,
   packed or tagged (`CONSTRAINTS_TOGGLES`), so it carries `broken`, `force` and the rest. The solver does not move its
   points, so a Transform Pieces onto the simulation points carries them with their pieces; world-anchored points
-  (`name` empty or `-1`) keep theirs. Export Broken Constraints (`KEEP_BROKEN`, Constraints tab after Break
+  (`name` empty or `-1`) keep theirs, and so do those of collision pieces (not simulation points, so not moved, a
+  moving one included, as Bullet's; test `solver_sop_constraints_collision_bullet`). Export Broken Constraints (`KEEP_BROKEN`, Constraints tab after Break
   Thresholds, off) removes the `broken` group's primitives first, as RBD Bullet Solver's `switchif_keepbroken`.
 * Solve on Creation Frame, as RBD Bullet Solver: `solvefirstframe` on the Solver tab (before Cache Simulation) is
   linked to the pieces' Packed Object, and `collision_solvefirstframe` (Advanced > Collision, as RBD Bullet Solver's)

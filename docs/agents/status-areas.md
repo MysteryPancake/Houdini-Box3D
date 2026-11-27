@@ -79,8 +79,3 @@ What is still to do: [todo.md](todo.md). Index and rules: [CLAUDE.md](../../CLAU
   and the first estimates are the same, so it comes from the later contacts at 1 to 4 m/s that follow the hit (a
   second estimate on a bond that still carries the first's impact); not traced further.
 * What the precompiled headers (`BOX3DDOP_PCH`) save: not measured.
-* Transform Pieces with packed transforms that carry scale or shear.
-* Constraints output through Transform Pieces: constraints between collision pieces (not in the simulation points, so
-  not moved).
-* FORCES: the Multiple Solver with nothing wired into PRESOLVE / POSTSOLVE (no warning expected); that diving into
-  the asset lands in FORCES (the build's check passes); FORCES editable in a locked instance (`EditableNodes`).

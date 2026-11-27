@@ -56,7 +56,9 @@ inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry, Con
 * The Constraint Network DOP uses Second Context Geometry and Attach Internal Constraints to Object, with Reload from
   SOPs off (as RBD Bullet Solver; its default expression reloads while the input changes over time, which would make
   every attribute follow the input), so the network is the pieces object's `ConstraintGeometry`. Only the pieces go
-  through it, the collision object is merged after: a second object would get its own copy and make every joint twice.
+  through it, the collision object is merged after (a line naming a collision piece still holds: Box3D makes its joint
+  and reads it for Break Thresholds, where the RBD Bullet Solver ignores such a line and gives it no feedback, a kept
+  difference; `solver_sop_constraints_collision_bullet`): a second object would get its own copy and make every joint twice.
   Every relationship in `RELATIONSHIPS` (ours and SideFX's) is merged into it with default Data Names, so any
   `constraint_name` finds one. Their parameters are not promoted: set values per primitive (floats multiply the
   node's).
@@ -88,4 +90,4 @@ inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry, Con
   Not `output`: in DOPs that is the Output DOP that saves to disk. A DOP subnet always shows four outputs. A Multiple
   Solver takes the objects and runs PRESOLVE, `scale_forces`, the Box3D Solver, POSTSOLVE. A POP Force on PRESOLVE
   writes `force`, applied and cleared by the solver in the same step; on POSTSOLVE it is applied the next step (see
-  [forces-affectors.md](forces-affectors.md)).
+  [forces-affectors.md](forces-affectors.md)). With nothing wired in, the usual case, the asset and its DOP nodes have no warning. Test `solver_sop_forces`.
