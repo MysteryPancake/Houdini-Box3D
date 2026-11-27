@@ -56,7 +56,7 @@ def core_test_names():
     names = set()
     for path in glob.glob(os.path.join(ROOT, "tests", "core_*.cpp")):
         with open(path, encoding="utf-8") as f:
-            names.update(re.findall(r'\{"([a-z_0-9]+)",\s*test\w+\}', f.read()))
+            names.update(re.findall(r'\{\s*"([a-z_0-9]+)",\s*test\w+\s*\}', f.read()))
     return names
 
 
