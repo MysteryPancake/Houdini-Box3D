@@ -74,14 +74,14 @@ inputs (Geometry, Constraints, Proxy, Collision) and four outputs (Geometry, Con
   `remove_deleted_*`. As Bullet's, Overwrite with SOP, Enable Attribute Update and the breaks' Update from Input are
   greyed out while it is on, and their expressions in the network ignore them then (a value already on stays set).
   Override Attributes from SOP is off then too, unlike Bullet's: it matches the pieces by name, which emission
-  changes every frame. Not built: Emission Cache Memory. Test `solver_sop_emit_bullet`.
+  changes every frame. Not built: Emission Cache Memory. Tests `solver_sop_emit_bullet`, and with World Scale `solver_sop_emit_scale_bullet`.
 * Replicate RBDs (`replicate`, on Emit RBDs' row; same module), as RBD Bullet Solver's, for pieces copied during the
   simulation: output side only. `set_sourcename` writes `__sourcename` before the DOP network; the simulation points
   keep it and `__restxform`, then `rename_copies` names the n-th point sharing a name `<name>_r<n>` (the Simulation
   Points output and every Transform Pieces use these). `replica_points` makes a point per copy, named after its source,
   at the origin with `__restxform` (else identity) as `transform`; `replicate_<kind>` (Copy to Points, Piece Attribute
   `name`) copies the source's render piece onto it, renamed by `rename_replicas_<kind>`, before `remove_deleted_*`.
-  Test `solver_sop_replicate_bullet`.
+  Tests `solver_sop_replicate_bullet`, and with World Scale `solver_sop_replicate_scale_bullet`.
 * Forces: a DOP subnet `FORCES` (the asset's dive target and an editable node: the `DiveTarget` and `EditableNodes`
   sections) with `subnetoutput` nodes `PRESOLVE` and `POSTSOLVE` (Output Index 0 and 1), nothing wired in, PRESOLVE
   left and POSTSOLVE right with a sticky note on each outer side (`FORCES_NOTES`), the subnet's inputs moved above.

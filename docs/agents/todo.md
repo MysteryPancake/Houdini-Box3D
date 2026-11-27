@@ -53,6 +53,9 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
   Bullet's. `kBulletInertiaPad` is a fixed length, as Bullet's margin is: a tetrahedron matches at 0.2, 1 and 5 times the
   size (within 1.2%), but the pad that would match an icosahedron is 0.115 against the tetrahedron's 0.08, so it is 14%
   off at 0.2 m, 3% at 1 m and 1% at 5 m (`bullet_hull_inertia`); what sets the difference between hulls is not known.
+* Whole objects and Bounding Box Inertia: a disc RBD Object's inertia is 7% below Bullet's with the toggle on (the
+  pad is Bullet's for a hull; `rbd_object_inertia_bullet`). RBD State's Use Bounding Box inertia has no pad, so it
+  is 14% below that, where Bullet ignores the menu.
 * Quadric primitives (how they are sampled: [bodies.md](bodies.md)): a denser sphere mesh (Polygon Mesh, NURBS) rests
   at 0.46 to 0.48 where Bullet rests at 0.499, because a Box3D hull keeps about 44 vertices and loses the poles
   (keeping the farthest point per direction rested lower: a 38-vertex ball tips onto a face). Volumes: Bullet's packed
@@ -71,9 +74,9 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
 * Sticky collisions. Box3D's contact begin / end and sensor events: Houdini has no output for them (Bullet has none), so
   nothing reads them beyond Impacts. Sensors (trigger zones) would be the useful part.
 * Box3D Solver SOP:
-  * Emit RBDs (`b3d_solver_emit.py`): untested with World Scale, Global Substeps and
+  * Emit RBDs (`b3d_solver_emit.py`): untested with Global Substeps and
     Deforming pieces (whose Packed Object reads the whole SOP every step, which would drop the emitted pieces), and
-    its cost on many pieces. Replicate RBDs is untested with Emit RBDs on and with World Scale.
+    its cost on many pieces. Replicate RBDs is untested with Emit RBDs on.
   * Break Thresholds (`b3d_solver_breaks.py`): `angle` matches Bullet's for a freely spinning piece, and `torque` is
     Bullet's quantity (the force's moment about the first piece's centre, `bullet_joint_feedback`), so the Torque
     Threshold breaks on the same frames (`solver_sop_break_angle_torque_bullet`, INFO). A Hard (all) line reads only
@@ -84,7 +87,7 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
     same frames in both with Rest Length 0, and Bullet's Soft Stiffness is the frequency in Hz that the mapping takes it
     for (`bullet_soft_spring_hz`), and with the default Rest Length of 1 and the anchors at one point the Angle
     Threshold of 0.2 goes on frame 3 in both (the anchors' shift is aimed again each frame as Bullet's is:
-    `bullet_soft_coincident_anchors`); the later frames' angle runs 0.50 / 0.42 on frame 5. Untested: Variance, World Scale other than 1, and the cost on a large network with it on (the SOP
+    `bullet_soft_coincident_anchors`); the later frames' angle runs 0.50 / 0.42 on frame 5. Untested: the cost on a large network with it on (the SOP
     Solver rewrites the constraint geometry each step, so the solver reads the whole network again). Not there: the
     Force Threshold (Bullet's `force` of a Glue is the difference of its pieces' forces times their mean mass, Box3D's
     is the joint's), the Group parameter, plastic flow, the VEX snippet.

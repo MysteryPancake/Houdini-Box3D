@@ -360,15 +360,36 @@ def test_winding():
 # ---------------------------------------------------------------------------
 
 
-def ground_plane_scene(name, planes, pieces, frames=120):
+def implicit_plane_static(dop, name, geo_path, transform):
+    """A Static Object DOP of the SOP `geo_path` with its Mode (the SDF Representation) set to Implicit Plane, placed by
+    the transform of the geometry object that holds the SOP (`transform`: its parameters, as {"ty": 1.0})."""
+    node = create(dop, "staticobject", name)
+    set_parm(node, ["soppath"], geo_path)
+    obj = hou.node(geo_path).parent()
+    for parm, value in transform.items():
+        set_parm(obj, [parm], value)
+    set_parm(node, ["objpath"], obj.path())
+    set_parm(node, ["usetransform"], 1)
+    set_parm(node, ["mode"], "implicitplane")
+    return node
+
+
+def ground_plane_scene(name, planes, pieces, frames=120, static=False):
     """Drops boxes on Ground Plane DOPs (a list of dicts of parameter values, or a position and
-    rotation each). Returns each box's final position and the solver's messages."""
+    rotation each), or with `static` on Static Object DOPs set to Implicit Plane (a 10 x 10 grid that the plane
+    replaces, placed by its geometry object's transform). Returns each box's final position and the solver's
+    messages."""
     dop = new_dopnet(name)
     path, names = packed_boxes(name + "_box", pieces)
     box = packed_object(dop, "box", path)
     colliders = []
     for i, plane in enumerate(planes):
-        node = create(dop, "groundplane", f"plane{i}")
+        if static:
+            grid = single_object_geo(f"{name}_grid{i}", lambda geo: create(geo, "grid"))
+            node = implicit_plane_static(dop, f"plane{i}", grid, plane)
+            plane = {}
+        else:
+            node = create(dop, "groundplane", f"plane{i}")
         for parm, value in plane.items():
             set_parm(node, [parm], value)
         colliders.append(node)
@@ -451,6 +472,47 @@ def test_ground_plane():
     return results
 
 
+def test_static_implicit_plane():
+    """A Static Object DOP whose Mode (SDF Representation) is Implicit Plane is a ground as a Ground Plane DOP is: a box
+    lands on it at its position, also 300 m from the 10 x 10 grid it is set on, and two tilted ones make a trough that
+    holds a box in the middle. With the Mode left at Ray Intersect the same grid is a plain polygon collider, so the box
+    300 m out falls past it."""
+    results = []
+    boxes = [{"size": (1, 1, 1), "center": (0, 3, 0)}, {"size": (1, 1, 1), "center": (300, 3, 0)}]
+    final, msgs = ground_plane_scene("static_plane_flat", [{"ty": 1.0}], boxes, static=True)
+    near, far = final[0][1], final[1][1]
+    results.append(Result("static_implicit_plane", Result.PASS if close(near, 1.5, 0.05) and close(far, 1.5, 0.05)
+                          else Result.FAIL,
+                          f"boxes on a Static Object plane at y=1 rest at y={near:.3f} and, 300 m out, y={far:.3f} "
+                          "(expected 1.5)"))
+    warned = [m for m in msgs if "usable collision" in m]
+    results.append(Result("static_implicit_plane", Result.FAIL if warned else Result.PASS,
+                          warned[0] if warned else "no collision-geometry warning"))
+
+    final, _ = ground_plane_scene("static_plane_trough", [{"rz": 45.0}, {"rz": -45.0}],
+                                  [{"size": (1, 1, 1), "center": (0.2, 3, 0)}], frames=240, static=True)
+    x, y = final[0][0], final[0][1]
+    results.append(Result("static_implicit_plane", Result.PASS if abs(x) < 0.15 and 0.5 < y < 0.9 else Result.FAIL,
+                          f"a box in a 90 degree trough of two Static Object planes rests at x={x:.3f}, y={y:.3f} "
+                          "(expected x near 0, y between 0.5 and 0.9)"))
+
+    # The control: the same grid with the default Mode is only the grid.
+    dop = new_dopnet("static_plane_control")
+    path, names = packed_boxes("static_plane_control_box", boxes)
+    box = packed_object(dop, "box", path)
+    grid = single_object_geo("static_plane_control_grid", lambda geo: create(geo, "grid"))
+    static = create(dop, "staticobject", "grid")
+    set_parm(static, ["soppath"], grid)
+    solver = box3d_solver(dop, merge(dop, [box, static]))
+    finish(dop, solver)
+    track = step(dop, 120, lambda sim, f: packed_positions(sim, "box"))[120]
+    near, far = track[names[0]][1], track[names[1]][1]
+    results.append(Result("static_implicit_plane", Result.PASS if near > 0.3 and far < -1.0 else Result.FAIL,
+                          f"with the Mode left at Ray Intersect: the box over the grid rests at y={near:.3f}, the one "
+                          f"300 m out is at y={far:.3f} (expected above 0.3, and fallen below -1)"))
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Item 44: a default RBD Object (no Box3D Data) has mass = density x volume, bounce 0.5, hull shape
 # ---------------------------------------------------------------------------
@@ -524,6 +586,7 @@ TESTS = {
     "pscale": test_pscale,
     "winding": test_winding,
     "ground_plane": test_ground_plane,
+    "static_implicit_plane": test_static_implicit_plane,
     "ground_plane_size": test_ground_plane_size,
     "rbd_defaults": test_rbd_defaults,
 }

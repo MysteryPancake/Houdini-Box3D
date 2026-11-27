@@ -78,8 +78,7 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 * `bullet_georep` `plane` on a packed piece (`ShapeType::Plane`, `buildShapes`): `bullet_plane_piece` has a box rest
   on it at the piece's height (through the piece's origin, +Y, as a Ground Plane). A box dropped on it in Bullet fell
   through, so there is nothing to compare against. A piece turning moving mid-simulation rebuilds as a box.
-* Ground: a Static Object whose SDF Representation is set to Implicit Plane is taken as a ground box facing +y through
-  its origin, as a Ground Plane DOP's is (only the Ground Plane is tested). A ground tilted off the axes has a large
+* Ground: a tilted ground (a Ground Plane DOP, or a Static Object set to Implicit Plane: `static_implicit_plane`) has a large
   broad-phase box, so every body in the world keeps a cheap contact with it. A box in a 90 degree trough of two
   grounds with the default friction wedges slightly high (`ground_plane`: 0.82 against 0.71), and sits flat with a
   friction of 0.2.

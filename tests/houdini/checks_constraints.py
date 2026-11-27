@@ -670,7 +670,7 @@ def test_rbd_object_inertia_type():
     with Use Bounding Box it turns about a third further before friction stops it. The RBD Object
     node has no such parameters, so they are set on the node that has computeinertialtensortype
     (found by _inertia_node). Also checks that Compute Inertial Tensor off keeps the volume
-    inertia."""
+    inertia. The solver's Bounding Box Inertia is off here (it would give the disc a box's inertia in each case)."""
     results = []
     turned = {}
     seen = {}
@@ -690,7 +690,9 @@ def test_rbd_object_inertia_type():
         # The object already has its RBD State: only Set Always changes it.
         for name in ("parmop_computeinertialtensortype", "parmop_computeinertialtensor"):
             set_menu_token(holder, [name], "always")
-        finish(dop, box3d_solver(dop, merge(dop, [ground_object(dop), holder])))
+        solver = box3d_solver(dop, merge(dop, [ground_object(dop), holder]))
+        set_parm(solver, ["boundsinertia"], 0)  # the solver's own box inertia would hide the difference
+        finish(dop, solver)
 
         def sample(sim, f):
             node = sim.findObject("disc")
@@ -710,6 +712,78 @@ def test_rbd_object_inertia_type():
                              "If Use Bounding Box shows a different value than Use Volume but the result is the "
                              "same, rebuild the plugin (build.bat) or the solver is not reading it")))
     return results
+
+
+def _drag_spin_loss(kind, label, token, compute, frames=30, bounds=True):
+    """How much of its spin a flat disc RBD Object (10 rad/s about its axis, no gravity, no ground) has lost after `frames`
+    frames under a Drag force on its angular velocity (Scale Torque 1, Ignore Mass), on the Box3D Solver ("box3d") or the
+    RBD Bullet Solver ("bullet") with RBD State's Compute Inertial Tensor `compute` and its type `token`: the torque is
+    the same, so the loss goes with the inverse of the inertia the solver gives the disc (rad/s). `bounds`: the Box3D
+    Solver's Bounding Box Inertia."""
+    name = f"rbd_inertia_bullet_{label}_{kind}"
+    dop = new_dopnet(name)
+    obj = rbd_object(dop, "disc", _disc_sop(f"{name}_disc"), angvel=(0, 573, 0))
+    set_parm(obj, ["bounce"], 0.0)
+    holder = obj if obj.parm("computeinertialtensortype") is not None else _inertia_node(dop, obj, "inertia_state")[0]
+    if holder is None:
+        return None
+    set_menu_token(holder, ["computeinertialtensortype"], token)
+    set_parm(holder, ["computeinertialtensor"], compute)
+    for parm in ("parmop_computeinertialtensortype", "parmop_computeinertialtensor"):
+        set_menu_token(holder, [parm], "always")
+    drag = create(dop, "drag", "drag")
+    drag.setInput(0, holder)
+    set_parm(drag, ["torquescale"], 1.0)
+    set_parm(drag, ["ignoremass"], 1)
+    if kind == "box3d":
+        last = box3d_solver(dop, drag, gravity=(0, 0, 0))
+        set_parm(last, ["boundsinertia"], int(bounds))
+    else:
+        last = create(dop, "bulletrbdsolver", "bullet_solver")
+        last.setInput(0, drag)
+    finish(dop, last)
+
+    def angle(sim, f):
+        m = sim.findObject("disc").transform()
+        return math.atan2(-m.at(0, 2), m.at(0, 0))
+
+    track = step(dop, frames, angle)
+    turn = (track[frames] - track[frames - 1] + math.pi) % (2 * math.pi) - math.pi
+    return 10.0 - abs(turn) * hou.fps()
+
+
+def test_rbd_object_inertia_bullet():
+    """RBD State's Compute Inertial Tensor and its type, and the solver's Bounding Box Inertia, against the RBD Bullet
+    Solver: a flat disc RBD Object spinning freely loses spin under an angular Drag force in proportion to the inverse of
+    the inertia the solver gives it. Bullet loses the same with Compute Inertial Tensor on (Use Volume or Use Bounding
+    Box) and off, so it does not read either; Box3D's off run is the same as its Use Volume one. Bullet gives the disc the
+    inertia of the box over it plus its margin, as it does a hull: with Bounding Box Inertia on (the default, whole
+    objects too) the loss is within 15% of Bullet's, and with it off Box3D's own, smaller inertia loses over 40% more.
+    PASS when Bullet's four runs agree within 1%, Box3D's off run matches its Use Volume one and those two bounds hold."""
+    cases = (("volume", "sdf", 1), ("volume_off", "sdf", 0), ("bounds", "bbox", 1), ("bounds_off", "bbox", 0))
+    loss = {kind: {label: _drag_spin_loss(kind, label, token, compute) for label, token, compute in cases}
+            for kind in ("bullet", "box3d")}
+    plain = _drag_spin_loss("box3d", "plain", "sdf", 1, bounds=False)
+    if plain is None or any(v is None for kind in loss.values() for v in kind.values()):
+        return [Result("rbd_object_inertia_bullet", Result.INFO, "no node type has computeinertialtensortype")]
+    bullet, ours = loss["bullet"], loss["box3d"]
+    base = bullet["volume"]
+    same_bullet = base > 0 and all(abs(v - base) <= 0.01 * base for v in bullet.values())
+    same_off = abs(ours["volume_off"] - ours["volume"]) <= 0.01 * ours["volume"] and abs(
+        ours["bounds_off"] - ours["volume"]) <= 0.01 * ours["volume"]
+    near = abs(ours["volume"] - base) <= 0.15 * base
+    apart = plain > 1.4 * base
+    ok = same_bullet and same_off and near and apart
+    return [Result("rbd_object_inertia_bullet", Result.PASS if ok else Result.FAIL,
+                   "spin lost in rad/s (of 10) after 1.25 s: " + ", ".join(
+                       f"{kind} {label} {v:.3f}" for kind in loss for label, v in loss[kind].items())
+                   + f", Box3D with Bounding Box Inertia off {plain:.3f} (expected Bullet's four alike, Box3D's two off runs "
+                   "the same as its Use Volume one, that one within 15% of Bullet's and the one with the toggle off over "
+                   "1.4 times Bullet's)"),
+            Result("rbd_object_inertia_bullet", Result.INFO,
+                   f"inertia of the disc relative to Box3D's with Bounding Box Inertia on (loss ratio): Bullet "
+                   f"{ours['volume'] / base:.2f}, Box3D's own computed {ours['volume'] / plain:.2f}, Box3D Use Bounding "
+                   f"Box {ours['volume'] / ours['bounds']:.2f}")]
 
 
 def test_data_change_midsim():
@@ -900,6 +974,7 @@ TESTS = {
     "rbd_object_active": test_rbd_object_active,
     "rbd_object_kinematic_pushes": test_rbd_object_kinematic_pushes,
     "rbd_object_inertia_type": test_rbd_object_inertia_type,
+    "rbd_object_inertia_bullet": test_rbd_object_inertia_bullet,
     "data_change_midsim": test_data_change_midsim,
     "data_under_geometry_objects": test_data_under_geometry_objects,
     "static_object_transform": test_static_object_transform,

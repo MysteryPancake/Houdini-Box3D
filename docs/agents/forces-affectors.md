@@ -126,6 +126,7 @@ written back to them (Bullet writes `Feedback` impacts onto them). Test `point_a
 instead of a mesh of its guide grid. Pose and scale come from `SIMgetGeometryTransform` as for any affector, but only
 the pose is used; a sheared transform fails the ground. Several Ground Plane DOPs give several grounds, each its own
 body. Material as above (Box3D Data, else the Ground Plane's Physical tab). The signature is the material and the
-size, so moving or turning the ground only moves its body. The object needs no geometry.
+size, so moving or turning the ground only moves its body. The object needs no geometry. A Static Object DOP with its Mode set to Implicit Plane takes this path too, placed by
+its object transform. Tests `ground_plane`, `static_implicit_plane`.
 
 Not done: SDF / volume collision, mask holes, per-pair collider selection.

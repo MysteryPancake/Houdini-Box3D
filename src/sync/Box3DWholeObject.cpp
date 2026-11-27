@@ -530,6 +530,9 @@ void syncWholeObject(Box3DSharedState &st, const SIM_Object &obj,
       readDynamicProps(setup.node, none, static_cast<GA_Offset>(0));
   // The pivot is the centre of mass (wholeObjectPose handles RBD State's own).
   p.computeCom = false;
+  // The solver's Bounding Box Inertia (Bullet's inertia for hulls and
+  // compounds); RBD State's own Use Bounding Box inertia, set below, wins.
+  p.shapeBoundsInertia = st.shapeBoundsInertia;
   // The bounding box only changes with the geometry or its transform.
   uint64_t boundsKey = 0;
   if (setup.boundsInertia) {

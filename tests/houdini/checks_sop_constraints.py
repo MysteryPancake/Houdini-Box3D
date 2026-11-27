@@ -224,12 +224,17 @@ def test_solver_sop_keep_broken_bullet():
     return results
 
 
-def _break_impact_held(kind, threshold, tag, strength=1e12, scale_by_strength=False, from_frame=None):
+def _world_scale_parms(scale):
+    """The Solver SOP parameters for World Scale `scale` (off at 1)."""
+    return {"usescale": 1, "scale": scale} if scale != 1.0 else {}
+
+
+def _break_impact_held(kind, threshold, tag, strength=1e12, scale_by_strength=False, from_frame=None, scale=1.0):
     """Whether a SideFX Glue pair (Strength 1e12: it cannot break by itself) landing from 3 holds with an Impact
     Threshold of `threshold` on the Break Thresholds of the Box3D Solver SOP ("box3d") or the RBD Bullet Solver SOP
     ("bullet"): the constraint primitives left on frame 48. `strength`: the Glue's own (a line attribute);
-    `scale_by_strength`: Scale by Attribute, the attribute `strength`; `from_frame`: the From Frame."""
-    parms = {"constraint_impactthreshold1": threshold}
+    `scale_by_strength`: Scale by Attribute, the attribute `strength`; `from_frame`: the From Frame; `scale`: World Scale."""
+    parms = dict(_world_scale_parms(scale), constraint_impactthreshold1=threshold)
     if from_frame is not None:
         parms.update({"constraint_usefromframe1": 1, "constraint_fromframe1": from_frame})
     if scale_by_strength:
@@ -276,6 +281,91 @@ def test_solver_sop_break_impact_bullet():
                    f"pair stops breaking at an Impact Threshold of {found['box3d']:.0f} (Box3D) and "
                    f"{found['bullet']:.0f} (Bullet), Bullet / Box3D {ratio:.2f}" +
                    (f"; PROBLEMS: {'; '.join(problems)}" if problems else ""))]
+
+
+def _survivors(kind, tag, count, parms, frames=8):
+    """How many of `count` Hard lines are left after `frames` frames on the Box3D Solver SOP ("box3d") or the RBD Bullet
+    Solver SOP ("bullet") with only the Distance Threshold on and `parms` set: each line holds a fixed box over a free
+    one (5 apart from the next pair), its anchors 2 apart."""
+    boxes = []
+    for i in range(count):
+        boxes += [{"size": (1, 1, 1), "center": (5 * i, 4, 0), "attrs": {"active": 0}},
+                  {"size": (1, 1, 1), "center": (5 * i, 2, 0), "attrs": {"active": 1}}]
+    pieces, pnames = packed_boxes(f"{tag}_pieces", boxes)
+    lines = constraint_lines(f"{tag}_network", [(pnames[2 * i], (5 * i, 3.5, 0), pnames[2 * i + 1], (5 * i, 1.5, 0), "Hard")
+                                                 for i in range(count)])
+    sop = (solver_sop if kind == "box3d" else bullet_sop)(f"{tag}_{kind}", geometry=pieces, constraints=lines)
+    set_parm(sop, ["enable_constraintbreaks"], 1)
+    set_parm(sop, ["constraint_names1"], "Hard")
+    for key in ("angle", "distance", "impact", "torque"):
+        set_parm(sop, [f"constraint_use{key}1"], 1 if key == "distance" else 0)
+    for name, value in parms.items():
+        set_parm(sop, [name], value)
+    return play(sop, frames, lambda s, f: len(s.geometry(1).prims()))[frames]
+
+
+def test_solver_sop_break_variance_bullet():
+    """Break Thresholds, Variance, against the RBD Bullet Solver SOP: 24 Hard constraints whose anchors start 2 apart with a
+    Distance Threshold that has a Variance (each constraint's threshold times a number of its own from 1 - Variance to
+    1 + Variance). A range wholly below the distance breaks every constraint (threshold 0.5, Variance 0.2), one wholly
+    above it none (threshold 50, Variance 0.9) and one across it some but not all (threshold 2, Variance 0.9), in both. How
+    many break is not compared (each draws its own numbers), only that it is some but not all."""
+    count = 24
+    problems, rows = [], []
+    for threshold, variance, want in ((0.5, 0.2, "all"), (50.0, 0.9, "none"), (2.0, 0.9, "some")):
+        left = {}
+        for kind in ("box3d", "bullet"):
+            parms = {"constraint_distancethreshold1": threshold, "constraint_usedistancevar1": 1,
+                     "constraint_distancevar1": variance}
+            left[kind] = _survivors(kind, f"sop_var_{kind}_{int(threshold * 10)}", count, parms)
+            ok = {"all": left[kind] == 0, "none": left[kind] == count, "some": 0 < left[kind] < count}[want]
+            if not ok:
+                problems.append(f"{kind} with a threshold of {threshold} and Variance {variance}: {left[kind]} of "
+                                f"{count} left, expected {want} broken")
+        rows.append(f"threshold {threshold} Variance {variance}: left of {count} (Box3D / Bullet) "
+                    f"{left['box3d']} / {left['bullet']}")
+    return [Result("solver_sop_break_variance_bullet", Result.FAIL if problems else Result.PASS,
+                   "; ".join(rows) + (f"; PROBLEMS: {'; '.join(problems)}" if problems else ""))]
+
+
+def test_solver_sop_break_scale_bullet():
+    """Break Thresholds with World Scale, against the RBD Bullet Solver SOP at the same World Scale (10 and 0.1): the
+    Distance and Impact Thresholds are in scene units (the solver takes them times World Scale), so a Hard constraint 2
+    apart breaks within 8 frames with a Distance Threshold of 0.2 and holds with 50, and a glued pair landing from 3
+    breaks with an Impact Threshold of 5000 and holds with 2e6, in both. The Distance one goes on frames at most 1
+    apart. A Variance of 0.9 on a threshold of 2 breaks some of 24 constraints and not all, in both."""
+    problems, rows = [], []
+    for k in (10.0, 0.1):
+        tag = str(k).replace(".", "_")
+        world = _world_scale_parms(k)
+        for thr, want_break in ((0.2, True), (50.0, False)):
+            gone = {kind: _first_break(kind, f"sop_scale_distance_{kind}{tag}_{int(thr * 10)}", "Hard",
+                                       ((0, 3.5, 0), (0, 1.5, 0)), enable=("distance",), names="Hard", frames=8,
+                                       parms=dict(world, constraint_distancethreshold1=thr))
+                    for kind in ("box3d", "bullet")}
+            rows.append(f"World Scale {k:g} Distance {thr}: gone on frame {gone['box3d']} / {gone['bullet']}")
+            for kind, f in gone.items():
+                if (f is not None) != want_break:
+                    problems.append(f"{kind} at World Scale {k:g} with a Distance Threshold of {thr}: gone on {f}")
+            if want_break and None not in gone.values() and abs(gone["box3d"] - gone["bullet"]) > 1:
+                problems.append(f"World Scale {k:g} Distance {thr}: gone on {gone['box3d']} / {gone['bullet']}")
+        for thr, want_break in ((5000.0, True), (2e6, False)):
+            held = {kind: _break_impact_held(kind, thr, f"sop_scale_impact_{kind}{tag}_{int(thr)}", scale=k)
+                    for kind in ("box3d", "bullet")}
+            rows.append(f"World Scale {k:g} Impact {thr:g}: held (Box3D / Bullet) {held['box3d']} / {held['bullet']}")
+            for kind, h in held.items():
+                if h == want_break:
+                    problems.append(f"{kind} at World Scale {k:g} with an Impact Threshold of {thr:g}: "
+                                    f"{'held' if h else 'broke'}")
+        left = {kind: _survivors(kind, f"sop_scale_var_{kind}{tag}", 24,
+                                 dict(world, constraint_distancethreshold1=2.0, constraint_usedistancevar1=1,
+                                      constraint_distancevar1=0.9)) for kind in ("box3d", "bullet")}
+        rows.append(f"World Scale {k:g} Variance 0.9: left of 24 (Box3D / Bullet) {left['box3d']} / {left['bullet']}")
+        for kind, n in left.items():
+            if not 0 < n < 24:
+                problems.append(f"{kind} at World Scale {k:g} with Variance 0.9: {n} of 24 left")
+    return [Result("solver_sop_break_scale_bullet", Result.FAIL if problems else Result.PASS,
+                   "; ".join(rows) + (f"; PROBLEMS: {'; '.join(problems)}" if problems else ""))]
 
 
 def _first_break(kind, tag, cname, anchors, hang=None, enable=(), parms=None, names="Glue", line_attrs=None, frames=24,
@@ -633,6 +723,8 @@ def test_solver_sop_speed_limit_bullet():
 
 
 TESTS = {
+    "solver_sop_break_variance_bullet": test_solver_sop_break_variance_bullet,
+    "solver_sop_break_scale_bullet": test_solver_sop_break_scale_bullet,
     "solver_sop_keep_broken_bullet": test_solver_sop_keep_broken_bullet,
     "solver_sop_break_impact_bullet": test_solver_sop_break_impact_bullet,
     "solver_sop_break_atframe_bullet": test_solver_sop_break_atframe_bullet,

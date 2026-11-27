@@ -20,8 +20,9 @@ is updated: [bodies.md](bodies.md). Index and rules: [CLAUDE.md](../../CLAUDE.md
   its pieces spin more slowly. With the toggle on `applyBodyMass` gives a body whose shapes are hulls (or several
   shapes) that box's inertia: `Box3DWorld::boundsInertiaExtentsByHandle` measures the shapes' extents in the rest
   frame (`restRot`) plus `kBulletInertiaPad`, and `boundsInverseInertiaIn` turns the box's tensor back into the
-  body's axes. Whole objects are left out (RBD State's own Compute Inertial Tensor decides theirs, `whole-object.md`), as are a
-  body of one box (a hull of six perpendicular faces), sphere or capsule, a mesh, and bodies with a custom inertia. Measured against Bullet in `bullet_hull_inertia` (a tetrahedron
+  body's axes. Whole objects take it too (`syncWholeObject` sets `shapeBoundsInertia`; RBD State's own Use Bounding Box
+  inertia, `whole-object.md`, replaces it, and the RBD Bullet Solver reads neither that nor Compute Inertial Tensor:
+  `rbd_object_inertia_bullet`). Left out are a body of one box (a hull of six perpendicular faces), sphere or capsule, a mesh, and bodies with a custom inertia. Measured against Bullet in `bullet_hull_inertia` (a tetrahedron
   within 1% and an icosahedron within 4% at 1 m, the tetrahedron within 1.2% from 0.2 to 5 times that size and the
   icosahedron 14% off at 0.2). The pieces of a Glue as One Body compound keep the true inertia of the
   merged shapes (`compoundsync::eligible` does not look at the flag), where Bullet sums its pieces' box inertias.

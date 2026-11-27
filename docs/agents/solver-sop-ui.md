@@ -47,7 +47,8 @@ state and messages. Its network: [solver-sop.md](solver-sop.md). Index and rules
   has points: the compiled loop costs about a millisecond a step over nothing): off, the constraint geometry is not
   imported, because a rewrite changes its data ids and the solver then reads the whole network again each step. Test
   `solver_sop_break_impact_bullet`, `solver_sop_break_atframe_bullet`, `solver_sop_break_distance_bullet`,
-  `solver_sop_break_attrib_update_bullet` (against the RBD Bullet Solver SOP), `solver_sop_break_next_settings` and
+  `solver_sop_break_attrib_update_bullet`, `solver_sop_break_variance_bullet`, `solver_sop_break_scale_bullet` (against
+  the RBD Bullet Solver SOP), `solver_sop_break_next_settings` and
   the INFO `solver_sop_break_angle_torque_bullet`.
 * Constraint attribute updates (`tools/b3d_solver_updates.py`, as RBD Bullet Solver's): the Constraints tab's Override
   Attributes folder (`enable_constraintupdates` with its label hidden, joined to `constraint_attributes`, then

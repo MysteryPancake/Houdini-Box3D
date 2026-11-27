@@ -862,6 +862,68 @@ def test_solver_sop_pop_drag_bullet():
     return results
 
 
+def _emit_sample(s, f):
+    """One frame of an emitting Solver SOP: the simulation points (position, v), the Geometry and constraint counts."""
+    return {"points": {p.attribValue("name"): (p.position(), p.attribValue("v")) for p in s.geometry(3).points()},
+            "geometry": len(s.geometry(0).prims()), "constraints": len(s.geometry(1).prims()),
+            "moved": named_positions(s.geometry(0)),
+            "proxy": len(s.geometry(2).prims())}
+
+
+def _emit_differences(box3d, bullet, names, frames):
+    """(problems, summary) of two emitting runs played `frames` frames: the same point names, positions within 0.05, the
+    same constraint count, one Geometry piece per point in Box3D's, an emitted copy that keeps its `v` (x 30) and
+    `2 * frames + 1` points in the end."""
+    problems = []
+    for f in range(1, frames + 1):
+        a, b = box3d[f], bullet[f]
+        if sorted(a["points"]) != sorted(b["points"]):
+            problems.append(f"frame {f} names Box3D {sorted(a['points'])}, Bullet {sorted(b['points'])}")
+            continue
+        far = [n for n in a["points"] if (a["points"][n][0] - b["points"][n][0]).length() > 0.05]
+        if far:
+            problems.append(f"frame {f}: {far} more than 0.05 from Bullet's")
+        if a["constraints"] != b["constraints"]:
+            problems.append(f"frame {f} constraints Box3D {a['constraints']}, Bullet {b['constraints']}")
+        if a["geometry"] != len(a["points"]):
+            problems.append(f"frame {f} Box3D geometry has {a['geometry']} pieces for {len(a['points'])} points")
+    last = box3d[frames]["points"]
+    emitted = f"{names[0]}_{frames * 100}"
+    v = last.get(emitted, (None, None))[1]
+    if v is None or abs(v[0] - 30.0) > 1e-3:
+        problems.append(f"{emitted}'s v {v}, expected x 30")
+    want = 2 * frames + 1
+    if len(last) != want:
+        problems.append(f"{len(last)} points on frame {frames}, expected {want}")
+    return problems, f"{len(last)} points and {box3d[frames]['constraints']} constraints on frame {frames}, as Bullet's"
+
+
+def test_solver_sop_emit_scale_bullet():
+    """Emit RBDs with World Scale, against the RBD Bullet Solver SOP at the same World Scale: the scene of
+    solver_sop_emit_bullet (Solve on Creation Frame off) at World Scale 10 and 0.1. The results are in scene units, so
+    they must be what the same checks find there: the same point names, constraint counts and positions within 0.05
+    as Bullet's, and an emitted copy that keeps its `v`."""
+    pieces, names = packed_boxes("sop_emit_scale_pieces", [
+        {"size": (1, 1, 1), "center": (0, 5, 0), "attrs": {"v": (30, 0, 0), "rbdbullet_emit": 1}},
+        {"size": (1, 1, 1), "center": (0, 6, 0), "attrs": {"v": (30, 0, 0), "rbdbullet_emit": 1}},
+        {"size": (1, 1, 1), "center": (0, 5, 5), "attrs": {"rbdbullet_emit": 0}}])
+    lines = constraint_lines("sop_emit_scale_network", [(names[0], (0, 5.5, 0), names[1], (0, 5.5, 0), "Glue")])
+    frames = 5
+    results = []
+    for k in (10.0, 0.1):
+        tag = str(k).replace(".", "_")
+        got = {}
+        for kind, sop in _both_sops(f"sop_emit_scale_{tag}", geometry=pieces, constraints=lines).items():
+            set_parm(sop, ["useemission"], 1)
+            set_parm(sop, ["usescale"], 1)
+            set_parm(sop, ["scale"], k)
+            got[kind] = play(sop, frames, _emit_sample)
+        problems, summary = _emit_differences(got["box3d"], got["bullet"], names, frames)
+        results.append(Result("solver_sop_emit_scale_bullet", Result.FAIL if problems else Result.PASS,
+                              f"World Scale {k:g}: " + ("; ".join(problems) if problems else summary)))
+    return results
+
+
 def test_solver_sop_emit_bullet():
     """Emit RBDs, against the RBD Bullet Solver SOP, with Solve on Creation Frame off and on: two glued boxes that emit,
     thrown sideways by their `v` fast enough to clear the spot before the next copy appears there, and one with
@@ -878,50 +940,20 @@ def test_solver_sop_emit_bullet():
     frames = 5
     results = []
 
-    def sample(s, f):
-        pts = s.geometry(3)
-        return {"points": {p.attribValue("name"): (p.position(), p.attribValue("v")) for p in pts.points()},
-                "geometry": len(s.geometry(0).prims()), "constraints": len(s.geometry(1).prims()),
-                "moved": named_positions(s.geometry(0)),
-                "proxy": len(s.geometry(2).prims())}
-
     for first in (0, 1):
         sops = _both_sops(f"sop_emit_{first}", geometry=pieces, constraints=lines)
         got = {}
         for kind, sop in sops.items():
             set_parm(sop, ["useemission"], 1)
             set_parm(sop, ["solvefirstframe"], first)
-            got[kind] = play(sop, frames, sample)
-        box3d, bullet = got["box3d"], got["bullet"]
-        problems = []
-        for f in range(1, frames + 1):
-            a, b = box3d[f], bullet[f]
-            if sorted(a["points"]) != sorted(b["points"]):
-                problems.append(f"frame {f} names Box3D {sorted(a['points'])}, Bullet {sorted(b['points'])}")
-                continue
-            far = [n for n in a["points"] if (a["points"][n][0] - b["points"][n][0]).length() > 0.05]
-            if far:
-                problems.append(f"frame {f}: {far} more than 0.05 from Bullet's")
-            if a["constraints"] != b["constraints"]:
-                problems.append(f"frame {f} constraints Box3D {a['constraints']}, Bullet {b['constraints']}")
-            if a["geometry"] != len(a["points"]):
-                problems.append(f"frame {f} Box3D geometry has {a['geometry']} pieces for {len(a['points'])} points")
-        last = box3d[frames]["points"]
-        emitted = f"{names[0]}_{frames * 100}"
-        v = last.get(emitted, (None, None))[1]
-        if v is None or abs(v[0] - 30.0) > 1e-3:
-            problems.append(f"{emitted}'s v {v}, expected x 30")
-        want = 2 * frames + 1
-        if len(last) != want:
-            problems.append(f"{len(last)} points on frame {frames}, expected {want}")
+            got[kind] = play(sop, frames, _emit_sample)
+        problems, summary = _emit_differences(got["box3d"], got["bullet"], names, frames)
         results.append(Result("solver_sop_emit_bullet", Result.FAIL if problems else Result.PASS,
-                              f"Solve on Creation Frame {first}: " + ("; ".join(problems) if problems else
-                              f"{len(last)} points and {box3d[frames]['constraints']} constraints on frame "
-                              f"{frames}, as Bullet's")))
+                              f"Solve on Creation Frame {first}: " + ("; ".join(problems) if problems else summary)))
 
     sop = solver_sop("sop_emit_proxy", geometry=pieces, constraints=lines, proxy=pieces)
     set_parm(sop, ["useemission"], 1)
-    track = play(sop, frames, sample)
+    track = play(sop, frames, _emit_sample)
     bad = [f"frame {f}: {track[f]['geometry']} geometry, {track[f]['proxy']} proxy pieces for "
            f"{len(track[f]['points'])} points" for f in track
            if not track[f]["geometry"] == track[f]["proxy"] == len(track[f]["points"])]
@@ -1018,6 +1050,49 @@ def _piece_centres(geo):
             for n, ps in points.items()}
 
 
+def _replicate_sample(s, f):
+    """One frame of a replicating Solver SOP: {point name: position} of the simulation points and {name: centre} of the
+    Geometry pieces."""
+    return {"points": {p.attribValue("name"): p.position() for p in s.geometry(3).points()},
+            "pieces": _piece_centres(s.geometry(0))}
+
+
+def test_solver_sop_replicate_scale_bullet():
+    """Replicate RBDs with World Scale, against the RBD Bullet Solver SOP at the same World Scale: the scene of
+    solver_sop_replicate_bullet at World Scale 10 and 0.1. Both name the copy `<name>_r1`, and the copy is at the
+    same place in both, as is the box that was not copied (within 0.05 of Bullet's, in scene units). The SOP Solver
+    works in the solver's units (a scene length times World Scale), so it moves the copy by 3 x World Scale to put it 3
+    aside in the scene. In Box3D the copy's Geometry piece is where its point is."""
+    pieces, names = packed_boxes("sop_replicate_scale_pieces", [{"size": (1, 1, 1), "center": (0, 5, 0)},
+                                                                {"size": (1, 1, 1), "center": (3, 5, 0)}])
+    copy = f"{names[0]}_r1"
+    frames = 5
+    results = []
+    for k in (10.0, 0.1):
+        tag = str(k).replace(".", "_")
+        got = {}
+        for kind, sop in _both_sops(f"sop_replicate_scale_{tag}", geometry=pieces).items():
+            set_parm(sop, ["replicate"], 1)
+            set_parm(sop, ["usescale"], 1)
+            set_parm(sop, ["scale"], k)
+            _duplicate_in_postsolve(sop, "FORCES" if kind == "box3d" else "forces", names[0], 3, (0, 0, 3 * k))
+            got[kind] = play(sop, frames, _replicate_sample)[frames]
+        a, b = got["box3d"], got["bullet"]
+        problems = []
+        if sorted(a["points"]) != sorted([names[0], names[1], copy]) or sorted(a["points"]) != sorted(b["points"]):
+            problems.append(f"points Box3D {sorted(a['points'])}, Bullet {sorted(b['points'])}")
+        else:
+            problems += [f"{n} at {a['points'][n]} in Box3D, {b['points'][n]} in Bullet" for n in (copy, names[1])
+                         if (a["points"][n] - b["points"][n]).length() > 0.05]
+            if copy not in a["pieces"] or (a["pieces"][copy] - a["points"][copy]).length() > 1e-3:
+                problems.append(f"{copy}'s piece at {a['pieces'].get(copy)}, its point at {a['points'][copy]}")
+        results.append(Result("solver_sop_replicate_scale_bullet", Result.FAIL if problems else Result.PASS,
+                              f"World Scale {k:g}: " + ("; ".join(problems) if problems else
+                                                        f"{copy} at {a['points'][copy]} in Box3D, {b['points'][copy]} in "
+                                                        "Bullet, with a Geometry piece at its point")))
+    return results
+
+
 def test_solver_sop_replicate_bullet():
     """Replicate RBDs, against the RBD Bullet Solver SOP: a SOP Solver in FORCES' POSTSOLVE copies one of two boxes on
     frame 3, 3 units aside. With Replicate RBDs on, both name the copy's simulation point `<name>_r1` and give it a
@@ -1029,10 +1104,7 @@ def test_solver_sop_replicate_bullet():
     copy = f"{names[0]}_r1"
     frames = 5
     results = []
-
-    def sample(s, f):
-        return {"points": {p.attribValue("name"): p.position() for p in s.geometry(3).points()},
-                "pieces": _piece_centres(s.geometry(0))}
+    sample = _replicate_sample
 
     got = {}
     for replicate in (0, 1):
@@ -1087,6 +1159,8 @@ def test_solver_sop_replicate_bullet():
 
 
 TESTS = {
+    "solver_sop_replicate_scale_bullet": test_solver_sop_replicate_scale_bullet,
+    "solver_sop_emit_scale_bullet": test_solver_sop_emit_scale_bullet,
     "solver_sop_replicate_bullet": test_solver_sop_replicate_bullet,
     "solver_sop_emit_bullet": test_solver_sop_emit_bullet,
     "solver_sop_quadrics": test_solver_sop_quadrics,

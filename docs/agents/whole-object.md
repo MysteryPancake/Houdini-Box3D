@@ -36,7 +36,9 @@ its state in the object's `Position` data instead of point attributes.
     `computeinertialtensor` on and `computeinertialtensortype` at Use Bounding Box (index 1, or a token containing
     "box" / "bound"), the inertia is that of a solid box with the mass and the geometry's object-space bounding box
     (`BodyProps::boundsInertia`, applied in `applyBodyMass`; the extents are rescanned every step); the scale still
-    applies. `computeinertialtensor` off keeps the computed inertia. The node has no tensor parameter. Glue options
+    applies. `computeinertialtensor` off keeps the computed inertia (the RBD Bullet Solver reads neither the toggle nor the type,
+    so its inertia does not change with them; the solver's Bounding Box Inertia gives the shapes Bullet's box inertia,
+    [body-features.md](body-features.md); `rbd_object_inertia_bullet`). The node has no tensor parameter. Glue options
     are not read. `computecom` on (the default): the pivot is the centroid of the convex hull of the geometry's
     object-space points (`objectCentreOfMass`, `Box3DWorld::hullCentroid`; the bounding box centre if no hull can be
     made), because Houdini's solvers fill `p` in themselves and it is (0, 0, 0) until then (the body would otherwise
