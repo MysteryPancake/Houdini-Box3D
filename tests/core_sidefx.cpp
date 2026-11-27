@@ -222,8 +222,8 @@ int main() {
     j = mapSideFX(SideFXType::Spring, s, ConstraintMode::Position, c2);
     CHECK(j.settings.linearStiffness == 0.0f); // nothing can move: no spring
 
-    // Cone twist: the smaller cone limit (Box3D's cone is round), 180 = none;
-    // twist symmetric.
+    // Cone twist: an elliptical cone, Max Out Rotation toward x (the up axis)
+    // and Max Up Rotation toward y, 180 = none; twist symmetric.
     s = SideFXSettings();
     j = mapSideFX(SideFXType::ConeTwist, s, ConstraintMode::All, ctx);
     CHECK(j.type == JointType::Spherical && !j.settings.enableConeLimit);
@@ -233,8 +233,9 @@ int main() {
     s.maxOutRotation = 25.0f;
     s.maxTwist = 180.0f;
     j = mapSideFX(SideFXType::ConeTwist, s, ConstraintMode::All, ctx);
-    CHECK(j.settings.enableConeLimit &&
+    CHECK(j.settings.enableConeLimit && j.settings.ellipticalCone &&
           near(j.settings.coneAngle, 25.0 * kDegToRad, 1e-6) &&
+          near(j.settings.coneAngleY, 40.0 * kDegToRad, 1e-6) &&
           !j.settings.enableTwistLimit);
     s.maxTwist = 30.0f;
     j = mapSideFX(SideFXType::ConeTwist, s, ConstraintMode::All, ctx);
@@ -521,43 +522,51 @@ int main() {
     CHECK(dist(fa.pos, fb.pos) < 0.05);
   }
   {
-    // Cone twist hanging straight down (twist axis -y), kicked sideways: stops
-    // at the smaller limit (20, not 45). Box3D's limits are soft, so a hard
-    // kick overshoots by a few degrees.
-    Box3DWorld w;
-    CHECK(w.create(ws));
-    const BodyHandle b = box(w, 0, 4, 0);
-    SideFXSettings s;
-    for (float *ax : {s.goalTwistAxis, s.constrainedTwistAxis}) {
-      ax[0] = 0;
-      ax[1] = -1;
-      ax[2] = 0;
+    // Cone twist hanging straight down (twist axis -y, up axis x), kicked
+    // sideways: an elliptical cone. Toward the up axis (x) it swings about the
+    // out axis, held by Max Out Rotation (45); toward the out axis (z) by Max
+    // Up Rotation (20). Box3D's limits are soft, so a hard kick overshoots by a
+    // few degrees.
+    for (int toward = 0; toward < 2; ++toward) {
+      Box3DWorld w;
+      CHECK(w.create(ws));
+      const BodyHandle b = box(w, 0, 4, 0);
+      SideFXSettings s;
+      for (float *ax : {s.goalTwistAxis, s.constrainedTwistAxis}) {
+        ax[0] = 0;
+        ax[1] = -1;
+        ax[2] = 0;
+      }
+      for (float *ax : {s.goalUpAxis, s.constrainedUpAxis}) {
+        ax[0] = 1;
+        ax[1] = 0;
+        ax[2] = 0;
+      }
+      s.maxUpRotation = 20.0f;
+      s.maxOutRotation = 45.0f;
+      s.maxTwist = 180.0f;
+      CHECK(make(w, SideFXType::ConeTwist, s, ConstraintMode::All, 0, b,
+                 frame(0, 5, 0), frame(0, 5, 0)) != 0);
+      const float kick[3] = {toward == 0 ? 4.0f : 0.0f, 0,
+                             toward == 1 ? 3.0f : 0.0f},
+                  none[3] = {0, 0, 0};
+      w.setVelocityByHandle(b, kick, none);
+      double worst = 0.0;
+      for (int i = 0; i < 120; ++i) {
+        w.step(kDt);
+        double p[3];
+        pos(w, b, p);
+        const double dx = p[0], dy = p[1] - 5.0, dz = p[2];
+        const double ang =
+            std::acos(-dy / std::sqrt(dx * dx + dy * dy + dz * dz)) * kRadToDeg;
+        worst = std::max(worst, ang);
+      }
+      const double limit = toward == 0 ? 45.0 : 20.0;
+      CHECK(worst > limit - 1.0 && worst < limit + 3.0);
+      std::printf("cone twist (%.0f deg toward %s): swung at most %.2f "
+                  "degrees\n",
+                  limit, toward == 0 ? "up" : "out", worst);
     }
-    for (float *ax : {s.goalUpAxis, s.constrainedUpAxis}) {
-      ax[0] = 1;
-      ax[1] = 0;
-      ax[2] = 0;
-    }
-    s.maxUpRotation = 20.0f;
-    s.maxOutRotation = 45.0f;
-    s.maxTwist = 180.0f;
-    CHECK(make(w, SideFXType::ConeTwist, s, ConstraintMode::All, 0, b,
-               frame(0, 5, 0), frame(0, 5, 0)) != 0);
-    const float kick[3] = {3, 0, 0}, none[3] = {0, 0, 0};
-    w.setVelocityByHandle(b, kick, none);
-    double worst = 0.0;
-    for (int i = 0; i < 120; ++i) {
-      w.step(kDt);
-      double p[3];
-      pos(w, b, p);
-      const double dx = p[0], dy = p[1] - 5.0, dz = p[2];
-      const double ang =
-          std::acos(-dy / std::sqrt(dx * dx + dy * dy + dz * dz)) * kRadToDeg;
-      worst = std::max(worst, ang);
-    }
-    CHECK(worst > 19.0 && worst < 23.0);
-    std::printf("cone twist (20 deg cone): swung at most %.2f degrees\n",
-                worst);
   }
 
   // Options that hold NaN compare equal to themselves (a Glue's strength read

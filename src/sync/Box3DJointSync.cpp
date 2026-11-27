@@ -123,9 +123,9 @@ struct NetworkReader {
       return std::clamp(bondCount, 1, b3dop::kMaxGlueIterations);
     int n = 1;
     if (globalIterations.isValid())
-      n = globalIterations.get(GA_Offset(0));
+      n = globalIterations.get(static_cast<GA_Offset>(0));
     else if (globalIterationsF.isValid()) {
-      const float f = globalIterationsF.get(GA_Offset(0));
+      const float f = globalIterationsF.get(static_cast<GA_Offset>(0));
       if (std::isfinite(f))
         n = static_cast<int>(
             std::clamp(f, 1.0f, static_cast<float>(b3dop::kMaxGlueIterations)));
@@ -371,18 +371,30 @@ private:
 
   // The type, settings and frame offsets for the primitive.
   JointSpec specFor(const Box3DJointKind &kind, GA_Offset off,
-                    b3dop::BodyHandle a, b3dop::BodyHandle b,
+                    const AnchorBody &ab, const AnchorBody &bb,
                     const b3dop::JointFrame &fa, const b3dop::JointFrame &fb,
                     const b3dop::JointFrame &authA,
                     const b3dop::JointFrame &authB,
                     const b3dop::JointFrame &nowA,
                     const b3dop::JointFrame &nowB) const {
+    const b3dop::BodyHandle a = ab.handle, b = bb.handle;
     JointSpec j;
     if (kind.sideFX) {
       // SideFX data: the primitive's overrides on its options, then mapped onto
       // a Box3D joint.
       b3dop::SideFXSettings sf = kind.sideFXSettings;
       applySideFXOverrides(mySfReaders, kind.sideFXType, off, sf);
+      // Cone Twist's axes are in each anchor's own space: on a mirrored rig
+      // transform its z is negated before the anchor's rotation (constrained
+      // axes on point 0, goal axes on point 1).
+      if (ab.mirrored) {
+        sf.constrainedTwistAxis[2] = -sf.constrainedTwistAxis[2];
+        sf.constrainedUpAxis[2] = -sf.constrainedUpAxis[2];
+      }
+      if (bb.mirrored) {
+        sf.goalTwistAxis[2] = -sf.goalTwistAxis[2];
+        sf.goalUpAxis[2] = -sf.goalUpAxis[2];
+      }
       b3dop::SideFXContext ctx;
       ctx.a = sideFXBody(myWorld, a);
       ctx.b = sideFXBody(myWorld, b);
@@ -560,14 +572,6 @@ private:
   bool resolveEnds(Box3DJointEntry &e, GA_Offset p0, GA_Offset p1,
                    AnchorBody &ab, AnchorBody &bb, b3dop::JointFrame &authA,
                    b3dop::JointFrame &authB) {
-    // Agent anchors name a transform of an agent's rig: nothing here simulates
-    // one.
-    if (myRd.anchorKind(p0) == AnchorKind::Agent ||
-        myRd.anchorKind(p1) == AnchorKind::Agent) {
-      ++myCounts.agentAnchors;
-      dropJoint(e);
-      return false;
-    }
     if (!myAnchors.resolve(myRd.anchorName(p0), ab) ||
         !myAnchors.resolve(myRd.anchorName(p1), bb)) {
       ++myCounts.unresolved;
@@ -575,11 +579,36 @@ private:
       dropJoint(e);
       return false; // not stamped: removed; retried when bodies change
     }
+    // An agent anchor names a transform of an agent's rig: it is a point on the
+    // body of a ragdoll agent's transform (`agentBody`), at its authored P; a
+    // transform without a body is nothing here simulates.
+    const bool agentA = myRd.anchorKind(p0) == AnchorKind::Agent,
+               agentB = myRd.anchorKind(p1) == AnchorKind::Agent;
+    if ((agentA && !(ab.entry && ab.entry->agentBody)) ||
+        (agentB && !(bb.entry && bb.entry->agentBody))) {
+      ++myCounts.agentAnchors;
+      dropJoint(e);
+      return false;
+    }
     if (ab.byObjectName || bb.byObjectName)
       myNet.needsBodies = true;
     AnchorLookup badAnchor = AnchorLookup::Ok;
     authA = asStored(authoredAnchor(e, false, p0, ab, badAnchor));
     authB = asStored(authoredAnchor(e, true, p1, bb, badAnchor));
+    // The frame of an agent anchor is its transform's, as the body was made
+    // (its `local_orient` is taken as identity).
+    const auto agentFrame = [&](AnchorBody &body, GA_Offset pt,
+                                b3dop::JointFrame &auth) {
+      const auto &rest = body.entry->sync->agentRest;
+      const auto it = rest.find(myRd.anchorName(pt));
+      b3dop::copy4(auth.rot, it != rest.end() ? it->second.rot.data()
+                                              : body.entry->restRot);
+      body.mirrored = it != rest.end() && it->second.mirrored;
+    };
+    if (agentA)
+      agentFrame(ab, p0, authA);
+    if (agentB)
+      agentFrame(bb, p1, authB);
     if (badAnchor != AnchorLookup::Ok) {
       myNet.needsBodies = true;
       ++(badAnchor == AnchorLookup::NoGeometry ? myCounts.anchorNoGeometry
@@ -670,7 +699,7 @@ private:
     const b3dop::JointFrame nowA = useLive ? fa : restToNow(myWorld, ab, fa),
                             nowB = useLive ? fb : restToNow(myWorld, bb, fb);
     const JointSpec j =
-        specFor(*kind, off, a, b, fa, fb, authA, authB, nowA, nowB);
+        specFor(*kind, off, ab, bb, fa, fb, authA, authB, nowA, nowB);
     noteKind(e, j, off);
 
     const bool live = myNet.writable;

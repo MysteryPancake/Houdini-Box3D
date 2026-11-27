@@ -18,7 +18,8 @@ state and messages. Its network: [solver-sop.md](solver-sop.md). Index and rules
   stiffness and thresholds 1, Spring damping 1, Hard CFM and ERP 1), `SOP_DATA_NAMES` and `SOP_ENABLED` its Spring
   (named `Spring`, off), `PIECE_DEFAULTS` the Pieces Bounce (0.25): a `strength` attribute multiplies the setting in
   both solvers, so the same scene breaks at the same impulse (`glue_fracture_vs_bullet`). Cone Twist keeps the node's
-  defaults: Bullet's own do not hold a piece (`bullet_cone_twist_goal`), so there is nothing to match.
+  defaults: Bullet makes no joint from them on a line without `constraint_type` rotation or all
+  (`bullet_cone_twist_goal`), so there is nothing to match.
 * Break Thresholds (`b3d_solver_breaks.py`, first on the Constraints tab, then Export Broken Constraints): RBD Bullet
   Solver's `Constraint_Solver` for the Angle, Distance, Impact and Torque Thresholds and At Frame. Data Defaults are
   RBD Bullet Solver's (enabled, Constraint Names `Soft Hard`, only the Distance Threshold on at 1, no Scale

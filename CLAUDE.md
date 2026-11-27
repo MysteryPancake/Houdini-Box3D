@@ -53,6 +53,7 @@ Load only the file for the area you are changing.
 | [docs/agents/motion-limits.md](docs/agents/motion-limits.md) | Drag, speed and acceleration limit attributes, and on Glue as One Body |
 | [docs/agents/forces-affectors.md](docs/agents/forces-affectors.md) | Force DOPs, point `force` / `torque`, Static Object colliders |
 | [docs/agents/whole-object.md](docs/agents/whole-object.md) | RBD Object style bodies (one body per DOP object) |
+| [docs/agents/agent-ragdolls.md](docs/agents/agent-ragdolls.md) | Crowd agents as ragdolls: bodies per rig transform, the arrays written back |
 | [docs/agents/joints.md](docs/agents/joints.md) | Joint types, settings table, `Box3DWorld` joint API |
 | [docs/agents/joint-networks.md](docs/agents/joint-networks.md) | Constraint relationship nodes, networks, break and write-back |
 | [docs/agents/joint-live-frames.md](docs/agents/joint-live-frames.md) | Live and local frames on the networks, upstream edits, moving world anchors |

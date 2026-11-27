@@ -83,6 +83,7 @@ JointSettings sanitized(const JointSettings &in) {
   s.targetSteeringAngle = finiteOr(s.targetSteeringAngle);
   s.targetAngle = std::clamp(finiteOr(s.targetAngle), -B3_PI, B3_PI);
   s.coneAngle = std::clamp(finiteOr(s.coneAngle), 0.0f, 0.5f * B3_PI);
+  s.coneAngleY = std::clamp(finiteOr(s.coneAngleY), 0.0f, 0.5f * B3_PI);
   orderedPair(s.lowerAngle, s.upperAngle);
   orderedPair(s.lowerTranslation, s.upperTranslation);
   orderedPair(s.lowerTwistAngle, s.upperTwistAngle);
@@ -180,6 +181,7 @@ b3JointId createSphericalJoint(const JointBuild &j) {
   d.targetRotation = makeQuat(s.targetRotation);
   d.enableConeLimit = s.enableConeLimit;
   d.coneAngle = s.coneAngle;
+  d.coneAngleY = s.ellipticalCone ? s.coneAngleY : -1.0f;
   d.enableTwistLimit = s.enableTwistLimit;
   d.lowerTwistAngle = s.lowerTwistAngle;
   d.upperTwistAngle = s.upperTwistAngle;
@@ -370,6 +372,8 @@ JointSettings Box3DWorld::defaultJointSettings(JointType type) {
     s.targetRotation[3] = d.targetRotation.s;
     s.enableConeLimit = d.enableConeLimit;
     s.coneAngle = d.coneAngle;
+    s.ellipticalCone = d.coneAngleY >= 0.0f;
+    s.coneAngleY = s.ellipticalCone ? d.coneAngleY : d.coneAngle;
     s.enableTwistLimit = d.enableTwistLimit;
     s.lowerTwistAngle = d.lowerTwistAngle;
     s.upperTwistAngle = d.upperTwistAngle;
@@ -585,7 +589,8 @@ void Box3DWorld::updateJoint(JointHandle h, JointType type,
     b3SphericalJoint_SetSpringDampingRatio(id, s.dampingRatio);
     b3SphericalJoint_SetTargetRotation(id, makeQuat(s.targetRotation));
     b3SphericalJoint_EnableConeLimit(id, s.enableConeLimit);
-    b3SphericalJoint_SetConeLimit(id, s.coneAngle);
+    b3SphericalJoint_SetConeLimits(
+        id, s.coneAngle, s.ellipticalCone ? s.coneAngleY : s.coneAngle);
     b3SphericalJoint_EnableTwistLimit(id, s.enableTwistLimit);
     b3SphericalJoint_SetTwistLimits(id, s.lowerTwistAngle, s.upperTwistAngle);
     b3SphericalJoint_EnableMotor(id, s.enableMotor);

@@ -45,8 +45,8 @@ The core joint API: [joints.md](joints.md). Index and rules: [CLAUDE.md](../../C
   the shared source (points in source order, vertices in primitive order: `fragmentAnchorPoint`). `orient` still
   applies. The position is kept in the entry (`pinA` / `pinB`, with the id it was taken for) at first sight, so the
   body moving is no edit. An id that is no point is `badAnchorId`: no joint. `-1` or a missing attribute: `P`. On the
-  world and affectors the id is ignored. `anchor_type` agent is `agentAnchors`: no joint (nothing simulates an agent
-  rig). `anchor_id` / `anchor_type` are in the network fingerprint. The `anchor_pid` / `anchor_vid` id matching is not
+  world and affectors the id is ignored. `anchor_type` agent names `<agent>/<rig transform>`: the body of a ragdoll agent's transform, else of the closest
+  ancestor transform that has one ([agent-ragdolls.md](agent-ragdolls.md)); no such body is `agentAnchors`: no joint. `anchor_id` / `anchor_type` are in the network fingerprint. The `anchor_pid` / `anchor_vid` id matching is not
   read. Settings = the kind's + matching primitive attributes, the Constraint Network DOP's rule: float attributes
   multiply the node's value (angles too: the attribute is a factor, so no degree conversion), toggles (int), vectors
   and Euler rotations (degrees) replace it. An attribute value of `kUnsetFloat` (a float, or a vector's x) or a

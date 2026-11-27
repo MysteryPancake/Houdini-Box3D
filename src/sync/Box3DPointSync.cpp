@@ -575,6 +575,7 @@ void readSlot(const ScanContext &ctx, int objectId, Box3DPointSlot &s) {
   s.packed = pk.prim != nullptr;
   s.unpackedPrim =
       !s.packed && ctx.anyPrims && GAisValid(ctx.gdp->pointVertex(s.off));
+  s.agentRagdoll = s.packed && isRagdollAgent(pk, ctx.activeAgent, s.off);
   if (s.packed) {
     s.primOff = static_cast<int64_t>(pk.primOff);
     std::copy(pk.m3, pk.m3 + 9, s.m3);
@@ -588,7 +589,7 @@ void readSlot(const ScanContext &ctx, int objectId, Box3DPointSlot &s) {
   s.refitWanted = a.autofitValid.isValid() && a.autofitValid.get(s.off) == 0;
   s.rebuild = false;
   s.dead = a.dead.isValid() && a.dead.get(s.off) != 0;
-  if (!s.ok || s.dead || s.unpackedPrim)
+  if (!s.ok || s.dead || s.unpackedPrim || s.agentRagdoll)
     return;
   if (!s.entry) {
     s.entry = ctx.st.mirror.find(key);
@@ -639,7 +640,8 @@ std::vector<size_t> slotsNeedingPlans(const SlotList &snaps) {
       snaps.size(),
       [&](size_t i) {
         const Box3DPointSlot &s = snaps[i];
-        flag[i] = s.ok && !s.unpackedPrim && (!s.entry ? !s.dead : s.rebuild);
+        flag[i] = s.ok && !s.unpackedPrim && !s.agentRagdoll &&
+                  (!s.entry ? !s.dead : s.rebuild);
       },
       kMinParallelFlags, 1024);
   std::vector<size_t> want;
@@ -707,8 +709,9 @@ bool quietSlot(const ScanContext &ctx, const Box3DPointSlot &s,
   // owner writes here (only its stamp, point index and packed data).
   if (!e || e->pointOff != static_cast<int64_t>(s.off) || e->pointId != s.bid)
     return false;
-  if (!e->handle || !s.ok || s.dead || s.unpackedPrim || s.badVelocity ||
-      s.rebuild || s.deforming || s.refitWanted || e->driven || e->wholeObject)
+  if (!e->handle || !s.ok || s.dead || s.unpackedPrim || s.agentRagdoll ||
+      s.badVelocity || s.rebuild || s.deforming || s.refitWanted || e->driven ||
+      e->wholeObject)
     return false;
   const b3dop::BodySettings::Type want =
       e->meshShapes ? b3dop::BodySettings::Type::Static
@@ -733,7 +736,7 @@ void stampQuietSlots(ScanContext &ctx, Box3DObjectSync &os, int objectId,
                      SlotList &snaps, SlotPlans &plans, bool checkProps) {
   size_t need = 0;
   for (Box3DPointSlot &s : snaps) {
-    const bool wants = s.ok && !s.unpackedPrim && !s.dead &&
+    const bool wants = s.ok && !s.unpackedPrim && !s.agentRagdoll && !s.dead &&
                        (!s.entry || s.rebuild || checkProps);
     s.props = wants ? static_cast<int32_t>(need++) : -1;
   }
@@ -996,7 +999,7 @@ private:
 
     // A polygon's (or other unpacked primitive's) point: no body. Not stamped,
     // so a body it had is removed. Counted by syncObject.
-    if (s.unpackedPrim) {
+    if (s.unpackedPrim || s.agentRagdoll) {
       s.entry = nullptr;
       return;
     }
@@ -1233,12 +1236,14 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
   // Problems (retried and reported every step), deforming and driven bodies
   // keep it scanning.
   os.entryCount = apply.stamped;
+  os.anyAgents = false;
+  syncAgentBodies(st, os, objectId, gdp, snaps, a, node, c);
   os.fp = fpNow;
   os.propsKnown = true;
   os.anyDeforming = apply.anyDeforming;
   os.anyDriven = apply.anyDriven;
-  os.canSkip =
-      problemCount(c) == problems0 && !apply.anyDeforming && !apply.anyDriven;
+  os.canSkip = problemCount(c) == problems0 && !apply.anyDeforming &&
+               !apply.anyDriven && !os.anyAgents;
 }
 
 } // namespace box3dsolver

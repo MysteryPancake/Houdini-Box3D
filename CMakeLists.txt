@@ -222,6 +222,7 @@ add_library(Box3DDOP SHARED
     src/sync/Box3DPointSync.cpp
     src/sync/Box3DPointShapes.cpp
     src/sync/Box3DPointBody.cpp
+    src/sync/Box3DAgent.cpp
     src/sync/Box3DWholeObject.cpp
     src/sync/Box3DPostStep.cpp
     src/sync/Box3DWriteBack.cpp

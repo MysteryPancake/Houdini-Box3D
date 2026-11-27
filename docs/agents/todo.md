@@ -63,10 +63,36 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
 * Objects solved by another solver: only RBD Bullet Solver's are tried (`other_solver`: packed ones are ignored as
   colliders, polygon ones push Box3D bodies one way). Vellum, FLIP and the rest are not.
 * Height fields: holes from a mask layer, height fields on points.
-* Constraint networks: agent anchors (`anchor_type` agent), the `anchor_pid` / `anchor_vid` matching. A missing
+* Agent ragdolls ([agent-ragdolls.md](agent-ragdolls.md): bodies, joints, the per-transform arrays and the agent's pose are
+  built; the PinnedRagdolls ragdolls hang from their pinned hand as Bullet's do). Not done, in order:
+  1. The gap to Bullet (PinnedRagdolls; the Box3D Solver's Gravity at 0, as the example has a Gravity DOP, which
+     `agent_oracle.load` does): the bodies are 0.02 from Bullet's with its motors off on average after 4 frames, 0.05
+     after 9 and 0.11 after 12 (0.04, 0.10 and 0.17 with the example's motors on), then 0.15 to 0.27 to frame 48 as
+     the swinging ragdolls part. Left: Bullet's first step solves no joint (every body falls at g times dt, none
+     turns); joints that start outside their limits (the wrists' twist 41 and 22 degrees against 5, the shoulders'
+     41 against 20) are eased in by Bullet over about ten frames (soft: `bias_factor` 0.3, `cfm` 0.2,
+     `softness`, the solver's `globalcfm` 0.025, none read) and put back in one step by Box3D. A softer joint
+     (`constraintStiffness` 1 to 10 Hz on Cone Twist) softens the point constraint too, so the ragdolls stretch off the
+     pin (fork item below). Against round cones the elliptical ones halve the gap to frame 9 (0.106 against 0.123 at
+     12) and let the knees bend as
+     Bullet's do (22 to 28 degrees by frame 12 against 5); after frame 16 neither is closer. Bullet's motors and
+     stiffness move its bodies by 0.04 to 0.11 and are not built.
+  2. What the Crowd Solver reads of the arrays on the next step (not known: found by leaving one out; the pose is written
+     directly as Bullet writes it), and a Crowd Solver that changes the pose of a ragdoll agent.
+  3. Agent anchors on a transform with no body or ancestor body (a moving world anchor driven by the rig:
+     `driveWorldAnchors` exists), `local_P` / `local_orient` of an anchor (taken as the transform's origin and frame).
+  4. Partial ragdolls (`active_agent` 0: kinematic bodies following the animation, now static: a transform with a static
+     body keeps the animation's pose, but its body stays where it was made), agents entering and leaving ragdoll state or
+     the crowd, shapes other than Tubes and the mass factor `kAgentMassScale` for them, a shear in the transforms'
+     matrices (dropped).
+  Unknowns: Bullet's motor model against Box3D's joint motors, the cost of 27 bodies an agent at crowd sizes. Tests so
+  far are `agent_*`; the rest go in `checks_agent.py`.
+* Constraint networks: the `anchor_pid` / `anchor_vid` matching. A missing
   `constraint_type` is `position` for Hard, Soft and Spring (`sidefx_hard_untyped`).
-* SideFX constraint data not mapped: Soft plasticity, Cone Twist's elliptical and wide
-  cones, softness, motors and translation ranges, Hard's angular motors.
+* SideFX constraint data not mapped: Soft plasticity, Cone Twist's cones wider than 90 degrees, softness, motors and
+  translation ranges, Hard's angular motors. Bullet makes no Cone Twist joint for a line whose `constraint_type` is
+  missing or `position` (only `rotation` and `all`); the plugin makes one for any, and `bullet_cone_twist_goal` /
+  `_apart` build their lines without it, so Bullet's piece falls freely there.
 * Slider Constraint Relationship (`sliderconrel`, Bullet's `btSliderConstraint`: a slide range along the first anchor's x and
   a rotation limit about it, nothing else free) is not read. A slide range of 0 is a revolute joint and a rotation limit
   of 0 a prismatic one; both free (a cylinder) has no Box3D joint. Nothing in Houdini creates one but the node itself.
@@ -108,8 +134,10 @@ Features to add in the fork. Once one exists, the wrapper maps it and the entry 
 * **Level landings.** A box landing flat at speed tips up to about a degree, where Bullet's stays level (status.md):
   the manifold's points are solved in order. Alternating the order each pass, or solving a face contact's points
   together, would keep it level.
-* **Wide and elliptical cones.** `b3SphericalJoint_SetConeLimit` asserts the angle is at most 90°, and the cone is
-  round. Cone Twist's wider and elliptical cones (unmapped above) need both lifted.
+* **Wide cones.** `b3SphericalJoint_SetConeLimit` and `SetConeLimits` assert each angle is at most 90°: Cone Twist's
+  wider cones need that lifted.
+* **Limit softness.** A softness for the spherical joint's limits apart from the point constraint (`constraintSoftness`
+  serves both) would let a ragdoll ease into limits it starts outside, as Bullet's does.
 
 Workarounds in the wrapper that the engine could own, roughly by value:
 

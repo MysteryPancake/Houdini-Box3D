@@ -86,6 +86,9 @@ struct AnchorBody {
   // Found as an object with a single body: adding or removing a body of that
   // object changes it.
   bool byObjectName = false;
+  // An agent anchor on a mirrored rig transform (Box3DAgentFrame): directions
+  // in the transform's space have their z negated.
+  bool mirrored = false;
 };
 
 // An anchor's anchor_type.
@@ -136,6 +139,12 @@ public:
     buildTables();
     const size_t slash = name.find('/');
     if (slash != std::string::npos) {
+      // "<agent>/<rig transform>": the body of a crowd agent's transform.
+      const auto agent = myAgentTable.find(name);
+      if (agent != myAgentTable.end()) {
+        out = agent->second;
+        return true;
+      }
       // The first object with this name decides, whether or not it has the
       // piece.
       const auto o = myObjectByName.find(name.substr(0, slash));
@@ -204,6 +213,9 @@ private:
     myBuilt = true;
     for (const auto &o : myObjects) {
       myObjectByName.try_emplace(o.name, &o);
+      for (const auto &kv : o.sync->agentByName)
+        if (kv.second->handle)
+          myAgentTable.try_emplace(kv.first, bodyOf(kv.second, o.object));
       if (o.sync->bodies.size() == 1 && o.sync->bodies[0]->handle)
         mySingleBody.try_emplace(o.name, bodyOf(o.sync->bodies[0], o.object));
     }
@@ -235,6 +247,7 @@ private:
   mutable std::unordered_map<std::string, const ObjectRef *> myObjectByName;
   mutable HandleTable mySingleBody;
   mutable HandleTable myAffector;
+  mutable HandleTable myAgentTable;
   mutable bool myPieces = false; // myPieceTable is in use
   mutable std::unordered_map<std::string_view, AnchorBody> myPieceTable;
 };

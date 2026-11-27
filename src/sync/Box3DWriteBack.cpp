@@ -26,7 +26,7 @@ struct MovedBodies {
 MovedBodies collectMovedBodies(Box3DSharedState &st) {
   MovedBodies out;
   const size_t moveCount = st.moves.size();
-  enum : uint8_t { kSkip, kMissing, kWhole, kPoint };
+  enum : uint8_t { kSkip, kMissing, kWhole, kPoint, kAgent };
   // Kept between steps (no allocation). References: a thread_local named in
   // a lambda would be each worker thread's own, empty one.
   thread_local std::vector<uint8_t> kindStore;
@@ -43,6 +43,8 @@ MovedBodies collectMovedBodies(Box3DSharedState &st) {
             static_cast<const Box3DBodyMirror *>(mv.userData);
         if (!entry || !entry->dynamic() || !st.isLive(*entry))
           kind[mi] = kSkip; // only dynamic bodies seen by this step's sync
+        else if (entry->agentBody)
+          kind[mi] = kAgent; // a ragdoll agent's bodies: written as arrays
         else if (!entry->handle)
           kind[mi] = kMissing;
         else if (entry->wholeObject)
@@ -60,6 +62,16 @@ MovedBodies collectMovedBodies(Box3DSharedState &st) {
     case kWhole:
       out.wholeMoves.push_back(static_cast<int>(mi));
       break;
+    case kAgent: {
+      const b3dop::BodyMove &mv = st.moves[mi];
+      Box3DBodyMirror *e = static_cast<Box3DBodyMirror *>(mv.userData);
+      std::copy(mv.pos, mv.pos + 3, e->pos);
+      std::copy(mv.rot, mv.rot + 4, e->rot);
+      std::copy(mv.lin, mv.lin + 3, e->lin);
+      std::copy(mv.ang, mv.ang + 3, e->ang);
+      e->awake = !mv.fellAsleep;
+      break;
+    }
     case kPoint:
       itemAt[mi] = items++;
       break;
@@ -345,6 +357,13 @@ using namespace box3dsolver;
 void SIM_SolverBox3D::writeResultsBack(SIM_Box3DWorld &worldData,
                                        SIM_ObjectArray &objects) {
   Box3DSharedState *st = worldData.state();
+  // Every way out writes the ragdoll agents' arrays (a body that did not move
+  // still has its creation state to write).
+  struct AgentArrays {
+    Box3DSharedState &st;
+    SIM_ObjectArray &objects;
+    ~AgentArrays() { writeAgentArrays(st, objects); }
+  } agentArrays{*st, objects};
   if (st->moves.empty())
     return;
 

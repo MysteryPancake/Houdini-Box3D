@@ -68,6 +68,7 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
     Box3DPointShapes.cpp   A point's shape plan (`planShapes`): size keys, primitive overrides, shape signature
     Box3DPointBody.cpp     Body settings (dynamic props, mass, type), what a changed setting does, making a body
     Box3DWholeObject.cpp   One body per DOP object (RBD Object etc.): sync and Position write-back
+    Box3DAgent.cpp         Crowd agent ragdolls: a body per rig transform, the per-transform arrays
     Box3DWriteBack.cpp     After the step: writeResultsBack (awake bodies and whole objects back to their points)
     Box3DImpacts.cpp       After the step: Impacts data (collectImpacts, recordImpacts)
     Box3DPostStep.cpp      After the step: queued point writes, merged move events, aging, dead points
@@ -119,6 +120,7 @@ tests/
                       checks_packed and checks_geometry share helpers in *_common.py), b3dtest.py (helpers),
                       review.py (tidies saved scenes), baseline.json; out/ holds each test's scene (git-ignored).
                       bench.py + bench_scenes.py: timing runs of Box3D against Bullet, outside run_tests.py
-                      (build.md)
+                      (build.md); agent_oracle.py: dumps what a solver does to the agents of SideFX's crowd
+                      ragdoll examples (todo.md, "Agent ragdolls")
   python/             test_harness.py: checks on the Houdini scripts that need no Houdini (stand-in `hou`)
 ```

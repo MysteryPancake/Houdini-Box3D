@@ -481,6 +481,126 @@ int main() {
     CHECK(std::fabs(av[2] - 3.0f) < 0.1f); // the wheel spins about frame B's z
   }
 
+  // ---- spherical cone shapes: a pendulum hung from the world (frame z down,
+  // x along world x, y along world z), kicked toward x, toward y and between.
+  // A round cone, an elliptical one, and a box (one angle under a quarter of
+  // the other) holding a 0 angle as a hinge; the last made round and changed
+  // live. Box3D's limits are soft, so a kick overshoots by a few degrees ----
+  {
+    struct Case {
+      const char *name;
+      float x, y; // cone angles, degrees
+      bool live;  // made round at x, then given both angles by updateJoint
+    };
+    const Case cases[] = {{"round", 30, 30, false},
+                          {"elliptical", 15, 50, false},
+                          {"box", 0, 50, false},
+                          {"live", 15, 50, true}};
+    const float down[4] = {0.70710678f, 0, 0, 0.70710678f}; // z -> -y
+    for (const Case &c : cases) {
+      for (int toward = 0; toward < 3; ++toward) {
+        Box3DWorld w;
+        CHECK(w.create(ws));
+        const BodyHandle b = box(w, 0, 4, 0);
+        JointSettings sph =
+            Box3DWorld::defaultJointSettings(JointType::Spherical);
+        sph.enableConeLimit = true;
+        sph.coneAngle = c.x * static_cast<float>(kDegToRad);
+        sph.ellipticalCone = !c.live && c.x != c.y;
+        sph.coneAngleY = c.y * static_cast<float>(kDegToRad);
+        const JointHandle j =
+            w.createJoint(JointType::Spherical, 0, b, frame(0, 5, 0, down),
+                          frame(0, 5, 0, down), sph);
+        CHECK(j != 0);
+        if (c.live) {
+          sph.ellipticalCone = true;
+          w.updateJoint(j, JointType::Spherical, sph);
+        }
+        const float kick[3] = {toward != 1 ? 4.0f : 0.0f, 0,
+                               toward != 0 ? 4.0f : 0.0f},
+                    none[3] = {0, 0, 0};
+        w.setVelocityByHandle(b, kick, none);
+        double worstX = 0.0, worstY = 0.0, worstEllipse = 0.0;
+        for (int i = 0; i < 120; ++i) {
+          w.step(kDt);
+          double p[3];
+          pos(w, b, p);
+          const double dx = p[0], dy = p[1] - 5.0, dz = p[2];
+          const double rho = std::sqrt(dx * dx + dz * dz);
+          const double swing = std::atan2(rho, -dy) * kRadToDeg;
+          const double tx = rho > 1e-9 ? swing * dx / rho : 0.0,
+                       ty = rho > 1e-9 ? swing * dz / rho : 0.0;
+          worstX = std::max(worstX, std::fabs(tx));
+          worstY = std::max(worstY, std::fabs(ty));
+          if (c.x > 0 && c.y > 0)
+            worstEllipse =
+                std::max(worstEllipse, std::sqrt((tx / c.x) * (tx / c.x) +
+                                                 (ty / c.y) * (ty / c.y)));
+        }
+        // Each axis reaches its limit when kicked along it and stays near
+        // it; the elliptical cone keeps a diagonal kick inside the ellipse.
+        const float slack = 3.0f;
+        CHECK(worstX < c.x + slack && worstY < c.y + slack);
+        if (toward == 0)
+          CHECK(worstX > c.x - 1.0f);
+        if (toward == 1)
+          CHECK(worstY > c.y - 1.0f);
+        // The diagonal kick is the hardest (the round cone overshoots by 11%).
+        if (toward == 2 && c.x > 0)
+          CHECK(worstEllipse > 0.9 && worstEllipse < 1.2);
+        std::printf("spherical %s cone (%.0f, %.0f) kicked toward %s: x %.2f, "
+                    "y %.2f degrees, ellipse %.3f\n",
+                    c.name, c.x, c.y,
+                    toward == 0   ? "x"
+                    : toward == 1 ? "y"
+                                  : "both",
+                    worstX, worstY, worstEllipse);
+      }
+    }
+  }
+
+  // ---- a hinge (box cone 0, 50) that starts leaning 1 degree toward +x and
+  // is kicked toward -x: its locked side holds both ways, so the bob crosses
+  // to -x by the lean's correction and the soft limit's give under a hard kick
+  // (2.8 degrees in the box case above), not by a step of free swing (3.8 more
+  // at this speed) ----
+  {
+    Box3DWorld w;
+    CHECK(w.create(ws));
+    const BodyHandle b = box(w, 0, 4, 0);
+    JointSettings sph = Box3DWorld::defaultJointSettings(JointType::Spherical);
+    sph.enableConeLimit = true;
+    sph.coneAngle = 0.0f;
+    sph.ellipticalCone = true;
+    sph.coneAngleY = 50.0f * static_cast<float>(kDegToRad);
+    const float down[4] = {0.70710678f, 0, 0, 0.70710678f}; // z -> -y
+    // Frame B turned 1 degree about world z: its z leans toward +x.
+    const float half = 0.5f * static_cast<float>(kDegToRad);
+    const float lean[4] = {0, 0, std::sin(half), std::cos(half)};
+    const float leaned[4] = {lean[3] * down[0] + lean[0] * down[3] +
+                                 lean[1] * down[2] - lean[2] * down[1],
+                             lean[3] * down[1] - lean[0] * down[2] +
+                                 lean[1] * down[3] + lean[2] * down[0],
+                             lean[3] * down[2] + lean[0] * down[1] -
+                                 lean[1] * down[0] + lean[2] * down[3],
+                             lean[3] * down[3] - lean[0] * down[0] -
+                                 lean[1] * down[1] - lean[2] * down[2]};
+    CHECK(w.createJoint(JointType::Spherical, 0, b, frame(0, 5, 0, down),
+                        frame(0, 5, 0, leaned), sph) != 0);
+    const float kick[3] = {-4.0f, 0, 0}, none[3] = {0, 0, 0};
+    w.setVelocityByHandle(b, kick, none);
+    double worst = 0.0;
+    for (int i = 0; i < 60; ++i) {
+      w.step(kDt);
+      double p[3];
+      pos(w, b, p);
+      worst = std::max(worst, -std::atan2(p[0], 5.0 - p[1]) * kRadToDeg);
+    }
+    CHECK(worst < 4.0);
+    std::printf("hinge kicked across its locked side: crossed %.2f degrees\n",
+                worst);
+  }
+
   // ---- filter: no collision between the pair ----
   {
     Box3DWorld w;

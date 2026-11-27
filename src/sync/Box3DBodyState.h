@@ -77,6 +77,9 @@ struct Box3DBodyMirror : Box3DBodyPose {
   bool packed = false;
   bool hasRest = false;
   bool wholeObject = false; // see below
+  // One rig transform of a crowd agent ragdoll (Box3DAgent.cpp): no point of
+  // its own (pointOff is -1); the agent's point is `pointId` / 4096.
+  bool agentBody = false;
   // Glued into a compound body (Box3DCompoundSync.cpp): this entry's own body
   // is disabled and the compound moves it. glueEdited: another node changed
   // the point's pose, so the compound is dissolved before the next step.
@@ -379,6 +382,10 @@ struct Box3DPointSlot {
   // The point belongs to a primitive that is not packed (a polygon's point):
   // no body, as RBD Bullet Solver (docs/agents/bodies.md, "Unpacked geometry").
   bool unpackedPrim = false;
+  // The point is a crowd agent that is a ragdoll (`active_agent` has elements):
+  // no body of its own either, but one per rig transform with a collision
+  // shape (syncAgentBodies).
+  bool agentRagdoll = false;
   int64_t index = 0; // point number
   int64_t primOff = -1;
   double m3[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
@@ -496,6 +503,34 @@ struct Box3DAccelSlot {
   float force[3] = {0, 0, 0}, torque[3] = {0, 0, 0};
 };
 
+// The frame of an anchor on a rig transform: the transform's rotation at rest,
+// as splitPackedMatrix splits it. A mirrored transform (a mirrored rig's left
+// side) is that rotation with its z row negated, so a direction in the
+// transform's own space has its z negated before the rotation turns it.
+struct Box3DAgentFrame {
+  std::array<float, 4> rot = {0, 0, 0, 1};
+  bool mirrored = false;
+};
+
+// An agent's rig at rest (Box3DAgent.cpp, restOfAgent): every transform's world
+// matrix in the simulation's space (row-major, row vectors), which the bodies'
+// motion since moves to give the agent its pose, and each transform's anchor
+// frame. Made once per agent, from the pose when its first bodies are made or
+// from its point's arrays.
+struct Box3DAgentRest {
+  std::vector<std::array<double, 16>> world;
+  std::vector<Box3DAgentFrame> frames;
+};
+
+// One ragdoll agent of an object (Box3DAgent.cpp): its point and, per rig
+// transform, the body (null: the transform has no shape).
+struct Box3DAgentRecord {
+  int64_t pointOff = -1;
+  int64_t primOff = -1;
+  int64_t agentId = 0; // the point's body id: the key of agentRestWorld
+  std::vector<Box3DBodyMirror *> bodies;
+};
+
 // Per object. A skipped sync leaves its entries untouched, so "current" is the
 // object's liveStamp rather than the step's stamp.
 struct Box3DObjectSync {
@@ -506,6 +541,17 @@ struct Box3DObjectSync {
   bool propsKnown = false; // fp's prop markers are recorded
   bool wholeObject =
       false; // the object is one body (syncWholeObject), not one per point
+  bool anyAgents = false; // ragdoll agents: never skip (poses and flags change)
+  std::vector<Box3DAgentRecord> agents; // the object's ragdoll agents
+  // "<agent name>/<rig transform name>" -> its body (an anchor's name, as
+  // Bullet's constraints name an agent's transform).
+  std::unordered_map<std::string, Box3DBodyMirror *> agentByName;
+  // "<agent name>/<rig transform name>" -> the frame a constraint's anchor on
+  // it has (its agent's Box3DAgentRest::frames; rebuilt each scan).
+  std::unordered_map<std::string, Box3DAgentFrame> agentRest;
+  // Per agent point (by its body id): its rig at rest. Kept between scans while
+  // the agent is a ragdoll.
+  std::unordered_map<int64_t, Box3DAgentRest> agentRestWorld;
   bool anyDeforming = false; // deforming bodies: never skip
   bool anyDriven =
       false; // a moved animated body (velocity to clear): never skip

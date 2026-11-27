@@ -64,7 +64,7 @@ Bullet solver does.
   frames (`current_*`) and saved local frames are already current and skip it; the world, affectors, whole objects and
   plain points are unchanged. A null BodyHandle is the world: one shapeless static body per world, made on first use
   (`Impl::anchor`, not in `bodyCount`). Settings are clamped first (`sanitized`) to what Box3D asserts on:
-  non-negative stiffness / damping / caps, ordered limits, cone angle 0..pi/2, revolute target -pi..pi, finite
+  non-negative stiffness / damping / caps, ordered limits, cone angles 0..pi/2, revolute target -pi..pi, finite
   vectors, unit quaternions (the test checks `assertCount` does not move in a RelWithDebInfo build). Filter joints
   always have `collideConnected` off.
 * Motion Lock (`b3MotionLockJointDef`, settings `lockLinearX/Y/Z`, `lockAngularXY`; node parameters `lock_x`,

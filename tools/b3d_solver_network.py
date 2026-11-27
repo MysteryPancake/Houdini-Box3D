@@ -160,7 +160,7 @@ JOINT_SCALE_POWERS = {name: power for power, names in (
     (2, ("torque_threshold", "max_motor_torque", "max_velocity_torque", "max_spring_torque", "max_torque",
          "max_spin_torque", "max_steering_torque")),
     (0, ("constraint_stiffness", "constraint_damping_ratio", "stiffness", "damping_ratio", "linear_stiffness",
-         "linear_damping_ratio", "angular_stiffness", "angular_damping_ratio", "target_rotation", "cone_angle",
+         "linear_damping_ratio", "angular_stiffness", "angular_damping_ratio", "target_rotation", "cone_angle", "cone_angle_y",
          "lower_twist_angle", "upper_twist_angle", "motor_velocity", "target_angle", "lower_angle",
          "upper_angle", "motor_speed", "angular_velocity", "suspension_stiffness", "suspension_damping_ratio",
          "spin_speed", "steering_stiffness", "steering_damping_ratio", "target_steering_angle",

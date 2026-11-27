@@ -227,13 +227,24 @@ SideFXJoint mapSideFX(SideFXType t, const SideFXSettings &s,
   case SideFXType::ConeTwist: {
     j.type = JointType::Spherical;
     j.settings = Box3DWorld::defaultJointSettings(JointType::Spherical);
-    // Box3D's cone is round: the smaller of the two limits, so neither is
-    // exceeded. Box3D caps it at 90 degrees; 180 or more is no limit (Houdini's
-    // default).
-    const float cone = std::min(s.maxUpRotation, s.maxOutRotation);
-    j.settings.enableConeLimit = std::isfinite(cone) && cone < 180.0f;
+    // An elliptical cone: the frame's x axis is the up axis, so Max Up
+    // Rotation (the turn about it) limits the swing toward y and Max Out
+    // Rotation the swing toward x. Box3D caps each at 90 degrees; 180 or more
+    // is no limit (Houdini's default), and the cone is off when both are.
+    const auto coneLimit = [](float degrees) {
+      return std::isfinite(degrees) && degrees < 180.0f
+                 ? std::clamp(degrees, 0.0f, 90.0f) * kDegToRad
+                 : 90.0f * kDegToRad;
+    };
+    j.settings.enableConeLimit =
+        (std::isfinite(s.maxUpRotation) && s.maxUpRotation < 180.0f) ||
+        (std::isfinite(s.maxOutRotation) && s.maxOutRotation < 180.0f);
     j.settings.coneAngle =
-        j.settings.enableConeLimit ? std::max(0.0f, cone) * kDegToRad : 0.0f;
+        j.settings.enableConeLimit ? coneLimit(s.maxOutRotation) : 0.0f;
+    j.settings.coneAngleY =
+        j.settings.enableConeLimit ? coneLimit(s.maxUpRotation) : 0.0f;
+    j.settings.ellipticalCone = j.settings.enableConeLimit &&
+                                j.settings.coneAngle != j.settings.coneAngleY;
     const float twist = s.maxTwist;
     j.settings.enableTwistLimit = std::isfinite(twist) && twist < 180.0f;
     const float tw =

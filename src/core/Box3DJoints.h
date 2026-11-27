@@ -98,7 +98,9 @@ struct JointSettings {
 
   // Spherical limits.
   bool enableConeLimit = false;
-  float coneAngle = 0.0f; // 0 .. pi/2, about frame A's z
+  float coneAngle = 0.0f; // 0 .. pi/2, about frame A's z; elliptical: toward x
+  bool ellipticalCone = false;
+  float coneAngleY = 0.0f; // elliptical: 0 .. pi/2 toward frame A's y
   bool enableTwistLimit = false;
   float lowerTwistAngle = 0.0f; // about frame B's z
   float upperTwistAngle = 0.0f;
@@ -352,8 +354,21 @@ inline const std::vector<JointParam> &jointParams() {
          "Limit how far the second body can swing away from the first anchor's "
          "z axis."),
       enabledBy(jp("cone_angle", "Cone Angle", Sp, &S::coneAngle,
-                   "Half-angle of the cone, 0 to 90 degrees.", K::Angle),
+                   "Half-angle of the cone, 0 to 90 degrees. With Elliptical "
+                   "Cone, how far the second body can swing toward the first "
+                   "anchor's x axis.",
+                   K::Angle),
                 "enable_cone_limit"),
+      enabledBy(jp("elliptical_cone", "Elliptical Cone", Sp, &S::ellipticalCone,
+                   "Give the cone a second angle, toward the first anchor's y "
+                   "axis, as Bullet's Cone Twist does. A 0 angle makes a "
+                   "hinge."),
+                "enable_cone_limit"),
+      enabledBy(jp("cone_angle_y", "Cone Angle Y", Sp, &S::coneAngleY,
+                   "How far the second body can swing toward the first "
+                   "anchor's y axis, 0 to 90 degrees.",
+                   K::Angle),
+                "elliptical_cone"),
       jp("enable_twist_limit", "Enable Twist Limit", Sp, &S::enableTwistLimit,
          "Limit the twist about the second anchor's z axis."),
       enabledBy(jp("lower_twist_angle", "Lower Twist Angle", Sp,
@@ -677,6 +692,7 @@ inline JointRange jointParamRange(const JointParam &p, JointType t) {
       {"max_length", {0, 10, true}},
       {"target_angle", {-180, 180, true, true}},
       {"cone_angle", {0, 90, true, true}},
+      {"cone_angle_y", {0, 90, true, true}},
       {"lower_angle", {-180, 180}},
       {"upper_angle", {-180, 180}},
       {"lower_twist_angle", {-180, 180}},
@@ -725,6 +741,7 @@ inline JointSettings nodeJointDefaults(JointType t, JointSettings s) {
     spring(s.stiffness, s.dampingRatio);
     s.maxMotorTorque = 100.0f;
     s.coneAngle = 45.0f * deg;
+    s.coneAngleY = 45.0f * deg;
     s.lowerTwistAngle = -45.0f * deg;
     s.upperTwistAngle = 45.0f * deg;
     break;

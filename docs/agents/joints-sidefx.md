@@ -93,11 +93,15 @@ Glue, Hard, Spring, Bullet Soft and Cone Twist mapped onto Box3D joints. Joint n
     they are (`bullet_soft_coincident_anchors`, `bullet_position_rest_length`, `position_rest_rebuild`). Which way that
     gap opens comes from the first frame's sag, which differs between the solvers, so a swinging piece then moves
     differently in each; a pin, or a rest offset fixed at rest, swings as Bullet's (`bullet_hard_pendulum`).
-  * Cone Twist: spherical joint. Box3D's cone is round: the smaller of Max Up / Max Out, clamped to Box3D's 90 degree
-    maximum; 180 or more turns it off (Houdini's default). Twist limit +-Max Twist (180 or more: none). Bullet twists
-    about x, Box3D about z, so each frame is turned so z = the twist axis and x = the up axis (constrained axes on
-    point 0, goal axes on point 1). Softness, the soft-constraint options, translation ranges, rest length and the
-    motor are ignored.
+  * Cone Twist: spherical joint with an elliptical cone (the fork's `coneAngleY`; `ellipticalCone` in
+    `JointSettings` when the two differ). Bullet twists about x, Box3D about z, so each frame is turned so z = the twist
+    axis and x = the up axis (constrained axes on point 0, goal axes on point 1). Max Up Rotation is the turn about the
+    up axis, so it limits the swing toward y (`coneAngleY`) and Max Out Rotation the swing toward x (`coneAngle`); the
+    agent ragdolls' elbows (Max Up 52.5, Max Out 0) bend toward the out axis in Bullet as this has them. Each is clamped
+    to Box3D's 90 degree maximum; 180 or more is no limit on that side (90), and the cone is off when both are
+    (Houdini's default). Twist limit +-Max Twist (180 or more: none). Softness, the soft-constraint options,
+    translation ranges, rest length and the motor are ignored. Bullet makes no joint for a Cone Twist line whose
+    `constraint_type` is missing or `position`; the plugin makes one for any.
   * Hard / Spring / Soft / Cone Twist: Collide Connected = !disablecollisions.
 * **Frame offsets**: a SideFX joint's frames need not sit on its anchors. `sideFXFrameOffsets` gives each anchor an
   offset in its own axes (`adjA` / `adjB` on `Box3DJointEntry`): a rotation (cone twist) and/or a shift along the

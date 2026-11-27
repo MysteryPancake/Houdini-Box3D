@@ -510,6 +510,8 @@ struct ScanContext {
   const PointAttrs &a;
   const b3dop::BodySettings &node;
   const bool anyPrims; // else no packed points
+  // The point's `active_agent` array: a crowd agent with elements is a ragdoll.
+  GA_ROHandleIA activeAgent;
   // The slots' cached rest rotations describe the current `restxform`.
   bool restReuse = false;
   ShapeSources sources;
@@ -520,6 +522,8 @@ struct ScanContext {
       : st(state), world(state.world), gdp(g), a(attrs), node(n),
         anyPrims(g->getNumPrimitives() > 0) {
     georep.bind(a);
+    activeAgent =
+        GA_ROHandleIA(g->findIntArray(GA_ATTRIB_POINT, "active_agent"));
   }
 
   // The point's packed primitive with its pivot (what building shapes needs).
@@ -583,6 +587,9 @@ struct SyncCounts {
   // Points on primitives that are not packed, in objects that also have
   // packed points: not simulated (warning).
   int unpackedPrimPoints = 0;
+  // Crowd agent ragdolls (Box3DAgent.cpp): bodies made, agents with a rig
+  // transform whose shape failed, agents whose layer has no shape at all.
+  int agentBodies = 0, agentFailed = 0, agentNoShapes = 0;
   // Objects with unpacked primitives and nothing packed: not simulated at all
   // (warning, as RBD Bullet Solver's "Geometry does not contain any primitive
   // types supported").
@@ -596,6 +603,24 @@ constexpr size_t kPlanChunk =
 
 void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
                 StepProgress &progress);
+
+// ---- crowd agent ragdolls (Box3DAgent.cpp) ----
+
+// The point's primitive is a crowd agent and the point's `active_agent` array
+// has elements (the crowd solver made it a ragdoll).
+bool isRagdollAgent(const PackedInfo &pk, const GA_ROHandleIA &active,
+                    GA_Offset off);
+// After a scan's apply pass: the bodies of every ragdoll agent among `slots`
+// (made once, then kept current: stamped, retyped by `active_agent`).
+void syncAgentBodies(Box3DSharedState &st, Box3DObjectSync &os, int objectId,
+                     const GU_Detail *gdp,
+                     const std::vector<Box3DPointSlot> &slots,
+                     const PointAttrs &a, const b3dop::BodySettings &node,
+                     SyncCounts &c);
+// After the step: the agents' per-transform arrays from their bodies
+// (pivot_agent, trans_agent, orient_agent, v_agent, w_agent, mass_agent), as
+// Bullet writes them.
+void writeAgentArrays(Box3DSharedState &st, SIM_ObjectArray &objects);
 
 // ---- whole-object bodies (Box3DWholeObject.cpp) ----
 
