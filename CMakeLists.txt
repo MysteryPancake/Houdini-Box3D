@@ -330,10 +330,11 @@ if(BOX3DDOP_MAKE_HDA)
         # a stamp file in the build folder records that the assets are up to date.
         set(BOX3DDOP_ASSET_STAMP "${CMAKE_BINARY_DIR}/box3d_assets.stamp")
         # hython reads $HOME as its preferences folder on Windows when it is set (Git Bash sets it), so it would look
-        # for the plugin in C:/Users/<you>/houdiniX.Y instead of Documents/houdiniX.Y: run it without HOME, as the
-        # configure step above does.
+        # for the plugin in C:/Users/<you>/houdiniX.Y instead of Documents/houdiniX.Y. Whether it is set is known only
+        # when the build runs (a folder configured from cmd is built from Git Bash, and configure has unset it above
+        # by now), so the step always runs hython without it: with HOUDINI_USER_PREF_DIR set it is not read anyway.
         set(BOX3DDOP_HYTHON_ENV "")
-        if(WIN32 AND DEFINED ENV{HOME} AND NOT DEFINED ENV{HOUDINI_USER_PREF_DIR})
+        if(WIN32)
             set(BOX3DDOP_HYTHON_ENV ${CMAKE_COMMAND} -E env --unset=HOME)
         endif()
         add_custom_command(OUTPUT "${BOX3DDOP_ASSET_STAMP}"

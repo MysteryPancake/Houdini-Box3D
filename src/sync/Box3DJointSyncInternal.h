@@ -129,6 +129,45 @@ public:
     }
   }
 
+  // "<agent>/<rig transform>" of a ragdoll agent whose transform has no body on
+  // or above it, or of an agent that is not a ragdoll
+  // (Box3DObjectSync::agentWithoutBody, agentsNotRagdoll). `expected` is set
+  // when the agent left the ragdoll state (agentsLeftRagdoll): nothing to warn
+  // about.
+  bool agentWithoutBody(const std::string &name, bool &expected) const {
+    expected = false;
+    // A ragdoll's transform with a body in any object is not (an agent of the
+    // same name elsewhere being animated does not hide it).
+    for (const ObjectRef &o : myObjects)
+      if (o.sync->agentByName.count(name))
+        return false;
+    const size_t slash = name.find('/');
+    const std::string agent =
+        slash != std::string::npos ? name.substr(0, slash) : name;
+    for (const ObjectRef &o : myObjects) {
+      if (o.sync->agentsNotRagdoll.count(agent)) {
+        expected = o.sync->agentsLeftRagdoll.count(agent) > 0;
+        return true;
+      }
+      if (o.sync->agentWithoutBody.count(name))
+        return true;
+    }
+    return false;
+  }
+
+  // "<agent>/..." of a ragdoll agent that left the crowd on this scan
+  // (Box3DObjectSync::agentsGone).
+  bool agentGone(const std::string &name) const {
+    const size_t slash = name.find('/');
+    if (slash == std::string::npos)
+      return false;
+    const std::string agent = name.substr(0, slash);
+    for (const ObjectRef &o : myObjects)
+      if (o.sync->agentsGone.count(agent))
+        return true;
+    return false;
+  }
+
   // Empty: the world (0). Else a piece's `name` in any object, "object/piece",
   // an object with a single body, or an affector object. False if nothing
   // matches.

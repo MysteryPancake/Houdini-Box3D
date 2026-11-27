@@ -6,9 +6,11 @@ the rest are not ([todo.md](todo.md), "Agent ragdolls"). Index and rules: [CLAUD
 
 ## What the solver does (`Box3DAgent.cpp`)
 
-* A point is a ragdoll agent when its primitive is a `GU_Agent` and its `active_agent` int array has elements
-  (`isRagdollAgent`; `Box3DPointSlot::agentRagdoll`, set in `readSlot`). It gets no body of its own, like a point of an
-  unpacked primitive, and an object with one never skips its scan (`Box3DObjectSync::anyAgents`).
+* A point whose primitive is a `GU_Agent` (`isAgentPrim`, checked only when the geometry has agents:
+  `hasAgentPrims`; `Box3DPointSlot::agent`, set in `readSlot`) gets no body of its own, like a point of an unpacked
+  primitive, as Bullet makes none, and an object with one never skips its scan (`Box3DObjectSync::anyAgents`). It is a
+  ragdoll agent when its `active_agent` int array has elements (`isRagdollAgent`, `Box3DPointSlot::agentRagdoll`);
+  one that is not gets no bodies at all, and its name goes in `Box3DObjectSync::agentsNotRagdoll`.
 * `syncAgentBodies` runs after the apply pass of `syncObject`. For each ragdoll agent it takes the first collision layer's
   shape bindings (`GU_AgentLayer::ShapeBinding`, one body per transform that has one) and makes the body once: a hull of
   the shape's geometry (a Tube primitive on one point, in the transform's own space, so the point is the centre of mass)
@@ -23,23 +25,38 @@ the rest are not ([todo.md](todo.md), "Agent ragdolls"). Index and rules: [CLAUD
   `mass_agent` comes to on the mocap biped of the examples) spread over the hull.
 * Bodies are mirror entries with `agentBody` set, no point (`pointOff` -1) and the id `kAgentIdBase + point id *
   kAgentTransforms + transform` in the object's key space. Each scan stamps them, so they go when their agent does, and
-  retypes a body when its `active_agent` element flips (0: static, else the node's type). Nothing makes a static body
-  follow the animation yet.
+  retypes a body when its `active_agent` element flips. A 0 is a transform that follows the animation: a kinematic
+  body (`followAnimation`) driven each scan to where the agent's pose has its shape now
+  (`setTargetTransformByHandle` over the step), so it moves with the animation's velocity as Bullet's does, the
+  ragdoll's joints hang from it, and a body turned dynamic carries on from the animated pose with that velocity; a
+  body just turned kinematic drops the velocity it had as a ragdoll (else it would coast on it for a step). Else the
+  node's type.
 * `writeAgentArrays` (called from `writeResultsBack` on every way out, so also on a frame where nothing moved) writes
   per agent point the arrays Bullet writes, one element per rig transform and zeros where there is no body:
   `pivot_agent` (the body's centre at rest), `trans_agent` (centre now minus that), `orient_agent` (rotation since
   rest: `box3dAbsoluteToRest`), `v_agent`, `w_agent` and `mass_agent`. Move events of agent bodies
-  update the mirror's pose there (`collectMovedBodies`, `kAgent`).
+  (animated, kinematic ones too) update the mirror's pose there (`collectMovedBodies`, `kAgent`).
 * Joints: a constraint network names its anchors `<agent name>/<rig transform>` (the agent primitive's `name`, else
   its point's; `anchor_type` agent) and the solver finds them in `Box3DObjectSync::agentByName`, which
   `syncAgentBodies` rebuilds every scan: a transform with a body maps to it, one without to the body of its closest
   ancestor transform that has one (the Agent Constraint Network's Cone Twist lines join a body to its parent
-  transform, which may have none). `Anchors::resolve` looks there first for a name with a slash. An agent anchor is a
-  point at its authored `P`; its frame is its transform's rotation at rest (`Box3DAgentRest::frames`, by name in
-  `Box3DObjectSync::agentRest`, the world matrix's rotation as `splitPackedMatrix` splits it) and its `local_P` and
-  `local_orient` are not read (`resolveEnds`). A mirrored rig transform (the mocap biped's left arm: a negative
-  determinant) is that rotation with its z row negated (`Box3DAgentFrame::mirrored`, `AnchorBody::mirrored`), so
-  `specFor` negates the z of that end's Cone Twist axes, which are in the transform's own space. The Cone Twist data
+  transform, which may have none). `Anchors::resolve` looks there first for a name with a slash. A transform with no
+  body on or above it (the rig's root and what hangs from it beside the first body) is in
+  `Box3DObjectSync::agentWithoutBody`: a constraint naming it, or any transform of an agent that is not a ragdoll,
+  makes no joint (`agentAnchors`, warned once), as Bullet makes none. An agent that left the ragdoll state (its
+  arrays still list bodies: `Box3DObjectSync::agentsLeftRagdoll`) drops its constraints without the warning, and so
+  does one that left the crowd (its point went: `Box3DObjectSync::agentsGone` on that scan, which each network that
+  names it remembers in `Box3DJointNetwork::agentsGone`; an agent of that name coming back resolves again). An agent
+  anchor is where
+  Bullet has it (`resolveEnds`): its `local_P` through its transform's world matrix at rest (`Box3DAgentRest::world`,
+  by name in `Box3DObjectSync::agentRest`), its frame the transform's rotation (`Box3DAgentRest::frames`, the matrix's
+  rotation as `splitPackedMatrix` splits it) turned by its `local_orient`; its `P` is not read, and each is read on its own:
+  without `local_P` the anchor is at `P`, without `local_orient` its frame is the transform's rotation. Those two are the anchor's place in the
+  transform, so an agent end is never given saved local frames (`agentEndA` / `agentEndB` on the entry: not written
+  after the step, not used to remake the joint). A mirrored rig transform (the mocap biped's left arm: a negative
+  determinant) is that rotation with its z row negated (`Box3DAgentFrame::mirrored`, `AnchorBody::mirrored`), so the
+  `local_orient` turn is mirrored to (-x, -y, z, w) and `specFor` negates the z of that end's Cone Twist axes, which
+  are in the transform's own space. The Cone Twist data
   then maps as for any anchors ([joints-sidefx.md](joints-sidefx.md)), and a Pin
   from a transform to a Static Object is an ordinary Hard line. The two ends of a joint are bodies of one ragdoll, so
   their collisions follow the data's Disable Collisions.
@@ -47,8 +64,9 @@ the rest are not ([todo.md](todo.md), "Agent ragdolls"). Index and rules: [CLAUD
   simulated body's transform is its rest world matrix (`Box3DAgentRest::world`, in
   `Box3DObjectSync::agentRestWorld`) with its origin put where the body's centre plus the rest offset turned by `orient_agent` lands and its axes
   turned by it. The root body (no simulated ancestor) gives the agent point's `P` / `orient` when nothing above it has
-  a body (the Hips): the agent's transform is the one that keeps the root's transform where the agent has it, and the
-  point's `orient` is its rotation. Every other simulated body's transform is placed in that space, a transform with
+  a body (the Hips) and the point's `bullet_updateagentxform` is not 0 (the Crowd Solver writes 1 for a whole ragdoll,
+  0 for a partial one, and Bullet leaves the agent's transform alone at 0): the agent's transform is the one that
+  keeps the root's transform where the agent has it, and the point's `orient` is its rotation. Every other simulated body's transform is placed in that space, a transform with
   no simulated body keeps its local transform under its parent (`GU_Agent::setWorldTransforms`), and with no
   simulated body at all nothing is written, so an animated agent keeps its animation. This reproduces Bullet's pose
   exactly from the same arrays (its joints' origins equal the arrays' prediction to 1e-4).
@@ -80,5 +98,12 @@ with its own Gravity at 0: the example's Gravity DOP is the gravity). Tests (the
 `agent_bodies_partial` (40 frames: 15 bodies an agent throughout, the flips of `active_agent` do not break it),
 `agent_joints_bullet` (PinnedRagdolls: the bodies near Bullet's on frame 6; on frames 24 and 48 the pinned hand, the
 ragdoll's centre and its spread against Bullet's), `agent_pose_box3d` (the posed joints are where the arrays say, the
-agent's point has moved) and `agent_rebuild` (the world rebuilt from a checkpoint at frame 15: `pivot_agent` kept, the
-bodies on frame 30 near a straight run's).
+agent's point has moved), `agent_rebuild` (the world rebuilt from a checkpoint at frame 15: `pivot_agent` kept, the
+bodies on frame 30 near a straight run's), `agent_anchor_local` (moving the anchors' `P` changes nothing, moving their
+`local_P` moves the bodies as in Bullet), `agent_anchor_no_body` (a Pin to the rig's root makes no joint, with the
+warning) and `agent_not_ragdoll` (an agent out of the ragdoll state gets no body, and a Pin to it makes no joint) and
+`agent_partial_bullet` (PartialRagdolls: the animated bodies on Bullet's, and the parts turned ragdoll near Bullet's),
+`agent_update_xform` (`bullet_updateagentxform` 0 keeps the agents' points) and `agent_leave_ragdoll` (agents leaving
+the ragdoll state: all animated, their bodies follow the animation; no longer ragdolls, their bodies go and their
+arrays stay as last written, as Bullet's) and `agent_crowd_changes` (an agent leaving the crowd leaves the others as
+they were; agents joining get their bodies on that frame and move as Bullet's).

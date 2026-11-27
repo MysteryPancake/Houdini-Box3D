@@ -246,6 +246,48 @@ bool restOfAgent(const GU_Detail *gdp, GA_Offset off, const GU_AgentRig &rig,
 
 } // namespace
 
+namespace {
+
+// An animated transform's kinematic body to where the animation has the
+// transform now (its shape's point through the transform's matrix), reached
+// over the step as Box3D drives a kinematic body to a target, so it moves with
+// the animation's velocity; when the animation stops, that velocity is
+// cleared. `retyped`: the body was simulated until now, so the velocity it had
+// then goes too (else it would coast on it for a step).
+void followAnimation(b3dop::Box3DWorld &world, const double local[3],
+                     const double now4[16], float stepDt, bool retyped,
+                     Box3DBodyMirror &entry) {
+  double m3[9], sc[3];
+  Box3DBodyPose target;
+  b3dop::upper3x3(now4, m3);
+  if (!splitPackedMatrix(m3, target.rot, sc))
+    return;
+  b3dop::xformPoint(now4, local, target.pos);
+  double d2 = 0.0;
+  for (int k = 0; k < 3; ++k)
+    d2 += (target.pos[k] - entry.pos[k]) * (target.pos[k] - entry.pos[k]);
+  if (d2 > 1e-14 || b3dop::quatsDiffer(target.rot, entry.rot)) {
+    world.setTargetTransformByHandle(entry.handle, target.pos, target.rot,
+                                     stepDt);
+    entry.setPose(target);
+    entry.driven = true;
+  } else if (entry.driven || retyped) {
+    const float zero[3] = {0.0f, 0.0f, 0.0f};
+    world.setVelocityByHandle(entry.handle, zero, zero);
+    entry.driven = false;
+  }
+}
+
+} // namespace
+
+bool hasAgentPrims(const GU_Detail *gdp) {
+  return gdp && gdp->countPrimitiveType(GU_Agent::typeId()) > 0;
+}
+
+bool isAgentPrim(const PackedInfo &pk) {
+  return pk.prim && pk.prim->getTypeId() == GU_Agent::typeId();
+}
+
 bool isRagdollAgent(const PackedInfo &pk, const GA_ROHandleIA &active,
                     GA_Offset off) {
   if (!pk.prim || !active.isValid() || !agentOf(pk.prim))
@@ -266,13 +308,41 @@ void syncAgentBodies(Box3DSharedState &st, Box3DObjectSync &os, int objectId,
   os.agents.clear();
   os.agentByName.clear();
   os.agentRest.clear();
+  os.agentWithoutBody.clear();
+  os.agentsNotRagdoll.clear();
+  os.agentsLeftRagdoll.clear();
+  os.agentsGone.clear();
+  const GA_ROHandleFA massArrays(
+      gdp->findFloatArray(GA_ATTRIB_POINT, "mass_agent"));
   std::unordered_set<int64_t> seen;
   const GA_ROHandleS primName(gdp, GA_ATTRIB_PRIMITIVE, "name");
   const GA_ROHandleS pointName(gdp, GA_ATTRIB_POINT, "name");
   for (const Box3DPointSlot &s : slots) {
-    if (!s.agentRagdoll)
+    if (!s.agent)
       continue;
     os.anyAgents = true;
+    if (!s.agentRagdoll) {
+      // No bodies: a constraint naming this agent makes no joint.
+      std::string name;
+      if (primName.isValid())
+        name = primName.get(static_cast<GA_Offset>(s.primOff));
+      if (name.empty() && pointName.isValid())
+        name = pointName.get(s.off);
+      if (!name.empty()) {
+        os.agentsNotRagdoll.insert(name);
+        // Bodies still listed in its arrays: it was a ragdoll (they stay as
+        // they were last written when it leaves the state, as Bullet's).
+        UT_Fpreal32Array mass;
+        if (massArrays.isValid())
+          massArrays.get(s.off, mass);
+        for (exint t = 0; t < mass.entries(); ++t)
+          if (mass(t) > 0.0f) {
+            os.agentsLeftRagdoll.insert(name);
+            break;
+          }
+      }
+      continue;
+    }
     const GA_Primitive *gp =
         gdp->getPrimitive(static_cast<GA_Offset>(s.primOff));
     const GU_PrimPacked *prim = gp && GU_PrimPacked::isPackedPrimitive(*gp)
@@ -281,6 +351,8 @@ void syncAgentBodies(Box3DSharedState &st, Box3DObjectSync &os, int objectId,
     const GU_Agent *agent = agentOf(prim);
     if (!agent)
       continue;
+    // Still in the crowd, whether or not its bodies can be made this scan.
+    seen.insert(s.bid);
     // What constraints call the agent: its primitive's `name`, else its
     // point's.
     std::string agentName;
@@ -316,15 +388,22 @@ void syncAgentBodies(Box3DSharedState &st, Box3DObjectSync &os, int objectId,
       mul4(local, full, now[t].data());
     }
     const GU_AgentRig &rig = *agent->getRig();
-    seen.insert(s.bid);
     auto restIt = os.agentRestWorld.find(s.bid);
     bool restored = false; // the rest came from the arrays: so do velocities
     if (restIt == os.agentRestWorld.end()) {
       Box3DAgentRest made;
+      made.name = agentName;
       restored = restOfAgent(gdp, s.off, rig, now, shapes, made);
       made.frames.resize(n);
       for (size_t t = 0; t < n; ++t)
         made.frames[t] = frameOf(made.world[t].data());
+      made.pivots.assign(n, {0.0, 0.0, 0.0});
+      made.hasPivot.assign(n, 0);
+      for (const TransformShape &shape : shapes) {
+        const size_t t = static_cast<size_t>(shape.transform);
+        if (t < n && shapePivot(shape, made.pivots[t].data()))
+          made.hasPivot[t] = 1;
+      }
       restIt = os.agentRestWorld.emplace(s.bid, std::move(made)).first;
     }
     const Box3DAgentRest &rest = restIt->second;
@@ -342,9 +421,11 @@ void syncAgentBodies(Box3DSharedState &st, Box3DObjectSync &os, int objectId,
       const int t = shape.transform;
       if (static_cast<size_t>(t) >= n || rest.world.size() != n)
         continue;
+      // An `active_agent` 0 transform follows the animation: a kinematic body,
+      // as Bullet's, that the ragdoll's joints hang from.
       const b3dop::BodySettings::Type want =
           (t < flags.entries() && flags(t) == 0)
-              ? b3dop::BodySettings::Type::Static
+              ? b3dop::BodySettings::Type::Kinematic
               : node.type;
       const uint64_t key = b3dop::makeBodyKey(objectId, agentBodyId(s.bid, t));
       Box3DBodyMirror *entry = st.mirror.find(key);
@@ -353,9 +434,8 @@ void syncAgentBodies(Box3DSharedState &st, Box3DObjectSync &os, int objectId,
         // rig's at rest, which the arrays and the pose measure from.
         const size_t ti = static_cast<size_t>(t);
         BodyPlan plan;
-        double local[3];
         if (!planBody(world, shape, now[ti].data(), plan) ||
-            !shapePivot(shape, local)) {
+            ti >= rest.hasPivot.size() || !rest.hasPivot[ti]) {
           ++c.agentFailed;
           continue;
         }
@@ -387,7 +467,8 @@ void syncAgentBodies(Box3DSharedState &st, Box3DObjectSync &os, int objectId,
         entry->handle = h;
         entry->type = want;
         entry->agentBody = true;
-        b3dop::xformPoint(rest.world[ti].data(), local, entry->pivot);
+        b3dop::xformPoint(rest.world[ti].data(), rest.pivots[ti].data(),
+                          entry->pivot);
         b3dop::copy4(entry->restRot, rest.frames[ti].rot.data());
         if (restored) {
           UT_Fpreal32Array v, w;
@@ -403,15 +484,28 @@ void syncAgentBodies(Box3DSharedState &st, Box3DObjectSync &os, int objectId,
               world.setVelocityByHandle(h, lin, ang);
               std::copy(lin, lin + 3, entry->lin);
               std::copy(ang, ang + 3, entry->ang);
+              // An animated body: the velocity is the animation's, cleared
+              // (as one followAnimation set) if the animation holds still.
+              if (want == b3dop::BodySettings::Type::Kinematic)
+                entry->driven = true;
             }
           }
         }
         ++c.agentBodies;
         ++c.added;
-      } else if (entry->type != want && entry->handle) {
-        // Simulated or animation-driven: retyped when the agent's flag flips.
-        retypeBody(world, *entry, want);
-        ++c.retyped;
+      } else if (entry->handle) {
+        // Simulated or animation-driven: retyped when the agent's flag flips
+        // (turned dynamic, the body keeps the animation's velocity).
+        const bool retyped = entry->type != want;
+        if (retyped) {
+          retypeBody(world, *entry, want);
+          ++c.retyped;
+        }
+        const size_t ti = static_cast<size_t>(t);
+        if (entry->type == b3dop::BodySettings::Type::Kinematic &&
+            ti < rest.hasPivot.size() && rest.hasPivot[ti])
+          followAnimation(world, rest.pivots[ti].data(), now[ti].data(),
+                          st.stepDt, retyped, *entry);
       }
       entry->pointOff = -1;
       entry->pointId = agentBodyId(s.bid, t);
@@ -434,18 +528,24 @@ void syncAgentBodies(Box3DSharedState &st, Box3DObjectSync &os, int objectId,
         const std::string name =
             agentName + "/" +
             std::string(rig.transformName(static_cast<exint>(t)).c_str());
-        os.agentRest[name] = rest.frames[t];
+        os.agentRest[name] = {&rest, t};
         exint at = static_cast<exint>(t);
         while (at >= 0 && !record.bodies[static_cast<size_t>(at)])
           at = rig.parentIndex(at);
         if (at >= 0)
           os.agentByName.emplace(name, record.bodies[static_cast<size_t>(at)]);
+        else
+          os.agentWithoutBody.insert(name);
       }
     }
     os.agents.push_back(std::move(record));
   }
   // An agent that is no longer a ragdoll (or gone) starts again from its pose
-  // if it comes back.
+  // if it comes back; one whose point went is noted as gone.
+  for (const auto &kv : os.agentRestWorld)
+    if (!seen.count(kv.first) && !kv.second.name.empty() &&
+        !os.agentsNotRagdoll.count(kv.second.name))
+      os.agentsGone.insert(kv.second.name);
   for (auto it = os.agentRestWorld.begin(); it != os.agentRestWorld.end();)
     it = seen.count(it->first) ? std::next(it) : os.agentRestWorld.erase(it);
 }
@@ -569,10 +669,15 @@ void writeAgentPose(GU_Detail *gdp, const Box3DObjectSync &os,
   // The agent's own transform: when the root body is the rig's topmost (nothing
   // above it has a body, simulated or not), the one that puts the root's
   // transform, as it is in the agent, where its body has it. Under a body that
-  // is not simulated the agent keeps the transform the crowd gave it.
+  // is not simulated the agent keeps the transform the crowd gave it, and so it
+  // does when the Crowd Solver's bullet_updateagentxform is 0 (1 for a whole
+  // ragdoll, 0 for a partial one), as RBD Bullet Solver reads it.
   bool topmost = true;
   for (exint a = rig.parentIndex(root); a >= 0; a = rig.parentIndex(a))
     topmost = topmost && !r.bodies[static_cast<size_t>(a)];
+  const GA_ROHandleI follow(gdp, GA_ATTRIB_POINT, "bullet_updateagentxform");
+  if (follow.isValid() && follow.get(static_cast<GA_Offset>(r.pointOff)) == 0)
+    topmost = false;
   UT_Matrix4D agentXform;
   if (topmost) {
     UT_Matrix4D rootWorld = toD((*worldPtr)(root)), rootInv;

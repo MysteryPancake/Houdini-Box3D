@@ -50,7 +50,7 @@ struct Box3DJointCounts {
   // (it is read for SideFX data only)
   int typeIgnored = 0;
   int badAnchorId = 0;  // an anchor_id that is no point / vertex of its object
-  int agentAnchors = 0; // anchor_type agent (not simulated here)
+  int agentAnchors = 0; // agent anchors on a transform with no body on or above
   int anchorNoGeometry = 0; // anchor_id on a body whose geometry was not read
   int notLines = 0;         // primitives that are not two-point lines
   int failed =

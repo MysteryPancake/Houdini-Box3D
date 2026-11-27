@@ -230,6 +230,32 @@ struct NetworkReader {
     return readFrame(localP, localQ, pt, out);
   }
 
+  // Its local_P alone (false: none, or not finite), and its local_orient alone
+  // (false: none, or all zero).
+  bool localPosition(GA_Offset pt, double out[3]) const {
+    if (!localP.isValid())
+      return false;
+    const UT_Vector3 p = localP.get(pt);
+    if (!std::isfinite(p.x()) || !std::isfinite(p.y()) || !std::isfinite(p.z()))
+      return false;
+    out[0] = p.x();
+    out[1] = p.y();
+    out[2] = p.z();
+    return true;
+  }
+  bool localOrient(GA_Offset pt, float out[4]) const {
+    if (!localQ.isValid())
+      return false;
+    const UT_QuaternionF q = localQ.get(pt);
+    if (q.x() == 0.0f && q.y() == 0.0f && q.z() == 0.0f && q.w() == 0.0f)
+      return false;
+    out[0] = q.x();
+    out[1] = q.y();
+    out[2] = q.z();
+    out[3] = q.w();
+    return true;
+  }
+
 private:
   // A frame stored as a position and a quaternion point attribute. False when
   // either is missing, the quaternion is all zero (not written) or the position
@@ -491,8 +517,9 @@ private:
     const b3dop::JointFrame ja = jointFrameOf(fa, j.adjA),
                             jb = jointFrameOf(fb, j.adjB);
     b3dop::JointFrame la, lb;
-    const bool useLocal = !edited && myRd.savedLocal(p0, la) &&
-                          myRd.savedLocal(p1, lb) &&
+    // An agent end's local_P / local_orient are authored, never saved frames.
+    const bool useLocal = !edited && !e.agentEndA && !e.agentEndB &&
+                          myRd.savedLocal(p0, la) && myRd.savedLocal(p1, lb) &&
                           localFrameAgrees(myWorld, a, la, ja) &&
                           localFrameAgrees(myWorld, b, lb, jb);
     // Live frames are where the anchors are now; authored ones are at rest, so
@@ -572,9 +599,38 @@ private:
   bool resolveEnds(Box3DJointEntry &e, GA_Offset p0, GA_Offset p1,
                    AnchorBody &ab, AnchorBody &bb, b3dop::JointFrame &authA,
                    b3dop::JointFrame &authB) {
+    // An agent anchor on a transform with no body on or above it: no joint, as
+    // RBD Bullet Solver makes none. Warned unless every such end is an agent
+    // that left the ragdoll state, where it is expected.
+    bool expectedA = true, expectedB = true;
+    const bool noBodyA =
+        myRd.anchorKind(p0) == AnchorKind::Agent &&
+        myAnchors.agentWithoutBody(myRd.anchorName(p0), expectedA);
+    const bool noBodyB =
+        myRd.anchorKind(p1) == AnchorKind::Agent &&
+        myAnchors.agentWithoutBody(myRd.anchorName(p1), expectedB);
+    if (noBodyA || noBodyB) {
+      if ((noBodyA && !expectedA) || (noBodyB && !expectedB))
+        ++myCounts.agentAnchors;
+      dropJoint(e);
+      return false;
+    }
     if (!myAnchors.resolve(myRd.anchorName(p0), ab) ||
         !myAnchors.resolve(myRd.anchorName(p1), bb)) {
-      ++myCounts.unresolved;
+      // An anchor on an agent that left the crowd: dropped quietly, then and
+      // whenever the network is read again.
+      const auto goneEnd = [&](GA_Offset pt) {
+        if (myRd.anchorKind(pt) != AnchorKind::Agent)
+          return false;
+        const std::string name = myRd.anchorName(pt);
+        const std::string agent = name.substr(0, name.find('/'));
+        if (myAnchors.agentGone(name))
+          myNet.agentsGone.insert(agent);
+        return myNet.agentsGone.count(agent) > 0;
+      };
+      const bool goneA = goneEnd(p0), goneB = goneEnd(p1);
+      if (!goneA && !goneB)
+        ++myCounts.unresolved;
       myNet.needsBodies = true;
       dropJoint(e);
       return false; // not stamped: removed; retried when bodies change
@@ -590,20 +646,47 @@ private:
       dropJoint(e);
       return false;
     }
+    e.agentEndA = agentA;
+    e.agentEndB = agentB;
     if (ab.byObjectName || bb.byObjectName)
       myNet.needsBodies = true;
     AnchorLookup badAnchor = AnchorLookup::Ok;
     authA = asStored(authoredAnchor(e, false, p0, ab, badAnchor));
     authB = asStored(authoredAnchor(e, true, p1, bb, badAnchor));
-    // The frame of an agent anchor is its transform's, as the body was made
-    // (its `local_orient` is taken as identity).
+    // An agent anchor is in its transform at rest, as RBD Bullet Solver has
+    // it: at its local_P through the transform's matrix (the agent's units and
+    // any mirror in it; its P is not read), turned by its local_orient. On a
+    // mirrored transform the rotation is splitPackedMatrix's (z row negated),
+    // so local_orient is mirrored too: (-x, -y, z, w), the same turn seen
+    // through the flip. Without local_P: P; without local_orient: no turn.
     const auto agentFrame = [&](AnchorBody &body, GA_Offset pt,
                                 b3dop::JointFrame &auth) {
       const auto &rest = body.entry->sync->agentRest;
       const auto it = rest.find(myRd.anchorName(pt));
-      b3dop::copy4(auth.rot, it != rest.end() ? it->second.rot.data()
-                                              : body.entry->restRot);
-      body.mirrored = it != rest.end() && it->second.mirrored;
+      if (it == rest.end() || !it->second.rest ||
+          it->second.transform >= it->second.rest->frames.size()) {
+        b3dop::copy4(auth.rot, body.entry->restRot);
+        body.mirrored = false;
+        return;
+      }
+      const Box3DAgentRest &r = *it->second.rest;
+      const Box3DAgentFrame &frame = r.frames[it->second.transform];
+      body.mirrored = frame.mirrored;
+      double localPos[3];
+      if (myRd.localPosition(pt, localPos))
+        b3dop::xformPoint(r.world[it->second.transform].data(), localPos,
+                          auth.pos);
+      float turn[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+      if (!myRd.localOrient(pt, turn)) {
+        b3dop::copy4(auth.rot, frame.rot.data());
+        return;
+      }
+      if (frame.mirrored) {
+        turn[0] = -turn[0];
+        turn[1] = -turn[1];
+      }
+      b3dop::quatMul(frame.rot.data(), turn, auth.rot);
+      b3dop::sanitizeQuat(auth.rot);
     };
     if (agentA)
       agentFrame(ab, p0, authA);

@@ -77,14 +77,8 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
      12) and let the knees bend as
      Bullet's do (22 to 28 degrees by frame 12 against 5); after frame 16 neither is closer. Bullet's motors and
      stiffness move its bodies by 0.04 to 0.11 and are not built.
-  2. What the Crowd Solver reads of the arrays on the next step (not known: found by leaving one out; the pose is written
-     directly as Bullet writes it), and a Crowd Solver that changes the pose of a ragdoll agent.
-  3. Agent anchors on a transform with no body or ancestor body (a moving world anchor driven by the rig:
-     `driveWorldAnchors` exists), `local_P` / `local_orient` of an anchor (taken as the transform's origin and frame).
-  4. Partial ragdolls (`active_agent` 0: kinematic bodies following the animation, now static: a transform with a static
-     body keeps the animation's pose, but its body stays where it was made), agents entering and leaving ragdoll state or
-     the crowd, shapes other than Tubes and the mass factor `kAgentMassScale` for them, a shear in the transforms'
-     matrices (dropped).
+  2. Shapes other than Tubes and the mass factor `kAgentMassScale` for them, a shear in the transforms' matrices
+     (dropped).
   Unknowns: Bullet's motor model against Box3D's joint motors, the cost of 27 bodies an agent at crowd sizes. Tests so
   far are `agent_*`; the rest go in `checks_agent.py`.
 * Constraint networks: the `anchor_pid` / `anchor_vid` matching. A missing

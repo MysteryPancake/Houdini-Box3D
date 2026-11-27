@@ -120,7 +120,12 @@ void writeLiveFrames(const b3dop::Box3DWorld &world, const Box3DSharedState &st,
         }
         if (localPH.isValid() && localQH.isValid()) {
           const b3dop::JointFrame *frames[2] = {&la, &lb};
+          const bool agentEnd[2] = {e->agentEndA, e->agentEndB};
           for (int k = 0; k < 2; ++k) {
+            // An agent end's local_P / local_orient are its authored place in
+            // its rig transform, which the anchor is read from.
+            if (agentEnd[k])
+              continue;
             const b3dop::JointFrame &f = *frames[k];
             localPH.set(pts[k], box3dVec3F(f.pos));
             localQH.set(pts[k],

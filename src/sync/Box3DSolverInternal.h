@@ -477,7 +477,7 @@ struct GeorepLookup {
 bool readPointState(const GU_Detail *gdp, const PointAttrs &a, GA_Offset off,
                     const PackedInfo &pk, Box3DBodyPose &out,
                     bool *badVelocity = nullptr,
-                    Box3DRestCache *rest = nullptr);
+                    Box3DRestCache *cache = nullptr);
 bool poseDiffers(const Box3DBodyPose &a, const Box3DBodyPose &b);
 Box3DSyncFingerprint makeFingerprint(const GU_Detail *gdp, const PointAttrs &a,
                                      int nodeType,
@@ -502,6 +502,9 @@ bool retypeBody(b3dop::Box3DWorld &world, Box3DBodyMirror &entry,
 bool startAwakeFor(const b3dop::BodySettings &node, const PointAttrs &a,
                    GA_Offset off);
 
+// The geometry has crowd agent primitives (Box3DAgent.cpp).
+bool hasAgentPrims(const GU_Detail *gdp);
+
 // What every point of one syncObject() scan shares.
 struct ScanContext {
   Box3DSharedState &st;
@@ -510,7 +513,9 @@ struct ScanContext {
   const PointAttrs &a;
   const b3dop::BodySettings &node;
   const bool anyPrims; // else no packed points
-  // The point's `active_agent` array: a crowd agent with elements is a ragdoll.
+  // Crowd agent primitives in the geometry (isAgentPrim is checked only then),
+  // and the points' `active_agent` array: an agent with elements is a ragdoll.
+  bool anyAgentPrims = false;
   GA_ROHandleIA activeAgent;
   // The slots' cached rest rotations describe the current `restxform`.
   bool restReuse = false;
@@ -522,6 +527,7 @@ struct ScanContext {
       : st(state), world(state.world), gdp(g), a(attrs), node(n),
         anyPrims(g->getNumPrimitives() > 0) {
     georep.bind(a);
+    anyAgentPrims = hasAgentPrims(g);
     activeAgent =
         GA_ROHandleIA(g->findIntArray(GA_ATTRIB_POINT, "active_agent"));
   }
@@ -606,6 +612,8 @@ void syncObject(Box3DSharedState &st, const SIM_Object &obj, SyncCounts &c,
 
 // ---- crowd agent ragdolls (Box3DAgent.cpp) ----
 
+// The point's packed primitive is a crowd agent.
+bool isAgentPrim(const PackedInfo &pk);
 // The point's primitive is a crowd agent and the point's `active_agent` array
 // has elements (the crowd solver made it a ragdoll).
 bool isRagdollAgent(const PackedInfo &pk, const GA_ROHandleIA &active,

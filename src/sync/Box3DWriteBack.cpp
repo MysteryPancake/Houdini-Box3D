@@ -41,10 +41,13 @@ MovedBodies collectMovedBodies(Box3DSharedState &st) {
         const b3dop::BodyMove &mv = st.moves[mi];
         const Box3DBodyMirror *entry =
             static_cast<const Box3DBodyMirror *>(mv.userData);
-        if (!entry || !entry->dynamic() || !st.isLive(*entry))
-          kind[mi] = kSkip; // only dynamic bodies seen by this step's sync
+        // Only bodies seen by this step's sync: dynamic ones, and a ragdoll
+        // agent's whatever their type (animated ones are kinematic).
+        if (!entry || !st.isLive(*entry) ||
+            (!entry->agentBody && !entry->dynamic()))
+          kind[mi] = kSkip;
         else if (entry->agentBody)
-          kind[mi] = kAgent; // a ragdoll agent's bodies: written as arrays
+          kind[mi] = kAgent; // written as arrays
         else if (!entry->handle)
           kind[mi] = kMissing;
         else if (entry->wholeObject)

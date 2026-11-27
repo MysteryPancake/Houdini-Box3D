@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -382,9 +383,10 @@ struct Box3DPointSlot {
   // The point belongs to a primitive that is not packed (a polygon's point):
   // no body, as RBD Bullet Solver (docs/agents/bodies.md, "Unpacked geometry").
   bool unpackedPrim = false;
-  // The point is a crowd agent that is a ragdoll (`active_agent` has elements):
-  // no body of its own either, but one per rig transform with a collision
-  // shape (syncAgentBodies).
+  // The point is a crowd agent: no body of its own either, as RBD Bullet
+  // Solver makes none. A ragdoll (`active_agent` has elements) gets one per rig
+  // transform with a collision shape (syncAgentBodies).
+  bool agent = false;
   bool agentRagdoll = false;
   int64_t index = 0; // point number
   int64_t primOff = -1;
@@ -520,6 +522,17 @@ struct Box3DAgentFrame {
 struct Box3DAgentRest {
   std::vector<std::array<double, 16>> world;
   std::vector<Box3DAgentFrame> frames;
+  // Per transform with a shape: the shape's point in the transform's own
+  // space, the body's centre (hasPivot 0: none).
+  std::vector<std::array<double, 3>> pivots;
+  std::vector<char> hasPivot;
+  std::string name; // what constraints call the agent
+};
+
+// A constraint anchor's rig transform: its agent's rest and its index there.
+struct Box3DAgentAnchor {
+  const Box3DAgentRest *rest = nullptr;
+  size_t transform = 0;
 };
 
 // One ragdoll agent of an object (Box3DAgent.cpp): its point and, per rig
@@ -546,9 +559,22 @@ struct Box3DObjectSync {
   // "<agent name>/<rig transform name>" -> its body (an anchor's name, as
   // Bullet's constraints name an agent's transform).
   std::unordered_map<std::string, Box3DBodyMirror *> agentByName;
-  // "<agent name>/<rig transform name>" -> the frame a constraint's anchor on
-  // it has (its agent's Box3DAgentRest::frames; rebuilt each scan).
-  std::unordered_map<std::string, Box3DAgentFrame> agentRest;
+  // "<agent name>/<rig transform name>" -> that transform at rest, where a
+  // constraint's anchor on it is (rebuilt each scan).
+  std::unordered_map<std::string, Box3DAgentAnchor> agentRest;
+  // Such names of transforms with no body on or above them, and the names of
+  // the object's agents that are not ragdolls: a constraint naming one makes
+  // no joint, as in Bullet (rebuilt each scan). Of those agents, the ones that
+  // left the ragdoll state (their arrays still list bodies): their constraints
+  // are dropped without a warning, as is expected there.
+  std::unordered_set<std::string> agentWithoutBody;
+  std::unordered_set<std::string> agentsNotRagdoll;
+  std::unordered_set<std::string> agentsLeftRagdoll;
+  // Names of ragdoll agents that left the crowd on this scan (their point
+  // went): a constraint network that drops a constraint naming one notes it
+  // (Box3DJointNetwork::agentsGone) and drops the rest without a warning, as
+  // Bullet drops them (rebuilt each scan).
+  std::unordered_set<std::string> agentsGone;
   // Per agent point (by its body id): its rig at rest. Kept between scans while
   // the agent is a ragdoll.
   std::unordered_map<int64_t, Box3DAgentRest> agentRestWorld;

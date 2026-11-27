@@ -11,6 +11,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -79,6 +80,9 @@ struct Box3DJointEntry {
   float madeRestLength = -1.0f;
   // made from P / orient: write local_P / local_orient after the step
   bool writeLocal = false;
+  // An end on a crowd agent's rig transform: its local_P / local_orient are
+  // the anchor's place in that transform (authored, read, never written).
+  bool agentEndA = false, agentEndB = false;
 
   // next_constraint_name: the broken joint's local frames, so the anchors can
   // be put where its frames were at the break (switchFrames) and the next
@@ -187,6 +191,10 @@ struct Box3DJointNetwork {
   std::unordered_map<std::string, Box3DJointKind>
       kinds; // by data name, as last used
   bool kindsKnown = false;
+  // Ragdoll agents its constraints name that left the crowd
+  // (Box3DObjectSync::agentsGone): their constraints are dropped without a
+  // warning. Bounded by the agents its geometry names.
+  std::unordered_set<std::string> agentsGone;
 };
 
 // What one bond adds to the signature of the bond list (kGlueCountSalt for the
