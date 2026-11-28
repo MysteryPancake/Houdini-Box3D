@@ -480,7 +480,7 @@ struct Box3DPointWrite
 	// kRest: a new packed body's `restxform` (its packed transform when it was
 	// made, row-major) and `pivot` (its P then), as Bullet initializes them.
 	float restxform[16] = {};
-	float pivot[3] = {};
+	double pivot[3] = {};
 };
 
 // A `dead` point to delete after the step (its body is already gone).
@@ -692,6 +692,9 @@ struct Box3DAffectorBody
 	std::string name;			  // the affector object's name (joint anchors can name it)
 	double pos[3] = { 0, 0, 0 };  // the body's pose as last given to Box3D
 	float rot[4] = { 0, 0, 0, 1 };
+	// A mesh's vertices are relative to this point (object space): the body sits
+	// where the object's transform puts it.
+	double meshOrigin[3] = { 0, 0, 0 };
 	float scale[3] = { 1, 1, 1 };	// the mesh shape's scale as last given to Box3D
 	float rolling = 0.0f;			// rolling resistance / conveyor velocity as last given to Box3D
 	float tangent[3] = { 0, 0, 0 }; // (not in the signature: animating them must not rebuild the mesh)

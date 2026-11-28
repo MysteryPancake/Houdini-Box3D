@@ -37,6 +37,10 @@ set(BOX3D_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/box3d" CACHE PATH "Path to Box
 # Because we are not the top-level project, Box3D skips its samples/tests.
 # ---------------------------------------------------------------------------
 set(BUILD_SHARED_LIBS OFF)
+# Double precision world positions (Box3D's large world mode). The plugin reads and writes P as
+# double either way, so a 64-bit P keeps full precision far from the origin.
+option(BOX3DDOP_DOUBLE_PRECISION "Build Box3D with double precision world positions" ON)
+set(BOX3D_DOUBLE_PRECISION ${BOX3DDOP_DOUBLE_PRECISION} CACHE BOOL "Set from BOX3DDOP_DOUBLE_PRECISION" FORCE)
 add_subdirectory("${BOX3D_DIR}" "${CMAKE_BINARY_DIR}/box3d" EXCLUDE_FROM_ALL)
 set_target_properties(box3d PROPERTIES POSITION_INDEPENDENT_CODE ON)
 

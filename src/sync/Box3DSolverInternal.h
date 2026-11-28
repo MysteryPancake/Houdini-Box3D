@@ -223,10 +223,13 @@ void readPackedPivot( PackedInfo& pk );
 
 // ---- collision source geometry and shapes (Box3DShapeBuild.cpp) ----
 
-// One piece's points, raw xyz in their own space.
+// One piece's points in their own space, as xyz relative to `origin` (so a
+// 64-bit P far from the origin keeps its precision in float).
 struct NamedPiece
 {
 	std::string name;
+	double origin[3] = { 0, 0, 0 }; // box3dPieceOrigin: zero unless P is 64-bit
+	bool originSet = false;
 	std::vector<GA_Offset> points; // while collecting (finishPieces reads and drops them)
 	std::vector<float> samples;	   // quadric primitives' surface points
 								   // (Box3DQuadrics.h), added to xyz
@@ -238,7 +241,23 @@ struct NamedPiece
 	double sphereCentre[3] = { 0, 0, 0 };
 	double sphereRadius = 0;
 	std::vector<float> xyz;
-	uint64_t hash = 0; // of xyz
+	uint64_t hash = 0; // of xyz and origin
+
+	// The origin from `pt` (of `gdp`), once: before the piece's first point or
+	// sample is added.
+	void setOrigin( const GU_Detail* gdp, GA_Offset pt )
+	{
+		if ( !originSet )
+			box3dPieceOrigin( gdp, pt, origin );
+		originSet = true;
+	}
+
+	// Point k (xyz index / 3) in the source's space.
+	void point( size_t k, double out[3] ) const
+	{
+		for ( size_t c = 0; c < 3; ++c )
+			out[c] = static_cast<double>( xyz[3 * k + c] ) + origin[c];
+	}
 };
 
 struct PieceGroup
@@ -277,6 +296,7 @@ void collectConnectedPieces( const GU_Detail* gdp, const GA_Range& prims, PieceG
 // body-local with Box3D's (counter-clockwise front faces).
 struct MeshPiece
 {
+	double origin[3] = { 0, 0, 0 }; // a source's xyz is relative to it (box3dTriangulate)
 	std::vector<float> xyz;
 	std::vector<int32_t> tris;
 };
@@ -531,6 +551,10 @@ struct ScanContext
 	GA_ROHandleIA activeAgent;
 	// The slots' cached rest rotations describe the current `restxform`.
 	bool restReuse = false;
+	// P is 64-bit: a rest position comes from `pivot` (P at rest) rather than
+	// from the float `restxform` (computeRestInit).
+	const bool p64;
+	GA_ROHandleV3D restPivot;
 	ShapeSources sources;
 	GeorepLookup georep;
 
@@ -541,7 +565,10 @@ struct ScanContext
 		, a( attrs )
 		, node( n )
 		, anyPrims( g->getNumPrimitives() > 0 )
+		, p64( box3dP64( g ) )
 	{
+		if ( p64 )
+			restPivot = GA_ROHandleV3D( g, GA_ATTRIB_POINT, "pivot" );
 		georep.bind( a );
 		anyAgentPrims = hasAgentPrims( g );
 		activeAgent = GA_ROHandleIA( g->findIntArray( GA_ATTRIB_POINT, "active_agent" ) );

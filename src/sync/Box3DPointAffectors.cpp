@@ -7,6 +7,7 @@
 // made when a particle is first seen, moved by a target pose each step and
 // destroyed when the particle is gone.
 #include "Box3DAffectors.h"
+#include "Box3DHoudiniUtil.h" // box3dPos
 #include "core/Box3DDebug.h"
 #include "core/Box3DMath.h"
 #include "dop/SIM_Box3DWorld.h"
@@ -54,8 +55,8 @@ void syncPointSpheres( Box3DSharedState& st, Box3DAffectorBody& ab, const GU_Det
 			continue;
 		const int64_t key =
 			ids.isValid() ? static_cast<int64_t>( ids.get( off ) ) : static_cast<int64_t>( gdp->pointIndex( off ) );
-		const UT_Vector3 p = gdp->getPos3( off );
-		const double local[3] = { p.x(), p.y(), p.z() };
+		double local[3];
+		box3dPos( gdp, off, local );
 		double pos[3];
 		b3dop::xformPoint( m, local, pos );
 		if ( !b3dop::finite3( pos ) )

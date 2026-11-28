@@ -6,6 +6,7 @@
 #include "Box3DSolverInternal.h"
 
 #include <functional>
+#include <limits>
 #include <string_view>
 
 namespace box3dsolver
@@ -21,10 +22,7 @@ bool readPointState( const GU_Detail* gdp, const PointAttrs& a, GA_Offset off, c
 {
 	if ( badVelocity )
 		*badVelocity = false;
-	const UT_Vector3 p = gdp->getPos3( off );
-	out.pos[0] = p.x();
-	out.pos[1] = p.y();
-	out.pos[2] = p.z();
+	box3dPos( gdp, off, out.pos );
 	if ( !b3dop::finite3( out.pos ) )
 		return false;
 
@@ -284,7 +282,7 @@ struct RestInit
 	float restRot[4];
 	double restPos[3];
 	float restxform[16];
-	float pivot[3];
+	double pivot[3];
 };
 
 // This scan's shape plans and rest data for new and rebuilt bodies, by
@@ -322,8 +320,7 @@ void computeRestInit( const ScanContext& ctx, const Box3DPointSlot& s, const Pac
 		m = box3dMatrix4F( r.restxform );
 		if ( !restRotation( m, rest ) )
 			return;
-		for ( int i = 0; i < 3; ++i )
-			r.pivot[i] = static_cast<float>( s.cur.pos[i] );
+		b3dop::copy3( r.pivot, s.cur.pos );
 		r.writeRest = true;
 	}
 	b3dop::copy4( r.restRot, rest );
@@ -331,6 +328,24 @@ void computeRestInit( const ScanContext& ctx, const Box3DPointSlot& s, const Pac
 	// origin was at rest.
 	for ( unsigned c = 0; c < 3; ++c )
 		r.restPos[c] = pk.pivot[0] * m( 0, c ) + pk.pivot[1] * m( 1, c ) + pk.pivot[2] * m( 2, c ) + m( 3, c );
+	// A 64-bit P: restxform's float translation rounds far from the origin, so
+	// the rest position is P itself for a rest made now, else `pivot` (P at
+	// rest) where it agrees with restxform to a few float spacings at that
+	// magnitude.
+	if ( r.writeRest && ctx.p64 )
+		b3dop::copy3( r.restPos, s.cur.pos );
+	else if ( ctx.p64 && ctx.restPivot.isValid() )
+	{
+		const UT_Vector3D p = ctx.restPivot.get( s.off );
+		bool agrees = true;
+		for ( unsigned c = 0; c < 3; ++c )
+			agrees = agrees && std::fabs( p[c] - r.restPos[c] ) <=
+								   2.0 * static_cast<double>( std::numeric_limits<float>::epsilon() ) *
+									   std::max( 1.0, std::fabs( r.restPos[c] ) );
+		if ( agrees )
+			for ( unsigned c = 0; c < 3; ++c )
+				r.restPos[c] = p[c];
+	}
 	r.hasRest = true;
 }
 

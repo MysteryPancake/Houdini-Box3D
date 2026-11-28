@@ -96,6 +96,22 @@ int main()
 		const Bounds b( p );
 		check( near( b.hi[1] - b.lo[1], 1.0 ) && near( b.hi[0] - b.lo[0], 1.0, 1e-4 ), "tube size" );
 	}
+	{ // Houdini's Tube SOP with radii 1 (top) and 0.5 (bottom), height 2: matrix
+		// (0.5, 2, 0.5) and taper 2, so the ring at y +1 has radius 1, at -1 0.5
+		std::fill( a, a + 9, 0.0 );
+		a[0] = 0.5, a[4] = 2.0, a[8] = 0.5;
+		std::vector<float> p;
+		appendQuadricPoints( QuadricKind::Tube, a, c, p, 2.0 );
+		double top = 0.0, bottom = 0.0;
+		for ( size_t i = 0; i + 2 < p.size(); i += 3 )
+		{
+			const double dx = p[i] - c[0], dz = p[i + 2] - c[2];
+			double& r = p[i + 1] > c[1] ? top : bottom;
+			r = std::max( r, std::sqrt( dx * dx + dz * dz ) );
+		}
+		check( near( top, 1.0, 1e-4 ) && near( bottom, 0.5, 1e-4 ),
+			   "tube taper: radius 1 at the top, 0.5 at the bottom" );
+	}
 	{ // a circle in XY, radius 0.5: thin along its normal (z), full across
 		diag( 0.5, a );
 		std::vector<float> p;

@@ -101,8 +101,10 @@ constexpr int kQuadricSegments = 24; // points around
 
 // Appends points (x, y, z, ...) on the primitive's surface, in the space of
 // `centre` (the primitive's point): the unit shape through `a` (3x3, p' = a *
-// p, row-major), plus `centre`.
-inline void appendQuadricPoints( QuadricKind kind, const double a[9], const double centre[3], std::vector<float>& xyz )
+// p, row-major), plus `centre`. A Tube's ring at y = 0.5 has radius `taper`
+// (GEO_PrimTube::getTaper; the ring at -0.5 has radius 1).
+inline void appendQuadricPoints( QuadricKind kind, const double a[9], const double centre[3], std::vector<float>& xyz,
+								 double taper = 1.0 )
 {
 	auto put = [&]( double x, double y, double z ) {
 		xyz.push_back( static_cast<float>( centre[0] + a[0] * x + a[1] * y + a[2] * z ) );
@@ -136,7 +138,8 @@ inline void appendQuadricPoints( QuadricKind kind, const double a[9], const doub
 				for ( int j = 0; j < kQuadricSegments; ++j )
 				{
 					const double th = twoPi * j / kQuadricSegments;
-					put( std::cos( th ), cap ? 0.5 : -0.5, std::sin( th ) );
+					const double r = cap ? taper : 1.0;
+					put( r * std::cos( th ), cap ? 0.5 : -0.5, r * std::sin( th ) );
 				}
 			break;
 		case QuadricKind::Circle:

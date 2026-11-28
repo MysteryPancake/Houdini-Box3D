@@ -122,9 +122,10 @@ std::vector<double> objectPoints( const GU_Detail* gdp, const double m[16] )
 	collectPieces( gdp, g );
 	std::vector<double> out;
 	for ( const NamedPiece& np : g.pieces )
-		for ( size_t k = 0; k + 2 < np.xyz.size(); k += 3 )
+		for ( size_t k = 0; 3 * k + 2 < np.xyz.size(); ++k )
 		{
-			const double p[3] = { np.xyz[k], np.xyz[k + 1], np.xyz[k + 2] };
+			double p[3];
+			np.point( k, p );
 			double o[3];
 			b3dop::xformPoint( m, p, o );
 			out.insert( out.end(), o, o + 3 );
@@ -302,8 +303,8 @@ void boundsCentre( const GU_Detail* gdp, const double m[16], double centre[3] )
 	bool any = false;
 	for ( GA_Iterator it( gdp->getPointRange() ); !it.atEnd(); ++it )
 	{
-		const UT_Vector3 p = gdp->getPos3( *it );
-		const double pd[3] = { p.x(), p.y(), p.z() };
+		double pd[3];
+		box3dPos( gdp, *it, pd );
 		double o[3];
 		b3dop::xformPoint( m, pd, o );
 		for ( int i = 0; i < 3; ++i )

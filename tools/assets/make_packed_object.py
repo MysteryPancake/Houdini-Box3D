@@ -303,6 +303,7 @@ def build_stage(sub, rows):
     rest = net.createNode("attribwrangle", "set_rest")
     rest.setInput(0, start_velocity)
     rest.parm("snippet").set(b3d_settings.REST_VEX)
+    rest.parm("vex_precision").set("64")  # Auto rounds P to float: a far-away piece keeps its position
     # Initial State's Position and Rotation, per piece about its pivot, after the rest is recorded. The Transform by
     # Attribute turns the points' vectors too (v, w, orient), as RBD Packed Object's apply_initial_xform.
     place = net.createNode("attribwrangle", "initial_transform")
@@ -310,6 +311,7 @@ def build_stage(sub, rows):
     place.setInput(1, name)  # the points' own pivot, before set_rest writes P there
     place.parm("class").set("point")
     place.parm("snippet").set(INITIAL_XFORM_VEX)
+    place.parm("vex_precision").set("64")  # as set_rest
     apply = net.createNode("xformbyattrib", "apply_initial_xform")
     apply.setInput(0, place)
     apply.parm("xformattrib").set("__initialxform")

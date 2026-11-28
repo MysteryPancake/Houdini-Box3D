@@ -115,10 +115,7 @@ void shapeCentre( const GU_Detail& sgdp, double out[3] )
 	if ( sgdp.getNumPrimitives() == 1 && sgdp.getNumPoints() == 1 &&
 		 sgdp.countPrimitiveType( GA_PRIMTUBE ) + sgdp.countPrimitiveType( GA_PRIMSPHERE ) == 1 )
 	{
-		const UT_Vector3 p = sgdp.getPos3( *GA_Iterator( sgdp.getPointRange() ) );
-		out[0] = p.x();
-		out[1] = p.y();
-		out[2] = p.z();
+		box3dPos( &sgdp, *GA_Iterator( sgdp.getPointRange() ), out );
 		return;
 	}
 	static const double kIdentity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
@@ -779,9 +776,7 @@ void writeAgentPose( GU_Detail* gdp, const Box3DObjectSync& os, const Box3DAgent
 	heading.updateFromRotationMatrix( rot );
 	const GA_Offset off = static_cast<GA_Offset>( r.pointOff );
 	if ( topmost )
-		gdp->setPos3( off,
-					  UT_Vector3( static_cast<float>( agentXform( 3, 0 ) ), static_cast<float>( agentXform( 3, 1 ) ),
-								  static_cast<float>( agentXform( 3, 2 ) ) ) );
+		gdp->setPos3( off, UT_Vector3D( agentXform( 3, 0 ), agentXform( 3, 1 ), agentXform( 3, 2 ) ) );
 	GA_RWHandleQ orient( gdp, GA_ATTRIB_POINT, "orient" );
 	if ( topmost && orient.isValid() )
 		orient.set( off, UT_QuaternionF( static_cast<float>( heading.x() ), static_cast<float>( heading.y() ),

@@ -41,7 +41,9 @@ How the project is built, tested and packaged. The digital assets' own notes are
   checks the count itself (Box3D would assert), and a failed rebuild fails the solve (`reportWorldCreationFailure`
   names the limit). The id limit is far above what memory allows, so how many old worlds stay alive (and their bodies)
   is bounded only by the DOP cache.
-* `-DBOX3D_DOUBLE_PRECISION=ON` works: positions cross the boundary as `double[3]`.
+* `BOX3DDOP_DOUBLE_PRECISION` (default ON) sets Box3D's `BOX3D_DOUBLE_PRECISION` (large world mode: world
+  positions are double, everything else float). Positions cross the core's boundary as `double[3]` in both modes, so
+  OFF builds too (CI builds both). How the plugin keeps the precision: [bodies.md](bodies.md), "Double precision".
 * Release or RelWithDebInfo only. RelWithDebInfo enables `B3_ENABLE_ASSERT`; `Box3DWorld::create` installs an assert
   handler that logs and continues (Box3D's default breaks to the debugger and kills Houdini). Inputs Box3D asserts on
   (non-finite velocities, gravity) are sanitized in the core.

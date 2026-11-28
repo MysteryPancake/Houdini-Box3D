@@ -502,6 +502,113 @@ def test_static_rbd_object_retype():
                    f"falling, then frozen); messages {msgs1 + msgs2 or 'none'}")]
 
 
+def _ring_radii(points):
+    """(top, bottom): the widest horizontal distance from the points' centre axis among the points above and below
+    their mean height."""
+    n = len(points)
+    cx, cy, cz = (sum(p[i] for p in points) / n for i in range(3))
+    top = bottom = 0.0
+    for p in points:
+        r = ((p[0] - cx) ** 2 + (p[2] - cz) ** 2) ** 0.5
+        if p[1] > cy:
+            top = max(top, r)
+        else:
+            bottom = max(bottom, r)
+    return top, bottom
+
+
+def test_tapered_tube_hull():
+    """A packed tapered Tube (radius 1 at one end, 0.5 at the other) is collided as the shape Houdini draws: the
+    rings of the Box3D hull, read back from Export Collision Shapes, are as wide at the top and at the bottom as
+    the same tube converted to polygons."""
+    from checks_bullet import primitive_sop, set_type_exactly
+
+    parms = {("rad1",): 1.0, ("rad2",): 0.5, ("height",): 2.0}
+    path = primitive_sop("taper_tube_piece", "tube", "Primitive", parms, True)
+    ref = new_geo("taper_tube_ref")
+    tube = create(ref, "tube")
+    set_type_exactly(tube, "Primitive")
+    for names, value in parms.items():
+        set_parm(tube, list(names), value)
+    conv = create(ref, "convert")
+    conv.setInput(0, tube)
+    set_parm(conv, ["fromtype"], "tube")
+    set_parm(conv, ["totype"], "poly")
+    expect = _ring_radii([tuple(p.position()) for p in conv.geometry().points()])
+    dop = new_dopnet("taper_tube")
+    finish(dop, box3d_solver(dop, packed_object(dop, "piece", path), gravity=(0, 0, 0)))
+    set_parm(dop.node("box3d_solver"), ["exportshapes"], 1)
+    geo = new_geo("taper_tube_read")
+    imp = create(geo, "dopimport", "import_shapes")
+    set_parm(imp, ["doppath"], dop.path())
+    set_parm(imp, ["objpattern"], "piece")
+    set_parm(imp, ["geodatapath"], "Box3DShapes")
+    for f in (1, 2, 3):
+        hou.setFrame(f)
+    pts = [tuple(p.position()) for p in imp.geometry().points()]
+    got = _ring_radii(pts) if pts else (0.0, 0.0)
+    ok = close(got[0], expect[0], 0.02) and close(got[1], expect[1], 0.02) and abs(expect[0] - expect[1]) > 0.2
+    return [Result("tapered_tube_hull", Result.PASS if ok else Result.FAIL,
+                   f"hull ring radii (top, bottom) ({got[0]:.3f}, {got[1]:.3f}), the converted tube's "
+                   f"({expect[0]:.3f}, {expect[1]:.3f}) (expected equal, and different from each other)")]
+
+
+def _far_scene(tag, offset, georep, solver_sop_node=False):
+    """A 1 m box dropped from y 2 onto a ground piece (`georep` collider), both packed and shifted by `offset`
+    along x with a 64-bit P (Attribute Cast, then a Python SOP, which keeps it) into a Box3D Packed Object. Returns
+    the box's position at frame 90 minus the offset. solver_sop_node: through the Box3D Solver SOP instead of a DOP
+    network."""
+    pieces = [dict(GROUND, attrs={"active": 0, "bullet_georep": georep}),
+              {"size": (1, 1, 1), "center": (0.1, 2, 0), "attrs": {"active": 1, "bullet_georep": "convexhull"}}]
+    path, names = packed_boxes(f"{tag}_pieces", pieces)
+    far = new_geo(f"{tag}_far")
+    merge_node = create(far, "object_merge")
+    set_parm(merge_node, ["objpath1"], path)
+    cast = create(far, "attribcast")
+    cast.setInput(0, merge_node)
+    set_parm(cast, ["numcasts"], 1)
+    set_parm(cast, ["class1"], "point")
+    set_parm(cast, ["attribs1"], "P")
+    set_parm(cast, ["precision1"], "fpreal64")
+    shift = create(far, "python")
+    shift.setInput(0, cast)
+    code = "geo = hou.pwd().geometry()" + chr(10) + "for pt in geo.points():" + chr(10)
+    code += f"    pt.setPosition(pt.position() + hou.Vector3({offset!r}, 0, 0))" + chr(10)
+    set_parm(shift, ["python"], code)
+    display(shift)
+    if solver_sop_node:
+        from checks_sop_common import named_positions, play, solver_sop
+
+        sop = solver_sop(f"{tag}_sop", geometry=shift.path())
+        final = play(sop, 90, lambda s, f: named_positions(s.geometry(0)) if f == 90 else None)[90]
+    else:
+        dop = new_dopnet(tag)
+        finish(dop, box3d_solver(dop, box3d_packed_object(dop, "pieces", shift.path())))
+        final = step(dop, 90, lambda sim, f: packed_positions(sim, "pieces"))[90]
+    if not final or names[1] not in final:
+        return None
+    p = final[names[1]]
+    return (p[0] - offset, p[1], p[2])
+
+
+def test_far_world():
+    """Packed pieces with a 64-bit P at x = 1e6 and 5e6 behave as at the origin: a box dropped onto a convex and onto
+    a concave (triangle mesh) ground ends up where the same scene at the origin leaves it, to 1e-3 (a float position
+    is 0.06 apart at 1e6, 0.5 at 5e6)."""
+    rows, ok = [], True
+    for georep, via_sop in (("convexhull", False), ("concave", False), ("convexhull", True)):
+        label = georep + (" (Solver SOP)" if via_sop else "")
+        home = _far_scene(f"far_{georep}{int(via_sop)}_0", 0.0, georep, via_sop)
+        for offset in (1.0e6, 5.0e6):
+            p = _far_scene(f"far_{georep}{int(via_sop)}_{int(offset)}", offset, georep, via_sop)
+            good = (home is not None and p is not None and close(p[1], 0.5, 0.02)
+                    and all(close(p[i], home[i], 1e-3) for i in range(3)))
+            ok = ok and good
+            rows.append(f"{label} at x {offset:g}: " + ("missing" if p is None else
+                        f"({p[0]:.4f}, {p[1]:.3f}, {p[2]:.4f}) against {tuple(round(c, 4) for c in home)} at the origin"))
+    return [Result("far_world", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
 TESTS = {
     "unpacked_geometry": test_unpacked_geometry,
     "unpacked_geometry_bullet": test_unpacked_geometry_bullet,
@@ -513,4 +620,6 @@ TESTS = {
     "collision_shapes_remove": test_collision_shapes_remove,
     "static_rbd_object_mesh": test_static_rbd_object_mesh,
     "static_rbd_object_retype": test_static_rbd_object_retype,
+    "tapered_tube_hull": test_tapered_tube_hull,
+    "far_world": test_far_world,
 }

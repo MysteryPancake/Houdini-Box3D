@@ -48,7 +48,7 @@ Load only the file for the area you are changing.
 | [docs/agents/solver-state.md](docs/agents/solver-state.md) | The shared world state (`SIM_Box3DWorld`, `Box3DSharedState`) |
 | [docs/agents/solver.md](docs/agents/solver.md) | The solver step: order, substeps, forces, Glue and joint stages |
 | [docs/agents/solver-sync.md](docs/agents/solver-sync.md) | `syncObject`, the skip fingerprint, write-back, threading |
-| [docs/agents/bodies.md](docs/agents/bodies.md) | Mid-simulation updates, building shapes |
+| [docs/agents/bodies.md](docs/agents/bodies.md) | Mid-simulation updates, building shapes, double precision |
 | [docs/agents/body-features.md](docs/agents/body-features.md) | Per-attribute features: sleep, CCD, locks, filters, impacts, ... |
 | [docs/agents/motion-limits.md](docs/agents/motion-limits.md) | Drag, speed and acceleration limit attributes, and on Glue as One Body |
 | [docs/agents/forces-affectors.md](docs/agents/forces-affectors.md) | Force DOPs, point `force` / `torque`, Static Object colliders |

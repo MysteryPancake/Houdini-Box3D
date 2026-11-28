@@ -8,6 +8,7 @@
 
 #include "core/Box3DShapes.h"
 
+#include <GA/GA_AIFTuple.h>
 #include <GA/GA_Iterator.h>
 #include <GA/GA_Primitive.h>
 #include <GA/GA_PrimitiveTypes.h>
@@ -28,6 +29,7 @@
 #include <UT/UT_StringHolder.h>
 #include <UT/UT_Vector3.h>
 #include <UT/UT_XformOrder.h>
+#include <cmath>
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
@@ -151,14 +153,45 @@ inline uint64_t geometryIdentity( const GU_Detail* gdp, bool withUniqueId = true
 	return mixHash( h, static_cast<uint64_t>( gdp->getNumPrimitives() ) );
 }
 
+// True when the detail's P is 64-bit: world positions written beside it keep
+// that precision, and what P reads back as is the double itself.
+inline bool box3dP64( const GU_Detail* gdp )
+{
+	const GA_Attribute* P = gdp->getP();
+	const GA_AIFTuple* t = P ? P->getAIFTuple() : nullptr;
+	return t && t->getStorage( P ) == GA_STORE_REAL64;
+}
+
+// What the points of one piece or mesh, `pt` among them, are gathered relative
+// to before they become floats: pt's P for a 64-bit P (far from the origin,
+// float would round the points), else zero (a float P loses nothing, and the
+// points stay as read).
+inline void box3dPieceOrigin( const GU_Detail* gdp, GA_Offset pt, double out[3] )
+{
+	out[0] = out[1] = out[2] = 0.0;
+	if ( box3dP64( gdp ) )
+	{
+		const UT_Vector3D p = gdp->getPos3D( pt );
+		if ( std::isfinite( p.x() ) && std::isfinite( p.y() ) && std::isfinite( p.z() ) )
+		{
+			out[0] = p.x();
+			out[1] = p.y();
+			out[2] = p.z();
+		}
+	}
+}
+
 // The polygons of `prims` as triangles, each fanned from its first vertex
 // (open curves, packed and other primitives are skipped). Vertices are the
-// points in order of first use. `reverse` flips the winding. `sparse` for a
-// range that is a small part of `gdp` (a packed fragment): the point lookup is
-// a hash map instead of an array the size of the whole detail.
+// points in order of first use, relative to `origin` (box3dPieceOrigin of the
+// first).
+// `reverse` flips the winding. `sparse` for a range that is a small part of
+// `gdp` (a packed fragment): the point lookup is a hash map instead of an
+// array the size of the whole detail.
 inline void box3dTriangulate( const GU_Detail* gdp, const GA_Range& prims, bool sparse, bool reverse,
-							  std::vector<float>& xyz, std::vector<int32_t>& tris )
+							  std::vector<float>& xyz, std::vector<int32_t>& tris, double origin[3] )
 {
+	origin[0] = origin[1] = origin[2] = 0.0;
 	std::vector<int32_t> dense;
 	std::unordered_map<GA_Offset, int32_t> hashed;
 	if ( !sparse )
@@ -167,11 +200,13 @@ inline void box3dTriangulate( const GU_Detail* gdp, const GA_Range& prims, bool 
 		int32_t& idx = sparse ? hashed.try_emplace( pt, -1 ).first->second : dense[static_cast<size_t>( pt )];
 		if ( idx < 0 )
 		{
-			const UT_Vector3 p = gdp->getPos3( pt );
+			if ( xyz.empty() )
+				box3dPieceOrigin( gdp, pt, origin );
+			const UT_Vector3D p = gdp->getPos3D( pt );
 			idx = static_cast<int32_t>( xyz.size() / 3 );
-			xyz.push_back( p.x() );
-			xyz.push_back( p.y() );
-			xyz.push_back( p.z() );
+			xyz.push_back( static_cast<float>( p.x() - origin[0] ) );
+			xyz.push_back( static_cast<float>( p.y() - origin[1] ) );
+			xyz.push_back( static_cast<float>( p.z() - origin[2] ) );
 		}
 		return idx;
 	};
@@ -217,6 +252,22 @@ inline UT_Matrix4F box3dMatrix4F( const float in[16] )
 inline UT_Vector3 box3dVec3F( const double v[3] )
 {
 	return UT_Vector3( static_cast<float>( v[0] ), static_cast<float>( v[1] ), static_cast<float>( v[2] ) );
+}
+
+// A double position as a UT_Vector3D (for P and other world positions, which
+// keep full precision when their attribute is 64-bit).
+inline UT_Vector3D box3dVec3D( const double v[3] )
+{
+	return UT_Vector3D( v[0], v[1], v[2] );
+}
+
+// A point's P as doubles (exact for a 64-bit P).
+inline void box3dPos( const GU_Detail* gdp, GA_Offset pt, double out[3] )
+{
+	const UT_Vector3D p = gdp->getPos3D( pt );
+	out[0] = p.x();
+	out[1] = p.y();
+	out[2] = p.z();
 }
 
 // Euler angles in degrees (Houdini's XYZ rotate order) -> quaternion x, y, z,

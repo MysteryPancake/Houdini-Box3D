@@ -123,6 +123,7 @@ def _wrangle(parent, name, inputs, snippet, run_over="point"):
         wr.setInput(i, src)
     wr.parm("class").set(run_over)
     wr.parm("snippet").set(snippet)
+    wr.parm("vex_precision").set("64")  # Auto rounds P to float: pieces far from the origin keep their position
     return wr
 
 

@@ -322,6 +322,12 @@ void testStoredPose()
 	volatile double hugeX = 1e300;
 	const double huge[3] = { hugeX, 0, 0 };
 	CHECK( !b3dop::storedPosition( huge, out ) ); // overflows float -> not finite
+	// A 64-bit P holds the double as is.
+	const double far[3] = { 1.0e7 + 0.123456789, -3.0e6 - 0.000123, 0.5 };
+	CHECK( b3dop::storedPosition( far, out, true ) );
+	for ( int i = 0; i < 3; ++i )
+		CHECK( out[i] == far[i] );
+	CHECK( b3dop::storedPosition( huge, out, true ) ); // finite in double
 	std::printf( "stored-pose checks done\n" );
 }
 

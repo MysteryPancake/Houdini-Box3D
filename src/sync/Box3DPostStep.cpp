@@ -17,12 +17,21 @@ namespace
 
 // Adds the float point attribute `name` with the given type info unless it
 // exists. True if added.
-bool addPointAttribIfMissing( GU_Detail* gdp, const char* name, int tupleSize, GA_TypeInfo typeInfo = GA_TYPE_VOID )
+bool addPointAttribIfMissing( GU_Detail* gdp, const char* name, int tupleSize, GA_TypeInfo typeInfo = GA_TYPE_VOID,
+							  GA_Storage storage = GA_STORE_REAL32 )
 {
-	if ( gdp->findPointAttribute( name ) )
+	if ( GA_Attribute* existing = gdp->findPointAttribute( name ) )
+	{
+		// A 32-bit one made earlier is widened when 64-bit is asked for, so it
+		// keeps what is written.
+		const GA_AIFTuple* tuple = existing->getAIFTuple();
+		if ( storage == GA_STORE_REAL64 && tuple && tuple->getStorage( existing ) == GA_STORE_REAL32 )
+			tuple->setStorage( existing, GA_STORE_REAL64 );
 		return false;
+	}
 	// The add returns the new attribute, so no second lookup.
-	GA_Attribute* attr = gdp->addFloatTuple( GA_ATTRIB_POINT, name, tupleSize );
+	GA_Attribute* attr =
+		gdp->addFloatTuple( GA_ATTRIB_POINT, name, tupleSize, GA_Defaults( 0.0 ), nullptr, nullptr, storage );
 	if ( attr && typeInfo != GA_TYPE_VOID )
 		attr->setTypeInfo( typeInfo );
 	return true;
@@ -191,7 +200,9 @@ void writePointAttrs( Box3DSharedState& st, SIM_ObjectArray& objects )
 			{
 				// A new restxform is all zero (unset) on the other points.
 				addPointAttribIfMissing( gdp, "restxform", 16, GA_TYPE_TRANSFORM );
-				addPointAttribIfMissing( gdp, "pivot", 3, GA_TYPE_POINT );
+				// P at rest: 64-bit beside a 64-bit P (computeRestInit reads it).
+				addPointAttribIfMissing( gdp, "pivot", 3, GA_TYPE_POINT,
+										 box3dP64( gdp ) ? GA_STORE_REAL64 : GA_STORE_REAL32 );
 				if ( addPointAttribIfMissing( gdp, "orient", 4, GA_TYPE_QUATERNION ) )
 					startOrientAtIdentity( gdp );
 			}
@@ -199,7 +210,7 @@ void writePointAttrs( Box3DSharedState& st, SIM_ObjectArray& objects )
 			GA_RWHandleF mass( gdp, GA_ATTRIB_POINT, "mass" );
 			GA_RWHandleI compound( gdp, GA_ATTRIB_POINT, kCompoundIdName );
 			GA_RWHandleM4 restxform( gdp, GA_ATTRIB_POINT, "restxform" );
-			GA_RWHandleV3 pivot( gdp, GA_ATTRIB_POINT, "pivot" );
+			GA_RWHandleV3D pivot( gdp, GA_ATTRIB_POINT, "pivot" );
 			GA_RWHandleQ orient( gdp, GA_ATTRIB_POINT, "orient" );
 			const bool restOk = restxform.isValid() && pivot.isValid() && orient.isValid();
 			const PointAttrs a( gdp );
@@ -227,7 +238,7 @@ void writePointAttrs( Box3DSharedState& st, SIM_ObjectArray& objects )
 				if ( ( w.flags & Box3DPointWrite::kRest ) && restOk )
 				{
 					restxform.set( w.off, box3dMatrix4F( w.restxform ) );
-					pivot.set( w.off, UT_Vector3F( w.pivot[0], w.pivot[1], w.pivot[2] ) );
+					pivot.set( w.off, box3dVec3D( w.pivot ) );
 					float q[4];
 					box3dAbsoluteToRest( w.entry->restRot, w.entry->rot, q );
 					orient.set( w.off, UT_QuaternionF( q[0], q[1], q[2], q[3] ) );

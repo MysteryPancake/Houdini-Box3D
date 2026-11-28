@@ -12,6 +12,12 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 
 **Not yet run in Houdini**
 
+* Double precision ([bodies.md](bodies.md), "Double precision"): `far_world` runs a box on a convex and a concave
+  ground at x 1e6 and 5e6 with a 64-bit `P` through the Box3D Packed Object and the Solver SOP, and matches the same
+  scene at the origin. Not run far from the origin: joints, Static Object colliders, Glue, nested packed pieces and the
+  `pivot` rest path. RBD Packed Object's own `update_pivot` wrangle rounds `P` to float (VEX precision Auto), so use the
+  Box3D Packed Object (its wranglers are 64-bit) for far scenes.
+
 * Glue as One Body releasing the pieces in a fast body's way (`holdCompoundsForApproach`,
   [glue-compound.md](glue-compound.md)): run by the `building` example (`glue_compound_hit`), by a box thrown at a
   glued pair (`glue_compound_id`: the pair's `compound_id` goes to -1 with nothing broken) and by a kinematic piece

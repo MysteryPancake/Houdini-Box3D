@@ -52,7 +52,8 @@ constexpr int kImplicitPlaneMode = 4;
 // point order of first use.
 struct TriMesh
 {
-	std::vector<float> xyz; // object space
+	double origin[3] = { 0, 0, 0 }; // object space; xyz is relative to it
+	std::vector<float> xyz;
 	std::vector<int32_t> tris;
 };
 
@@ -62,7 +63,7 @@ void buildMesh( const GU_Detail* gdp, TriMesh& out )
 	out.tris.clear();
 	// Houdini polygons wind clockwise seen from their front; Box3D wants
 	// counter-clockwise front faces, and its meshes are one-sided.
-	box3dTriangulate( gdp, gdp->getPrimitiveRange(), false, true, out.xyz, out.tris );
+	box3dTriangulate( gdp, gdp->getPrimitiveRange(), false, true, out.xyz, out.tris, out.origin );
 }
 
 // ---- height fields
@@ -208,8 +209,11 @@ void buildHeightMesh( const GEO_PrimVolume* vol, const HeightFrame& f, const std
 			p +=
 				f.up * static_cast<double>(
 						   heights[static_cast<size_t>( i ) + static_cast<size_t>( j ) * static_cast<size_t>( f.n1 )] );
+			if ( out.xyz.empty() ) // relative to the first vertex: the volume may be far away
+				for ( int k = 0; k < 3; ++k )
+					out.origin[k] = p[k];
 			for ( int k = 0; k < 3; ++k )
-				out.xyz.push_back( static_cast<float>( p[k] ) );
+				out.xyz.push_back( static_cast<float>( p[k] - out.origin[k] ) );
 		}
 	// (e1, e2, up) right-handed: (i, j) -> (i+1, j) -> (i+1, j+1) turns
 	// counter-clockwise seen from up.
@@ -332,6 +336,17 @@ bool readAffectorTransform( const SIM_Object& obj, AffectorInput& in )
 	// Shear or mirroring: baked.
 	in.rigid = b3dop::decomposeScaledRigid( in.m, in.pos, in.rot, in.scale );
 	return true;
+}
+
+// Where a body sits whose shape is relative to `origin` (object space): that
+// point through the object's transform. A rigid transform with a zero origin
+// is its own position.
+void meshBodyPosition( const AffectorInput& in, const double origin[3], double out[3] )
+{
+	if ( in.rigid && origin[0] == 0.0 && origin[1] == 0.0 && origin[2] == 0.0 )
+		b3dop::copy3( out, in.pos );
+	else
+		b3dop::xformPoint( in.m, origin, out );
 }
 
 // Material (bodies are always static): a Box3D Data node on the affector sets
@@ -483,7 +498,8 @@ void updateAffector( Box3DSharedState& st, Box3DAffectorBody& ab, const Affector
 	if ( !in.rigid )
 		return;
 
-	const double* pos = in.pos;
+	double pos[3];
+	meshBodyPosition( in, ab.meshOrigin, pos );
 	const float* rot = in.rot;
 	const bool samePose = std::fabs( ab.pos[0] - pos[0] ) < 1e-9 && std::fabs( ab.pos[1] - pos[1] ) < 1e-9 &&
 						  std::fabs( ab.pos[2] - pos[2] ) < 1e-9 && std::fabs( ab.rot[0] - rot[0] ) < 1e-7f &&
@@ -527,19 +543,21 @@ void updateAffector( Box3DSharedState& st, Box3DAffectorBody& ab, const Affector
 // ---- build
 // ----------------------------------------------------------------------------------
 // Shear or mirroring cannot be a body transform plus mesh scale: bake the
-// matrix into the vertices (`baked`) and keep the body at the origin.
-// (Mirroring flips the winding, so flip the triangles back.)
-void bakeTransform( const double m[16], TriMesh& mesh, std::vector<float>& baked )
+// matrix into the vertices (`baked`), relative to `bodyPos` where the body
+// sits unturned. (Mirroring flips the winding, so flip the triangles back.)
+void bakeTransform( const double m[16], TriMesh& mesh, const double bodyPos[3], std::vector<float>& baked )
 {
 	const size_t n = mesh.xyz.size() / 3;
 	baked.resize( mesh.xyz.size() );
 	for ( size_t i = 0; i < n; ++i )
 	{
-		const double p[3] = { mesh.xyz[3 * i], mesh.xyz[3 * i + 1], mesh.xyz[3 * i + 2] };
+		double p[3];
+		for ( size_t j = 0; j < 3; ++j )
+			p[j] = static_cast<double>( mesh.xyz[3 * i + j] ) + mesh.origin[j];
 		double q[3];
 		b3dop::xformPoint( m, p, q );
 		for ( int j = 0; j < 3; ++j )
-			baked[3 * i + static_cast<size_t>( j )] = static_cast<float>( q[j] );
+			baked[3 * i + static_cast<size_t>( j )] = static_cast<float>( q[j] - bodyPos[j] );
 	}
 	double m3[9];
 	b3dop::upper3x3( m, m3 );
@@ -587,6 +605,7 @@ void buildAffector( Box3DSharedState& st, Box3DAffectorBody& ab, int objectId, c
 	destroyAffector( st, ab );
 	ab.signature = in.sig;
 	ab.poseKnown = true;
+	ab.meshOrigin[0] = ab.meshOrigin[1] = ab.meshOrigin[2] = 0.0;
 	ab.movable = ab.kinematic = ab.driven = false;
 	const b3dop::BodySettings& body = in.body;
 	// Records the body just built and what it was given.
@@ -639,18 +658,21 @@ void buildAffector( Box3DSharedState& st, Box3DAffectorBody& ab, int objectId, c
 		return;
 	}
 	const float* verts = mesh.xyz.data();
-	double bodyPos[3] = { 0, 0, 0 };
+	// The body sits where the mesh's origin lands (its vertices are relative to
+	// it), so a mesh far from the world origin keeps its precision.
+	double bodyPos[3];
+	meshBodyPosition( in, mesh.origin, bodyPos );
+	b3dop::copy3( ab.meshOrigin, mesh.origin );
 	float bodyRot[4] = { 0, 0, 0, 1 };
 	float bodyScale[3] = { 1, 1, 1 };
 	if ( in.rigid )
 	{
-		b3dop::copy3( bodyPos, in.pos );
 		b3dop::copy4( bodyRot, in.rot );
 		b3dop::copy3( bodyScale, in.scale );
 	}
 	else
 	{
-		bakeTransform( in.m, mesh, baked );
+		bakeTransform( in.m, mesh, bodyPos, baked );
 		verts = baked.data();
 		++counts.baked;
 	}
@@ -669,7 +691,7 @@ void buildAffector( Box3DSharedState& st, Box3DAffectorBody& ab, int objectId, c
 		return;
 	}
 	built( h, bodyPos, bodyRot, bodyScale );
-	ab.movable = in.rigid; // a baked transform keeps the body at the origin
+	ab.movable = in.rigid; // a baked transform keeps the body where it was built
 	if ( in.volume )
 		++counts.heightFields;
 	B3D_DEBUG_LOG( "  affector id=%d: static mesh built, %d triangle(s)%s%s", objectId,

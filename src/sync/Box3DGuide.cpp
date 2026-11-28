@@ -403,10 +403,7 @@ void placeBodies( const Box3DSharedState& st, const SIM_Object& obj, std::vector
 							 }
 							 else
 							 {
-								 const UT_Vector3 P = gdp->getPos3( off );
-								 p.pos[0] = P.x();
-								 p.pos[1] = P.y();
-								 p.pos[2] = P.z();
+								 box3dPos( gdp, off, p.pos );
 								 if ( orient.isValid() )
 								 {
 									 const UT_QuaternionF q = orient.get( off );

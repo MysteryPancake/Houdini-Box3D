@@ -54,23 +54,32 @@ void writeLiveFrames( const b3dop::Box3DWorld& world, const Box3DSharedState& st
 {
 	if ( entries.empty() )
 		return;
-	auto ensure = [&]( const char* name, int size, bool quat, bool& created ) {
+	const bool p64 = box3dP64( gdp );
+	auto ensure = [&]( const char* name, int size, bool quat, bool& created, GA_Storage storage = GA_STORE_REAL32 ) {
 		created = false;
-		if ( !gdp->findPointAttribute( name ) )
+		GA_Attribute* attr = gdp->findPointAttribute( name );
+		if ( !attr )
 		{
-			gdp->addFloatTuple( GA_ATTRIB_POINT, name, size );
+			gdp->addFloatTuple( GA_ATTRIB_POINT, name, size, GA_Defaults( 0.0 ), nullptr, nullptr, storage );
 			created = true;
 			if ( quat )
-				if ( GA_Attribute* attr = gdp->findPointAttribute( name ) )
-					attr->setTypeInfo( GA_TYPE_QUATERNION );
+				if ( GA_Attribute* added = gdp->findPointAttribute( name ) )
+					added->setTypeInfo( GA_TYPE_QUATERNION );
+			return;
 		}
+		// A 32-bit one made before P became 64-bit: widened, so it keeps what is
+		// written.
+		const GA_AIFTuple* tuple = attr->getAIFTuple();
+		if ( storage == GA_STORE_REAL64 && tuple && tuple->getStorage( attr ) == GA_STORE_REAL32 )
+			tuple->setStorage( attr, GA_STORE_REAL64 );
 	};
 	// A new current_orient is 0,0,0,0 on every point: "not written" for the
 	// points of joints that are not live (see NetworkReader::live).
 	bool created = false;
-	ensure( kCurrentP, 3, false, created );
+	// World positions: 64-bit beside a 64-bit P.
+	ensure( kCurrentP, 3, false, created, p64 ? GA_STORE_REAL64 : GA_STORE_REAL32 );
 	ensure( kCurrentOrient, 4, true, created );
-	GA_RWHandleV3 pH( gdp, GA_ATTRIB_POINT, kCurrentP );
+	GA_RWHandleV3D pH( gdp, GA_ATTRIB_POINT, kCurrentP );
 	GA_RWHandleQ orientH( gdp, GA_ATTRIB_POINT, kCurrentOrient );
 	if ( !pH.isValid() || !orientH.isValid() )
 		return;
@@ -168,8 +177,8 @@ void writeLiveFrames( const b3dop::Box3DWorld& world, const Box3DSharedState& st
 		{
 			// The anchors, not the frames (SideFX data may offset the frames from
 			// them).
-			e->wroteA = asStored( anchorFrameOf( fa, e->adjA ) );
-			e->wroteB = asStored( anchorFrameOf( fb, e->adjB ) );
+			e->wroteA = asStored( anchorFrameOf( fa, e->adjA ), p64 );
+			e->wroteB = asStored( anchorFrameOf( fb, e->adjB ), p64 );
 			e->wrote = true;
 		}
 		else if ( !e->switchFrames )
@@ -179,7 +188,7 @@ void writeLiveFrames( const b3dop::Box3DWorld& world, const Box3DSharedState& st
 		for ( int k = 0; k < 2; ++k )
 		{
 			const b3dop::JointFrame& f = *frames[k];
-			pH.set( pts[k], box3dVec3F( f.pos ) );
+			pH.set( pts[k], box3dVec3D( f.pos ) );
 			orientH.set( pts[k], UT_QuaternionF( f.rot[0], f.rot[1], f.rot[2], f.rot[3] ) );
 		}
 		wroteFrames.store( true, std::memory_order_relaxed );
@@ -476,15 +485,15 @@ struct PrimExists
 // remade as that constraint at the next step, from where the pieces are now,
 // and the attribute is cleared. The anchors go where the broken joint's frames
 // are now (writeLiveFrames).
-void switchToNextConstraint( const b3dop::Box3DWorld& world, Box3DJointEntry& e )
+void switchToNextConstraint( const b3dop::Box3DWorld& world, Box3DJointEntry& e, bool p64 )
 {
 	e.broken = false;
 	b3dop::JointFrame fa, fb;
 	if ( e.brokeLocalKnown && e.extra && world.localToWorld( e.bodyA, e.extra->brokeLocalA, fa ) &&
 		 world.localToWorld( e.bodyB, e.extra->brokeLocalB, fb ) )
 	{
-		e.wroteA = asStored( anchorFrameOf( fa, e.adjA ) );
-		e.wroteB = asStored( anchorFrameOf( fb, e.adjB ) );
+		e.wroteA = asStored( anchorFrameOf( fa, e.adjA ), p64 );
+		e.wroteB = asStored( anchorFrameOf( fb, e.adjB ), p64 );
 		e.wrote = true;
 		e.switchFrames = true;
 	}
@@ -595,7 +604,7 @@ bool writeBrokenJoints( const b3dop::Box3DWorld& world, GU_Detail* gdp, const Pr
 			conNameH.set( e->prim, nextName );
 			nextH.set( e->prim, UT_StringHolder() );
 			applyNextSettings( gdp, next, e->prim );
-			switchToNextConstraint( world, *e );
+			switchToNextConstraint( world, *e, box3dP64( gdp ) );
 			switched = true;
 			continue;
 		}

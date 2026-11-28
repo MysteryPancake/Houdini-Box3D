@@ -20,13 +20,12 @@ verdict for every sample: [sample-port-table-a.md](sample-port-table-a.md) (Benc
 
 ## Verdicts
 
-Of the 207 live samples: **81 portable now**, **63 with a workaround**, **63 not portable**. The tables mark the
+Of the 207 live samples: **81 portable now**, **68 with a workaround**, **58 not portable**. The tables mark the
 ported ones **built** in place of their verdict.
 
 * Not portable, by reason: no simulation, only queries or geometry tools (Collision, Manifold, Geometry, Tree, Replay,
   query benchmarks, mesh and hull viewers); character movers or keyboard control (Character, Village, Contact, Raycast
-  Vehicle); sensors and contact begin / end events (no output for them, [todo.md](todo.md)); double precision (World:
-  the plugin builds Box3D with `BOX3D_DOUBLE_PRECISION` off and Houdini's `P` is 32-bit); world queries during the run
+  Vehicle); sensors and contact begin / end events (no output for them, [todo.md](todo.md)); world queries during the run
   (Query Spawn); wind lift (Wind Drop).
 * The common workarounds (helpers still to write: [todo.md](todo.md)): a kinematic body is an animated piece; a body of several shapes
   is glued pieces with Glue as One Body, or `compound` with Hull per Connected; a scripted step is keyed parameters, a

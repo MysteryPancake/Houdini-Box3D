@@ -44,8 +44,14 @@ jobs:
         include:
           - os: ubuntu-latest
             werror: "ON"
+            double: "ON"
           - os: windows-latest
             werror: "ON"
+            double: "ON"
+          # Box3D in single precision: the core's position boundary must build and pass both ways.
+          - os: ubuntu-latest
+            werror: "ON"
+            double: "OFF"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -53,14 +59,14 @@ jobs:
       - name: Configure
         run: >
           cmake -S . -B build -DBOX3DDOP_CORE_ONLY=ON -DBOX3DDOP_WARNINGS_AS_ERRORS=${{ matrix.werror }}
-          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DBOX3DDOP_DOUBLE_PRECISION=${{ matrix.double }} -DCMAKE_BUILD_TYPE=RelWithDebInfo
       - name: Build
         run: cmake --build build --config RelWithDebInfo --parallel
       - name: Test
         run: ctest --test-dir build -C RelWithDebInfo --output-on-failure
       # Linux only (Makefiles write build/compile_commands.json). The Houdini-side files need an HDK.
       - name: clang-tidy
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && matrix.double == 'ON'
         run: >
           clang-tidy -p build --warnings-as-errors='*'
           src/core/*.cpp tests/core_*.cpp tests/physics_*.cpp

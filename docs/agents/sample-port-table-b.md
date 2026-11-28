@@ -168,6 +168,13 @@ starting push is the first piece's `v`, samples held in a plane use Motion Lock.
 
 ## World (`sample_world.cpp`)
 
-All **no**: they show double precision far from the origin (Far Stack, Far Motion Lock, Far Pyramid, Far Ragdolls,
-Far Mesh Drop). The plugin builds Box3D in single precision and Houdini's `P` is 32-bit, so the point of each is lost;
-near the origin they repeat Stacking, Joints, Ragdoll and Continuous samples.
+They show double precision far from the origin: the pieces, their ground and anchors need a 64-bit `P` (Attribute
+Cast), or the point of each is lost and near the origin they repeat Stacking, Joints, Ragdoll and Continuous samples.
+
+| Sample | Verdict | What it uses / why |
+|---|---|---|
+| Far Stack | work | A box stack at 1e7 on a ground box: 64-bit `P` |
+| Far Motion Lock | work | Motion-locked joints anchored to the world at the offset: 64-bit `P` |
+| Far Pyramid | work | A box pyramid at the offset: 64-bit `P` |
+| Far Ragdolls | work | Ragdolls piled at the offset: 64-bit `P` |
+| Far Mesh Drop | work | Bodies dropped on a static mesh at the offset: 64-bit `P` |

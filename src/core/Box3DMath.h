@@ -310,11 +310,12 @@ struct BodyPose
 	float q[4] = { 0, 0, 0, 1 };
 };
 
-// P is stored as float: double -> float -> double. False if not finite.
-inline bool storedPosition( const double in[3], double out[3] )
+// What P holds after `in` is written to it: the double itself for a 64-bit P
+// (`exact`), else double -> float -> double. False if not finite.
+inline bool storedPosition( const double in[3], double out[3], bool exact = false )
 {
 	for ( int i = 0; i < 3; ++i )
-		out[i] = static_cast<double>( static_cast<float>( in[i] ) );
+		out[i] = exact ? in[i] : static_cast<double>( static_cast<float>( in[i] ) );
 	return std::isfinite( out[0] ) && std::isfinite( out[1] ) && std::isfinite( out[2] );
 }
 

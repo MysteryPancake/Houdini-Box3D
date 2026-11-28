@@ -113,10 +113,7 @@ PackedInfo getPackedInfo( const GU_Detail* gdp, GA_Offset ptoff )
 
 	pk.prim = static_cast<const GU_PrimPacked*>( prim );
 	pk.primOff = po;
-	const UT_Vector3 pos = gdp->getPos3( ptoff );
-	pk.P[0] = pos.x();
-	pk.P[1] = pos.y();
-	pk.P[2] = pos.z();
+	box3dPos( gdp, ptoff, pk.P );
 	fetchFull4( *pk.prim, pk.m4 );
 	b3dop::upper3x3( pk.m4, pk.m3 );
 	splitPackedMatrix( pk.m3, pk.rot, pk.scale );
@@ -142,30 +139,13 @@ void readPackedPivot( PackedInfo& pk )
 namespace
 {
 
-// A Tube's two end rings as Houdini evaluates them, which includes its taper
-// (one radius at each end). False if the primitive cannot be evaluated, then
-// the unit tube is sampled instead.
-bool appendTubePoints( const GA_Primitive& prim, NamedPiece& np )
+// A Tube's taper: its ring at y = 0.5 (local) has this radius, the one at
+// -0.5 has 1. 1 when it is not a GEO_PrimTube or the taper is not usable.
+double tubeTaper( const GA_Primitive& prim )
 {
 	const GEO_PrimTube* tube = dynamic_cast<const GEO_PrimTube*>( &prim );
-	if ( !tube )
-		return false;
-	std::vector<float> ring;
-	for ( int end = 0; end < 2; ++end )
-		for ( int j = 0; j < b3dop::kQuadricSegments; ++j )
-		{
-			UT_Vector4 pos;
-			// u around, v along; v = 1 is the end u wraps to, so stay inside [0, 1).
-			if ( tube->evaluatePoint( pos, static_cast<float>( j ) / static_cast<float>( b3dop::kQuadricSegments ),
-									  static_cast<float>( end ) ) != 0 ||
-				 !std::isfinite( pos.x() + pos.y() + pos.z() ) )
-				return false;
-			ring.push_back( pos.x() );
-			ring.push_back( pos.y() );
-			ring.push_back( pos.z() );
-		}
-	np.samples.insert( np.samples.end(), ring.begin(), ring.end() );
-	return true;
+	const double taper = tube ? static_cast<double>( tube->getTaper() ) : 1.0;
+	return std::isfinite( taper ) && taper >= 0.0 ? taper : 1.0;
 }
 
 // A Sphere, Tube, Circle or Metaball primitive has one point and a transform,
@@ -189,10 +169,12 @@ void appendQuadricSamples( const GU_Detail* gdp, const GA_Primitive& prim, Named
 	for ( unsigned r = 0; r < 3; ++r )
 		for ( unsigned c = 0; c < 3; ++c )
 			a[c * 3 + r] = m( r, c );
-	const UT_Vector3 p = gdp->getPos3( prim.getPointOffset( 0 ) );
-	const double centre[3] = { p.x(), p.y(), p.z() };
-	if ( !( kind == b3dop::QuadricKind::Tube && appendTubePoints( prim, np ) ) )
-		b3dop::appendQuadricPoints( kind, a, centre, np.samples );
+	double centre[3];
+	box3dPos( gdp, prim.getPointOffset( 0 ), centre );
+	const double rel[3] = { centre[0] - np.origin[0], centre[1] - np.origin[1], centre[2] - np.origin[2] };
+	// Sampled about the primitive's own point in double, so a primitive far from
+	// the origin keeps its shape.
+	b3dop::appendQuadricPoints( kind, a, rel, np.samples, kind == b3dop::QuadricKind::Tube ? tubeTaper( prim ) : 1.0 );
 	double radius = 0;
 	if ( ( kind == b3dop::QuadricKind::Sphere || kind == b3dop::QuadricKind::Metaball ) &&
 		 b3dop::quadricSphereRadius( a, radius ) )
@@ -239,38 +221,42 @@ void appendNestedPacked( const GU_Detail* gdp, const GU_PrimPacked& packed, Name
 			in.points.push_back( *it );
 	std::sort( in.points.begin(), in.points.end() );
 	in.points.erase( std::unique( in.points.begin(), in.points.end() ), in.points.end() );
-	std::vector<float> pts;
+	// The inner points as doubles in the inner detail's space (its samples are
+	// relative to in.origin).
+	std::vector<double> pts;
 	pts.reserve( 3 * in.points.size() + in.samples.size() );
 	for ( const GA_Offset pt : in.points )
 	{
-		const UT_Vector3 p = inner->getPos3( pt );
-		pts.push_back( p.x() );
-		pts.push_back( p.y() );
-		pts.push_back( p.z() );
+		const UT_Vector3D p = inner->getPos3D( pt );
+		pts.insert( pts.end(), { p.x(), p.y(), p.z() } );
 	}
-	pts.insert( pts.end(), in.samples.begin(), in.samples.end() );
+	for ( size_t i = 0; i < in.samples.size(); ++i )
+		pts.push_back( static_cast<double>( in.samples[i] ) + in.origin[i % 3] );
 
 	double m4[16], m3[9];
 	fetchFull4( packed, m4 );
 	b3dop::upper3x3( m4, m3 );
 	UT_Vector3 pv( 0, 0, 0 );
 	packed.getPivot( pv );
-	const UT_Vector3 P = gdp->getPos3( packed.getPointOffset( 0 ) );
+	double P[3];
+	box3dPos( gdp, packed.getPointOffset( 0 ), P );
 	const double pivot[3] = { pv.x(), pv.y(), pv.z() };
-	const double origin[3] = { P.x(), P.y(), P.z() };
+	// Where the pivot lands, relative to the piece's origin.
+	const double at[3] = { P[0] - np.origin[0], P[1] - np.origin[1], P[2] - np.origin[2] };
 	for ( size_t i = 0; i + 2 < pts.size(); i += 3 )
 	{
 		double d[3];
 		for ( int k = 0; k < 3; ++k )
-			d[k] = static_cast<double>( pts[i + static_cast<size_t>( k )] ) - pivot[k];
+			d[k] = pts[i + static_cast<size_t>( k )] - pivot[k];
 		for ( int j = 0; j < 3; ++j )
-			np.samples.push_back(
-				static_cast<float>( d[0] * m3[j] + d[1] * m3[3 + j] + d[2] * m3[6 + j] + origin[j] ) );
+			np.samples.push_back( static_cast<float>( d[0] * m3[j] + d[1] * m3[3 + j] + d[2] * m3[6 + j] + at[j] ) );
 	}
 }
 
 void appendPrimPoints( const GU_Detail* gdp, const GA_Primitive& prim, NamedPiece& np, int depth )
 {
+	if ( prim.getVertexCount() > 0 )
+		np.setOrigin( gdp, prim.getPointOffset( 0 ) );
 	++np.primCount;
 	if ( GU_PrimPacked::isPackedPrimitive( prim ) )
 	{
@@ -296,10 +282,9 @@ void finishPieces( const GU_Detail* gdp, PieceGroup& g )
 		np.xyz.reserve( np.points.size() * 3 );
 		for ( const GA_Offset pt : np.points )
 		{
-			const UT_Vector3 p = gdp->getPos3( pt );
-			np.xyz.push_back( p.x() );
-			np.xyz.push_back( p.y() );
-			np.xyz.push_back( p.z() );
+			const UT_Vector3D p = gdp->getPos3D( pt );
+			for ( int k = 0; k < 3; ++k )
+				np.xyz.push_back( static_cast<float>( p[k] - np.origin[k] ) );
 		}
 		if ( np.primCount != 1 ) // only a piece that is one sphere is a sphere
 			np.sphereValid = false;
@@ -307,6 +292,8 @@ void finishPieces( const GU_Detail* gdp, PieceGroup& g )
 		np.samples = std::vector<float>();
 		np.points = std::vector<GA_Offset>();
 		np.hash = b3dop::hashFloats( np.xyz.data(), np.xyz.size() );
+		for ( const double o : np.origin )
+			np.hash = b3dop::mixDouble( np.hash, o );
 		g.hash = b3dop::mixHash( g.hash, np.hash );
 	}
 }
@@ -341,7 +328,10 @@ void collectPieces( const GU_Detail* gdp, PieceGroup& out )
 	{
 		NamedPiece& np = out.piece( std::string() );
 		for ( GA_Iterator it( gdp->getPointRange() ); !it.atEnd(); ++it )
+		{
+			np.setOrigin( gdp, *it );
 			np.points.push_back( *it );
+		}
 	}
 	finishPieces( gdp, out );
 }
@@ -367,6 +357,8 @@ void collectConnectedPieces( const GU_Detail* gdp, const GA_Range& prims, PieceG
 	for ( size_t i = 0; i < primPoints.size(); ++i )
 	{
 		NamedPiece& np = out.piece( std::to_string( setOf[i] ) );
+		if ( !primPoints[i].empty() )
+			np.setOrigin( gdp, primPoints[i][0] );
 		// Quadrics and nested packed primitives add their surface points (the
 		// same as appendPrimPoints); their own point is a collision point only for
 		// a quadric.
@@ -546,7 +538,7 @@ namespace
 std::shared_ptr<const MeshPiece> collectTriangles( const GU_Detail* gdp, const GA_Range& prims, bool fragment )
 {
 	auto mesh = std::make_shared<MeshPiece>();
-	box3dTriangulate( gdp, prims, fragment, false, mesh->xyz, mesh->tris );
+	box3dTriangulate( gdp, prims, fragment, false, mesh->xyz, mesh->tris, mesh->origin );
 	if ( mesh->tris.empty() )
 		return nullptr;
 	return mesh;
@@ -603,8 +595,9 @@ std::shared_ptr<const MeshPiece> staticMeshPiece( ShapeSources& src, const Packe
 	if ( !raw )
 		return nullptr;
 	auto mesh = std::make_shared<MeshPiece>();
-	b3dop::packedPointsToBodyLocal( raw->xyz.data(), static_cast<int>( raw->xyz.size() / 3 ), pk.m4, pk.pivot,
-									mesh->xyz );
+	const double pivot[3] = { pk.pivot[0] - raw->origin[0], pk.pivot[1] - raw->origin[1],
+							  pk.pivot[2] - raw->origin[2] };
+	b3dop::packedPointsToBodyLocal( raw->xyz.data(), static_cast<int>( raw->xyz.size() / 3 ), pk.m4, pivot, mesh->xyz );
 	mesh->tris = raw->tris;
 	// Houdini's front faces wind clockwise, Box3D's counter-clockwise (meshes are
 	// one-sided), as for Static Object meshes. A mirrored piece's points are
@@ -815,11 +808,18 @@ BuiltShapes buildShapes( b3dop::Box3DWorld& world, ShapeSources& src, b3dop::Sha
 
 	// Body-local points of `from`, merged.
 	std::vector<float> pts, local;
+	// The pivot relative to a piece's origin (its xyz are).
+	auto pivotOf = [&]( const NamedPiece& np, double out[3] ) {
+		for ( int k = 0; k < 3; ++k )
+			out[k] = pk.pivot[k] - np.origin[k];
+	};
 	auto toBodyLocal = [&]( const std::vector<const NamedPiece*>& from, std::vector<float>& dst ) {
 		dst.clear();
 		for ( const NamedPiece* np : from )
 		{
-			packedPointsToBodyLocal( np->xyz.data(), static_cast<int>( np->xyz.size() / 3 ), pk.m4, pk.pivot, local );
+			double pivot[3];
+			pivotOf( *np, pivot );
+			packedPointsToBodyLocal( np->xyz.data(), static_cast<int>( np->xyz.size() / 3 ), pk.m4, pivot, local );
 			dst.insert( dst.end(), local.begin(), local.end() );
 		}
 	};
@@ -831,10 +831,14 @@ BuiltShapes buildShapes( b3dop::Box3DWorld& world, ShapeSources& src, b3dop::Sha
 			Piece pc;
 			// Through the packed transform.
 			const auto sphereToBody = [&]( const double in[3], double out[3] ) {
-				const float f[3] = { static_cast<float>( in[0] ), static_cast<float>( in[1] ),
-									 static_cast<float>( in[2] ) };
+				const NamedPiece& np = *from[0];
+				const float f[3] = { static_cast<float>( in[0] - np.origin[0] ),
+									 static_cast<float>( in[1] - np.origin[1] ),
+									 static_cast<float>( in[2] - np.origin[2] ) };
+				double pivot[3];
+				pivotOf( np, pivot );
 				std::vector<float> o;
-				packedPointsToBodyLocal( f, 1, pk.m4, pk.pivot, o );
+				packedPointsToBodyLocal( f, 1, pk.m4, pivot, o );
 				if ( o.size() < 3 )
 					return false;
 				for ( size_t k = 0; k < 3; ++k )
@@ -909,12 +913,14 @@ BuiltShapes buildWholeObjectShapes( b3dop::Box3DWorld& world, const GU_Detail* g
 	if ( staticMesh && type == ShapeType::Concave )
 	{
 		auto mesh = std::make_shared<MeshPiece>();
-		box3dTriangulate( gdp, gdp->getPrimitiveRange(), false, false, mesh->xyz, mesh->tris );
+		double origin[3];
+		box3dTriangulate( gdp, gdp->getPrimitiveRange(), false, false, mesh->xyz, mesh->tris, origin );
 		if ( !mesh->tris.empty() )
 		{
 			for ( size_t k = 0; k + 2 < mesh->xyz.size(); k += 3 )
 			{
-				const double p[3] = { mesh->xyz[k], mesh->xyz[k + 1], mesh->xyz[k + 2] };
+				const double p[3] = { mesh->xyz[k] + origin[0], mesh->xyz[k + 1] + origin[1],
+									  mesh->xyz[k + 2] + origin[2] };
 				double o[3];
 				b3dop::xformPoint( m, p, o );
 				for ( int c = 0; c < 3; ++c )
@@ -945,9 +951,10 @@ BuiltShapes buildWholeObjectShapes( b3dop::Box3DWorld& world, const GU_Detail* g
 		collectPieces( gdp, g );
 
 	auto toBody = [&]( const NamedPiece& np, std::vector<float>& dst ) {
-		for ( size_t k = 0; k + 2 < np.xyz.size(); k += 3 )
+		for ( size_t k = 0; 3 * k + 2 < np.xyz.size(); ++k )
 		{
-			const double p[3] = { np.xyz[k], np.xyz[k + 1], np.xyz[k + 2] };
+			double p[3];
+			np.point( k, p );
 			double o[3];
 			b3dop::xformPoint( m, p, o );
 			for ( int c = 0; c < 3; ++c )

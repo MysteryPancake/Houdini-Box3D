@@ -288,8 +288,7 @@ void followSourceSops( Box3DSharedState& st, SIM_ObjectArray& objects, double no
 			float since[4];
 			box3dAbsoluteToRest( f.rest, pose.rot, since );
 			b3dop::sanitizeQuat( since );
-			gdp->setPos3( f.off, UT_Vector3( static_cast<float>( pose.pos[0] ), static_cast<float>( pose.pos[1] ),
-											 static_cast<float>( pose.pos[2] ) ) );
+			gdp->setPos3( f.off, box3dVec3D( pose.pos ) );
 			orient.set( f.off, UT_QuaternionF( since[0], since[1], since[2], since[3] ) );
 			if ( pscale.isValid() && pscale.get( f.off ) != 1.0f )
 			{

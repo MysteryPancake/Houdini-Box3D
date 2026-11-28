@@ -86,7 +86,7 @@ body's attributes and packed transform).
    full call when nearly all buckets are hit), then write each body's attributes, compute the new packed 3x3 (the row
    scale the sync stored, the new rotation: no matrix decomposition), set it on the body's own primitive
    (`setLocalTransform` + `transformDirty`), and store in the mirror what the geometry now holds without reading it
-   back (`storedPosition`, `sanitizeQuat` of the written rotation). It must agree with `readPointState` within
+   back (`storedPosition`, exact for a 64-bit `P`; `sanitizeQuat` of the written rotation). It must agree with `readPointState` within
    `poseDiffers`' tolerances (1e-5; q and -q equal), or our write looks like an external edit; a packed transform's
    float round trip stays well inside them. `BOX3DDOP_VERIFY_READBACK=1` re-reads and logs `READBACK MISMATCH` when
    `poseDiffers` would see a difference. Afterwards one `getPrimitiveList().bumpDataId()` (the HDK leaves marking

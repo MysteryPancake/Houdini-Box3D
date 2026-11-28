@@ -21,3 +21,4 @@
 - On the Box3D Solver SOP, Collide As Static Object makes the Collision input one static mesh, or a height field. It uses the Material settings.
 - On the Box3D Solver SOP, Override Attributes from SOP (Properties tab) copies the listed attributes (active, animated and deforming by default) from the pieces every step, so changes to them reach the simulation. It costs time, so it is off by default.
 - Escape cancels a step in progress.
+- Positions are simulated in double precision. For scenes far from the origin, give the pieces' `P` 64-bit precision (Attribute Cast) to keep it, and use the Box3D Packed Object or the Box3D Solver SOP, not RBD Packed Object, which rounds P to float.

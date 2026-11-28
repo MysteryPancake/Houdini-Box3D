@@ -86,8 +86,28 @@ primitive. The pivot is `getPivot`; the body origin is the point's `P`. Packed r
 quaternions; shear dropped). A packed primitive inside a source contributes its own points, carried into the source's
 space by `(p - pivot) * M + P` (`appendNestedPacked`, recursive); its own point is not a collision point. Quadric
 primitives (Sphere, Tube, Circle, Metaball) have one point and a transform, so `appendQuadricSamples` adds points on
-their surface (`Box3DQuadrics.h`, sized like Bullet's, `bullet_primitive_types`). A Tube's rings come from
-`GEO_PrimTube::evaluatePoint` (taper included). A Sphere or Metaball that is a piece's only primitive and uniformly
-scaled is a real Box3D sphere (`NamedPiece::sphereValid`). A flat piece that cannot be hulled (a Circle as polygons)
+their surface (`Box3DQuadrics.h`, sized like Bullet's, `bullet_primitive_types`), in double about their own point. A
+Tube's rings come from its transform and `GEO_PrimTube::getTaper` (the ring at local y 0.5 has radius `taper`, the
+other 1). A Sphere or Metaball that is a piece's only primitive and uniformly scaled is a real Box3D sphere (`NamedPiece::sphereValid`). A flat piece that cannot be hulled (a Circle as polygons)
 becomes a box `kFlatHalfThickness` thick. Nested packs and quadrics are read the same way for Hull per Connected
 pieces.
+
+## Double precision
+
+Box3D's world positions are double (`BOX3DDOP_DOUBLE_PRECISION`, [build.md](build.md)), and the plugin keeps a
+64-bit `P` in full; a 32-bit `P` rounds positions to float on the attribute only.
+* `P` is read and written as double (`box3dPos`, `getPos3D`, `GA_RWHandleV3D` in the write-back), as are joint anchors
+  and `current_P`, which is created 64-bit beside a 64-bit `P` (`writeLiveFrames`).
+* The write-back's mirror predicts what `P` holds: `storedPosition( ..., exact )`, exact when `box3dP64`.
+* Source points become floats relative to an origin, so a model far from the world origin keeps its shape:
+  `box3dPieceOrigin` (with a 64-bit `P` the piece's or mesh's first point, else zero, which leaves float scenes' points
+  as read). `NamedPiece::origin` (`setOrigin`) and `MeshPiece::origin` hold it; packed paths pass `pivot - origin` to
+  `packedPointsToBodyLocal`, whole objects add it back before their transform. It is in each piece's hash, so a hull
+  key still implies identical points.
+* Static Object meshes sit where their origin lands (`meshBodyPosition`, `Box3DAffectorBody::meshOrigin`), baked or
+  not; a height mesh is relative to its first vertex.
+* With a 64-bit `P` the rest position (`computeRestInit`) is `P` for a rest made now, else the `pivot` attribute (`P` at
+  rest, written 64-bit) where it agrees with the float `restxform`; joint anchors are not rounded (`asStored`), and an
+  existing 32-bit `current_P` is widened (`writeLiveFrames`).
+* Still float: the packed pivot (the HDK stores it as float, and it is only ever subtracted), velocities, local frames
+  (`local_P`), `SIM_Impacts` positions and the guide geometry.

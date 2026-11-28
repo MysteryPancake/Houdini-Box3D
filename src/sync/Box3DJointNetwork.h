@@ -49,6 +49,6 @@ SIM_GeometryCopy* writableNetworkGeometry( SIM_Object& obj, const NetworkSource&
 // re-read.
 uint64_t networkFingerprint( const GU_Detail* gdp );
 // A joint frame and its anchor frame (identity offsets pass through bit for
-// bit), and a frame as the geometry stores it.
+// bit), and a frame as the geometry stores it (`exact`: a 64-bit P, so as is).
 b3dop::JointFrame anchorFrameOf( const b3dop::JointFrame& joint, const b3dop::JointFrame& adj );
-b3dop::JointFrame asStored( const b3dop::JointFrame& f );
+b3dop::JointFrame asStored( const b3dop::JointFrame& f, bool exact );

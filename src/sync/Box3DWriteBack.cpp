@@ -161,6 +161,7 @@ public:
 		, myGdp( gdp )
 		, myA( a )
 		, myAnyPrims( gdp->getNumPrimitives() > 0 )
+		, myP64( box3dP64( gdp ) )
 		, myP( gdp, GA_ATTRIB_POINT, "P" )
 		, myV( gdp, GA_ATTRIB_POINT, "v" )
 		, myW( gdp, GA_ATTRIB_POINT, "w" )
@@ -215,7 +216,7 @@ private:
 	{
 		const GA_Offset off = w.off;
 		if ( myP.isValid() )
-			myP.set( off, box3dVec3F( mv.pos ) );
+			myP.set( off, box3dVec3D( mv.pos ) );
 		if ( myQ.isValid() )
 		{
 			// Packed with a rest: the rotation since rest (Bullet's orient); the
@@ -274,7 +275,7 @@ private:
 	}
 
 	// What the read path will see, so our own write does not look like an
-	// external edit: P through float; the rotation as written (poseDiffers allows
+	// external edit: P as its storage holds it; the rotation as written (poseDiffers allows
 	// for the float noise of a packed transform's round trip and for q vs -q).
 	// Non-finite P: Box3D's values.
 	void updateMirror( const Box3DWriteItem& w, const b3dop::BodyMove& mv, bool packed ) const
@@ -289,7 +290,7 @@ private:
 			mirror.lin[i] = myV.isValid() ? w.lin[i] : 0.0f;
 			mirror.ang[i] = myW.isValid() ? w.ang[i] : 0.0f;
 		}
-		if ( !b3dop::storedPosition( mv.pos, mirror.pos ) )
+		if ( !b3dop::storedPosition( mv.pos, mirror.pos, myP64 ) )
 			std::copy( mv.pos, mv.pos + 3, mirror.pos );
 	}
 
@@ -323,7 +324,9 @@ private:
 	GU_Detail* myGdp;
 	[[maybe_unused]] const PointAttrs& myA;
 	const bool myAnyPrims;
-	mutable GA_RWHandleV3 myP, myV, myW;
+	const bool myP64; // P is 64-bit
+	mutable GA_RWHandleV3D myP;
+	mutable GA_RWHandleV3 myV, myW;
 	mutable GA_RWHandleQ myQ;
 	mutable GA_RWHandleI myAwake;
 	bool myAnyAwakeWrite = false;

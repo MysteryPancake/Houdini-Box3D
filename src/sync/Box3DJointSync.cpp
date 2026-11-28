@@ -75,13 +75,14 @@ bool frameEdited( const b3dop::JointFrame& now, const b3dop::JointFrame& wrote )
 
 } // namespace
 
-// A frame as the geometry stores it (float P), so it compares equal when read
-// back.
-b3dop::JointFrame asStored( const b3dop::JointFrame& f )
+// A frame as the geometry stores it, so it compares equal when read back:
+// through float for a 32-bit P, as is for a 64-bit one (`exact`).
+b3dop::JointFrame asStored( const b3dop::JointFrame& f, bool exact )
 {
 	b3dop::JointFrame out = f;
-	for ( int k = 0; k < 3; ++k )
-		out.pos[k] = static_cast<double>( static_cast<float>( f.pos[k] ) );
+	if ( !exact )
+		for ( int k = 0; k < 3; ++k )
+			out.pos[k] = static_cast<double>( static_cast<float>( f.pos[k] ) );
 	return out;
 }
 
@@ -95,7 +96,7 @@ struct NetworkReader
 	const GA_ROHandleS conName, conType, name;
 	const GA_ROHandleF autoRest;
 	const GA_ROHandleQ orient, localQ, currentQ;
-	const GA_ROHandleV3 localP, currentP;
+	const GA_ROHandleV3D localP, currentP;
 	const GA_PrimitiveGroup* broken;
 	const GA_ROHandleI anchorIdH, anchorTypeI;
 	const GA_ROHandleS anchorTypeS;
@@ -184,10 +185,7 @@ struct NetworkReader
 	b3dop::JointFrame authored( GA_Offset pt ) const
 	{
 		b3dop::JointFrame f;
-		const UT_Vector3 p = gdp->getPos3( pt );
-		f.pos[0] = p.x();
-		f.pos[1] = p.y();
-		f.pos[2] = p.z();
+		box3dPos( gdp, pt, f.pos );
 		if ( orient.isValid() )
 		{
 			const UT_QuaternionF q = orient.get( pt );
@@ -250,7 +248,7 @@ struct NetworkReader
 	{
 		if ( !localP.isValid() )
 			return false;
-		const UT_Vector3 p = localP.get( pt );
+		const UT_Vector3D p = localP.get( pt );
 		if ( !std::isfinite( p.x() ) || !std::isfinite( p.y() ) || !std::isfinite( p.z() ) )
 			return false;
 		out[0] = p.x();
@@ -276,11 +274,11 @@ private:
 	// A frame stored as a position and a quaternion point attribute. False when
 	// either is missing, the quaternion is all zero (not written) or the position
 	// is not finite.
-	static bool readFrame( const GA_ROHandleV3& posH, const GA_ROHandleQ& quatH, GA_Offset pt, b3dop::JointFrame& out )
+	static bool readFrame( const GA_ROHandleV3D& posH, const GA_ROHandleQ& quatH, GA_Offset pt, b3dop::JointFrame& out )
 	{
 		if ( !posH.isValid() || !quatH.isValid() )
 			return false;
-		const UT_Vector3 p = posH.get( pt );
+		const UT_Vector3D p = posH.get( pt );
 		const UT_QuaternionF q = quatH.get( pt );
 		if ( ( q.x() == 0.0f && q.y() == 0.0f && q.z() == 0.0f && q.w() == 0.0f ) || !std::isfinite( p.x() ) ||
 			 !std::isfinite( p.y() ) || !std::isfinite( p.z() ) )
@@ -336,6 +334,7 @@ public:
 		, myGdp( gdp )
 		, myCounts( counts )
 		, myRd( gdp )
+		, myP64( box3dP64( gdp ) )
 		, myReaders( bindSettings( gdp ) )
 		, mySfReaders( bindSideFX( gdp ) )
 	{
@@ -681,8 +680,8 @@ private:
 		if ( ab.byObjectName || bb.byObjectName )
 			myNet.needsBodies = true;
 		AnchorLookup badAnchor = AnchorLookup::Ok;
-		authA = asStored( authoredAnchor( e, false, p0, ab, badAnchor ) );
-		authB = asStored( authoredAnchor( e, true, p1, bb, badAnchor ) );
+		authA = asStored( authoredAnchor( e, false, p0, ab, badAnchor ), myP64 );
+		authB = asStored( authoredAnchor( e, true, p1, bb, badAnchor ), myP64 );
 		// An agent anchor is in its transform at rest, as RBD Bullet Solver has
 		// it: at its local_P through the transform's matrix (the agent's units and
 		// any mirror in it; its P is not read), turned by its local_orient. On a
@@ -874,6 +873,7 @@ private:
 	const GU_Detail* myGdp;
 	Box3DJointCounts& myCounts;
 	const NetworkReader myRd;
+	const bool myP64; // the network's P is 64-bit (asStored)
 	const std::vector<SettingReader> myReaders;
 	const std::vector<SideFXReader> mySfReaders;
 };

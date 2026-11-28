@@ -81,8 +81,7 @@ bool pointAnchorWorld( const SIM_Object& obj, int id, bool vertex, double out[3]
 		return false;
 	UT_DMatrix4 xf;
 	SIMgetGeometryTransform( xf, obj );
-	const UT_Vector3 p = gdp->getPos3( pt );
-	UT_Vector3D w( p.x(), p.y(), p.z() );
+	UT_Vector3D w = gdp->getPos3D( pt );
 	w.rowVecMult( xf );
 	for ( int k = 0; k < 3; ++k )
 	{
@@ -170,15 +169,14 @@ AnchorLookup packedAnchorWorld( const SIM_Object& obj, int64_t pointOff, int id,
 	packed.getFullTransform4( xf );
 	UT_Vector3 pv( 0, 0, 0 );
 	packed.getPivot( pv );
-	const UT_Vector3 p = igdp->getPos3( ipt );
-	const UT_Vector3 at = gdp->getPos3( ppt );
+	const UT_Vector3D p = igdp->getPos3D( ipt );
+	const UT_Vector3D at = gdp->getPos3D( ppt );
 	// (p - pivot) * M3: scale and turn about the pivot; the packed point is
 	// where the pivot is.
-	const UT_Vector3D rel( static_cast<double>( p.x() ) - pv.x(), static_cast<double>( p.y() ) - pv.y(),
-						   static_cast<double>( p.z() ) - pv.z() );
+	const UT_Vector3D rel( p.x() - pv.x(), p.y() - pv.y(), p.z() - pv.z() );
 	for ( unsigned k = 0; k < 3; ++k )
 	{
-		out[k] = static_cast<double>( at[k] ) + rel.x() * xf( 0, k ) + rel.y() * xf( 1, k ) + rel.z() * xf( 2, k );
+		out[k] = at[k] + rel.x() * xf( 0, k ) + rel.y() * xf( 1, k ) + rel.z() * xf( 2, k );
 		if ( !std::isfinite( out[k] ) )
 			return AnchorLookup::NoGeometry;
 	}

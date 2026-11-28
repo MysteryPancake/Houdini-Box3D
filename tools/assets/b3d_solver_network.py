@@ -463,6 +463,7 @@ def fast_transform(sub, removed, sim_points, xform):
         move.setInput(1, sim_points)
         move.parm("class").set("point")
         move.parm("snippet").set(snippet)
+        move.parm("vex_precision").set("64")  # Auto rounds P to float: pieces far from the origin keep their position
         set_named(move, "exportlist", writes)  # what it may write: `w` and `v` are made if missing
         moves.append(move)
     pick = create(sub, "switch", "switch_fast_transform")
@@ -530,6 +531,7 @@ def scale_wrangle(sub, name, src, snippet, inverse, run_over="point"):
     wr.parm(WORLD_SCALE).setExpression(f"1 / {SCALE_FACTOR}" if inverse else SCALE_FACTOR,
                                        hou.exprLanguage.Hscript)
     wr.parm("snippet").set(snippet)
+    wr.parm("vex_precision").set("64")  # as the move wrangles: P is scaled
     sw = create(sub, "switch", f"switch_{name}")
     sw.setInput(0, src)
     sw.setInput(1, wr)

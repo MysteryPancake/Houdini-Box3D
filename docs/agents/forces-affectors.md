@@ -96,7 +96,8 @@ height field if the geometry has one, else a triangle mesh of its polygons.
 **Meshes.** Polygons fan-triangulated; Houdini front faces are clockwise and Box3D's one-sided meshes want
 counter-clockwise, so triangles are flipped. A rotation + positive per-axis scale
 (`decomposeScaledRigid`, Box3DAffectorMath.h) goes to the body pose and the mesh scale (`setMeshScaleByHandle`), so an
-animated transform never rebuilds the mesh; shear or a mirror is baked into the vertices. Signature: P and
+animated transform never rebuilds the mesh; shear or a mirror is baked into the vertices. Either way the body sits
+where the mesh's origin lands ([bodies.md](bodies.md), "Double precision"). Signature: P and
 primitive-list data ids, counts, friction / bounce, and the matrix when baked.
 
 **Height fields** (`findHeightVolume`, `prepareHeightField`, `buildHeightFieldBody`). The float `GEO_PrimVolume`
