@@ -312,6 +312,11 @@ inline bool box3dDataOption( const SIM_Data&, const SIM_Options* opts, const cha
 	return opts && opts->importOption( name, out );
 }
 
+inline bool box3dDataOption( const SIM_Data&, const SIM_Options* opts, const char* name, UT_QuaternionD& out )
+{
+	return opts && opts->importOption( name, out );
+}
+
 inline bool box3dDataOption( const SIM_Data& data, const SIM_Options* opts, const char* name, UT_StringHolder& out )
 {
 	if ( opts )

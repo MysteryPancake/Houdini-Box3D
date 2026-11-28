@@ -104,6 +104,12 @@ struct StepProgress
 namespace box3dsolver
 {
 
+// A new packed point's `restxform` is kept while it times `orient` is the
+// packed rotation to this, per quaternion component, and its rest position
+// is `pivot` to this fraction of its magnitude (float write-back rounding is
+// far below both); else the rest is made as Bullet's (computeRestInit).
+constexpr double kRestAgreement = 1e-4;
+
 // Below these counts a pass runs serially (untuned starting points).
 constexpr size_t kMinParallelPoints = 512;	   // default
 constexpr size_t kMinParallelReadPlain = 1024; // sync read, no primitives in the geometry
@@ -212,7 +218,7 @@ struct PackedInfo
 
 bool splitPackedMatrix( const double m3[9], float q[4], double scale[3] );
 void composePackedMatrix( const float q[4], const double sc[3], double out[9] );
-// Packed points' Bullet convention (docs/agents/body-features.md, "Rest
+// Packed points' Bullet convention (docs/agents/bodies.md, "Rest
 // transform"): `orient` is the rotation since `restxform`
 // (box3dRestToAbsolute).
 bool restRotation( const UT_Matrix4F& m, float q[4] );
@@ -554,6 +560,7 @@ struct ScanContext
 	// P is 64-bit: a rest position comes from `pivot` (P at rest) rather than
 	// from the float `restxform` (computeRestInit).
 	const bool p64;
+	// `pivot`: P at rest, and where a new rest undoes `orient` about.
 	GA_ROHandleV3D restPivot;
 	ShapeSources sources;
 	GeorepLookup georep;
@@ -567,8 +574,7 @@ struct ScanContext
 		, anyPrims( g->getNumPrimitives() > 0 )
 		, p64( box3dP64( g ) )
 	{
-		if ( p64 )
-			restPivot = GA_ROHandleV3D( g, GA_ATTRIB_POINT, "pivot" );
+		restPivot = GA_ROHandleV3D( g, GA_ATTRIB_POINT, "pivot" );
 		georep.bind( a );
 		anyAgentPrims = hasAgentPrims( g );
 		activeAgent = GA_ROHandleIA( g->findIntArray( GA_ATTRIB_POINT, "active_agent" ) );

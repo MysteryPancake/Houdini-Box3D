@@ -105,6 +105,8 @@ once the asset exists (`wire_stage`).
 * Collider Label `PackedObject`, as RBD Packed Object's: other solvers collide with it as packed pieces; the solver
   still syncs it per point (`isWholeObject` takes any other label as one body). The script prints one line, or
   warnings, and never fails the build; its `check` cooks the stage of a fresh instance.
+* Box3D Solver only: RBD Bullet Solver silently freezes a piece unless it has `Geometry/BulletData` and every point
+  attribute RBD Packed Object writes, and writing them all would stop settings falling back to Box3D Data.
 
 All four assets list themselves under Box3D in the Tab menu (`b3d_hda.set_tab_submenu`: a Tools.shelf section as
 SideFX's, `doptoolutils` / `soptoolutils.genericTool`).
@@ -121,13 +123,3 @@ Traps it handles:
   kept it from attaching.
 * A second Box3D Data after the asset only changes Set Always parameters (Set Initial applies when the data is
   created, and the asset's already has been), and only for settings the asset left at their defaults.
-
-
-## Network dump
-
-`tools/dev/houdini_network_dump.py` is not part of the build: run it in Houdini (Python Source Editor, a shelf tool, or
-`main(node_path, out_path)` in hython) to write a node and everything inside it to a text file: the HDA's interface
-and text sections, a hierarchy tree, and per network an ASCII layout, boxes, notes, wiring and each node's
-non-default parameters (VEX, expressions, references). It dumps an unlocked temporary copy (`WORK_ON_COPY`), so the
-scene's assets stay locked. This is how RBD Bullet Solver's and RBD Configure's packing were read for
-`b3d_prepare.py`.

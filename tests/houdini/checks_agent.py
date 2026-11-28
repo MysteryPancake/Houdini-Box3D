@@ -131,7 +131,7 @@ def test_agent_partial_bullet():
 def test_agent_joints_bullet():
     """PinnedRagdolls against Bullet: the agents' internal Cone Twist joints and the Pin of each right hand to the box
     hold the ragdolls as Bullet's do. On frame 6, before the ragdolls swing apart chaotically, every body is on average
-    within 0.08 of Bullet's (0.056 measured, Bullet's motors on as the example has them; 0.16 with a mirrored rig
+    within 0.08 of Bullet's (0.055 measured, the example's motors on in both; 0.16 with a mirrored rig
     transform's Cone Twist axes taken unmirrored, which turned the left arm over on the first step). On frames 24 and
     48 the pinned hand's body is within 0.05 of Bullet's (the pin is the same), each ragdoll's centre of its bodies
     within 0.3 (0.09 and 0.25 measured) and no body further than 1.3 from it (Bullet's farthest is 1: without the

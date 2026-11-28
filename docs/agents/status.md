@@ -10,6 +10,12 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
 
 ## Unverified
 
+* Cone Twist motor targets clamped to the limits ([cone-twist-motor.md](cone-twist-motor.md)): the clamp is stock
+  `btConeTwistConstraint`'s, not measured against RBD Bullet Solver. A joint mirrored at one end only (the half turn on
+  that end alone) is not measured: PinnedRagdolls has none. Bullet's swing motor toward 60 degrees under 120 degree
+  limits stalls at 4 to 6 degrees after three frames (Max Impulse 0.05, no gravity) where Box3D's carries on: why is
+  not known.
+
 **Not yet run in Houdini**
 
 * Double precision ([bodies.md](bodies.md), "Double precision"): `far_world` runs a box on a convex and a concave

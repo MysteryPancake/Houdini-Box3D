@@ -651,6 +651,10 @@ public:
 	// Push every setting of the type into a live joint (frames and bodies stay);
 	// wakes its bodies.
 	void updateJoint( JointHandle h, JointType type, const JointSettings& in );
+	// A spherical joint's motor alone (on, velocity in joint frame A in rad/s,
+	// max torque), set every step by a driven motor. False if `h` is no live
+	// spherical joint.
+	bool setSphericalMotor( JointHandle h, bool enable, const float velocity[3], float maxTorque );
 	bool jointFeedback( JointHandle h, JointType type, JointFeedback& out ) const;
 	// Where the joint's two frames are now, in world space (each body's pose
 	// times its local frame; the world end does not move). Making a joint from

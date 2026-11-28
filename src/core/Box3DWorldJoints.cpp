@@ -782,6 +782,19 @@ bool Box3DWorld::jointFeedback( JointHandle h, JointType type, JointFeedback& ou
 	return true;
 }
 
+bool Box3DWorld::setSphericalMotor( JointHandle h, bool enable, const float velocity[3], float maxTorque )
+{
+	if ( !isJointValid( h ) )
+		return false;
+	const b3JointId id = b3LoadJointId( h );
+	if ( b3Joint_GetType( id ) != b3_sphericalJoint )
+		return false;
+	b3SphericalJoint_EnableMotor( id, enable );
+	b3SphericalJoint_SetMotorVelocity( id, finiteVec3( velocity ) );
+	b3SphericalJoint_SetMaxMotorTorque( id, std::isfinite( maxTorque ) ? std::max( 0.0f, maxTorque ) : 0.0f );
+	return true;
+}
+
 bool Box3DWorld::jointWorldFrames( JointHandle h, JointFrame& a, JointFrame& b ) const
 {
 	if ( !isJointValid( h ) )

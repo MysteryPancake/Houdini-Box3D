@@ -495,6 +495,7 @@ SIM_Solver::SIM_Result SIM_SolverBox3D::solveObjectsSubclass( SIM_Engine& engine
 	const int n = st->stepDt > 0.0f ? std::max( static_cast<int>( getSubsteps() ), 1 ) : 1;
 	const float subDt = st->stepDt / static_cast<float>( n );
 	reaimJoints( *st );			   // joints whose anchors are together aim along their line
+	driveJointMotors( *st );	   // Cone Twist motors toward this frame's targets
 	driveWorldAnchors( *st );	   // world anchors that move, over the frame
 	refreshMotion( *st, objects ); // drag and speed limit attributes
 	refreshCompoundMotion( *st );  // ... combined for Glue as One Body

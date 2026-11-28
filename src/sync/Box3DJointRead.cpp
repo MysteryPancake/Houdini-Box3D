@@ -103,6 +103,18 @@ b3dop::SideFXSettings readSideFXSettings( const SIM_Data& data, b3dop::SideFXTyp
 					( s.*p.v )[k] = static_cast<float>( v( k ) );
 			continue;
 		}
+		if ( p.kind == SideFXParam::Quat )
+		{
+			UT_QuaternionD q;
+			if ( box3dDataOption( data, p.name, q ) )
+			{
+				( s.*p.q )[0] = static_cast<float>( q.x() );
+				( s.*p.q )[1] = static_cast<float>( q.y() );
+				( s.*p.q )[2] = static_cast<float>( q.z() );
+				( s.*p.q )[3] = static_cast<float>( q.w() );
+			}
+			continue;
+		}
 		fpreal64 v = 0.0;
 		if ( !box3dDataOption( data, p.name, v ) )
 			continue;
@@ -235,8 +247,11 @@ uint64_t networkFingerprint( const GU_Detail* gdp )
 	h = mixHash( h, idOf( gdp->findGlobalAttribute( kPropagateIteration ) ) );
 	for ( const b3dop::JointParam& p : b3dop::jointParams() )
 		h = mixHash( h, idOf( gdp->findPrimitiveAttribute( p.name ) ) );
+	// (not the per-step ones: a motor's target changes every step, and
+	// readJointMotors reads them)
 	for ( const b3dop::SideFXParam& p : b3dop::sideFXParams() )
-		h = mixHash( h, idOf( gdp->findPrimitiveAttribute( p.name ) ) );
+		if ( !p.perStep )
+			h = mixHash( h, idOf( gdp->findPrimitiveAttribute( p.name ) ) );
 	const GA_PrimitiveGroup* broken = gdp->findPrimitiveGroup( kBrokenGroup );
 	return mixHash( h, broken ? static_cast<uint64_t>( broken->getDataId() ) : ~0ull );
 }
@@ -344,6 +359,10 @@ std::vector<SideFXReader> bindSideFX( const GU_Detail* gdp )
 				r.v = GA_ROHandleV3( gdp, GA_ATTRIB_PRIMITIVE, p.name );
 				ok = r.v.isValid();
 				break;
+			case SideFXParam::Quat:
+				r.q = GA_ROHandleV4( gdp, GA_ATTRIB_PRIMITIVE, p.name );
+				ok = r.q.isValid();
+				break;
 		}
 		if ( ok )
 			out.push_back( r );
@@ -391,6 +410,15 @@ void applySideFXOverrides( const std::vector<SideFXReader>& readers, b3dop::Side
 				( s.*p.v )[2] = a.z();
 				break;
 			}
+			case SideFXParam::Quat:
+			{
+				const UT_Vector4 a = r.q.get( prim );
+				if ( b3dop::isUnsetFloat( a.x() ) )
+					break;
+				for ( unsigned k = 0; k < 4; ++k )
+					( s.*p.q )[k] = a( k );
+				break;
+			}
 		}
 	}
 }
@@ -408,6 +436,26 @@ b3dop::SideFXBody sideFXBody( const b3dop::Box3DWorld& world, b3dop::BodyHandle 
 		body.dynamic = body.mass > 0.0f;
 		body.inertia = ( inertia[0] + inertia[1] + inertia[2] ) / 3.0f;
 	}
+	return body;
+}
+
+// The same with its inertia taken about `point` (world space): the mean
+// principal moment plus mass times the squared distance from its centre of mass.
+b3dop::SideFXBody sideFXBodyAbout( const b3dop::Box3DWorld& world, b3dop::BodyHandle h, const double point[3] )
+{
+	b3dop::SideFXBody body = sideFXBody( world, h );
+	double pos[3];
+	float rot[4], center[3], inertia[3], mass = 0.0f;
+	if ( !body.dynamic || !world.getTransformByHandle( h, pos, rot ) ||
+		 !world.getMassDataByHandle( h, mass, center, inertia ) )
+		return body;
+	double c[3];
+	const double local[3] = { center[0], center[1], center[2] };
+	b3dop::quatRotate( rot, local, c );
+	double d2 = 0.0;
+	for ( int k = 0; k < 3; ++k )
+		d2 += ( pos[k] + c[k] - point[k] ) * ( pos[k] + c[k] - point[k] );
+	body.inertia += static_cast<float>( static_cast<double>( body.mass ) * d2 );
 	return body;
 }
 

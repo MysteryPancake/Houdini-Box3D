@@ -42,13 +42,13 @@ Load only the file for the area you are changing.
 | File | Covers |
 |---|---|
 | [docs/agents/doc-rules.md](docs/agents/doc-rules.md) | Rules for editing the README, `docs/` and these notes |
-| [docs/agents/layout.md](docs/agents/layout.md) | File-by-file source layout |
+| [docs/agents/layout.md](docs/agents/layout.md) | File-by-file source layout, the network dump tool |
 | [docs/agents/build.md](docs/agents/build.md) | CMake options, build scripts, tests, benchmarks, debug logging, the package |
 | [docs/agents/core.md](docs/agents/core.md) | `b3dop::Box3DWorld`: handle API, mass, filtering, shapes, hull cache, settings |
 | [docs/agents/solver-state.md](docs/agents/solver-state.md) | The shared world state (`SIM_Box3DWorld`, `Box3DSharedState`) |
 | [docs/agents/solver.md](docs/agents/solver.md) | The solver step: order, substeps, forces, Glue and joint stages |
 | [docs/agents/solver-sync.md](docs/agents/solver-sync.md) | `syncObject`, the skip fingerprint, write-back, threading |
-| [docs/agents/bodies.md](docs/agents/bodies.md) | Mid-simulation updates, building shapes, double precision |
+| [docs/agents/bodies.md](docs/agents/bodies.md) | Mid-simulation updates, building shapes, the rest transform, double precision |
 | [docs/agents/body-features.md](docs/agents/body-features.md) | Per-attribute features: sleep, CCD, locks, filters, impacts, ... |
 | [docs/agents/motion-limits.md](docs/agents/motion-limits.md) | Drag, speed and acceleration limit attributes, and on Glue as One Body |
 | [docs/agents/forces-affectors.md](docs/agents/forces-affectors.md) | Force DOPs, point `force` / `torque`, Static Object colliders |
@@ -58,6 +58,7 @@ Load only the file for the area you are changing.
 | [docs/agents/joint-networks.md](docs/agents/joint-networks.md) | Constraint relationship nodes, networks, break and write-back |
 | [docs/agents/joint-live-frames.md](docs/agents/joint-live-frames.md) | Live and local frames on the networks, upstream edits, moving world anchors |
 | [docs/agents/joints-sidefx.md](docs/agents/joints-sidefx.md) | SideFX data (Glue, Hard, Spring, Soft, Cone Twist) mapped to joints |
+| [docs/agents/cone-twist-motor.md](docs/agents/cone-twist-motor.md) | SideFX Cone Twist motors (crowd ragdoll motors and stiffness) |
 | [docs/agents/glue-compound.md](docs/agents/glue-compound.md) | Glue as One Body (`gluecompound`) |
 | [docs/agents/reference.md](docs/agents/reference.md) | Parameters, point attributes, node warnings, unsupported features |
 | [docs/agents/assets.md](docs/agents/assets.md) | The digital assets' shared notes and the Box3D Packed Object |

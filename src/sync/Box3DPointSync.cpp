@@ -270,15 +270,19 @@ void storePlan( Box3DBodyMirror& m, const ShapePlan& plan )
 	b3dop::copy3( m.sizeKey, plan.sizeKey );
 }
 
-// A new packed body's rest (docs/agents/body-features.md, "Rest transform"):
-// the point's `restxform` if set; else its transform now, which the solver then
-// writes as `restxform` with `pivot` = P (writeRest, kRest). Plain data with no
+// A new packed body's rest (docs/agents/bodies.md, "Rest transform"):
+// the point's `restxform` where the packed transform is it times `orient`;
+// else, as RBD Bullet Solver, one worked out from the packed transform, which
+// the solver then writes as `restxform` with `pivot` (writeRest, kRest), and
+// the body starts at the packed rotation (repose). Plain data with no
 // initializers, made in the parallel plan pass (the array of them is not
 // cleared first, so its pages are first touched by the threads that fill it).
 struct RestInit
 {
 	bool hasRest;
 	bool writeRest;
+	bool repose;
+	float poseRot[4];
 	float restRot[4];
 	double restPos[3];
 	float restxform[16];
@@ -294,34 +298,114 @@ struct SlotPlans
 	std::vector<b3dop::BodyProps> props; // by Box3DPointSlot::props
 };
 
+// The rest of a new packed body as RBD Bullet Solver makes it, for a point
+// whose `restxform` is unset or disagrees with its packed transform and
+// `orient`: the packed transform with `orient` (`since`) undone about the
+// `pivot` attribute (P without one), and `pivot` written as P at rest, so
+// `orient` is kept. Into r.restxform (float, as the attribute will store it) and
+// r.pivot; a degenerate packed transform leaves a restxform restRotation
+// rejects.
+void bulletRest( const ScanContext& ctx, const Box3DPointSlot& s, const PackedInfo& pk, const float since[4],
+				 RestInit& r )
+{
+	float packedRot[4];
+	b3dop::copy4( packedRot, pk.rot );
+	b3dop::sanitizeQuat( packedRot );
+	// `since`'s rotation undone (row vectors: absolute = rest * since), applied
+	// to the whole packed 3x3 so its scale, shear and mirror stay in the rest.
+	UT_Matrix3D undo, packed3;
+	UT_QuaternionD( -since[0], -since[1], -since[2], since[3] ).getRotationMatrix( undo );
+	for ( unsigned i = 0; i < 3; ++i )
+		for ( unsigned j = 0; j < 3; ++j )
+			packed3( i, j ) = pk.m3[i * 3 + j];
+	const UT_Matrix3D rest3 = packed3 * undo;
+	UT_Vector3D centre( s.cur.pos[0], s.cur.pos[1], s.cur.pos[2] );
+	if ( ctx.restPivot.isValid() )
+	{
+		const UT_Vector3D p = ctx.restPivot.get( s.off );
+		if ( b3dop::finite3( p.data() ) )
+			centre = p;
+	}
+	const UT_Vector3D t = ( UT_Vector3D( pk.m4[12], pk.m4[13], pk.m4[14] ) - centre ) * undo + centre;
+	const UT_Vector3D pivot = ( UT_Vector3D( s.cur.pos[0], s.cur.pos[1], s.cur.pos[2] ) - centre ) * undo + centre;
+	for ( unsigned i = 0; i < 3; ++i )
+	{
+		for ( unsigned j = 0; j < 3; ++j )
+			r.restxform[i * 4 + j] = static_cast<float>( rest3( i, j ) );
+		r.restxform[i * 4 + 3] = 0.0f;
+		r.restxform[12 + i] = static_cast<float>( t[i] );
+		r.pivot[i] = pivot[i];
+	}
+	r.restxform[15] = 1.0f;
+	b3dop::copy4( r.poseRot, packedRot );
+}
+
+// True unless the point has a `pivot` (P at rest) that the packed pivot
+// through restxform `m` misses by more than kRestAgreement of its magnitude
+// (or 1).
+bool restPositionAgrees( const ScanContext& ctx, GA_Offset off, const PackedInfo& pk, const UT_Matrix4F& m )
+{
+	if ( !ctx.restPivot.isValid() )
+		return true;
+	const UT_Vector3D p = ctx.restPivot.get( off );
+	if ( !b3dop::finite3( p.data() ) )
+		return true;
+	for ( unsigned c = 0; c < 3; ++c )
+	{
+		const double at = pk.pivot[0] * m( 0, c ) + pk.pivot[1] * m( 1, c ) + pk.pivot[2] * m( 2, c ) + m( 3, c );
+		if ( std::fabs( p[c] - at ) > kRestAgreement * std::max( 1.0, std::fabs( at ) ) )
+			return false;
+	}
+	return true;
+}
+
 // Works out the rest of the new packed body of slot `s`, whose primitive (with
 // its pivot) is `pk`.
 void computeRestInit( const ScanContext& ctx, const Box3DPointSlot& s, const PackedInfo& pk, RestInit& r )
 {
 	r.hasRest = false;
 	r.writeRest = false;
+	r.repose = false;
 	if ( !s.packed || !pk.prim )
 		return;
 	const PointAttrs& a = ctx.a;
+	float since[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+	if ( a.orient.isValid() )
+	{
+		const UT_QuaternionF q = a.orient.get( s.off );
+		since[0] = q.x();
+		since[1] = q.y();
+		since[2] = q.z();
+		since[3] = q.w();
+		b3dop::sanitizeQuat( since );
+	}
 	float rest[4];
 	UT_Matrix4F m;
-	bool set = false;
+	bool keep = false;
 	if ( a.restxform.isValid() )
 	{
 		m = a.restxform.get( s.off );
-		set = restRotation( m, rest );
+		if ( restRotation( m, rest ) )
+		{
+			float absolute[4];
+			box3dRestToAbsolute( rest, since, absolute );
+			float packedRot[4];
+			b3dop::copy4( packedRot, pk.rot );
+			b3dop::sanitizeQuat( packedRot );
+			keep =
+				!b3dop::quatsDiffer( absolute, packedRot, kRestAgreement ) && restPositionAgrees( ctx, s.off, pk, m );
+		}
 	}
-	if ( !set )
+	if ( !keep )
 	{
-		// As the attribute will store it, so the read path splits the same
-		// matrix.
-		for ( int i = 0; i < 16; ++i )
-			r.restxform[i] = static_cast<float>( pk.m4[i] );
+		bulletRest( ctx, s, pk, since, r );
+		// Split from the float matrix the attribute will hold, so the read path
+		// splits the same one.
 		m = box3dMatrix4F( r.restxform );
 		if ( !restRotation( m, rest ) )
 			return;
-		b3dop::copy3( r.pivot, s.cur.pos );
 		r.writeRest = true;
+		r.repose = true;
 	}
 	b3dop::copy4( r.restRot, rest );
 	// The packed pivot (its own space) through restxform: where the body's
@@ -329,11 +413,11 @@ void computeRestInit( const ScanContext& ctx, const Box3DPointSlot& s, const Pac
 	for ( unsigned c = 0; c < 3; ++c )
 		r.restPos[c] = pk.pivot[0] * m( 0, c ) + pk.pivot[1] * m( 1, c ) + pk.pivot[2] * m( 2, c ) + m( 3, c );
 	// A 64-bit P: restxform's float translation rounds far from the origin, so
-	// the rest position is P itself for a rest made now, else `pivot` (P at
-	// rest) where it agrees with restxform to a few float spacings at that
-	// magnitude.
+	// the rest position is the `pivot` worked out in double for a rest made
+	// now, else `pivot` (P at rest) where it agrees with restxform to a few
+	// float spacings at that magnitude.
 	if ( r.writeRest && ctx.p64 )
-		b3dop::copy3( r.restPos, s.cur.pos );
+		b3dop::copy3( r.restPos, r.pivot );
 	else if ( ctx.p64 && ctx.restPivot.isValid() )
 	{
 		const UT_Vector3D p = ctx.restPivot.get( s.off );
@@ -716,7 +800,7 @@ bool planSlots( ScanContext& ctx, SlotList& snaps, SlotPlans& plans, StepProgres
 				plans.shapes[c0 + j] = planShapes( ctx, s.off, s.bid, pk, s.staticBody );
 				// Only a new body takes its rest from it.
 				if ( s.entry )
-					plans.rest[c0 + j].hasRest = plans.rest[c0 + j].writeRest = false;
+					plans.rest[c0 + j].hasRest = plans.rest[c0 + j].writeRest = plans.rest[c0 + j].repose = false;
 				else
 					computeRestInit( ctx, s, pk, plans.rest[c0 + j] );
 				s.plan = static_cast<int32_t>( c0 + j );
@@ -1015,11 +1099,11 @@ private:
 	}
 
 	// A new packed body's rest, worked out by the plan pass (computeRestInit)
-	// or, for a point without a plan, now. A written rest (kRest) is filled into
-	// `pending`.
-	void initRest( const Box3DPointSlot& s, Box3DBodyMirror& entry, unsigned& writes, Box3DPointWrite& pending )
+	// or, for a point without a plan, now into `local`. A rest made as Bullet's
+	// starts the body at the packed rotation, so it is applied to the slot's
+	// pose before the body is built.
+	const RestInit& restFor( Box3DPointSlot& s, RestInit& local )
 	{
-		RestInit local;
 		const RestInit* r = &local;
 		if ( s.plan >= 0 )
 		{
@@ -1030,18 +1114,27 @@ private:
 			const PackedInfo pk = s.packed ? myCtx.packedInfo( s.off ) : PackedInfo();
 			computeRestInit( myCtx, s, pk, local );
 		}
-		entry.hasRest = r->hasRest;
-		if ( r->writeRest )
+		if ( r->repose )
+			b3dop::copy4( s.cur.rot, r->poseRot );
+		return *r;
+	}
+
+	// The new body's rest from restFor. A written rest (kRest) is filled into
+	// `pending`.
+	static void initRest( const RestInit& r, Box3DBodyMirror& entry, unsigned& writes, Box3DPointWrite& pending )
+	{
+		entry.hasRest = r.hasRest;
+		if ( r.writeRest )
 		{
-			std::copy( r->restxform, r->restxform + 16, pending.restxform );
-			std::copy( r->pivot, r->pivot + 3, pending.pivot );
+			std::copy( r.restxform, r.restxform + 16, pending.restxform );
+			std::copy( r.pivot, r.pivot + 3, pending.pivot );
 			writes |= Box3DPointWrite::kRest;
 		}
-		if ( r->hasRest )
+		if ( r.hasRest )
 		{
-			b3dop::copy4( entry.restRot, r->restRot );
+			b3dop::copy4( entry.restRot, r.restRot );
 			for ( unsigned c = 0; c < 3; ++c )
-				entry.restPos[c] = r->restPos[c];
+				entry.restPos[c] = r.restPos[c];
 		}
 	}
 
@@ -1118,14 +1211,16 @@ private:
 		anyDeforming = anyDeforming || s.deforming;
 		unsigned writes = s.refitWanted ? Box3DPointWrite::kAutofitValid : 0u;
 
+		RestInit restLocal;
+		const RestInit* restInit = ref.fresh ? &restFor( s, restLocal ) : nullptr;
 		if ( ref.fresh && !addBody( s, *entry, s.animated, writes ) )
 		{
 			dropFresh( ref, s );
 			return;
 		}
 		Box3DPointWrite rest;
-		if ( ref.fresh )
-			initRest( s, *entry, writes, rest );
+		if ( restInit )
+			initRest( *restInit, *entry, writes, rest );
 
 		stampEntry( s, *entry );
 		if ( !ref.fresh )

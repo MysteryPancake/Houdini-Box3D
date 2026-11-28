@@ -11,6 +11,7 @@
 - Sleeping a body also sleeps the bodies touching it.
 - Solve On Creation Frame works as with Bullet: off, a new object starts moving one frame after it appears.
 - As with Bullet, a Box3D Packed Object bakes `orient`, `pscale` and `scale` into the pieces when its object is created. The Box3D Solver SOP's World Scale simulates the scene scaled, for pieces far from 1 unit. Joint settings and PRESOLVE forces are scaled with it, so enter real values.
+- Packed pieces brought in without a packed object (a plain SOP Geometry DOP) read `orient` as the turn since rest, as with Bullet. Constraint anchors drawn on pieces with a non-zero `orient` are then turned by it, so use a Box3D or RBD Packed Object, which resets the rest.
 - Show Collision Shapes is in Guide Options on the solver, and Visualization on the Box3D Solver SOP.
 - The Box3D Solver SOP's Ground Collision makes a Ground Box, a very wide and deep box (Position, Rotation, Size), or a Height Field ground (with Use Deforming Geometry). Friction, Bounce, Rolling Resistance and Conveyor Velocity are under Physical. Show Ground on the Visualization tab draws it, solid or wireframe.
 - An unpacked collider that turns or scales during the simulation needs Collision Type Deforming on the Box3D Solver SOP. Animated keeps its first shape, as with Bullet.

@@ -344,6 +344,7 @@ struct SideFXReader
 	GA_ROHandleF f;
 	GA_ROHandleI i;
 	GA_ROHandleV3 v;
+	GA_ROHandleV4 q;
 };
 
 std::vector<SideFXReader> bindSideFX( const GU_Detail* gdp );
@@ -356,6 +357,8 @@ void applySideFXOverrides( const std::vector<SideFXReader>& readers, b3dop::Side
 // A body as the SideFX mapping needs it: Spring converts its stiffness from the
 // masses.
 b3dop::SideFXBody sideFXBody( const b3dop::Box3DWorld& world, b3dop::BodyHandle h );
+// The same with its inertia about `point` (world space), as a joint there turns it.
+b3dop::SideFXBody sideFXBodyAbout( const b3dop::Box3DWorld& world, b3dop::BodyHandle h, const double point[3] );
 
 // Two readings of a body are the same for the Spring conversion (the same mass
 // and inertia, to a part in ten thousand).

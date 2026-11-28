@@ -104,16 +104,4 @@ is updated: [bodies.md](bodies.md). Index and rules: [CLAUDE.md](../../CLAUDE.md
 **Point writes after the step** (`Box3DPointWrite`: `kAutofitValid`, `kMass`, `kRest`): grouped per object
 (`forEachObjectRun`), offsets via `resolvePointOffsets`, then `noteOwnWrite`.
 
-**Rest transform** (packed points, Bullet's convention): `restxform` (4x4, the packed transform at rest; all zero =
-unset), `pivot` (P at rest) and `orient` = the rotation since rest, so Transform Pieces needs no rest input. Bodies
-stay absolute inside: `readPointState` reads `restRotation(restxform) * orient` (`box3dRestToAbsolute`) once restxform
-is set, else the packed rotation; the write-back writes `orient` with `box3dAbsoluteToRest` from the entry's `restRot`
-and the packed transform as before. A new packed body (`initRest`) takes `restRot` from a set restxform, else from its
-packed transform stored as float (what the attribute will hold, so both paths split the same matrix) and queues
-`kRest`: restxform, `pivot` = P, `orient` from the mirror's pose. As in Bullet's solver an incoming restxform is kept:
-resetting it when an object is created is the object's job (the Box3D Packed Object's SOP stage,
-[assets.md](assets.md)), so a world rebuilt mid-simulation keeps the rest too. Editing only a packed transform after
-rest is ignored, as in Bullet: edit `orient` / `P`. Only its mirror is kept: the sign of the 3x3's determinant,
-written back as a flip of the third row whichever row was flipped, with the hull rebuilt (`mirrored_midsim`). Bullet
-drops the mirror too (`bullet_mirror_flip`). `restPos` (the packed pivot through restxform) is where the body's origin
-was at rest; joints map authored anchors with it ([joints.md](joints.md)).
+**Rest transform**: [bodies.md](bodies.md).

@@ -18,6 +18,8 @@ of Box3D Configure, RBD Configure or RBD Packed Object win.
 
 The Box3D Solver SOP makes its own, so this node is for DOP networks you build yourself.
 
+It works with the Box3D Solver only. In RBD Bullet Solver its pieces don't move: use RBD Packed Object there.
+
 @parameters
 
 == Object ==

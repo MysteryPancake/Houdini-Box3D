@@ -92,6 +92,24 @@ other 1). A Sphere or Metaball that is a piece's only primitive and uniformly sc
 becomes a box `kFlatHalfThickness` thick. Nested packs and quadrics are read the same way for Hull per Connected
 pieces.
 
+## Rest transform
+
+Packed points follow Bullet's convention: `restxform` (4x4, the packed transform at rest; all zero =
+unset), `pivot` (P at rest) and `orient` = the rotation since rest, so Transform Pieces needs no rest input. Bodies
+stay absolute inside: `readPointState` reads `restRotation(restxform) * orient` (`box3dRestToAbsolute`) once restxform
+is set, else the packed rotation; the write-back writes `orient` with `box3dAbsoluteToRest` from the entry's `restRot`
+and the packed transform as before. A new packed body (`computeRestInit`) keeps an incoming restxform whose rotation
+times `orient` is the packed rotation and whose rest position is `pivot` (`kRestAgreement`), so a world rebuilt
+mid-simulation keeps its rest. Otherwise, or with none, it is made as Bullet's (`bulletRest`, `bullet_rest_mismatch`):
+the body starts at the packed rotation (`repose`, set on the slot before `addBody`), the rest is the packed transform
+with `orient` undone about `pivot` (P without one), stored as float before `restRot` is split from it, and `kRest`
+writes it with `pivot` as P at rest; `orient` is kept. Resetting the rest when an object is created is the object's
+job (the Box3D Packed Object's SOP stage, [assets.md](assets.md)). Editing only a packed transform after
+rest is ignored, as in Bullet: edit `orient` / `P`. Only its mirror is kept: the sign of the 3x3's determinant,
+written back as a flip of the third row whichever row was flipped, with the hull rebuilt (`mirrored_midsim`). Bullet
+drops the mirror too (`bullet_mirror_flip`). `restPos` (the packed pivot through restxform) is where the body's origin
+was at rest; joints map authored anchors with it ([joints.md](joints.md)).
+
 ## Double precision
 
 Box3D's world positions are double (`BOX3DDOP_DOUBLE_PRECISION`, [build.md](build.md)), and the plugin keeps a

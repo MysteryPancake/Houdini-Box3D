@@ -100,7 +100,7 @@ Glue, Hard, Spring, Bullet Soft and Cone Twist mapped onto Box3D joints. Joint n
     agent ragdolls' elbows (Max Up 52.5, Max Out 0) bend toward the out axis in Bullet as this has them. Each is clamped
     to Box3D's 90 degree maximum; 180 or more is no limit on that side (90), and the cone is off when both are
     (Houdini's default). Twist limit +-Max Twist (180 or more: none). Softness, the soft-constraint options,
-    translation ranges, rest length and the motor are ignored. Bullet makes no joint for a Cone Twist line whose
+    translation ranges and rest length are ignored. Its motor: [cone-twist-motor.md](cone-twist-motor.md). Bullet makes no joint for a Cone Twist line whose
     `constraint_type` is missing or `position`; the plugin makes one for any.
   * Hard / Spring / Soft / Cone Twist: Collide Connected = !disablecollisions.
 * **Frame offsets**: a SideFX joint's frames need not sit on its anchors. `sideFXFrameOffsets` gives each anchor an

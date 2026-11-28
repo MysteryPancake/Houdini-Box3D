@@ -8,6 +8,10 @@ What is still to do: [todo.md](todo.md). Index and rules: [CLAUDE.md](../../CLAU
 **Bullet semantics not compared**
 * The extra `restRotation` split per packed point in every full scan (the rest convention matches Bullet:
   `bullet_rest_convention`, `bullet_rest_rescan`).
+* A new piece with a restxform that agrees with its packed transform, `orient` and `pivot` but has moved since
+  rest (a world rebuilt mid-simulation): Box3D keeps the rest. Bullet remakes the rest of every new piece from
+  them (`bullet_rest_mismatch`), which would put it where the piece is; whether Bullet rebuilds a moved piece that
+  way is not compared.
 * Solve on Creation Frame on the SOP's collider (`solver_sop_solve_first_frame_bullet`): a box on a collider lifted
   0.5 a frame ends at 1.1 to 2.3 in Box3D (it clips into the collider: fork list) and at 1.0 in Bullet.
 * With both anchors at one point (`bullet_joint_rest`, INFO) the centres end 2.55 and 2.59 apart, past the 2.06

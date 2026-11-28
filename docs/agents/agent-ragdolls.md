@@ -1,8 +1,9 @@
 # Agent ragdolls
 
 Crowd agents (`GU_Agent` primitives with a `active_agent` array) as one body per rig transform, as the RBD Bullet Solver
-does for SideFX's crowd ragdolls. Bodies, their joints, the per-transform arrays and the agent's pose are built; the motors and
-the rest are not ([todo.md](todo.md), "Agent ragdolls"). Index and rules: [CLAUDE.md](../../CLAUDE.md).
+does for SideFX's crowd ragdolls. Bodies, their joints and motors ([cone-twist-motor.md](cone-twist-motor.md)), the
+per-transform arrays and the agent's pose are built; what is left: [todo.md](todo.md), "Agent ragdolls". Index and
+rules: [CLAUDE.md](../../CLAUDE.md).
 
 ## What the solver does (`Box3DAgent.cpp`)
 

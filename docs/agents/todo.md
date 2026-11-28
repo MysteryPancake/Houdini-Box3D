@@ -64,11 +64,11 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
 * Objects solved by another solver: only RBD Bullet Solver's are tried (`other_solver`: packed ones are ignored as
   colliders, polygon ones push Box3D bodies one way). Vellum, FLIP and the rest are not.
 * Height fields: holes from a mask layer, height fields on points.
-* Agent ragdolls ([agent-ragdolls.md](agent-ragdolls.md): bodies, joints, the per-transform arrays and the agent's pose are
-  built; the PinnedRagdolls ragdolls hang from their pinned hand as Bullet's do). Not done, in order:
+* Agent ragdolls ([agent-ragdolls.md](agent-ragdolls.md): bodies, joints and their motors, the per-transform arrays and the
+  agent's pose are built; the PinnedRagdolls ragdolls hang from their pinned hand as Bullet's do). Not done, in order:
   1. The gap to Bullet (PinnedRagdolls; the Box3D Solver's Gravity at 0, as the example has a Gravity DOP, which
      `agent_oracle.load` does): the bodies are 0.02 from Bullet's with its motors off on average after 4 frames, 0.05
-     after 9 and 0.11 after 12 (0.04, 0.10 and 0.17 with the example's motors on), then 0.15 to 0.27 to frame 48 as
+     after 9 and 0.11 after 12 (0.03, 0.08 and 0.12 with the example's motors on in both), then 0.15 to 0.27 to frame 48 as
      the swinging ragdolls part. The first step solves no joint, as Bullet's. Left:
      joints that start outside their limits (the wrists' twist 41 and 22 degrees against 5, the shoulders' 41 against
      20) are eased in by Bullet over about ten frames (soft: `bias_factor` 0.3, `cfm` 0.2, `softness`, the solver's
@@ -79,20 +79,23 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
      agents swing apart unevenly (agent 2 is 0.67 to 0.98 from its neighbours' bodies on frames 15 to 30) and Box3D's
      identically, so they come within 0.18 of each other (frame 24) and touch. Against round cones the elliptical ones
      halve the gap to frame 9 (0.106 against 0.123 at 12) and let the knees bend as Bullet's do (22 to 28 degrees by
-     frame 12 against 5); after frame 16 neither is closer. Bullet's motors and
-     stiffness move its bodies by 0.04 to 0.11 and are not built.
+     frame 12 against 5); after frame 16 neither is closer. With the motors on, the legs' motors move Box3D's bodies
+     1.5 to 2 times as far as Bullet's by frame 6 (the feet 0.18 and 0.23 against 0.11 and 0.16, each solver's
+     motors on against off), though a joint's motor alone matches Bullet's (`bullet_cone_twist_motor`); turning off
+     the motor's torque cap or the joints' cone and twist limits changes nothing.
   2. Sheared transforms (a non-uniform scale above rotated transforms: `MASTER` scaled (1, 1.6, 1), rows up to 64
      degrees apart). The hull is the sheared shape; Bullet's capsule masses are 0.2 to 3.5% above ours, in no relation
      to the matrix found, and with the pins removed the bodies are 0.16 from Bullet's on frame 6 against 0.07 unsheared
      (0.09 for a uniform scale of 1.6). How Bullet fits a capsule to a sheared matrix is not known. Custom shapes:
      Bullet samples their volume (a tetrahedron's mass 0.71 to 0.98 of the density times its volume as it grows, a
      cone's 1.03 to 1.08, its centre 0.5 units off the centroid), so ours, exact, are only near.
-  Unknowns: Bullet's motor model against Box3D's joint motors, the cost of 27 bodies an agent at crowd sizes. Tests so
-  far are `agent_*`; the rest go in `checks_agent.py`.
+  Unknowns: the cost of 27 bodies an agent at crowd sizes. Tests so far are `agent_*`; the rest go in
+  `checks_agent.py`.
 * Constraint networks: the `anchor_pid` / `anchor_vid` matching. A missing
   `constraint_type` is `position` for Hard, Soft and Spring (`sidefx_hard_untyped`).
-* SideFX constraint data not mapped: Soft plasticity, Cone Twist's cones wider than 90 degrees, softness, motors and
-  translation ranges, Hard's angular motors. Bullet makes no Cone Twist joint for a line whose `constraint_type` is
+* SideFX constraint data not mapped: Soft plasticity, Cone Twist's cones wider than 90 degrees, softness, translation
+  ranges and its motor's soft-constraint and position targets ([cone-twist-motor.md](cone-twist-motor.md)), Hard's
+  angular motors. Bullet makes no Cone Twist joint for a line whose `constraint_type` is
   missing or `position` (only `rotation` and `all`); the plugin makes one for any, and `bullet_cone_twist_goal` /
   `_apart` build their lines without it, so Bullet's piece falls freely there.
 * Slider Constraint Relationship (`sliderconrel`, Bullet's `btSliderConstraint`: a slide range along the first anchor's x and

@@ -7,6 +7,7 @@
 #include "core/Box3DSideFX.h"
 #include "core/Box3DWorld.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <set>
@@ -67,7 +68,7 @@ int main()
 		CHECK( !sideFXTypeFromDataType( "SIM_ConRelSoftAttach", t ) && !sideFXTypeFromDataType( nullptr, t ) );
 		for ( const SideFXParam& p : sideFXParams() )
 		{
-			const int members = ( p.f ? 1 : 0 ) + ( p.i ? 1 : 0 ) + ( p.v ? 1 : 0 );
+			const int members = ( p.f ? 1 : 0 ) + ( p.i ? 1 : 0 ) + ( p.v ? 1 : 0 ) + ( p.q ? 1 : 0 );
 			CHECK( members == 1 && p.types != 0 );
 		}
 		CHECK( constraintModeFromString( "position" ) == ConstraintMode::Position );
@@ -536,6 +537,132 @@ int main()
 		}
 	}
 
+	// Cone Twist motor: off by default; a turn about Bullet's twist / out / up
+	// axes is one about the spherical joint's -z / y / -x (its axes z / -y / x,
+	// the turn inverted); each Bullet substep corrects substep / Correction Time
+	// of what is left; Target Current Pose holds; the torque is Max Impulse per
+	// Bullet substep, times the inertia with Ignore Mass.
+	{
+		const float dt = 1.0f / 24.0f, identity[4] = { 0, 0, 0, 1 };
+		const float half = 15.0f * 3.14159265f / 180.0f, angle = 2.0f * half;
+		SideFXSettings s;
+		float v[3];
+		coneTwistMotorVelocity( coneTwistMotor( s ), identity, dt, v );
+		CHECK( !coneTwistMotor( s ).on && v[0] == 0.0f && v[1] == 0.0f && v[2] == 0.0f );
+		s.motorEnabled = 1;
+		s.motorCorrectionTime = 1e-4f; // reached in one substep
+		const float axes[3][3] = { { 0, 0, -1 }, { 0, 1, 0 }, { -1, 0, 0 } };
+		for ( int axis = 0; axis < 3; ++axis )
+		{
+			for ( int k = 0; k < 3; ++k )
+				s.motorTarget[k] = k == axis ? std::sin( half ) : 0.0f;
+			s.motorTarget[3] = std::cos( half );
+			coneTwistMotorVelocity( coneTwistMotor( s ), identity, dt, v );
+			for ( int k = 0; k < 3; ++k )
+				CHECK( std::fabs( v[k] - axes[axis][k] * angle / dt ) < 1e-3f * angle / dt );
+		}
+		// The target is clamped to the limits: twist to Max Twist, the swing along
+		// its axis to the Out / Up ellipse; spans under 0.05 rad are not clamped.
+		{
+			SideFXSettings c = s;
+			c.maxTwist = 10.0f;
+			c.maxOutRotation = 15.0f;
+			c.maxUpRotation = 20.0f;
+			const float turns[3][4] = { { std::sin( half ), 0, 0, std::cos( half ) },
+										{ 0, std::sin( half ), 0, std::cos( half ) },
+										{ 0, 0, std::sin( half ), std::cos( half ) } };
+			const float limits[3] = { 10.0f, 15.0f, 20.0f };
+			for ( int axis = 0; axis < 3; ++axis )
+			{
+				std::copy( turns[axis], turns[axis] + 4, c.motorTarget );
+				coneTwistMotorVelocity( coneTwistMotor( c ), identity, dt, v );
+				const float got = std::sqrt( v[0] * v[0] + v[1] * v[1] + v[2] * v[2] ) * dt;
+				CHECK( std::fabs( got - limits[axis] * kDegToRad ) < 1e-3f );
+			}
+			c.maxTwist = 2.0f; // under 0.05 rad: not clamped
+			std::copy( turns[0], turns[0] + 4, c.motorTarget );
+			coneTwistMotorVelocity( coneTwistMotor( c ), identity, dt, v );
+			CHECK( std::fabs( std::fabs( v[2] ) * dt - angle ) < 1e-3f );
+		}
+		// Both ends on mirrored rig transforms: the turn is the same one seen through
+		// a half turn about the frame's y axis (x and z reversed).
+		{
+			SideFXSettings mir = s;
+			const float mixed[4] = { 0.2f, -0.15f, 0.1f, std::sqrt( 1.0f - 0.0725f ) };
+			std::copy( mixed, mixed + 4, mir.motorTarget );
+			float plain[3], mirrored[3];
+			coneTwistMotorVelocity( coneTwistMotor( mir ), identity, dt, plain );
+			coneTwistMotorVelocity( coneTwistMotor( mir, true, true ), identity, dt, mirrored );
+			CHECK( std::fabs( mirrored[0] + plain[0] ) < 1e-3f && std::fabs( mirrored[1] - plain[1] ) < 1e-3f &&
+				   std::fabs( mirrored[2] + plain[2] ) < 1e-3f );
+		}
+		s.motorCorrectionTime = 0.8f; // a fraction of the way in one step
+		coneTwistMotorVelocity( coneTwistMotor( s ), identity, dt, v );
+		const float alpha = dt / kSideFXMotorSubsteps / 0.8f;
+		const float reached = 1.0f - std::pow( 1.0f - alpha, static_cast<float>( kSideFXMotorSubsteps ) );
+		CHECK( std::fabs( v[0] + angle * reached / dt ) < 1e-4f && v[1] == 0.0f && v[2] == 0.0f );
+		// Already at the target: nothing to do.
+		ConeTwistMotor m = coneTwistMotor( s );
+		coneTwistMotorVelocity( m, m.target, dt, v );
+		CHECK( std::fabs( v[0] ) < 1e-5f && std::fabs( v[1] ) < 1e-5f && std::fabs( v[2] ) < 1e-5f );
+		// A moving target (Use Previous Target): the joint moves with it, whatever
+		// the Correction Time, plus its share of the gap; never past the target,
+		// and one already there stays.
+		{
+			SideFXSettings mv = s;
+			mv.motorHasTargetPrev = 1;
+			mv.motorCorrectionTime = 1e6f; // no correction: the target's move alone
+			for ( float& c : mv.motorTargetPrev )
+				c = 0.0f;
+			mv.motorTargetPrev[3] = 1.0f; // from no turn to the target: there in one step
+			coneTwistMotorVelocity( coneTwistMotor( mv ), identity, dt, v );
+			CHECK( std::fabs( std::fabs( v[0] ) * dt - angle ) < 1e-4f );
+			const ConeTwistMotor at = coneTwistMotor( mv );
+			coneTwistMotorVelocity( at, at.target, dt, v ); // there already
+			CHECK( std::fabs( v[0] ) < 1e-5f && std::fabs( v[1] ) < 1e-5f && std::fabs( v[2] ) < 1e-5f );
+			coneTwistMotorVelocity( at, at.targetPrev, dt, v ); // behind it: on to it, not past
+			CHECK( std::fabs( std::fabs( v[0] ) * dt - angle ) < 1e-4f );
+			// A target moving away (from twice the turn back to it) still pulls the
+			// joint toward it, at its speed: there in one step.
+			const float twice[4] = { std::sin( 2.0f * half ), 0, 0, std::cos( 2.0f * half ) };
+			std::copy( twice, twice + 4, mv.motorTargetPrev );
+			for ( int k = 0; k < 4; ++k )
+				mv.motorTarget[k] = k == 0 ? std::sin( half ) : k == 3 ? std::cos( half ) : 0.0f;
+			const ConeTwistMotor away = coneTwistMotor( mv );
+			coneTwistMotorVelocity( away, identity, dt, v );
+			float landed[4];
+			const float turn[4] = { v[0] * dt, v[1] * dt, v[2] * dt };
+			const float turnLen = std::sqrt( turn[0] * turn[0] + turn[1] * turn[1] + turn[2] * turn[2] );
+			for ( int k = 0; k < 3; ++k )
+				landed[k] = turn[k] / turnLen * std::sin( 0.5f * turnLen );
+			landed[3] = std::cos( 0.5f * turnLen );
+			CHECK( !quatsDiffer( landed, away.target, 1e-4 ) );
+		}
+		// Target Current Pose, or no Correction Time: velocity 0.
+		s.motorTargetCurrentPose = 1;
+		coneTwistMotorVelocity( coneTwistMotor( s ), identity, dt, v );
+		CHECK( coneTwistMotor( s ).hold && v[0] == 0.0f && v[1] == 0.0f && v[2] == 0.0f );
+		s.motorTargetCurrentPose = 0;
+		s.motorCorrectionTime = 0.0f;
+		CHECK( coneTwistMotor( s ).hold );
+		// Torque: Max Impulse per Bullet substep, times the effective inertia with
+		// Ignore Mass; a static end adds nothing to it.
+		SideFXBody dyn, fixed;
+		dyn.dynamic = true;
+		dyn.mass = 2.0f;
+		dyn.inertia = 3.0f;
+		s.motorMaxImpulse = 0.2f;
+		const float perSecond = static_cast<float>( kSideFXMotorSubsteps ) / dt;
+		CHECK( std::fabs( coneTwistMotorTorque( coneTwistMotor( s ), dyn, fixed, dt ) - 0.2f * 3.0f * perSecond ) <
+			   1e-3f );
+		CHECK( std::fabs( coneTwistMotorTorque( coneTwistMotor( s ), dyn, dyn, dt ) - 0.2f * 1.5f * perSecond ) <
+			   1e-3f );
+		s.motorNormalizeMaxImpulse = 0;
+		CHECK( std::fabs( coneTwistMotorTorque( coneTwistMotor( s ), dyn, fixed, dt ) - 0.2f * perSecond ) < 1e-3f );
+		s.motorEnabled = 0;
+		CHECK( coneTwistMotorTorque( coneTwistMotor( s ), dyn, fixed, dt ) == 0.0f );
+	}
+
 	// Options that hold NaN compare equal to themselves (a Glue's strength read
 	// from a NaN attribute must not look changed every step); a different value
 	// still differs.
@@ -549,7 +676,7 @@ int main()
 				if ( !p.usedBy( type ) || p.kind == SideFXParam::Int )
 					continue;
 				SideFXSettings a = defaultSideFXSettings( type );
-				float* value = p.f ? &( a.*p.f ) : &( a.*p.v )[0];
+				float* value = p.f ? &( a.*p.f ) : p.v ? &( a.*p.v )[0] : &( a.*p.q )[0];
 				*value = nan;
 				SideFXSettings b = a;
 				CHECK( sameSideFXSettings( type, a, b ) );

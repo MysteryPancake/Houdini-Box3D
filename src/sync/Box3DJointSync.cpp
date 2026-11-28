@@ -45,6 +45,10 @@ using namespace jointsync;
 namespace
 {
 
+// A driven motor turning its joint faster than this (rad/s) wakes the joint's
+// bodies (driveJointMotors); slower, it lets them sleep.
+constexpr float kMotorWakeSpeed = 0.01f;
+
 // What a joint is made from: its type and bodies, plus its frames when they are
 // not live (a network that is not written back keeps the authored frames, so a
 // change there is an edit).
@@ -313,10 +317,12 @@ struct JointSpec
 	uint64_t frameSig = 0;
 	bool glue = false; // SideFX Glue: breaks on impact impulse (core/Box3DGlue.h)
 	b3dop::GlueParams glueParams;
-	bool massDependent = false;		// SideFX Spring: Hz from the bodies' masses
-	bool reaim = false;				// SideFXJoint::reaim
-	float reaimRest = 0.0f;			// its shift's length
-	b3dop::SideFXBody bodyA, bodyB; // the masses it was converted with
+	bool massDependent = false;				   // SideFX Spring: Hz from the bodies' masses
+	bool reaim = false;						   // SideFXJoint::reaim
+	float reaimRest = 0.0f;					   // its shift's length
+	b3dop::SideFXBody bodyA, bodyB;			   // the masses it was converted with
+	bool motor = false;						   // SideFX Cone Twist with motor_enabled: driven every step
+	bool mirroredA = false, mirroredB = false; // its ends on mirrored rig transforms
 };
 
 // One network's primitives, read from its geometry, into joints: make, update,
@@ -343,6 +349,7 @@ public:
 	void run()
 	{
 		myNet.needsBodies = false;
+		myNet.motorEntries.clear();
 		// A network made all at once (a first frame, a rebuilt world) would
 		// otherwise rehash the entry map every time it doubles.
 		mySt.joints.reserve( mySt.joints.size() + static_cast<size_t>( myGdp->getNumPrimitives() ) );
@@ -483,6 +490,10 @@ private:
 				j.bodyA = ctx.a;
 				j.bodyB = ctx.b;
 			}
+			j.motor = kind.sideFXType == b3dop::SideFXType::ConeTwist && sf.motorEnabled != 0 &&
+					  m.type == b3dop::JointType::Spherical;
+			j.mirroredA = ab.mirrored;
+			j.mirroredB = bb.mirrored;
 			if ( kind.sideFXType == b3dop::SideFXType::Glue )
 			{
 				j.glue = true;
@@ -863,6 +874,20 @@ private:
 			e.made = true;
 		}
 		e.stamp = myNet.liveStamp;
+		if ( j.motor && e.handle )
+		{
+			Box3DJointExtra& x = e.ensureExtra();
+			x.motorMirroredA = j.mirroredA;
+			x.motorMirroredB = j.mirroredB;
+			myNet.motorEntries.push_back( &e );
+		}
+		else if ( e.extra && e.extra->motorDriven )
+		{
+			// The motor went off (the joint stays): it no longer drives.
+			const float zero[3] = { 0.0f, 0.0f, 0.0f };
+			myWorld.setSphericalMotor( e.handle, false, zero, 0.0f );
+			e.extra->motorDriven = false;
+		}
 	}
 
 	Box3DSharedState& mySt;
@@ -877,6 +902,30 @@ private:
 	const std::vector<SettingReader> myReaders;
 	const std::vector<SideFXReader> mySfReaders;
 };
+
+// The settings of the network's motors (Box3DJointNetwork::motorEntries) as the
+// geometry has them this step: their targets change every step without the
+// network being read again.
+void readJointMotors( Box3DJointNetwork& net, const GU_Detail* gdp )
+{
+	if ( net.motorEntries.empty() )
+		return;
+	const GA_ROHandleS conName( gdp, GA_ATTRIB_PRIMITIVE, kConstraintName );
+	if ( !conName.isValid() )
+		return;
+	const std::vector<SideFXReader> readers = bindSideFX( gdp );
+	for ( Box3DJointEntry* e : net.motorEntries )
+	{
+		const char* n = static_cast<const char*>( conName.get( e->prim ) );
+		const auto it = n ? net.kinds.find( std::string( n ) ) : net.kinds.end();
+		if ( it == net.kinds.end() || !it->second.sideFX )
+			continue;
+		b3dop::SideFXSettings sf = it->second.sideFXSettings;
+		applySideFXOverrides( readers, it->second.sideFXType, e->prim, sf );
+		Box3DJointExtra& x = e->ensureExtra();
+		x.motor = b3dop::coneTwistMotor( sf, x.motorMirroredA, x.motorMirroredB );
+	}
+}
 
 // True if the network's joints were read again (false: left as they are).
 bool processNetwork( Box3DSharedState& st, const NetworkRef& ref, const Anchors& anchors, bool massChanged,
@@ -897,12 +946,19 @@ bool processNetwork( Box3DSharedState& st, const NetworkRef& ref, const Anchors&
 	net.kindsKnown = true;
 
 	const SIM_Geometry* geo = networkGeometry( *ref.object, ref.source );
-	if ( !geo )
+	// No geometry this step: its motors have no target, so they stop driving.
+	const auto stopMotors = [&net]() {
+		for ( Box3DJointEntry* e : net.motorEntries )
+			if ( e->extra )
+				e->extra->motor.on = false;
 		return false;
+	};
+	if ( !geo )
+		return stopMotors();
 	SIM_GeometryAutoReadLock lock( geo );
 	const GU_Detail* gdp = lock.getGdp();
 	if ( !gdp )
-		return false;
+		return stopMotors();
 
 	// Unchanged geometry, constraint data and bodies it depends on: the joints
 	// stay as they are (they keep liveStamp). Bodies coming or going matter only
@@ -912,15 +968,17 @@ bool processNetwork( Box3DSharedState& st, const NetworkRef& ref, const Anchors&
 	const bool bodiesMatter = st.allNetworksDirty || bodyRemoved ||
 							  ( net.needsBodies && ( st.bodiesAdded || !st.removedBodies.empty() ) ) ||
 							  net.nameVersion != st.nameVersion || net.retryNextStep;
-	if ( fp == net.fingerprint && !bodiesMatter && !kindsChanged && !massChanged )
-		return false;
-	net.retryNextStep = false;
-	net.fingerprint = fp;
-	net.nameVersion = st.nameVersion;
-	net.liveStamp = st.syncStamp;
-
-	NetworkPass( st, ref, net, anchors, gdp, counts ).run();
-	return true;
+	const bool reread = fp != net.fingerprint || bodiesMatter || kindsChanged || massChanged;
+	if ( reread )
+	{
+		net.retryNextStep = false;
+		net.fingerprint = fp;
+		net.nameVersion = st.nameVersion;
+		net.liveStamp = st.syncStamp;
+		NetworkPass( st, ref, net, anchors, gdp, counts ).run();
+	}
+	readJointMotors( net, gdp );
+	return reread;
 }
 
 // Takes the bonds that broke out of the glue lists: swapped out of the bond
@@ -1198,6 +1256,45 @@ bool jointLocalFramesOf( const b3dop::Box3DWorld& world, const Box3DJointEntry& 
 			f = inWorld;
 	}
 	return true;
+}
+
+void driveJointMotors( Box3DSharedState& st )
+{
+	b3dop::Box3DWorld& w = st.world;
+	for ( auto& kv : st.jointNetworks )
+		for ( Box3DJointEntry* e : kv.second.motorEntries )
+		{
+			if ( e->broken || !e->extra || e->type != b3dop::JointType::Spherical || !w.isJointValid( e->handle ) )
+				continue;
+			Box3DJointExtra& x = *e->extra;
+			b3dop::JointFrame fa, fb;
+			if ( !x.motor.on || !w.jointWorldFrames( e->handle, fa, fb ) )
+			{
+				if ( x.motorDriven )
+				{
+					const float zero[3] = { 0.0f, 0.0f, 0.0f };
+					w.setSphericalMotor( e->handle, false, zero, 0.0f );
+					x.motorDriven = false;
+				}
+				continue;
+			}
+			// Frame B relative to frame A now: what the motor turns.
+			float inv[4], rel[4];
+			b3dop::quatConj( fa.rot, inv );
+			b3dop::quatMul( inv, fb.rot, rel );
+			b3dop::sanitizeQuat( rel );
+			float v[3];
+			b3dop::coneTwistMotorVelocity( x.motor, rel, st.stepDt, v );
+			const float torque = b3dop::coneTwistMotorTorque( x.motor, sideFXBodyAbout( w, e->bodyA, fa.pos ),
+															  sideFXBodyAbout( w, e->bodyB, fb.pos ), st.stepDt );
+			x.motorDriven = w.setSphericalMotor( e->handle, true, v, torque );
+			// A motor that turns the joint wakes its bodies; one that only holds (or
+			// has arrived) lets them sleep.
+			if ( v[0] * v[0] + v[1] * v[1] + v[2] * v[2] > kMotorWakeSpeed * kMotorWakeSpeed )
+				for ( const b3dop::BodyHandle h : { e->bodyA, e->bodyB } )
+					if ( h )
+						w.wakeByHandle( h );
+		}
 }
 
 void reaimJoints( Box3DSharedState& st )

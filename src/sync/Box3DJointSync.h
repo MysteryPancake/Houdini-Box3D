@@ -107,6 +107,12 @@ void advanceGlue( Box3DSharedState& st, float dt );
 // current line again, as Bullet makes its constraints every frame.
 void reaimJoints( Box3DSharedState& st );
 
+// Before the steps: each SideFX Cone Twist motor (Box3DJointNetwork::
+// motorEntries) sets its spherical joint's motor for this frame, toward its
+// target (b3dop::coneTwistMotorVelocity) with Bullet's strength
+// (b3dop::coneTwistMotorTorque), and wakes the joint's bodies when it turns it.
+void driveJointMotors( Box3DSharedState& st );
+
 // After the step: joints over their force / torque threshold are destroyed and
 // marked broken (`broken` primitive group, or switched to their
 // next_constraint_name), and the live frames and feedback attributes are

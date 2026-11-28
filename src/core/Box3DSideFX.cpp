@@ -347,4 +347,194 @@ JointFrame removeFrameOffset( const JointFrame& joint, const JointFrame& adj )
 	return out;
 }
 
+namespace
+{
+
+// A motor target in Bullet's Cone Twist space (x twist, y out, z up) as the
+// spherical joint's frame B relative to frame A: its axes as twistFrame's (x up,
+// y -out, z twist), and inverted (Bullet's turns the other way: measured).
+void coneTwistToJointRotation( const float in[4], float out[4] )
+{
+	out[0] = -in[2];
+	out[1] = in[1];
+	out[2] = -in[0];
+	out[3] = in[3];
+	sanitizeQuat( out );
+}
+
+// Axis times angle of the unit quaternion q, the short way round.
+void rotationVector( const float q[4], double out[3] )
+{
+	const double sign = q[3] < 0.0f ? -1.0 : 1.0;
+	const double x = sign * q[0], y = sign * q[1], z = sign * q[2], w = sign * q[3];
+	const double s = std::sqrt( x * x + y * y + z * z );
+	const double scale = s > 1e-12 ? 2.0 * std::atan2( s, w ) / s : 2.0;
+	out[0] = x * scale;
+	out[1] = y * scale;
+	out[2] = z * scale;
+}
+
+// A motor target (Bullet's space) clamped to the joint's limits, as Bullet's
+// Cone Twist does: split into a swing that takes the twist axis x where the
+// target takes it, then a twist about x; the twist clamped to Max Twist, the
+// swing along its own axis to the ellipse of Max Out Rotation (about y) and Max
+// Up Rotation (about z). Like Bullet, spans under kConeTwistClampMinSpan are not
+// clamped, nor are the swing's unless both of its spans reach it.
+void clampConeTwistTarget( const SideFXSettings& s, float q[4] )
+{
+	const auto span = []( float degrees ) {
+		return std::isfinite( degrees ) ? static_cast<double>( std::max( 0.0f, degrees ) * kDegToRad ) : 0.0;
+	};
+	const double pi = static_cast<double>( kPi ), twistSpan = span( s.maxTwist );
+	const double outSpan = span( s.maxOutRotation ), upSpan = span( s.maxUpRotation );
+	const double unitX[3] = { 1.0, 0.0, 0.0 };
+	double x[3];
+	quatRotate( q, unitX, x );
+	// The swing: about (0, -x.z, x.y), by the angle between x and where it went.
+	double swingAngle = std::acos( std::clamp( x[0], -1.0, 1.0 ) );
+	double ay = -x[2], az = x[1];
+	const double axisLen = std::sqrt( ay * ay + az * az );
+	if ( axisLen > 1e-9 )
+	{
+		ay /= axisLen;
+		az /= axisLen;
+	}
+	else
+	{
+		swingAngle = 0.0;
+		ay = 0.0;
+		az = 1.0;
+	}
+	const auto axisAngle = []( double angle, double ax, double by, double cz, float out[4] ) {
+		const double h = 0.5 * angle, sh = std::sin( h );
+		out[0] = static_cast<float>( ax * sh );
+		out[1] = static_cast<float>( by * sh );
+		out[2] = static_cast<float>( cz * sh );
+		out[3] = static_cast<float>( std::cos( h ) );
+	};
+	float swing[4], swingInv[4], twist[4];
+	axisAngle( swingAngle, 0.0, ay, az, swing );
+	quatConj( swing, swingInv );
+	quatMul( swingInv, q, twist ); // about x
+	double twistAngle = 2.0 * std::atan2( static_cast<double>( twist[0] ), static_cast<double>( twist[3] ) );
+	if ( twistAngle > pi )
+		twistAngle -= 2.0 * pi;
+	else if ( twistAngle < -pi )
+		twistAngle += 2.0 * pi;
+	if ( twistSpan >= kConeTwistClampMinSpan && twistSpan < pi )
+		twistAngle = std::clamp( twistAngle, -twistSpan, twistSpan );
+	if ( outSpan >= kConeTwistClampMinSpan && upSpan >= kConeTwistClampMinSpan && ( outSpan < pi || upSpan < pi ) )
+	{
+		// (at most Box3D's 90 degree cone, as mapSideFX caps it, so the motor can reach it)
+		const double o = std::min( outSpan, 0.5 * pi ), u = std::min( upSpan, 0.5 * pi );
+		const double limit = 1.0 / std::sqrt( ( ay / o ) * ( ay / o ) + ( az / u ) * ( az / u ) );
+		swingAngle = std::min( swingAngle, limit );
+	}
+	axisAngle( swingAngle, 0.0, ay, az, swing );
+	axisAngle( twistAngle, 1.0, 0.0, 0.0, twist );
+	quatMul( swing, twist, q );
+	sanitizeQuat( q );
+}
+
+} // namespace
+
+ConeTwistMotor coneTwistMotor( const SideFXSettings& s, bool mirroredA, bool mirroredB )
+{
+	ConeTwistMotor m;
+	m.on = s.motorEnabled != 0;
+	m.correctionTime = s.motorCorrectionTime;
+	m.hold =
+		s.motorTargetCurrentPose != 0 || !( s.motorCorrectionTime > 0.0f ) || !std::isfinite( s.motorCorrectionTime );
+	float target[4], prev[4];
+	copy4( target, s.motorTarget );
+	copy4( prev, s.motorHasTargetPrev != 0 ? s.motorTargetPrev : s.motorTarget );
+	sanitizeQuat( target );
+	sanitizeQuat( prev );
+	clampConeTwistTarget( s, target );
+	clampConeTwistTarget( s, prev );
+	coneTwistToJointRotation( target, m.target );
+	coneTwistToJointRotation( prev, m.targetPrev );
+	// A mirrored end's frame is Bullet's turned half a turn about its y axis (the
+	// axis twistFrame derives: mirroring its axes reverses it; measured on PinnedRagdolls'
+	// left arm), so its targets are too.
+	const float halfY[4] = { 0.0f, 1.0f, 0.0f, 0.0f };
+	for ( float* q : { m.target, m.targetPrev } )
+	{
+		if ( mirroredA )
+			quatMul( halfY, q, q );
+		if ( mirroredB )
+			quatMul( q, halfY, q );
+	}
+	m.maxImpulse = std::isfinite( s.motorMaxImpulse ) ? std::max( 0.0f, s.motorMaxImpulse ) : 0.0f;
+	m.normalize = s.motorNormalizeMaxImpulse != 0;
+	return m;
+}
+
+void coneTwistMotorVelocity( const ConeTwistMotor& m, const float relQ[4], float dt, float out[3] )
+{
+	out[0] = out[1] = out[2] = 0.0f;
+	if ( !m.on || m.hold || !( dt > 0.0f ) )
+		return;
+	// What is left to the target at the step's start and end, as rotations of
+	// frame B in frame A's axes (the way the joint's relative rotation turns).
+	float inv[4], left0[4], left1[4];
+	quatConj( relQ, inv );
+	quatMul( m.targetPrev, inv, left0 );
+	quatMul( m.target, inv, left1 );
+	double g0[3], g1[3];
+	rotationVector( left0, g0 );
+	rotationVector( left1, g1 );
+	// How far the target moves over the step.
+	float prevInv[4], moved[4];
+	quatConj( m.targetPrev, prevInv );
+	quatMul( m.target, prevInv, moved );
+	double movedVec[3];
+	rotationVector( moved, movedVec );
+	const int n = kSideFXMotorSubsteps;
+	const double speed =
+		std::sqrt( movedVec[0] * movedVec[0] + movedVec[1] * movedVec[1] + movedVec[2] * movedVec[2] ) / n;
+	// Bullet's substeps: the target moves from targetPrev to target over the step;
+	// each substep the joint turns toward the step's target by the target's own
+	// move that substep (whichever way the target goes), plus substep /
+	// Correction Time of the gap to where the target is then, but never past the
+	// step's target: one there stays.
+	const double h = static_cast<double>( dt ) / n;
+	const double alpha = std::min( 1.0, h / static_cast<double>( m.correctionTime ) );
+	double x[3] = { 0.0, 0.0, 0.0 };
+	for ( int i = 1; i <= n; ++i )
+	{
+		const double t = static_cast<double>( i ) / n;
+		double left[3], leftLen = 0.0;
+		for ( int k = 0; k < 3; ++k )
+		{
+			left[k] = g1[k] - x[k];
+			leftLen += left[k] * left[k];
+		}
+		leftLen = std::sqrt( leftLen );
+		if ( leftLen < kConeTwistMotorArrived )
+			break;
+		double move[3], along = 0.0;
+		for ( int k = 0; k < 3; ++k )
+		{
+			const double g = g0[k] + ( g1[k] - g0[k] ) * t;
+			move[k] = speed * left[k] / leftLen + alpha * ( g - x[k] );
+			along += move[k] * left[k];
+		}
+		const bool past = along > leftLen * leftLen;
+		for ( int k = 0; k < 3; ++k )
+			x[k] += past ? left[k] : move[k];
+	}
+	for ( int k = 0; k < 3; ++k )
+		out[k] = static_cast<float>( x[k] / static_cast<double>( dt ) );
+}
+
+float coneTwistMotorTorque( const ConeTwistMotor& m, const SideFXBody& a, const SideFXBody& b, float dt )
+{
+	if ( !m.on || !( dt > 0.0f ) || !( m.maxImpulse > 0.0f ) )
+		return 0.0f;
+	const float scale = m.normalize ? effective( a, b, &SideFXBody::inertia ) : 1.0f;
+	const float torque = m.maxImpulse * scale * static_cast<float>( kSideFXMotorSubsteps ) / dt;
+	return std::isfinite( torque ) ? torque : FLT_MAX;
+}
+
 } // namespace b3dop

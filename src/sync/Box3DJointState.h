@@ -47,6 +47,13 @@ struct Box3DJointExtra
 	b3dop::BodyHandle anchorBody = 0;
 	bool anchorOnA = false;
 	b3dop::JointFrame anchorTarget;
+	// SideFX Cone Twist with a motor: its settings as read this step
+	// (readJointMotors), and whether driveJointMotors turned the joint's motor
+	// on.
+	b3dop::ConeTwistMotor motor;
+	bool motorDriven = false;
+	// Its ends on mirrored rig transforms (AnchorBody::mirrored), for its targets.
+	bool motorMirroredA = false, motorMirroredB = false;
 };
 
 // One joint made from a primitive of a constraint network (Box3DJointSync.cpp).
@@ -203,6 +210,10 @@ struct Box3DJointNetwork
 	// Some constraint waits for the next step (a ragdoll made fresh this step):
 	// read the network again then.
 	bool retryNextStep = false;
+	// Its live joints with a motor driven every step (SideFX Cone Twist with
+	// motor_enabled), listed by each full read of the network: entries are only
+	// erased when a read did not stamp them, so the pointers hold.
+	std::vector<Box3DJointEntry*> motorEntries;
 };
 
 // What one bond adds to the signature of the bond list (kGlueCountSalt for the

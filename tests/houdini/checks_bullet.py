@@ -1372,6 +1372,98 @@ def test_bullet_mirror_flip():
     return results
 
 
+REST_INPUT_CASES = (
+    # label, the packed transform's XYZ rotation, restxform's (None: no restxform), orient's (degrees), the
+    # `pivot` attribute (None: P), the packed transform's scale (a negative one mirrors it)
+    ("consistent, fresh", (0, 0, 30), (0, 0, 30), (0, 0, 0), None, (1, 1, 1)),
+    ("consistent, turned since rest", (0, 0, 30), (0, 0, 0), (0, 0, 30), None, (1, 1, 1)),
+    ("packed transform behind orient", (0, 0, 0), (0, 0, 0), (0, 0, 30), None, (1, 1, 1)),
+    ("packed transform ahead of orient", (0, 0, 30), (0, 0, 0), (0, 0, 0), None, (1, 1, 1)),
+    ("no restxform, orient set", (0, 0, 0), None, (0, 0, 30), None, (1, 1, 1)),
+    ("disagreeing, turns that do not commute", (40, 0, 0), (0, 0, 0), (0, 0, 30), None, (1, 1, 1)),
+    ("disagreeing, pivot away from P", (0, 0, 0), (0, 0, 0), (0, 0, 30), (5, 5, 5), (1, 1, 1)),
+    ("consistent, pivot away from P", (0, 0, 30), (0, 0, 30), (0, 0, 0), (5, 5, 5), (1, 1, 1)),
+    ("no restxform, mirrored and scaled, pivot away from P", (40, 0, 0), None, (0, 0, 30), (5, 5, 5), (2, 1, -1)),
+)
+
+
+def rest_input_run(tag, kind, packed, rest, orient, pivot, scale):
+    """One packed box at (2, 20, 1) made by a plain Empty Object and SOP Geometry (no packed object asset, so nothing
+    resets the rest), with RBD Packed Object's point attributes, then the packed transform (scaled by `scale`),
+    `restxform`, `orient` and `pivot` set as given. No gravity or spin. Frame 3: (packed 3x3 rows, restxform as 16 floats or None, orient,
+    pivot)."""
+    path, _ = packed_boxes(f"{tag}_{kind}_src", [{"size": (0.6, 0.4, 0.8), "center": (2, 20, 1)}])
+    ref = new_dopnet(f"{tag}_{kind}_ref")
+    stage = packed_object(ref, "pieces", path).node("create_or_overwrite_attributes/OUT")
+    geo = new_geo(f"{tag}_{kind}_pieces")
+    fetch = create(geo, "object_merge")
+    set_parm(fetch, ["objpath1"], stage.path())
+    pose = create(geo, "attribwrangle", "pose")
+    pose.setInput(0, fetch)
+    set_menu_token(pose, "class", "point")
+
+    def quat(r):
+        return f"eulertoquaternion(radians(set({r[0]}, {r[1]}, {r[2]})), XFORM_XYZ)"
+
+    vex = [f"matrix3 m = qconvert({quat(packed)});", f"scale(m, set({scale[0]}, {scale[1]}, {scale[2]}));",
+           'setprimintrinsic(0, "transform", @ptnum, m);',
+           f"p@orient = {quat(orient)};",
+           f"4@restxform = matrix(qconvert({quat(rest)}));" if rest is not None else 'removepointattrib(0, "restxform");']
+    if pivot is not None:
+        vex.append(f"v@pivot = set({pivot[0]}, {pivot[1]}, {pivot[2]});")
+    set_parm(pose, ["snippet"], "\n".join(vex))
+    display(pose)
+    dop = new_dopnet(f"{tag}_{kind}")
+    obj = create(dop, "emptyobject", "object")
+    set_parm(obj, ["objname"], "pieces")
+    sop = create(dop, "sopgeo", "geometry")
+    sop.setInput(0, obj)
+    set_parm(sop, ["soppath"], pose.path())
+    last = sop
+    if kind == "bullet":  # Bullet moves a packed piece only with Bullet Data
+        last = create(dop, "bulletdata", "bulletdata")
+        last.setInput(0, sop)
+    label = create(dop, "colliderlabel", "label")
+    label.setInput(0, last)
+    set_parm(label, ["colliderlabel"], "PackedObject")
+    if kind == "box3d":
+        solver = box3d_solver(dop, label, gravity=(0, 0, 0))
+    else:
+        solver = create(dop, "bulletrbdsolver", "bullet_solver")
+        solver.setInput(0, label)
+    finish(dop, solver)
+
+    def sample(sim, f):
+        attrs = point_attributes(sim, "pieces", None, ["orient", "restxform", "pivot"]) or {}
+        return packed_transform(sim, "pieces"), attrs.get("restxform"), attrs.get("orient"), attrs.get("pivot")
+
+    return step(dop, 3, sample)[3]
+
+
+def test_bullet_rest_mismatch():
+    """A new packed piece whose packed transform, `restxform`, `orient` and `pivot` are set by hand, in Box3D and in
+    Bullet with no packed object asset to reset the rest, on frame 3. Bullet keeps the packed pose and orient and
+    makes the rest the packed transform (with its scale and mirror) with orient undone about `pivot`, writing `pivot`
+    as P at rest. Box3D does the same unless restxform agrees with all of them (then it keeps it, so a world rebuilt
+    mid-simulation keeps its rest). The packed rotation and orient within 0.1 degree, restxform within 0.001 and
+    pivot within 0.001 of Bullet's."""
+    results = []
+    for i, (label, packed, rest, orient, pivot, scale) in enumerate(REST_INPUT_CASES):
+        got = {kind: rest_input_run(f"rest_input_{i}", kind, packed, rest, orient, pivot, scale) for kind in KINDS}
+        (pb, rb, ob, vb), (pt, rt, ot, vt) = got["box3d"], got["bullet"]
+        dpacked = rotation_angle(pb, pt)
+        dorient = quat_angle(ob, ot)
+        drest = max(abs(x - y) for x, y in zip(rb, rt)) if rb is not None and rt is not None else float("inf")
+        dpivot = math.dist(vb, vt)
+        text = (f"{label}: against Bullet, packed rotation {dpacked:.2f} deg, orient {dorient:.2f} deg, restxform "
+                f"{drest:.4f}, pivot {dpivot:.4f} (Box3D restxform translation "
+                f"{tuple(round(c, 3) for c in rb[12:15]) if rb else None}, pivot {tuple(round(c, 3) for c in vb)}; "
+                f"Bullet {tuple(round(c, 3) for c in rt[12:15]) if rt else None}, {tuple(round(c, 3) for c in vt)})")
+        agrees = dpacked < 0.1 and dorient < 0.1 and drest < 1e-3 and dpivot < 1e-3
+        results.append(Result("bullet_rest_mismatch", Result.PASS if agrees else Result.FAIL, text))
+    return results
+
+
 JOINT_ANGLE_CASES = (
     # label, the hanging piece's own rotation in degrees, its initial spin (radians/s)
     ("turned 30 degrees about z, spinning about y", (0.0, 0.0, 30.0), (0.0, 2.0, 0.0)),
@@ -2612,6 +2704,113 @@ def test_bullet_glue_materials():
                    + " (expected within 0.05 of Bullet: each slab back on its own friction)")]
 
 
+def cone_twist_motor_run(tag, kind, line, frames, gravity=False, anchor=(1.0, 2.0, 0.0)):
+    """A 1 m box turning about `anchor` on a SideFX Cone Twist (constraint_type all, limits 120 degrees, collisions
+    off) to a fixed box, its motor set by the line's attributes `line` (a 4-tuple is a quaternion): the box's turn
+    since frame 1 as a quaternion (x, y, z, w with w >= 0), per frame in `frames`."""
+    dop = new_dopnet(f"{tag}_{kind}")
+    pieces = [{"size": (1, 1, 1), "center": (0, 2, 0), "attrs": {"active": 0}},
+              {"size": (1, 1, 1), "center": (1, 2, 0), "attrs": {"active": 1}}]
+    path, names = packed_boxes(f"{tag}_{kind}_pieces", pieces)
+    obj = packed_object(dop, "pieces", path)
+    conetwist = create(dop, "conetwistconrel", "conetwist")
+    for parm, value in (("max_twist", 120.0), ("max_out_rotation", 120.0), ("max_up_rotation", 120.0),
+                        ("disablecollisions", 1)):
+        set_parm(conetwist, [parm], value)
+    geo = new_geo(f"{tag}_{kind}_network")
+    wr = create(geo, "attribwrangle", "network")
+    set_parm(wr, ["class"], 0)
+    code = ["int a = addpoint(0, set(%r, %r, %r)); int b = addpoint(0, set(%r, %r, %r));" % (anchor + anchor),
+            f'addpointattrib(0, "name", ""); setpointattrib(0, "name", a, "{names[0]}"); '
+            f'setpointattrib(0, "name", b, "{names[1]}");',
+            'int pr = addprim(0, "polyline", a, b);',
+            'addprimattrib(0, "constraint_name", ""); setprimattrib(0, "constraint_name", pr, "ConeTwist");',
+            'addprimattrib(0, "constraint_type", ""); setprimattrib(0, "constraint_type", pr, "all");']
+    for attr, value in line.items():
+        if isinstance(value, tuple):
+            # (a vector4 variable: set() of four floats is ambiguous for setprimattrib)
+            code.append('{ vector4 q = set(%r, %r, %r, %r); addprimattrib(0, "%s", {0, 0, 0, 0}); '
+                        'setprimattrib(0, "%s", pr, q); }' % (value + (attr, attr)))
+        elif isinstance(value, int):
+            code.append(f'addprimattrib(0, "{attr}", 0); setprimattrib(0, "{attr}", pr, {value});')
+        else:
+            code.append(f'addprimattrib(0, "{attr}", 0.0); setprimattrib(0, "{attr}", pr, {value!r});')
+    set_parm(wr, ["snippet"], "\n".join(code))
+    display(wr)
+    net = create(dop, "constraintnetwork", "constraint_network")
+    net.setInput(0, obj)
+    net.setInput(1, conetwist)
+    set_parm(net, ["soppath"], wr.path())
+    if kind == "box3d":
+        last = solver_for(kind, dop, net, gravity=(0.0, -9.80665 if gravity else 0.0, 0.0))
+    else:
+        last = create(dop, "bulletrbdsolver", "bullet_solver")
+        last.setInput(0, net)
+        if gravity:
+            grav = create(dop, "gravity", "gravity")
+            grav.setInput(0, last)
+            last = grav
+    finish(dop, last)
+
+    def sample(sim, f):
+        geo = sim.findObject("pieces").geometry()
+        pt = next(p for p in geo.points() if p.attribValue("name") == names[1])
+        return hou.Quaternion(pt.attribValue("orient"))
+
+    track = step(dop, max(frames), sample)
+    out = {}
+    for f in frames:
+        d = track[f] * track[1].conjugate()
+        out[f] = d if d[3] >= 0.0 else hou.Quaternion(-d[0], -d[1], -d[2], -d[3])
+    return out
+
+
+def test_bullet_cone_twist_motor():
+    """A SideFX Cone Twist's motor, set by line attributes as the Crowd Solver sets a ragdoll's, against RBD Bullet
+    Solver (docs/agents/cone-twist-motor.md): a box turning about its centre, no gravity, to a fixed target (30 degrees
+    about the up axis, Correction Time 0.8: the node's 0.2 times the line's 4), to a moving one (from 45 degrees about
+    the twist axis to 30, Correction Time 0.2) and to one moving away (twist from 30 to 15 degrees: Bullet still lands
+    on it), and a pendulum under gravity (hinged at a box edge) held by a Target Current Pose motor of Max Impulse 0.06
+    (Bullet's holds from about 0.05; 0.02 does not). Turns within 1 degree of Bullet's on frames 2, 3, 5 and 9 (the
+    pendulum: frames 5 to 13, both held within 5 degrees or both not)."""
+    def turn(deg, axis):
+        h = math.radians(deg) / 2.0
+        v = [0.0, 0.0, 0.0]
+        v[axis] = math.sin(h)
+        return tuple(v) + (math.cos(h),)
+
+    def angle_between(a, b):
+        d = a * b.conjugate()
+        return math.degrees(2.0 * math.acos(min(1.0, abs(d[3]))))
+
+    base = {"motor_enabled": 1, "motor_hastargetprev": 1, "motor_maximpulse": 1e6, "motor_cfm": 0.0}
+    cases = [("fixed", dict(base, motor_target=turn(30, 2), motor_targetprev=turn(30, 2), motor_erp=4.0)),
+             ("moving", dict(base, motor_target=turn(30, 0), motor_targetprev=turn(45, 0), motor_erp=1.0)),
+             ("away", dict(base, motor_target=turn(15, 0), motor_targetprev=turn(30, 0), motor_erp=1.0))]
+    frames = (2, 3, 5, 9)
+    rows, problems = [], []
+    for name, line in cases:
+        runs = {kind: cone_twist_motor_run(f"ct_motor_{name}", kind, line, frames) for kind in KINDS}
+        worst = max(angle_between(runs["box3d"][f], runs["bullet"][f]) for f in frames)
+        rows.append(f"{name}: within {worst:.2f} deg (frame 9 Box3D "
+                    f"{math.degrees(2 * math.acos(min(1.0, runs['box3d'][9][3]))):.1f}, Bullet "
+                    f"{math.degrees(2 * math.acos(min(1.0, runs['bullet'][9][3]))):.1f})")
+        if worst > 1.0:
+            problems.append(f"{name}: {worst:.2f} deg from Bullet's")
+    hold = {"motor_enabled": 1, "motor_targetcurrentpose": 1, "motor_erp": 0.0, "motor_cfm": 0.01}
+    for impulse in (0.02, 0.06):
+        runs = {kind: cone_twist_motor_run(f"ct_motor_hold{int(impulse * 100)}", kind,
+                                           dict(hold, motor_maximpulse=impulse), (5, 9, 13), gravity=True,
+                                           anchor=(0.5, 2.0, 0.0)) for kind in KINDS}
+        swung = {kind: math.degrees(2 * math.acos(min(1.0, runs[kind][13][3]))) for kind in KINDS}
+        rows.append(f"pendulum held by Max Impulse {impulse}: frame 13 Box3D {swung['box3d']:.1f} deg, Bullet "
+                    f"{swung['bullet']:.1f}")
+        if (swung["box3d"] < 5.0) != (swung["bullet"] < 5.0):
+            problems.append(f"Max Impulse {impulse}: Box3D swung {swung['box3d']:.1f} deg, Bullet {swung['bullet']:.1f}")
+    return [Result("bullet_cone_twist_motor", Result.FAIL if problems else Result.PASS,
+                   "; ".join(rows) + (f"; PROBLEMS: {'; '.join(problems)}" if problems else ""))]
+
+
 TESTS = {
     "bullet_computecom": test_bullet_computecom,
     "bullet_computecom_cases": test_bullet_computecom_cases,
@@ -2620,6 +2819,7 @@ TESTS = {
     "bullet_plane_piece": test_bullet_plane_piece,
     "bullet_rest_rescan": test_bullet_rest_rescan,
     "bullet_mirror_flip": test_bullet_mirror_flip,
+    "bullet_rest_mismatch": test_bullet_rest_mismatch,
     "bullet_joint_angle": test_bullet_joint_angle,
     "bullet_joint_feedback": test_bullet_joint_feedback,
     "bullet_hard_collisions": test_bullet_hard_collisions,
@@ -2654,6 +2854,7 @@ TESTS = {
     "bullet_rbd_box_settle": test_bullet_rbd_box_settle,
     "bullet_rbd_pivot": test_bullet_rbd_pivot,
     "bullet_cone_twist_goal": test_bullet_cone_twist_goal,
+    "bullet_cone_twist_motor": test_bullet_cone_twist_motor,
     "bullet_impact_normal": test_bullet_impact_normal,
     "bullet_kinematic_push": test_bullet_kinematic_push,
     "bullet_kinematic_object_push": test_bullet_kinematic_object_push,

@@ -110,6 +110,17 @@ struct SideFXSettings
 	float goalUpAxis[3] = { 0, 1, 0 };
 	float constrainedTwistAxis[3] = { 1, 0, 0 };
 	float constrainedUpAxis[3] = { 0, 1, 0 };
+
+	// Cone twist motor (coneTwistMotor). Rotations are Bullet's, in its
+	// constraint space (x twist, y out, z up), quaternion x, y, z, w.
+	int motorEnabled = 0;
+	int motorTargetCurrentPose = 0;
+	float motorTarget[4] = { 0, 0, 0, 1 };
+	float motorTargetPrev[4] = { 0, 0, 0, 1 };
+	int motorHasTargetPrev = 0;
+	float motorMaxImpulse = 1.0f;
+	float motorCorrectionTime = 0.2f; // motor_erp, seconds
+	int motorNormalizeMaxImpulse = 1; // Ignore Mass
 };
 
 // Houdini's defaults for type `t` (only strength differs between types).
@@ -142,13 +153,19 @@ struct SideFXParam
 		Float, // primitive attribute multiplies
 		Int,   // toggle / int: primitive attribute replaces
 		Vec3,  // primitive attribute replaces
+		Quat,  // primitive attribute replaces
 	};
 	const char* name = "";
 	Kind kind = Float;
 	unsigned types = 0; // sideFXBit mask
+	// Changes every step (a motor's target): left out of the network's
+	// fingerprint, and read each step for the joints with a motor
+	// (motor_enabled is not one, so turning a motor on reads the network).
+	bool perStep = false;
 	float SideFXSettings::* f = nullptr;
 	int SideFXSettings::* i = nullptr;
 	float ( SideFXSettings::*v )[3] = nullptr;
+	float ( SideFXSettings::*q )[4] = nullptr;
 
 	bool usedBy( SideFXType t ) const
 	{
@@ -186,6 +203,18 @@ inline const std::vector<SideFXParam>& sideFXParams()
 		p.v = m;
 		return p;
 	};
+	auto q = []( const char* n, unsigned t, float( S::* m )[4] ) {
+		SideFXParam p;
+		p.name = n;
+		p.kind = SideFXParam::Quat;
+		p.types = t;
+		p.q = m;
+		return p;
+	};
+	auto perStep = []( SideFXParam p ) {
+		p.perStep = true;
+		return p;
+	};
 	static const std::vector<SideFXParam> kParams = {
 		f( "strength", G | Sp, &S::strength ),
 		f( "impulse_halflife", G, &S::impulseHalfLife ),
@@ -206,6 +235,14 @@ inline const std::vector<SideFXParam>& sideFXParams()
 		v( "goal_up_axis", C, &S::goalUpAxis ),
 		v( "constrained_twist_axis", C, &S::constrainedTwistAxis ),
 		v( "constrained_up_axis", C, &S::constrainedUpAxis ),
+		i( "motor_enabled", C, &S::motorEnabled ),
+		perStep( i( "motor_targetcurrentpose", C, &S::motorTargetCurrentPose ) ),
+		perStep( q( "motor_target", C, &S::motorTarget ) ),
+		perStep( q( "motor_targetprev", C, &S::motorTargetPrev ) ),
+		perStep( i( "motor_hastargetprev", C, &S::motorHasTargetPrev ) ),
+		perStep( f( "motor_maximpulse", C, &S::motorMaxImpulse ) ),
+		perStep( f( "motor_erp", C, &S::motorCorrectionTime ) ),
+		perStep( i( "motor_normalizemaximpulse", C, &S::motorNormalizeMaxImpulse ) ),
 	};
 	return kParams;
 }
@@ -230,6 +267,11 @@ inline bool sameSideFXSettings( SideFXType t, const SideFXSettings& a, const Sid
 			case SideFXParam::Vec3:
 				for ( int k = 0; k < 3; ++k )
 					if ( !sameFloat( ( a.*p.v )[k], ( b.*p.v )[k] ) )
+						return false;
+				break;
+			case SideFXParam::Quat:
+				for ( int k = 0; k < 4; ++k )
+					if ( !sameFloat( ( a.*p.q )[k], ( b.*p.q )[k] ) )
 						return false;
 				break;
 		}
@@ -296,6 +338,48 @@ constexpr float kSideFXMinRestLength = 1e-6f;
 
 // Implemented in Box3DSideFX.cpp (needs Box3D's joint defaults).
 SideFXJoint mapSideFX( SideFXType t, const SideFXSettings& s, ConstraintMode mode, const SideFXContext& c );
+
+// A Cone Twist's motor (measured on RBD Bullet Solver, Houdini 22.0), driven
+// through the spherical joint's own motor, set every step. Each Bullet substep
+// its target moves on from the previous target (Use Previous Target) toward
+// this step's, both clamped to the joint's limits, and the joint turns toward
+// the step's target as fast as the target moves, plus substep / Correction
+// Time of the gap to where the target is then, never past the step's target;
+// the change of relative angular velocity per substep is capped by Max Impulse
+// (rad/s with Ignore Mass: times the bodies' inertia about the joint; an
+// angular impulse without). Bullet's motor works per substep, so it is taken
+// at Bullet's default substeps.
+constexpr int kSideFXMotorSubsteps = 10;
+// Closer than this (radians) to its target, a motor has arrived and stops.
+constexpr double kConeTwistMotorArrived = 1e-6;
+// A motor's target is clamped to the joint's limits, but not to a span below
+// this (radians; Bullet's btConeTwistConstraint).
+constexpr double kConeTwistClampMinSpan = 0.05;
+
+struct ConeTwistMotor
+{
+	bool on = false;
+	// Target Current Pose (or no Correction Time): resists any change of the
+	// relative rotation, a motor at velocity 0.
+	bool hold = false;
+	float correctionTime = 0.2f;
+	// Joint frame B relative to joint frame A, as the spherical joint's own
+	// rotations (its targetRotation), at the end of the step and its start.
+	float target[4] = { 0, 0, 0, 1 };
+	float targetPrev[4] = { 0, 0, 0, 1 };
+	float maxImpulse = 0.0f;
+	bool normalize = true;
+};
+
+// mirroredA / mirroredB: that end is on a mirrored rig transform (its axes' z
+// negated, as specFor does).
+ConeTwistMotor coneTwistMotor( const SideFXSettings& s, bool mirroredA = false, bool mirroredB = false );
+// The motor's velocity over a step of `dt` (joint frame A, rad/s) with the
+// joint's frame B relative to frame A at `relQ` now.
+void coneTwistMotorVelocity( const ConeTwistMotor& m, const float relQ[4], float dt, float out[3] );
+// Its maximum torque over a step of `dt` between bodies a and b, their inertia
+// taken about the joint.
+float coneTwistMotorTorque( const ConeTwistMotor& m, const SideFXBody& a, const SideFXBody& b, float dt );
 
 // The joint's frames relative to the anchors' frames (world: the anchors' P /
 // orient): adjA / adjB are offsets in each anchor's own axes, so joint frame =

@@ -128,3 +128,12 @@ tests/
                       ragdoll examples (todo.md, "Agent ragdolls")
   python/             test_harness.py: checks on the Houdini scripts that need no Houdini (stand-in `hou`)
 ```
+
+## Network dump
+
+`tools/dev/houdini_network_dump.py` is not part of the build: run it in Houdini (Python Source Editor, a shelf tool, or
+`main(node_path, out_path)` in hython) to write a node and everything inside it to a text file: the HDA's interface
+and text sections, a hierarchy tree, and per network an ASCII layout, boxes, notes, wiring and each node's
+non-default parameters (VEX, expressions, references). It dumps an unlocked temporary copy (`WORK_ON_COPY`), so the
+scene's assets stay locked. This is how RBD Bullet Solver's and RBD Configure's packing were read for
+`b3d_prepare.py`.
