@@ -176,6 +176,34 @@ void prism(string nm; vector p[]) {
         face(nm, array(q[i], q[j], q[n + j], q[n + i]));
     }
 }
+// capsule(name, a, c, r): b3Capsule { a, c, r } as polygons of the body `name`: at each end a ring on the cylinder and
+// rings at 30 and 60 degrees on the cap, 16 around, and the pole. Every ring point is r from the axis and the poles r
+// past the ends, so a piece fitted as a capsule (piece_georep) is exactly this one.
+void capsule(string nm; vector a; vector c; float r) {
+    vector d = normalize(c - a);
+    vector side = abs(d.x) < 0.9 ? set(1.0, 0.0, 0.0) : set(0.0, 1.0, 0.0);
+    vector u = normalize(cross(d, side)), w = cross(d, u);
+    float lat[] = array(60.0, 30.0, 0.0, 0.0, 30.0, 60.0);
+    vector p[];
+    for (int k = 0; k < 6; ++k) {
+        vector o = k < 3 ? a : c;
+        float sgn = k < 3 ? -1.0 : 1.0, la = radians(lat[k]);
+        for (int j = 0; j < 16; ++j) {
+            float t = 2.0 * PI * j / 16.0;
+            push(p, o + sgn * r * sin(la) * d + r * cos(la) * (cos(t) * u + sin(t) * w));
+        }
+    }
+    push(p, a - r * d);
+    push(p, c + r * d);
+    int q[] = points(p);
+    for (int j = 0; j < 16; ++j) {
+        int j2 = (j + 1) % 16;
+        for (int k = 0; k < 5; ++k)
+            face(nm, array(q[16 * k + j], q[16 * k + j2], q[16 * (k + 1) + j2], q[16 * (k + 1) + j]));
+        face(nm, array(q[96], q[j2], q[j]));
+        face(nm, array(q[97], q[80 + j], q[80 + j2]));
+    }
+}
 addprimattrib(0, "name", "");
 """
 
@@ -201,8 +229,10 @@ function int[] welded(vector p[]; float tol) {
     return corner;
 }
 // b3CreateWaveMesh( xCount, zCount, cellWidth, amplitude, rowFrequency, columnFrequency ), its vertices times s
-// (b3CreateMeshShape's scale) plus o. Amplitude 0 is b3CreateGridMesh.
-void wave_mesh(string nm; int xc; int zc; float w; float amp; float rowf; float colf; vector s; vector o) {
+// (b3CreateMeshShape's scale), turned by q and moved by o (the static body's rotation and position). Amplitude 0 is
+// b3CreateGridMesh.
+void wave_mesh_turned(string nm; int xc; int zc; float w; float amp; float rowf; float colf; vector s; vector4 q;
+                      vector o) {
     vector p[];
     float omega_z = 2.0 * PI * rowf * w, omega_x = 2.0 * PI * colf * w;
     float x = -0.5 * w * xc;
@@ -211,7 +241,7 @@ void wave_mesh(string nm; int xc; int zc; float w; float amp; float rowf; float 
         float z = -0.5 * w * zc;
         for (int iz = 0; iz <= zc; ++iz) {
             float column_height = cossin(omega_z * iz)[1];
-            push(p, set(x, amp * row_height * column_height, z) * s + o);
+            push(p, qrotate(q, set(x, amp * row_height * column_height, z) * s) + o);
             z += w;
         }
         x += w;
@@ -223,7 +253,13 @@ void wave_mesh(string nm; int xc; int zc; float w; float amp; float rowf; float 
         tri(nm, v[i3], v[i4], v[i1]);
     }
 }
+void wave_mesh(string nm; int xc; int zc; float w; float amp; float rowf; float colf; vector s; vector o) {
+    wave_mesh_turned(nm, xc, zc, w, amp, rowf, colf, s, {0, 0, 0, 1}, o);
+}
 void grid_mesh(string nm; int xc; int zc; float w; vector s; vector o) { wave_mesh(nm, xc, zc, w, 0, 0, 0, s, o); }
+void grid_mesh_turned(string nm; int xc; int zc; float w; vector s; vector4 q; vector o) {
+    wave_mesh_turned(nm, xc, zc, w, 0, 0, 0, s, q, o);
+}
 // b3CreateBoxMesh( center, extent ), outward faces; inward 1 is b3CreateHollowBoxMesh (the same triangles reversed).
 // The mesh is then turned by q and moved by o: a static body's rotation and position.
 void box_mesh(string nm; vector center; vector e; int inward; vector4 q; vector o) {
@@ -455,16 +491,23 @@ class Bodies:
         return merge, "concave"
 
     def parts(self, tag, parts):
-        """Several hulls on one body, each a shape from box(), cylinder(), hull() or shifted() of one of them:
-        parts is [(part name, shape)]. As compound(): named pieces of one packed shape, bullet_georep "concave"."""
+        """Several shapes on one body (b3Create*Shape called more than once): parts is [(part name, shape)] or
+        [(part name, shape, density scale)], each shape from box(), capsule(), sphere(), cylinder(), hull() or
+        shifted() of one of them. As compound(): named pieces of one packed shape, bullet_georep "concave". A capsule
+        or sphere part is fitted as one (its pieces' piece_georep), not hulled; a density scale (piece_densityscale)
+        makes that part's density the body's times it."""
         merge = create(self.geo, "merge", f"{tag}_shape")
-        for i, (part, (sop, rep, *rest)) in enumerate(parts):
-            if rep not in ("box", "convexhull") or rest:
-                raise SetupError(f"{tag}: part {part!r} is a {rep}; only hulls can share a body (glue the rest)")
+        for i, (part, (sop, rep, *_), *scale) in enumerate(parts):
+            if rep not in ("box", "convexhull", "capsule", "sphere"):
+                raise SetupError(f"{tag}: part {part!r} is a {rep}, which cannot share a body")
+            lines = [f's@name = "{part}";']
+            if rep in ("capsule", "sphere"):
+                lines.append(f's@piece_georep = "{rep}";')
+            lines.append(f"f@piece_densityscale = {num(scale[0] if scale else 1.0)};")
             named = create(self.geo, "attribwrangle", f"{tag}_{part}_named")
             named.setInput(0, sop)
             set_parm(named, "class", 1)  # primitives
-            set_parm(named, "snippet", f's@name = "{part}";')
+            set_parm(named, "snippet", "\n".join(lines))
             merge.setInput(i, named)
         return merge, "concave"
 
@@ -627,7 +670,8 @@ addpointattrib(0, "w", {{0, 0, 0}});
 
     def mesh(self, tag, vex, cd=(0.45, 0.5, 0.55), note="", **defaults):
         """Static triangle meshes (b3CreateMeshShape on a static body) the VEX builds with points() and tri(),
-        welded() (a triangle soup), grid_mesh(), wave_mesh(), box_mesh() and torus_mesh() (MESH_FUNCTIONS), each name
+        welded() (a triangle soup), grid_mesh(), wave_mesh() (and their _turned forms), box_mesh() and
+        torus_mesh() (MESH_FUNCTIONS), each name
         one static body of bullet_georep "concave": the solver makes one Box3D mesh of its triangles."""
         return self.polygons(tag, vex, cd=cd, active=0, note=note, rep="concave", **defaults)
 

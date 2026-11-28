@@ -44,7 +44,8 @@ Load only the file for the area you are changing.
 | [docs/agents/doc-rules.md](docs/agents/doc-rules.md) | Rules for editing the README, `docs/` and these notes |
 | [docs/agents/layout.md](docs/agents/layout.md) | File-by-file source layout, the network dump tool |
 | [docs/agents/build.md](docs/agents/build.md) | CMake options, build scripts, tests, benchmarks, debug logging, the package |
-| [docs/agents/core.md](docs/agents/core.md) | `b3dop::Box3DWorld`: handle API, mass, filtering, shapes, hull cache, settings |
+| [docs/agents/core.md](docs/agents/core.md) | `b3dop::Box3DWorld`: handle API, mass, filtering, settings |
+| [docs/agents/core-shapes.md](docs/agents/core-shapes.md) | `Box3DWorld` shapes, hull cache, meshes, ground; `Box3DShapes.h`, `Box3DMath.h` |
 | [docs/agents/solver-state.md](docs/agents/solver-state.md) | The shared world state (`SIM_Box3DWorld`, `Box3DSharedState`) |
 | [docs/agents/solver.md](docs/agents/solver.md) | The solver step: order, substeps, forces, Glue and joint stages |
 | [docs/agents/solver-sync.md](docs/agents/solver-sync.md) | `syncObject`, the skip fingerprint, write-back, threading |
@@ -69,7 +70,7 @@ Load only the file for the area you are changing.
 | [docs/agents/configure.md](docs/agents/configure.md) | Box3D Configure asset |
 | [docs/agents/status.md](docs/agents/status.md), [status-areas.md](docs/agents/status-areas.md) | Unverified |
 | [docs/agents/todo.md](docs/agents/todo.md) | TODO, features to add to the Box3D fork |
-| [docs/agents/sample-port-plan.md](docs/agents/sample-port-plan.md), [table a](docs/agents/sample-port-table-a.md), [b](docs/agents/sample-port-table-b.md) | Porting Box3D's samples to example scenes: plan, verdict per sample |
+| [docs/agents/sample-port-plan.md](docs/agents/sample-port-plan.md), [code](docs/agents/sample-port-code.md), [table a](docs/agents/sample-port-table-a.md), [b](docs/agents/sample-port-table-b.md) | Porting Box3D's samples to example scenes: plan, the helpers, verdict per sample |
 
 **Values that live in code stay in code.** Defaults, counts, thresholds and sizes are not copied into the docs: name
 the constant or table and its file (`kMinParallelPoints` in `Box3DSolverInternal.h`, `kPropAttribNames` in

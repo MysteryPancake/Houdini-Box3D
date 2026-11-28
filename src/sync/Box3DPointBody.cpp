@@ -177,9 +177,9 @@ int addShapes( b3dop::Box3DWorld& world, b3dop::BodyHandle h, const b3dop::BodyS
 			ok = world.createMeshShape( h, b, pc.mesh->xyz.data(), static_cast<int>( pc.mesh->xyz.size() / 3 ),
 										pc.mesh->tris.data(), static_cast<int>( pc.mesh->tris.size() / 3 ) );
 		else if ( pc.isHull )
-			ok = world.createHullShape( h, b, pc.hull, false );
+			ok = world.createHullShape( h, b, pc.hull, false, pc.densityScale );
 		else
-			ok = world.createShape( h, b, pc.spec, false );
+			ok = world.createShape( h, b, pc.spec, false, pc.densityScale );
 		added += ok ? 1 : 0;
 	}
 	return added;

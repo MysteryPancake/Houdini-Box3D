@@ -11,6 +11,8 @@
 #include <atomic>
 #include <box3d/box3d.h>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -227,6 +229,38 @@ inline void cleanTangent( const float in[3], float out[3] )
 	const bool ok = finite3( in );
 	for ( int i = 0; i < 3; ++i )
 		out[i] = ok ? in[i] : 0.0f;
+}
+
+// A shape's density scale (createShape's densityScale) is kept in its user data,
+// which nothing else uses: the float's bits with bit 32 set, so a scale of 0 is
+// not a null pointer; null is 1.
+static_assert( sizeof( void* ) >= sizeof( uint64_t ), "the density scale tag needs 64-bit pointers" );
+
+// A usable scale: finite and not negative, else 1.
+inline float cleanDensityScale( float s )
+{
+	return std::isfinite( s ) && s >= 0.0f ? s : 1.0f;
+}
+
+inline void* densityScaleTag( float s )
+{
+	s = cleanDensityScale( s );
+	if ( s == 1.0f )
+		return nullptr;
+	uint32_t bits = 0;
+	std::memcpy( &bits, &s, sizeof bits );
+	return reinterpret_cast<void*>( static_cast<uintptr_t>( ( uint64_t{ 1 } << 32 ) | bits ) );
+}
+
+inline float shapeDensityScale( b3ShapeId s )
+{
+	const uintptr_t tag = reinterpret_cast<uintptr_t>( b3Shape_GetUserData( s ) );
+	if ( !tag )
+		return 1.0f;
+	const uint32_t bits = static_cast<uint32_t>( tag & 0xffffffffu );
+	float scale = 1.0f;
+	std::memcpy( &scale, &bits, sizeof scale );
+	return cleanDensityScale( scale );
 }
 
 } // namespace b3dop

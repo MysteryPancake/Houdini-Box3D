@@ -33,9 +33,10 @@ All are optional except `P`. A missing one uses the Box3D Data value. Every step
 | `fastobject` | int | Nonzero = can't pass through other moving bodies |
 | `fastrotation` | int | Nonzero = no spin speed limit (round pieces only) |
 | `contactrecycling` | int | `0` = never recycle this body's contacts |
-| `collision_category`, `collision_mask`, `collision_group` | int | Collision filtering (below) |
+| `collision_categorybits`, `collision_maskbits`, `collision_groupindex` | int | Collision filtering (below) |
 | `bullet_georep` | string | Collision shape (see [Shapes](shapes.md)) |
 | `bullet_autofit`, `bullet_primS`, `bullet_radius`, `bullet_length`, `bullet_primT`, `bullet_primR` | various | Hand-set box, sphere or capsule |
+| `piece_georep`, `piece_densityscale` | string / float | Primitive attributes inside a `concave` piece: each named part's own shape and density (see [Shapes](shapes.md)) |
 | `pscale` / `scale` | float / vector | Size of the shape on plain points. On packed pieces, a Box3D Packed Object bakes it into the piece |
 | `deforming` | int | Nonzero = rebuild the collision shape every step |
 | `bullet_autofit_valid` | int | `0` = rebuild the collision shape once |
@@ -46,4 +47,4 @@ All are optional except `P`. A missing one uses the Box3D Data value. Every step
 | `speedmin`, `speedmax`, `spinmin`, `spinmax` | float | Limits on speed and spin. Below 0 or missing: none. A resting body is never started. Applied after each step, so a body can be a little over its limit within one |
 | `accelmax`, `angaccelmax` | float | The most collisions and constraints may change the velocity / spin, per second. Below 0 or missing: none. As in Bullet, only the velocity carried on is limited: a landing piece still stops, but keeps its downward `v` |
 
-**Collision filtering.** Two bodies in the same nonzero `collision_group` always collide if it's positive, never if it's negative. Otherwise they collide when each one's `collision_mask` shares a bit with the other's `collision_category`. For example `i@collision_group = -1` for pieces that never hit each other, or `i@collision_category = 2` with `i@collision_mask = ~2` for debris that ignores other debris. Static Object colliders use every bit.
+**Collision filtering.** Two bodies in the same nonzero `collision_groupindex` always collide if it's positive, never if it's negative. Otherwise they collide when each one's `collision_maskbits` shares a bit with the other's `collision_categorybits`. For example `i@collision_groupindex = -1` for pieces that never hit each other, or `i@collision_categorybits = 2` with `i@collision_maskbits = ~2` for debris that ignores other debris. Static Object colliders use every bit.

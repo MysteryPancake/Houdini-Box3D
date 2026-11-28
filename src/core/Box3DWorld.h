@@ -287,7 +287,7 @@ struct BodyProps
 		// motion exceeds this times the body's thinnest extent. Box3D recommends
 		// 0.01 .. 0.5
 		0.5f;
-	CollisionFilter filter; // `collision_category` / `collision_mask` / `collision_group`
+	CollisionFilter filter; // `collision_categorybits` / `collision_maskbits` / `collision_groupindex`
 
 	// The custom inertia matches: both off, or both on with the same tensor.
 	bool sameInertia( const BodyProps& o ) const
@@ -421,8 +421,13 @@ public:
 	BodyHandle createBody( const BodySettings& body, const double position[3], const float rotationXYZW[4],
 						   void* userData = nullptr ); // 0 on failure
 	void destroyBody( BodyHandle h );
-	bool createShape( BodyHandle h, const BodySettings& body, const ShapeSpec& shape, bool updateMass = true );
-	bool createHullShape( BodyHandle h, const BodySettings& body, HullId hull, bool updateMass = true );
+	// densityScale: this shape's density is the body's times it (a piece's
+	// `piece_densityscale`). The shape keeps it, so applyMassByHandle and
+	// copyShapesByHandle carry it; non-finite or negative is 1.
+	bool createShape( BodyHandle h, const BodySettings& body, const ShapeSpec& shape, bool updateMass = true,
+					  float densityScale = 1.0f );
+	bool createHullShape( BodyHandle h, const BodySettings& body, HullId hull, bool updateMass = true,
+						  float densityScale = 1.0f );
 	// Destroys the body's shapes at these positions in creation order, as
 	// [first, first + count) pairs (a compound's pieces), leaving the others in
 	// order. The mass is not updated (call applyMassFromShapes). Returns how
@@ -526,8 +531,9 @@ public:
 	// own inertia is exact, for a mesh, and for no shape.
 	bool boundsInertiaExtentsByHandle( BodyHandle h, const float* restRot, float pad, float extents[3] ) const;
 
-	// Set every shape's density (skipped with setShapeDensity = false, for shapes
-	// just created with it) and apply the mass from the shapes; then, for dynamic
+	// Set every shape's density, times its own scale (createShape's
+	// densityScale; skipped with setShapeDensity = false, for shapes just created
+	// with it) and apply the mass from the shapes; then, for dynamic
 	// bodies, comAtOrigin moves the centre of mass to the body origin (parallel
 	// axis theorem) and inertiaScale scales the inertia. setTypeByHandle
 	// recomputes from the shapes, so re-apply after a type change.
@@ -820,7 +826,11 @@ public:
 	// geometry along the body axes keeps the body axes exactly. Fewer than 4
 	// points or no hull: the body axes. Thread-safe. Results are cached
 	// process-wide by the points' content, so identical pieces fit once.
-	static bool fitShapeOriented( ShapeType type, const float* xyz, int count, ShapeSpec& out );
+	// alongSymmetryAxis: a capsule or cylinder runs along the points' axis of
+	// symmetry (symmetryAxisFrame), not the axis nearest Y: a piece's own shape
+	// (Box3DShapeBuild's `piece_georep`).
+	static bool fitShapeOriented( ShapeType type, const float* xyz, int count, ShapeSpec& out,
+								  bool alongSymmetryAxis = false );
 	// The same cache under a caller's key (packedFitKey), for fits of packed
 	// instances of one source that need not build their points to look it up.
 	// storeFit keeps what fitShapeOriented returned for that source; findFit is
@@ -887,14 +897,15 @@ private:
 
 	// The shape builders behind createShape.
 	bool boxShape( BodyHandle h, const BodySettings& b, const float halfExtents[3], const float center[3],
-				   const float rotationXYZW[4], bool updateMass );
-	bool sphereShape( BodyHandle h, const BodySettings& b, float radius, const float center[3], bool updateMass );
+				   const float rotationXYZW[4], bool updateMass, float densityScale = 1.0f );
+	bool sphereShape( BodyHandle h, const BodySettings& b, float radius, const float center[3], bool updateMass,
+					  float densityScale = 1.0f );
 	bool capsuleShape( BodyHandle h, const BodySettings& b, float radius, float halfLength, const float center[3],
-					   const float rotationXYZW[4], bool updateMass );
+					   const float rotationXYZW[4], bool updateMass, float densityScale = 1.0f );
 	// A kCylinderSides-sided prism hull from b3CreateCylinder, turned and moved
 	// like a capsule; cached by its size and pose.
 	bool cylinderShape( BodyHandle h, const BodySettings& b, float radius, float halfLength, const float center[3],
-						const float rotationXYZW[4], bool updateMass );
+						const float rotationXYZW[4], bool updateMass, float densityScale = 1.0f );
 
 	struct Impl;
 	std::unique_ptr<Impl> myImpl;

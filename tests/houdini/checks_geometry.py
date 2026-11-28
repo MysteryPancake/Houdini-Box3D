@@ -1,9 +1,13 @@
 """Unpacked geometry, RBD Point Objects, collision masks, collision shapes and Static RBD Objects."""
 
+import math
+
 import hou
 from b3dtest import (
     GROUND,
     four_points_at_height,
+    ground_object,
+    constraint_lines,
     Result,
     SetupError,
     box3d_data,
@@ -32,7 +36,7 @@ from b3dtest import (
 
 
 # ---------------------------------------------------------------------------
-# collision_category / collision_mask / collision_group (docs/attributes.md's collision rules)
+# collision_categorybits / collision_maskbits / collision_groupindex (docs/attributes.md's collision rules)
 # ---------------------------------------------------------------------------
 
 
@@ -41,16 +45,16 @@ def test_collision_masks():
     that misses the other's category passes through, a negative shared group never collides."""
     cases = {
         # name: (falling box attributes, expected to land)
-        "mask -1": ({"collision_category": 2, "collision_mask": -1, "collision_group": 0}, True),
-        "mask misses category": ({"collision_category": 2, "collision_mask": 4, "collision_group": 0}, False),
-        "shared negative group": ({"collision_category": 2, "collision_mask": -1, "collision_group": -1}, False),
-        "shared positive group, masks miss": ({"collision_category": 2, "collision_mask": 4, "collision_group": 1}, True),
+        "mask -1": ({"collision_categorybits": 2, "collision_maskbits": -1, "collision_groupindex": 0}, True),
+        "mask misses category": ({"collision_categorybits": 2, "collision_maskbits": 4, "collision_groupindex": 0}, False),
+        "shared negative group": ({"collision_categorybits": 2, "collision_maskbits": -1, "collision_groupindex": -1}, False),
+        "shared positive group, masks miss": ({"collision_categorybits": 2, "collision_maskbits": 4, "collision_groupindex": 1}, True),
     }
     rows, bad = [], []
     for label, (attrs, should_land) in cases.items():
         ground = dict(GROUND)
-        ground_group = attrs["collision_group"]
-        ground["attrs"] = {"active": 0, "collision_category": 1, "collision_mask": -1, "collision_group": ground_group}
+        ground_group = attrs["collision_groupindex"]
+        ground["attrs"] = {"active": 0, "collision_categorybits": 1, "collision_maskbits": -1, "collision_groupindex": ground_group}
         box = {"size": (1, 1, 1), "center": (0, 2, 0), "attrs": {"active": 1, **attrs}}
         path, names = packed_boxes("masks_" + label.replace(" ", "_").replace(",", "").replace("-", "m"), [ground, box])
         dop = new_dopnet("masks_" + str(len(rows)))
@@ -609,6 +613,231 @@ def test_far_world():
     return [Result("far_world", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
 
 
+# A rod (a hexagonal prism 1 long along x, corners 0.2 from its axis, a flat face down) with a 0.2 m cube inside it, as
+# two named pieces of one packed concave body: VEX for a detail wrangle. The rod's piece_georep is `kind` (none: the
+# attribute is left off), the cube's piece_densityscale LUMP_SCALE (_rod_geometry fills it in).
+_PIECE_ROD_VEX = """
+int ring[];
+for (int end = 0; end < 2; ++end)
+    for (int k = 0; k < 6; ++k) {
+        float a = radians(30.0 + 60.0 * k);
+        push(ring, addpoint(0, set(end ? 0.5 : -0.5, 0.2 * cos(a), 0.2 * sin(a))));
+    }
+int faces[];
+int bottom[] = array(ring[5], ring[4], ring[3], ring[2], ring[1], ring[0]);
+int top[] = array(ring[6], ring[7], ring[8], ring[9], ring[10], ring[11]);
+int pr = addprim(0, "poly", bottom);
+push(faces, pr);
+pr = addprim(0, "poly", top);
+push(faces, pr);
+for (int k = 0; k < 6; ++k) {
+    int j = (k + 1) % 6;
+    int side[] = array(ring[k], ring[j], ring[6 + j], ring[6 + k]);
+    pr = addprim(0, "poly", side);
+    push(faces, pr);
+}
+addprimattrib(0, "name", "");
+foreach (int f; faces) setprimattrib(0, "name", f, "rod");
+int cube[];
+for (int i = 0; i < 8; ++i)
+    push(cube, addpoint(0, set((i & 1) ? 0.1 : -0.1, (i & 2) ? 0.1 : -0.1, (i & 4) ? 0.1 : -0.1)));
+int quads[] = array(0, 2, 3, 1,  4, 5, 7, 6,  0, 1, 5, 4,  2, 6, 7, 3,  0, 4, 6, 2,  1, 3, 7, 5);
+addprimattrib(0, "piece_densityscale", 1.0);
+for (int q = 0; q < 6; ++q) {
+    int corners[] = array(cube[quads[4 * q]], cube[quads[4 * q + 1]], cube[quads[4 * q + 2]], cube[quads[4 * q + 3]]);
+    int f = addprim(0, "poly", corners);
+    setprimattrib(0, "name", f, "lump");
+    setprimattrib(0, "piece_densityscale", f, LUMP_SCALE);
+}
+"""
+
+
+def _rod_geometry(geo, kind, lump_scale=10.0, named=True):
+    """The rod and its cube (_PIECE_ROD_VEX) in `geo`, the rod's piece_georep `kind`; named False: no `name`, so the
+    pieces are the connected sets (Hull per Connected). Returns the SOP."""
+    build = create(geo, "attribwrangle", "rod")
+    set_parm(build, ["class"], 0)
+    vex = _PIECE_ROD_VEX.replace("LUMP_SCALE", f"{lump_scale!r}")
+    if kind:
+        vex += f'addprimattrib(0, "piece_georep", "");\nforeach (int f; faces) setprimattrib(0, "piece_georep", f, "{kind}");\n'
+    if not named:
+        vex += 'removeprimattrib(0, "name");\n'
+    set_parm(build, ["snippet"], vex)
+    return build
+
+
+def _piece_rod(kind, how="packed"):
+    """(rest height of the body's point, its written-back mass) for the rod with piece_georep `kind`, dropped flat
+    from 0.8 onto the ground. how: "packed" (a packed concave piece), "connected" (packed with no names, Hull per
+    Connected on, so its two connected sets are the pieces) or "object" (an RBD Object with Default Shape Concave:
+    its height is its points' mean, and no mass is written)."""
+    tag = f"piece_rod_{how}_{kind or 'none'}"
+    geo = new_geo(tag + "_geo")
+    build = _rod_geometry(geo, kind, named=how != "connected")
+    dop = new_dopnet(tag)
+    if how == "object":
+        lift = create(geo, "xform", "lifted")
+        lift.setInput(0, build)
+        set_parm(lift, ["t"], (0.0, 0.8, 0.0))
+        display(lift)
+        obj = box3d_data(dop, rbd_object(dop, "rod", lift.path()), "rod_data", defaultshape=3)
+    else:
+        pack = create(geo, "pack")  # one packed primitive holding both pieces (Assemble would pack each name apart)
+        pack.setInput(0, build)
+        attrs = create(geo, "attribwrangle", "body")
+        attrs.setInput(0, pack)
+        set_parm(attrs, ["snippet"], 's@name = "rod"; s@bullet_georep = "concave"; @P = {0, 0.8, 0};')
+        display(attrs)
+        obj = packed_object(dop, "rod", attrs.path())
+        if how == "connected":
+            obj = box3d_data(dop, obj, "rod_data", hullperconnected=1)
+    finish(dop, box3d_solver(dop, merge(dop, [ground_object(dop, tag + "_ground"), obj])))
+    if how == "object":
+        track = step(dop, 72, lambda sim, f: whole_object_points(sim, "rod") if f == 72 else None)
+        pts = track[72] or []
+        return (sum(q[1] for q in pts) / len(pts) if pts else float("nan")), float("nan")
+    track = step(dop, 72, lambda sim, f: point_attributes(sim, "rod", "rod", ["P", "mass"]) if f == 72 else None)
+    last = track[72] or {}
+    p, mass = last.get("P"), last.get("mass")
+    return (p[1] if p else float("nan")), (mass if mass is not None else float("nan"))
+
+
+def test_piece_shapes():
+    """A packed concave body's pieces take their own shape and density (piece_georep, piece_densityscale): a
+    hexagonal rod fitted as each shape rests at that shape's height on the ground and weighs its volume, plus a
+    cube inside it at 10 times the density (80 kg). A hull rests on a flat (0.173); a capsule fitted along the rod's
+    length rests at its radius (0.2); a cylinder (a kCylinderSides-sided hull, 32) on a flat at 0.2 cos(pi / 32); a sphere through
+    the rod's corners at 0.539; a box hugging the hexagon on its wide face (0.173). Masses are the plugin's: the
+    fitted shape's volume times 1000."""
+    r, half = 0.2, 0.5
+    hexagon = 1.5 * math.sqrt(3.0) * r * r * 2.0 * half
+    sphere_r = math.hypot(half, r)
+    want = {
+        None: (r * math.cos(math.radians(30.0)), hexagon),
+        "capsule": (r, math.pi * r * r * (2.0 * (half - r) + 4.0 / 3.0 * r)),
+        "cylinder": (r * math.cos(math.pi / 32.0), math.pi * r * r * 2.0 * half),
+        "sphere": (sphere_r, 4.0 / 3.0 * math.pi * sphere_r ** 3),
+        "box": (r * math.cos(math.radians(30.0)), 2.0 * half * 2.0 * r * 2.0 * r * math.cos(math.radians(30.0))),
+    }
+    rows, ok = [], True
+    for kind, (height, volume) in want.items():
+        got_h, got_m = _piece_rod(kind)
+        mass = 1000.0 * volume + 80.0
+        good = close(got_h, height, 0.005) and close(got_m, mass, 0.01 * mass)
+        ok = ok and good
+        rows.append(f"{kind or 'no attribute'}: rests at {got_h:.4f} (expected {height:.4f}), mass {got_m:.1f} "
+                    f"(expected {mass:.1f})")
+    return [Result("piece_shapes", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+def test_piece_shapes_paths():
+    """The piece attributes on the other paths that make pieces: the rod of piece_shapes as an RBD Object (Default
+    Shape Concave: one shape per `name` piece of its own geometry) and as a packed piece without names under Hull
+    per Connected (the rod and the cube are its two connected sets). Its capsule rests at 0.2 and its sphere at 0.539
+    either way, where its hull rests on a flat at 0.173; the packed one weighs the capsule's 108.9 kg and the cube's
+    80 at its density scale of 10."""
+    r, half = 0.2, 0.5
+    sphere_r = math.hypot(half, r)
+    capsule = 1000.0 * math.pi * r * r * (2.0 * (half - r) + 4.0 / 3.0 * r) + 80.0
+    want = [("object", None, r * math.cos(math.radians(30.0)), None), ("object", "capsule", r, None),
+            ("object", "sphere", sphere_r, None), ("connected", "capsule", r, capsule)]
+    rows, ok = [], True
+    for how, kind, height, mass in want:
+        got_h, got_m = _piece_rod(kind, how)
+        good = close(got_h, height, 0.005) and (mass is None or close(got_m, mass, 0.01 * mass))
+        ok = ok and good
+        rows.append(f"{how}, {kind or 'no attribute'}: rests at {got_h:.4f} (expected {height:.4f})"
+                    + (f", mass {got_m:.1f} (expected {mass:.1f})" if mass is not None else ""))
+    return [Result("piece_shapes_paths", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
+def _object_push(lump):
+    """How far piece_shapes' rod and cube, as one RBD Object (Default Shape Concave, the cube's piece_densityscale
+    `lump`), travels from frame 20 to 60 after a dense ball moving at 5 m/s along x hits its end, with no gravity.
+    Nothing bounces, so the two move on together."""
+    tag = f"piece_object_push_{int(lump)}"
+    geo = new_geo(tag + "_geo")
+    lift = create(geo, "xform", "lifted")
+    lift.setInput(0, _rod_geometry(geo, None, lump_scale=lump))
+    set_parm(lift, ["t"], (0.0, 2.0, 0.0))
+    display(lift)
+    ball_path, _ = packed_boxes(tag + "_ball", [{"size": (0.2, 0.2, 0.2), "center": (-1.5, 2.0, 0.0),
+                                                  "attrs": {"bullet_georep": "sphere", "density": 67500.0,
+                                                            "bounce": 0.0, "friction": 0.0, "v": (5.0, 0.0, 0.0)}}])
+    dop = new_dopnet(tag)
+    rod = box3d_data(dop, rbd_object(dop, "rod", lift.path()), "rod_data", defaultshape=3, bounce=0.0, friction=0.0)
+    ball = packed_object(dop, "ball", ball_path, keep_velocity=True, bounce=0.0, friction=0.0)
+    finish(dop, box3d_solver(dop, merge(dop, [ball, rod]), gravity=(0.0, 0.0, 0.0)))
+
+    def mean_x(sim, f):
+        pts = whole_object_points(sim, "rod") if f in (20, 60) else None
+        return sum(q[0] for q in pts) / len(pts) if pts else None
+
+    track = step(dop, 60, mean_x)
+    return (track[60] - track[20]) if track[20] is not None and track[60] is not None else float("nan")
+
+
+def test_piece_shapes_object_density():
+    """piece_densityscale counts in an RBD Object's mass: a heavy ball hits the end of piece_shapes' rod as an RBD
+    Object, with no gravity and no bounce, and they move on together at the ball's speed times m / (m + M). From the
+    speeds with the cube at 1 and at 10, (5 / v - 1) gives M / m, so their ratio is the rods' mass ratio whatever the
+    ball weighs: (hull 103.9 + 80) / (103.9 + 8) = 1.643 with the scale, 1 without it. An RBD Object's centre of mass
+    stays the centroid of its hull (Bullet's rule), so only the mass shows."""
+    seconds = 40.0 / hou.fps()
+    light, heavy = _object_push(1.0) / seconds, _object_push(10.0) / seconds
+    ratio = (5.0 / heavy - 1.0) / (5.0 / light - 1.0) if light > 0.0 and heavy > 0.0 else float("nan")
+    hexagon = 1.5 * math.sqrt(3.0) * 0.2 * 0.2 * 1.0 * 1000.0
+    want = (hexagon + 80.0) / (hexagon + 8.0)
+    ok = close(ratio, want, 0.03)
+    return [Result("piece_shapes_object_density", Result.PASS if ok else Result.FAIL,
+                   f"speed after the hit {light:.3f} m/s with the cube at 1, {heavy:.3f} at 10: mass ratio "
+                   f"{ratio:.3f} (expected {want:.3f}; 1 would mean the scale is ignored)")]
+
+def test_piece_shapes_glue():
+    """A piece's density scale survives Glue as One Body, which copies the pieces' shapes onto one compound body:
+    two rods (piece_shapes' rod and cube) glued end to end, the left rod's cube 10 times as dense as the right's,
+    dropped onto a ridge 2 cm wide at x -0.06. Their centre of mass is at x -0.12 with the scales (left 184 kg, right
+    112), so they tip to the left; with both cubes alike it would be at 0, and they would tip to the right."""
+    rows, ok = [], True
+    for compound in (1, 0):
+        tag = f"piece_glue_{compound}"
+        geo = new_geo(tag + "_geo")
+        rods = []
+        for side, x, lump in (("left", -0.5, 10.0), ("right", 0.5, 1.0)):
+            pack = create(geo, "pack", f"{side}_pack")
+            pack.setInput(0, _rod_geometry(geo, None, lump_scale=lump))
+            body = create(geo, "attribwrangle", f"{side}_body")
+            body.setInput(0, pack)
+            set_parm(body, ["snippet"], f's@name = "{side}"; s@bullet_georep = "concave"; @P = {{{x}, 0.75, 0}};')
+            rods.append(body)
+        both = merge(geo, rods, "rods")
+        display(both)
+        ridge_path, _ = packed_boxes(tag + "_ridge", [{"size": (0.02, 0.5, 2.0), "center": (-0.06, 0.25, 0.0),
+                                                        "attrs": {"active": 0}}])
+        dop = new_dopnet(tag)
+        obj = packed_object(dop, "rods", both.path())
+        glue = create(dop, "glueconrel", "glue")
+        set_parm(glue, ["strength"], 1e9)
+        net = create(dop, "constraintnetwork", "constraint_network")
+        net.setInput(0, obj)
+        set_parm(net, ["soppath", "constraintsoppath", "geosoppath"],
+                 constraint_lines(tag + "_network", [("left", (0, 0.75, 0), "right", (0, 0.75, 0), "Glue")]))
+        net.setInput(1, glue)
+        solver = box3d_solver(dop, merge(dop, [ground_object(dop, tag + "_ground"),
+                                               packed_object(dop, "ridge", ridge_path), net]))
+        set_parm(solver, ["gluecompound"], compound)
+        finish(dop, solver)
+        track = step(dop, 90, lambda sim, f: packed_positions(sim, "rods") if f == 90 else None)
+        end = track[90] or {}
+        left, right = end.get("left"), end.get("right")
+        good = left is not None and right is not None and left[1] < right[1] - 0.2
+        ok = ok and good
+        rows.append(f"Glue as One Body {'on' if compound else 'off'}: left rod at y "
+                    + (f"{left[1]:.3f}, right at {right[1]:.3f}" if left and right else "missing")
+                    + " (expected the left lower by over 0.2)")
+    return [Result("piece_shapes_glue", Result.PASS if ok else Result.FAIL, "; ".join(rows))]
+
+
 TESTS = {
     "unpacked_geometry": test_unpacked_geometry,
     "unpacked_geometry_bullet": test_unpacked_geometry_bullet,
@@ -622,4 +851,8 @@ TESTS = {
     "static_rbd_object_retype": test_static_rbd_object_retype,
     "tapered_tube_hull": test_tapered_tube_hull,
     "far_world": test_far_world,
+    "piece_shapes": test_piece_shapes,
+    "piece_shapes_paths": test_piece_shapes_paths,
+    "piece_shapes_glue": test_piece_shapes_glue,
+    "piece_shapes_object_density": test_piece_shapes_object_density,
 }

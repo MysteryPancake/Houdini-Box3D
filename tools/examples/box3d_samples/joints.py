@@ -62,7 +62,7 @@ fall side by side onto the ground.""", try_="move one cube over the other in box
 
 @sample("Joints", "Motor Joint", SOURCE, frames=600)
 def motor_joint(s):
-    b = Bodies(s.tag, {"animated": 0, "collision_mask": -1})
+    b = Bodies(s.tag, {"animated": 0, "collision_maskbits": -1})
     b.ground(20.0)
     speed = b.slider("speed", "Speed", 1.0, -5.0, 5.0,
                      "How fast the target runs along its path (the sample's Speed slider, which starts at 0). "
@@ -70,13 +70,13 @@ def motor_joint(s):
     b.stream("target", b.sphere("target", 0.1), f"""\
 // The kinematic target (active 0, animated 1), moved each step by b3Body_SetTargetTransform along a figure of eight
 // in the xy plane, turning about z. The sample advances its time by Speed each step before setting the target, so the
-// pose at time T is the path at Speed * T. It collides with nothing (collision_mask 0): the sample's has no shape.
+// pose at time T is the path at Speed * T. It collides with nothing (collision_maskbits 0): the sample's has no shape.
 float t = {speed} * @Time;
 vector p = set(6.0 * sin(2.0 * t), 10.0 + 4.0 * sin(t), 0.0);
 int pt = static_body(p, axis_angle({{0, 0, 1}}, 2.0 * t));
 setpointattrib(0, "animated", pt, 1);
 """, cd=(0.75, 0.55, 0.85), note="a small ball to show the target; the sample's target body has no shape",
-             animated=1, collision_mask=0)
+             animated=1, collision_maskbits=0)
     b.stream("box", b.box("box", 1.0, 0.25, 0.25), "body({0, 10, 0}, identity);", cd=(0.9, 0.6, 0.2),
              note="b3MakeBoxHull( 1, 0.25, 0.25 ): 500 kg")
     b.stream("spring_box", b.box("spring_box", 0.5, 0.5, 0.5), "body({-2, 2, 0}, identity);", cd=(0.4, 0.65, 0.9),

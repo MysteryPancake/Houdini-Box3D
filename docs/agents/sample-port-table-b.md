@@ -83,10 +83,10 @@ Wedge, Triangle vs Hull, Hull Ghost Manifold, Sphere Ghost Manifold, Ghost Oracl
 
 | Sample | Verdict | What it uses / why |
 |---|---|---|
-| Box | work | `human` on a ground box |
-| Mesh | work | `human` on a grid mesh |
-| Pile | work | Many `human`s on a grid mesh |
-| Incline | work | `human` on a slope; its friction and spring drop at 2 s: keyed relationship node parameters |
+| Box | built | `Humans` (`human.py`) on a ground box; the calf is two capsule parts, the foot at half density |
+| Mesh | built | A ragdoll on a grid mesh, its bones on parallel joints to the world (the kinematic anchors) |
+| Pile | built | 20 ragdolls on a grid mesh, their spots from `XorShift(42)` |
+| Incline | built | A ragdoll on a slope (`grid_mesh_turned`); its friction and spring drop at 2 s: keyed relationship node parameters |
 | Pose | no | Compiled out (`#if 0`) |
 
 ## Replay (`sample_replay.cpp`)
@@ -108,7 +108,7 @@ are dropped.
 | Sphere Stack Restitution | A sphere stack hit from above, Gravity |
 | Restitution Propagation | Balls bouncing on crates: Bounce Propagation |
 | Box Restitution | A box landing at speed, Gravity |
-| Rotated Box Restitution | Tilted boxes kept apart by `collision_group` |
+| Rotated Box Restitution | Tilted boxes kept apart by `collision_groupindex` |
 | Two Box Restitution | Two bouncing boxes |
 | Sphere Restitution | A row of spheres |
 | Bounce Impulse | Sphere and box bounce, Gravity |

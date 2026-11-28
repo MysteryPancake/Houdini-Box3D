@@ -14,6 +14,7 @@ void testStoredPose();
 void testHandleBuild();
 void testMidSimChanges();
 void testConvexShapes();
+void testPieceShapes();
 void testPrimitiveOverrides();
 void testHullCache();
 void testHullCentroid();

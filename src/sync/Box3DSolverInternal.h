@@ -244,6 +244,13 @@ struct NamedPiece
 	// Box3D sphere instead of a hull.
 	int primCount = 0;
 	bool sphereValid = false;
+	// The piece's own shape and density scale (kPieceShapeAttrib,
+	// kPieceDensityScaleAttrib): Convex is a hull, as a piece without them is.
+	// `ownSettings` once its first primitive with either attribute was read.
+	b3dop::ShapeType shape = b3dop::ShapeType::Convex;
+	float densityScale = 1.0f;
+	bool ownSettings = false;
+	bool unknownShape = false; // kPieceShapeAttrib named no shape: a hull, with a warning
 	double sphereCentre[3] = { 0, 0, 0 };
 	double sphereRadius = 0;
 	std::vector<float> xyz;
@@ -416,11 +423,14 @@ struct Piece
 	b3dop::ShapeSpec spec;
 	std::shared_ptr<const MeshPiece> mesh; // set: a mesh (static bodies only)
 	float volume = 0.0f;
+	float densityScale = 1.0f; // the piece's density over the body's (kPieceDensityScaleAttrib)
 };
 
 struct BuiltShapes
 {
 	std::vector<Piece> pieces;
+	// The pieces' volumes, each times its densityScale: the body's mass is its
+	// density times this, so a set mass gives every piece its share.
 	float totalVolume = 0.0f;
 	const char* note = nullptr; // set when something fell back
 	bool mesh = false;			// static-only pieces: one triangle mesh, or a ground

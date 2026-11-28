@@ -2,7 +2,8 @@
 
 import math
 
-from .common import Bodies, f32, finish, motion_locks, num, sample
+from .common import (POLYGON_FUNCTIONS, VEX_FUNCTIONS, Bodies, cos_sin, create, f32, finish, motion_locks, num,
+                     sample, set_parm, vec)
 from .joints import node
 
 SOURCE = "sample_bodies.cpp"
@@ -319,6 +320,76 @@ the tilt about x and z, and inertialtensorstiffness 1e4 (10000 times as hard to 
                   joints=[("box3d_motionlockconrel", "lock_rotation",
                            {"lock_x": 0, "lock_y": 0, "lock_z": 0, "lock_angular_xy": 1}, "motionlock")],
                   lines=motion_locks([("fixed0", (0.3, 0.5, 0.0))]))
+
+
+def _ring_band(count=24, radius=1.0):
+    """The Class Ring's band as the sample builds it: count points on a circle of radius 0.9 r in the xy plane, each
+    the last turned by b3ComputeCosSin( 2 pi / count ) in float. Returns (vertices, tube radius)."""
+    tube = f32(0.1 * radius)
+    c, sn = (f32(v) for v in cos_sin(f32(2.0 * f32(math.pi) / count)))
+    x, y = f32(radius - tube), 0.0
+    vertices = []
+    for _ in range(count):
+        vertices.append((x, y, 0.0))
+        x, y = f32(f32(c * x) - f32(sn * y)), f32(f32(sn * x) + f32(c * y))
+    return vertices, tube
+
+
+@sample("Bodies", "Class Ring", SOURCE, frames=1200)
+def class_ring(s):
+    b = Bodies(s.tag, {"fastrotation": 0, "contactrecycling": 1})
+    b.ground(100.0)
+    vertices, tube = _ring_band()
+    n = len(vertices)
+    # The band: one capsule between each vertex and the next (the last one closes the loop, a little longer than the
+    # rest, as b3ComputeCosSin's 15 degrees are not exact), named pieces fitted as capsules (piece_georep).
+    build = create(b.geo, "attribwrangle", "band")
+    set_parm(build, "class", 0)
+    listed = ", ".join(vec(v) for v in vertices)
+    set_parm(build, "snippet", VEX_FUNCTIONS + POLYGON_FUNCTIONS + f"""\
+// b3Capsule {{ v[i], v[i + 1], {num(tube)} }} for each of the {n} band vertices: the pieces band0 to band{n - 1}.
+vector v[] = array({listed});
+for (int i = 0; i < {n}; ++i) capsule(sprintf("band%d", i), v[i], v[(i + 1) % {n}], {num(tube)});
+""")
+    named = create(b.geo, "attribwrangle", "band_named")
+    named.setInput(0, build)
+    set_parm(named, "class", 1)  # primitives
+    set_parm(named, "snippet", 's@piece_georep = "capsule";\nf@piece_densityscale = 1.0;')
+    gem, _ = b.shifted(b.sphere("gem", 0.3), (0.0, -0.65, 0.0))
+    gem_named = create(b.geo, "attribwrangle", "gem_named")
+    gem_named.setInput(0, gem)
+    set_parm(gem_named, "class", 1)
+    set_parm(gem_named, "snippet", 's@name = "gem";\ns@piece_georep = "sphere";\nf@piece_densityscale = 2.0;')
+    merge = create(b.geo, "merge", "ring_shape")
+    merge.setInput(0, named)
+    merge.setInput(1, gem_named)
+    ring = (merge, "concave")
+    b.stream("ring", ring, """\
+// The ring standing on its edge (its centre 1 m up, the band in its xy plane), tilted 13 degrees about x and spun at
+// 100 rad/s about its own (turned) y: a coin spun on a table, the gem at the bottom.
+vector4 q = axis_angle({1, 0, 0}, 13.0 * PI / 180.0);
+int pt = body({0, 1, 0}, q);
+setpointattrib(0, "w", pt, qrotate(q, {0, 100, 0}));
+""", cd=(0.85, 0.7, 0.3), note=f"{n} capsules of radius {num(tube)} around a circle of radius 0.9 (density 1) and a "
+                              "sphere gem of radius 0.3 at (0, -0.65, 0) at density 2, on one body; allowFastRotation, "
+                              "contact recycling off",
+             density=1.0, fastrotation=1, contactrecycling=0)
+    return finish(s, b, about="""\
+A class ring: a band of 24 capsules with a heavy gem, spun on its edge like a coin at 100 rad/s, the
+gem at the bottom. It wanders across the ground, hopping now and then, and the spin carries the gem up:
+for a while the ring spins gem up, upside down (around frames 660 to 780 here). Then it slows, falls
+over and lies flat, the gem on the ground, by about frame 1020.""",
+                  ported="""\
+the ring is one body of named pieces: the 24 band capsules and the gem, each fitted as its own shape
+(piece_georep on band_named and gem_named), the gem's density twice the band's
+(piece_densityscale 2). The sample steps 16 times a frame (960 Hz) with 8 substeps, as the fast spin
+needs: the solver's Substeps 16 and Constraint Iterations 8. The ring follows Box3D's to 0.1 mm for
+the first 30 frames. After that the spin is chaotic (tilting Box3D's ring 0.01 degrees more moves it
+0.7 m by frame 60), so the paths part, but Box3D's ring does the same things: it turns gem up somewhere
+between frames 420 and 800 (with the tilt) and lies flat by frames 1000 to 1150.""",
+                  try_="lower Substeps on the solver to 1 and Constraint Iterations to 4 (60 Hz): the ring rolls "
+                       "upright, slowing, and does not turn over in the first 5 s.",
+                  solver={"substeps": 16, "solverpasses": 8})
 
 
 @sample("Bodies", "Offset Kinematic", SOURCE, frames=600)

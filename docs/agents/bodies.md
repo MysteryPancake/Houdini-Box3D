@@ -49,7 +49,10 @@ equal to what its body was built with.
      hulls first, and a body with a mesh is never retyped away from static. No polygons: hulls.
   3. Convex / concave hulls: `pieceFromPoints` with a `packedHullKey`, `findHull` first, points only on a miss, else a
      fitted box with a note. Convex merges all pieces unless hull-per-connected; concave is one hull per piece, or per
-     connected set with hull-per-connected.
+     connected set with hull-per-connected. There a piece's first primitive may set `kPieceShapeAttrib` (fitted by
+     `fittedPiece`: `fitShapeOriented` along the piece) and `kPieceDensityScaleAttrib` (`Piece::densityScale`; the
+     body's `totalVolume` counts each piece times it, so a set `mass` is shared by weight). A source whose pieces use
+     them skips the summary fast path (`SourceSummary::plainHulls`).
   4. Box / sphere / capsule with autofit: `fitShapeOriented` (below).
   5. Nothing usable: `makeShapeSpec(pscale * scale)`, plus `applyPrimOverrides` only with autofit off (RBD Packed
      Object writes default `bullet_primS` / `bullet_radius` onto every point).

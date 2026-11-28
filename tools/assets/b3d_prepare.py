@@ -73,7 +73,7 @@ s@name = name;
 """
 COLLISION_PREFIX = "static"  # Bullet's Output Prefix for assembled colliders
 
-# Bullet's `collisiongroup` / `collisionignore` as Box3D's `collision_category` / `collision_mask`.
+# Bullet's `collisiongroup` / `collisionignore` as Box3D's `collision_categorybits` / `collision_maskbits`.
 # Input 1 is the other geometry of the simulation (pieces <-> colliders), so both sides number the
 # same group names the same way. Bit 0 is "no group"; groups take bits 1 to 30 in sorted order (more
 # share bit 30), so the values fit a 32-bit int. A piece ignores a group when the pattern matches
@@ -148,7 +148,7 @@ for (int src = 0; src < 2; src++) {
 }
 i[]@__allows = allows;
 """
-# Per point (the node is skipped when the pieces have neither attribute; collision_category / collision_mask are
+# Per point (the node is skipped when the pieces have neither attribute; collision_categorybits / collision_maskbits are
 # there, 1 and -1 where they were missing, so a point with neither attribute keeps what it had).
 COLLISION_NAMES_VEX = COLLISION_IGNORED_FN + """\
 int hasGroup = haspointattrib(0, "collisiongroup");
@@ -163,8 +163,8 @@ int category = (group != "" && index >= 0) ? bit(min(index + 1, 30)) : 1;
 int mask = ~ignoredBits(ignore, used);
 for (int k = 0; k < len(allows); k++)
     if (allows[k] & category) mask |= bit(min(k, 30));
-setpointattrib(0, "collision_category", i@ptnum, category);
-setpointattrib(0, "collision_mask", i@ptnum, mask);
+setpointattrib(0, "collision_categorybits", i@ptnum, category);
+setpointattrib(0, "collision_maskbits", i@ptnum, mask);
 """
 # Bullet's Path Attribute on its Assembles.
 PACK_PATH = "op:`opfullpath('.')`/pack"
@@ -190,8 +190,8 @@ def _set(node, warn, parms=None, exprs=None):
 
 
 def collision_names(parent, name, src, other, warn):
-    """A subnet `name` in `parent` that maps `src`'s collisiongroup / collisionignore onto collision_category /
-    collision_mask (COLLISION_NAMES_VEX); `other` is the simulation's other geometry. Each geometry's group names
+    """A subnet `name` in `parent` that maps `src`'s collisiongroup / collisionignore onto collision_categorybits /
+    collision_maskbits (COLLISION_NAMES_VEX); `other` is the simulation's other geometry. Each geometry's group names
     come from an Attribute Promote (unique), `__used` joins them once, and a point wrangle works out each point's
     bits. The subnet passes `src` through when it has neither attribute. Returns it."""
     net = parent.createNode("subnet", name)
@@ -223,8 +223,8 @@ def collision_names(parent, name, src, other, warn):
     used.setInput(1, groups(inputs[1], "other"))
     used.parm("class").set("detail")
     used.parm("snippet").set(COLLISION_USED_VEX)
-    bits = b3d_hda.attribute_create(net, "make_bits", [("collision_category", "int", None),
-                                                       ("collision_mask", "int", None)], warn, write=False)
+    bits = b3d_hda.attribute_create(net, "make_bits", [("collision_categorybits", "int", None),
+                                                       ("collision_maskbits", "int", None)], warn, write=False)
     bits.setInput(0, inputs[0])
     for k, default in (("1", 1), ("2", -1)):
         bits.parm(f"default{k}v1").set(default)

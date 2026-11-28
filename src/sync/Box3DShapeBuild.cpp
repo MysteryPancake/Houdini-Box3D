@@ -269,6 +269,48 @@ void appendPrimPoints( const GU_Detail* gdp, const GA_Primitive& prim, NamedPiec
 	appendQuadricSamples( gdp, prim, np );
 }
 
+// The piece attributes of a source detail (kPieceShapeAttrib,
+// kPieceDensityScaleAttrib), read from each piece's first primitive. The
+// density scale may be a float or an int attribute.
+struct PieceAttrs
+{
+	GA_ROHandleS shape;
+	const GA_Attribute* density = nullptr;
+	const GA_AIFTuple* densityTuple = nullptr;
+
+	explicit PieceAttrs( const GU_Detail* gdp )
+		: shape( gdp, GA_ATTRIB_PRIMITIVE, kPieceShapeAttrib )
+	{
+		density = gdp->findPrimitiveAttribute( kPieceDensityScaleAttrib );
+		densityTuple = density ? density->getAIFTuple() : nullptr;
+	}
+
+	// The piece's shape and density scale from `prim`, if it has none yet. A
+	// shape other than box, sphere, capsule or cylinder is a hull, and any but an
+	// empty one or convexhull also marks the piece (unknownShape) for a warning;
+	// a density scale that is negative or not finite is 1.
+	void read( GA_Offset prim, NamedPiece& np ) const
+	{
+		if ( np.ownSettings || ( !shape.isValid() && !densityTuple ) )
+			return;
+		np.ownSettings = true;
+		if ( shape.isValid() )
+			if ( const char* name = shape.get( prim ) )
+			{
+				b3dop::ShapeType t = b3dop::ShapeType::Convex;
+				const bool known = b3dop::parseShapeType( name, t );
+				if ( known && ( t == b3dop::ShapeType::Box || t == b3dop::ShapeType::Sphere ||
+								t == b3dop::ShapeType::Capsule || t == b3dop::ShapeType::Cylinder ) )
+					np.shape = t;
+				else if ( *name && !( known && t == b3dop::ShapeType::Convex ) )
+					np.unknownShape = true;
+			}
+		fpreal64 d = 1.0;
+		if ( densityTuple && densityTuple->get( density, prim, d ) )
+			np.densityScale = std::isfinite( d ) && d >= 0.0 ? static_cast<float>( d ) : 1.0f;
+	}
+};
+
 // Each piece's points once (in offset order) into xyz, then the hashes of each
 // piece and of all of them together (once per shared source).
 void finishPieces( const GU_Detail* gdp, PieceGroup& g )
@@ -311,6 +353,7 @@ const GU_PackedFragment* asFragment( const GU_PrimPacked& prim )
 void collectPieces( const GU_Detail* gdp, PieceGroup& out )
 {
 	const GA_ROHandleS nameH( gdp, GA_ATTRIB_PRIMITIVE, "name" );
+	const PieceAttrs attrs( gdp );
 	bool anyPrim = false;
 	for ( GA_Iterator it( gdp->getPrimitiveRange() ); !it.atEnd(); ++it )
 	{
@@ -322,7 +365,9 @@ void collectPieces( const GU_Detail* gdp, PieceGroup& out )
 		if ( nameH.isValid() )
 			if ( const char* n = nameH.get( *it ) )
 				name = n;
-		appendPrimPoints( gdp, *prim, out.piece( name ) );
+		NamedPiece& np = out.piece( name );
+		attrs.read( *it, np );
+		appendPrimPoints( gdp, *prim, np );
 	}
 	if ( !anyPrim )
 	{
@@ -341,12 +386,14 @@ void collectConnectedPieces( const GU_Detail* gdp, const GA_Range& prims, PieceG
 {
 	std::vector<std::vector<GA_Offset>> primPoints;
 	std::vector<const GA_Primitive*> primList;
+	std::vector<GA_Offset> primOffsets;
 	for ( GA_Iterator it( prims ); !it.atEnd(); ++it )
 	{
 		const GA_Primitive* prim = gdp->getPrimitive( *it );
 		if ( !prim )
 			continue;
 		primList.push_back( prim );
+		primOffsets.push_back( *it );
 		primPoints.emplace_back();
 		const GA_Size nv = prim->getVertexCount();
 		for ( GA_Size i = 0; i < nv; ++i )
@@ -354,9 +401,11 @@ void collectConnectedPieces( const GU_Detail* gdp, const GA_Range& prims, PieceG
 	}
 
 	const std::vector<int> setOf = b3dop::connectedSets( primPoints );
+	const PieceAttrs attrs( gdp );
 	for ( size_t i = 0; i < primPoints.size(); ++i )
 	{
 		NamedPiece& np = out.piece( std::to_string( setOf[i] ) );
+		attrs.read( primOffsets[i], np );
 		if ( !primPoints[i].empty() )
 			np.setOrigin( gdp, primPoints[i][0] );
 		// Quadrics and nested packed primitives add their surface points (the
@@ -383,9 +432,13 @@ namespace
 void collectFragmentPiece( const GU_Detail* gdp, const GA_Range& range, const std::string& name, PieceGroup& out )
 {
 	NamedPiece& np = out.piece( name );
+	const PieceAttrs attrs( gdp );
 	for ( GA_Iterator it( range ); !it.atEnd(); ++it )
 		if ( const GA_Primitive* prim = gdp->getPrimitive( *it ) )
+		{
+			attrs.read( *it, np );
 			appendPrimPoints( gdp, *prim, np );
+		}
 	finishPieces( gdp, out );
 }
 
@@ -397,6 +450,11 @@ struct SourceSummary
 {
 	uint64_t groupHash = 0;
 	std::vector<uint64_t> pieceHashes;
+	// Each piece's own shape (Convex: a hull) and density scale, beside its hash:
+	// a fitted piece is found by pieceFitKey.
+	std::vector<b3dop::ShapeType> pieceShapes;
+	std::vector<float> pieceDensityScales;
+	bool unknownShape = false; // a piece's piece_georep named no shape (its warning)
 };
 
 namespace
@@ -439,7 +497,12 @@ public:
 		sum->groupHash = g.hash;
 		for ( const NamedPiece& np : g.pieces )
 			if ( !np.xyz.empty() )
+			{
 				sum->pieceHashes.push_back( np.hash );
+				sum->pieceShapes.push_back( np.shape );
+				sum->pieceDensityScales.push_back( np.densityScale );
+				sum->unknownShape = sum->unknownShape || np.unknownShape;
+			}
 		std::unique_lock<std::shared_mutex> lock( myMutex );
 		if ( myMap.size() >= kMaxEntries )
 		{
@@ -458,13 +521,16 @@ private:
 };
 
 // The identity SourceSummaryCache is keyed by: the geometry's, and the
-// primitive `name` attribute the pieces are grouped by (editing it changes
-// neither P nor the primitive list).
+// primitive attributes the pieces are made from, `name` and the piece
+// attributes (editing them changes neither P nor the primitive list).
 uint64_t sourceIdentity( const GU_Detail* gdp, GA_Offset fragmentFirst, bool connected )
 {
 	uint64_t h = geometryIdentity( gdp );
-	const GA_Attribute* name = gdp->findPrimitiveAttribute( "name" );
-	h = b3dop::mixHash( h, name ? static_cast<uint64_t>( name->getDataId() ) : ~0ull );
+	for ( const char* attrib : { "name", kPieceShapeAttrib, kPieceDensityScaleAttrib } )
+	{
+		const GA_Attribute* a = gdp->findPrimitiveAttribute( attrib );
+		h = b3dop::mixHash( h, a ? static_cast<uint64_t>( a->getDataId() ) : ~0ull );
+	}
 	h = b3dop::mixHash( h, static_cast<uint64_t>( static_cast<int64_t>( fragmentFirst ) ) );
 	return b3dop::mixHash( h, connected ? 1 : 2 );
 }
@@ -678,6 +744,35 @@ template <class ToBody> bool spherePiece( const NamedPiece& np, const ToBody& to
 	return true;
 }
 
+const char* const kUnknownPieceShapeNote = "a piece's piece_georep is not box, sphere, capsule, cylinder or "
+										   "convexhull; used a hull";
+
+// A piece whose kPieceShapeAttrib asks for a box, capsule or cylinder (or a
+// sphere, unless it is one Sphere primitive, which spherePiece makes exactly):
+// fitted to its body-local points, fill(pts), as AutoFit fits a body, but a
+// capsule or cylinder runs along the piece's length. False for a hull piece
+// (the caller hulls it) or points that cannot be fitted.
+// The fit cache key of a packed piece fitted as its own shape (fittedPiece, or
+// spherePiece for a piece_georep sphere): by its hash, the pivot, scale and shape,
+// apart from the keys of a whole packed point's AutoFit (packedFitKey).
+uint64_t pieceFitKey( uint64_t pieceHash, const double pivot[3], const double S[3], b3dop::ShapeType shape )
+{
+	return b3dop::mixHash( b3dop::packedFitKey( pieceHash, pivot, S, shape ), 0x9ece5ull );
+}
+
+template <class Fill> bool fittedPiece( const NamedPiece& np, const Fill& fill, std::vector<float>& pts, Piece& out )
+{
+	if ( np.shape == b3dop::ShapeType::Convex || ( np.shape == b3dop::ShapeType::Sphere && np.sphereValid ) )
+		return false;
+	fill( pts );
+	if ( !b3dop::Box3DWorld::fitShapeOriented( np.shape, pts.data(), static_cast<int>( pts.size() / 3 ), out.spec,
+											   true ) )
+		return false;
+	out.isHull = false;
+	out.volume = b3dop::shapeVolume( out.spec );
+	return true;
+}
+
 } // namespace
 
 // A point's shapes (docs/agents/bodies.md, "Pieces and packed geometry"):
@@ -696,7 +791,7 @@ BuiltShapes buildShapes( b3dop::Box3DWorld& world, ShapeSources& src, b3dop::Sha
 	using namespace b3dop;
 	BuiltShapes out;
 	auto add = [&]( const Piece& pc ) {
-		out.totalVolume += pc.volume;
+		out.totalVolume += pc.volume * pc.densityScale;
 		out.pieces.push_back( pc );
 	};
 
@@ -754,8 +849,17 @@ BuiltShapes buildShapes( b3dop::Box3DWorld& world, ShapeSources& src, b3dop::Sha
 		if ( sum && !sum->pieceHashes.empty() )
 		{
 			std::vector<Piece> found;
-			auto lookup = [&]( uint64_t sourceHash, uint32_t kind ) {
+			auto lookup = [&]( uint64_t sourceHash, uint32_t kind, ShapeType shape, float densityScale ) {
 				Piece pc;
+				pc.densityScale = densityScale;
+				if ( shape != ShapeType::Convex )
+				{
+					if ( !Box3DWorld::findFit( pieceFitKey( sourceHash, pk.pivot, S, shape ), pc.spec ) )
+						return false;
+					pc.volume = shapeVolume( pc.spec );
+					found.push_back( pc );
+					return true;
+				}
 				pc.hull = world.findHull( packedHullKey( sourceHash, pk.pivot, S, kind ), &pc.volume );
 				pc.isHull = pc.hull != 0;
 				if ( pc.isHull )
@@ -764,18 +868,16 @@ BuiltShapes buildShapes( b3dop::Box3DWorld& world, ShapeSources& src, b3dop::Sha
 			};
 			bool all = true;
 			if ( mergeAll )
-				all = lookup( sum->groupHash, 1 );
+				all = lookup( sum->groupHash, 1, ShapeType::Convex, 1.0f );
 			else
-				for ( const uint64_t h : sum->pieceHashes )
-				{
-					all = lookup( h, 2 );
-					if ( !all )
-						break;
-				}
+				for ( size_t i = 0; i < sum->pieceHashes.size() && all; ++i )
+					all = lookup( sum->pieceHashes[i], 2, sum->pieceShapes[i], sum->pieceDensityScales[i] );
 			if ( all )
 			{
 				for ( const Piece& pc : found )
 					add( pc );
+				if ( !mergeAll && sum->unknownShape )
+					out.note = kUnknownPieceShapeNote;
 				return out;
 			}
 		}
@@ -829,6 +931,21 @@ BuiltShapes buildShapes( b3dop::Box3DWorld& world, ShapeSources& src, b3dop::Sha
 		auto addHull = [&]( uint64_t sourceHash, uint32_t kind, const std::vector<const NamedPiece*>& from ) {
 			const uint64_t key = keyed ? packedHullKey( sourceHash, pk.pivot, S, kind ) : 0;
 			Piece pc;
+			// One piece of several (not a merged convex hull): its own shape and
+			// density, if it has them.
+			if ( !mergeAll && from.size() == 1 )
+			{
+				if ( from[0]->unknownShape )
+					out.note = kUnknownPieceShapeNote;
+				pc.densityScale = from[0]->densityScale;
+				if ( fittedPiece( *from[0], [&]( std::vector<float>& dst ) { toBodyLocal( from, dst ); }, pts, pc ) )
+				{
+					if ( keyed )
+						Box3DWorld::storeFit( pieceFitKey( sourceHash, pk.pivot, S, from[0]->shape ), pc.spec );
+					add( pc );
+					return;
+				}
+			}
 			// Through the packed transform.
 			const auto sphereToBody = [&]( const double in[3], double out[3] ) {
 				const NamedPiece& np = *from[0];
@@ -847,6 +964,8 @@ BuiltShapes buildShapes( b3dop::Box3DWorld& world, ShapeSources& src, b3dop::Sha
 			};
 			if ( from.size() == 1 && from[0]->sphereValid && spherePiece( *from[0], sphereToBody, pc ) )
 			{
+				if ( keyed && !mergeAll && from[0]->shape != ShapeType::Convex ) // a piece_georep sphere
+					Box3DWorld::storeFit( pieceFitKey( sourceHash, pk.pivot, S, from[0]->shape ), pc.spec );
 				add( pc );
 				return;
 			}
@@ -962,8 +1081,28 @@ BuiltShapes buildWholeObjectShapes( b3dop::Box3DWorld& world, const GU_Detail* g
 		}
 	};
 	std::vector<float> pts;
-	auto addHull = [&]( const std::vector<const NamedPiece*>& from ) {
+	auto addHull = [&]( const std::vector<const NamedPiece*>& from, bool perPiece ) {
 		Piece pc;
+		// One piece of several (not a merged convex hull): its own shape and
+		// density, if it has them.
+		if ( perPiece )
+		{
+			if ( from[0]->unknownShape )
+				out.note = kUnknownPieceShapeNote;
+			pc.densityScale = from[0]->densityScale;
+			if ( fittedPiece(
+					 *from[0],
+					 [&]( std::vector<float>& dst ) {
+						 dst.clear();
+						 toBody( *from[0], dst );
+					 },
+					 pts, pc ) )
+			{
+				out.totalVolume += pc.volume * pc.densityScale;
+				out.pieces.push_back( pc );
+				return;
+			}
+		}
 		const auto sphereToBody = [&]( const double in[3], double out[3] ) {
 			double o[3];
 			b3dop::xformPoint( m, in, o );
@@ -973,7 +1112,7 @@ BuiltShapes buildWholeObjectShapes( b3dop::Box3DWorld& world, const GU_Detail* g
 		};
 		if ( from.size() == 1 && from[0]->sphereValid && spherePiece( *from[0], sphereToBody, pc ) )
 		{
-			out.totalVolume += pc.volume;
+			out.totalVolume += pc.volume * pc.densityScale;
 			out.pieces.push_back( pc );
 			return;
 		}
@@ -986,7 +1125,7 @@ BuiltShapes buildWholeObjectShapes( b3dop::Box3DWorld& world, const GU_Detail* g
 				 },
 				 pts, pc, out.note ) )
 		{
-			out.totalVolume += pc.volume;
+			out.totalVolume += pc.volume * pc.densityScale;
 			out.pieces.push_back( pc );
 		}
 	};
@@ -1001,10 +1140,10 @@ BuiltShapes buildWholeObjectShapes( b3dop::Box3DWorld& world, const GU_Detail* g
 	if ( type == ShapeType::Concave || connected )
 	{
 		for ( const NamedPiece* np : all )
-			addHull( { np } );
+			addHull( { np }, true );
 	}
 	else if ( type == ShapeType::Convex )
-		addHull( all );
+		addHull( all, false );
 	else
 	{
 		pts.clear();

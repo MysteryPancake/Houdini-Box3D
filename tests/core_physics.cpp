@@ -691,6 +691,7 @@ const TestCase kTests[] = {
 	{ "hull_centroid", testHullCentroid },
 	{ "point_mapping", testPointMapping },
 	{ "convex_shapes", testConvexShapes },
+	{ "piece_shapes", testPieceShapes },
 	{ "primitive_overrides", testPrimitiveOverrides },
 	{ "move_events", testMoveEvents },
 	{ "stored_pose", testStoredPose },

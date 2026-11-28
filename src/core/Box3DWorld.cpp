@@ -618,7 +618,10 @@ bool Box3DWorld::applyMassByHandle( BodyHandle h, float density, bool comAtOrigi
 	const int n = setShapeDensity ? bodyShapes( id, tShapes ) : b3Body_GetShapeCount( id );
 	if ( setShapeDensity )
 		for ( int i = 0; i < n; ++i )
-			b3Shape_SetDensity( tShapes[static_cast<size_t>( i )], density, false );
+		{
+			const b3ShapeId s = tShapes[static_cast<size_t>( i )];
+			b3Shape_SetDensity( s, density * shapeDensityScale( s ), false );
+		}
 	b3Body_ApplyMassFromShapes( id );
 
 	// A custom inertia is the inverse of the tensor given, about the centre of

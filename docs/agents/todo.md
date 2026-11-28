@@ -64,6 +64,8 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
 * Objects solved by another solver: only RBD Bullet Solver's are tried (`other_solver`: packed ones are ignored as
   colliders, polygon ones push Box3D bodies one way). Vellum, FLIP and the rest are not.
 * Height fields: holes from a mask layer, height fields on points.
+* RBD Objects: `piece_densityscale` changes the mass but not the centre of mass, which stays the centroid of
+  the geometry's hull (`objectCentreOfMass`, Bullet's rule; `piece_shapes_object_density`).
 * Agent ragdolls ([agent-ragdolls.md](agent-ragdolls.md): bodies, joints and their motors, the per-transform arrays and the
   agent's pose are built; the PinnedRagdolls ragdolls hang from their pinned hand as Bullet's do). Not done, in order:
   1. The gap to Bullet (PinnedRagdolls; the Box3D Solver's Gravity at 0, as the example has a Gravity DOP, which
@@ -103,17 +105,10 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
   of 0 a prismatic one; both free (a cylinder) has no Box3D joint. Nothing in Houdini creates one but the node itself.
 * Box3D's samples as example scenes ([sample-port-plan.md](sample-port-plan.md)): the tables mark what is built.
   Left, in order:
-  1. The ragdoll: Ragdoll, then Rain, the Determinism scenes and Mesh / Reflection (`building.obj`: `mesh_file`).
-  2. Multi-shape bodies and per-material meshes: Compound, Class Ring, Falling Trees, Village (benchmark), Gear Lift,
-     Ghost, Conveyor Mesh; then the wind approximations.
-
-  Helpers these need in `tools/examples/box3d_samples/common.py`:
-  * `multi_shape_body(parts)`: several shapes as one body when some are spheres or capsules (hulls alone:
-    `Bodies.parts`): glued pieces, Glue as One Body on, without other joints (a glued group with another joint stays
-    on welds, [glue-compound.md](glue-compound.md)).
-  * `human(name, position, friction_torque, hertz, damping)`: `human.c`'s ragdoll: capsule pieces, revolute and
-    spherical joints with its limits, springs and friction motors (motor speed 0), filter joints; shin and foot as one
-    `multi_shape_body`.
+  1. The ragdoll's other scenes (`human.py`): Rain, the Determinism scenes, Far Ragdolls and Mesh / Reflection
+     (`building.obj`: `mesh_file`).
+  2. Multi-shape bodies (`Bodies.parts`, capsule and sphere parts included) and per-material meshes: Compound,
+     Falling Trees, Village (benchmark), Gear Lift, Ghost, Conveyor Mesh; then the wind approximations.
 * Force DOPs: parallel evaluation of circle / sphere sampled forces (the resolver has only the point call).
 * Sticky collisions. Box3D's contact begin / end and sensor events: Houdini has no output for them (Bullet has none), so
   nothing reads them beyond Impacts. Sensors (trigger zones) would be the useful part.

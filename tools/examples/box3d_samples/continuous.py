@@ -118,21 +118,21 @@ MESH_DROP_WAVES = {False: (40, 1.0, 0.1, 0.2, 0.5), True: (640, 0.03125, 4.7, 5.
 def _mesh_drop(s, rough):
     count, cell, row_f, column_f, amplitude = MESH_DROP_WAVES[rough]
     extent = 0.5 * count * cell
-    b = Bodies(s.tag, {"collision_category": -1, "collision_mask": -1})
+    b = Bodies(s.tag, {"collision_categorybits": -1, "collision_maskbits": -1})
     wave = f"{count}, {count}, {num(cell)}, {num(amplitude)}, {num(row_f)}, {num(column_f)}"
     b.mesh("wave", f"""\
 // CreateMeshDropMesh: b3CreateWaveMesh( {wave} ).
 wave_mesh("wave", {wave}, {{1, 1, 1}}, {{0, 0, 0}});
-""", collision_category=1)
+""", collision_categorybits=1)
     b.stream("walls_x", b.box("walls_x", extent, 1.0, 0.1), f"""\
 // CreateMeshDropGround's walls (box hulls on the mesh's static body): along x at z = +-{num(extent)}.
 static_body({{0, 1, {num(-extent)}}}, identity);
 static_body({{0, 1, {num(extent)}}}, identity);
-""", cd=(0.55, 0.6, 0.65), collision_category=1)
+""", cd=(0.55, 0.6, 0.65), collision_categorybits=1)
     b.stream("walls_z", b.box("walls_z", 0.1, 1.0, extent), f"""\
 static_body({{{num(-extent)}, 1, 0}}, identity);
 static_body({{{num(extent)}, 1, 0}}, identity);
-""", cd=(0.55, 0.6, 0.65), collision_category=1)
+""", cd=(0.55, 0.6, 0.65), collision_categorybits=1)
 
     rng = XorShift(MESH_DROP_SEED)
     starts = [(rng.vec3(-1.0, 1.0), rng.vec3(-5.0, 5.0)) for _ in range(MESH_DROP_GRID * MESH_DROP_GRID)]
@@ -146,7 +146,7 @@ v[]@drop_w = array({", ".join(vec(w) for _, w in starts)});
 """)
     grid = f"""\
 // A {MESH_DROP_GRID} x {MESH_DROP_GRID} grid 0.5 apart, 5 m up, each with its starting velocities from input 1. They
-// collide with the mesh and walls only (collision_category 2, collision_mask 1: the sample's Collide off).
+// collide with the mesh and walls only (collision_categorybits 2, collision_maskbits 1: the sample's Collide off).
 vector vs[] = detail(1, "drop_v"), ws[] = detail(1, "drop_w");
 int index = 0;
 for (int i = 0; i < {MESH_DROP_GRID}; ++i) for (int j = 0; j < {MESH_DROP_GRID}; ++j) {{
@@ -164,7 +164,7 @@ for (int i = 0; i < {MESH_DROP_GRID}; ++i) for (int j = 0; j < {MESH_DROP_GRID};
     streams = []
     for token, shape, note, rolling in shapes:
         copy = b.stream(token, shape, grid, note=note, merged=False, rollingresistance=rolling,
-                        collision_category=2, collision_mask=1)
+                        collision_categorybits=2, collision_maskbits=1)
         copy.inputs()[1].setInput(1, speeds)
         streams.append((token, token.capitalize(), copy))
     b.choice("shape", "Shape", streams, default=0)

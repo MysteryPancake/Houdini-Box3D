@@ -977,3 +977,121 @@ void testMixHash()
 		   b3dop::mixHash( b3dop::mixHash( b3dop::kHashSeed, 2 ), 1 ) );
 	std::printf( "mix hash checks done\n" );
 }
+
+// A packed piece's own shape and density (Box3DShapeBuild's piece_georep and
+// piece_densityscale): a capsule or cylinder fitted along the points' axis of
+// symmetry, and a shape whose density is a multiple of its body's, kept through a
+// mass re-apply and a copy onto another body.
+void testPieceShapes()
+{
+	using namespace b3dop;
+
+	// A capsule lying along x (0.8 long, radius 0.1, 16 sides): AutoFit's capsule
+	// stands along y as Bullet's does (turned 11.25 degrees about x to hug the
+	// flat sides), alongSymmetryAxis lays it along x.
+	std::vector<float> rod;
+	for ( int i = 0; i < 16; ++i )
+	{
+		const float t = 2.0f * kPi * static_cast<float>( i ) / 16.0f;
+		for ( const float x : { -0.3f, 0.3f } )
+			rod.insert( rod.end(), { x, 0.1f * std::cos( t ), 0.1f * std::sin( t ) } );
+	}
+	rod.insert( rod.end(), { -0.4f, 0.0f, 0.0f, 0.4f, 0.0f, 0.0f } ); // the poles
+	const int n = static_cast<int>( rod.size() / 3 );
+	const float up[3] = { 0, 1, 0 };
+	float axis[3];
+	ShapeSpec o;
+	CHECK( Box3DWorld::fitShapeOriented( ShapeType::Capsule, rod.data(), n, o ) );
+	quatRotate( o.rot, up, axis );
+	CHECK( std::fabs( axis[1] ) > 0.98f );
+	CHECK( Box3DWorld::fitShapeOriented( ShapeType::Capsule, rod.data(), n, o, true ) );
+	quatRotate( o.rot, up, axis );
+	CHECK( std::fabs( std::fabs( axis[0] ) - 1.0f ) < 1e-5f );
+	CHECK( near( o.radius, 0.1, 1e-5 ) && near( o.halfLength, 0.3, 1e-5 ) );
+	// The cylinder along x too; a box is the same either way.
+	CHECK( Box3DWorld::fitShapeOriented( ShapeType::Cylinder, rod.data(), n, o, true ) );
+	quatRotate( o.rot, up, axis );
+	CHECK( std::fabs( std::fabs( axis[0] ) - 1.0f ) < 1e-5f && near( o.halfLength, 0.4, 1e-5 ) );
+	CHECK( Box3DWorld::fitShapeOriented( ShapeType::Box, rod.data(), n, o, true ) );
+	CHECK( near( o.halfExtents[0], 0.4, 1e-5 ) && o.halfExtents[1] <= 0.1f && o.halfExtents[2] <= 0.1f );
+	// symmetryAxisFrame: the rod tilted 50 degrees about z (the ragdoll's foot) gets its axis back to float
+	// precision, right-handed, so its radius stays 0.1; along a body axis the axis is exact.
+	{
+		const float c = std::cos( 50.0f * kDegToRad ), sn = std::sin( 50.0f * kDegToRad );
+		std::vector<float> tilted;
+		for ( size_t i = 0; i + 2 < rod.size(); i += 3 )
+			tilted.insert( tilted.end(),
+						   { rod[i] * c - rod[i + 1] * sn + 0.3f, rod[i] * sn + rod[i + 1] * c, rod[i + 2] } );
+		float f[3][3];
+		CHECK( symmetryAxisFrame( tilted.data(), n, f ) );
+		CHECK( std::fabs( std::fabs( f[1][0] ) - c ) < 1e-5f && std::fabs( std::fabs( f[1][1] ) - sn ) < 1e-5f );
+		const float zx = f[0][1] * f[1][2] - f[0][2] * f[1][1], zy = f[0][2] * f[1][0] - f[0][0] * f[1][2],
+					zz = f[0][0] * f[1][1] - f[0][1] * f[1][0];
+		CHECK( std::fabs( zx - f[2][0] ) < 1e-6f && std::fabs( zy - f[2][1] ) < 1e-6f &&
+			   std::fabs( zz - f[2][2] ) < 1e-6f );
+		CHECK( Box3DWorld::fitShapeOriented( ShapeType::Capsule, tilted.data(), n, o, true ) );
+		CHECK( near( o.radius, 0.1, 1e-5 ) && near( o.halfLength, 0.3, 1e-5 ) && near( o.center[0], 0.3, 1e-5 ) );
+		CHECK( symmetryAxisFrame( rod.data(), n, f ) && std::fabs( f[1][0] ) == 1.0f && f[1][1] == 0.0f &&
+			   f[1][2] == 0.0f );
+		// A disc (a short cylinder, wider than long): still along its axis, not across it.
+		std::vector<float> disc;
+		for ( size_t i = 0; i + 2 < rod.size(); i += 3 )
+			disc.insert( disc.end(), { 0.05f * rod[i] / 0.4f, 2.0f * rod[i + 1], 2.0f * rod[i + 2] } );
+		CHECK( Box3DWorld::fitShapeOriented( ShapeType::Cylinder, disc.data(), n, o, true ) );
+		quatRotate( o.rot, up, axis );
+		CHECK( std::fabs( std::fabs( axis[0] ) - 1.0f ) < 1e-5f && near( o.radius, 0.2, 1e-5 ) );
+		// A hexagonal prism sqrt(0.08) long with corners 0.2 from its axis, squashed 1% one way across it and
+		// stretched 1% the other: its spread along x (0.02) lies between its two across, so the variances point across
+		// it. The roundness about x tells.
+		std::vector<float> squat;
+		for ( const float x : { -0.1414214f, 0.1414214f } )
+			for ( int k = 0; k < 6; ++k )
+			{
+				const float t = ( 30.0f + 60.0f * static_cast<float>( k ) ) * kDegToRad;
+				squat.insert( squat.end(), { x, 0.199f * std::cos( t ), 0.201f * std::sin( t ) } );
+			}
+		CHECK( Box3DWorld::fitShapeOriented( ShapeType::Cylinder, squat.data(), 12, o, true ) );
+		quatRotate( o.rot, up, axis );
+		CHECK( std::fabs( std::fabs( axis[0] ) - 1.0f ) < 1e-5f && near( o.radius, 0.2, 2e-3 ) &&
+			   near( o.halfLength, 0.1414214, 1e-5 ) );
+	}
+
+	// Density scales: two unit cubes on one body, one at half density.
+	Box3DWorld w;
+	CHECK( w.create( WorldSettings() ) );
+	BodySettings b;
+	b.props.density = 1000.0f;
+	const double pos[3] = { 0, 5, 0 };
+	const BodyHandle h = w.createBody( b, pos, qIdentity );
+	ShapeSpec cube;
+	cube.halfExtents[0] = cube.halfExtents[1] = cube.halfExtents[2] = 0.5f;
+	CHECK( w.createShape( h, b, cube, false ) );
+	cube.center[0] = 1.0f;
+	CHECK( w.createShape( h, b, cube, false, 0.5f ) );
+	w.applyMassFromShapes( h );
+	float m = 0, c[3] = {}, in[3] = {};
+	CHECK( w.getMassDataByHandle( h, m, c, in ) );
+	CHECK( near( m, 1500.0, 1e-2 ) && near( c[0], 1.0 / 3.0, 1e-5 ) );
+	// A new body density keeps the ratio (the scale lives on the shape).
+	CHECK( w.applyMassByHandle( h, 2000.0f, false, 1.0f, true, nullptr ) );
+	CHECK( w.getMassDataByHandle( h, m, c, in ) );
+	CHECK( near( m, 3000.0, 1e-2 ) && near( c[0], 1.0 / 3.0, 1e-5 ) );
+	// Copied onto another body (a Glue as One Body compound), the same.
+	const BodyHandle copy = w.createBody( b, pos, qIdentity );
+	const float none[3] = { 0, 0, 0 };
+	CHECK( w.copyShapesByHandle( h, copy, none, qIdentity ) == 2 );
+	CHECK( w.applyMassByHandle( copy, 1000.0f, false, 1.0f, true, nullptr ) );
+	CHECK( w.getMassDataByHandle( copy, m, c, in ) );
+	CHECK( near( m, 1500.0, 1e-2 ) && near( c[0], 1.0 / 3.0, 1e-5 ) );
+	// A scale of 0 is a massless shape; a negative or non-finite one is 1.
+	const BodyHandle odd = w.createBody( b, pos, qIdentity );
+	cube.center[0] = 0.0f;
+	CHECK( w.createShape( odd, b, cube, false, 0.0f ) );
+	cube.center[0] = 1.0f;
+	CHECK( w.createShape( odd, b, cube, false, -2.0f ) );
+	cube.center[0] = 2.0f;
+	CHECK( w.createShape( odd, b, cube, false, std::nanf( "" ) ) );
+	CHECK( w.applyMassByHandle( odd, 1000.0f, false, 1.0f, true, nullptr ) );
+	CHECK( w.getMassDataByHandle( odd, m, c, in ) );
+	CHECK( near( m, 2000.0, 1e-2 ) && near( c[0], 1.5, 1e-5 ) );
+}

@@ -29,8 +29,8 @@ is updated: [bodies.md](bodies.md). Index and rules: [CLAUDE.md](../../CLAUDE.md
 * **CCD threshold** (`ccdthreshold`) -> `b3BodyDef::safetyFactor` (Box3D's name; negatives keep the default).
 * **Fast rotation** (`fastrotation`) -> `allowFastRotation`; without it Box3D caps spin at `B3_MAX_ROTATION` per Box3D
   step (the DOP step over Substeps).
-* **Collision filtering** (`collision_category`, `collision_mask` read as `GA_ROHandleID` so `-1` means every bit;
-  `collision_group`) -> the shapes' filter. Affector bodies use the defaults. Bullet's `collisiongroup` /
+* **Collision filtering** (`collision_categorybits`, `collision_maskbits` read as `GA_ROHandleID` so `-1` means every bit;
+  `collision_groupindex`) -> the shapes' filter. Affector bodies use the defaults. Bullet's `collisiongroup` /
   `collisionignore` names become these bits in the Box3D Solver SOP (`collision_names` in `b3d_prepare.py`, a subnet
   on the pieces and on the colliders: an Attribute Promote (unique) per geometry, `used_groups` joins the names once,
   and the point wrangle `COLLISION_NAMES_VEX` sets each point's bits, so both sides number the groups alike): bit 0 is

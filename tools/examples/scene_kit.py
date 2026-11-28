@@ -226,11 +226,12 @@ def ground(pieces, size=40.0):
 
 def network_sop(name, lines):
     """A constraint network: one polyline per joint between two pieces' anchor points.
-    lines: (name_a, pos_a, name_b, pos_b, constraint_name[, orient]), or a string of VEX calling joint( name_a,
-    pos_a, name_b, pos_b, constraint_name ) (no orient). An empty name pins to the
+    lines: (name_a, pos_a, name_b, pos_b, constraint_name[, orient[, orient_b]]), or a string of VEX calling
+    joint( name_a, pos_a, name_b, pos_b, constraint_name ) (no orient). An empty name pins to the
     world. Both points sit where the joint is; constraint_name picks the relationship node. The
     optional orient (a quaternion, on both ends) turns the joint's axes: a revolute hinge turns
-    about its z axis, a prismatic slides along x, and so on."""
+    about its z axis, a prismatic slides along x, and so on. orient_b, when given, is the second
+    end's (a joint whose two frames start apart: Box3D's localFrameA and localFrameB)."""
     geo = create(hou.node("/obj"), "geo", name)
     for child in geo.children():
         child.destroy()
@@ -246,11 +247,11 @@ def network_sop(name, lines):
             '    setprimattrib(0, "constraint_name", pr, cname);',
             "}"]
     if turned:
-        code += ["// The same with orient on both ends: the joint's axes (no orient = the world axes).",
-                 "void joint_turned(string a; vector pa; string b; vector pb; string cname; vector4 q) {",
+        code += ["// The same with orient on the ends: each end's axes (no orient = the world axes).",
+                 "void joint_turned(string a; vector pa; string b; vector pb; string cname; vector4 qa; vector4 qb) {",
                  "    int i = addpoint(0, pa), j = addpoint(0, pb);",
                  '    setpointattrib(0, "name", i, a); setpointattrib(0, "name", j, b);',
-                 '    setpointattrib(0, "orient", i, q); setpointattrib(0, "orient", j, q);',
+                 '    setpointattrib(0, "orient", i, qa); setpointattrib(0, "orient", j, qb);',
                  '    int pr = addprim(0, "polyline", i, j);',
                  '    setprimattrib(0, "constraint_name", pr, cname);',
                  "}"]
@@ -265,7 +266,8 @@ def network_sop(name, lines):
             continue
         a, pa, b, pb, cname = line[:5]
         if len(line) > 5:
-            code.append(f'joint_turned("{a}", {vec(pa)}, "{b}", {vec(pb)}, "{cname}", {vec(line[5])});')
+            qb = line[6] if len(line) > 6 else line[5]
+            code.append(f'joint_turned("{a}", {vec(pa)}, "{b}", {vec(pb)}, "{cname}", {vec(line[5])}, {vec(qb)});')
         else:
             code.append(f'joint("{a}", {vec(pa)}, "{b}", {vec(pb)}, "{cname}");')
     set_parm(wr, "snippet", "\n".join(code))

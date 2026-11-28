@@ -261,6 +261,13 @@ uint64_t wholeObjectShapeSig( const GU_Detail* gdp, const double m[16], const do
 	const b3dop::BodySettings& node = setup.node;
 	using b3dop::mixHash;
 	uint64_t h = geometryIdentity( gdp );
+	// The primitive attributes the pieces are made from: editing them changes
+	// neither P nor the primitive list.
+	for ( const char* attrib : { "name", kPieceShapeAttrib, kPieceDensityScaleAttrib } )
+	{
+		const GA_Attribute* a = gdp->findPrimitiveAttribute( attrib );
+		h = mixHash( h, a ? static_cast<uint64_t>( a->getDataId() ) : ~0ull );
+	}
 	for ( int i = 0; i < 16; ++i )
 		h = b3dop::mixDouble( h, m[i] );
 	for ( int i = 0; i < 3; ++i )

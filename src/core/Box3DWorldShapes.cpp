@@ -47,13 +47,14 @@ b3Filter toB3Filter( const CollisionFilter& f )
 	return out;
 }
 
-b3ShapeDef shapeDefFor( const BodySettings& b, bool updateMass )
+b3ShapeDef shapeDefFor( const BodySettings& b, bool updateMass, float densityScale = 1.0f )
 {
 	const BodyProps& p = b.props;
 	float tangent[3];
 	b3ShapeDef def = b3DefaultShapeDef();
 	def.updateBodyMass = updateMass; // false: the caller applies the mass afterwards
-	def.density = p.density;
+	def.density = p.density * cleanDensityScale( densityScale );
+	def.userData = densityScaleTag( densityScale );
 	def.baseMaterial.friction = p.friction;
 	def.baseMaterial.restitution = p.restitution;
 	def.baseMaterial.rollingResistance = nonNegOr( p.rollingResistance );
@@ -66,16 +67,19 @@ b3ShapeDef shapeDefFor( const BodySettings& b, bool updateMass )
 
 } // namespace
 
-bool Box3DWorld::createShape( BodyHandle h, const BodySettings& body, const ShapeSpec& shape, bool updateMass )
+bool Box3DWorld::createShape( BodyHandle h, const BodySettings& body, const ShapeSpec& shape, bool updateMass,
+							  float densityScale )
 {
 	switch ( shape.type )
 	{
 		case ShapeType::Sphere:
-			return sphereShape( h, body, shape.radius, shape.center, updateMass );
+			return sphereShape( h, body, shape.radius, shape.center, updateMass, densityScale );
 		case ShapeType::Capsule:
-			return capsuleShape( h, body, shape.radius, shape.halfLength, shape.center, shape.rot, updateMass );
+			return capsuleShape( h, body, shape.radius, shape.halfLength, shape.center, shape.rot, updateMass,
+								 densityScale );
 		case ShapeType::Cylinder:
-			return cylinderShape( h, body, shape.radius, shape.halfLength, shape.center, shape.rot, updateMass );
+			return cylinderShape( h, body, shape.radius, shape.halfLength, shape.center, shape.rot, updateMass,
+								  densityScale );
 		case ShapeType::Plane:
 		{
 			// A ground slab with its top through the body origin, facing its +Y
@@ -88,16 +92,17 @@ bool Box3DWorld::createShape( BodyHandle h, const BodySettings& body, const Shap
 			return boxShape( h, body, shape.halfExtents, below, nullptr, updateMass );
 		}
 		default:
-			return boxShape( h, body, shape.halfExtents, shape.center, shape.rot, updateMass );
+			return boxShape( h, body, shape.halfExtents, shape.center, shape.rot, updateMass, densityScale );
 	}
 }
 
-bool Box3DWorld::createHullShape( BodyHandle h, const BodySettings& body, HullId hullId, bool updateMass )
+bool Box3DWorld::createHullShape( BodyHandle h, const BodySettings& body, HullId hullId, bool updateMass,
+								  float densityScale )
 {
 	const HullRef hull = h ? myImpl->heldHull( hullId ) : nullptr;
 	if ( !hull )
 		return false;
-	const b3ShapeDef def = shapeDefFor( body, updateMass );
+	const b3ShapeDef def = shapeDefFor( body, updateMass, densityScale );
 	return !B3_IS_NULL( b3CreateHullShape( b3LoadBodyId( h ), &def, hull->hull ) ); // added to the world's database
 }
 
@@ -128,6 +133,7 @@ int Box3DWorld::copyShapesByHandle( BodyHandle src, BodyHandle dst, const float 
 		b3ShapeDef def = b3DefaultShapeDef();
 		def.updateBodyMass = false; // the caller applies the mass once
 		def.density = b3Shape_GetDensity( s );
+		def.userData = b3Shape_GetUserData( s ); // its density scale (densityScaleTag)
 		def.baseMaterial = b3Shape_GetSurfaceMaterial( s );
 		def.filter = b3Shape_GetFilter( s );
 		def.enableHitEvents = true;
@@ -318,7 +324,7 @@ void Box3DWorld::applyMassFromShapes( BodyHandle h )
 }
 
 bool Box3DWorld::boxShape( BodyHandle h, const BodySettings& b, const float halfExtents[3], const float center[3],
-						   const float rotationXYZW[4], bool updateMass )
+						   const float rotationXYZW[4], bool updateMass, float densityScale )
 {
 	if ( !h )
 		return false;
@@ -340,13 +346,13 @@ bool Box3DWorld::boxShape( BodyHandle h, const BodySettings& b, const float half
 	{
 		hull = b3MakeBoxHull( halfExtents[0], halfExtents[1], halfExtents[2] );
 	}
-	const b3ShapeDef def = shapeDefFor( b, updateMass );
+	const b3ShapeDef def = shapeDefFor( b, updateMass, densityScale );
 	const b3ShapeId shape = b3CreateHullShape( b3LoadBodyId( h ), &def, &hull.base );
 	return !B3_IS_NULL( shape );
 }
 
-bool Box3DWorld::sphereShape( BodyHandle h, const BodySettings& b, float radius, const float center[3],
-							  bool updateMass )
+bool Box3DWorld::sphereShape( BodyHandle h, const BodySettings& b, float radius, const float center[3], bool updateMass,
+							  float densityScale )
 {
 	if ( !h )
 		return false;
@@ -354,13 +360,13 @@ bool Box3DWorld::sphereShape( BodyHandle h, const BodySettings& b, float radius,
 	b3Sphere sphere;
 	sphere.center = makeVec3( center );
 	sphere.radius = radius;
-	const b3ShapeDef def = shapeDefFor( b, updateMass );
+	const b3ShapeDef def = shapeDefFor( b, updateMass, densityScale );
 	const b3ShapeId shape = b3CreateSphereShape( b3LoadBodyId( h ), &def, &sphere );
 	return !B3_IS_NULL( shape );
 }
 
 bool Box3DWorld::capsuleShape( BodyHandle h, const BodySettings& b, float radius, float halfLength,
-							   const float center[3], const float rotationXYZW[4], bool updateMass )
+							   const float center[3], const float rotationXYZW[4], bool updateMass, float densityScale )
 {
 	if ( !h )
 		return false;
@@ -385,13 +391,14 @@ bool Box3DWorld::capsuleShape( BodyHandle h, const BodySettings& b, float radius
 	capsule.center2.z = c[2] + halfLength * axis[2];
 	capsule.radius = radius;
 	// Box3D turns a capsule that is too short into a sphere by itself.
-	const b3ShapeDef def = shapeDefFor( b, updateMass );
+	const b3ShapeDef def = shapeDefFor( b, updateMass, densityScale );
 	const b3ShapeId shape = b3CreateCapsuleShape( b3LoadBodyId( h ), &def, &capsule );
 	return !B3_IS_NULL( shape );
 }
 
 bool Box3DWorld::cylinderShape( BodyHandle h, const BodySettings& b, float radius, float halfLength,
-								const float center[3], const float rotationXYZW[4], bool updateMass )
+								const float center[3], const float rotationXYZW[4], bool updateMass,
+								float densityScale )
 {
 	if ( !h || !std::isfinite( radius ) || !std::isfinite( halfLength ) )
 		return false;
@@ -435,7 +442,7 @@ bool Box3DWorld::cylinderShape( BodyHandle h, const BodySettings& b, float radiu
 		const HullRef ref = HullLibrary::instance().insert( key, hull );
 		myImpl->hold( key, ref );
 	}
-	return createHullShape( h, b, key, updateMass );
+	return createHullShape( h, b, key, updateMass, densityScale );
 }
 
 namespace

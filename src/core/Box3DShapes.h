@@ -610,4 +610,178 @@ inline void canonicalFrame( float axes[3][3] )
 		}
 }
 
+// symmetryAxisFrame: below this gap between one variance and the mean of the
+// other two (relative to their mean), the variances do not tell which axis the
+// points are round about.
+constexpr double kSymmetryAxisGap = 0.1;
+
+// The eigenvalues and unit eigenvectors (rows) of the symmetric 3x3 matrix
+// `a` (xx, yy, zz, xy, xz, yz), by cyclic Jacobi rotations.
+inline void symmetricEigen3( const double a[6], double values[3], double vectors[3][3] )
+{
+	double m[3][3] = { { a[0], a[3], a[4] }, { a[3], a[1], a[5] }, { a[4], a[5], a[2] } };
+	double v[3][3] = { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } }; // columns: the eigenvectors
+	for ( int sweep = 0; sweep < 32; ++sweep )
+	{
+		const double off = m[0][1] * m[0][1] + m[0][2] * m[0][2] + m[1][2] * m[1][2];
+		const double diag = m[0][0] * m[0][0] + m[1][1] * m[1][1] + m[2][2] * m[2][2];
+		if ( off <= 1e-30 * diag || off == 0.0 )
+			break;
+		for ( int p = 0; p < 2; ++p )
+			for ( int q = p + 1; q < 3; ++q )
+			{
+				if ( m[p][q] == 0.0 )
+					continue;
+				const double theta = ( m[q][q] - m[p][p] ) / ( 2.0 * m[p][q] );
+				const double t =
+					( theta >= 0.0 ? 1.0 : -1.0 ) / ( std::fabs( theta ) + std::sqrt( theta * theta + 1.0 ) );
+				const double c = 1.0 / std::sqrt( t * t + 1.0 ), sn = t * c;
+				for ( int k = 0; k < 3; ++k ) // m = m J
+				{
+					const double mkp = m[k][p], mkq = m[k][q];
+					m[k][p] = c * mkp - sn * mkq;
+					m[k][q] = sn * mkp + c * mkq;
+				}
+				for ( int k = 0; k < 3; ++k ) // m = J^T m
+				{
+					const double mpk = m[p][k], mqk = m[q][k];
+					m[p][k] = c * mpk - sn * mqk;
+					m[q][k] = sn * mpk + c * mqk;
+				}
+				for ( int k = 0; k < 3; ++k )
+				{
+					const double vkp = v[k][p], vkq = v[k][q];
+					v[k][p] = c * vkp - sn * vkq;
+					v[k][q] = sn * vkp + c * vkq;
+				}
+			}
+	}
+	for ( int i = 0; i < 3; ++i )
+	{
+		values[i] = m[i][i];
+		for ( int k = 0; k < 3; ++k )
+			vectors[i][k] = v[k][i];
+	}
+}
+
+// A fitting frame (rows, right-handed) whose second axis is the points'
+// axis of symmetry, for a capsule or cylinder that runs along its piece (a
+// piece's `piece_georep`; a body's AutoFit runs along the axis nearest Y
+// instead, as Bullet's does): of the principal axes of the points' spread, the
+// one whose variance differs most from the other two, which is the axis of a
+// round rod or disc, and the long side of a box; when none differs enough
+// (kSymmetryAxisGap), the one the points are round about. An
+// axis within 1e-6 of a body axis becomes it exactly. The first axis is the
+// body axis least along it, made perpendicular. False without points.
+inline bool symmetryAxisFrame( const float* xyz, int count, float axes[3][3] )
+{
+	if ( !xyz || count <= 0 )
+		return false;
+	double mean[3] = { 0, 0, 0 };
+	for ( int i = 0; i < count; ++i )
+		for ( int k = 0; k < 3; ++k )
+			mean[k] += static_cast<double>( xyz[3 * i + k] );
+	for ( double& m : mean )
+		m /= static_cast<double>( count );
+	double cov[6] = { 0, 0, 0, 0, 0, 0 };
+	for ( int i = 0; i < count; ++i )
+	{
+		double d[3];
+		for ( int k = 0; k < 3; ++k )
+			d[k] = static_cast<double>( xyz[3 * i + k] ) - mean[k];
+		cov[0] += d[0] * d[0];
+		cov[1] += d[1] * d[1];
+		cov[2] += d[2] * d[2];
+		cov[3] += d[0] * d[1];
+		cov[4] += d[0] * d[2];
+		cov[5] += d[1] * d[2];
+	}
+	double values[3], vectors[3][3];
+	symmetricEigen3( cov, values, vectors );
+	int pick = 0;
+	double apart = -1.0;
+	for ( int i = 0; i < 3; ++i )
+	{
+		const double d = std::fabs( values[i] - 0.5 * ( values[( i + 1 ) % 3] + values[( i + 2 ) % 3] ) );
+		if ( d > apart )
+		{
+			apart = d;
+			pick = i;
+		}
+	}
+	// A round rod about 0.7 times as long as it is wide spreads as far along its
+	// axis as across it, so the variances cannot tell: then the axis is the one
+	// the points are round about (the least anisotropy of their spread in the
+	// plane across it, to fourth order, which an n-gon with n other than 1, 2
+	// or 4 has none of).
+	const double mean3 = ( values[0] + values[1] + values[2] ) / 3.0;
+	if ( apart < kSymmetryAxisGap * mean3 )
+	{
+		double best = -1.0;
+		for ( int i = 0; i < 3; ++i )
+		{
+			const double* u = vectors[( i + 1 ) % 3];
+			const double* w = vectors[( i + 2 ) % 3];
+			double c2 = 0, s2 = 0, c4 = 0, s4 = 0, r2 = 0, r4 = 0;
+			for ( int k = 0; k < count; ++k )
+			{
+				double d[3];
+				for ( int j = 0; j < 3; ++j )
+					d[j] = static_cast<double>( xyz[3 * k + j] ) - mean[j];
+				const double x = d[0] * u[0] + d[1] * u[1] + d[2] * u[2];
+				const double y = d[0] * w[0] + d[1] * w[1] + d[2] * w[2];
+				const double re = x * x - y * y, im = 2.0 * x * y; // (x + iy)^2
+				c2 += re;
+				s2 += im;
+				c4 += re * re - im * im;
+				s4 += 2.0 * re * im;
+				r2 += x * x + y * y;
+				r4 += ( x * x + y * y ) * ( x * x + y * y );
+			}
+			const double score =
+				( r2 > 0.0 ? std::hypot( c2, s2 ) / r2 : 0.0 ) + ( r4 > 0.0 ? std::hypot( c4, s4 ) / r4 : 0.0 );
+			if ( best < 0.0 || score < best )
+			{
+				best = score;
+				pick = i;
+			}
+		}
+	}
+	double a[3] = { vectors[pick][0], vectors[pick][1], vectors[pick][2] };
+	int along = 0, across = 0;
+	for ( int k = 1; k < 3; ++k )
+	{
+		if ( std::fabs( a[k] ) > std::fabs( a[along] ) )
+			along = k;
+		if ( std::fabs( a[k] ) < std::fabs( a[across] ) )
+			across = k;
+	}
+	if ( std::fabs( a[( along + 1 ) % 3] ) < 1e-6 && std::fabs( a[( along + 2 ) % 3] ) < 1e-6 )
+	{
+		const double sign = a[along] < 0.0 ? -1.0 : 1.0;
+		a[0] = a[1] = a[2] = 0.0;
+		a[along] = sign;
+		across = ( along + 1 ) % 3;
+	}
+	double n = std::sqrt( a[0] * a[0] + a[1] * a[1] + a[2] * a[2] );
+	for ( double& c : a )
+		c /= n;
+	// The first axis: the body axis least along `a`, without its `a` part.
+	double u[3] = { 0, 0, 0 };
+	u[across] = 1.0;
+	for ( int k = 0; k < 3; ++k )
+		u[k] -= a[across] * a[k];
+	n = std::sqrt( u[0] * u[0] + u[1] * u[1] + u[2] * u[2] );
+	for ( double& c : u )
+		c /= n;
+	const double w[3] = { u[1] * a[2] - u[2] * a[1], u[2] * a[0] - u[0] * a[2], u[0] * a[1] - u[1] * a[0] };
+	for ( int k = 0; k < 3; ++k )
+	{
+		axes[0][k] = static_cast<float>( u[k] );
+		axes[1][k] = static_cast<float>( a[k] );
+		axes[2][k] = static_cast<float>( w[k] );
+	}
+	return true;
+}
+
 } // namespace b3dop

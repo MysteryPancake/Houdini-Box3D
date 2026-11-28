@@ -95,7 +95,7 @@ boxes on one ground box: many separate islands, which Box3D solves in parallel."
 @sample("Benchmark", "Joint Grid", SOURCE, frames=300)
 def joint_grid(s):
     n = 100
-    b = Bodies(s.tag, {"enablesleep": 0, "collision_category": 2, "collision_mask": -3})
+    b = Bodies(s.tag, {"enablesleep": 0, "collision_categorybits": 2, "collision_maskbits": -3})
     b.stream("balls", b.sphere("balls", 0.4), f"""\
 // A {n} x {n} grid of spheres hanging in the xy plane: column k at x = k, row i at y = -i. The top row
 // (i = 0) is static.
@@ -105,7 +105,7 @@ for (int k = 0; k < {n}; ++k)
         if (i == 0) static_body(p, identity); else body(p, identity);
     }}
 """, cd=(0.4, 0.65, 0.9), note="radius 0.4, category 2 and mask ~2: the spheres never collide with each other",
-             collision_category=2, collision_mask=-3, enablesleep=0)
+             collision_categorybits=2, collision_maskbits=-3, enablesleep=0)
     joint_vex = f"""\
 // A spherical joint from each sphere to the one above it (half a unit up) and to the one to its left (half a unit
 // left), where their surfaces would touch: the anchors of b3SphericalJointDef at (0, -0.5, 0) / (0, 0.5, 0) and
@@ -198,11 +198,11 @@ def mesh_drop(s):
     cells, border, grid = 120, 10, 100
     spacing = (cells - 2 * border) / grid
     offset = 0.5 * spacing * (1 - grid)
-    b = Bodies(s.tag, {"collision_category": -1, "collision_mask": -1, "rollingresistance": 0.0})
+    b = Bodies(s.tag, {"collision_categorybits": -1, "collision_maskbits": -1, "rollingresistance": 0.0})
     b.mesh("wave", f"""\
 // b3CreateWaveMesh( {cells}, {cells}, 1, 0.5, 0.1, 0.2 ): a {cells} m square wave mesh centred on the origin.
 wave_mesh("wave", {cells}, {cells}, 1.0, 0.5, 0.1, 0.2, {{1, 1, 1}}, {{0, 0, 0}});
-""", collision_category=1)
+""", collision_categorybits=1)
     rng = XorShift(3963634789)
     starts = [(rng.vec3(-1.0, 1.0), rng.vec3(-5.0, 5.0)) for _ in range(grid * grid)]
     speeds = create(b.geo, "attribwrangle", "drop_velocities")
@@ -215,7 +215,7 @@ v[]@drop_w = array({", ".join(vec(w) for _, w in starts)});
 """)
     boxes = b.stream("boxes", b.box("boxes", 0.02, 0.2, 0.04), f"""\
 // A {grid} x {grid} grid {num(spacing)} m apart over the mesh (a {border} m border left), 5 m up, each with its
-// starting velocities from input 1. They collide with the mesh only (collision_category 2, collision_mask 1).
+// starting velocities from input 1. They collide with the mesh only (collision_categorybits 2, collision_maskbits 1).
 vector vs[] = detail(1, "drop_v"), ws[] = detail(1, "drop_w");
 int index = 0;
 for (int i = 0; i < {grid}; ++i) for (int j = 0; j < {grid}; ++j) {{
@@ -225,8 +225,8 @@ for (int i = 0; i < {grid}; ++i) for (int j = 0; j < {grid}; ++j) {{
     setpointattrib(0, "Cd", pt, hsvtorgb(set(index / {float(grid * grid)}, 0.55, 0.95)));
     index += 1;
 }}
-""", note="b3MakeBoxHull( 0.02, 0.2, 0.04 ), rolling resistance 0.1", rollingresistance=0.1, collision_category=2,
-                     collision_mask=1)
+""", note="b3MakeBoxHull( 0.02, 0.2, 0.04 ), rolling resistance 0.1", rollingresistance=0.1, collision_categorybits=2,
+                     collision_maskbits=1)
     boxes.inputs()[1].setInput(1, speeds)
     return finish(s, b, about=f"""\
 {grid * grid} thin boxes thrown down from 5 m with random velocities onto a {cells} m wave mesh. They do not

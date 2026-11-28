@@ -39,8 +39,8 @@ as RBD Configure's); each Box3D Data folder and Constraints in an entry is an op
   The Group button picks primitives in the viewport (RBD Configure's `selectGroupParm` call).
 * Settings Box3D Data has no parameter for (`extra_folders`): Initial State (`v`, `w` in degrees per second written as
   radians, `enabled`, `deforming`), Motion (`fastrotation`), Speed Limit (RBD Configure's: `speedmin`, `speedmax`,
-  `spinmin`, `spinmax`, `accelmax`, `angaccelmax`, -1 for none), Collision Filtering (`collision_category` /
-  `collision_mask` / `collision_group`, and the string `collisiongroup` / `collisionignore`, kind `s`, which the
+  `spinmin`, `spinmax`, `accelmax`, `angaccelmax`, -1 for none), Collision Filtering (`collision_categorybits` /
+  `collision_maskbits` / `collision_groupindex`, and the string `collisiongroup` / `collisionignore`, kind `s`, which the
   Solver SOP's `collision_names` subnet turns into the integers). The hand-set shape and Rotational Stiffness are
   Box3D Data's own (its Shape and Body folders). Defaults are the solver's when the attribute is missing.
 * Visualization folder (`visualization_folder`, `visualization_templates`), as RBD Configure's (read from a dump): a

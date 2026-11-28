@@ -114,10 +114,10 @@ coefficient of 0.87 against the 0.9 asked for.""",
 
 @sample("Restitution", "Rotated Box Restitution", SOURCE, frames=300)
 def rotated_box_restitution(s):
-    b = Bodies(s.tag, {"ccdthreshold": -1.0, "collision_group": 0})
+    b = Bodies(s.tag, {"ccdthreshold": -1.0, "collision_groupindex": 0})
     b.ground(25.0)
     b.stream("cubes", b.box("cubes", 0.5, 0.5, 0.5), """\
-// 12 cubes dropped from 10 m, turned 0 to 82.5 degrees about z; collision_group -1: they never touch.
+// 12 cubes dropped from 10 m, turned 0 to 82.5 degrees about z; collision_groupindex -1: they never touch.
 int count = 12;
 float dq = 0.5 * PI / count;
 float x = -1.0 * (count - 1);
@@ -125,7 +125,7 @@ for (int i = 0; i < count; ++i) {
     body(set(x, 10.0, 0.0), axis_angle({0, 0, 1}, i * dq));
     x += 2.0;
 }
-""", cd=(0.9, 0.6, 0.2), friction=0.0, bounce=0.9, ccdthreshold=0.5, collision_group=-1)
+""", cd=(0.9, 0.6, 0.2), friction=0.0, bounce=0.9, ccdthreshold=0.5, collision_groupindex=-1)
     return finish(s, b, about="""\
 12 cubes of bounce 0.9 dropped from 10 m, landing on an edge at angles from 0 to 82.5 degrees. Each
 should bounce back to about the same height (the sample prints each one's percentage).""")

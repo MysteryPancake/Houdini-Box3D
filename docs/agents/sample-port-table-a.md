@@ -12,7 +12,7 @@ numbers the port does not reproduce.
 | Large Pyramid | built | Box pyramid on a ground box, no sleeping |
 | Wide Pyramid | built | Stepped pyramid of boxes |
 | Many Pyramids | built | A field of small pyramids, no sleeping |
-| Rain | work | `human` ragdolls dropped in groups onto grid and torus meshes, the oldest group replaced each cycle: pieces appearing at frames and `dead` (`step_script`); joint tuning as Constraint Stiffness |
+| Rain | work | `Humans` ragdolls dropped in groups onto grid and torus meshes, the oldest group replaced each cycle: pieces appearing at frames and `dead` (`step_script`); joint tuning as Constraint Stiffness |
 | Large World (first) | no | Compiled out (`#if 0`) |
 | Joint Grid | built | Spheres joined in a grid by spherical joints (`network_sop` VEX) |
 | Falling Boxes | built | Box hulls falling on a ground box |
@@ -48,7 +48,7 @@ numbers the port does not reproduce.
 | Cast | no | Body ray, shape and mover casts |
 | Kinematic | built | Kinematic box on a path after a delay (`SetTargetTransform`): an animated stream |
 | Fixed Rotation | built | `fixedRotation`: no attribute; Lock Tilt and a large `inertialtensorstiffness` |
-| Class Ring | work | Ring of capsules with a sphere gem as one body: `multi_shape_body`; 16 steps a frame at 8 substeps (raise Substeps), `fastrotation` |
+| Class Ring | built | 24 capsule pieces (`capsule` VEX) and a sphere gem at twice the density on one body (`piece_georep`, `piece_densityscale`); Substeps 16 and Constraint Iterations 8 as its 960 Hz, `fastrotation` |
 | Offset Kinematic | built | Kinematic box spinning about an offset centre: an animated stream with the point at the centre |
 
 ## Character (`sample_character.cpp`)
@@ -87,7 +87,7 @@ All **no**: they show queries or narrow-phase tools, not a simulation.
 | Sample | Verdict | What it uses / why |
 |---|---|---|
 | Simple | work | Baked compound of hulls on a dynamic body: `Bodies.parts`; Contact Recycle Distance |
-| Spheres | work | Compound of spheres: glued sphere pieces (`multi_shape_body`) |
+| Spheres | work | A static baked compound of spheres on the ground body: one static sphere body per sphere |
 | Hulls | work | Compound of box hulls: `Bodies.compound` |
 | Tile Floor | work | Static compound of tiles: one static box piece per tile |
 | Mesh Tile | work | Static compound of box meshes: static `concave` pieces |
@@ -113,7 +113,7 @@ All **no**: they show queries or narrow-phase tools, not a simulation.
 
 | Sample | Verdict | What it uses / why |
 |---|---|---|
-| Falling Ragdolls | work | `human` groups on grid and torus meshes; the hash check dropped |
+| Falling Ragdolls | work | `Humans` groups on grid and torus meshes; the hash check dropped |
 | Wave Pile | work | Mixed shapes and rocks on a wave height field; the hash check dropped |
 | Query Spawn | no | Spawn points come from world queries during the run |
 | Mesh Drop | work | Shapes on a mesh; the hash check dropped |

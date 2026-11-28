@@ -131,8 +131,16 @@ namespace
 {
 
 // fitShapeOriented without the cache.
-bool fitOrientedUncached( ShapeType type, const float* xyz, int count, ShapeSpec& out )
+bool fitOrientedUncached( ShapeType type, const float* xyz, int count, ShapeSpec& out, bool alongSymmetryAxis )
 {
+	// A piece's capsule or cylinder: along its axis of symmetry, which the
+	// faces of a reduced hull only find roughly (a degree off on a 16-sided
+	// capsule, which then fits a wider radius).
+	if ( alongSymmetryAxis && ( type == ShapeType::Capsule || type == ShapeType::Cylinder ) )
+	{
+		float axes[3][3];
+		return symmetryAxisFrame( xyz, count, axes ) && fitShapeInFrame( type, xyz, count, axes, out );
+	}
 	std::vector<b3Vec3> pts;
 	if ( !loadPoints( xyz, count, pts ) )
 		return false;
@@ -219,21 +227,24 @@ bool fitOrientedUncached( ShapeType type, const float* xyz, int count, ShapeSpec
 
 } // namespace
 
-bool Box3DWorld::fitShapeOriented( ShapeType type, const float* xyz, int count, ShapeSpec& out )
+bool Box3DWorld::fitShapeOriented( ShapeType type, const float* xyz, int count, ShapeSpec& out, bool alongSymmetryAxis )
 {
 	if ( !xyz || count <= 0 )
 		return false;
-	if ( count < 4 )
+	const bool symmetric = alongSymmetryAxis && ( type == ShapeType::Capsule || type == ShapeType::Cylinder );
+	if ( count < 4 && !symmetric )
 		return fitShapeToPoints( type, xyz, count, out );
 	// Before hashing: a non-finite point must not find a cached fit.
 	for ( int i = 0; i < count * 3; ++i )
 		if ( !std::isfinite( xyz[i] ) )
 			return false;
-	const uint64_t key = mixHash( hashPoints( xyz, count ), static_cast<uint64_t>( static_cast<int>( type ) ) );
+	uint64_t key = mixHash( hashPoints( xyz, count ), static_cast<uint64_t>( static_cast<int>( type ) ) );
+	if ( alongSymmetryAxis )
+		key = mixHash( key, 0x10a6e57ull );
 	FitLibrary& lib = FitLibrary::instance();
 	if ( lib.find( key, out ) )
 		return true;
-	if ( !fitOrientedUncached( type, xyz, count, out ) )
+	if ( !fitOrientedUncached( type, xyz, count, out, alongSymmetryAxis ) )
 		return false;
 	lib.insert( key, out );
 	return true;

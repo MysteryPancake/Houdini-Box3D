@@ -37,15 +37,15 @@
 	X( lineardamping, "lineardamping", F )                                                                             \
 	X( angulardamping, "angulardamping", F )                                                                           \
 	X( gravityscale, "gravityscale", F )                                                                               \
-	X( enablesleep, "enablesleep", I )				 /* 0 = this body never sleeps */                                  \
-	X( enabled, "enabled", I )						 /* 0 = left out of the simulation */                              \
-	X( awake, "awake", I )							 /* 0 = asleep: starts the body */                                 \
-	X( deforming, "deforming", I )					 /* rebuild the shape every step */                                \
-	X( autofitValid, "bullet_autofit_valid", I )	 /* 0 = rebuild once */                                            \
-	X( pscale, "pscale", F )						 /* a plain point's convex / concave */                            \
-	X( scale, "scale", V3 )							 /* fallback box */                                                \
-	X( collisionCategory, "collision_category", ID ) /* read as 64-bit */                                              \
-	X( collisionMask, "collision_mask", ID )                                                                           \
+	X( enablesleep, "enablesleep", I )					 /* 0 = this body never sleeps */                              \
+	X( enabled, "enabled", I )							 /* 0 = left out of the simulation */                          \
+	X( awake, "awake", I )								 /* 0 = asleep: starts the body */                             \
+	X( deforming, "deforming", I )						 /* rebuild the shape every step */                            \
+	X( autofitValid, "bullet_autofit_valid", I )		 /* 0 = rebuild once */                                        \
+	X( pscale, "pscale", F )							 /* a plain point's convex / concave */                        \
+	X( scale, "scale", V3 )								 /* fallback box */                                            \
+	X( collisionCategory, "collision_categorybits", ID ) /* read as 64-bit */                                          \
+	X( collisionMask, "collision_maskbits", ID )                                                                       \
 	X( animated, "animated", I )                                                                                       \
 	X( density, "density", F )                                                                                         \
 	X( computeMass, "computemass", I )                                                                                 \
@@ -54,7 +54,7 @@
 	X( sleepThreshold, "sleepthreshold", F )                                                                           \
 	X( ccdThreshold, "ccdthreshold", F )                                                                               \
 	X( fastObject, "fastobject", I )                                                                                   \
-	X( collisionGroup, "collision_group", I )                                                                          \
+	X( collisionGroup, "collision_groupindex", I )                                                                     \
 	X( dead, "dead", I )                                                                                               \
 	X( contactRecycling, "contactrecycling", I )                                                                       \
 	X( fastRotation, "fastrotation", I )                                                                               \
@@ -85,6 +85,14 @@ namespace box3dsolver
 inline constexpr const char* kMotionAttribNames[] = { "airresist", "spinresist", "drag",	 "dragexp",
 													  "targetv",   "targetw",	 "speedmin", "speedmax",
 													  "spinmin",   "spinmax",	 "accelmax", "angaccelmax" };
+
+// Primitive attributes inside a packed piece's geometry, read per `name` piece
+// of a concave (or Hull per Connected) body: the shape a piece is fitted as
+// (box, sphere, capsule, cylinder, convexhull; b3dop::parseShapeType) and its
+// density as a multiple of the body's. The first primitive of a piece that has
+// them sets them. Box3DShapeBuild.cpp, docs/shapes.md.
+inline constexpr const char* kPieceShapeAttrib = "piece_georep";
+inline constexpr const char* kPieceDensityScaleAttrib = "piece_densityscale";
 
 // Names of the prop markers, in order (Box3DSyncFingerprint::propIds); the
 // count is derived.
