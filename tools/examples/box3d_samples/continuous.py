@@ -1,6 +1,6 @@
 """Box3D's Continuous samples (samples/sample_continuous.cpp): fast bodies against thin and static shapes."""
 
-from .common import Bodies, Every, finish, num, random_vec3, sample, vec
+from .common import Bodies, Every, XorShift, create, finish, num, random_vec3, sample, set_parm, vec
 
 SOURCE = "sample_continuous.cpp"
 
@@ -105,6 +105,87 @@ setpointattrib(0, "v", pt, {0, -10, 0});
     return finish(s, b, about="""\
 A thin plate thrown down onto four needle tips of slightly different heights (open cone meshes, no
 ground). It lands on the tips without them poking through.""")
+
+
+# shared/mesh_drop.c: a grid of small bodies dropped with random velocities onto a walled wave mesh. The sample seeds
+# each generation from the clock; the port uses one fixed seed.
+MESH_DROP_SEED = 1
+MESH_DROP_GRID = 32  # MESH_DROP_GRID_COUNT in a Release build
+# The wave: cell count, cell width, row and column frequency, amplitude (smooth, then rough).
+MESH_DROP_WAVES = {False: (40, 1.0, 0.1, 0.2, 0.5), True: (640, 0.03125, 4.7, 5.9, 0.015)}
+
+
+def _mesh_drop(s, rough):
+    count, cell, row_f, column_f, amplitude = MESH_DROP_WAVES[rough]
+    extent = 0.5 * count * cell
+    b = Bodies(s.tag, {"collision_category": -1, "collision_mask": -1})
+    wave = f"{count}, {count}, {num(cell)}, {num(amplitude)}, {num(row_f)}, {num(column_f)}"
+    b.mesh("wave", f"""\
+// CreateMeshDropMesh: b3CreateWaveMesh( {wave} ).
+wave_mesh("wave", {wave}, {{1, 1, 1}}, {{0, 0, 0}});
+""", collision_category=1)
+    b.stream("walls_x", b.box("walls_x", extent, 1.0, 0.1), f"""\
+// CreateMeshDropGround's walls (box hulls on the mesh's static body): along x at z = +-{num(extent)}.
+static_body({{0, 1, {num(-extent)}}}, identity);
+static_body({{0, 1, {num(extent)}}}, identity);
+""", cd=(0.55, 0.6, 0.65), collision_category=1)
+    b.stream("walls_z", b.box("walls_z", 0.1, 1.0, extent), f"""\
+static_body({{{num(-extent)}, 1, 0}}, identity);
+static_body({{{num(extent)}, 1, 0}}, identity);
+""", cd=(0.55, 0.6, 0.65), collision_category=1)
+
+    rng = XorShift(MESH_DROP_SEED)
+    starts = [(rng.vec3(-1.0, 1.0), rng.vec3(-5.0, 5.0)) for _ in range(MESH_DROP_GRID * MESH_DROP_GRID)]
+    speeds = create(b.geo, "attribwrangle", "drop_velocities")
+    set_parm(speeds, "class", 0)
+    set_parm(speeds, "snippet", f"""\
+// CreateMeshDropBodies' starting velocities: per body RandomVec3Uniform( -1, 1 ) then ( -5, 5 ), XorShift32 from seed
+// {MESH_DROP_SEED} (mesh_drop.c's RandomFloatRange), computed in Python by box3d_samples.common.XorShift.
+v[]@drop_v = array({", ".join(vec(v) for v, _ in starts)});
+v[]@drop_w = array({", ".join(vec(w) for _, w in starts)});
+""")
+    grid = f"""\
+// A {MESH_DROP_GRID} x {MESH_DROP_GRID} grid 0.5 apart, 5 m up, each with its starting velocities from input 1. They
+// collide with the mesh and walls only (collision_category 2, collision_mask 1: the sample's Collide off).
+vector vs[] = detail(1, "drop_v"), ws[] = detail(1, "drop_w");
+int index = 0;
+for (int i = 0; i < {MESH_DROP_GRID}; ++i) for (int j = 0; j < {MESH_DROP_GRID}; ++j) {{
+    int pt = body(set(0.5 * (i - 0.5 * {MESH_DROP_GRID}), 5.0, 0.5 * (j - 0.5 * {MESH_DROP_GRID})), identity);
+    setpointattrib(0, "v", pt, vs[index]);
+    setpointattrib(0, "w", pt, ws[index]);
+    setpointattrib(0, "Cd", pt, hsvtorgb(set(index / {float(MESH_DROP_GRID * MESH_DROP_GRID)}, 0.55, 0.95)));
+    index += 1;
+}}
+"""
+    shapes = [("box", b.box("box", 0.02, 0.2, 0.04), "MakeDropBox: b3MakeBoxHull( 0.02, 0.2, 0.04 )", 0.1),
+              ("capsule", b.capsule("capsule", 0.2, 0.05), "b3Capsule { (0, -0.2, 0), (0, 0.2, 0), 0.05 }", 0.4),
+              ("cylinder", b.cylinder("cylinder", 0.4, 0.05, 0.0, 6), "b3CreateCylinder( 0.4, 0.05, 0, 6 )", 0.1),
+              ("sphere", b.sphere("sphere", 0.05), "a sphere of radius 0.05", 0.4)]
+    streams = []
+    for token, shape, note, rolling in shapes:
+        copy = b.stream(token, shape, grid, note=note, merged=False, rollingresistance=rolling,
+                        collision_category=2, collision_mask=1)
+        copy.inputs()[1].setInput(1, speeds)
+        streams.append((token, token.capitalize(), copy))
+    b.choice("shape", "Shape", streams, default=0)
+    ground = "rough wave mesh, its bumps about 20 cm across" if rough else "wave mesh"
+    return finish(s, b, about=f"""\
+{MESH_DROP_GRID * MESH_DROP_GRID} small bodies (boxes by default; Shape on the bodies object picks capsules, cylinders
+or spheres) dropped from 5 m with random velocities onto a walled {ground}. They do not collide
+with each other, only with the mesh. None should tunnel through it (fall below y = -2).""", ported="""\
+the sample seeds each generation from the clock and counts contacts at the manifold cap, the deepest sink
+and tunnels; here the seed is fixed and the readouts dropped. Its Generate buttons are a rebuild of the
+scene (MESH_DROP_SEED in continuous.py).""", try_="the other shapes: Shape on the bodies object's Sample tab.")
+
+
+@sample("Continuous", "Mesh Drop", SOURCE, frames=300)
+def mesh_drop(s):
+    return _mesh_drop(s, rough=False)
+
+
+@sample("Continuous", "Rough Mesh Drop", SOURCE, frames=300)
+def rough_mesh_drop(s):
+    return _mesh_drop(s, rough=True)
 
 
 @sample("Continuous", "Hump Mesh", SOURCE, frames=180)

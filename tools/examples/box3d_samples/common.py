@@ -7,7 +7,9 @@ scenes do. The plan, and which samples are ported: docs/agents/sample-port-plan.
 """
 
 import math
+import os
 import re
+import shutil
 
 import hou
 
@@ -254,8 +256,8 @@ void torus_mesh(string nm; int radial; int tubular; float radius; float thicknes
     }
 }
 // hull_points(name, positions): the convex hull of a point set (b3CreateHull), as triangles: every triple of points
-// with all the others on one side. For small sets (tens of points) in general position. Only the points on the hull
-// are added.
+// with all the others on one side. A face with more than three points (within 1e-5 of its plane) is a fan from its
+// lowest point over its boundary edges. For small sets (tens of points). Only the points on the hull are added.
 void hull_points(string nm; vector p[]) {
     int n = len(p);
     int v[];
@@ -263,13 +265,20 @@ void hull_points(string nm; vector p[]) {
     foreach (int i; int x; v) v[i] = -1;
     for (int i = 0; i < n; ++i) for (int j = i + 1; j < n; ++j) for (int k = j + 1; k < n; ++k) {
         vector nrm = cross(p[j] - p[i], p[k] - p[i]);
-        if (length(nrm) < 1e-9) continue;
-        int above = 0, below = 0;
-        for (int m = 0; m < n; ++m) {
+        if (length(nrm) < 1e-12) continue;
+        nrm = normalize(nrm);
+        int above = 0, below = 0, keep = 1;
+        // The side of the edge j-k that point i is on, within the face's plane: a boundary edge has every point of
+        // the face on that side.
+        float side_i = dot(cross(p[k] - p[j], p[i] - p[j]), nrm);
+        for (int m = 0; m < n && keep; ++m) {
+            if (m == i || m == j || m == k) continue;
             float d = dot(nrm, p[m] - p[i]);
-            if (d > 1e-7) above++; else if (d < -1e-7) below++;
+            if (d > 1e-5) above++;
+            else if (d < -1e-5) below++;
+            else if (m < i || dot(cross(p[k] - p[j], p[m] - p[j]), nrm) * side_i < 0.0) keep = 0;
         }
-        if (above && below) continue;
+        if (!keep || (above && below)) continue;
         int corners[] = array(i, j, k);
         foreach (int c; corners) if (v[c] < 0) v[c] = addpoint(0, p[c]);
         if (above) tri(nm, v[i], v[k], v[j]); else tri(nm, v[i], v[j], v[k]);  // facing away from the others
@@ -330,6 +339,32 @@ class Bodies:
                                      f"{num(radius + half_length)});")
         return stretch, "capsule", {"bullet_autofit": 0, "bullet_radius": float(radius),
                                     "bullet_length": 2.0 * half_length, "bullet_primT": (0.0, 0.0, 0.0)}
+
+    def compound(self, tag, boxes):
+        """Several box hulls on one body (b3CreateHullShape called more than once): boxes is
+        [(part name, (hx, hy, hz), centre in the body's frame)]. Each part is a named piece inside the packed shape;
+        bullet_georep "concave" gives a moving body one hull per named piece."""
+        merge = create(self.geo, "merge", f"{tag}_shape")
+        for i, (part, half, centre) in enumerate(boxes):
+            box = create(self.geo, "box", f"{tag}_{part}")
+            set_parm(box, "size", tuple(2.0 * h for h in half))
+            set_parm(box, "t", tuple(centre))
+            named = create(self.geo, "attribwrangle", f"{tag}_{part}_named")
+            named.setInput(0, box)
+            set_parm(named, "class", 1)  # primitives
+            set_parm(named, "snippet", f's@name = "{part}";')
+            merge.setInput(i, named)
+        return merge, "concave"
+
+    def hull(self, tag, points, note=""):
+        """b3CreateHull( points ): the hull of a point set in the body's frame (hull_points), collided as its convex
+        hull. For a hull several bodies share; one body's own hull can be polygons() with hull_points()."""
+        build = create(self.geo, "attribwrangle", f"{tag}_shape")
+        set_parm(build, "class", 0)
+        listed = ", ".join(vec(p) for p in points)
+        set_parm(build, "snippet", (f"// {note}\n" if note else "") + VEX_FUNCTIONS + POLYGON_FUNCTIONS
+                 + MESH_FUNCTIONS + f"vector p[] = array({listed});\nhull_points(\"hull\", p);\n")
+        return build, "convexhull"
 
     def cylinder(self, tag, height, radius, y_offset=0.0, sides=12):
         """b3CreateCylinder( height, radius, yOffset, sides ): a prism of `sides` sides along y, from y_offset
@@ -449,15 +484,18 @@ addpointattrib(0, "w", {{0, 0, 0}});
         return switch
 
     def polygons(self, tag, vex, cd=(0.7, 0.7, 0.7), active=1, note="", rep="convexhull", v=(0.0, 0.0, 0.0),
-                 w=(0.0, 0.0, 0.0), **defaults):
+                 w=(0.0, 0.0, 0.0), source=None, **defaults):
         """Bodies whose shapes are polygons the VEX builds (b3CreateHull of a point set): points(positions) adds a
         body's points, face(name, point numbers) a polygon of the body `name` on them, prism(name, positions) and
         hull_points(name, positions) a whole hull (MESH_FUNCTIONS has the mesh builders). Each name is packed into
-        one body, collided as its convex hull (rep "concave": see mesh). v, w: every body's starting velocities."""
-        build = create(self.geo, "attribwrangle", f"{tag}_polygons")
-        set_parm(build, "class", 0)
-        set_parm(build, "snippet", (f"// {note}\n" if note else "") + VEX_FUNCTIONS + POLYGON_FUNCTIONS
-                 + MESH_FUNCTIONS + vex.strip() + "\n")
+        one body, collided as its convex hull (rep "concave": see mesh). v, w: every body's starting velocities.
+        source: a SOP with the named polygons in place of the VEX (mesh_file)."""
+        build = source
+        if build is None:
+            build = create(self.geo, "attribwrangle", f"{tag}_polygons")
+            set_parm(build, "class", 0)
+            set_parm(build, "snippet", (f"// {note}\n" if note else "") + VEX_FUNCTIONS + POLYGON_FUNCTIONS
+                     + MESH_FUNCTIONS + vex.strip() + "\n")
         pack = create(self.geo, "pack", f"{tag}_pack")
         pack.setInput(0, build)
         set_parm(pack, ["packbyname"], 1)
@@ -487,6 +525,30 @@ addpointattrib(0, "w", {{0, 0, 0}});
         welded() (a triangle soup), grid_mesh(), wave_mesh(), box_mesh() and torus_mesh() (MESH_FUNCTIONS), each name
         one static body of bullet_georep "concave": the solver makes one Box3D mesh of its triangles."""
         return self.polygons(tag, vex, cd=cd, active=0, note=note, rep="concave", **defaults)
+
+    def mesh_file(self, tag, file_name, scale=1.0, z_up=False, weld=0.0, offset=(0.0, 0.0, 0.0),
+                  cd=(0.45, 0.5, 0.55), **defaults):
+        """A static triangle mesh read from one of Box3D's mesh files (extern/box3d/data/meshes, copied to
+        examples/cache), as the samples' LoadTempMesh reads it: positions times scale, (y, z, x) for a z-up file,
+        moved by offset. weld: b3MeshDef's weldTolerance, a Fuse of the points within it (Box3D's weldVertices)."""
+        read = create(self.geo, "file", f"{tag}_file")
+        set_parm(read, "file", cached_mesh_file(file_name))
+        place = create(self.geo, "attribwrangle", f"{tag}_placed")
+        place.setInput(0, read)
+        axes = "set(@P.y, @P.z, @P.x)" if z_up else "@P"
+        set_parm(place, "snippet", f"// LoadTempMesh( \"{file_name}\", scale {num(scale)}, zUp {int(z_up)} )\n"
+                                   f"@P = {axes} * {num(scale)} + {vec(offset)};")
+        last = place
+        if weld > 0.0:
+            fuse = create(self.geo, "fuse", f"{tag}_welded")
+            fuse.setInput(0, last)
+            set_parm(fuse, ["tol3d", "dist"], float(weld))
+            last = fuse
+        named = create(self.geo, "attribwrangle", f"{tag}_named")
+        named.setInput(0, last)
+        set_parm(named, "class", 1)  # primitives
+        set_parm(named, "snippet", f's@name = "{tag}";')
+        return self.polygons(tag, "", cd=cd, active=0, rep="concave", source=named, **defaults)
 
     def shifted(self, shape, offset, rotate=None):
         """A shape (from box(), capsule(), ...) moved by offset in the body's frame, after turning it by rotate
@@ -551,11 +613,12 @@ SOLVER_NOTE = ("The solver runs as Box3D's sample app: 60 fps with Substeps 1 an
 
 
 def finish(s, bodies, about, ported="", try_="", joints=None, lines=None, solver=None, gravity=GRAVITY,
-           note_size=(10, 6), emit=False):
+           note_size=(10, 6), emit=False, statics=()):
     """The DOP network around the bodies, the solver set as Box3D runs, the frame range and the notes.
     joints: [(relationship type, node name, {parm: value}, constraint_name)] for the network `lines`
     (network_sop's (name_a, pos_a, name_b, pos_b, constraint_name[, orient])). emit: a Box3D Solver SOP with Emit RBDs
-    in place of the DOP network, for samples that make bodies again during the run (their `rbdbullet_emit`: Every)."""
+    in place of the DOP network, for samples that make bodies again during the run (their `rbdbullet_emit`: Every).
+    statics: SOP paths of colliders (height_field) for Static Object DOPs merged in, with Box3D's material."""
     if emit:
         if lines:
             raise SetupError(f"{s.tag}: emit takes no joints")
@@ -571,6 +634,16 @@ def finish(s, bodies, about, ported="", try_="", joints=None, lines=None, solver
     dop, solver_node, data_names = build_dops(f"{s.tag}_sim", path, joints=joint_nodes, network_path=network)
     if network:
         fix_constraint_names(network, data_names, wanted)
+    if statics:
+        merge = create(dop, "merge", "with_colliders")
+        merge.setInput(0, solver_node.inputs()[0])
+        for i, sop_path in enumerate(statics):
+            static = create(dop, "staticobject", f"collider{i}")
+            set_parm(static, "soppath", sop_path)
+            set_parm(static, "friction", BOX3D_MATERIAL["friction"])
+            set_parm(static, "bounce", BOX3D_MATERIAL["bounce"])
+            merge.setInput(i + 1, static)
+        solver_node.setInput(0, merge)
     box3d_world(solver_node, gravity=gravity, **(solver or {}))
     tidy(s.frames, _note_text(s, about, ported, try_), dop, note_size=note_size)
     inner = dop.findStickyNote("how_it_works")  # tidy's note in the DOP network (a sticky note is not a node)
@@ -618,20 +691,77 @@ def _finish_emit(s, bodies, text, solver, gravity, note_size):
     return sop, s.frames
 
 
+class XorShift:
+    """The samples' random numbers (shared/utils.h's RandomFloatRange, mesh_drop.c's own copy): XorShift32 from a
+    seed. Every Sample's constructor sets the global one to RAND_SEED, 12345."""
+
+    def __init__(self, seed=12345):
+        self.state = seed
+
+    def float(self, lo, hi):
+        x = self.state
+        x ^= (x << 13) & 0xFFFFFFFF
+        x ^= x >> 17
+        x ^= (x << 5) & 0xFFFFFFFF
+        self.state = x
+        return (hi - lo) * ((x % 32768) / 32767.0) + lo
+
+    def vec3(self, lo, hi):
+        """RandomVec3( lo, hi ), or RandomVec3Uniform when lo and hi are numbers."""
+        lo3 = lo if isinstance(lo, (tuple, list)) else (lo, lo, lo)
+        hi3 = hi if isinstance(hi, (tuple, list)) else (hi, hi, hi)
+        return tuple(self.float(a, b) for a, b in zip(lo3, hi3))
+
+
 def random_vec3(count, lo, hi, seed=12345):
-    """The first `count` RandomVec3( lo, hi ) of the samples' generator (shared/utils.h: XorShift32 from RAND_SEED,
-    which every Sample's constructor sets)."""
-    out = []
-    for _ in range(count):
-        v = []
-        for a, b in zip(lo, hi):
-            seed ^= (seed << 13) & 0xFFFFFFFF
-            seed ^= seed >> 17
-            seed ^= (seed << 5) & 0xFFFFFFFF
-            r = (seed % 32768) / 32767.0
-            v.append(a + r * (b - a))
-        out.append(tuple(v))
-    return out
+    """The first `count` RandomVec3( lo, hi ) of the samples' generator."""
+    rng = XorShift(seed)
+    return [rng.vec3(lo, hi) for _ in range(count)]
+
+
+REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+
+
+def cached_mesh_file(file_name):
+    """Copies extern/box3d/data/meshes/<file_name> to examples/cache (once) and returns the path a sample scene
+    reads it by, relative to the scene (examples/<category>/<sample>.hip), so the examples folder can move."""
+    source = os.path.join(REPO, "extern", "box3d", "data", "meshes", file_name)
+    cache = os.path.join(REPO, "examples", "cache")
+    os.makedirs(cache, exist_ok=True)
+    target = os.path.join(cache, file_name)
+    if not os.path.exists(target):
+        shutil.copyfile(source, target)
+    return f"$HIP/../cache/{file_name}"
+
+
+def height_field(tag, columns, rows, scale, origin=(0.0, 0.0, 0.0), heights=""):
+    """A Box3D height field (b3CreateGrid( rows, columns, scale ) and the like) as a HeightField SOP in its own
+    geometry object, for finish(statics=...): samples `scale.x` apart (scale.z must match: a height field's voxels
+    are square) with sample (0, 0) at `origin`, the static body's position, as Box3D puts the field's corner at its
+    body. heights: VEX setting @height from the sample's position (@P), times scale.y; none for a flat field."""
+    if abs(scale[0] - scale[2]) > 1e-9:
+        raise SetupError(f"{tag}: a height field's x and z spacing must match ({scale})")
+    geo = create(hou.node("/obj"), "geo", f"{tag}_heightfield")
+    for child in geo.children():
+        child.destroy()
+    hf = create(geo, "heightfield", "heightfield")
+    set_parm(hf, "gridspacing", float(scale[0]))
+    set_parm(hf, "sizex", columns * scale[0])
+    set_parm(hf, "sizey", rows * scale[2])
+    set_parm(hf, "tx", origin[0] + 0.5 * (columns - 1) * scale[0])
+    set_parm(hf, "ty", float(origin[1]))
+    set_parm(hf, "tz", origin[2] + 0.5 * (rows - 1) * scale[2])
+    last = hf
+    if heights:
+        wr = create(geo, "volumewrangle", "heights")
+        wr.setInput(0, hf)
+        set_parm(wr, "snippet", heights.strip() + f"\n@height *= {num(scale[1])};")
+        last = wr
+    out = create(geo, "null", "OUT_heightfield")
+    out.setInput(0, last)
+    display(out)
+    cooked_geometry(out)
+    return out.path()
 
 
 def box_impulse(half, density, impulse, offset):

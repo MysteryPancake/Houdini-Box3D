@@ -8,19 +8,19 @@ The plan: [sample-port-plan.md](sample-port-plan.md).
 
 | Sample | Verdict | What it uses / why |
 |---|---|---|
-| Crash | now | Welded boxes on a grid mesh |
-| Multiple Prismatic | now | Prismatic chain with limits, `constraint_stiffness` |
+| Crash | built | Welded boxes on a grid mesh; the weld there from the start, not added by its button |
+| Multiple Prismatic | built | Prismatic chain with limits, `constraint_stiffness` |
 | Hull Crash | no | Hull building from point sets, no simulation |
 | Thin Slab Hull | no | Hull building, no simulation |
 | Convex Jitter | built | Custom hulls at rest, rolling resistance |
 | s&box mover | work | `building.obj` (`obj_mesh`), height field, platform mesh; `fixedRotation` bodies (see Fixed Rotation) |
 | Capsule Mesh | work | `fixedRotation` capsules on a mesh |
 | s&box Ghost Collisions | work | A body walked back and forth by setting its velocity each step: drag towards a keyed `targetv`; `fixedRotation`; speculative contact off has no setting |
-| GMod Wheel Stack | now | Stacked hull wheels; contact tuning on the solver; profile readout dropped |
+| GMod Wheel Stack | built | Stacked hull wheels (`hull`, its 64 points from Box3D at full precision); contact tuning on the solver |
 | Restitution Overshoot | built | Box bouncing; readout dropped |
 | Slide Twist Off Center Shape | built | Offset box spinning while it slides |
 | Huge Box | built | One very large box |
-| Heightfield | now | Cylinder on a height field |
+| Heightfield | built | Cylinder on a flat height field (`height_field`, a Static Object) |
 | Thin Wall Push Out | work | Mover held still every step: `animated_piece`; Gravity |
 | Rolling Deck | work | Kinematic deck rolled by `SetTargetTransform`: `animated_piece` |
 | Turning Platform | work | Platform that starts turning after a settle time: `animated_piece` keyed |
@@ -38,23 +38,23 @@ The plan: [sample-port-plan.md](sample-port-plan.md).
 
 | Sample | Verdict | What it uses / why |
 |---|---|---|
-| Distance Joint | now | Distance chain: spring, min / max length, spring force range |
-| Filter | now | Filter joint |
+| Distance Joint | built | A ball on a rigid distance joint (Count 1); spring, force range and limit set on the node, off |
+| Filter | built | Filter joint |
 | Motor Joint | work | Motor joint chasing a target moved each step: `animated_piece` target; max spring force / torque |
 | Top Down Friction | work | Motor joints to the ground as friction (max velocity force / torque), no gravity; GUI explosion: starting `v` |
-| Prismatic | now | Spring, limits, motor, target translation |
-| Spherical | now | Cone and twist limits, spring, motor, target rotation |
-| Spherical Motor Frame | now | Spherical motor velocity |
-| Parallel Spring | now | Parallel joint spring |
-| Revolute | now | Limits, spring, motor, target angle |
-| Weld | now | Linear and angular springs, constraint stiffness |
-| Wheel | now | Suspension, spin motor, steering and limits |
-| Ball and Chain | now | Capsule links, spherical joints with friction motors |
+| Prismatic | built | Spring, limits, motor, target translation |
+| Spherical | built | Cone and twist limits, spring, motor, target rotation |
+| Spherical Motor Frame | built | Spherical motor velocity; the head two hulls (`compound`), the kinematic neck static |
+| Parallel Spring | built | Parallel joint spring |
+| Revolute | built | Limits, spring, motor, target angle |
+| Weld | built | Linear and angular springs, constraint stiffness |
+| Wheel | built | Suspension, spin motor, steering and limits |
+| Ball and Chain | built | Capsule links, spherical joints with friction motors |
 | Door | work | Revolute door hit by a GUI impulse: starting `w`; per-joint constraint stiffness |
-| Bridge | now | Revolute and spherical bridge with springs and damping |
-| Fold Out | now | Revolute friction motors |
+| Bridge | built | Spherical-jointed planks with springs and damping |
+| Fold Out | built | Revolute friction motors |
 | Locked Joints | work | Joints on motion-locked bodies; lock and rotation choices are GUI (one per scene), the impulse a starting `v` |
-| Motion Lock Joint | now | Motion lock joint; the key impulse as a starting `v` / `w` |
+| Motion Lock Joint | built | Motion lock joint; the key impulse as a starting `v` / `w` (Try) |
 | Driving | work | Keyboard car on a height field: keyed Spin Speed and Target Steering Angle on the wheel node (live settings) |
 | Gear Lift | work | Gears of offset boxes on revolute motors, a prismatic lift, rocks, custom mesh: `multi_shape_body` |
 
@@ -72,10 +72,10 @@ Wedge, Triangle vs Hull, Hull Ghost Manifold, Sphere Ghost Manifold, Ghost Oracl
 | Big Box | built | A body on a large box mesh: the Shape menu (`choice`); the mesh scale slider dropped |
 | Box | built | A body on a box mesh turned 45 degrees: the Shape menu (`choice`) |
 | Reflection | work | Mirrored mesh: a Transform SOP scale of -1 and Reverse before `concave` |
-| Height Field | work | Spheres and boxes on a height field; the ray and shape casts dropped |
+| Height Field | no | Ray and shape casts over a height field; its bodies are compiled out (`#if 0`) |
 | Viewer | no | Mesh tree viewer, no simulation |
 | Creation Benchmark | no | Mesh build timing |
-| Voxel | work | `voxel_mesh_0*.obj` (`obj_mesh`) |
+| Voxel | built | A hull on `collision_mesh_01.obj` (`mesh_file`, welded); moved from 5 km out to the origin |
 | Hollow Box | built | Capsules and cylinders in a hollow box mesh |
 | Wedged Sphere | built | Sphere wedged in a mesh; readout dropped |
 

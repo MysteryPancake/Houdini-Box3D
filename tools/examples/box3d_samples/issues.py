@@ -1,6 +1,7 @@
 """Box3D's Issues samples (samples/sample_issues.cpp): scenes kept from bug reports."""
 
-from .common import Bodies, Every, finish, sample, vec
+from .common import Bodies, Every, finish, height_field, num, sample, vec
+from .joints import node
 
 SOURCE = "sample_issues.cpp"
 
@@ -25,6 +26,45 @@ JITTER_DYNAMIC = [(29.5, 17.1488495, 0.175081104), (29.5, -17.2990532, 0.125), (
                   (29.5, 17.3429642, 24.0)]
 
 
+# GMod Wheel Stack's wheel: b3CreateHull of the vertices of its 37 piece hulls (s_metalWheel1Verts / Hulls in
+# sample_issues.cpp), as Box3D builds it: these 64 points, printed by a program linked with Box3D to full float
+# precision. The stack is that sensitive: rounded to 6 decimals, its faces change and it falls.
+WHEEL_HULL = [
+    (-0.49721697, -0.0847039968, -1.60001218e-05), (-0.000108003616, 0.0863350108, 0.497087955),
+    (0.497002989, -0.0847039968, -2.89976597e-05), (-0.49721697, 0.0863349959, -1.60001218e-05),
+    (0.497002989, 0.0863349959, -2.89976597e-05), (-0.000105001032, -0.0847039968, -0.497132987),
+    (-0.000108003616, -0.0847039968, 0.497087955), (0.351408005, 0.0863349959, 0.351482987),
+    (-0.351615012, 0.0863349959, -0.351534009), (-0.351617992, 0.0863349959, 0.351487011),
+    (0.351404995, 0.0863349959, -0.351530999), (0.351402014, -0.0847039968, 0.351489007),
+    (-0.351615012, -0.0847039968, -0.351534009), (-0.351617992, -0.0847039968, 0.351487011),
+    (0.351404995, -0.0847039968, -0.351530999), (0.45916301, -0.0847039968, 0.190215006),
+    (-0.459376007, 0.0863350108, -0.190259993), (0.190127, 0.0863349959, 0.459248006),
+    (0.190130994, 0.0863349959, -0.459291995), (-0.190344006, 0.0863350108, 0.459246993),
+    (-0.190340996, 0.0863350108, -0.459293008), (0.459163994, 0.0863349959, -0.190256998),
+    (-0.459374011, 0.0863349959, 0.190219998), (-0.459376007, -0.0847039968, -0.190259993),
+    (0.45916301, 0.0863350108, 0.190215006), (0.190130994, -0.0847039968, -0.459291995),
+    (-0.190344006, -0.0847039968, 0.459246993), (-0.190340996, -0.0847039968, -0.459293008),
+    (0.190127, -0.0847039968, 0.459248006), (0.459163994, -0.0847039968, -0.190256998),
+    (-0.459374011, -0.0847039968, 0.190219998), (0.276071012, 0.0863349959, 0.413311005),
+    (-0.487664998, 0.0863349959, -0.0970050022), (0.487453014, -0.0847039968, 0.0969519913),
+    (-0.0970899984, 0.0863349959, 0.487536013), (-0.276288003, 0.0863349959, 0.413309008),
+    (-0.413437992, 0.0863349959, -0.276203007), (0.0968730003, 0.0863349959, 0.487536013),
+    (0.413224012, -0.0847039968, 0.276158988), (-0.276284993, 0.0863349959, -0.413354993),
+    (-0.0970859975, 0.0863350108, -0.487581015), (-0.487664998, 0.0863349959, 0.0969569981),
+    (0.0968680009, 0.0863350108, -0.487581998), (0.276066989, 0.0863349959, -0.413358003),
+    (0.487452, 0.0863349959, -0.0970019996), (-0.413439989, 0.0863349959, 0.276156008),
+    (0.413226008, 0.0863350108, -0.276199996), (-0.487664998, -0.0847039968, -0.0970050022),
+    (0.487453014, 0.0863349959, 0.0969519913), (-0.0970899984, -0.0847039968, 0.487536013),
+    (0.276071012, -0.0847039968, 0.413311005), (-0.276288003, -0.0847039968, 0.413309008),
+    (-0.413437992, -0.0847039968, -0.276203007), (0.0968730003, -0.0847039968, 0.487536013),
+    (-0.276284993, -0.0847039968, -0.413354993), (-0.0970859975, -0.0847039968, -0.487581015),
+    (-0.487664998, -0.0847039968, 0.0969569981), (0.0968680009, -0.0847039968, -0.487581998),
+    (0.276066989, -0.0847039968, -0.413358003), (0.487452, -0.0847039968, -0.0970019996),
+    (-0.413439989, -0.0847039968, 0.276156008), (0.413226008, -0.0847039968, -0.276199996),
+    (0.413224012, 0.0863349959, 0.276158988), (-0.000105001032, 0.0863350108, -0.497132987)
+]
+
+
 def _jitter_hull(name, points, base, quat):
     """VEX for one ConvexJitter hull: its points swapped and scaled as the sample does, placed by the body's pose."""
     s = 0.01
@@ -33,6 +73,42 @@ def _jitter_hull(name, points, base, quat):
     return (f"vector {name}[] = array({', '.join(vec(p) for p in local)});\n"
             f"foreach (int i; vector p; {name}) {name}[i] = qrotate({vec(quat)}, p) + {vec(pos)};\n"
             f'hull_points("{name}", {name});\n')
+
+
+@sample("Issues", "Crash", SOURCE, frames=240)
+def crash(s):
+    b = Bodies(s.tag)
+    b.mesh("grid", """\
+// b3CreateGridMesh( 20, 20, 2 ) on a static body at (0, -1, 0): a flat 40 x 40 mesh at y = -1.
+grid_mesh("grid", 20, 20, 2.0, {1, 1, 1}, {0, -1, 0});
+""")
+    b.stream("boxes", b.box("boxes", 0.5, 0.5, 0.5), "body({2, 4, 0}, identity);\nbody({-2, 4, 0}, identity);",
+             cd=(0.9, 0.6, 0.2))
+    return finish(s, b, about="""\
+Two cubes 4 m apart welded together by a weld whose frames are at each cube's centre, so it pulls the
+centres together: the cubes crash into each other, then fall onto a grid mesh as one. Adding this joint
+mid-run once crashed Box3D.""",
+                  ported="the sample adds the weld with its Add Joint button; here it is there from the start.",
+                  joints=[node("weld", "pull_together")],
+                  lines=[("boxes0", (2, 4, 0), "boxes1", (-2, 4, 0), "pull_together")])
+
+
+@sample("Issues", "Multiple Prismatic", SOURCE, frames=240)
+def multiple_prismatic(s):
+    b = Bodies(s.tag)
+    b.stream("boxes", b.box("boxes", 0.5, 0.5, 0.5), """\
+// Six cubes in a column, each on a prismatic joint to the one below (the first to the world at the origin).
+for (int i = 0; i < 6; ++i) body(set(0, 0.6 + 1.2 * i, 0), identity);
+""", cd=(0.9, 0.6, 0.2))
+    lines = [("" if i == 0 else f"boxes{i - 1}", (0, 1.2 * i, 0), f"boxes{i}", (0, 1.2 * i, 0), "sliders")
+             for i in range(6)]
+    return finish(s, b, about="""\
+A column of six cubes, each sliding along x on the cube below (the first on the world), limited to
+6 m either way, Constraint Stiffness 240. Gravity pulls across the sliders, so the column holds still.
+The sample is for dragging the cubes with the mouse.""",
+                  try_="push them: v {3, 0, 0} on one cube in boxes_points.",
+                  joints=[node("prismatic", "sliders", constraint_stiffness=240.0, enable_limit=1,
+                               lower_translation=-6.0, upper_translation=6.0)], lines=lines)
 
 
 @sample("Issues", "Convex Jitter", SOURCE, frames=300)
@@ -50,6 +126,29 @@ def convex_jitter(s):
     return finish(s, b, about="""\
 Two hulls from a game's level: a crate made of 18 points, nearly a box, resting on a static hull of
 16 points. The crate used to jitter on it; it should settle and sleep.""")
+
+
+@sample("Issues", "GMod Wheel Stack", SOURCE, frames=600)
+def gmod_wheel_stack(s):
+    height = 0.171
+    spacing, start = height + 0.006, 0.5 * height + 0.004
+    b = Bodies(s.tag)
+    b.ground(10.0)
+    b.stream("wheels", b.hull("wheels", WHEEL_HULL, note="the wheel: one hull of 64 points (WHEEL_HULL)"), f"""\
+// 30 wheels lying flat, stacked {num(spacing)} apart.
+for (int i = 0; i < 30; ++i) body(set(0.0, {num(start)} + i * {num(spacing)}, 0.0), identity);
+""", cd=(0.6, 0.62, 0.66))
+    return finish(s, b, about="""\
+30 metal wheels (1 m across, 17 cm thick) stacked flat, from a game prop. Each wheel is one hull of 64
+points wrapped around its 37-piece convex decomposition: Box3D's comment says the single hull simulates
+better. It settles leaning a little (the top wheel about 0.35 m off-centre after 5 s) and falls asleep
+standing, as in Box3D.""",
+                  ported="the sample's profile readout is dropped. Contact Stiffness 240 on the solver is the "
+                         "sample's b3World_SetContactTuning; Box3D caps it at an eighth of the substep rate, 30 Hz "
+                         "at one step of 4 substeps a frame, so here it is 30 either way.",
+                  try_="raise Constraint Iterations on the Box3D Solver (Box3D's substeps): the 240 Hz then "
+                       "takes effect.",
+                  solver={"contactstiffness": 240.0, "contactdamping": 10.0, "contactpushspeed": 3.0})
 
 
 @sample("Issues", "Restitution Overshoot", SOURCE, frames=600)
@@ -96,6 +195,22 @@ def huge_box(s):
     return finish(s, b, about="""\
 A 200 m cube (8e9 kg) standing tilted on one edge. Its inertia tensor once overflowed; it should tip
 onto its face and settle like a small one.""")
+
+
+@sample("Issues", "Heightfield", SOURCE, frames=300)
+def heightfield(s):
+    field = height_field(s.tag, 100, 100, (1.0, 1.0, 1.0))
+    b = Bodies(s.tag)
+    b.stream("cylinder", b.cylinder("cylinder", 20.0, 5.0, -10.0, 24), """\
+// b3CreateCylinder( 20, 5, -10, 24 ): 20 m long and 10 across, centred on the body, tilted 45 degrees about x.
+body({50, 20, 50}, axis_angle({1, 0, 0}, 0.25 * PI));
+""", cd=(0.5, 0.75, 0.45))
+    return finish(s, b, about="""\
+A large tilted cylinder dropped on a flat height field (b3CreateGrid: 100 x 100 samples 1 m apart, its
+corner at the origin). Its bounds cover more than 512 of the field's triangles, which once broke the
+contact; it should land, roll onto its side and settle.""",
+                  ported="the height field is a HeightField SOP on a Static Object (the collider0 node).",
+                  statics=[field])
 
 
 @sample("Issues", "Bullet Thin Plate", SOURCE, frames=240)

@@ -102,8 +102,8 @@ All **no**: they show queries or narrow-phase tools, not a simulation.
 | Spinning Stick | built | Fast spinning stick, its spin the sample's first `RandomVec3` (`random_vec3`) |
 | Bullet vs Stack | work | A `fastobject` sphere fired into a stack by key: emitted at a frame with its `v` (`emit`) |
 | Needle Mesh | built | A thin plate thrown onto four needle meshes (open cones) |
-| Mesh Drop | work | `mesh_drop.c` drops in generations onto a mesh: one generation, or pieces appearing at frames; tunnel readout dropped |
-| Rough Mesh Drop | work | Same, rough mesh |
+| Mesh Drop | built | `mesh_drop.c`'s 1024 bodies on a walled wave mesh: one generation, a fixed seed (`XorShift`), the Shape menu; readouts dropped |
+| Rough Mesh Drop | built | Same, rough mesh |
 | Hump Mesh | built | A thin plate thrown onto the ridge of a custom mesh |
 | Is Fast | built | Long boxes spinning in the air under the fast-body test (its capsule option is off) |
 | Stall | built | A rock (`hull_points`) fired into a dense torus mesh, `fastobject`; Launch as one every second (`emit`) |
@@ -125,7 +125,7 @@ All **no**: they show queries or narrow-phase tools, not a simulation.
 | Sensor Visit | no | Sensor events destroy what enters |
 | Hit | work | Hit events: Add Impact Data records Impacts instead of markers |
 | Move | work | Move events coloured by sleep: colour by the written-back `awake` after the solver |
-| Joint | now | Every joint type with Break Force / Torque (Breakable) |
+| Joint | built | Distance, prismatic, revolute and weld joints with Break Force / Torque (Breakable); motor and wheel compiled out |
 | Contact | no | Keyboard player absorbing bodies on contact begin events |
 | Persistent Contact | no | Contact begin / end events and contact data |
 | Sensor Hits | no | Sensors on moving bodies |

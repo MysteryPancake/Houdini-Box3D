@@ -44,8 +44,9 @@ def rainbow(t):
 
 
 def num(x):
-    """A VEX float literal (always with a decimal point, so VEX never reads it as an int)."""
-    text = f"{float(x):.6g}"
+    """A VEX float literal (always with a decimal point, so VEX never reads it as an int). Nine significant digits
+    give back any 32-bit float exactly: a hull's points rounded further can change its faces."""
+    text = f"{float(x):.9g}"
     return text if any(c in text for c in ".en") else text + ".0"
 
 
@@ -368,7 +369,8 @@ def fix_constraint_names(network_path, data_names, wanted):
     wr = hou.node(network_path)
     code = wr.parm("snippet").eval()
     for k, v in mapping.items():
-        code = code.replace(f'"{k}");', f'"{v}");')
+        # The constraint_name argument: last in joint(), before the orient in joint_turned().
+        code = code.replace(f'"{k}");', f'"{v}");').replace(f'"{k}", vector4', f'"{v}", vector4')
     wr.parm("snippet").set(code)
 
 

@@ -1,0 +1,297 @@
+"""Box3D's Joints samples (samples/sample_joint.cpp). A joint is a constraint network line between two bodies' anchors
+(an empty name is the world, Box3D's static ground body), its settings a Box3D relationship node's parameters: the
+sample's sliders and checkboxes, live in Houdini as they are in the sample app."""
+
+import math
+
+from .common import Bodies, finish, num, sample
+
+SOURCE = "sample_joint.cpp"
+
+H = math.sqrt(0.5)
+Z_TO_Y = (-H, 0.0, 0.0, H)  # b3ComputeQuatBetweenUnitVectors( z, y ): a quarter turn about -x
+X_TO_Y = (0.0, 0.0, H, H)  # ( x, y ): about z
+Y_TO_Z = (H, 0.0, 0.0, H)  # ( y, z ): about x
+Y_TO_X = (0.0, 0.0, -H, H)  # ( y, x ): about -z
+
+TRY_NODE = "the sample's checkboxes and sliders are the {node} node's parameters: turn on its {what} and play."
+
+
+def node(kind, name, **parms):
+    """A Box3D <kind> relationship node named `name`, its Data Name (the lines' constraint_name) its name too: nodes
+    of one type would otherwise share the type's default Data Name, and all their lines one node's settings."""
+    return (f"box3d_{kind}conrel", name, {"dataname": name, **parms}, name)
+
+
+@sample("Joints", "Distance Joint", SOURCE, frames=300)
+def distance_joint(s):
+    count, length = 1, 1.0
+    b = Bodies(s.tag, {"angulardamping": 0.0})
+    b.ground(20.0)
+    b.stream("balls", b.sphere("balls", 0.25), f"""\
+// {count} sphere(s) of radius 0.25 a joint length apart along x, 20 m up: DistanceJoint's Count {count}.
+for (int i = 0; i < {count}; ++i) body(set({num(length)} * (i + 1), 20, 0), identity);
+""", cd=(0.85, 0.45, 0.3), density=20.0, angulardamping=1.0)
+    lines = [("" if i == 0 else f"balls{i - 1}", (length * i, 20.0, 0.0), f"balls{i}", (length * (i + 1), 20.0, 0.0),
+              "rods") for i in range(count)]
+    return finish(s, b, about="""\
+A ball on a 1 m distance joint to the world (its anchors 1 m apart, the length they start at), started
+level: a rigid pendulum. The joint's spring and limit are off, as the sample starts.""",
+                  try_=TRY_NODE.format(node="rods", what="Enable Spring (5 Hz, tension 2000 and compression 100 "
+                                                         "set) or Enable Limit") + " More balls: count in joints.py.",
+                  joints=[node("distance", "rods", stiffness=5.0, damping_ratio=0.5, limit_spring_force=1,
+                               max_tension_force=2000.0, max_compression_force=100.0, min_length=1.0,
+                               limit_max_length=1, max_length=1.0)],
+                  lines=lines)
+
+
+@sample("Joints", "Filter", SOURCE, frames=120)
+def filter_joint(s):
+    b = Bodies(s.tag)
+    b.ground(20.0)
+    b.stream("boxes", b.box("boxes", 0.5, 0.5, 0.5), "body({2, 4, 0}, identity);\nbody({-2, 4, 0}, identity);",
+             cd=(0.9, 0.6, 0.2))
+    return finish(s, b, about="""\
+Two cubes joined by a filter joint: it holds nothing, only stops the pair colliding with each other. They
+fall side by side onto the ground.""", try_="move one cube over the other in boxes_points: they pass through "
+                                           "each other.",
+                  joints=[node("filter", "no_collision")], lines=[("boxes0", (2, 4, 0), "boxes1", (-2, 4, 0),
+                                                                   "no_collision")])
+
+
+@sample("Joints", "Prismatic", SOURCE, frames=300)
+def prismatic(s):
+    b = Bodies(s.tag, {"gravityscale": 1.0})
+    b.ground(20.0)
+    b.stream("box", b.box("box", 0.5, 1.5, 0.25), "body({0, 4, 0}, identity);", cd=(0.9, 0.6, 0.2),
+             note="no gravity", gravityscale=0.0)
+    return finish(s, b, about="""\
+A box on a prismatic joint to the world at its top (5.5 m up), sliding along x, with no gravity. The
+joint's spring (2 Hz) holds it at its target translation 0, so it stays still until you change the
+joint.""", try_=TRY_NODE.format(node="slider", what="Enable Motor or Enable Limit, or set Target "
+                                                  "Translation"),
+                  joints=[node("prismatic", "slider", constraint_stiffness=120.0, enable_spring=1, stiffness=2.0,
+                               damping_ratio=0.7, max_motor_force=20.0, motor_speed=0.0, lower_translation=-1.0,
+                               upper_translation=1.0)],
+                  lines=[("", (0, 5.5, 0), "box0", (0, 5.5, 0), "slider")])
+
+
+@sample("Joints", "Spherical", SOURCE, frames=300)
+def spherical(s):
+    b = Bodies(s.tag, {"gravityscale": 1.0})
+    b.ground(20.0)
+    b.stream("box", b.box("box", 0.5, 1.5, 0.25), "body({0, 4, 0}, identity);", cd=(0.9, 0.6, 0.2),
+             note="density 100, no gravity", density=100.0, gravityscale=0.0)
+    return finish(s, b, about="""\
+A box on a spherical joint to the world at its top, with no gravity. The joint's spring (2 Hz) holds it
+at its target rotation, so it stays still until you change the joint.""",
+                  try_=TRY_NODE.format(node="ball_joint", what="Enable Motor (Motor Velocity), the cone and twist "
+                                                             "limits, or set Target Rotation"),
+                  joints=[node("spherical", "ball_joint", enable_spring=1, stiffness=2.0, damping_ratio=0.7,
+                               cone_angle=30.0, lower_twist_angle=-35.0, upper_twist_angle=35.0,
+                               max_motor_torque=20.0)],
+                  lines=[("", (0, 5.5, 0), "box0", (0, 5.5, 0), "ball_joint")])
+
+
+@sample("Joints", "Spherical Motor Frame", SOURCE, frames=480)
+def spherical_motor_frame(s):
+    b = Bodies(s.tag, {"gravityscale": 1.0})
+    b.ground(20.0)
+    turn = vec4(Y_TO_X)
+    b.stream("base", b.box("base", 1.4, 0.3, 0.3), f"static_body({{0, 2, 0}}, {turn});", cd=(0.55, 0.6, 0.65),
+             note="the neck, turned so its x is down (kinematic in the sample, its spin speed 0)")
+    head = b.compound("head", [("skull", (0.5, 0.5, 0.5), (0, 0, 0)), ("nose", (0.1, 0.1, 0.25), (0, 0, 0.75))])
+    b.stream("head", head,
+             f"body({{0, 4, 0}}, {turn});", cd=(0.9, 0.6, 0.2),
+             note="a cube and a nose (b3MakeOffsetBoxHull): two hulls on one body, no gravity", gravityscale=0.0)
+    return finish(s, b, about="""\
+A head on a spherical joint to a neck, its motor driving it at 1 rad/s about the joint frame's z (Motor
+Velocity (0, 0, 57.3) degrees per second, Max Motor Torque 1000). The motor's velocity is in the frame of
+the first body, the neck: its z is the way the nose points, so the head spins steadily about its nose.""",
+                  ported="""\
+the neck is a static body: the sample's is kinematic, spun by its Base Speed slider (0 at the start).
+The head's two hulls are named pieces of one packed shape (bullet_georep concave).""",
+                  try_=TRY_NODE.format(node="neck_joint", what="Motor Velocity: another axis, or several at once"),
+                  joints=[node("spherical", "neck_joint", enable_motor=1,
+                               motor_velocity=(0.0, 0.0, math.degrees(1.0)), max_motor_torque=1000.0)],
+                  lines=[("base0", (0, 4, 0), "head0", (0, 4, 0), "neck_joint", Y_TO_X)])
+
+
+@sample("Joints", "Parallel Spring", SOURCE, frames=300)
+def parallel_spring(s):
+    b = Bodies(s.tag)
+    b.ground(20.0)
+    b.stream("walls_x", b.box("walls_x", 20.0, 5.0, 0.1), "static_body({0, 4, -20}, identity);\n"
+             "static_body({0, 4, 20}, identity);", cd=(0.55, 0.6, 0.65),
+             note="four static walls (in Box3D box hulls on one static body at (0, -1, 0))")
+    b.stream("walls_z", b.box("walls_z", 0.1, 5.0, 20.0), "static_body({-20, 4, 0}, identity);\n"
+             "static_body({20, 4, 0}, identity);", cd=(0.55, 0.6, 0.65))
+    b.stream("box", b.box("box", 0.5, 1.5, 0.25), "body({0, 4, 0}, axis_angle({1, 0, 0}, 0.25 * PI));",
+             cd=(0.9, 0.6, 0.2), note="tilted 45 degrees about x")
+    return finish(s, b, about="""\
+A tilted box on a parallel joint to the world: a 10 Hz spring holds its axis at the angle it starts at
+(the joint's frames turned so their z is up). It falls onto the ground and lands still tilted, its axis
+kept parallel while it slides; the walls keep it in.""",
+                  try_=TRY_NODE.format(node="keep_tilt", what="Limit Torque (5000 in the sample's slider)") +
+                  " Throw it: v in box_points.",
+                  joints=[node("parallel", "keep_tilt", stiffness=10.0, damping_ratio=0.7, max_torque=5000.0,
+                               collide_connected=1)],
+                  lines=[("", (0, -1, 0), "box0", (0, 4, 0), "keep_tilt", Z_TO_Y)])
+
+
+@sample("Joints", "Revolute", SOURCE, frames=300)
+def revolute(s):
+    b = Bodies(s.tag)
+    b.ground(20.0)
+    b.stream("box", b.box("box", 0.5, 1.5, 0.25), "body({0, 4, 0}, identity);", cd=(0.9, 0.6, 0.2))
+    return finish(s, b, about="""\
+A box hanging from a revolute joint to the world at its top, turning about z. It hangs straight down,
+so it stays still until you push it or change the joint.""",
+                  try_=TRY_NODE.format(node="hinge", what="Enable Motor (Max Motor Torque 5000), Enable Spring "
+                                                        "or Enable Limit (-35 to 35)") +
+                  " Swing it: w {0, 0, 3} in box_points.",
+                  joints=[node("revolute", "hinge", stiffness=2.0, damping_ratio=0.7, max_motor_torque=5000.0,
+                               motor_speed=0.0, lower_angle=-35.0, upper_angle=35.0)],
+                  lines=[("", (0, 5.5, 0), "box0", (0, 5.5, 0), "hinge")])
+
+
+@sample("Joints", "Weld", SOURCE, frames=300)
+def weld(s):
+    b = Bodies(s.tag, {"gravityscale": 1.0})
+    b.ground(20.0)
+    b.stream("box", b.box("box", 0.5, 1.5, 0.25), "body({0, 4, 0}, identity);", cd=(0.9, 0.6, 0.2),
+             note="no gravity", gravityscale=0.0)
+    return finish(s, b, about="""\
+A box welded to the world at its top, with no gravity: rigid in position, a 2 Hz spring in rotation
+(Constraint Stiffness 240). It stays still until pushed, then wobbles back.""",
+                  try_=TRY_NODE.format(node="weld", what="Enable Linear Spring, or change the angular spring") +
+                  " Kick it: w {3, 0, 0} in box_points.",
+                  joints=[node("weld", "weld", constraint_stiffness=240.0, enable_angular_spring=1,
+                               angular_stiffness=2.0, angular_damping_ratio=0.7)],
+                  lines=[("", (0, 5.5, 0), "box0", (0, 5.5, 0), "weld")])
+
+
+@sample("Joints", "Wheel", SOURCE, frames=240)
+def wheel(s):
+    b = Bodies(s.tag)
+    b.ground(20.0)
+    b.stream("wheel", b.cylinder("wheel", 0.25, 0.4, 0.0, 12), f"body({{0, 2, 0}}, {vec4(Y_TO_Z)});",
+             cd=(0.3, 0.3, 0.32), note="b3CreateCylinder( 0.25, 0.4, 0, 12 ), its axis turned to z")
+    return finish(s, b, about="""\
+A wheel on a wheel joint to the world: its suspension runs up and down (the joint frame's x turned to y)
+and it spins about z. The sample starts with the suspension spring, its limit, the spin motor and the
+steering all off, so the wheel slides down its free suspension onto the ground.""",
+                  ported="the joint's frames are one orientation on both ends; Box3D's differ by a turn about the "
+                         "spin axis, which is free.",
+                  try_=TRY_NODE.format(node="wheel_joint", what="Enable Suspension Spring (2 Hz), Enable Spin Motor "
+                                                              "or Enable Steering"),
+                  joints=[node("wheel", "wheel_joint", collide_connected=1, enable_suspension_spring=0,
+                               suspension_stiffness=2.0, suspension_damping_ratio=0.7, lower_suspension_limit=-1.0,
+                               upper_suspension_limit=1.0, max_spin_torque=20.0, spin_speed=0.0,
+                               steering_stiffness=1.0, steering_damping_ratio=0.7, max_steering_torque=20.0,
+                               lower_steering_limit=-45.0, upper_steering_limit=45.0)],
+                  lines=[("", (0, 2, 0), "wheel0", (0, 2, 0), "wheel_joint", X_TO_Y)])
+
+
+@sample("Joints", "Ball and Chain", SOURCE, frames=480)
+def ball_and_chain(s):
+    links, extent, radius = 32, 0.5, 2.0
+    b = Bodies(s.tag)
+    b.stream("links", b.capsule("links", extent, 0.125), f"""\
+// {links} capsule links along x from the world anchor at the origin.
+for (int i = 0; i < {links}; ++i) body(set({num(extent)} * (1 + 2 * i), 0, 0), along_x(identity));
+""", cd=(0.6, 0.62, 0.66), note="b3Capsule { (-0.5, 0, 0), (0.5, 0, 0), 0.125 }: built along y, turned to x")
+    ball_x = (1.0 + 2.0 * links) * extent + radius - extent
+    b.stream("ball", b.sphere("ball", radius), f"body({{{num(ball_x)}, 0, 0}}, identity);", cd=(0.85, 0.45, 0.3))
+    lines = [("" if i == 0 else f"links{i - 1}", (2 * extent * i, 0, 0), f"links{i}", (2 * extent * i, 0, 0),
+              "chain") for i in range(links)]
+    lines.append((f"links{links - 1}", (2 * extent * links, 0, 0), "ball0", (2 * extent * links, 0, 0), "chain"))
+    return finish(s, b, about=f"""\
+A chain of {links} capsule links held at one end by the world, a 2 m ball on the other end, started
+straight out along x. The spherical joints have a friction motor (Motor Velocity 0, Max Motor Torque
+10) that damps the swing. No ground.""",
+                  try_=TRY_NODE.format(node="chain", what="Max Motor Torque up or down (0 is a free chain)"),
+                  joints=[node("spherical", "chain", enable_motor=1, max_motor_torque=10.0)], lines=lines)
+
+
+@sample("Joints", "Bridge", SOURCE, frames=480)
+def bridge(s):
+    count, a = 150, 0.125
+    xbase = -160.0 * a
+    b = Bodies(s.tag, {"lineardamping": 0.0, "angulardamping": 0.0})
+    b.ground(60.0)
+    b.stream("planks", b.box("planks", a, 0.125, 0.5), f"""\
+// {count} planks 0.25 wide, 20 m up, edge to edge along x.
+for (int i = 0; i < {count}; ++i) body(set({num(xbase)} + {num(a)} * (1 + 2 * i), 20, 0), identity);
+""", cd=(0.65, 0.5, 0.35), density=20.0, lineardamping=0.1, angulardamping=0.1)
+    lines = []
+    for i in range(count + 1):
+        left, right = ("" if i == 0 else f"planks{i - 1}"), ("" if i == count else f"planks{i}")
+        for z in (-0.5, 0.5):  # a joint at each side of the deck
+            p = (xbase + 2 * a * i, 20.0, z)
+            lines.append((left, p, right, p, "deck_joints"))
+    return finish(s, b, about=f"""\
+A rope bridge of {count} planks, each joined to the next by two spherical joints (one at each side), the
+ends to the world. The joints have a 2 Hz spring holding the planks level with each other and a very
+stiff Constraint Stiffness (1000 Hz), so the bridge sags little.""",
+                  try_=TRY_NODE.format(node="deck_joints", what="spring off, or a lower Constraint Stiffness"),
+                  joints=[node("spherical", "deck_joints", constraint_stiffness=1000.0, enable_spring=1,
+                               stiffness=2.0, damping_ratio=1.0)], lines=lines)
+
+
+@sample("Joints", "Fold Out", SOURCE, frames=480)
+def fold_out(s):
+    half, spacing = 2.0, 1.0
+    b = Bodies(s.tag)
+    b.ground(20.0)
+    b.stream("boards", b.box("boards", half, 0.1, 0.25), f"""\
+// Six boards 4 m long, stacked {num(spacing)} apart, each hinged to the one below at alternate ends.
+for (int i = 0; i < 6; ++i) body(set(0, {num(0.5 * spacing)} + i * {num(spacing)}, 0), identity);
+""", cd=(0.65, 0.5, 0.35), density=2000.0)
+    lines = []
+    for i in range(6):
+        x = half if i & 1 else -half
+        p = (x, 0.5 * spacing + i * spacing - 0.5 * spacing, 0.0)
+        lines.append(("" if i == 0 else f"boards{i - 1}", p, f"boards{i}", p, "hinges", Z_TO_Y))
+    return finish(s, b, about="""\
+Six boards stacked in the air, each hinged to the one below at alternate ends about an upright axis
+(the first to the ground). The hinges are upright, so gravity cannot turn them, and their friction motors
+(Motor Speed 0, Max Motor Torque 1000) hold them: the stack stands as it is and falls asleep at once.""",
+                  try_=TRY_NODE.format(node="hinges", what="Motor Speed (45: every hinge turns and the boards fold "
+                                                         "out)"),
+                  joints=[node("revolute", "hinges", constraint_stiffness=240.0, enable_motor=1,
+                               max_motor_torque=1000.0, motor_speed=0.0)], lines=lines)
+
+
+@sample("Joints", "Motion Lock Joint", SOURCE, frames=300)
+def motion_lock_joint(s):
+    presets = [("point_point", 1, 1, 1, 0), ("point_line_x", 0, 1, 1, 0), ("point_plane_xz", 0, 1, 0, 0),
+               ("planar_xy", 0, 0, 1, 1)]
+    b = Bodies(s.tag, {"enablesleep": 1, "computemass": 1, "mass": 0.0})
+    b.ground(20.0)
+    b.stream("boxes", b.box("boxes", 1.0, 0.5, 0.25), """\
+// Four boxes 4 m up, each held by a different motion lock to the world at its centre.
+for (int i = 0; i < 4; ++i) body(set(-9.0 + 6.0 * i, 4, 0), identity);
+""", cd=(0.9, 0.6, 0.2), enablesleep=0)
+    b.stream("platform", b.box("platform", 2.0, 0.05, 0.5), "body({0, 8, 6}, identity);", cd=(0.55, 0.6, 0.65),
+             note="mass 1 (b3Body_SetMassData; the inertia scaled with it)", enablesleep=0, computemass=0, mass=1.0)
+    b.stream("ball", b.sphere("ball", 0.5), "body({0, 9, 6}, identity);", cd=(0.85, 0.45, 0.3),
+             note="mass 10", enablesleep=0, computemass=0, mass=10.0)
+    joints = [node("motionlock", name, collide_connected=1, lock_x=x, lock_y=y, lock_z=z, lock_angular_xy=r)
+              for name, x, y, z, r in presets]
+    joints.append(node("motionlock", "spin_z", lock_x=1, lock_y=1, lock_z=1, lock_angular_xy=1))
+    lines = [("", (-9.0 + 6.0 * i, 4, 0), f"boxes{i}", (-9.0 + 6.0 * i, 4, 0), presets[i][0]) for i in range(4)]
+    lines.append(("", (0, 8, 6), "platform0", (0, 8, 6), "spin_z"))
+    return finish(s, b, about="""\
+Motion locks, each holding a box to the world in its own way, left to right: at a point (it can only
+turn), on a line along x (it slides along x), on the xz plane (it can move across it) and planar xy
+(moves in that plane, turns only about z). A thin platform behind them is locked to spin about z only;
+a 10 kg ball drops onto it.""",
+                  ported="the sample's L key pushes the four boxes (impulse (5, 5, 5), angular (2, 2, 2)); Try "
+                         "gives them that as a starting v and w.",
+                  try_="push the boxes: v {5, 5, 5} and w {2, 2, 2} in boxes_points; drop the ball off centre.",
+                  joints=joints, lines=lines)
+
+
+def vec4(q):
+    return "{" + ", ".join(num(c) for c in q) + "}"

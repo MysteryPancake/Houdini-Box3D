@@ -20,7 +20,7 @@ verdict for every sample: [sample-port-table-a.md](sample-port-table-a.md) (Benc
 
 ## Verdicts
 
-Of the 207 live samples: **81 portable now**, **64 with a workaround**, **62 not portable**. The tables mark the
+Of the 207 live samples: **81 portable now**, **63 with a workaround**, **63 not portable**. The tables mark the
 ported ones **built** in place of their verdict.
 
 * Not portable, by reason: no simulation, only queries or geometry tools (Collision, Manifold, Geometry, Tree, Replay,
@@ -79,8 +79,16 @@ ported ones **built** in place of their verdict.
   * `finish`: the network (`motion_locks` for `Sample::LockMotion`), the DOP network, `box3d_world`, the notes. With
     `emit=True` a Box3D Solver SOP with Emit RBDs replaces the DOP network, for samples that make bodies during the
     run: bodies whose `rbdbullet_emit` is `Every(n)` (1 on frames 1, 1 + n, ...) are made again then, the rest once.
-    `box_impulse`: the velocity a `b3Body_ApplyLinearImpulse` before the first step gives a box; `random_vec3`: the
-    samples' `RandomVec3` sequence (`shared/utils.h`).
+    `statics`: Static Objects merged in, such as `height_field` (a HeightField SOP placed as Box3D places a field, its
+    corner sample at the body's position).
+  * More shapes: `Bodies.hull(points)` (one point set copied onto several bodies), `Bodies.compound(boxes)` (box
+    hulls on one moving body: named pieces of one packed shape, `concave`), `Bodies.mesh_file` (a mesh from
+    `extern/box3d/data/meshes`, copied to `examples/cache` and read `$HIP`-relative, as `LoadTempMesh` reads it, its
+    `weldTolerance` a Fuse). A hull's points come from a program linked with Box3D when Box3D builds them (GMod Wheel
+    Stack), printed to full precision: `num` writes 9 significant digits, and rounded points can change a hull's faces.
+  * `box_impulse`: the velocity a `b3Body_ApplyLinearImpulse` before the first step gives a box; `XorShift` and
+    `random_vec3`: the samples' random numbers (`shared/utils.h`, `mesh_drop.c`), computed in Python (VEX has no bit
+    shifts).
 * `make_examples.py --samples` builds the samples; names select a category (`stacking`) or one sample
   (`stacking/card_house`). Without `--samples` it builds the nine scenes as before. `--check` simulates each.
 
@@ -106,10 +114,14 @@ Sticky notes state only what that comparison showed.
 * Materials: `friction`, `restitution`, `rollingResistance`, `tangentVelocity` -> `friction`, `bounce`,
   `rollingresistance`, `tangentvelocity`. Filters: `categoryBits`, `maskBits`, `groupIndex` -> `collision_category`,
   `collision_mask`, `collision_group`.
-* Joints: one network polyline per joint, both ends at frame A's world position, `orient` its rotation (a revolute
-  turns about the frame's z, a prismatic slides along x, as in Box3D). One relationship node per distinct setting, or
-  primitive attributes named like the parameters (Attributes Replace Values). `hertz` is Stiffness, angles in
-  degrees, `constraintHertz` -> `constraint_stiffness`, `forceThreshold` / `torqueThreshold` -> Breakable.
+* Joints: one network polyline per joint, each end at its frame's world position (the same point but for a distance
+  joint's anchors), `orient` the frames' rotation on both ends (a revolute turns about the frame's z, a prismatic
+  slides along x, as in Box3D). Frames that differ only by a free turn (the wheel's spin axis) make the same joint.
+  One relationship node per distinct setting (`joints.node`: its Data Name its own name, since nodes of one type share
+  a default one), or primitive attributes named like the parameters (Attributes Replace Values). `hertz` is
+  Stiffness, angles and angular velocities in degrees, `constraintHertz` -> `constraint_stiffness`,
+  `forceThreshold` / `torqueThreshold` -> Breakable (Box3D only reports them; the samples destroy the joint).
+  A sample's joint sliders and checkboxes are the node's parameters, set to the sample's starting values.
 * World: `b3World_SetGravity` -> Gravity; `SetContactTuning` -> the contact parameters; restitution threshold ->
   Bounce Threshold; Isotropic Inertia Tolerance -> Near-Sphere Tolerance; contact recycle distance -> Contact Recycle
   Distance. Joint tuning has no world setting: Constraint Stiffness per node.

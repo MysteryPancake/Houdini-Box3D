@@ -876,6 +876,7 @@ def main():
     for name, path, build in jobs(args, ap):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         hou.hipFile.clear(suppress_save_prompt=True)
+        hou.hipFile.setName(path.replace("\\", "/"))  # $HIP is the scene's folder while it is built ($HIP-relative files)
         try:
             dop, frames = build()
         except SetupError as e:

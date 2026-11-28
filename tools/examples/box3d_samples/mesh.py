@@ -2,7 +2,7 @@
 
 import math
 
-from .common import Bodies, finish, sample
+from .common import Bodies, finish, sample, vec
 
 SOURCE = "sample_mesh.cpp"
 
@@ -104,6 +104,35 @@ A body on top of a box mesh turned 45 degrees. The default cube rests with its c
 edges and should stay still. Shape on the bodies object picks a sphere, a capsule or a wide 8-sided
 cylinder standing on the box instead, as the sample's buttons do.""",
                   ported="the sample's sliders scale the mesh; the port keeps it unscaled.", try_=SHAPE_TRY)
+
+
+VOXEL_ORIGIN = (5000.0, 3500.0, -7000.0)  # where the sample puts the mesh; the port puts it at the origin
+VOXEL_HULL = [(-3.13548756, 3.81141949, 237.289047), (-16.2333279, -23.4977913, 235.486603),
+              (-13.8834839, 6.20244455, 23.7760544), (14.0794125, 4.63170528, 24.9530792),
+              (3.98322797, -16.4192238, 236.704071), (-23.3520412, -3.26714420, 236.071594),
+              (13.4517860, -6.94963741, 24.4085312), (-5.24953651, 13.9316301, 24.5058060),
+              (-4.65071201, -24.1484108, 235.974121), (-14.5111103, -5.37889385, 23.2315063),
+              (6.33307076, 13.2810068, 24.9935150), (4.81784487, -14.6788225, 23.6787796),
+              (-14.7180958, 4.46204281, 236.801331), (-23.9796677, -14.8484812, 235.527039),
+              (4.61085415, -4.83788204, 237.248611), (-6.76476669, -14.0281992, 23.1910706)]
+
+
+@sample("Mesh", "Voxel", SOURCE, frames=300)
+def voxel(s):
+    b = Bodies(s.tag)
+    b.mesh_file("voxels", "collision_mesh_01.obj", scale=0.01, z_up=True, weld=0.002)
+    body = tuple(a - o for a, o in zip((5020.27734, 3506.22559, -6986.48584), VOXEL_ORIGIN))
+    hull = [(0.01 * y, 0.01 * z, 0.01 * x) for x, y, z in VOXEL_HULL]
+    b.stream("cylinder", b.hull("cylinder", hull, note="a rough 2 m cylinder of 16 points"),
+             f"body({vec(body)}, {vec((0.664546967, 0.669287264, 0.135021493, 0.303646326))});",
+             cd=(0.5, 0.75, 0.45), rollingresistance=0.1)
+    return finish(s, b, about="""\
+A rough cylinder (a 16-point hull, 2 m long) dropped onto a voxel terrain mesh from a game
+(collision_mesh_01.obj): thousands of small, nearly coplanar faces, welded within 2 mm as Box3D's mesh
+builder does. It should roll and settle on the steps without catching on the faces' edges.""",
+                  ported=f"""\
+the sample puts the mesh {VOXEL_ORIGIN} m from the origin, which needs Box3D's double precision; here it
+is at the origin. The weld is a Fuse SOP (voxels_welded). The OBJ is copied to examples/cache.""")
 
 
 @sample("Mesh", "Hollow Box", SOURCE, frames=300)

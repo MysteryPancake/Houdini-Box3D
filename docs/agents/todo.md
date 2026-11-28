@@ -99,25 +99,21 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
   of 0 a prismatic one; both free (a cylinder) has no Box3D joint. Nothing in Houdini creates one but the node itself.
 * Box3D's samples as example scenes ([sample-port-plan.md](sample-port-plan.md)): the tables mark what is built.
   Left, in order:
-  1. Height fields (Mesh / Height Field, Issues / Heightfield), Continuous / Mesh Drop and Rough Mesh Drop
-     (`wave_mesh`), GMod Wheel Stack (the wheel's hull points from `sample_issues.cpp`'s data), Mesh / Voxel.
-  2. Joints (portable now, with Issues / Crash and Multiple Prismatic), then Benchmark's portable ones (pyramids,
-     Convex Pile, Joint Grid, Spinner), timed with `--check` a few at a time.
-  3. Animated pieces and step scripts: Bodies, Kinematic, Rolling Deck, Turning Platform, Motor Joint, Junkyard,
+  1. Joints with workarounds (Door, Locked Joints, Top Down Friction, Driving), then Benchmark's portable ones
+     (pyramids, Convex Pile, Joint Grid, Spinner), timed with `--check` a few at a time.
+  2. Animated pieces and step scripts: Bodies, Kinematic, Rolling Deck, Turning Platform, Motor Joint, Junkyard,
      Washer, Static Invoke, Disable.
-  4. The ragdoll: Ragdoll, then Rain, the Determinism scenes and Mesh / Reflection (with `obj_mesh`).
-  5. Multi-shape bodies and per-material meshes: Compound, Class Ring, Falling Trees, Village (benchmark), Gear Lift,
+  3. The ragdoll: Ragdoll, then Rain, the Determinism scenes and Mesh / Reflection (`building.obj`: `mesh_file`).
+  4. Multi-shape bodies and per-material meshes: Compound, Class Ring, Falling Trees, Village (benchmark), Gear Lift,
      Ghost, Conveyor Mesh; then the wind approximations.
 
   Helpers these need in `tools/examples/box3d_samples/common.py`:
-  * `wave_heightfield` (`b3CreateWave`'s formula) on a Static Object, and `obj_mesh(file)` (copies
-    `extern/box3d/data/meshes` files to `examples/cache/`, read with `$HIP`-relative paths) as a `concave` static piece.
   * `animated_piece(vex)`: `active 0`, `animated 1`, `P` / `orient` driven by a wrangle on `@Time` (kinematic bodies).
   * `step_script(vex)`: a SOP Solver in a Multiple Solver after the Box3D Solver, writing `force`, `v`, `enabled`,
     `awake` or `dead` on given frames, for samples whose `Step()` does that.
-  * `multi_shape_body(parts)`: several shapes as one body. Without other joints: glued pieces, Glue as One Body on
-    (keeps sphere and capsule shapes). With joints (a glued group with another joint stays on welds,
-    [glue-compound.md](glue-compound.md)): one piece, `compound` with Box3D Data's Hull per Connected.
+  * `multi_shape_body(parts)`: several shapes as one body. Hulls only: `Bodies.compound` (named pieces, `concave`)
+    extended past boxes. With spheres or capsules: glued pieces, Glue as One Body on, without other joints (a glued
+    group with another joint stays on welds, [glue-compound.md](glue-compound.md)).
   * `human(name, position, friction_torque, hertz, damping)`: `human.c`'s ragdoll: capsule pieces, revolute and
     spherical joints with its limits, springs and friction motors (motor speed 0), filter joints; shin and foot as one
     `multi_shape_body`.
