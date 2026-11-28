@@ -705,6 +705,14 @@ addpointattrib(0, "w", {{0, 0, 0}});
         self._sample_parms([hou.ToggleParmTemplate(name, label, default_value=default, help=help_text or None)])
         return f'chi("../{name}")'
 
+    def menu(self, name, label, items, default=0, help_text=""):
+        """A sample's radio buttons read by the streams' VEX (choice() picks between streams instead): a menu on the
+        Sample tab, items [(token, label)]. Returns the VEX that reads its index (restart the simulation after
+        changing it)."""
+        self._sample_parms([hou.MenuParmTemplate(name, label, [t for t, _ in items], [lab for _, lab in items],
+                                                 default_value=default, help=help_text or None)])
+        return f'chi("../{name}")'
+
     def explode(self, centre, radius, falloff, impulse_per_area):
         """b3World_Explode( b3ExplosionDef ) before the first step: a wrangle after the bodies' merge adds the push
         to each dynamic box, sphere and capsule body's v and w (EXPLODE_VEX). Its settings are on the Sample tab."""
@@ -925,6 +933,20 @@ def cos_sin(radians):
         s = 16.0 * x * (math.pi - x) / (5.0 * pi2 - 4.0 * x * (math.pi - x))
     m = math.hypot(s, c)
     return (c / m, s / m) if m > 0.0 else (0.0, 0.0)
+
+
+def rock_points(radius):
+    """b3CreateRock( radius )'s 10 points (src/hull.c): a Fibonacci lattice, its turns at b3ComputeCosSin, in float."""
+    phi = f32((1.0 + f32(math.sqrt(5.0))) / 2.0)
+    dc, ds = (f32(x) for x in cos_sin(f32(f32(2.0 * f32(math.pi)) / phi)))
+    c, sn = 1.0, 0.0
+    points = []
+    for i in range(10):
+        z = f32(1.0 - f32((2.0 * i + 1.0) / 10))
+        rxy = f32(math.sqrt(f32(1.0 - f32(z * z))))
+        points.append((f32(f32(radius * rxy) * c), f32(f32(radius * rxy) * sn), f32(radius * z)))
+        c, sn = f32(f32(dc * c) - f32(ds * sn)), f32(f32(ds * c) + f32(dc * sn))
+    return points
 
 
 def complex_hull_points(radius):

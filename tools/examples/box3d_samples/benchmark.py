@@ -1,10 +1,11 @@
-"""Box3D's Benchmark samples (samples/sample_benchmark.cpp, shared/benchmarks.c). The ones that only simulate: the
-pyramids, the falling boxes, the candy cups, the convex pile, the joint grid, the mesh drop and the spinner.
-Each is the C++ loop in VEX, at the sizes Box3D's release build uses."""
+"""Box3D's Benchmark samples (samples/sample_benchmark.cpp, shared/benchmarks.c): the pyramids, the falling boxes, the
+candy cups, the convex pile, the joint grid, the mesh drop, the spinner, and the washer and junkyard with their
+kinematic bodies as animated pieces. Each is the C++ loop in VEX, at the sizes Box3D's release build uses."""
 
 import math
 
-from .common import Bodies, XorShift, complex_hull_points, cos_sin, create, f32, finish, num, sample, set_parm, vec
+from .common import (MESH_FUNCTIONS, POLYGON_FUNCTIONS, VEX_FUNCTIONS, Bodies, XorShift, complex_hull_points, cos_sin,
+                     create, f32, finish, num, rock_points, sample, set_parm, vec)
 from .joints import node
 
 SOURCE = "sample_benchmark.cpp"
@@ -295,3 +296,97 @@ radius 12, which is a mesh with its triangles facing the axis. The paddle's tip 
                   joints=[node("revolute", "motor", enable_motor=1, motor_speed=math.degrees(8.0),
                                max_motor_torque=1.0e9)],
                   lines=[("drum", (0, y_center - half_length, 0), "paddle0", (0, y_center - half_length, 0), "motor")])
+
+
+@sample("Benchmark", "Washer", SOURCE, frames=900)
+def washer(s):
+    grid, a = 20, 0.2
+    b = Bodies(s.tag, {"animated": 0})
+    b.ground(60.0)
+    drum = create(b.geo, "attribwrangle", "drum_shape")
+    set_parm(drum, "class", 0)
+    set_parm(drum, "snippet", VEX_FUNCTIONS + POLYGON_FUNCTIONS + MESH_FUNCTIONS + """\
+// CreateWasher's drum in its body's frame: a ring of 36 wall hulls between radii 16 and 18, 20 m deep along z, each
+// spanning 10 degrees (a tenth of that past each end, so neighbours overlap), and 4 paddles between radii 14 and 16
+// on every ninth. Each hull is b3CreateHull of 8 points, a named piece of one packed shape (bullet_georep concave).
+float r0 = 14.0, r1 = 16.0, r2 = 18.0;
+vector nd = {0, 0, -10}, pd = {0, 0, 10};
+float angle = PI / 18.0;
+vector4 q = axis_angle({0, 0, 1}, angle), qo = axis_angle({0, 0, 1}, 0.1 * angle);
+vector u1 = {1, 0, 0};
+for (int i = 0; i < 36; ++i) {
+    vector u2 = i == 35 ? set(1.0, 0.0, 0.0) : qrotate(q, u1);
+    vector a1 = qrotate(qinvert(qo), u1), a2 = qrotate(qo, u2);
+    hull_points(sprintf("wall%d", i), array(nd + r1 * a1, nd + r2 * a1, nd + r1 * a2, nd + r2 * a2,
+                                            pd + r1 * a1, pd + r2 * a1, pd + r1 * a2, pd + r2 * a2));
+    if (i % 9 == 0)
+        hull_points(sprintf("paddle%d", i / 9), array(nd + r0 * u1, nd + r1 * u1, nd + r0 * u2, nd + r1 * u2,
+                                                       pd + r0 * u1, pd + r1 * u1, pd + r0 * u2, pd + r1 * u2));
+    u1 = u2;
+}
+""")
+    b.stream("drum", (drum, "concave"), """\
+// The kinematic drum (active 0, animated 1): it starts at (0, 21, 0) turning at 25 degrees a second about z, with a
+// small drift of (0.001, -0.002, 0) m/s, and nothing changes its velocity. A kinematic body has no mass, so it turns
+// about its origin.
+int pt = static_body({0, 21, 0} + {0.001, -0.002, 0} * @Time, quaternion(radians(25.0) * @Time, {0, 0, 1}));
+setpointattrib(0, "animated", pt, 1);
+""", cd=(0.55, 0.6, 0.65), note="40 hulls on one kinematic body", animated=1)
+    b.stream("cubes", b.box("cubes", a, a, a), f"""\
+// A {grid} x {grid} x {grid} block of cubes {num(4 * a)} m apart inside the drum.
+for (int i = 0; i < {grid}; ++i)
+    for (int j = 0; j < {grid}; ++j)
+        for (int k = 0; k < {grid}; ++k)
+            body(set({num(-2 * a * grid)} + {num(4 * a)} * i, {num(-2 * a * grid + 21)} + {num(4 * a)} * j,
+                     {num(-2 * a * grid)} + {num(4 * a)} * k), identity);
+""", cd=(0.85, 0.45, 0.3), note=f"b3MakeBoxHull( {num(a)}, {num(a)}, {num(a)} )")
+    return finish(s, b, about=f"""\
+A washing machine: {grid ** 3} small cubes tumbling in a kinematic drum of 40 hulls (a ring of walls and four
+paddles) that turns at 25 degrees a second about z. The paddles lift the cubes, which fall back as they pass
+the top: a test of many contacts against one moving body of many shapes.""",
+                  ported="""\
+the drum is an animated piece (active 0, animated 1) whose pose drum_points sets from the time, as Box3D's
+kinematic body moves at its starting velocities. Its 40 hulls are named pieces of one packed shape
+(bullet_georep concave). The drum is open at both ends, as in Box3D: cubes that reach an end fall out.
+The pile tumbles as Box3D's does, not body for body: after 15 s 2780 cubes are out of the drum (Box3D:
+2787) and their mean height is 11.4 m (11.1).""",
+                  try_="turn it faster: the 25 in drum_points (and restart).")
+
+
+@sample("Benchmark", "Junkyard", SOURCE, frames=900)
+def junkyard(s):
+    layers, radius = 24, 35.0
+    b = Bodies(s.tag, {"animated": 0})
+    b.ground(120.0)
+    b.stream("walls_x", b.box("walls_x", 1.0, 8.0, 50.0), "static_body({-50, 7, 0}, identity);\n"
+             "static_body({50, 7, 0}, identity);", cd=(0.55, 0.6, 0.65),
+             note="four walls around the yard (in Box3D offset box hulls on the ground body)")
+    b.stream("walls_z", b.box("walls_z", 50.0, 8.0, 1.0), "static_body({0, 7, -50}, identity);\n"
+             "static_body({0, 7, 50}, identity);", cd=(0.55, 0.6, 0.65))
+    b.stream("rocks", b.hull("rocks", rock_points(1.5), note="b3CreateRock( 1.5 ): the hull of 10 points on a "
+                                                            "Fibonacci lattice, the same for every rock"),
+             f"""\
+// {layers} layers of 21 x 21 rocks, 4 m apart, from 25 m up.
+for (int y = 0; y < {layers}; ++y)
+    for (int x = 0; x <= 20; ++x)
+        for (int z = 0; z <= 20; ++z)
+            body(set(-40.0 + 4.0 * x, 4.0 * y + 25.0, -40.0 + 4.0 * z), identity);
+""", cd=(0.6, 0.5, 0.4))
+    b.stream("pusher", b.cylinder("pusher", 24.0, 4.0, 0.0, 16), f"""\
+// The kinematic pusher (active 0, animated 1): a cylinder of radius 4 and 24 high, moved each step by
+// b3Body_SetTargetTransform round a circle of radius {num(radius)} at -6 degrees a second (StepJunkyard), without
+// turning. The pose at time T is the one set for the step ending at T.
+float degrees = -6.0 * @Time;
+vector2 cs = cossin(radians(degrees));
+int pt = static_body(set({num(radius)} * cs[0], 0.0, {num(radius)} * cs[1]), identity);
+setpointattrib(0, "animated", pt, 1);
+""", cd=(0.75, 0.55, 0.85), note="b3CreateCylinder( 24, 4, 0, 16 ) on a kinematic body", animated=1)
+    return finish(s, b, about=f"""\
+A junkyard: {layers * 21 * 21} rocks dropped into a walled yard, where a tall kinematic cylinder ploughs
+round a circle of radius {num(radius)} through the pile at 6 degrees a second (a turn a minute). A test of
+a large pile of hulls pushed by a moving body.""",
+                  ported="""\
+the pusher is an animated piece (active 0, animated 1) posed from pusher_points, as the sample's
+b3Body_SetTargetTransform each step. The pile settles as Box3D's does, not body for body: after 15 s the
+rocks' mean height is 8.55 m (Box3D: 8.63), and 23 have been thrown over the walls (Box3D: 19).""",
+                  try_="fewer layers (the layers count in benchmark.py) for a lighter scene.")

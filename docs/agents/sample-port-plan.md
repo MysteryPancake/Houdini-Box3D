@@ -88,9 +88,10 @@ ported ones **built** in place of their verdict.
     Stack), printed to full precision: `num` writes 9 significant digits, and rounded points can change a hull's faces.
   * `box_impulse`: the velocity a `b3Body_ApplyLinearImpulse` before the first step gives a box; `XorShift` and
     `random_vec3`: the samples' random numbers (`shared/utils.h`), computed in Python (VEX has no bit shifts);
-    `complex_hull_points` (`b3CreateComplexHull`), `cos_sin` and `f32`, for points a builder lists.
+    `complex_hull_points` (`b3CreateComplexHull`), `rock_points` (`b3CreateRock`), `cos_sin` and `f32`, for points a
+    builder lists.
   * `finish(step=vex)`: `step_script`, a sample's `Step()` before `b3World_Step` (a SOP Solver ahead of the Box3D
-    Solver in a Multiple Solver; a changed `v` / `w` is an edit). `Bodies.slider` / `toggle`: a sample's GUI controls.
+    Solver in a Multiple Solver; a changed `v` / `w` is an edit). `Bodies.slider` / `toggle` / `menu`: a sample's GUI controls, read by the streams' VEX.
   * `Bodies.explode`: `b3World_Explode` before the first step, a wrangle (`EXPLODE_VEX`) adding each box, sphere or
     capsule body's push to its `v` / `w` (Box3D's to float rounding); its settings are on the Sample tab.
   * `network_sop` takes a VEX string calling `joint(...)` in place of lines, for thousands of joints (Joint Grid).

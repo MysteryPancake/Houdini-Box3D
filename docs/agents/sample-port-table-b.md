@@ -40,7 +40,7 @@ The plan: [sample-port-plan.md](sample-port-plan.md).
 |---|---|---|
 | Distance Joint | built | A ball on a rigid distance joint (Count 1); spring, force range and limit set on the node, off |
 | Filter | built | Filter joint |
-| Motor Joint | work | Motor joint chasing a target moved each step: an animated stream target; max spring force / torque |
+| Motor Joint | built | Motor joint chasing an animated target; the Speed slider (0 in the sample) is 1 |
 | Top Down Friction | built | Motor joints to the world as friction, no gravity; Explode as starting `v` / `w` (`Bodies.explode`) |
 | Prismatic | built | Spring, limits, motor, target translation |
 | Spherical | built | Cone and twist limits, spring, motor, target rotation |
@@ -131,7 +131,7 @@ are dropped.
 | High Resistance | built | High `rollingresistance` capsule |
 | Isotropic Friction | built | Boxes sliding in many directions |
 | Slide Twist | built | Spinning box sliding |
-| Static Invoke | work | A static body created at step 20: a static piece emitted at that frame (`emit`) |
+| Static Invoke | built | A static body made at step 20: emitted on that frame (`emit`); the plugin's acts as Invoke, not the default Passive |
 | Conveyor Belt | built | `tangentvelocity` |
 | Conveyor Mesh | work | `conveyor.obj` with per-triangle belt materials: one static piece per material |
 | Wind | work | Spherical-jointed chains in wind: drag only (`airresist` / `targetv`), no lift |

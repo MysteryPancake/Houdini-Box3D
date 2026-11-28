@@ -106,6 +106,36 @@ A box dropped spinning fast (25 rad/s about the slope's normal) onto a 20 degree
 comment asks what this sample is for; the box spins down and stays about where it lands.""")
 
 
+STATIC_INVOKE_PORTED = """\
+the static sphere is emitted on frame 21 by the Box3D Solver SOP's Emit RBDs. A static shape the
+plugin makes during the run finds its contacts at once, as the sample's Invoke: the ball is pushed out
+at Box3D's contact push speed (3 m/s) and rests against the post at x = 1, on the same frames as Box3D's
+Invoke run. The sample's default, Passive, leaves the ball inside the post, where it falls asleep. The
+Invoke / Passive choice and the Create / Destroy buttons are dropped."""
+
+
+@sample("Shapes", "Static Invoke", SOURCE, frames=240)
+def static_invoke(s):
+    b = Bodies(s.tag, {"rbdbullet_emit": 0})
+    b.ground(20.0)
+    b.stream("ball", b.sphere("ball", 0.5), "body({0.25, 1, 0}, identity);", cd=(0.85, 0.45, 0.3),
+             note="radius 0.5, rolling resistance 0.2", rollingresistance=0.2)
+    b.stream("post", b.sphere("post", 0.5), """\
+// The static sphere the sample makes after its 20th step, inside the ball's lower half: only on frame 21, where
+// Emit RBDs adds it (rbdbullet_emit 1), and kept from then on.
+if (int(@Frame) == 21) static_body({0, 0.5, 0}, identity);
+""", cd=(0.55, 0.6, 0.65), note="a static sphere of radius 0.5, made on frame 21", rbdbullet_emit=1)
+    return finish(s, b, about="""\
+A static body made in the middle of a simulation. A ball drops onto the ground, and after 20 steps a
+static sphere appears overlapping it. Box3D does not look for contacts on a new static shape unless its
+shape asks it to (invokeContactCreation, the sample's Invoke button): Passive, the default, waits for a
+body moving near it to find the pair, and a ball already at rest there is never pushed out.""",
+                  ported=STATIC_INVOKE_PORTED,
+                  try_="make the post on another frame (the 21 in post_points): earlier, while the ball still "
+                       "falls, or later, once it rests.",
+                  emit=True)
+
+
 @sample("Shapes", "Conveyor Belt", SOURCE, frames=360)
 def conveyor_belt(s):
     b = Bodies(s.tag, {"tangentvelocity": (0.0, 0.0, 0.0)})

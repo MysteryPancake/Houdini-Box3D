@@ -2,9 +2,98 @@
 
 import math
 
-from .common import Bodies, f32, finish, motion_locks, sample
+from .common import Bodies, f32, finish, motion_locks, num, sample
+from .joints import node
 
 SOURCE = "sample_bodies.cpp"
+
+
+BODY_TYPE_PORTED = """\
+the Type buttons are the Type menu and Enable the Enable toggle on the bodies object's Sample tab, set
+before the simulation starts where the sample switches them while it runs. Kinematic bodies are
+animated pieces (active 0, animated 1); the platform's path is worked out in platform_points. With each
+Type, and with Enable off, the bodies are where Box3D's are to a few millimetres over 10 s, but the capsule,
+which starts 5 cm into the ground, is pushed out 3 mm the other way along x."""
+
+DISABLE_PORTED = """\
+the sample's Enable Link and Enable Ball checkboxes are toggles on the bodies object's Sample tab (the
+enabled attribute), set before the simulation starts. The push each step is a step script setting the
+third link's force to 6 N (0.1 N s over a 1/60 s step). With either setting the bodies are where Box3D's
+are, to a tenth of a millimetre."""
+
+
+@sample("Bodies", "Body Type", SOURCE, frames=600)
+def body_type(s):
+    b = Bodies(s.tag, {"animated": 0, "enabled": 1, "gravityscale": 1.0})
+    b.ground(20.0)
+    kind = b.menu("body_type", "Type", [("static", "Static"), ("kinematic", "Kinematic"), ("dynamic", "Dynamic")],
+                  default=2, help_text="The type of the platform, the right post, the right crate, the debris and "
+                                       "the floater (the sample's radio buttons). Restart the simulation after "
+                                       "changing it.")
+    enabled = b.toggle("enable", "Enable", True, "Off: the left post, the right crate and the floater are left out "
+                                                 "of the simulation (b3Body_Disable). Restart after changing it.")
+    switched = f"""\
+// The sample's Type radio buttons (0 static, 1 kinematic, 2 dynamic) for the bodies it switches: dynamic is active 1,
+// kinematic an animated piece (active 0, animated 1), static active 0.
+#define KIND ({kind})
+int kind = KIND;
+int switched(vector p) {{
+    int pt = add_body(p, {{0, 0, 0, 1}}, KIND == 2);
+    setpointattrib(0, "animated", pt, KIND == 1);
+    return pt;
+}}
+"""
+    b.stream("posts", b.box("posts", 0.5, 2.0, 0.5), switched + f"""\
+int left = body({{-2, 3, 0}}, identity);  // always dynamic
+setpointattrib(0, "enabled", left, {enabled});
+switched({{3, 3, 0}});  // the right post
+""", cd=(0.55, 0.6, 0.65), note="b3MakeBoxHull( 0.5, 2, 0.5 ), density 1: the two posts the platform hangs from",
+             density=1.0)
+    # b3MakeTransformedBoxHull( 0.5, 4, 0.5, { (4, 0, 0), a quarter turn about z } ): a bar 8 long along x, its middle
+    # 4 to the right of the body's origin.
+    b.stream("platform", b.shifted(b.box("platform", 4.0, 0.5, 0.5), (4.0, 0.0, 0.0)), switched + """\
+// The platform's body origin is its left end. Kinematic, it slides along x at 3 m/s, turned back when past x = -14
+// or 6 (checked before each step, as the sample's Step()): the pose after the steps up to this time.
+vector p = {-4, 5, 0};
+if (kind == 1) {
+    float vx = -3.0;
+    for (int i = 0; i < int(rint(@Time * 60.0)); ++i) {
+        if ((p.x < -14.0 && vx < 0.0) || (p.x > 6.0 && vx > 0.0)) vx = -vx;
+        p.x += vx / 60.0;
+    }
+}
+switched(p);
+""", cd=(0.65, 0.5, 0.35), note="density 2", density=2.0)
+    b.stream("crates", b.box("crates", 0.75, 0.75, 0.75), switched + f"""\
+body({{-3, 8, 0}}, identity);  // always dynamic
+int right = switched({{2, 8, 0}});
+setpointattrib(0, "enabled", right, {enabled});
+""", cd=(0.9, 0.6, 0.2), note="b3MakeBoxHull( 0.75, 0.75, 0.75 ), density 2: payloads dropped on the platform",
+             density=2.0)
+    b.stream("debris", b.shifted(b.capsule("debris", 0.5, 0.25), (0.5, 0.0, 0.0), (0.0, 0.0, 90.0)),
+             switched + "switched({8, 0.2, 0});", cd=(0.4, 0.65, 0.9),
+             note="b3Capsule { (0, 0, 0), (1, 0, 0), 0.25 }, density 2, lying on the ground", density=2.0)
+    b.stream("floater", b.shifted(b.sphere("floater", 0.25), (0.0, 0.5, 0.0)), switched + f"""\
+int pt = switched({{-8, 12, 0}});
+setpointattrib(0, "enabled", pt, {enabled});
+""", cd=(0.85, 0.45, 0.3), note="a sphere of radius 0.25 half a metre above its body's origin, density 2, gravity "
+                                 "scale 0", density=2.0, gravityscale=0.0)
+    hinge = node("revolute", "hinges", enable_motor=1, max_motor_torque=50.0, motor_speed=0.0)
+    slide = node("prismatic", "slide", enable_motor=1, max_motor_force=1000.0, motor_speed=0.0, enable_limit=1,
+                 lower_translation=-10.0, upper_translation=10.0)
+    return finish(s, b, about="""\
+Body types and disabling. A platform (an 8 m bar) hangs from two posts on revolute joints with friction
+motors and slides along x on a prismatic joint to the world; two crates drop onto it, a capsule lies on
+the ground and a ball floats with no gravity. The sample's Type buttons make the platform, the right post,
+the right crate, the capsule and the ball static, kinematic or dynamic (the default); kinematic, the
+platform slides back and forth between x = -14 and 6 at 3 m/s, dragging the left post with it. Enable off
+takes the left post, the right crate and the ball out of the simulation.""",
+                  ported=BODY_TYPE_PORTED,
+                  try_="Type Kinematic on the bodies object's Sample tab, restart and play; then untick Enable.",
+                  joints=[hinge, slide],
+                  lines=[("posts0", (-2, 5, 0), "platform0", (-2, 5, 0), "hinges"),
+                         ("posts1", (3, 5, 0), "platform0", (3, 5, 0), "hinges"),
+                         ("", (0, 5, 0), "platform0", (0, 5, 0), "slide")])
 
 
 @sample("Bodies", "Spinning Book", SOURCE, frames=600)
@@ -143,6 +232,43 @@ mass (computecom 0 puts the centre at the point, with the inertia moved to it as
 does), and the capsule is drawn 1.5 above it. The scene starts from the Teleport pose (Start on the bodies
 object's Sample tab); the Explode button is dropped.""",
                   try_="Start: Upright on the bodies object's Sample tab, then restart: it drops 1 m and stays up.")
+
+
+@sample("Bodies", "Disable", SOURCE, frames=300)
+def disable(s):
+    count, radius = 4, 0.1
+    length = 5.0 * radius
+    b = Bodies(s.tag, {"animated": 0, "enabled": 1})
+    b.ground(20.0)
+    link = b.toggle("enable_link", "Enable Link", True, "Off: the third link is left out of the simulation "
+                                                       "(b3Body_Disable), with its joints. Restart after changing it.")
+    ball = b.toggle("enable_ball", "Enable Ball", True, "Off: the ball is left out of the simulation.")
+    b.stream("links", b.shifted(b.capsule("links", 0.5 * length, radius), (0.0, -0.5 * length, 0.0)), f"""\
+// {count} capsule links hanging in a line, each from its body origin down {num(length)}: the first kinematic (an
+// animated piece standing still), the rest dynamic, welded end to end.
+for (int i = 0; i < {count}; ++i) {{
+    int pt = add_body(set(0.0, ({count} - i) * {num(length)} + 1.0, 0.0), identity, i > 0);
+    setpointattrib(0, "animated", pt, i == 0);
+    if (i == 2) setpointattrib(0, "enabled", pt, {link});
+}}
+""", cd=(0.6, 0.62, 0.66), note=f"b3Capsule {{ (0, 0, 0), (0, -{num(length)}, 0), {num(radius)} }}")
+    b.stream("ball", b.sphere("ball", 0.5), f"""\
+int pt = body({{3, 3, 0}}, identity);
+setpointattrib(0, "enabled", pt, {ball});
+""", cd=(0.85, 0.45, 0.3))
+    lines = [(f"links{i - 1}", (0.0, (count - i) * length + 1.0, 0.0), f"links{i}",
+              (0.0, (count - i) * length + 1.0, 0.0), "welds") for i in range(1, count)]
+    return finish(s, b, about="""\
+Disabled bodies. A chain of four capsule links hangs from a kinematic first link, welded end to end (the
+welds rigid in position, a 10 Hz spring in rotation), and a ball drops onto the ground beside it. Every
+step the third link gets a small push up (0.1 N s). Disabling a body (b3Body_Disable) takes it and its
+joints out of the simulation: with the third link disabled, the last link drops to the ground.""",
+                  ported=DISABLE_PORTED,
+                  try_="untick Enable Link on the bodies object's Sample tab and restart.",
+                  joints=[node("weld", "welds", enable_angular_spring=1, angular_stiffness=10.0,
+                               angular_damping_ratio=1.0)],
+                  lines=lines,
+                  step='if (s@name == "links2") v@force = {0, 6, 0};')
 
 
 @sample("Bodies", "Kinematic", SOURCE, frames=900)

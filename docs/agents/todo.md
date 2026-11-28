@@ -104,9 +104,8 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
 * Box3D's samples as example scenes ([sample-port-plan.md](sample-port-plan.md)): the tables mark what is built.
   Left, in order:
   1. Joints with workarounds: Locked Joints, Driving.
-  2. Animated pieces and step scripts: Motor Joint, Junkyard, Washer, Static Invoke, Body Type, Disable.
-  3. The ragdoll: Ragdoll, then Rain, the Determinism scenes and Mesh / Reflection (`building.obj`: `mesh_file`).
-  4. Multi-shape bodies and per-material meshes: Compound, Class Ring, Falling Trees, Village (benchmark), Gear Lift,
+  2. The ragdoll: Ragdoll, then Rain, the Determinism scenes and Mesh / Reflection (`building.obj`: `mesh_file`).
+  3. Multi-shape bodies and per-material meshes: Compound, Class Ring, Falling Trees, Village (benchmark), Gear Lift,
      Ghost, Conveyor Mesh; then the wind approximations.
 
   Helpers these need in `tools/examples/box3d_samples/common.py`:

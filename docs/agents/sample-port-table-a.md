@@ -23,12 +23,12 @@ numbers the port does not reproduce.
 | Mesh Drop | built | Boxes on a static wave mesh, starting velocities from `XorShift` |
 | Village | work | One baked static compound (tiles, wave meshes, capsule and sphere props): separate static pieces; bodies dropped on it; the cast curtain (queries) dropped |
 | Sensor | no | Sensor shapes and events, custom filter callback |
-| Washer | work | Kinematic drum of hull walls spun at a constant rate: an animated stream (or its revolute motor variant) |
+| Washer | built | Kinematic drum of 40 hulls spun at a constant rate: an animated `concave` piece |
 | Large World | work | A million static floor boxes, a sphere dropped every few steps: a smaller floor, spheres emitted (`emit`) |
 | Hull | no | Hull build timing, no simulation |
 | Chains | work | Capsule chains (spherical joints, springs, friction motors) on a wave mesh; per-shape wind: drag only (`airresist` / `targetv`) |
 | Destruction | work | A box grid blown apart and respawned periodically: starting `v`, `dead` and new pieces by frame (`step_script`) |
-| Junkyard | work | Kinematic pusher on a circle (`SetTargetTransform`): an animated stream; rocks, cylinders, offset boxes |
+| Junkyard | built | Kinematic cylinder pushed round a circle (`SetTargetTransform`) through 10584 rocks (`rock_points`): an animated stream |
 | Convex Pile | built | Hulls of 32 random points (`complex_hull_points`) |
 | Spinner | built | Inward cylinder mesh, paddle on a revolute motor to the mesh's body |
 | Sleep | work | Pyramids woken by a filter joint made and destroyed when asleep: `step_script` writing `awake` |
@@ -38,13 +38,13 @@ numbers the port does not reproduce.
 
 | Sample | Verdict | What it uses / why |
 |---|---|---|
-| Body Type | work | Platform (kinematic by default, velocity reversed at two bounds) carrying prismatic and revolute jointed bodies: an animated stream; the type and enable switches are GUI |
+| Body Type | built | Jointed platform and bodies whose type (`Bodies.menu`) and `enabled` are set before the run; kinematic is an animated stream, the platform's bounce path worked out in VEX |
 | Spinning Book | built | Boxes spun about each axis, no gravity (`w`, `gravityscale`) |
 | Gyroscopic Torque | built | Cylinder plus box in one body (`Bodies.parts`) |
 | Gyroscopic Precession | built | Spinning tops (one hull), `fastrotation`, rolling resistance; readout dropped |
 | Spinning Capsule | built | Spinning capsule; Near-Sphere Tolerance; readout dropped |
 | Weeble | built | Custom mass data (low centre): `computecom` 0 with the point at the centre; starts at Teleport's pose (Start menu), Explode dropped |
-| Disable | work | Welded capsules and spheres, an impulse every step and GUI disable: `step_script` (`force`, `enabled`) |
+| Disable | built | Welded capsule chain from a kinematic link, an impulse every step (`step_script` writing `force`), `enabled` toggles |
 | Cast | no | Body ray, shape and mover casts |
 | Kinematic | built | Kinematic box on a path after a delay (`SetTargetTransform`): an animated stream |
 | Fixed Rotation | built | `fixedRotation`: no attribute; Lock Tilt and a large `inertialtensorstiffness` |

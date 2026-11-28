@@ -59,6 +59,49 @@ fall side by side onto the ground.""", try_="move one cube over the other in box
                                                                    "no_collision")])
 
 
+@sample("Joints", "Motor Joint", SOURCE, frames=600)
+def motor_joint(s):
+    b = Bodies(s.tag, {"animated": 0, "collision_mask": -1})
+    b.ground(20.0)
+    speed = b.slider("speed", "Speed", 1.0, -5.0, 5.0,
+                     "How fast the target runs along its path (the sample's Speed slider, which starts at 0). "
+                     "Restart the simulation after changing it.")
+    b.stream("target", b.sphere("target", 0.1), f"""\
+// The kinematic target (active 0, animated 1), moved each step by b3Body_SetTargetTransform along a figure of eight
+// in the xy plane, turning about z. The sample advances its time by Speed each step before setting the target, so the
+// pose at time T is the path at Speed * T. It collides with nothing (collision_mask 0): the sample's has no shape.
+float t = {speed} * @Time;
+vector p = set(6.0 * sin(2.0 * t), 10.0 + 4.0 * sin(t), 0.0);
+int pt = static_body(p, axis_angle({{0, 0, 1}}, 2.0 * t));
+setpointattrib(0, "animated", pt, 1);
+""", cd=(0.75, 0.55, 0.85), note="a small ball to show the target; the sample's target body has no shape",
+             animated=1, collision_mask=0)
+    b.stream("box", b.box("box", 1.0, 0.25, 0.25), "body({0, 10, 0}, identity);", cd=(0.9, 0.6, 0.2),
+             note="b3MakeBoxHull( 1, 0.25, 0.25 ): 500 kg")
+    b.stream("spring_box", b.box("spring_box", 0.5, 0.5, 0.5), "body({-2, 2, 0}, identity);", cd=(0.4, 0.65, 0.9),
+             note="held in the air at its starting pose by a motor joint to the world at its corner (-1.75, 2.25, 0)")
+    return finish(s, b, about="""\
+Motor joints: a box chasing a moving target. The target (the small ball) runs along a figure of eight,
+turning as it goes; the box is joined to it by a motor joint whose springs (4 Hz, damping 0.7, at most
+400000 N and 500000 N m) pull the box's position and rotation to the target's, so it follows with a lag
+and swings at the turns. A second box near the ground hangs in the air on a stiffer motor joint to the
+world (7.5 Hz), which holds it where it starts.""",
+                  ported="""\
+the target is an animated piece (active 0, animated 1) posed from target_points, and the sample's Speed
+slider (0 when the sample starts: nothing moves until you drag it) is Speed on the bodies object's
+Sample tab, set to 1 here. The force and torque readout is dropped. From frame 30 on both boxes are where
+Box3D's are, to a millimetre; on the first frames the chasing box starts a little slower.""",
+                  try_="Speed 3 (restart), or lower Max Spring Force and Max Spring Torque on the chase node: the box "
+                       "falls behind and sags. The sample's Apply Impulse: v {200, 0, 0} on box_points.",
+                  joints=[node("motor", "chase", linear_stiffness=4.0, linear_damping_ratio=0.7, angular_stiffness=4.0,
+                               angular_damping_ratio=0.7, max_spring_force=400000.0, max_spring_torque=500000.0),
+                          node("motor", "hold", collide_connected=1, linear_stiffness=7.5, linear_damping_ratio=0.7,
+                               angular_stiffness=7.5, angular_damping_ratio=0.7, max_spring_force=200000.0,
+                               max_spring_torque=10000.0)],
+                  lines=[("target0", (0, 10, 0), "box0", (0, 10, 0), "chase"),
+                         ("", (-1.75, 2.25, 0), "spring_box0", (-1.75, 2.25, 0), "hold")])
+
+
 @sample("Joints", "Top Down Friction", SOURCE, frames=300)
 def top_down_friction(s):
     b = Bodies(s.tag, {"gravityscale": 1.0})
