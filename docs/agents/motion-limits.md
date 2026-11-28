@@ -24,6 +24,7 @@ Body compound takes them. The other per-attribute features: [body-features.md](b
   after the step less what the one before it (`beginAccelLimits`) would be with only gravity, the forces the force
   pass put on the body (`noteAccelForce`) and Box3D's damping over the step's solver substeps (`undisturbedVelocity`),
   shortened to the limit times the step; only the velocity carried on changes, as Bullet's. Joints are limited as
-  contacts are, and a compound takes its pieces' smallest limit, as Bullet's chunk. Tests
+  contacts are, and a compound takes its pieces' smallest limit, as Bullet's chunk. The Solver SOP's World Scale
+  scales the input points' linear limits and `targetv` ([solver-sop-io.md](solver-sop-io.md)). Tests
   `bullet_drag_limits`, `bullet_glue_drag_limits`, `bullet_accel_limits`, `solver_sop_speed_limit_bullet`,
-  `solver_sop_pop_drag_bullet`, `core_motion`.
+  `solver_sop_pop_drag_bullet`, `solver_sop_world_scale_speed_limit`, `core_motion`.

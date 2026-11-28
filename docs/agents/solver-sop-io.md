@@ -52,8 +52,9 @@ and forces: [solver-sop.md](solver-sop.md). Index and rules: [CLAUDE.md](../../C
 * World Scale (`WORLD_SCALE_TOGGLE` / `WORLD_SCALE`, first on the Solver tab; Bullet's usescale / Bullet World Scale):
   Transform SOPs scale every input (`world_scale_*`; the before-start outputs pass the unscaled inputs), each behind a
   Switch (`switch_<name>`) that takes it only while scaling (a Transform by 1 still copies every point);
-  `scale_attributes` (`SCALE_ATTRIBS_VEX`) then divides `density` by the cube and `w` back, and scales the hand-set
-  `bullet_prim*` sizes and `sleepthreshold` (Bullet leaves those). `scale_settings` turns the channel references in
+  `scale_attributes` (`SCALE_ATTRIBS_VEX`) then divides `density` by the cube and `w` back, scales `speedmin`,
+  `speedmax` and `accelmax` as Bullet does, and the hand-set `bullet_prim*` sizes, `sleepthreshold` and `targetv`
+  (Bullet leaves those). `scale_settings` turns the channel references in
   `SCALED_SETTINGS` (lengths and speeds of the solver, the pieces' and collider's Box3D Data) into reference x scale.
   The outputs come back through `unscale_*` (Transform SOPs; `UNSCALE_*_VEX` for the simulation points, the
   constraints' `force` / `distance` / `torque` and the impact records). Every wrangle sits behind a Switch

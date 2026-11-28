@@ -196,14 +196,15 @@ v@force *= s;
 v@torque *= s * s;
 """
 # The pieces after packing (Transform scaled P, v, w and the packed transforms): Bullet's
-# scale_density_and_attribs (density / s^3, w back, as the Transform scaled it), plus the hand-set
-# shape sizes and the sleep threshold, which Bullet leaves.
+# scale_density_and_attribs (density / s^3, w back, as the Transform scaled it, the speed and accel
+# limits by s), plus the hand-set shape sizes, the sleep threshold and the drag's target velocity,
+# which Bullet leaves.
 SCALE_ATTRIBS_VEX = """\
 float s = chf("scale");
 if (haspointattrib(0, "density")) setpointattrib(0, "density", i@ptnum, 1 / pow(s, 3), "mult");
 if (haspointattrib(0, "w")) setpointattrib(0, "w", i@ptnum, 1 / s, "mult");
 foreach (string n; {"bullet_primS", "bullet_primT", "bullet_radius", "bullet_length", "sleepthreshold",
-                          "tangentvelocity"})
+                          "tangentvelocity", "speedmin", "speedmax", "accelmax", "targetv"})
     if (haspointattrib(0, n)) setpointattrib(0, n, i@ptnum, s, "mult");
 """
 # Outputs scaled back (chf("scale") is 1 / World Scale): Bullet's scale_simpoints, scale_attribs and

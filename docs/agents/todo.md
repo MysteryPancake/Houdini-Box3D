@@ -47,8 +47,10 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
   their real impulse.
 * Box3D Configure has no Units (RBD Configure's Unit Mass and Unit Length, which scale Density by
   `unitlength / unitmass`, each over 1000).
-* Drag and speed limits (`Box3DMotion.cpp`, [motion-limits.md](motion-limits.md)): World Scale other than 1 does not
-  scale the values.
+* Drag and speed limits under World Scale ([motion-limits.md](motion-limits.md)): only the input points' linear
+  limits and `targetv` are scaled (`SCALE_ATTRIBS_VEX`, as Bullet). Values a POP writes in the simulation (POP Drag,
+  POP Speed Limit) stay in scaled units, and `airresist` is not scaled (it should go by scale^(1 - `dragexp`)).
+  Bullet scales neither.
 * Bounding Box Inertia ([body-features.md](body-features.md)): a Glue as One Body compound takes the true inertia of
   its merged shapes, where Bullet's chunk sums the pieces' box inertias, so a glued group spins more freely than
   Bullet's. `kBulletInertiaPad` is a fixed length, as Bullet's margin is: a tetrahedron matches at 0.2, 1 and 5 times the
@@ -109,6 +111,8 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
      (`building.obj`: `mesh_file`).
   2. Multi-shape bodies (`Bodies.parts`, capsule and sphere parts included) and per-material meshes: Compound,
      Falling Trees, Village (benchmark), Gear Lift, Ghost, Conveyor Mesh; then the wind approximations.
+* Per-piece surface material, collision filter and explicit sizes, and per-triangle materials on static meshes:
+  not started, planned in [piece-settings-plan.md](piece-settings-plan.md).
 * Force DOPs: parallel evaluation of circle / sphere sampled forces (the resolver has only the point call).
 * Sticky collisions. Box3D's contact begin / end and sensor events: Houdini has no output for them (Bullet has none), so
   nothing reads them beyond Impacts. Sensors (trigger zones) would be the useful part.
@@ -147,6 +151,9 @@ Features to add in the fork. Once one exists, the wrapper maps it and the entry 
 * **Level landings.** A box landing flat at speed tips up to about a degree, where Bullet's stays level (status.md):
   the manifold's points are solved in order. Alternating the order each pass, or solving a face contact's points
   together, would keep it level.
+* **Per-slot surface materials.** `b3Shape_SetSurfaceMaterial` and its friction / restitution setters change only a
+  mesh's first material; a `b3Shape_SetSurfaceMaterialAt` would let body-wide changes reach per-triangle materials
+  ([piece-settings-plan.md](piece-settings-plan.md), phase 3).
 * **Wide cones.** `b3SphericalJoint_SetConeLimit` and `SetConeLimits` assert each angle is at most 90°: Cone Twist's
   wider cones need that lifted.
 

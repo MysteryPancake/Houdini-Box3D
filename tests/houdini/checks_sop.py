@@ -149,6 +149,26 @@ def test_solver_sop_world_scale_forces():
                    + " (expected the same in each, both above 0)")]
 
 
+def test_solver_sop_world_scale_speed_limit():
+    """A speedmax on the input points is in scene units under World Scale (`scale_attributes` scales it, as Bullet's
+    scale_density_and_attribs): a box falling freely with speedmax 3 falls at 3 m/s with World Scale 1, 10 and 0.1
+    (within 0.2 m/s: Box3D clamps after its step)."""
+    got = {}
+    for k in (1.0, 10.0, 0.1):
+        tag = str(k).replace(".", "_")
+        pieces, names = packed_boxes(f"sop_scale_limit_pieces_{tag}", [
+            {"size": (1, 1, 1), "center": (0, 1000, 0), "attrs": {"active": 1, "speedmax": 3.0}}])
+        sop = solver_sop(f"sop_scale_limit_{tag}", geometry=pieces)
+        set_parm(sop, ["usescale"], 1 if k != 1.0 else 0)
+        set_parm(sop, ["scale"], k)
+        track = play(sop, 36, lambda s, f: named_positions(s.geometry(3)).get(names[0]) if f >= 35 else None)
+        got[k] = abs(track[36][1] - track[35][1]) * hou.fps() if track[35] and track[36] else None
+    ok = all(v is not None and abs(v - 3.0) < 0.2 for v in got.values())
+    return [Result("solver_sop_world_scale_speed_limit", Result.PASS if ok else Result.FAIL,
+                   "falls at " + ", ".join(f"World Scale {k}: {v if v is None else round(v, 3)} m/s"
+                                           for k, v in got.items()) + " (expected 3 in each)")]
+
+
 def test_solver_sop_moving_input():
     """As RBD Bullet Solver SOP, the Geometry and Proxy outputs move the input as of the Start Frame by the pieces' motion
     since: pieces whose input SOP rises 0.1 and turns 3 degrees a frame (a Transform SOP), kinematic (animated) and
@@ -1265,6 +1285,7 @@ TESTS = {
     "solver_sop_removed_pieces": test_solver_sop_removed_pieces,
     "solver_sop_world_scale": test_solver_sop_world_scale,
     "solver_sop_world_scale_forces": test_solver_sop_world_scale_forces,
+    "solver_sop_world_scale_speed_limit": test_solver_sop_world_scale_speed_limit,
     "solver_sop_moving_input": test_solver_sop_moving_input,
     "solver_sop_animated_scale": test_solver_sop_animated_scale,
     "solver_sop_animated_setting": test_solver_sop_animated_setting,

@@ -70,6 +70,7 @@ Load only the file for the area you are changing.
 | [docs/agents/configure.md](docs/agents/configure.md) | Box3D Configure asset |
 | [docs/agents/status.md](docs/agents/status.md), [status-areas.md](docs/agents/status-areas.md) | Unverified |
 | [docs/agents/todo.md](docs/agents/todo.md) | TODO, features to add to the Box3D fork |
+| [docs/agents/piece-settings-plan.md](docs/agents/piece-settings-plan.md) | Plan: per-piece material, filter and sizes, per-triangle mesh materials |
 | [docs/agents/sample-port-plan.md](docs/agents/sample-port-plan.md), [code](docs/agents/sample-port-code.md), [table a](docs/agents/sample-port-table-a.md), [b](docs/agents/sample-port-table-b.md) | Porting Box3D's samples to example scenes: plan, the helpers, verdict per sample |
 
 **Values that live in code stay in code.** Defaults, counts, thresholds and sizes are not copied into the docs: name
