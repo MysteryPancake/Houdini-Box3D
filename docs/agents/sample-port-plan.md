@@ -82,13 +82,15 @@ ported ones **built** in place of their verdict.
     `statics`: Static Objects merged in, such as `height_field` (a HeightField SOP placed as Box3D places a field, its
     corner sample at the body's position).
   * More shapes: `Bodies.hull(points)` (one point set copied onto several bodies), `Bodies.compound(boxes)` (box
-    hulls on one moving body: named pieces of one packed shape, `concave`), `Bodies.mesh_file` (a mesh from
+    hulls on one moving body: named pieces of one packed shape, `concave`; `Bodies.parts` for any hulls), `Bodies.mesh_file` (a mesh from
     `extern/box3d/data/meshes`, copied to `examples/cache` and read `$HIP`-relative, as `LoadTempMesh` reads it, its
     `weldTolerance` a Fuse). A hull's points come from a program linked with Box3D when Box3D builds them (GMod Wheel
     Stack), printed to full precision: `num` writes 9 significant digits, and rounded points can change a hull's faces.
   * `box_impulse`: the velocity a `b3Body_ApplyLinearImpulse` before the first step gives a box; `XorShift` and
     `random_vec3`: the samples' random numbers (`shared/utils.h`), computed in Python (VEX has no bit shifts);
     `complex_hull_points` (`b3CreateComplexHull`), `cos_sin` and `f32`, for points a builder lists.
+  * `finish(step=vex)`: `step_script`, a sample's `Step()` before `b3World_Step` (a SOP Solver ahead of the Box3D
+    Solver in a Multiple Solver; a changed `v` / `w` is an edit). `Bodies.slider` / `toggle`: a sample's GUI controls.
   * `Bodies.explode`: `b3World_Explode` before the first step, a wrangle (`EXPLODE_VEX`) adding each box, sphere or
     capsule body's push to its `v` / `w` (Box3D's to float rounding); its settings are on the Sample tab.
   * `network_sop` takes a VEX string calling `joint(...)` in place of lines, for thousands of joints (Joint Grid).
@@ -109,7 +111,8 @@ Sticky notes state only what that comparison showed.
 
 ## Mapping a sample
 
-* Bodies: static -> `active 0`; kinematic -> an animated piece (`active 0`, `animated 1`); dynamic -> `active 1`. `linearVelocity` /
+* Bodies: static -> `active 0`; kinematic -> an animated piece (`active 0`, `animated 1`,
+  a stream whose VEX poses it by `@Time`: the pose at T is Box3D's after the step ending at T); dynamic -> `active 1`. `linearVelocity` /
   `angularVelocity` -> `v` / `w`; `gravityScale`, `linearDamping`, `angularDamping`, `enableSleep`, `isAwake`,
   `isEnabled`, `allowFastRotation`, `enableContactRecycling` -> `gravityscale`, `lineardamping`, `angulardamping`,
   `enablesleep`, `awake`, `enabled`, `fastrotation`, `contactrecycling`; `isBullet` -> `fastobject`;

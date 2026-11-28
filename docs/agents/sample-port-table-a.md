@@ -19,16 +19,16 @@ numbers the port does not reproduce.
 | Candy Cups | built | One hull from a point set (`Bodies.hull`), many copies |
 | Explosion | work | `b3World_Explode` on boxes and cylinders over a grid mesh: starting `v` / `w` (`Bodies.explode`, which needs hulls) |
 | Height Field | no | Ray and shape casts over a height field; nothing moves |
-| Falling Trees | work | Trees of several transformed hulls: `multi_shape_body`; wave mesh or height field ground |
+| Falling Trees | work | Trees of several transformed hulls: `Bodies.parts`; wave mesh or height field ground |
 | Mesh Drop | built | Boxes on a static wave mesh, starting velocities from `XorShift` |
 | Village | work | One baked static compound (tiles, wave meshes, capsule and sphere props): separate static pieces; bodies dropped on it; the cast curtain (queries) dropped |
 | Sensor | no | Sensor shapes and events, custom filter callback |
-| Washer | work | Kinematic drum of hull walls spun at a constant rate: `animated_piece` (or its revolute motor variant) |
+| Washer | work | Kinematic drum of hull walls spun at a constant rate: an animated stream (or its revolute motor variant) |
 | Large World | work | A million static floor boxes, a sphere dropped every few steps: a smaller floor, spheres emitted (`emit`) |
 | Hull | no | Hull build timing, no simulation |
 | Chains | work | Capsule chains (spherical joints, springs, friction motors) on a wave mesh; per-shape wind: drag only (`airresist` / `targetv`) |
 | Destruction | work | A box grid blown apart and respawned periodically: starting `v`, `dead` and new pieces by frame (`step_script`) |
-| Junkyard | work | Kinematic pusher on a circle (`SetTargetTransform`): `animated_piece`; rocks, cylinders, offset boxes |
+| Junkyard | work | Kinematic pusher on a circle (`SetTargetTransform`): an animated stream; rocks, cylinders, offset boxes |
 | Convex Pile | built | Hulls of 32 random points (`complex_hull_points`) |
 | Spinner | built | Inward cylinder mesh, paddle on a revolute motor to the mesh's body |
 | Sleep | work | Pyramids woken by a filter joint made and destroyed when asleep: `step_script` writing `awake` |
@@ -38,18 +38,18 @@ numbers the port does not reproduce.
 
 | Sample | Verdict | What it uses / why |
 |---|---|---|
-| Body Type | work | Platform (kinematic by default, velocity reversed at two bounds) carrying prismatic and revolute jointed bodies: `animated_piece`; the type and enable switches are GUI |
-| Spinning Book | now | Box spun about its middle axis, no gravity (`w`, `gravityscale`) |
-| Gyroscopic Torque | work | Cylinder plus box in one body: `multi_shape_body` |
-| Gyroscopic Precession | now | Spinning tops (one hull), `fastrotation`, rolling resistance; readout dropped |
-| Spinning Capsule | now | Spinning capsule; Near-Sphere Tolerance; readout dropped |
-| Weeble | work | Custom mass data (low centre): `computecom` 0 with the point at the centre; GUI explosion dropped |
+| Body Type | work | Platform (kinematic by default, velocity reversed at two bounds) carrying prismatic and revolute jointed bodies: an animated stream; the type and enable switches are GUI |
+| Spinning Book | built | Boxes spun about each axis, no gravity (`w`, `gravityscale`) |
+| Gyroscopic Torque | built | Cylinder plus box in one body (`Bodies.parts`) |
+| Gyroscopic Precession | built | Spinning tops (one hull), `fastrotation`, rolling resistance; readout dropped |
+| Spinning Capsule | built | Spinning capsule; Near-Sphere Tolerance; readout dropped |
+| Weeble | built | Custom mass data (low centre): `computecom` 0 with the point at the centre; starts at Teleport's pose (Start menu), Explode dropped |
 | Disable | work | Welded capsules and spheres, an impulse every step and GUI disable: `step_script` (`force`, `enabled`) |
 | Cast | no | Body ray, shape and mover casts |
-| Kinematic | work | Kinematic box on a path after a delay (`SetTargetTransform`): `animated_piece` |
-| Fixed Rotation | work | `fixedRotation`: no attribute; a large `inertialtensorstiffness`, or Lock Tilt |
+| Kinematic | built | Kinematic box on a path after a delay (`SetTargetTransform`): an animated stream |
+| Fixed Rotation | built | `fixedRotation`: no attribute; Lock Tilt and a large `inertialtensorstiffness` |
 | Class Ring | work | Ring of capsules with a sphere gem as one body: `multi_shape_body`; 16 steps a frame at 8 substeps (raise Substeps), `fastrotation` |
-| Offset Kinematic | work | Kinematic box spinning about an offset centre: `animated_piece` with the point at the centre |
+| Offset Kinematic | built | Kinematic box spinning about an offset centre: an animated stream with the point at the centre |
 
 ## Character (`sample_character.cpp`)
 
@@ -86,9 +86,9 @@ All **no**: they show queries or narrow-phase tools, not a simulation.
 
 | Sample | Verdict | What it uses / why |
 |---|---|---|
-| Simple | work | Baked compound of hulls on a dynamic body: `multi_shape_body`; Contact Recycle Distance |
+| Simple | work | Baked compound of hulls on a dynamic body: `Bodies.parts`; Contact Recycle Distance |
 | Spheres | work | Compound of spheres: glued sphere pieces (`multi_shape_body`) |
-| Hulls | work | Compound of box hulls: `multi_shape_body` |
+| Hulls | work | Compound of box hulls: `Bodies.compound` |
 | Tile Floor | work | Static compound of tiles: one static box piece per tile |
 | Mesh Tile | work | Static compound of box meshes: static `concave` pieces |
 | Village | no | Keyboard character mover and compound queries |

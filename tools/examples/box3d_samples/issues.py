@@ -1,5 +1,7 @@
 """Box3D's Issues samples (samples/sample_issues.cpp): scenes kept from bug reports."""
 
+import math
+
 from .common import Bodies, Every, finish, height_field, num, sample, vec
 from .joints import node
 
@@ -211,6 +213,123 @@ corner at the origin). Its bounds cover more than 512 of the field's triangles, 
 contact; it should land, roll onto its side and settle.""",
                   ported="the height field is a HeightField SOP on a Static Object (the collider0 node).",
                   statics=[field])
+
+
+@sample("Issues", "Thin Wall Push Out", SOURCE, frames=240)
+def thin_wall_push_out(s):
+    b = Bodies(s.tag, {"enablesleep": 1})
+    start_x = b.slider("start_x", "Start X", 0.2, -0.6, 0.6,
+                       help_text="Where the mover starts across the wall (inside is -x), as the sample's slider. "
+                                 "Restart to see it.")
+    b.ground(20.0)
+    b.stream("wall", b.box("wall", 0.1, 1.5, 2.0), "static_body({0, 1.5, 0}, identity);", cd=(0.55, 0.6, 0.65),
+             note="a static wall 0.2 thick: the room is on its -x side")
+    b.stream("mover", b.box("mover", 0.5, 0.5, 0.5), f"""\
+// A 1 m box dragged into the wall: it starts overlapping it, Start X across (Start X on the Sample tab).
+body(set({start_x}, 1.5, 0.0), identity);
+""", cd=(0.9, 0.6, 0.2), note="friction 0, never sleeping", friction=0.0, enablesleep=0)
+    # Sample::LockMotion( linearY, e_spinY ): a motion lock whose frame has z along the world y, locking that
+    # position and the tilt about the frame's x and y, so the mover slides on the floor plane and turns about y.
+    # Its anchor stays at the default Start X: with x and z free, only its height matters.
+    spin_y = (-math.sin(math.pi / 4.0), 0.0, 0.0, math.cos(math.pi / 4.0))
+    lines = [("", (0.2, 1.5, 0.0), "mover0", (0.2, 1.5, 0.0), "motionlock", spin_y)]
+    return finish(s, b, about="""\
+The quasi-static push-out idiom (Box3D issue 135): zero a body's velocity every step, so only the
+contact's push moves it out of the wall. The mover starts 0.2 past the wall's middle, and Box3D pushes it
+along the shorter way out, through the wall to the outside (x 0.6, in 1/3 s, as in Box3D) instead of back
+into the room (x -0.6).
+Box3D's comment: this is how the separating axis works, not a bug.""",
+                  ported="""\
+the velocity is zeroed by step_script in the DOP network (a SOP Solver before the Box3D Solver), as the
+sample's Step() does before b3World_Step. Gravity is off; a Box3D Motion Lock holds the height and the
+tilt (Sample::LockMotion with linearY and e_spinY). The readouts and the Reset button are dropped.""",
+                  try_="set Start X (the bodies object's Sample tab) below 0 and restart: the mover goes back into "
+                       "the room. Bypass step_script: it keeps the push's speed (0.43 m/s) and slides away.",
+                  gravity=(0.0, 0.0, 0.0),
+                  joints=[("box3d_motionlockconrel", "lock_floor_plane",
+                           {"lock_x": 0, "lock_y": 0, "lock_z": 1, "lock_angular_xy": 1}, "motionlock")],
+                  lines=lines,
+                  step='if (s@name == "mover0") {\n    v@v = {0, 0, 0};\n    v@w = {0, 0, 0};\n}')
+
+
+@sample("Issues", "Rolling Deck", SOURCE, frames=1200)
+def rolling_deck(s):
+    b = Bodies(s.tag, {"animated": 0, "contactrecycling": 1, "enablesleep": 1})
+    recycling = b.toggle("deck_recycling", "Deck Recycling",
+                         help_text="Let the deck's contacts be recycled, as the sample's checkbox (restart to see it).")
+    b.stream("deck", b.box("deck", 2.0, 0.25, 10.0), f"""\
+// A kinematic deck (active 0, animated 1) at the origin, still for 1 s, then rolling 8 degrees each way about x
+// every 6 s, eased in over the first quarter roll: the sample's RollAngle at the step's end time.
+float t = @Time - 1.0, period = 6.0, angle = 0.0;
+if (t > 0.0) {{
+    float ease = 1.0;
+    if (t < 0.25 * period) {{
+        float u = t / (0.25 * period);
+        ease = u * u * (3.0 - 2.0 * u);
+    }}
+    angle = ease * 8.0 * PI / 180.0 * sin(2.0 * PI * t / period);
+}}
+int pt = static_body({{0, 0, 0}}, axis_angle({{1, 0, 0}}, angle));
+setpointattrib(0, "animated", pt, 1);
+setpointattrib(0, "contactrecycling", pt, {recycling});  // Deck Recycling on the Sample tab
+""", cd=(0.44, 0.5, 0.56), note="b3MakeBoxHull( 2, 0.25, 10 ) on a kinematic body, friction 1", friction=1.0,
+             animated=1)
+    b.stream("crates", b.box("crates", 0.5, 0.5, 0.5), """\
+// Two crates on the deck 8 m either side of the roll axis: the orange one recycles its contacts, the blue one not.
+for (int i = 0; i < 2; ++i) {
+    int pt = body(set(0.0, 0.75, i == 0 ? 8.0 : -8.0), identity);
+    setpointattrib(0, "contactrecycling", pt, i == 0);
+    setpointattrib(0, "Cd", pt, i == 0 ? {1, 0.55, 0} : {0.12, 0.56, 1});
+}
+""", note="friction 1, never sleeping", friction=1.0, enablesleep=0)
+    return finish(s, b, about="""\
+Two crates on a rolling deck, one each side of the roll axis. A recycled contact keeps the normal and
+anchors it was made with, fixed in the world, while the bodies turn less than 10 degrees and stay within
+the Contact Recycle Distance. A crate rolling with the deck would then move straight up and down instead
+of along its arc and walk off across the deck. Box3D's fix is to turn recycling off on the deck, which
+stops it for every body on it: both crates ride with the deck.""",
+                  ported="""\
+the deck is an animated piece (active 0, animated 1) posed by the sample's roll angle; contactrecycling
+is the sample's enableContactRecycling. The readouts (normal error, slide) are dropped.""",
+                  try_="turn Deck Recycling on (the bodies object's Sample tab) and restart: the orange crate "
+                       "walks 0.7 m out across the deck in 20 s, as in Box3D; the blue one rides with it.")
+
+
+@sample("Issues", "Turning Platform", SOURCE, frames=1200)
+def turning_platform(s):
+    b = Bodies(s.tag, {"animated": 0, "contactrecycling": 1, "enablesleep": 1})
+    recycling = b.toggle("platform_recycling", "Platform Recycling",
+                         help_text="Let the platform's contacts be recycled, as the sample's checkbox (restart to "
+                                   "see it).")
+    b.stream("platform", b.box("platform", 4.0, 0.25, 1.5), f"""\
+// A kinematic platform (active 0, animated 1) at the origin spinning about y at a constant 0.12 rad/s.
+int pt = static_body({{0, 0, 0}}, quaternion(0.12 * @Time, {{0, 1, 0}}));
+setpointattrib(0, "animated", pt, 1);
+setpointattrib(0, "contactrecycling", pt, {recycling});  // Platform Recycling on the Sample tab
+""", cd=(0.44, 0.5, 0.56), note="b3MakeBoxHull( 4, 0.25, 1.5 ) on a kinematic body", animated=1)
+    b.stream("boxes", b.box("boxes", 0.25, 0.25, 0.25), """\
+// Two 25 kg boxes 1.75 m either side of the axis, started at the platform's speed so nothing slips: the orange
+// one recycles its contacts, the blue one not.
+vector omega = {0, 0.12, 0};
+for (int i = 0; i < 2; ++i) {
+    vector p = set(i == 0 ? -1.75 : 1.75, 0.5, 0.0);
+    int pt = body(p, identity);
+    setpointattrib(0, "v", pt, cross(omega, p));
+    setpointattrib(0, "w", pt, omega);
+    setpointattrib(0, "contactrecycling", pt, i == 0);
+    setpointattrib(0, "Cd", pt, i == 0 ? {1, 0.55, 0} : {0.12, 0.56, 1});
+}
+""", note="density 200 (25 kg), never sleeping", density=200.0, enablesleep=0)
+    return finish(s, b, about="""\
+Two boxes on a platform turning slowly about the vertical. A recycled contact keeps its anchors in the
+world orientation they were made with, so friction holds a box to the platform's speed at a point up to
+10 degrees behind it on the arc, and the box would spiral outwards. Box3D's fix is to turn recycling off
+on the platform, which stops it for both boxes: they stay put.""",
+                  ported="""\
+the platform is an animated piece (active 0, animated 1) turned by 0.12 rad/s times the time;
+contactrecycling is the sample's enableContactRecycling. The readouts (radius, slide) are dropped.""",
+                  try_="turn Platform Recycling on (the bodies object's Sample tab) and restart: the orange box "
+                       "drifts 0.4 m outwards in 20 s, as in Box3D; the blue one stays.")
 
 
 @sample("Issues", "Bullet Thin Plate", SOURCE, frames=240)

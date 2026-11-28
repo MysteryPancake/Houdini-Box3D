@@ -104,19 +104,15 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
 * Box3D's samples as example scenes ([sample-port-plan.md](sample-port-plan.md)): the tables mark what is built.
   Left, in order:
   1. Joints with workarounds: Locked Joints, Driving.
-  2. Animated pieces and step scripts: Bodies, Kinematic, Rolling Deck, Turning Platform, Motor Joint, Junkyard,
-     Washer, Static Invoke, Disable.
+  2. Animated pieces and step scripts: Motor Joint, Junkyard, Washer, Static Invoke, Body Type, Disable.
   3. The ragdoll: Ragdoll, then Rain, the Determinism scenes and Mesh / Reflection (`building.obj`: `mesh_file`).
   4. Multi-shape bodies and per-material meshes: Compound, Class Ring, Falling Trees, Village (benchmark), Gear Lift,
      Ghost, Conveyor Mesh; then the wind approximations.
 
   Helpers these need in `tools/examples/box3d_samples/common.py`:
-  * `animated_piece(vex)`: `active 0`, `animated 1`, `P` / `orient` driven by a wrangle on `@Time` (kinematic bodies).
-  * `step_script(vex)`: a SOP Solver in a Multiple Solver after the Box3D Solver, writing `force`, `v`, `enabled`,
-    `awake` or `dead` on given frames, for samples whose `Step()` does that.
-  * `multi_shape_body(parts)`: several shapes as one body. Hulls only: `Bodies.compound` (named pieces, `concave`)
-    extended past boxes. With spheres or capsules: glued pieces, Glue as One Body on, without other joints (a glued
-    group with another joint stays on welds, [glue-compound.md](glue-compound.md)).
+  * `multi_shape_body(parts)`: several shapes as one body when some are spheres or capsules (hulls alone:
+    `Bodies.parts`): glued pieces, Glue as One Body on, without other joints (a glued group with another joint stays
+    on welds, [glue-compound.md](glue-compound.md)).
   * `human(name, position, friction_torque, hertz, damping)`: `human.c`'s ragdoll: capsule pieces, revolute and
     spherical joints with its limits, springs and friction motors (motor speed 0), filter joints; shin and foot as one
     `multi_shape_body`.

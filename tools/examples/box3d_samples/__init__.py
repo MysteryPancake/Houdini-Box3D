@@ -4,9 +4,9 @@ make_examples.py --samples builds them into examples/<category>/<sample>.hip.
 Which samples port and how: docs/agents/sample-port-plan.md.
 """
 
-from . import (benchmark, continuous, events, issues, joints, mesh, restitution, robustness, shapes,  # register
+from . import (benchmark, bodies, continuous, events, issues, joints, mesh, restitution, robustness, shapes,  # register
                stacking)
 from .common import SAMPLES, start_scene
 
-__all__ = ["SAMPLES", "start_scene", "benchmark", "continuous", "events", "issues", "joints", "mesh", "restitution",
-           "robustness", "shapes", "stacking"]
+__all__ = ["SAMPLES", "start_scene", "benchmark", "bodies", "continuous", "events", "issues", "joints", "mesh",
+           "restitution", "robustness", "shapes", "stacking"]

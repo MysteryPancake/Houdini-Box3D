@@ -454,6 +454,20 @@ class Bodies:
             merge.setInput(i, named)
         return merge, "concave"
 
+    def parts(self, tag, parts):
+        """Several hulls on one body, each a shape from box(), cylinder(), hull() or shifted() of one of them:
+        parts is [(part name, shape)]. As compound(): named pieces of one packed shape, bullet_georep "concave"."""
+        merge = create(self.geo, "merge", f"{tag}_shape")
+        for i, (part, (sop, rep, *rest)) in enumerate(parts):
+            if rep not in ("box", "convexhull") or rest:
+                raise SetupError(f"{tag}: part {part!r} is a {rep}; only hulls can share a body (glue the rest)")
+            named = create(self.geo, "attribwrangle", f"{tag}_{part}_named")
+            named.setInput(0, sop)
+            set_parm(named, "class", 1)  # primitives
+            set_parm(named, "snippet", f's@name = "{part}";')
+            merge.setInput(i, named)
+        return merge, "concave"
+
     def hull(self, tag, points, note=""):
         """b3CreateHull( points ): the hull of a point set in the body's frame (hull_points), collided as its convex
         hull. For a hull several bodies share; one body's own hull can be polygons() with hull_points()."""
@@ -678,6 +692,19 @@ addpointattrib(0, "w", {{0, 0, 0}});
                 group.appendToFolder(folder, template)
         self.geo.setParmTemplateGroup(group)
 
+    def slider(self, name, label, default, lo, hi, help_text=""):
+        """A sample's slider: a float on the Sample tab. Returns the VEX that reads it in a stream (restart the
+        simulation after changing it)."""
+        self._sample_parms([hou.FloatParmTemplate(name, label, 1, default_value=(default,), min=lo, max=hi,
+                                                  help=help_text or None)])
+        return f'ch("../{name}")'
+
+    def toggle(self, name, label, default=False, help_text=""):
+        """A sample's checkbox: a toggle on the Sample tab. Returns the VEX that reads it in a stream (restart the
+        simulation after changing it)."""
+        self._sample_parms([hou.ToggleParmTemplate(name, label, default_value=default, help=help_text or None)])
+        return f'chi("../{name}")'
+
     def explode(self, centre, radius, falloff, impulse_per_area):
         """b3World_Explode( b3ExplosionDef ) before the first step: a wrangle after the bodies' merge adds the push
         to each dynamic box, sphere and capsule body's v and w (EXPLODE_VEX). Its settings are on the Sample tab."""
@@ -734,21 +761,47 @@ def motion_locks(names_and_points, constraint_name="motionlock"):
     return [("", p, n, p, constraint_name) for n, p in names_and_points]
 
 
+def step_script(dop, solver_node, vex):
+    """A sample's Step() before b3World_Step: a SOP Solver running `vex` over the bodies' points, then the Box3D
+    Solver, in a Multiple Solver. The solver takes a changed v / w as an edit and sets the body's velocity before it
+    steps."""
+    ss = create(dop, "sopsolver", "step_script")
+    wrangle = ss.createNode("attribwrangle", "step")
+    set_parm(wrangle, "snippet", "// The sample's Step(), before each Box3D step.\n" + vex.strip() + "\n")
+    out = next((c for c in ss.children() if c.type().name() == "output"), None)
+    if out is None:
+        raise SetupError(f"{ss.path()}: no Output SOP inside the SOP Solver")
+    wrangle.setInput(0, out.input(0))
+    out.setInput(0, wrangle)
+    multi = create(dop, "multisolver", "step_then_solve")
+    multi.setInput(0, solver_node.inputs()[0])
+    multi.setInput(1, ss)
+    for node in solver_node.outputs():
+        for i, upstream in enumerate(node.inputs()):
+            if upstream == solver_node:
+                node.setInput(i, multi)
+    solver_node.setInput(0, None)
+    multi.setInput(2, solver_node)
+    return ss
+
+
 SOLVER_NOTE = ("The solver runs as Box3D's sample app: 60 fps with Substeps 1 and Constraint Iterations 4 (one Box3D "
                "step of 4 substeps a frame), gravity -10, Box3D's contact settings and friction / bounce mixing, "
                "Bounding Box Inertia off.")
 
 
 def finish(s, bodies, about, ported="", try_="", joints=None, lines=None, solver=None, gravity=GRAVITY,
-           note_size=(10, 6), emit=False, statics=()):
+           note_size=(10, 6), emit=False, statics=(), step=None):
     """The DOP network around the bodies, the solver set as Box3D runs, the frame range and the notes.
     joints: [(relationship type, node name, {parm: value}, constraint_name)] for the network `lines`
     (network_sop's (name_a, pos_a, name_b, pos_b, constraint_name[, orient])). emit: a Box3D Solver SOP with Emit RBDs
     in place of the DOP network, for samples that make bodies again during the run (their `rbdbullet_emit`: Every).
-    statics: SOP paths of colliders (height_field) for Static Object DOPs merged in, with Box3D's material."""
+    statics: SOP paths of colliders (height_field) for Static Object DOPs merged in, with Box3D's material.
+    step: VEX run over the bodies' points before each Box3D step (step_script), for a sample whose Step() sets
+    v, w, force, awake, enabled or dead."""
     if emit:
-        if lines:
-            raise SetupError(f"{s.tag}: emit takes no joints")
+        if lines or step:
+            raise SetupError(f"{s.tag}: emit takes no joints or step script")
         return _finish_emit(s, bodies, _note_text(s, about, ported, try_), solver, gravity, note_size)
     path = bodies.finish()
     network, joint_nodes, wanted = None, None, {}
@@ -771,6 +824,8 @@ def finish(s, bodies, about, ported="", try_="", joints=None, lines=None, solver
             set_parm(static, "bounce", BOX3D_MATERIAL["bounce"])
             merge.setInput(i + 1, static)
         solver_node.setInput(0, merge)
+    if step:
+        step_script(dop, solver_node, step)
     box3d_world(solver_node, gravity=gravity, **(solver or {}))
     tidy(s.frames, _note_text(s, about, ported, try_), dop, note_size=note_size)
     inner = dop.findStickyNote("how_it_works")  # tidy's note in the DOP network (a sticky note is not a node)

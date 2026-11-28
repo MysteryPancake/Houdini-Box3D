@@ -21,9 +21,9 @@ The plan: [sample-port-plan.md](sample-port-plan.md).
 | Slide Twist Off Center Shape | built | Offset box spinning while it slides |
 | Huge Box | built | One very large box |
 | Heightfield | built | Cylinder on a flat height field (`height_field`, a Static Object) |
-| Thin Wall Push Out | work | Mover held still every step: `animated_piece`; Gravity |
-| Rolling Deck | work | Kinematic deck rolled by `SetTargetTransform`: `animated_piece` |
-| Turning Platform | work | Platform that starts turning after a settle time: `animated_piece` keyed |
+| Thin Wall Push Out | built | Mover whose velocity is zeroed every step (`step_script`); Motion Lock; no gravity; Start X a slider |
+| Rolling Deck | built | Kinematic deck rolled by `SetTargetTransform`: an animated stream; Deck Recycling a toggle (`Bodies.toggle`) |
+| Turning Platform | built | Kinematic platform at a constant spin: an animated stream; Platform Recycling a toggle |
 | Static Load | work | Hit threshold and contact impulse readouts: Add Impact Data shows the impulses |
 | Translation Locked Platform | work | Translation locked through mass data: Motion Lock (position locks) |
 | Bullet Thin Plate | built | `fastobject` spheres against a thin plate hull and mesh, a pair a second (`emit`); earlier pairs kept |
@@ -40,7 +40,7 @@ The plan: [sample-port-plan.md](sample-port-plan.md).
 |---|---|---|
 | Distance Joint | built | A ball on a rigid distance joint (Count 1); spring, force range and limit set on the node, off |
 | Filter | built | Filter joint |
-| Motor Joint | work | Motor joint chasing a target moved each step: `animated_piece` target; max spring force / torque |
+| Motor Joint | work | Motor joint chasing a target moved each step: an animated stream target; max spring force / torque |
 | Top Down Friction | built | Motor joints to the world as friction, no gravity; Explode as starting `v` / `w` (`Bodies.explode`) |
 | Prismatic | built | Spring, limits, motor, target translation |
 | Spherical | built | Cone and twist limits, spring, motor, target rotation |
@@ -56,7 +56,7 @@ The plan: [sample-port-plan.md](sample-port-plan.md).
 | Locked Joints | work | Joints on motion-locked bodies; lock and rotation choices are GUI (one per scene), the impulse a starting `v` |
 | Motion Lock Joint | built | Motion lock joint; the key impulse as a starting `v` / `w` (Try) |
 | Driving | work | Keyboard car on a height field: keyed Spin Speed and Target Steering Angle on the wheel node (live settings) |
-| Gear Lift | work | Gears of offset boxes on revolute motors, a prismatic lift, rocks, custom mesh: `multi_shape_body` |
+| Gear Lift | work | Gears of offset boxes on revolute motors, a prismatic lift, rocks, custom mesh: `Bodies.parts` |
 
 ## Manifold (`sample_manifold.cpp`)
 
