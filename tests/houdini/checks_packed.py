@@ -834,12 +834,23 @@ def follow_source_poses(kind, tag, count, source_vex="", start=None, moving_sop=
         solver.setInput(0, obj)
         finish(dop, solver)
 
+    def packed(pt):
+        """The point's packed primitive's 3x3 (rotation and size) as 9 numbers, then its `pscale` (1 without one);
+        None if it has no packed primitive."""
+        prims = pt.prims()
+        if not prims or not hasattr(prims[0], "transform"):
+            return None
+        m = prims[0].transform()
+        pscale = pt.attribValue("pscale") if pt.geometry().findPointAttrib("pscale") else 1.0
+        return tuple(m.at(r, c) for r in range(3) for c in range(3)) + (pscale,)
+
     def sample(sim, f):
         obj = sim.findObject("pieces")
         gdp = obj.geometry() if obj is not None else None
         if gdp is None or not gdp.points():
             return {}
-        return {pt.attribValue("name"): (tuple(pt.position()), tuple(pt.attribValue("orient"))) for pt in gdp.points()}
+        return {pt.attribValue("name"): (tuple(pt.position()), tuple(pt.attribValue("orient")), packed(pt))
+                for pt in gdp.points()}
 
     return step(dop, frames, sample)
 
@@ -848,7 +859,11 @@ def test_animated_follows_source():
     """Kinematic pieces follow their source SOP as RBD Bullet Solver's do, in every frame: with source `orient` /
     `pscale` attributes on the pieces (fixed, and changing each frame), 200 pieces, and a DOP Start Frame of 5
     (nothing exists before it). The pieces rise 0.1 and turn 3 degrees a frame in the source; each case is
-    compared point by point with Bullet (largest position / orient difference), and must have moved."""
+    compared point by point with Bullet (largest position / orient difference, and of the packed primitive's 3x3 and
+    `pscale`: from the second frame both are the source primitive's, which drops the `pscale` 2 the packed object
+    baked in), and must have moved. Last, the collider follows that size: a kinematic box with `pscale` 2 moving
+    0.05 a frame first moves a small free box on the same frame under both solvers (the size of a box without
+    `pscale`), and with a source that never moves a free box thrown at it gets as close under both."""
     cases = (
         ("fixed orient / pscale", "fixed", 2, dict(source_vex="p@orient = quaternion(radians(45), {0,1,0}); f@pscale = 2;")),
         ("changing orient / pscale", "changing", 2, dict(
@@ -861,28 +876,96 @@ def test_animated_follows_source():
     for label, tag, count, kw in cases:
         runs = {kind: follow_source_poses(kind, tag, count, **kw) for kind in ("box3d", "bullet")}
         last = max(runs["box3d"])
-        worst, compared = 0.0, 0
+        worst, worst_packed, compared = 0.0, 0.0, 0
         for f, b3d in runs["box3d"].items():
             bullet = runs["bullet"][f]
             if bool(b3d) != bool(bullet):
                 worst = float("inf")
-            for name, (pos, orient) in b3d.items():
+            for name, (pos, orient, packed) in b3d.items():
                 if name not in bullet:
                     worst = float("inf")
                     continue
                 compared += 1
                 worst = max(worst, max(abs(a - c) for a, c in zip(pos, bullet[name][0])),
                             max(abs(a - c) for a, c in zip(orient, bullet[name][1])))
+                theirs = bullet[name][2]
+                worst_packed = max(worst_packed, float("inf") if packed is None or theirs is None
+                                   else max(abs(a - c) for a, c in zip(packed, theirs)))
         end = runs["box3d"][last]
         first = runs["box3d"][5 if kw.get("start") else 1]
         moved = max((abs(end[n][0][1] - first[n][0][1]) for n in end if n in first), default=0.0)
         expect_move = 0.0 if tag == "changing" else 0.1 * (last - (5 if kw.get("start") else 1))
-        ok = compared > 0 and worst < 1e-3 and (tag == "changing" or close(moved, expect_move, 1e-3))
+        ok = (compared > 0 and worst < 1e-3 and worst_packed < 1e-3
+              and (tag == "changing" or close(moved, expect_move, 1e-3)))
         results.append(Result("animated_follows_source", Result.PASS if ok else Result.FAIL,
-                              f"{label}: largest difference from Bullet {worst:.2e} over {compared} piece poses (expected "
-                              f"below 1e-3); a piece rose {moved:.3f} by frame {last} (expected {expect_move:.3f}"
+                              f"{label}: largest difference from Bullet {worst:.2e} over {compared} piece poses, of the "
+                              f"packed transform and pscale {worst_packed:.2e} (expected below 1e-3); a piece rose "
+                              f"{moved:.3f} by frame {last} (expected {expect_move:.3f}"
                               f"{', fixed height' if tag == 'changing' else ''})"))
+    touch = {(kind, pscale): first_push(kind, pscale) for kind, pscale in (("box3d", 2), ("bullet", 2), ("box3d", 1))}
+    # Within a frame of each other (contact margins differ); a x2 collider touches 10 frames earlier.
+    ok = None not in touch.values() and max(touch.values()) - min(touch.values()) <= 1
+    results.append(Result("animated_follows_source", Result.PASS if ok else Result.FAIL,
+                          f"collider size: a pscale 2 kinematic box first moves the free box on frame "
+                          f"{touch[('box3d', 2)]} (Bullet {touch[('bullet', 2)]}; a box without pscale "
+                          f"{touch[('box3d', 1)]}; expected within a frame of each other, a x2 box 10 frames earlier)"))
+    reach = {kind: nearest_approach(kind) for kind in ("box3d", "bullet")}
+    ok = close(reach["box3d"], 0.6, 0.02) and close(reach["bullet"], 0.6, 0.02)
+    results.append(Result("animated_follows_source", Result.PASS if ok else Result.FAIL,
+                          f"still source: a free box thrown at a pscale 2 kinematic box whose source never moves gets "
+                          f"to x {reach['box3d']:.3f} (Bullet {reach['bullet']:.3f}; expected 0.6, the box's size "
+                          f"without pscale, as both read the source's on their first step; 1.1 at pscale 2)"))
     return results
+
+
+def nearest_approach(kind):
+    """How close (smallest x) a free 0.2 box thrown from x 1.5 at 1 m/s along -x (no gravity) gets to a kinematic unit
+    box at the origin with point `pscale` 2 whose source never moves, over 48 frames."""
+    path, names = packed_boxes(f"still_{kind}",
+                               [{"size": (1, 1, 1), "center": (0, 0, 0), "attrs": {"active": 0, "animated": 1}},
+                                {"size": (0.2, 0.2, 0.2), "center": (1.5, 0, 0),
+                                 "attrs": {"active": 1, "v": (-1.0, 0.0, 0.0)}}])
+    geo = hou.node(path).parent()
+    wr = create(geo, "attribwrangle", "source_pscale")
+    wr.setInput(0, hou.node(path))
+    set_parm(wr, ["class"], 2)
+    set_parm(wr, ["snippet"], f'f@pscale = s@name == "{names[0]}" ? 2 : 1;')
+    display(wr)
+    dop = new_dopnet(f"still_{kind}")
+    if kind == "box3d":
+        finish(dop, box3d_solver(dop, box3d_packed_object(dop, "pieces", wr.path()), gravity=(0, 0, 0)))
+    else:
+        solver = create(dop, "bulletrbdsolver", "bullet_solver")
+        solver.setInput(0, packed_object(dop, "pieces", wr.path(), keep_velocity=True))
+        finish(dop, solver)
+    xs = step(dop, 48, lambda sim, f: packed_positions(sim, "pieces")[names[1]][0])
+    return min(xs.values())
+
+
+def first_push(kind, pscale):
+    """The first frame on which a kinematic unit box with point `pscale` `pscale`, moving +0.05 a frame along x in its
+    source, moves a free 0.2 box whose centre starts at x 1.5 (no gravity); None if it never does by frame 36."""
+    tag = f"push_{kind}_{pscale}".replace(".", "_")
+    path, names = packed_boxes(tag, [{"size": (1, 1, 1), "center": (0, 0, 0), "attrs": {"active": 0, "animated": 1}},
+                                     {"size": (0.2, 0.2, 0.2), "center": (1.5, 0, 0), "attrs": {"active": 1}}])
+    geo = hou.node(path).parent()
+    wr = create(geo, "attribwrangle", "source_pscale")
+    wr.setInput(0, hou.node(path))
+    set_parm(wr, ["class"], 2)
+    set_parm(wr, ["snippet"], f'f@pscale = s@name == "{names[0]}" ? {pscale} : 1;')
+    xf = create(geo, "xform", "move")
+    xf.setInput(0, wr)
+    xf.parm("tx").setExpression("($FF - 1) * 0.05", hou.exprLanguage.Hscript)
+    display(xf)
+    dop = new_dopnet(tag)
+    if kind == "box3d":
+        finish(dop, box3d_solver(dop, box3d_packed_object(dop, "pieces", xf.path()), gravity=(0, 0, 0)))
+    else:
+        solver = create(dop, "bulletrbdsolver", "bullet_solver")
+        solver.setInput(0, packed_object(dop, "pieces", xf.path()))
+        finish(dop, solver)
+    xs = step(dop, 36, lambda sim, f: packed_positions(sim, "pieces")[names[1]][0])
+    return next((f for f in range(2, 37) if xs[f] > 1.5 + 1e-4), None)
 
 
 def growing_source(name, attrs_first=None):

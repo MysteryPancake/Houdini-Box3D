@@ -1,7 +1,7 @@
 # Box3D samples: verdicts, Benchmark to Ghost
 
-One row per registered sample: **now** (portable as the plugin is), **work** (portable with the workaround named),
-**no** (not portable, and why). The plan: [sample-port-plan.md](sample-port-plan.md); the helpers named here that are still to write: [todo.md](todo.md). The
+One row per registered sample: **built** (ported: `make_examples.py --samples` builds it), **now** (portable
+as the plugin is), **work** (portable with the workaround named), **no** (not portable, and why). The plan: [sample-port-plan.md](sample-port-plan.md); the helpers named here that are still to write: [todo.md](todo.md). The
 rest of the samples: [sample-port-table-b.md](sample-port-table-b.md). "Readout dropped" means the sample also draws
 numbers the port does not reproduce.
 
@@ -24,7 +24,7 @@ numbers the port does not reproduce.
 | Village | work | One baked static compound (tiles, wave meshes, capsule and sphere props): separate static pieces; bodies dropped on it; the cast curtain (queries) dropped |
 | Sensor | no | Sensor shapes and events, custom filter callback |
 | Washer | work | Kinematic drum of hull walls spun at a constant rate: `animated_piece` (or its revolute motor variant) |
-| Large World | work | A million static floor boxes, a sphere dropped every few steps: a smaller floor, spheres appearing at frames |
+| Large World | work | A million static floor boxes, a sphere dropped every few steps: a smaller floor, spheres emitted (`emit`) |
 | Hull | no | Hull build timing, no simulation |
 | Chains | work | Capsule chains (spherical joints, springs, friction motors) on a wave mesh; per-shape wind: drag only (`airresist` / `targetv`) |
 | Destruction | work | A box grid blown apart and respawned periodically: starting `v`, `dead` and new pieces by frame (`step_script`) |
@@ -97,17 +97,17 @@ All **no**: they show queries or narrow-phase tools, not a simulation.
 
 | Sample | Verdict | What it uses / why |
 |---|---|---|
-| Thin Wall | now | Fast sphere, capsule and box against a thin wall (`v`, `w`) |
-| Bounce House | now | Body bouncing inside a box mesh (`box_mesh`, inward), `bounce`, no gravity |
-| Spinning Stick | now | Fast spinning stick |
-| Bullet vs Stack | work | A `fastobject` sphere fired into a stack by key: fired at a frame (appears with its `v`) |
-| Needle Mesh | now | Thin boxes thrown at a custom mesh |
+| Thin Wall | built | Fast sphere, capsule and box against a thin wall (`v`, `w`) |
+| Bounce House | built | Ball bouncing inside four static walls (hulls of one body: four static boxes), `bounce`, no gravity |
+| Spinning Stick | built | Fast spinning stick, its spin the sample's first `RandomVec3` (`random_vec3`) |
+| Bullet vs Stack | work | A `fastobject` sphere fired into a stack by key: emitted at a frame with its `v` (`emit`) |
+| Needle Mesh | built | A thin plate thrown onto four needle meshes (open cones) |
 | Mesh Drop | work | `mesh_drop.c` drops in generations onto a mesh: one generation, or pieces appearing at frames; tunnel readout dropped |
 | Rough Mesh Drop | work | Same, rough mesh |
-| Hump Mesh | now | Box sliding over a custom mesh |
-| Is Fast | now | Spinning capsules and boxes under the fast-body test |
-| Stall | now | Rocks and a torus mesh, `fastobject` |
-| Safety Factor | now | `ccdthreshold`; readout dropped |
+| Hump Mesh | built | A thin plate thrown onto the ridge of a custom mesh |
+| Is Fast | built | Long boxes spinning in the air under the fast-body test (its capsule option is off) |
+| Stall | built | A rock (`hull_points`) fired into a dense torus mesh, `fastobject`; Launch as one every second (`emit`) |
+| Safety Factor | built | `ccdthreshold`; readout dropped |
 
 ## Determinism (`sample_determinism.cpp`, `shared/determinism.c`)
 

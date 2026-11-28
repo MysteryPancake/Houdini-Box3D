@@ -196,11 +196,12 @@ vector o = {0, 1, 0};
 vector v[] = array({-1.0, 1.0, -0.1}, {1.0, 1.0, -0.1}, {-1.0, 1.0, 0.1}, {1.0, 1.0, 0.1},
                    {-0.5, 0.5, 0.0}, {0.5, 0.5, 0.0});
 foreach (int i; vector p; v) v[i] = p + o;
-face("wedge", array(v[0], v[2], v[3], v[1]));
-face("wedge", array(v[0], v[1], v[5], v[4]));
-face("wedge", array(v[3], v[2], v[4], v[5]));
-face("wedge", array(v[0], v[4], v[2]));
-face("wedge", array(v[1], v[3], v[5]));
+int q[] = points(v);
+face("wedge", array(q[0], q[2], q[3], q[1]));
+face("wedge", array(q[0], q[1], q[5], q[4]));
+face("wedge", array(q[3], q[2], q[4], q[5]));
+face("wedge", array(q[0], q[4], q[2]));
+face("wedge", array(q[1], q[3], q[5]));
 """, cd=(0.85, 0.55, 0.3))
     return finish(s, b, about="""\
 A wedge whose lower edge lands on the ground. Box3D's comment: this shape can get a wrong contact

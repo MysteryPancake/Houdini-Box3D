@@ -45,10 +45,16 @@ is updated: [bodies.md](bodies.md). Index and rules: [CLAUDE.md](../../CLAUDE.md
   `setTargetTransformByHandle(cur, stepDt)` and a step without one zeroes the velocity. Not written back. An object
   with `SourceObject` data follows its source SOP (`followSourceSops`, Box3DSourceSync.cpp, as RBD Bullet Solver):
   before the sync, each such piece (or every piece of a Kinematic Box3D Data) whose pose in that SOP at the step's end
-  changed since it was last read (`Box3DSharedState::sourcePoses`; the first read compares with a step earlier) gets P
-  and `orient` (since rest) written as an edit, matched by `name`. The SOP object's transform applies when the data's
-  `usetransform` is on. A changed source scale is written to the piece's packed transform (the row lengths the shapes
-  are sized by, so a convex or concave piece is rebuilt, `animated_scale_follows_source`) and to the point's `scale`
+  changed since it was last read (`Box3DSharedState::sourcePoses`; the first read compares with a step earlier, for
+  the velocity; on the object's first step, by its creation time, every piece is written even when its source is
+  still, as Bullet's, and its body is then made at that pose, so a state rebuilt later (a reloaded checkpoint) leaves
+  edits since alone, `sop_solver_edit_reload`) gets P and `orient` (since rest) written as an edit, matched by `name`. The SOP object's transform applies when the data's
+  `usetransform` is on. The piece's packed transform becomes the source primitive's, as Bullet's: the new absolute
+  rotation, so it is drawn as posed, and the source's row lengths, which size the shapes (a convex or concave piece is
+  rebuilt). On the first step they replace a `pscale` the packed object baked in at creation, so a piece made with
+  `pscale` 2 collides at its source's size from then on, and the point's `pscale` goes to 1, as Bullet writes it
+  (`animated_follows_source` compares the 3x3, `pscale` and the collider's size). A changed source scale
+  (`animated_scale_follows_source`) is also written to the point's `scale`
   (against its `restxform`, added at 1 on every point when the first one changes), as Bullet's. A static SOP leaves
   other edits (a SOP Solver) alone.
 * **Drag and speed limits** (`airresist` ... `angaccelmax`): [motion-limits.md](motion-limits.md).

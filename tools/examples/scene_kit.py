@@ -332,8 +332,9 @@ def build_dops(name, pieces_path, joints=None, network_path=None, solver_parms=N
     return dop, solver, data_names
 
 
-def tidy(frames, note, dop, note_size=(9, 6)):
-    """Frame range, layout, hide the source geometry and add the sticky notes."""
+def tidy(frames, note, dop, note_size=(9, 6), shown=()):
+    """Frame range, layout, hide the source geometry and add the sticky notes. shown: geometry objects to keep
+    visible (a SOP solver's); the inner note goes in `dop`, the DOP network or that object."""
     try:
         hou.playbar.setFrameRange(1, frames)
         hou.playbar.setPlaybackRange(1, frames)
@@ -342,7 +343,7 @@ def tidy(frames, note, dop, note_size=(9, 6)):
     hou.setFrame(1)
     obj = hou.node("/obj")
     for node in obj.children():
-        if node.type().name() == "geo":
+        if node.type().name() == "geo" and node not in shown:
             node.setDisplayFlag(False)  # the DOP network shows the simulated pieces
         if node.isNetwork() and node.children():
             node.layoutChildren()

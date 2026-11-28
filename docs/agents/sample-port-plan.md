@@ -20,7 +20,8 @@ verdict for every sample: [sample-port-table-a.md](sample-port-table-a.md) (Benc
 
 ## Verdicts
 
-Of the 207 live samples: **81 portable now**, **64 with a workaround**, **62 not portable**.
+Of the 207 live samples: **81 portable now**, **64 with a workaround**, **62 not portable**. The tables mark the
+ported ones **built** in place of their verdict.
 
 * Not portable, by reason: no simulation, only queries or geometry tools (Collision, Manifold, Geometry, Tree, Replay,
   query benchmarks, mesh and hull viewers); character movers or keyboard control (Character, Village, Contact, Raycast
@@ -58,17 +59,28 @@ Of the 207 live samples: **81 portable now**, **64 with a workaround**, **62 not
     numbers; `b3DefaultWorldDef`'s gravity and contact tuning; friction mixing
     geometric mean and bounce mixing maximum (Box3D's default callbacks); Bounding Box Inertia off.
   * `Bodies`: the geometry object of a sample's bodies. Shapes in Box3D's terms: `box(hx, hy, hz)` (half extents),
-    `sphere(r)` (a Sphere primitive, a true sphere), `capsule(h, r)` (along y; VEX `along_x` turns it to Box3D's x),
-    `cylinder(height, radius, y_offset, sides)` (`b3CreateCylinder`, collided as its hull). `stream` copies a shape onto
-    the bodies its VEX makes (`body(p, q)`, `static_body(p, q)`); `polygons` packs per-name polygons into hull bodies
-    (`face`, `prism`: `b3CreateHull` of a point set); `ground(extent)` is `AddGroundBox`. Every point carries
-    `BOX3D_MATERIAL` (Box3D's shape material defaults) and the sample's own attributes with their defaults, so no
-    stream is filled in with 0 by the Merge; a stream's defaults must be among them.
+    `sphere(r)` (a Sphere primitive, a true sphere), `capsule(h, r)` (along y; VEX `along_x` turns it to Box3D's x; set
+    by hand with `bullet_autofit` 0, as AutoFit can tilt it), `cylinder(height, radius, y_offset, sides)`
+    (`b3CreateCylinder`'s points in its order, at its approximate sines, collided as their hull),
+    `shifted(shape, offset, rotate)` (a shape off its body's origin: `b3MakeOffsetBoxHull`, a capsule along z). `stream`
+    copies a shape onto the bodies its VEX makes (`body(p, q)`, `static_body(p, q)`), each packed with its pivot at the
+    point, so the point is Box3D's body origin; `polygons` packs per-name polygons into hull bodies (`points` adds a
+    body's points, `face` a polygon on their numbers; `prism`, `hull_points`: `b3CreateHull` of a point set); `mesh`
+    makes static `concave` bodies from `MESH_FUNCTIONS` (`tri` in Box3D's winding, `welded` for a triangle soup,
+    `grid_mesh`, `wave_mesh`, `box_mesh`, `torus_mesh`: `src/mesh.c`'s builders, each adding Box3D's vertices once, in
+    its order). Faces share their points: a mesh's triangles share vertices and edges as Box3D's do, and a hull's faces
+    are one connected piece (the Box3D Solver SOP re-assembles separate faces into a body of many hulls).
+    `ground(extent)` is `AddGroundBox`. Every point carries `BOX3D_MATERIAL` (Box3D's shape material defaults) and the
+    sample's own attributes with their defaults, so no stream is filled in with 0 by the Merge; a stream's defaults
+    must be among them.
   * VEX `cossin` and `axis_angle` are `b3ComputeCosSin` and `b3MakeQuatFromAxisAngle`, approximation included (40
     degrees comes out as 40.149): with exact angles bodies start in other places than Box3D's (Inclined Plane's boxes
     2 cm higher, enough to tumble the one that holds in Box3D).
-  * `finish`: the network (`motion_locks` for `Sample::LockMotion`), the DOP network, `box3d_world`, the notes.
-    `box_impulse`: the velocity a `b3Body_ApplyLinearImpulse` before the first step gives a box.
+  * `finish`: the network (`motion_locks` for `Sample::LockMotion`), the DOP network, `box3d_world`, the notes. With
+    `emit=True` a Box3D Solver SOP with Emit RBDs replaces the DOP network, for samples that make bodies during the
+    run: bodies whose `rbdbullet_emit` is `Every(n)` (1 on frames 1, 1 + n, ...) are made again then, the rest once.
+    `box_impulse`: the velocity a `b3Body_ApplyLinearImpulse` before the first step gives a box; `random_vec3`: the
+    samples' `RandomVec3` sequence (`shared/utils.h`).
 * `make_examples.py --samples` builds the samples; names select a category (`stacking`) or one sample
   (`stacking/card_house`). Without `--samples` it builds the nine scenes as before. `--check` simulates each.
 
@@ -78,6 +90,11 @@ A port is checked against Box3D itself: a small C program linked with `build/box
 with `NDEBUG`) builds the sample as its C++ does, steps it at 60 Hz with 4 substeps and prints the same measurements
 as a hython script reading the scene's DOP object each frame (rest heights, rebound peaks, distances travelled).
 Sticky notes state only what that comparison showed.
+
+* The program needs `/MD` (the library's runtime). A packed point's `P` is the body origin
+  (`b3Body_GetPosition`, not the centre of mass), and frame f is the state after f - 1 steps.
+* Ties between contact points can go the other way in Houdini (Hollow Box: one of four side cylinders drifts down
+  where Box3D's drifts up), as the hull's vertex order differs; the sticky note says so.
 
 ## Mapping a sample
 
@@ -96,7 +113,9 @@ Sticky notes state only what that comparison showed.
 * World: `b3World_SetGravity` -> Gravity; `SetContactTuning` -> the contact parameters; restitution threshold ->
   Bounce Threshold; Isotropic Inertia Tolerance -> Near-Sphere Tolerance; contact recycle distance -> Contact Recycle
   Distance. Joint tuning has no world setting: Constraint Stiffness per node.
-* GUI sliders: the defaults are baked in; the one worth playing with becomes a spare parameter on the pieces' object,
-  as Count in `scene_many_bodies`. Parameters a sample changes at a time become keyframes (joint settings are live).
+* GUI sliders: the defaults are baked in; the one worth playing with becomes a spare parameter on the pieces' object, as
+  Count in `scene_many_bodies`. Radio buttons that pick a body are `Bodies.choice`: a stream per option (`merged=False`)
+  into a Switch SOP read from a menu on the bodies object's Sample tab (Mesh's Shape). Parameters a sample changes at a
+  time become keyframes (joint settings are live).
 * Sticky note: what the sample shows, `Box3D sample <Category> / <Name> (samples/sample_<file>.cpp)`, what was
   changed for the port, and what to try.

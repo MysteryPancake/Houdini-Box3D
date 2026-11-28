@@ -167,13 +167,15 @@ inline ShapeSpec makeShapeSpec( ShapeType type, float pscale, const float scale[
 //   body origin bullet_primR   Euler degrees, order XYZ (the solver builds the
 //   quaternion)
 // ---------------------------------------------------------------------------
+// The values are Box3D Data's parameter defaults: SIM_Box3DData counts a value as
+// set when it differs from them.
 struct PrimOverrides
 {
 	bool hasSize = false, hasRot = false, hasPos = false, hasRadius = false, hasLength = false;
 	float size[3] = { 1.0f, 1.0f, 1.0f };
 	float rot[4] = { 0.0f, 0.0f, 0.0f, 1.0f }; // unit quaternion x, y, z, w (the solver builds it with the HDK)
 	float pos[3] = { 0.0f, 0.0f, 0.0f };
-	float radius = 0.5f;
+	float radius = 1.0f;
 	float length = 1.0f;
 
 	bool any() const

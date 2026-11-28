@@ -7,7 +7,8 @@
 // `animated`, or every point of a Kinematic Box3D Data) is moved to the pose
 // its piece has in that SOP at the step's end time: P and `orient` are written
 // onto the Geometry the way an edit would be, and the sync turns the change
-// into a kinematic target. Pieces are matched by their `name`.
+// into a kinematic target; the packed transform turns with it, so the piece is
+// drawn as posed. Pieces are matched by their `name`.
 #include "sync/Box3DSolverInternal.h"
 
 #include <GA/GA_Handle.h>
@@ -118,15 +119,21 @@ void readSourcePoses( SOP_Node& sop, double t, bool useTransform, Box3DSourceCac
 	}
 }
 
+// Row lengths that differ by more than float noise.
+bool scalesDiffer( const double a[3], const double b[3] )
+{
+	for ( int i = 0; i < 3; ++i )
+		if ( std::fabs( a[i] - b[i] ) > 1e-6 * std::fabs( b[i] ) )
+			return true;
+	return false;
+}
+
 bool samePose( const Box3DSourcePose& a, const Box3DSourcePose& b )
 {
 	for ( int i = 0; i < 3; ++i )
 		if ( std::fabs( a.pos[i] - b.pos[i] ) > 1e-6 )
 			return false;
-	for ( int i = 0; i < 3; ++i )
-		if ( std::fabs( a.scale[i] - b.scale[i] ) > 1e-6 * std::fabs( b.scale[i] ) )
-			return false;
-	return !b3dop::quatsDiffer( a.rot, b.rot, 1e-6 );
+	return !scalesDiffer( a.scale, b.scale ) && !b3dop::quatsDiffer( a.rot, b.rot, 1e-6 );
 }
 
 } // namespace
@@ -160,8 +167,9 @@ void followSourceSops( Box3DSharedState& st, SIM_ObjectArray& objects, double no
 			if ( !names.isValid() || !restxform.isValid() || !orient.isValid() ||
 				 ( !allKinematic && !animated.isValid() ) )
 				continue;
-			// The followers depend on these markers only (P and orient change every
-			// step: the solver writes them), so an unchanged object is not walked.
+			// The followers depend on these markers only, so an unchanged object is
+			// not walked. Not on P, `orient` or the primitive list: they change every
+			// step (the solver writes them, and this function the packed transforms).
 			const auto idOf = []( const GA_ROHandleS& h ) {
 				return h.isValid() ? static_cast<uint64_t>( h.getAttribute()->getDataId() ) : ~0ull;
 			};
@@ -172,9 +180,6 @@ void followSourceSops( Box3DSharedState& st, SIM_ObjectArray& objects, double no
 			key = b3dop::mixHash( key, static_cast<uint64_t>( restxform.getAttribute()->getDataId() ) );
 			key = b3dop::mixHash(
 				key, animated.isValid() ? static_cast<uint64_t>( animated.getAttribute()->getDataId() ) : ~0ull );
-			key = b3dop::mixHash( key, gdp->getNumPrimitives() > 0
-										   ? static_cast<uint64_t>( gdp->getPrimitiveList().getDataId() )
-										   : ~0ull );
 			key = b3dop::mixHash( key, allKinematic ? 1 : 2 );
 			if ( !cache.followersKnown || cache.followersKey != key )
 			{
@@ -226,7 +231,16 @@ void followSourceSops( Box3DSharedState& st, SIM_ObjectArray& objects, double no
 		std::unordered_map<std::string, Box3DSourcePose> current;
 		readSourcePoses( *sop, engine.getGlobalTime( SIM_Time( now ) ), useTransform, cache, wanted, current );
 
-		// The pieces whose pose changed, and of those the ones whose scale did.
+		// The pieces whose pose changed, and of those the ones whose scale did. On
+		// the object's first step every piece is written, even one whose source
+		// is still, as Bullet's: its packed transform becomes the source's,
+		// replacing a `pscale` or `orient` the packed object baked in when it made
+		// the piece. Its body is made in the sync after this, already at that
+		// pose, so nothing sweeps there. Only then: a state rebuilt later (a
+		// reloaded checkpoint) reads every piece for the first time too, and must
+		// not undo edits made since (a SOP Solver's). The creation time is the
+		// object's, kept through a reload.
+		const bool firstStep = now - dt <= static_cast<double>( obj.getCreationTime() ) + 0.5 * dt;
 		struct Move
 		{
 			const Box3DSourceFollower* follower;
@@ -241,13 +255,9 @@ void followSourceSops( Box3DSharedState& st, SIM_ObjectArray& objects, double no
 				continue;
 			auto was = known.find( f.name );
 			const bool moved = was != known.end() && !samePose( was->second, it->second );
-			bool scaled = false;
-			if ( moved )
-				for ( int k = 0; k < 3; ++k )
-					scaled = scaled || std::fabs( was->second.scale[k] - it->second.scale[k] ) >
-										   1e-6 * std::fabs( it->second.scale[k] );
+			const bool scaled = moved && scalesDiffer( was->second.scale, it->second.scale );
 			known[f.name] = it->second;
-			if ( moved )
+			if ( moved || ( firstStep && unseen.find( f.name ) != unseen.end() ) )
 				moves.push_back( { &f, &it->second, scaled } );
 		}
 		if ( moves.empty() )
@@ -266,6 +276,11 @@ void followSourceSops( Box3DSharedState& st, SIM_ObjectArray& objects, double no
 		// against its rest, which Transform Pieces applies to the piece (added at
 		// 1 for every point the first time a piece's scale changes).
 		GA_RWHandleV3 scaleAttr( gdp, GA_ATTRIB_POINT, "scale" );
+		// `pscale` goes to 1 on a piece that follows, as Bullet writes it: the
+		// packed object baked it into the packed transform when it made the piece,
+		// and the source's transform (which has no `pscale`) replaces that now.
+		GA_RWHandleF pscale( gdp, GA_ATTRIB_POINT, "pscale" );
+		bool wrotePscale = false;
 		for ( const Move& mv : moves )
 		{
 			const Box3DSourceFollower& f = *mv.follower;
@@ -276,20 +291,30 @@ void followSourceSops( Box3DSharedState& st, SIM_ObjectArray& objects, double no
 			gdp->setPos3( f.off, UT_Vector3( static_cast<float>( pose.pos[0] ), static_cast<float>( pose.pos[1] ),
 											 static_cast<float>( pose.pos[2] ) ) );
 			orient.set( f.off, UT_QuaternionF( since[0], since[1], since[2], since[3] ) );
-			if ( !mv.scaled )
-				continue;
-			// The source's scale reaches the piece's packed transform, whose row
-			// lengths the sync sizes the shapes by (a convex or concave piece is
-			// rebuilt when they change). Its rotation stays: the pose rotation is
-			// `orient` since rest.
+			if ( pscale.isValid() && pscale.get( f.off ) != 1.0f )
+			{
+				pscale.set( f.off, 1.0f );
+				wrotePscale = true;
+			}
+			// The packed transform is the source's, as Bullet's: the absolute
+			// rotation (which `orient` since rest gives the body), so the piece is
+			// drawn as it is posed, and the source's row lengths, which the sync
+			// sizes the shapes by (a convex or concave piece is rebuilt when they
+			// change). On the first step they replace a `pscale` the packed object
+			// baked in; the row lengths are rewritten only when they differ, so
+			// float noise never rebuilds a shape.
 			const PackedInfo pk = getPackedInfo( gdp, f.off );
-			if ( !pk.prim )
+			if ( pk.prim )
+			{
+				double m3[9];
+				composePackedMatrix( pose.rot, scalesDiffer( pk.scale, pose.scale ) ? pose.scale : pk.scale, m3 );
+				b3dop::keepMirror( pk.m3, m3 );
+				setLocal3( *static_cast<GU_PrimPacked*>( gdp->getPrimitive( pk.primOff ) ), m3 );
+				wrotePacked = true;
+			}
+			// `scale` only when the source's own scale changed.
+			if ( !mv.scaled || !pk.prim )
 				continue;
-			double m3[9];
-			composePackedMatrix( pk.rot, pose.scale, m3 );
-			b3dop::keepMirror( pk.m3, m3 );
-			setLocal3( *static_cast<GU_PrimPacked*>( gdp->getPrimitive( pk.primOff ) ), m3 );
-			wrotePacked = true;
 			if ( !scaleAttr.isValid() )
 			{
 				const GA_Defaults ones( 1.0 );
@@ -303,6 +328,8 @@ void followSourceSops( Box3DSharedState& st, SIM_ObjectArray& objects, double no
 		}
 		if ( scaleAttr.isValid() )
 			scaleAttr.getAttribute()->bumpDataId();
+		if ( wrotePscale )
+			pscale.getAttribute()->bumpDataId();
 		if ( wrotePacked )
 			gdp->getPrimitiveList().bumpDataId();
 		if ( GA_Attribute* p = gdp->getP() )

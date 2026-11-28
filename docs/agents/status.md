@@ -37,8 +37,9 @@ What no script checks: Escape mid-step, the viewport, motion blur, how greyed-ou
   checked: a multi-name field toggling picks in and out (a click), the menus on the Solver SOP's nested nodes, and the
   node's output (Inspector Attributes).
 
-* Animated bodies following their source SOP (`followSourceSops`; `animated_follows_source` matches Bullet with source
-  `orient` / `pscale`, 200 pieces and a Start Frame of 5). The Solver SOP's collider follows too: its context geometry
+* Animated bodies following their source SOP (`followSourceSops`; `animated_follows_source` matches Bullet's P, `orient`,
+  packed transform, `pscale` and collider size with source `orient` / `pscale`, 200 pieces, a Start Frame of 5 and
+  a source that never moves). The Solver SOP's collider follows too: its context geometry
   resolves to a SOP node inside the asset (`solver_sop_animated_collision`).
 * A Solver SOP piece whose input SOP moves: the Geometry and Proxy outputs match RBD Bullet Solver SOP for kinematic
   and dynamic pieces (`solver_sop_moving_input`). Still different with a `deforming` attribute on the input: Bullet's

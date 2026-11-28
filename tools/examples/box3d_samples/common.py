@@ -97,8 +97,18 @@ def box3d_world(solver, gravity=GRAVITY, **parms):
 BODY_ATTRIBUTES = ["name", "active", "bullet_georep", "bullet_autofit", "Cd"]
 
 
+class Every(int):
+    """An int attribute that is 1 on frames 1, 1 + n, 1 + 2n, ... and 0 between: `rbdbullet_emit` for bodies a sample
+    fires again every n steps (finish's Emit RBDs). Every(0) is never: a body made once."""
+
+    def vex(self):
+        return f"(int(@Frame) - 1) % {int(self)} == 0" if self else "0"
+
+
 def vex_literal(value):
     """(VEX type prefix, literal) for an attribute default."""
+    if isinstance(value, Every):
+        return "i", value.vex()
     if isinstance(value, bool) or isinstance(value, int):
         return "i", str(int(value))
     if isinstance(value, float):
@@ -138,24 +148,133 @@ vector4 along_x(vector4 q) { return qmultiply(q, quaternion(radians(-90.0), {0, 
 
 
 POLYGON_FUNCTIONS = """\
-// face(name, points): one polygon of the body `name`, through the given positions.
-void face(string nm; vector p[]) {
-    int pr = addprim(0, "poly");
-    foreach (vector q; p) addvertex(0, pr, addpoint(0, q));
+// points(positions): adds one point per position; their point numbers, in order, for face() and tri(). A body's faces
+// are built on its points, so they share them as one connected piece (the Box3D Solver SOP re-assembles faces that
+// do not into a body of many hulls), and a mesh's triangles share vertices and edges as Box3D's do.
+function int[] points(vector p[]) {
+    int ids[];
+    foreach (vector q; p) push(ids, addpoint(0, q));
+    return ids;
+}
+// face(name, pts): one polygon of the body `name` through the given point numbers.
+void face(string nm; int pts[]) {
+    int pr = addprim(0, "poly", pts);
     setprimattrib(0, "name", pr, nm);
 }
-// prism(name, points): the hull of a ring of n points and the ring above it (points 0..n-1, then n..2n-1).
+// prism(name, positions): the hull of a ring of n points and the ring above it (points 0..n-1, then n..2n-1).
 void prism(string nm; vector p[]) {
+    int q[] = points(p);
     int n = len(p) / 2;
-    vector bottom[], top[];
-    for (int i = 0; i < n; i++) { push(bottom, p[n - 1 - i]); push(top, p[n + i]); }
+    int bottom[], top[];
+    for (int i = 0; i < n; i++) { push(bottom, q[n - 1 - i]); push(top, q[n + i]); }
     face(nm, bottom); face(nm, top);
     for (int i = 0; i < n; i++) {
         int j = (i + 1) % n;
-        face(nm, array(p[i], p[j], p[n + j], p[n + i]));
+        face(nm, array(q[i], q[j], q[n + j], q[n + i]));
     }
 }
 addprimattrib(0, "name", "");
+"""
+
+# Static triangle meshes (b3CreateMesh and its shape builders in src/mesh.c), for Bodies.mesh. Each builder adds its
+# vertices once, in Box3D's order, and its triangles on them. A triangle is given in Box3D's order: counter-clockwise
+# seen from the side it collides on. Houdini's front faces are clockwise, and the solver flips Houdini's triangles back,
+# so tri() adds (a, c, b).
+MESH_FUNCTIONS = """\
+// tri(name, a, b, c): one triangle of the mesh `name` through three point numbers, in Box3D's winding.
+void tri(string nm; int a; int b; int c) { face(nm, array(a, c, b)); }
+// welded(positions, tolerance): b3MeshDef's weldVertices for a triangle soup (three positions a triangle): one point
+// per position, those within the tolerance of an earlier one sharing its point. The point number of each corner.
+function int[] welded(vector p[]; float tol) {
+    vector seen[];
+    int ids[], corner[];
+    foreach (vector q; p) {
+        int found = -1;
+        for (int i = 0; i < len(seen) && found < 0; ++i)
+            if (distance(seen[i], q) <= tol) found = ids[i];
+        if (found < 0) { found = addpoint(0, q); push(seen, q); push(ids, found); }
+        push(corner, found);
+    }
+    return corner;
+}
+// b3CreateWaveMesh( xCount, zCount, cellWidth, amplitude, rowFrequency, columnFrequency ), its vertices times s
+// (b3CreateMeshShape's scale) plus o. Amplitude 0 is b3CreateGridMesh.
+void wave_mesh(string nm; int xc; int zc; float w; float amp; float rowf; float colf; vector s; vector o) {
+    vector p[];
+    float omega_z = 2.0 * PI * rowf * w, omega_x = 2.0 * PI * colf * w;
+    float x = -0.5 * w * xc;
+    for (int ix = 0; ix <= xc; ++ix) {
+        float row_height = cossin(omega_x * ix)[1];
+        float z = -0.5 * w * zc;
+        for (int iz = 0; iz <= zc; ++iz) {
+            float column_height = cossin(omega_z * iz)[1];
+            push(p, set(x, amp * row_height * column_height, z) * s + o);
+            z += w;
+        }
+        x += w;
+    }
+    int v[] = points(p);
+    for (int ix = 0; ix < xc; ++ix) for (int iz = 0; iz < zc; ++iz) {
+        int i1 = iz + (zc + 1) * ix, i2 = i1 + 1, i3 = i2 + zc + 1, i4 = i3 - 1;
+        tri(nm, v[i1], v[i2], v[i3]);
+        tri(nm, v[i3], v[i4], v[i1]);
+    }
+}
+void grid_mesh(string nm; int xc; int zc; float w; vector s; vector o) { wave_mesh(nm, xc, zc, w, 0, 0, 0, s, o); }
+// b3CreateBoxMesh( center, extent ), outward faces; inward 1 is b3CreateHollowBoxMesh (the same triangles reversed).
+// The mesh is then turned by q and moved by o: a static body's rotation and position.
+void box_mesh(string nm; vector center; vector e; int inward; vector4 q; vector o) {
+    vector p[] = array(set(e.x, e.y, e.z), set(-e.x, e.y, e.z), set(-e.x, -e.y, e.z), set(e.x, -e.y, e.z),
+                       set(e.x, e.y, -e.z), set(-e.x, e.y, -e.z), set(-e.x, -e.y, -e.z), set(e.x, -e.y, -e.z));
+    foreach (int i; vector c; p) p[i] = qrotate(q, c + center) + o;
+    int v[] = points(p);
+    int ix[] = array(0, 1, 3, 1, 2, 3,  0, 4, 1, 1, 4, 5,  0, 3, 7, 4, 0, 7,
+                     4, 7, 5, 6, 5, 7,  1, 5, 2, 6, 2, 5,  3, 2, 7, 6, 7, 2);
+    for (int t = 0; t < 12; ++t) {
+        int a = v[ix[3 * t]], b = v[ix[3 * t + 1]], c = v[ix[3 * t + 2]];
+        if (inward) tri(nm, a, c, b); else tri(nm, a, b, c);
+    }
+}
+// b3CreateTorusMesh( radialResolution, tubularResolution, radius, thickness ): about the z axis, moved by o.
+void torus_mesh(string nm; int radial; int tubular; float radius; float thickness; vector o) {
+    vector p[];
+    for (int r = 0; r < radial; ++r) for (int t = 0; t < tubular; ++t) {
+        vector2 cu = cossin(float(t) / tubular * 2.0 * PI), cv = cossin(float(r) / radial * 2.0 * PI);
+        push(p, set((radius + thickness * cv[0]) * cu[0], (radius + thickness * cv[0]) * cu[1], thickness * cv[1]) + o);
+    }
+    int v[] = points(p);
+    for (int r1 = 0; r1 < radial; ++r1) {
+        int r2 = (r1 + 1) % radial;
+        for (int t1 = 0; t1 < tubular; ++t1) {
+            int t2 = (t1 + 1) % tubular;
+            int i1 = r1 * tubular + t1, i2 = r1 * tubular + t2, i3 = r2 * tubular + t2, i4 = r2 * tubular + t1;
+            tri(nm, v[i1], v[i2], v[i3]);
+            tri(nm, v[i3], v[i4], v[i1]);
+        }
+    }
+}
+// hull_points(name, positions): the convex hull of a point set (b3CreateHull), as triangles: every triple of points
+// with all the others on one side. For small sets (tens of points) in general position. Only the points on the hull
+// are added.
+void hull_points(string nm; vector p[]) {
+    int n = len(p);
+    int v[];
+    resize(v, n);
+    foreach (int i; int x; v) v[i] = -1;
+    for (int i = 0; i < n; ++i) for (int j = i + 1; j < n; ++j) for (int k = j + 1; k < n; ++k) {
+        vector nrm = cross(p[j] - p[i], p[k] - p[i]);
+        if (length(nrm) < 1e-9) continue;
+        int above = 0, below = 0;
+        for (int m = 0; m < n; ++m) {
+            float d = dot(nrm, p[m] - p[i]);
+            if (d > 1e-7) above++; else if (d < -1e-7) below++;
+        }
+        if (above && below) continue;
+        int corners[] = array(i, j, k);
+        foreach (int c; corners) if (v[c] < 0) v[c] = addpoint(0, p[c]);
+        if (above) tri(nm, v[i], v[k], v[j]); else tri(nm, v[i], v[j], v[k]);  // facing away from the others
+    }
+}
 """
 
 
@@ -190,10 +309,11 @@ class Bodies:
         return sph, "sphere"
 
     def capsule(self, tag, half_length, radius):
-        """b3Capsule { (0, -h, 0), (0, h, 0), r }: along y, as Houdini fits capsules (along_x turns it to x)."""
-        # The fit takes the radius from the points farthest from the axis and ends the caps at the bounds. A polymesh
-        # with even rows has no ring on the equator: it is sized so the two rings nearest it are at the radius (cols a
-        # multiple of 4 puts points on the axes), and its halves moved apart so the poles end at h + r.
+        """b3Capsule { (0, -h, 0), (0, h, 0), r }: along y, as the solver's capsules run (along_x turns it to x).
+        Set by hand (bullet_autofit 0, bullet_radius, bullet_length, bullet_primT), not fitted: AutoFit can pick a
+        frame a little off the axis and make it fatter. The geometry is the same capsule, for display."""
+        # A polymesh with even rows has no ring on the equator: it is sized so the two rings nearest it are at the
+        # radius (cols a multiple of 4 puts points on the axes), and its halves moved apart so the poles end at h + r.
         rows = 10
         rad = radius / math.cos(math.pi / (2 * (rows - 1)))
         shift = max(radius + half_length - rad, 0.0)
@@ -208,19 +328,37 @@ class Bodies:
                                      f"the poles at {num(radius + half_length)}.\n"
                                      f"@P.y = sign(@P.y) * min(abs(@P.y) + {num(shift)}, "
                                      f"{num(radius + half_length)});")
-        return stretch, "capsule"
+        return stretch, "capsule", {"bullet_autofit": 0, "bullet_radius": float(radius),
+                                    "bullet_length": 2.0 * half_length, "bullet_primT": (0.0, 0.0, 0.0)}
 
     def cylinder(self, tag, height, radius, y_offset=0.0, sides=12):
         """b3CreateCylinder( height, radius, yOffset, sides ): a prism of `sides` sides along y, from y_offset
         to y_offset + height in the body's frame, collided as its convex hull."""
-        tube = create(self.geo, "tube", f"{tag}_shape")
-        _set_type(tube)
-        set_parm(tube, "rad", (radius, radius))
-        set_parm(tube, "height", height)
-        set_parm(tube, "t", (0.0, y_offset + 0.5 * height, 0.0))
-        set_parm(tube, "rows", 2)
-        set_parm(tube, "cols", sides)
-        set_parm(tube, "cap", 1)
+        # Its points as b3CreateCylinder makes them: in its order (bottom, top, a side at a time, from +x towards +z)
+        # at b3Sin / b3Cos of each angle, which are not exact. The solver hulls the points in the order given.
+        tube = create(self.geo, "attribwrangle", f"{tag}_shape")
+        set_parm(tube, "class", 0)
+        set_parm(tube, "snippet", VEX_FUNCTIONS + f"""\
+// b3CreateCylinder( {num(height)}, {num(radius)}, {num(y_offset)}, {sides} )
+int sides = {sides};
+float height = {num(height)}, radius = {num(radius)}, y_offset = {num(y_offset)};
+float alpha = 0.0;
+for (int i = 0; i < sides; ++i) {{
+    vector2 cs = cossin(alpha);
+    addpoint(0, set(radius * cs[0], y_offset, radius * cs[1]));
+    addpoint(0, set(radius * cs[0], y_offset + height, radius * cs[1]));
+    alpha += 2.0 * PI / sides;
+}}
+int bottom[], top[];
+for (int i = 0; i < sides; ++i) {{
+    int j = (i + 1) % sides;
+    addprim(0, "poly", 2 * i, 2 * j, 2 * j + 1, 2 * i + 1);
+    push(bottom, 2 * i);
+    insert(top, 0, 2 * i + 1);
+}}
+addprim(0, "poly", bottom);
+addprim(0, "poly", top);
+""")
         return tube, "convexhull"
 
     # --- streams ---------------------------------------------------------------------------------
@@ -237,10 +375,14 @@ class Bodies:
         return "\n".join(f'addpointattrib(0, "{name}", {vex_literal(value)[1]});'
                          for name, value in {**self.attribs, **defaults}.items())
 
-    def stream(self, tag, shape, vex, cd=(0.7, 0.7, 0.7), note="", **defaults):
+    def stream(self, tag, shape, vex, cd=(0.7, 0.7, 0.7), note="", merged=True, **defaults):
         """Copies `shape` (from box(), sphere(), ...) onto the bodies the VEX makes. defaults: this stream's
-        values of the sample's attributes (friction=0.7, ...)."""
-        sop, rep = shape
+        values of the sample's attributes (friction=0.7, ...). merged False: left out of the bodies, for choice()."""
+        sop, rep, *rest = shape
+        prim = rest[0] if rest else {}  # a shape set by hand: its bullet_* attributes
+        prim_sets = "".join(f'    setpointattrib(0, "{k}", pt, {vex_literal(v)[1]});\n' for k, v in prim.items())
+        prim_decls = "".join(f'addpointattrib(0, "{k}", {vex_literal(v)[1]});\n'
+                             for k, v in prim.items() if k != "bullet_autofit")
         pts = create(self.geo, "attribwrangle", f"{tag}_points")
         set_parm(pts, "class", 0)  # detail: the code adds the points
         prelude = f"""\
@@ -254,7 +396,7 @@ int add_body(vector p; vector4 q; int act) {{
     setpointattrib(0, "Cd", pt, {vec(cd)});
     setpointattrib(0, "active", pt, act);
     setpointattrib(0, "bullet_georep", pt, REP);
-    return pt;
+{prim_sets}    return pt;
 }}
 int body(vector p; vector4 q) {{ return add_body(p, q, 1); }}   // dynamic
 int static_body(vector p; vector4 q) {{ return add_body(p, q, 0); }}  // static (active 0)
@@ -267,7 +409,7 @@ addpointattrib(0, "Cd", {vec(cd)});
 addpointattrib(0, "active", 1);
 addpointattrib(0, "bullet_georep", REP);
 addpointattrib(0, "bullet_autofit", 1);
-addpointattrib(0, "v", {{0, 0, 0}});
+{prim_decls}addpointattrib(0, "v", {{0, 0, 0}});
 addpointattrib(0, "w", {{0, 0, 0}});
 {self._declarations(defaults)}
 """
@@ -276,17 +418,46 @@ addpointattrib(0, "w", {{0, 0, 0}});
         copy.setInput(0, sop)
         copy.setInput(1, pts)
         set_parm(copy, ["pack", "packgeo"], 1)
+        # The packed pivot is the body's origin: at the point, as Box3D's body position, not the shape's centroid
+        # (a cylinder's base, an offset box: b3MakeOffsetBoxHull, shifted()).
+        set_parm(copy, "pivot", 0)
         set_parm(copy, "targetattribs", 1)
-        set_parm(copy, "applyattribs1", " ".join(BODY_ATTRIBUTES + ["v", "w"] + list(self.attribs)))
-        self.merge.setInput(len(self.merge.inputs()), copy)
+        set_parm(copy, "applyattribs1", " ".join(BODY_ATTRIBUTES + ["v", "w"] + list(self.attribs)
+                                                 + [k for k in prim if k not in BODY_ATTRIBUTES]))
+        if merged:
+            self.merge.setInput(len(self.merge.inputs()), copy)
         return copy
 
-    def polygons(self, tag, vex, cd=(0.7, 0.7, 0.7), active=1, note="", **defaults):
-        """Bodies whose shapes are polygons the VEX builds (b3CreateHull of a point set): face(name, pts)
-        adds a polygon to the body `name`. Each name is packed into one body, collided as its convex hull."""
+    def choice(self, tag, label, options, default=0):
+        """One of several streams (made with merged=False), picked by a menu on the bodies' object: a sample's
+        radio buttons. options: [(token, menu label, stream)]. A Switch SOP reads the menu, so changing it
+        rebuilds the bodies (restart the simulation to see the new one)."""
+        switch = create(self.geo, "switch", f"{tag}_choice")
+        for i, (_, _, node) in enumerate(options):
+            switch.setInput(i, node)
+        menu = hou.MenuParmTemplate(tag, label, [t for t, _, _ in options], [lab for _, lab, _ in options],
+                                    default_value=default)
+        group = self.geo.parmTemplateGroup()
+        folder = group.findFolder("Sample")
+        if folder is None:
+            group.append(hou.FolderParmTemplate("sample", "Sample", [menu]))
+        else:
+            group.appendToFolder(folder, menu)
+        self.geo.setParmTemplateGroup(group)
+        switch.parm("input").setExpression(f'ch("../{tag}")')
+        self.merge.setInput(len(self.merge.inputs()), switch)
+        return switch
+
+    def polygons(self, tag, vex, cd=(0.7, 0.7, 0.7), active=1, note="", rep="convexhull", v=(0.0, 0.0, 0.0),
+                 w=(0.0, 0.0, 0.0), **defaults):
+        """Bodies whose shapes are polygons the VEX builds (b3CreateHull of a point set): points(positions) adds a
+        body's points, face(name, point numbers) a polygon of the body `name` on them, prism(name, positions) and
+        hull_points(name, positions) a whole hull (MESH_FUNCTIONS has the mesh builders). Each name is packed into
+        one body, collided as its convex hull (rep "concave": see mesh). v, w: every body's starting velocities."""
         build = create(self.geo, "attribwrangle", f"{tag}_polygons")
         set_parm(build, "class", 0)
-        set_parm(build, "snippet", (f"// {note}\n" if note else "") + POLYGON_FUNCTIONS + vex.strip() + "\n")
+        set_parm(build, "snippet", (f"// {note}\n" if note else "") + VEX_FUNCTIONS + POLYGON_FUNCTIONS
+                 + MESH_FUNCTIONS + vex.strip() + "\n")
         pack = create(self.geo, "pack", f"{tag}_pack")
         pack.setInput(0, build)
         set_parm(pack, ["packbyname"], 1)
@@ -298,11 +469,11 @@ addpointattrib(0, "w", {{0, 0, 0}});
                  "int prims[] = pointprims(0, @ptnum);",
                  's@name = prim(0, "name", prims[0]);',
                  f"i@active = {int(active)};",
-                 's@bullet_georep = "convexhull";',
+                 f's@bullet_georep = "{rep}";',
                  "i@bullet_autofit = 1;",
                  f"v@Cd = {vec(cd)};",
-                 "v@v = {0, 0, 0};",
-                 "v@w = {0, 0, 0};"]
+                 f"v@v = {vec(v)};",
+                 f"v@w = {vec(w)};"]
         self._check_defaults(defaults)
         for name, value in {**self.attribs, **defaults}.items():
             t, lit = vex_literal(value)
@@ -310,6 +481,31 @@ addpointattrib(0, "w", {{0, 0, 0}});
         set_parm(attrs, "snippet", "\n".join(lines))
         self.merge.setInput(len(self.merge.inputs()), attrs)
         return attrs
+
+    def mesh(self, tag, vex, cd=(0.45, 0.5, 0.55), note="", **defaults):
+        """Static triangle meshes (b3CreateMeshShape on a static body) the VEX builds with points() and tri(),
+        welded() (a triangle soup), grid_mesh(), wave_mesh(), box_mesh() and torus_mesh() (MESH_FUNCTIONS), each name
+        one static body of bullet_georep "concave": the solver makes one Box3D mesh of its triangles."""
+        return self.polygons(tag, vex, cd=cd, active=0, note=note, rep="concave", **defaults)
+
+    def shifted(self, shape, offset, rotate=None):
+        """A shape (from box(), capsule(), ...) moved by offset in the body's frame, after turning it by rotate
+        (XYZ Euler degrees, about its centre): a shape not centred on its body's origin
+        (b3Capsule { (0, 0, 0), (0, 1, 0), r }). The point stays the body's origin."""
+        sop, rep, *rest = shape
+        move = create(self.geo, "xform", f"{sop.name()}_moved")
+        move.setInput(0, sop)
+        set_parm(move, "t", tuple(offset))
+        if rotate:
+            set_parm(move, "r", tuple(rotate))
+        if rest:  # a shape set by hand: its bullet_primT and bullet_primR (it starts centred)
+            prim = {**rest[0], "bullet_primT": tuple(offset)}
+            if rotate:
+                prim["bullet_primR"] = tuple(rotate)
+            return move, rep, prim
+        if rotate and rep in ("box", "sphere", "capsule"):
+            raise SetupError("shifted: a fitted box / sphere / capsule is fitted along the body's axes; turn the body")
+        return move, rep
 
     def ground(self, extent, note="", **defaults):
         """Sample::AddGroundBox( extent ): a static box of half extents (extent, 1, extent) whose top is y = 0."""
@@ -349,11 +545,21 @@ def motion_locks(names_and_points, constraint_name="motionlock"):
     return [("", p, n, p, constraint_name) for n, p in names_and_points]
 
 
+SOLVER_NOTE = ("The solver runs as Box3D's sample app: 60 fps with Substeps 1 and Constraint Iterations 4 (one Box3D "
+               "step of 4 substeps a frame), gravity -10, Box3D's contact settings and friction / bounce mixing, "
+               "Bounding Box Inertia off.")
+
+
 def finish(s, bodies, about, ported="", try_="", joints=None, lines=None, solver=None, gravity=GRAVITY,
-           note_size=(10, 6)):
+           note_size=(10, 6), emit=False):
     """The DOP network around the bodies, the solver set as Box3D runs, the frame range and the notes.
     joints: [(relationship type, node name, {parm: value}, constraint_name)] for the network `lines`
-    (network_sop's (name_a, pos_a, name_b, pos_b, constraint_name[, orient]))."""
+    (network_sop's (name_a, pos_a, name_b, pos_b, constraint_name[, orient])). emit: a Box3D Solver SOP with Emit RBDs
+    in place of the DOP network, for samples that make bodies again during the run (their `rbdbullet_emit`: Every)."""
+    if emit:
+        if lines:
+            raise SetupError(f"{s.tag}: emit takes no joints")
+        return _finish_emit(s, bodies, _note_text(s, about, ported, try_), solver, gravity, note_size)
     path = bodies.finish()
     network, joint_nodes, wanted = None, None, {}
     if lines:
@@ -366,20 +572,66 @@ def finish(s, bodies, about, ported="", try_="", joints=None, lines=None, solver
     if network:
         fix_constraint_names(network, data_names, wanted)
     box3d_world(solver_node, gravity=gravity, **(solver or {}))
+    tidy(s.frames, _note_text(s, about, ported, try_), dop, note_size=note_size)
+    inner = dop.findStickyNote("how_it_works")  # tidy's note in the DOP network (a sticky note is not a node)
+    if inner is not None:
+        inner.setText(inner.text() + "\n\n" + SOLVER_NOTE)
+        inner.setSize(hou.Vector2(6, 3.5))
+    return dop, s.frames
+
+
+def _note_text(s, about, ported, try_):
     text = f"{s.name.upper()}\nBox3D sample {s.category} / {s.name} (extern/box3d/samples/{s.source})\n\n" \
            f"{about.strip()}"
     if ported:
         text += f"\n\nPort: {ported.strip()}"
     if try_:
         text += f"\n\nTry: {try_.strip()}"
-    tidy(s.frames, text, dop, note_size=note_size)
-    inner = dop.findStickyNote("how_it_works")  # tidy's note in the DOP network (a sticky note is not a node)
+    return text
+
+
+def _finish_emit(s, bodies, text, solver, gravity, note_size):
+    """finish with emit: the bodies into a Box3D Solver SOP with Emit RBDs on. Each frame it adds the bodies whose
+    `rbdbullet_emit` is 1 again as new ones (renamed `<name>_<frame * 100>`); those at 0 are made once, on the first
+    frame. Returns (the solver SOP, frames)."""
+    path = bodies.finish()
+    sim = create(hou.node("/obj"), "geo", f"{s.tag}_sim")
+    for child in sim.children():
+        child.destroy()
+    source = create(sim, "object_merge", "bodies")
+    set_parm(source, "objpath1", path)
+    sop = create(sim, "box3d_solver", "box3d_solver")
+    sop.setInput(0, source)
+    set_parm(sop, "useemission", 1)
+    set_parm(sop, "useground", 0)  # the sample's own ground body, if it has one
+    box3d_world(sop, gravity=gravity, **(solver or {}))
+    out = create(sim, "null", "OUT")
+    out.setInput(0, sop)
+    display(out)
+    tidy(s.frames, text, sim, note_size=note_size, shown=[sim])
+    inner = sim.findStickyNote("how_it_works")
     if inner is not None:
-        inner.setText(inner.text() + "\n\nThe solver runs as Box3D's sample app: 60 fps with Substeps 1 and "
-                      "Constraint Iterations 4 (one Box3D step of 4 substeps a frame), gravity -10, Box3D's "
-                      "contact settings and friction / bounce mixing, Bounding Box Inertia off.")
+        inner.setText("The Box3D Solver SOP simulates the bodies from the bodies object, with Emit RBDs on (Solver "
+                      "tab): every frame it adds the bodies whose rbdbullet_emit is 1 again, as new bodies, which is "
+                      "how this scene fires more of them during the run. Bodies at 0 are made once.\n\n" + SOLVER_NOTE)
         inner.setSize(hou.Vector2(6, 3.5))
-    return dop, s.frames
+    return sop, s.frames
+
+
+def random_vec3(count, lo, hi, seed=12345):
+    """The first `count` RandomVec3( lo, hi ) of the samples' generator (shared/utils.h: XorShift32 from RAND_SEED,
+    which every Sample's constructor sets)."""
+    out = []
+    for _ in range(count):
+        v = []
+        for a, b in zip(lo, hi):
+            seed ^= (seed << 13) & 0xFFFFFFFF
+            seed ^= seed >> 17
+            seed ^= (seed << 5) & 0xFFFFFFFF
+            r = (seed % 32768) / 32767.0
+            v.append(a + r * (b - a))
+        out.append(tuple(v))
+    return out
 
 
 def box_impulse(half, density, impulse, offset):

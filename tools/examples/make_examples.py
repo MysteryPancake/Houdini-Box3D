@@ -812,18 +812,26 @@ SCENES = {
 
 
 def check(dop, frames):
-    """Simulates the scene and reports timing and solver messages."""
+    """Simulates the scene and reports timing and solver messages. dop: the DOP network, or a solver SOP."""
+    if isinstance(dop, hou.SopNode):
+        def advance():
+            dop.geometry()
+        nodes = [dop]
+    else:
+        def advance():
+            dop.simulation().objects()
+        nodes = dop.children()
     start = time.time()
     hou.setFrame(1)
-    dop.simulation().objects()
+    advance()
     first = time.time() - start
     start = time.time()
     for f in range(2, frames + 1):
         hou.setFrame(f)
-        dop.simulation().objects()
+        advance()
     per = (time.time() - start) / max(frames - 1, 1)
     msgs = []
-    for node in dop.children():
+    for node in nodes:
         for get in ("errors", "warnings"):
             try:
                 msgs += getattr(node, get)()

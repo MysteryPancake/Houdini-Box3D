@@ -10,6 +10,7 @@ orient, the posed hand transform, and per rig transform with a body: the arrays'
 mass), orient, v, w and mass."""
 
 import os
+import re
 import sys
 
 sys.dont_write_bytecode = True
@@ -19,6 +20,33 @@ import hou  # noqa: E402
 EXAMPLES = os.path.join(os.environ.get("HFS", ""), "houdini", "help", "examples", "nodes", "dop", "crowdsolver")
 
 
+def retarget_paths(top, original):
+    """Points the paths inside `top` that name `original` (the example's own node, /obj/<Example>1) at `top` itself,
+    wherever they are: a string parameter's value (also inside backticks) or any parameter's expression (ch(),
+    chs(), op: paths). A second copy in the same scene is named <Example>2, and without this it reads the first copy's
+    nodes: its pin goal (an Object Merge into its own object) then stays where the first copy is when the copy is
+    moved. A parameter that cannot be set (locked) is left as it is."""
+    if top.path() == original:
+        return
+    # (not a longer name that starts the same, /obj/<Example>10)
+    pattern = re.compile(re.escape(original) + r"(?![\w.])")
+    for node in top.allSubChildren():
+        for parm in node.parms():
+            try:
+                keys = parm.keyframes()
+                if keys:
+                    for key in keys:
+                        if key.isExpressionSet() and pattern.search(key.expression()):
+                            key.setExpression(pattern.sub(top.path(), key.expression()), key.expressionLanguage())
+                            parm.setKeyframe(key)
+                elif parm.parmTemplate().type() == hou.parmTemplateType.String:
+                    raw = parm.unexpandedString()
+                    if pattern.search(raw):
+                        parm.set(pattern.sub(top.path(), raw))
+            except hou.Error:
+                continue
+
+
 def load(example, solver):
     """The example's crowd geometry object and its DOP network, with the solver `solver` ("bullet" or "box3d")."""
     path = os.path.join(EXAMPLES, example + ".hda")
@@ -26,6 +54,7 @@ def load(example, solver):
     # (named as the example's own node: its Object Merges refer to /obj/<Example>1 by path)
     top = hou.node("/obj").createNode(example, example + "1")
     top.allowEditingOfContents()  # (some examples keep their DOP network inside the locked asset)
+    retarget_paths(top, "/obj/" + example + "1")
     crowd = next(c for c in top.children() if c.type().name() == "geo" and c.node("sim") is not None)
     sim = crowd.node("sim")
     if solver == "box3d":

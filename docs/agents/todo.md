@@ -97,22 +97,21 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
 * Slider Constraint Relationship (`sliderconrel`, Bullet's `btSliderConstraint`: a slide range along the first anchor's x and
   a rotation limit about it, nothing else free) is not read. A slide range of 0 is a revolute joint and a rotation limit
   of 0 a prismatic one; both free (a cylinder) has no Box3D joint. Nothing in Houdini creates one but the node itself.
-* Box3D's samples as example scenes ([sample-port-plan.md](sample-port-plan.md)): Stacking, Shapes, Restitution and
-  Robustness are built. Left, in order:
-  1. Static meshes and height fields: Mesh, Continuous, the portable Issues.
-  2. Joints (portable now), then Benchmark's portable ones (pyramids, Convex Pile, Joint Grid, Spinner), timed with
-     `--check` a few at a time.
+* Box3D's samples as example scenes ([sample-port-plan.md](sample-port-plan.md)): the tables mark what is built.
+  Left, in order:
+  1. Height fields (Mesh / Height Field, Issues / Heightfield), Continuous / Mesh Drop and Rough Mesh Drop
+     (`wave_mesh`), GMod Wheel Stack (the wheel's hull points from `sample_issues.cpp`'s data), Mesh / Voxel.
+  2. Joints (portable now, with Issues / Crash and Multiple Prismatic), then Benchmark's portable ones (pyramids,
+     Convex Pile, Joint Grid, Spinner), timed with `--check` a few at a time.
   3. Animated pieces and step scripts: Bodies, Kinematic, Rolling Deck, Turning Platform, Motor Joint, Junkyard,
      Washer, Static Invoke, Disable.
-  4. The ragdoll: Ragdoll, then Rain and the Determinism scenes.
+  4. The ragdoll: Ragdoll, then Rain, the Determinism scenes and Mesh / Reflection (with `obj_mesh`).
   5. Multi-shape bodies and per-material meshes: Compound, Class Ring, Falling Trees, Village (benchmark), Gear Lift,
      Ghost, Conveyor Mesh; then the wind approximations.
 
   Helpers these need in `tools/examples/box3d_samples/common.py`:
-  * Static meshes as SOP networks: `grid_mesh`, `wave_mesh` and `wave_heightfield` (the formulas of `b3CreateGridMesh`,
-    `b3CreateWaveMesh`, `b3CreateWave`), `torus_mesh`, `box_mesh` (inward faces: Reverse), `hollow_box_mesh`,
-    `obj_mesh(file)` (copies `extern/box3d/data/meshes` files to `examples/cache/`, read with
-    `$HIP`-relative paths); all `concave` on a static piece, height fields on a Static Object.
+  * `wave_heightfield` (`b3CreateWave`'s formula) on a Static Object, and `obj_mesh(file)` (copies
+    `extern/box3d/data/meshes` files to `examples/cache/`, read with `$HIP`-relative paths) as a `concave` static piece.
   * `animated_piece(vex)`: `active 0`, `animated 1`, `P` / `orient` driven by a wrangle on `@Time` (kinematic bodies).
   * `step_script(vex)`: a SOP Solver in a Multiple Solver after the Box3D Solver, writing `force`, `v`, `enabled`,
     `awake` or `dead` on given frames, for samples whose `Step()` does that.

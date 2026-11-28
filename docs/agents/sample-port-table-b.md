@@ -1,6 +1,7 @@
 # Box3D samples: verdicts, Issues to World
 
-Continued from [sample-port-table-a.md](sample-port-table-a.md), with the same verdicts (**now**, **work**, **no**).
+Continued from [sample-port-table-a.md](sample-port-table-a.md), with the same verdicts (**built**, **now**, **work**,
+**no**).
 The plan: [sample-port-plan.md](sample-port-plan.md).
 
 ## Issues (`sample_issues.cpp`)
@@ -11,21 +12,21 @@ The plan: [sample-port-plan.md](sample-port-plan.md).
 | Multiple Prismatic | now | Prismatic chain with limits, `constraint_stiffness` |
 | Hull Crash | no | Hull building from point sets, no simulation |
 | Thin Slab Hull | no | Hull building, no simulation |
-| Convex Jitter | now | Custom hulls at rest, rolling resistance |
+| Convex Jitter | built | Custom hulls at rest, rolling resistance |
 | s&box mover | work | `building.obj` (`obj_mesh`), height field, platform mesh; `fixedRotation` bodies (see Fixed Rotation) |
 | Capsule Mesh | work | `fixedRotation` capsules on a mesh |
 | s&box Ghost Collisions | work | A body walked back and forth by setting its velocity each step: drag towards a keyed `targetv`; `fixedRotation`; speculative contact off has no setting |
 | GMod Wheel Stack | now | Stacked hull wheels; contact tuning on the solver; profile readout dropped |
-| Restitution Overshoot | now | Box bouncing; readout dropped |
-| Slide Twist Off Center Shape | now | Offset box spinning while it slides |
-| Huge Box | now | One very large box |
+| Restitution Overshoot | built | Box bouncing; readout dropped |
+| Slide Twist Off Center Shape | built | Offset box spinning while it slides |
+| Huge Box | built | One very large box |
 | Heightfield | now | Cylinder on a height field |
 | Thin Wall Push Out | work | Mover held still every step: `animated_piece`; Gravity |
 | Rolling Deck | work | Kinematic deck rolled by `SetTargetTransform`: `animated_piece` |
 | Turning Platform | work | Platform that starts turning after a settle time: `animated_piece` keyed |
 | Static Load | work | Hit threshold and contact impulse readouts: Add Impact Data shows the impulses |
 | Translation Locked Platform | work | Translation locked through mass data: Motion Lock (position locks) |
-| Bullet Thin Plate | now | `fastobject` spheres against a thin plate mesh |
+| Bullet Thin Plate | built | `fastobject` spheres against a thin plate hull and mesh, a pair a second (`emit`); earlier pairs kept |
 
 ## Vehicle (`sample_issues.cpp`)
 
@@ -67,16 +68,16 @@ Wedge, Triangle vs Hull, Hull Ghost Manifold, Sphere Ghost Manifold, Ghost Oracl
 
 | Sample | Verdict | What it uses / why |
 |---|---|---|
-| Grid | now | Shapes dropped on a grid mesh |
-| Big Box | now | Shapes inside a large box mesh |
-| Box | now | Shapes inside a box mesh |
+| Grid | built | A body dropped on a grid mesh: the Shape menu (`choice`); the mesh scale slider dropped |
+| Big Box | built | A body on a large box mesh: the Shape menu (`choice`); the mesh scale slider dropped |
+| Box | built | A body on a box mesh turned 45 degrees: the Shape menu (`choice`) |
 | Reflection | work | Mirrored mesh: a Transform SOP scale of -1 and Reverse before `concave` |
 | Height Field | work | Spheres and boxes on a height field; the ray and shape casts dropped |
 | Viewer | no | Mesh tree viewer, no simulation |
 | Creation Benchmark | no | Mesh build timing |
 | Voxel | work | `voxel_mesh_0*.obj` (`obj_mesh`) |
-| Hollow Box | now | Capsules and cylinders in a hollow box mesh |
-| Wedged Sphere | now | Sphere wedged in a mesh; readout dropped |
+| Hollow Box | built | Capsules and cylinders in a hollow box mesh |
+| Wedged Sphere | built | Sphere wedged in a mesh; readout dropped |
 
 ## Ragdoll (`sample_ragdoll.cpp`)
 
@@ -96,7 +97,7 @@ Wedge, Triangle vs Hull, Hull Ghost Manifold, Sphere Ghost Manifold, Ghost Oracl
 
 ## Restitution (`sample_restitution.cpp`)
 
-All **now**: `bounce` on boxes and spheres, with Bounce Mixing maximum (`box3d_world`). The energy and height readouts
+All **built**: `bounce` on boxes and spheres, with Bounce Mixing maximum (`box3d_world`). The energy and height readouts
 are dropped.
 
 | Sample | What it uses |
@@ -116,22 +117,22 @@ are dropped.
 
 | Sample | Verdict | What it uses / why |
 |---|---|---|
-| HighMassRatio1 | now | Light boxes under heavy ones (`density`) |
-| Tiny Pyramid | now | A pyramid of tiny boxes |
-| Overlap Recovery | now | Overlapping boxes pushed apart: the contact parameters |
-| Overflow Color Pile | now | A dense pile; the overflow counter dropped |
+| HighMassRatio1 | built | Light boxes under heavy ones (`density`) |
+| Tiny Pyramid | built | A pyramid of tiny boxes |
+| Overlap Recovery | built | Overlapping boxes pushed apart: the contact parameters |
+| Overflow Color Pile | built | A dense pile; the overflow counter dropped |
 
 ## Shapes (`sample_shapes.cpp`)
 
 | Sample | Verdict | What it uses / why |
 |---|---|---|
-| Inclined Plane | now | Boxes of rising `friction` on a slope |
-| Rolling Resistance | now | `rollingresistance` |
-| High Resistance | now | High `rollingresistance` capsule |
-| Isotropic Friction | now | Boxes sliding in many directions |
-| Slide Twist | now | Spinning box sliding |
-| Static Invoke | work | A static body created at step 20: a static piece appearing at that frame |
-| Conveyor Belt | now | `tangentvelocity` |
+| Inclined Plane | built | Boxes of rising `friction` on a slope |
+| Rolling Resistance | built | `rollingresistance` |
+| High Resistance | built | High `rollingresistance` capsule |
+| Isotropic Friction | built | Boxes sliding in many directions |
+| Slide Twist | built | Spinning box sliding |
+| Static Invoke | work | A static body created at step 20: a static piece emitted at that frame (`emit`) |
+| Conveyor Belt | built | `tangentvelocity` |
 | Conveyor Mesh | work | `conveyor.obj` with per-triangle belt materials: one static piece per material |
 | Wind | work | Spherical-jointed chains in wind: drag only (`airresist` / `targetv`), no lift |
 | Wind Drop | no | A falling plate whose flutter comes from wind lift, which drag cannot give |
@@ -139,8 +140,8 @@ are dropped.
 
 ## Stacking (`sample_stacking.cpp`)
 
-All **now** but Capsule Stack (**work**): boxes, spheres, capsules, cylinders and hulls on a ground box; a starting
-push is the first piece's `v`, samples held in a plane use Motion Lock.
+All **built** (Capsule Stack with its workaround): boxes, spheres, capsules, cylinders and hulls on a ground box; a
+starting push is the first piece's `v`, samples held in a plane use Motion Lock.
 
 | Sample | What it uses |
 |---|---|

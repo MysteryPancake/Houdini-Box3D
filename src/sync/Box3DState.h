@@ -122,7 +122,8 @@ struct Box3DSharedState
 	b3dop::Box3DWorld world;
 	Box3DMirrorMap mirror; // key: makeBodyKey(object id, point id)
 	// Per object, by piece name: the pose its source SOP had when last read. A
-	// piece is moved only when this changes, so other edits (a SOP Solver) stand.
+	// piece is moved only when this changes (and on its object's first step), so
+	// other edits (a SOP Solver) stand.
 	std::unordered_map<int, std::unordered_map<std::string, Box3DSourcePose>> sourcePoses;
 	std::unordered_map<int, Box3DSourceCache> sourceCaches; // per object
 

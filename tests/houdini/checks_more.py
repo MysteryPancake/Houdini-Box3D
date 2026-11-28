@@ -232,6 +232,45 @@ def test_sop_solver_edit():
                    f"resting at y={y24:.2f}" + ("" if ok else f". SOP Solver contents: {contents}"))]
 
 
+def test_sop_solver_edit_reload():
+    """An animated piece (`animated` 1) whose source SOP never moves, in a Box3D Packed Object, moved 5 along x by a
+    SOP Solver (after the Box3D Solver) on frame 8; a checkpoint written each frame to 12, the scene saved and
+    reopened (the solver rebuilds its world from the checkpoint) and played on to 16. The edit stands: x 5 on frames
+    8 to 16. The solver writes a piece from its source on the object's first step even when the source is still;
+    a world rebuilt later reads every piece for the first time too, and must not write it back (it did: x 0 from
+    frame 13)."""
+    path, names = packed_boxes("reload_edit_pieces",
+                               [{"size": (1, 1, 1), "center": (0, 0, 0), "attrs": {"active": 0, "animated": 1}}])
+    dop = new_dopnet("reload_edit")
+    obj = box3d_packed_object(dop, "pieces", path)
+    edit = sop_solver(dop, f'if (s@name == "{names[0]}" && abs(@Frame - 8) < 0.5) @P.x += 5;')
+    contents = sop_solver_contents(edit)
+    finish(dop, multisolver(dop, obj, [box3d_solver(dop, None, gravity=(0, 0, 0)), edit]))
+    folder = tempfile.mkdtemp(prefix="box3d_reload_edit_")
+    set_parm(dop, ["explicitcache", "savecheckpoints"], 1)
+    set_parm(dop, ["explicitcachename", "checkpointname"], os.path.join(folder, "ckpt.$SF.sim").replace("\\", "/"))
+    try:
+        set_parm(dop, ["explicitcachensteps", "checkpointtrail"], 1)
+    except SetupError:
+        pass
+    first = step(dop, 12, lambda sim, f: packed_positions(sim, "pieces")[names[0]][0])
+    dop_path = dop.path()
+    hip = os.path.join(folder, "saved.hip")
+    hou.hipFile.save(hip)
+    hou.hipFile.load(hip, suppress_save_prompt=True)
+    dop = hou.node(dop_path)
+    resumed = {}
+    for f in range(12, 17):
+        hou.setFrame(f)
+        resumed[f] = packed_positions(dop.simulation(), "pieces")[names[0]][0]
+    ok = (close(first[7], 0.0, 1e-3) and all(close(first[f], 5.0, 1e-3) for f in range(8, 13))
+          and all(close(x, 5.0, 1e-3) for x in resumed.values()))
+    return [Result("sop_solver_edit_reload", Result.PASS if ok else Result.FAIL,
+                   f"x: {first[7]:.2f} on frame 7, {first[8]:.2f} on frame 8, {first[12]:.2f} on frame 12; reopened "
+                   f"from the checkpoint: " + ", ".join(f"{x:.2f}" for x in resumed.values()) + " on frames 12 to 16 "
+                   "(expected 0, then 5 from frame 8 on)" + ("" if ok else f". SOP Solver contents: {contents}"))]
+
+
 # ---------------------------------------------------------------------------
 # Kinematic (animated) bodies with Time Scale != 1 (status: animated bodies)
 # ---------------------------------------------------------------------------
@@ -1021,6 +1060,7 @@ TESTS = {
     "duplicate_id_first_point_wins": test_duplicate_id_first_point_wins,
     "edited_source": test_edited_source,
     "sop_solver_edit": test_sop_solver_edit,
+    "sop_solver_edit_reload": test_sop_solver_edit_reload,
     "time_scale_kinematic": test_time_scale_kinematic,
     "attribute_toggles": test_attribute_toggles,
     "dop_import": test_dop_import,

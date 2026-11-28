@@ -4,7 +4,8 @@ saving tests/houdini/out/<test>.hip):
 * every network is laid out (as pressing L in the network editor), so no nodes overlap;
 * geometry objects that only feed a simulation are hidden, so the viewport shows the simulations,
   and the visible objects (DOP networks, and geometry that reads a simulation back, such as a DOP
-  Import) are spaced out left to right along +X so they do not overlap;
+  Import) are spaced out left to right along +X so they do not overlap; an object whose simulation reads its
+  own transform (SideFX's crowd examples) stays put and a *_view object merging what it shows moves instead;
 * a sticky note at /obj says what the test checks and expects (its docstring), what this run gave,
   and which network is which; each DOP network gets a short note saying where it sits;
 * every solver draws its collision shapes (show_collision_shapes), so a piece whose collider is not its
@@ -143,6 +144,53 @@ def _shift_x(node, dx):
         return False
 
 
+def _reads_own_transform(node):
+    """True for an object (not a DOP network) with a simulation inside that reads object transforms: a DOP node with
+    Use Object Transform on (SideFX's crowd examples). Moving such an object changes what it simulates, so it is shown
+    through a view instead."""
+    if node.type().name() == "dopnet":
+        return False
+    for n in node.allSubChildren():
+        p = n.parm("usetransform") if n.type().category().name() == "Dop" else None
+        try:
+            if p is not None and p.eval():
+                return True
+        except hou.Error:
+            continue
+    return False
+
+
+def _make_view(node):
+    """A geometry object at /obj that merges what `node` displays, in world space, so moving the view moves only what
+    the viewport shows. Hides `node`. None if it shows nothing."""
+    sources = [node] + list(node.allSubChildren())
+    paths = []
+    for n in sources:
+        try:
+            if n.type().category().name() != "Object" or not n.isDisplayFlagSet():
+                continue
+            shown = n.displayNode() if hasattr(n, "displayNode") else None
+        except (hou.Error, AttributeError):
+            continue
+        if shown is not None:
+            paths.append(shown.path())
+    if not paths:
+        return None
+    view = node.parent().createNode("geo", node.name() + "_view")
+    for child in view.children():  # some versions start a geo object with a File SOP
+        child.destroy()
+    merge = view.createNode("object_merge", "show")
+    merge.parm("numobj").set(len(paths))
+    for i, path in enumerate(paths, 1):
+        merge.parm(f"objpath{i}").set(path)
+    # (into a specified object, none named: the sources' world positions; "into this object" would undo the view's move)
+    merge.parm("xformtype").set("object")
+    merge.parm("xformpath").set("")
+    merge.setDisplayFlag(True)
+    node.setDisplayFlag(False)
+    return view
+
+
 def _wrap(text):
     lines = []
     for para in text.split("\n"):
@@ -208,8 +256,9 @@ def tidy_for_review(test_name, test_fn, results):
     tops = sorted(obj.children(), key=lambda n: n.sessionId())
     dopnets = [n for n in tops if n.type().name() == "dopnet"]
 
-    # Inputs off, simulations (and views of them) on.
-    shown = []
+    # Inputs off, simulations (and views of them) on. `views`: the object each view shows, and the view; `pinned`:
+    # objects that read their own transform and got no view (they show nothing), which must not be moved.
+    shown, views, pinned = [], {}, set()
     for n in tops:
         if n in dopnets:
             shown.append(n)
@@ -218,7 +267,14 @@ def tidy_for_review(test_name, test_fn, results):
             if n.type().category().name() != "Object" or not hasattr(n, "setDisplayFlag"):
                 continue
             if _reads_simulation(n, dopnets):
-                shown.append(n)
+                view = None
+                if _reads_own_transform(n):
+                    view = _make_view(n)
+                    if view is None:
+                        pinned.add(n)
+                    else:
+                        views[n] = view
+                shown.append(view or n)
             else:
                 n.setDisplayFlag(False)
         except (hou.Error, AttributeError):
@@ -228,7 +284,7 @@ def tidy_for_review(test_name, test_fn, results):
     extents = [_dopnet_extent(n) if n in dopnets else _geo_extent(n) for n in shown]
     placed = []
     for n, dx, (lo, hi) in zip(shown, place_along_x(extents), extents):
-        moved = _shift_x(n, dx)
+        moved = n not in pinned and _shift_x(n, dx)
         left = (lo + dx) if (moved and math.isfinite(lo)) else None
         placed.append((n, moved, left))
 
@@ -240,7 +296,15 @@ def tidy_for_review(test_name, test_fn, results):
     for i, (n, moved, left) in enumerate(placed, 1):
         pos = f"starts at x = {left:.1f}" if left is not None else "not moved"
         where.append(f"  {_ordinal(i)} from the left: {n.name()} ({pos})")
-    hidden = [n.name() for n in tops if n not in shown and hasattr(n, "isDisplayFlagSet")]
+    if views:
+        where += _wrap("Views (" + ", ".join(f"{v.name()} shows {n.name()}" for n, v in views.items()) + "): each "
+                       "object shown through a view stays where the test had it, because its simulation reads its "
+                       "object transform and moving it would change the result. Turn its display flag on to see it "
+                       "in place.")
+    if pinned:
+        where += _wrap("Not moved (their simulation reads their object transform): "
+                       + ", ".join(n.name() for n in pinned))
+    hidden = [n.name() for n in tops if n not in shown and n not in views and hasattr(n, "isDisplayFlagSet")]
     lines = [f"TEST: {test_name}", ""] + _wrap(doc) + ["", "THIS RUN:"]
     for status, message in results:
         lines += _wrap(f"{status}  {message}")
