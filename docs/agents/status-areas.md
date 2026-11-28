@@ -43,6 +43,9 @@ What is still to do: [todo.md](todo.md). Index and rules: [CLAUDE.md](../../CLAU
 * An RBD Object without Box3D Data colliding as its convex hull; `bullet_primT` / `bullet_primS` meaning there.
 
 **Box3D Solver SOP** (`tools/assets/make_solver_sop.py`, `tests/houdini/checks_sop.py`)
+* Settings on unpacked input: packing it moves only `PACK_TRANSFER_ATTRIBS` to the pieces' points, so `bounce`,
+  `density` and the other point settings RBD Configure writes on unpacked geometry may never reach the body (they stay
+  on the points inside the packed geometry). Not checked against RBD Bullet Solver's own packing.
 * Collision Type Animated / Deforming: whether the Packed Object's Overwrite Attributes from SOP (SOP Geometry's Set
   Always) re-imports every step (the build prints which menus it drives), and the solver's cost of a full rescan of
   the collider each step.

@@ -454,7 +454,7 @@ struct SourceSummary
 	// a fitted piece is found by pieceFitKey.
 	std::vector<b3dop::ShapeType> pieceShapes;
 	std::vector<float> pieceDensityScales;
-	bool unknownShape = false; // a piece's piece_georep named no shape (its warning)
+	bool unknownShape = false; // a piece's bullet_georep named no shape (its warning)
 };
 
 namespace
@@ -744,7 +744,7 @@ template <class ToBody> bool spherePiece( const NamedPiece& np, const ToBody& to
 	return true;
 }
 
-const char* const kUnknownPieceShapeNote = "a piece's piece_georep is not box, sphere, capsule, cylinder or "
+const char* const kUnknownPieceShapeNote = "a piece's bullet_georep is not box, sphere, capsule, cylinder or "
 										   "convexhull; used a hull";
 
 // A piece whose kPieceShapeAttrib asks for a box, capsule or cylinder (or a
@@ -753,7 +753,7 @@ const char* const kUnknownPieceShapeNote = "a piece's piece_georep is not box, s
 // capsule or cylinder runs along the piece's length. False for a hull piece
 // (the caller hulls it) or points that cannot be fitted.
 // The fit cache key of a packed piece fitted as its own shape (fittedPiece, or
-// spherePiece for a piece_georep sphere): by its hash, the pivot, scale and shape,
+// spherePiece for a bullet_georep sphere): by its hash, the pivot, scale and shape,
 // apart from the keys of a whole packed point's AutoFit (packedFitKey).
 uint64_t pieceFitKey( uint64_t pieceHash, const double pivot[3], const double S[3], b3dop::ShapeType shape )
 {
@@ -964,7 +964,7 @@ BuiltShapes buildShapes( b3dop::Box3DWorld& world, ShapeSources& src, b3dop::Sha
 			};
 			if ( from.size() == 1 && from[0]->sphereValid && spherePiece( *from[0], sphereToBody, pc ) )
 			{
-				if ( keyed && !mergeAll && from[0]->shape != ShapeType::Convex ) // a piece_georep sphere
+				if ( keyed && !mergeAll && from[0]->shape != ShapeType::Convex ) // a bullet_georep sphere
 					Box3DWorld::storeFit( pieceFitKey( sourceHash, pk.pivot, S, from[0]->shape ), pc.spec );
 				add( pc );
 				return;

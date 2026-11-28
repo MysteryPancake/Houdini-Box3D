@@ -666,7 +666,7 @@ inline void symmetricEigen3( const double a[6], double values[3], double vectors
 
 // A fitting frame (rows, right-handed) whose second axis is the points'
 // axis of symmetry, for a capsule or cylinder that runs along its piece (a
-// piece's `piece_georep`; a body's AutoFit runs along the axis nearest Y
+// piece's `bullet_georep`; a body's AutoFit runs along the axis nearest Y
 // instead, as Bullet's does): of the principal axes of the points' spread, the
 // one whose variance differs most from the other two, which is the axis of a
 // round rod or disc, and the long side of a box; when none differs enough

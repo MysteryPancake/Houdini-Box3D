@@ -48,7 +48,7 @@ numbers the port does not reproduce.
 | Cast | no | Body ray, shape and mover casts |
 | Kinematic | built | Kinematic box on a path after a delay (`SetTargetTransform`): an animated stream |
 | Fixed Rotation | built | `fixedRotation`: no attribute; Lock Tilt and a large `inertialtensorstiffness` |
-| Class Ring | built | 24 capsule pieces (`capsule` VEX) and a sphere gem at twice the density on one body (`piece_georep`, `piece_densityscale`); Substeps 16 and Constraint Iterations 8 as its 960 Hz, `fastrotation` |
+| Class Ring | built | 24 capsule pieces (`capsule` VEX) and a sphere gem at twice the density on one body (`bullet_georep`, `densityscale`); Substeps 16 and Constraint Iterations 8 as its 960 Hz, `fastrotation` |
 | Offset Kinematic | built | Kinematic box spinning about an offset centre: an animated stream with the point at the centre |
 
 ## Character (`sample_character.cpp`)

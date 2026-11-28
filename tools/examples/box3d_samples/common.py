@@ -178,7 +178,7 @@ void prism(string nm; vector p[]) {
 }
 // capsule(name, a, c, r): b3Capsule { a, c, r } as polygons of the body `name`: at each end a ring on the cylinder and
 // rings at 30 and 60 degrees on the cap, 16 around, and the pole. Every ring point is r from the axis and the poles r
-// past the ends, so a piece fitted as a capsule (piece_georep) is exactly this one.
+// past the ends, so a piece fitted as a capsule (bullet_georep) is exactly this one.
 void capsule(string nm; vector a; vector c; float r) {
     vector d = normalize(c - a);
     vector side = abs(d.x) < 0.9 ? set(1.0, 0.0, 0.0) : set(0.0, 1.0, 0.0);
@@ -494,7 +494,7 @@ class Bodies:
         """Several shapes on one body (b3Create*Shape called more than once): parts is [(part name, shape)] or
         [(part name, shape, density scale)], each shape from box(), capsule(), sphere(), cylinder(), hull() or
         shifted() of one of them. As compound(): named pieces of one packed shape, bullet_georep "concave". A capsule
-        or sphere part is fitted as one (its pieces' piece_georep), not hulled; a density scale (piece_densityscale)
+        or sphere part is fitted as one (its pieces' bullet_georep), not hulled; a density scale (densityscale)
         makes that part's density the body's times it."""
         merge = create(self.geo, "merge", f"{tag}_shape")
         for i, (part, (sop, rep, *_), *scale) in enumerate(parts):
@@ -502,8 +502,8 @@ class Bodies:
                 raise SetupError(f"{tag}: part {part!r} is a {rep}, which cannot share a body")
             lines = [f's@name = "{part}";']
             if rep in ("capsule", "sphere"):
-                lines.append(f's@piece_georep = "{rep}";')
-            lines.append(f"f@piece_densityscale = {num(scale[0] if scale else 1.0)};")
+                lines.append(f's@bullet_georep = "{rep}";')
+            lines.append(f"f@densityscale = {num(scale[0] if scale else 1.0)};")
             named = create(self.geo, "attribwrangle", f"{tag}_{part}_named")
             named.setInput(0, sop)
             set_parm(named, "class", 1)  # primitives

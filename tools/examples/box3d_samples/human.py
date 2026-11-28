@@ -3,7 +3,7 @@ joined by spherical and revolute joints with limits, springs and friction motors
 and between the neck and each upper arm.
 
 The calf's foot is a second capsule on the calf's body, at half density: the shin and foot are two named pieces of the
-calf's packed shape, each fitted as a capsule (piece_georep), the foot's piece_densityscale 0.5 (Bodies.parts).
+calf's packed shape, each fitted as a capsule (bullet_georep), the foot's densityscale 0.5 (Bodies.parts).
 """
 
 import math

@@ -422,7 +422,7 @@ public:
 						   void* userData = nullptr ); // 0 on failure
 	void destroyBody( BodyHandle h );
 	// densityScale: this shape's density is the body's times it (a piece's
-	// `piece_densityscale`). The shape keeps it, so applyMassByHandle and
+	// `densityscale`). The shape keeps it, so applyMassByHandle and
 	// copyShapesByHandle carry it; non-finite or negative is 1.
 	bool createShape( BodyHandle h, const BodySettings& body, const ShapeSpec& shape, bool updateMass = true,
 					  float densityScale = 1.0f );
@@ -828,7 +828,7 @@ public:
 	// process-wide by the points' content, so identical pieces fit once.
 	// alongSymmetryAxis: a capsule or cylinder runs along the points' axis of
 	// symmetry (symmetryAxisFrame), not the axis nearest Y: a piece's own shape
-	// (Box3DShapeBuild's `piece_georep`).
+	// (Box3DShapeBuild's `bullet_georep`).
 	static bool fitShapeOriented( ShapeType type, const float* xyz, int count, ShapeSpec& out,
 								  bool alongSymmetryAxis = false );
 	// The same cache under a caller's key (packedFitKey), for fits of packed

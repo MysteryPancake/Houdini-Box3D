@@ -614,8 +614,8 @@ def test_far_world():
 
 
 # A rod (a hexagonal prism 1 long along x, corners 0.2 from its axis, a flat face down) with a 0.2 m cube inside it, as
-# two named pieces of one packed concave body: VEX for a detail wrangle. The rod's piece_georep is `kind` (none: the
-# attribute is left off), the cube's piece_densityscale LUMP_SCALE (_rod_geometry fills it in).
+# two named pieces of one packed concave body: VEX for a detail wrangle. The rod's bullet_georep is `kind` (none: the
+# attribute is left off), the cube's densityscale LUMP_SCALE (_rod_geometry fills it in).
 _PIECE_ROD_VEX = """
 int ring[];
 for (int end = 0; end < 2; ++end)
@@ -642,24 +642,24 @@ int cube[];
 for (int i = 0; i < 8; ++i)
     push(cube, addpoint(0, set((i & 1) ? 0.1 : -0.1, (i & 2) ? 0.1 : -0.1, (i & 4) ? 0.1 : -0.1)));
 int quads[] = array(0, 2, 3, 1,  4, 5, 7, 6,  0, 1, 5, 4,  2, 6, 7, 3,  0, 4, 6, 2,  1, 3, 7, 5);
-addprimattrib(0, "piece_densityscale", 1.0);
+addprimattrib(0, "densityscale", 1.0);
 for (int q = 0; q < 6; ++q) {
     int corners[] = array(cube[quads[4 * q]], cube[quads[4 * q + 1]], cube[quads[4 * q + 2]], cube[quads[4 * q + 3]]);
     int f = addprim(0, "poly", corners);
     setprimattrib(0, "name", f, "lump");
-    setprimattrib(0, "piece_densityscale", f, LUMP_SCALE);
+    setprimattrib(0, "densityscale", f, LUMP_SCALE);
 }
 """
 
 
 def _rod_geometry(geo, kind, lump_scale=10.0, named=True):
-    """The rod and its cube (_PIECE_ROD_VEX) in `geo`, the rod's piece_georep `kind`; named False: no `name`, so the
+    """The rod and its cube (_PIECE_ROD_VEX) in `geo`, the rod's bullet_georep `kind`; named False: no `name`, so the
     pieces are the connected sets (Hull per Connected). Returns the SOP."""
     build = create(geo, "attribwrangle", "rod")
     set_parm(build, ["class"], 0)
     vex = _PIECE_ROD_VEX.replace("LUMP_SCALE", f"{lump_scale!r}")
     if kind:
-        vex += f'addprimattrib(0, "piece_georep", "");\nforeach (int f; faces) setprimattrib(0, "piece_georep", f, "{kind}");\n'
+        vex += f'addprimattrib(0, "bullet_georep", "");\nforeach (int f; faces) setprimattrib(0, "bullet_georep", f, "{kind}");\n'
     if not named:
         vex += 'removeprimattrib(0, "name");\n'
     set_parm(build, ["snippet"], vex)
@@ -667,7 +667,7 @@ def _rod_geometry(geo, kind, lump_scale=10.0, named=True):
 
 
 def _piece_rod(kind, how="packed"):
-    """(rest height of the body's point, its written-back mass) for the rod with piece_georep `kind`, dropped flat
+    """(rest height of the body's point, its written-back mass) for the rod with bullet_georep `kind`, dropped flat
     from 0.8 onto the ground. how: "packed" (a packed concave piece), "connected" (packed with no names, Hull per
     Connected on, so its two connected sets are the pieces) or "object" (an RBD Object with Default Shape Concave:
     its height is its points' mean, and no mass is written)."""
@@ -703,7 +703,7 @@ def _piece_rod(kind, how="packed"):
 
 
 def test_piece_shapes():
-    """A packed concave body's pieces take their own shape and density (piece_georep, piece_densityscale): a
+    """A packed concave body's pieces take their own shape and density (bullet_georep, densityscale): a
     hexagonal rod fitted as each shape rests at that shape's height on the ground and weighs its volume, plus a
     cube inside it at 10 times the density (80 kg). A hull rests on a flat (0.173); a capsule fitted along the rod's
     length rests at its radius (0.2); a cylinder (a kCylinderSides-sided hull, 32) on a flat at 0.2 cos(pi / 32); a sphere through
@@ -752,7 +752,7 @@ def test_piece_shapes_paths():
 
 
 def _object_push(lump):
-    """How far piece_shapes' rod and cube, as one RBD Object (Default Shape Concave, the cube's piece_densityscale
+    """How far piece_shapes' rod and cube, as one RBD Object (Default Shape Concave, the cube's densityscale
     `lump`), travels from frame 20 to 60 after a dense ball moving at 5 m/s along x hits its end, with no gravity.
     Nothing bounces, so the two move on together."""
     tag = f"piece_object_push_{int(lump)}"
@@ -778,7 +778,7 @@ def _object_push(lump):
 
 
 def test_piece_shapes_object_density():
-    """piece_densityscale counts in an RBD Object's mass: a heavy ball hits the end of piece_shapes' rod as an RBD
+    """densityscale counts in an RBD Object's mass: a heavy ball hits the end of piece_shapes' rod as an RBD
     Object, with no gravity and no bounce, and they move on together at the ball's speed times m / (m + M). From the
     speeds with the cube at 1 and at 10, (5 / v - 1) gives M / m, so their ratio is the rods' mass ratio whatever the
     ball weighs: (hull 103.9 + 80) / (103.9 + 8) = 1.643 with the scale, 1 without it. An RBD Object's centre of mass

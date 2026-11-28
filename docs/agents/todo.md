@@ -66,7 +66,7 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
 * Objects solved by another solver: only RBD Bullet Solver's are tried (`other_solver`: packed ones are ignored as
   colliders, polygon ones push Box3D bodies one way). Vellum, FLIP and the rest are not.
 * Height fields: holes from a mask layer, height fields on points.
-* RBD Objects: `piece_densityscale` changes the mass but not the centre of mass, which stays the centroid of
+* RBD Objects: `densityscale` changes the mass but not the centre of mass, which stays the centroid of
   the geometry's hull (`objectCentreOfMass`, Bullet's rule; `piece_shapes_object_density`).
 * Agent ragdolls ([agent-ragdolls.md](agent-ragdolls.md): bodies, joints and their motors, the per-transform arrays and the
   agent's pose are built; the PinnedRagdolls ragdolls hang from their pinned hand as Bullet's do). Not done, in order:

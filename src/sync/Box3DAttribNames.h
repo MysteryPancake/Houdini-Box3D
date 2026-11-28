@@ -90,9 +90,10 @@ inline constexpr const char* kMotionAttribNames[] = { "airresist", "spinresist",
 // of a concave (or Hull per Connected) body: the shape a piece is fitted as
 // (box, sphere, capsule, cylinder, convexhull; b3dop::parseShapeType) and its
 // density as a multiple of the body's. The first primitive of a piece that has
-// them sets them. Box3DShapeBuild.cpp, docs/shapes.md.
-inline constexpr const char* kPieceShapeAttrib = "piece_georep";
-inline constexpr const char* kPieceDensityScaleAttrib = "piece_densityscale";
+// them sets them. The shape takes the body's own name (on a primitive inside,
+// not the point, it is the piece's). Box3DShapeBuild.cpp, docs/shapes.md.
+inline constexpr const char* kPieceShapeAttrib = "bullet_georep";
+inline constexpr const char* kPieceDensityScaleAttrib = "densityscale";
 
 // Names of the prop markers, in order (Box3DSyncFingerprint::propIds); the
 // count is derived.

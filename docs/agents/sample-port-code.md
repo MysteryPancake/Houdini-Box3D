@@ -21,7 +21,7 @@ The modules and helpers that build the sample ports. The plan, output layout and
     copies a shape onto the bodies its VEX makes (`body(p, q)`, `static_body(p, q)`), each packed with its pivot at the
     point, so the point is Box3D's body origin; `polygons` packs per-name polygons into hull bodies (`points` adds a
     body's points, `face` a polygon on their numbers; `prism`, `hull_points`: `b3CreateHull` of a point set;
-    `capsule(name, a, c, r)`: a capsule's polygons that fit back exactly as a `piece_georep` capsule); `mesh`
+    `capsule(name, a, c, r)`: a capsule's polygons that fit back exactly as a `bullet_georep` capsule); `mesh`
     makes static `concave` bodies from `MESH_FUNCTIONS` (`tri` in Box3D's winding, `welded` for a triangle soup,
     `grid_mesh`, `wave_mesh` (`_turned` for a turned body), `box_mesh`, `torus_mesh`: `src/mesh.c`'s builders, each adding Box3D's vertices once, in
     its order). Faces share their points: a mesh's triangles share vertices and edges as Box3D's do, and a hull's faces

@@ -36,7 +36,7 @@ All are optional except `P`. A missing one uses the Box3D Data value. Every step
 | `collision_categorybits`, `collision_maskbits`, `collision_groupindex` | int | Collision filtering (below) |
 | `bullet_georep` | string | Collision shape (see [Shapes](shapes.md)) |
 | `bullet_autofit`, `bullet_primS`, `bullet_radius`, `bullet_length`, `bullet_primT`, `bullet_primR` | various | Hand-set box, sphere or capsule |
-| `piece_georep`, `piece_densityscale` | string / float | Primitive attributes inside a `concave` piece: each named part's own shape and density (see [Shapes](shapes.md)) |
+| `bullet_georep`, `densityscale` | string / float | Primitive attributes inside a `concave` piece: each named part's own shape and density (see [Shapes](shapes.md)) |
 | `pscale` / `scale` | float / vector | Size of the shape on plain points. On packed pieces, a Box3D Packed Object bakes it into the piece |
 | `deforming` | int | Nonzero = rebuild the collision shape every step |
 | `bullet_autofit_valid` | int | `0` = rebuild the collision shape once |

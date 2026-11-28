@@ -28,8 +28,8 @@ ported ones **built** in place of their verdict.
   Vehicle); sensors and contact begin / end events (no output for them, [todo.md](todo.md)); world queries during the run
   (Query Spawn); wind lift (Wind Drop).
 * The common workarounds: a kinematic body is an animated piece; a body of several shapes is named pieces of one
-  `concave` packed shape (`Bodies.parts`: capsule and sphere parts by `piece_georep`, a part's density by
-  `piece_densityscale`); a scripted step is keyed parameters, a
+  `concave` packed shape (`Bodies.parts`: capsule and sphere parts by `bullet_georep`, a part's density by
+  `densityscale`); a scripted step is keyed parameters, a
   SOP Solver writing point attributes, or pieces appearing at a frame; an explosion is starting `v` / `w`
   (`Bodies.explode`); wind is drag (`airresist` / `targetv`); `fixedRotation` has no attribute (a large
   `inertialtensorstiffness`, or Motion Lock's Lock Tilt for two axes); per-triangle mesh materials are one static

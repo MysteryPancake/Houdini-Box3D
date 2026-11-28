@@ -6,8 +6,8 @@ already carries its own shape and density ([bodies.md](bodies.md), "Pieces and p
 
 ## Where pieces stand
 
-* Only a moving `concave` body has a shape per piece: `PieceAttrs` (`Box3DShapeBuild.cpp`) reads `piece_georep` and
-  `piece_densityscale` from each piece's first primitive, and `Piece::densityScale` reaches `createShape` /
+* Only a moving `concave` body has a shape per piece: `PieceAttrs` (`Box3DShapeBuild.cpp`) reads `bullet_georep` and
+  `densityscale` from each piece's first primitive, and `Piece::densityScale` reaches `createShape` /
   `createHullShape`. A `convex` body merges its pieces into one hull, a static `concave` one is one triangle mesh and a
   plain point is one shape, so none of them can differ per piece.
 * `shapeDefFor` (`Box3DWorldShapes.cpp`) gives every shape the body's material and filter, and `setMaterialByHandle`,
@@ -18,10 +18,14 @@ already carries its own shape and density ([bodies.md](bodies.md), "Pieces and p
 
 ## Decisions
 
-* A piece's value replaces the body's, one field at a time; missing means the body's. `piece_densityscale` stays a
+* A piece's value replaces the body's, one field at a time; missing means the body's. `densityscale` stays a
   multiplier, as a body's set `mass` is shared among its pieces by weight (`totalVolume`), which an absolute density
   could not honour. Friction, bounce and filter bits have no such total.
-* Editing them mid-simulation does nothing: they apply at creation or a shape rebuild, as `piece_georep` does.
+* A piece's attribute has the body's name (`kPropAttribNames`): on the body's point it is the body's, on a primitive
+  inside the packed geometry the piece's, as a material inside packed geometry beats the packed primitive's. Only
+  primitives inside are read, never points: RBD Configure on unpacked geometry leaves point `bounce` and `density`
+  inside the pieces, which must not become per-piece values.
+* Editing them mid-simulation does nothing: they apply at creation or a shape rebuild, as `bullet_georep` does.
 * A mesh with several materials takes a body-wide change through a new fork setter, not a shape rebuild (phase 3).
 
 ## Attributes
@@ -30,11 +34,11 @@ Primitive attributes on the packed geometry, read from each piece's first primit
 
 | Attribute | Type | Meaning |
 |---|---|---|
-| `piece_friction`, `piece_bounce`, `piece_rollingresistance` | float | The piece's own surface |
-| `piece_tangentvelocity` | vector | Conveyor velocity, in body axes as `tangentvelocity` |
-| `piece_collision_categorybits`, `piece_collision_maskbits`, `piece_collision_groupindex` | int | The piece's filter |
-| `piece_autofit` | int | 0: sized by the attributes below instead of fitted |
-| `piece_primS`, `piece_primR`, `piece_primT`, `piece_radius`, `piece_length` | vector / float | As `bullet_prim*`, in the packed source's space |
+| `friction`, `bounce`, `rollingresistance` | float | The piece's own surface |
+| `tangentvelocity` | vector | Conveyor velocity, in body axes as the body's |
+| `collision_categorybits`, `collision_maskbits`, `collision_groupindex` | int | The piece's filter |
+| `bullet_autofit` | int | 0: sized by the attributes below instead of fitted |
+| `bullet_primS`, `bullet_primR`, `bullet_primT`, `bullet_radius`, `bullet_length` | vector / float | As the body's, in the packed source's space |
 
 Box3D uses rolling resistance only on spheres and capsules (`b3SurfaceMaterial`). New values are cleaned as the body's
 are (`nonNegOr`, `cleanTangent`): Box3D's input checks are asserts that Release drops.
@@ -81,7 +85,7 @@ What Conveyor Mesh and Conveyor Circuit need ([sample-port-table-a.md](sample-po
 
 ## Phase 4: explicit sizes
 
-1. In `fittedPiece`, a piece with `piece_autofit` 0 skips `fitShapeOriented`: its `ShapeSpec` comes from `piece_prim*`
+1. In `fittedPiece`, a piece with `bullet_autofit` 0 skips `fitShapeOriented`: its `ShapeSpec` comes from `bullet_prim*`
    as `applyPrimOverrides` builds one, moved into body space by the packed `pivot` and `S` as `packedPointsToBodyLocal`
    moves points.
 2. `pieceFitKey` includes the values.

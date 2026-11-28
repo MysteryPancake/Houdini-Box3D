@@ -978,8 +978,8 @@ void testMixHash()
 	std::printf( "mix hash checks done\n" );
 }
 
-// A packed piece's own shape and density (Box3DShapeBuild's piece_georep and
-// piece_densityscale): a capsule or cylinder fitted along the points' axis of
+// A packed piece's own shape and density (Box3DShapeBuild's bullet_georep and
+// densityscale): a capsule or cylinder fitted along the points' axis of
 // symmetry, and a shape whose density is a multiple of its body's, kept through a
 // mass re-apply and a copy onto another body.
 void testPieceShapes()

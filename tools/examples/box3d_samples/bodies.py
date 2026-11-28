@@ -342,7 +342,7 @@ def class_ring(s):
     vertices, tube = _ring_band()
     n = len(vertices)
     # The band: one capsule between each vertex and the next (the last one closes the loop, a little longer than the
-    # rest, as b3ComputeCosSin's 15 degrees are not exact), named pieces fitted as capsules (piece_georep).
+    # rest, as b3ComputeCosSin's 15 degrees are not exact), named pieces fitted as capsules (bullet_georep).
     build = create(b.geo, "attribwrangle", "band")
     set_parm(build, "class", 0)
     listed = ", ".join(vec(v) for v in vertices)
@@ -354,12 +354,12 @@ for (int i = 0; i < {n}; ++i) capsule(sprintf("band%d", i), v[i], v[(i + 1) % {n
     named = create(b.geo, "attribwrangle", "band_named")
     named.setInput(0, build)
     set_parm(named, "class", 1)  # primitives
-    set_parm(named, "snippet", 's@piece_georep = "capsule";\nf@piece_densityscale = 1.0;')
+    set_parm(named, "snippet", 's@bullet_georep = "capsule";\nf@densityscale = 1.0;')
     gem, _ = b.shifted(b.sphere("gem", 0.3), (0.0, -0.65, 0.0))
     gem_named = create(b.geo, "attribwrangle", "gem_named")
     gem_named.setInput(0, gem)
     set_parm(gem_named, "class", 1)
-    set_parm(gem_named, "snippet", 's@name = "gem";\ns@piece_georep = "sphere";\nf@piece_densityscale = 2.0;')
+    set_parm(gem_named, "snippet", 's@name = "gem";\ns@bullet_georep = "sphere";\nf@densityscale = 2.0;')
     merge = create(b.geo, "merge", "ring_shape")
     merge.setInput(0, named)
     merge.setInput(1, gem_named)
@@ -381,8 +381,8 @@ for a while the ring spins gem up, upside down (around frames 660 to 780 here). 
 over and lies flat, the gem on the ground, by about frame 1020.""",
                   ported="""\
 the ring is one body of named pieces: the 24 band capsules and the gem, each fitted as its own shape
-(piece_georep on band_named and gem_named), the gem's density twice the band's
-(piece_densityscale 2). The sample steps 16 times a frame (960 Hz) with 8 substeps, as the fast spin
+(bullet_georep on band_named and gem_named), the gem's density twice the band's
+(densityscale 2). The sample steps 16 times a frame (960 Hz) with 8 substeps, as the fast spin
 needs: the solver's Substeps 16 and Constraint Iterations 8. The ring follows Box3D's to 0.1 mm for
 the first 30 frames. After that the spin is chaotic (tilting Box3D's ring 0.01 degrees more moves it
 0.7 m by frame 60), so the paths part, but Box3D's ring does the same things: it turns gem up somewhere

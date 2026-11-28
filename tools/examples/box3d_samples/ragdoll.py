@@ -12,7 +12,7 @@ RAGDOLL_PORTED = """\
 each bone is a capsule body (bullet_primT / bullet_primR place its capsule as human.c's), its joint a
 network line from the parent's frame to the bone's (the two frames start apart, as in Box3D, so the
 springs pull the pose a little at the start). The calf is two capsules, the shin and the foot at half
-density: two named pieces of its packed shape fitted as capsules (piece_georep, piece_densityscale on
+density: two named pieces of its packed shape fitted as capsules (bullet_georep, densityscale on
 the calf_l_shin_named / _foot_named wrangles). The joint nodes group the bones whose settings match:
 spine, neck, hips, knees, shoulders, elbows."""
 
