@@ -11,8 +11,7 @@ Names, defaults, ranges and menus are defined once, in the `Box3DParms` tables: 
 
 * Solver: read every step, except the thread count, which rebuilds the world. `threads` defaults to
   `b3dop::defaultWorkerCount()` (`Box3DCpu.h`: the machine's physical performance cores, as Box3D recommends). The
-  Box3D tuning settings are Box3D's defaults except the contact stiffness and damping, tuned for bouncier, more rigid
-  contacts. `gluecompound` and `gluecompoundload`: [glue-compound.md](glue-compound.md).
+  Box3D tuning settings are Box3D's defaults except the contact damping, lowered for bouncier contacts. `gluecompound` and `gluecompoundload`: [glue-compound.md](glue-compound.md).
 * Disabled conditions: `reapatframeend` while `reapdead` is off, `forceswake` while `useforces` is off, Box3D Data's
   `startasleep` / `sleepthreshold` while `enablesleep` is off, `mass` / `density` by `computemass`. Joint nodes:
   `enabledBy` in [joints.md](joints.md). Settings on one node that need a setting on the other (sleep, Fast Object,

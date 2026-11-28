@@ -571,7 +571,7 @@ def test_rbd_defaults():
         if top > 0.35:
             results.append(Result("rbd_defaults", Result.INFO,
                                   "but it isn't lying flat (flat would top out at 0.2, or 0.28 on an edge): open "
-                                  "out/rbd_defaults.hip to see what it rests on"))
+                                  "examples/tests/rbd_defaults.hip to see what it rests on"))
     else:
         results.append(Result("rbd_defaults", Result.FAIL,
                               shape_msg + ": it stands, as an axis-aligned box fitted around the tilted rod would"))

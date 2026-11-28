@@ -97,7 +97,8 @@ src/                  The include root: includes are written "core/Box3DWorld.h"
                            quaternion, options of SIM data by name (box3dDataOption), the threaded loop
                            (box3dParallelFor)
     Box3DHoudiniTasks.h    TaskRunner on Houdini's TBB pool (UT_TaskGroup). Only SIM_Box3DWorld.cpp includes it
-examples/             Not in git: made by make_examples.py, holding only the example scenes it builds and cache/
+examples/             Not in git: made by make_examples.py, holding only the example scenes it builds and cache/,
+                      plus tests/: each Houdini check's saved scene (run_tests.py)
 package/              Box3D.json.in: the Houdini package file the build configures
 tools/                A folder per job, and beside them find_houdini.bat (the .bat and .sh helpers):
   assets/             make_assets.py (the four asset builders in one hython, as the build does),
@@ -121,7 +122,7 @@ tests/
   houdini/            Houdini checks: run_tests.py (runner), checks_*.py (tests by area, listed in the runner's
                       MODULES; each opens with a docstring naming its area, and checks_sop*, checks_output,
                       checks_packed and checks_geometry share helpers in *_common.py), b3dtest.py (helpers),
-                      review.py (tidies saved scenes), baseline.json; out/ holds each test's scene (git-ignored).
+                      review.py (tidies saved scenes), baseline.json; out/ holds last_results.json (git-ignored).
                       bench.py + bench_scenes.py: timing runs of Box3D against Bullet, outside run_tests.py
                       (build.md); agent_oracle.py: dumps what a solver does to the agents of SideFX's crowd
                       ragdoll examples (todo.md, "Agent ragdolls")

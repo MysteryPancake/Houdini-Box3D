@@ -198,7 +198,7 @@ def test_ui():
             ("Ground", True, ["groundsize"]),
             ("Performance", True, ["autothreads", "threads"])])
     expect("Output tab folders", tab_folders("Output"), [("Impact Data", True, ["impactminspeed"])])
-    expect("Solver Contact Stiffness default", solver.parm("contactstiffness").parmTemplate().defaultValue()[0], 60.0)
+    expect("Solver Contact Stiffness default", solver.parm("contactstiffness").parmTemplate().defaultValue()[0], 30.0)
     expect("Solver Contact Damping Ratio default", solver.parm("contactdamping").parmTemplate().defaultValue()[0], 3.0)
     expect("Enable Spring label", rev.parm("enable_spring").parmTemplate().label(), "Enable Spring")
     expect("Solver sleep label", solver.parm("enablesleep").parmTemplate().label(), "Allow Sleeping")

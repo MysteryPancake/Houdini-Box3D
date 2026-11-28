@@ -4,7 +4,7 @@ sample's sliders and checkboxes, live in Houdini as they are in the sample app."
 
 import math
 
-from .common import Bodies, finish, num, sample
+from .common import Bodies, box_impulse, finish, num, sample, vec
 
 SOURCE = "sample_joint.cpp"
 
@@ -57,6 +57,47 @@ fall side by side onto the ground.""", try_="move one cube over the other in box
                                            "each other.",
                   joints=[node("filter", "no_collision")], lines=[("boxes0", (2, 4, 0), "boxes1", (-2, 4, 0),
                                                                    "no_collision")])
+
+
+@sample("Joints", "Top Down Friction", SOURCE, frames=300)
+def top_down_friction(s):
+    b = Bodies(s.tag, {"gravityscale": 1.0})
+    b.stream("walls_x", b.box("walls_x", 10.0, 0.5, 4.0), "static_body({0, 0, 0}, identity);\n"
+             "static_body({0, 20, 0}, identity);", cd=(0.55, 0.6, 0.65),
+             note="a closed square in xy, open in z: four box hulls on one static body in Box3D")
+    b.stream("walls_y", b.box("walls_y", 0.5, 10.0, 4.0), "static_body({-10, 10, 0}, identity);\n"
+             "static_body({10, 10, 0}, identity);", cd=(0.55, 0.6, 0.65))
+    grid =[("capsules", b.capsule("capsules", 0.25, 0.25), "k % 4 == 0", "along_x(identity)", (0.4, 0.65, 0.9),
+             "b3Capsule { (-0.25, 0, 0), (0.25, 0, 0), 0.25 }: built along y, turned to x"),
+            ("spheres", b.sphere("spheres", 0.35), "k % 4 == 1", "identity", (0.85, 0.45, 0.3), "radius 0.35"),
+            ("cubes", b.box("cubes", 0.35, 0.35, 0.35), "k % 4 >= 2", "identity", (0.9, 0.6, 0.2),
+             "b3MakeBoxHull( 0.35, 0.35, 0.35 )")]
+    for tag, shape, test, turn, colour, what in grid:
+        b.stream(tag, shape, f"""\
+// The {tag} of a 10 x 10 grid 1 m apart in the xy plane, row by row from (-5, 15): body k is a capsule when k % 4
+// is 0, a sphere when 1, a cube otherwise.
+for (int k = 0; k < 100; ++k)
+    if ({test}) body(set(-5.0 + k % 10, 15.0 - k / 10, 0.0), {turn});
+""", cd=colour, note=f"{what}, restitution 0.8, gravity scale 0", bounce=0.8, gravityscale=0.0)
+    b.explode((0.0, 10.0, 0.0), 10.0, 5.0, 10000.0)
+    counts, lines = {}, []
+    for k in range(100):
+        tag = grid[min(k % 4, 2)][0]
+        counts[tag] = counts.get(tag, -1) + 1
+        p = (-5.0 + k % 10, 15.0 - k // 10, 0.0)
+        lines.append(("", p, f"{tag}{counts[tag]}", p, "friction"))
+    return finish(s, b, about="""\
+A top-down view (look along -z): 100 capsules, spheres and cubes with no gravity in a closed square, each
+on a motor joint to the world that pulls its velocity and spin toward zero with at most 1000 N and 1000 N m:
+friction against an imagined floor. Explode blows them apart from the middle; they bounce off the walls
+(restitution 0.8) and are slowed to a stop by the motors.""",
+                  ported="the sample's Explode button is pressed before the first frame: the explode wrangle in the "
+                         "bodies object gives each body the push b3World_Explode would. Without it nothing moves.",
+                  try_="the Explosion settings on the bodies object's Sample tab (move the Centre, raise Impulse per "
+                       "Area), or " + TRY_NODE.format(node="friction", what="Max Velocity Force and Max Velocity "
+                                                                             "Torque (lower: they slide further)"),
+                  joints=[node("motor", "friction", collide_connected=1, max_velocity_force=1000.0,
+                               max_velocity_torque=1000.0)], lines=lines)
 
 
 @sample("Joints", "Prismatic", SOURCE, frames=300)
@@ -261,6 +302,37 @@ Six boards stacked in the air, each hinged to the one below at alternate ends ab
                                                          "out)"),
                   joints=[node("revolute", "hinges", constraint_stiffness=240.0, enable_motor=1,
                                max_motor_torque=1000.0, motor_speed=0.0)], lines=lines)
+
+
+@sample("Joints", "Door", SOURCE, frames=300)
+def door(s):
+    half, density, magnitude = (0.75, 1.5, 0.1), 1000.0, 50000.0
+    v, w = box_impulse(half, density, (0.0, 0.0, -magnitude), (0.75, 0.0, 0.0))
+    b = Bodies(s.tag, {"gravityscale": 1.0})
+    b.ground(20.0)
+    b.stream("door", b.box("door", *half), f"""\
+// The door: 1.5 x 3 x 0.2 m, 900 kg, its bottom edge on the ground. It starts with the velocity the sample's Impulse
+// button gives it: {num(magnitude)} N s along -z at the middle of its free edge (b3Body_ApplyLinearImpulse).
+int pt = body({{0, 1.5, 0}}, identity);
+setpointattrib(0, "v", pt, {vec(v)});
+setpointattrib(0, "w", pt, {vec(w)});
+""", cd=(0.6, 0.45, 0.3), note="density 1000, gravity scale 2", density=density, gravityscale=2.0)
+    hinge = node("revolute", "hinges", constraint_stiffness=120.0, constraint_damping_ratio=0.0, enable_limit=1,
+                 lower_angle=-90.0, upper_angle=90.0, enable_spring=1, stiffness=1.0, damping_ratio=0.5,
+                 max_motor_torque=100.0, motor_speed=0.0)
+    lines = [("ground0", (-0.75, y, 0), "door0", (-0.75, y, 0), "hinges", Z_TO_Y) for y in (0.0, 3.0)]
+    return finish(s, b, about=f"""\
+A heavy door (900 kg, gravity scale 2) on two revolute hinges along its left edge, at its bottom and top
+corners, with a 1 Hz spring that swings it shut and a limit of 90 degrees either way. It is hit with
+{num(magnitude)} N s at its free edge, which slams it against the limit: the hinges' Constraint
+Stiffness (120 Hz, damping 0) keeps the door on them.""",
+                  ported="the Impulse button is the door's starting v and w (box_impulse); the hinges join the "
+                         "door to the ground body as in the sample, so its bottom edge does not rub on the ground. "
+                         "The translation error readout is not drawn.",
+                  try_=TRY_NODE.format(node="hinges", what="Constraint Stiffness (15 to 240) and Constraint "
+                                                           "Damping Ratio, or turn off Enable Limit") +
+                  " One hinge: delete the top line in door_network. Another blow: scale v and w in door_points.",
+                  joints=[hinge], lines=lines)
 
 
 @sample("Joints", "Motion Lock Joint", SOURCE, frames=300)

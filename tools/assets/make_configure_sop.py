@@ -672,25 +672,20 @@ def visualize_vex(defaults):
     # The setting and its default for each ramped mode, as a VEX if chain.
     pick = "\n".join(f'if (mode == {m}) {{ attrib = "{n}"; dflt = {num(defaults[n])}; }}'
                      for m, n in SCALAR_MODES.items())
-    # point(): assigned to a typed variable, so an int attribute is read as a float.
-    value = ("float value(string name; int pt; float dflt) {\n"
-             "    float v = dflt;\n"
-             "    if (haspointattrib(0, name)) v = point(0, name, pt);\n"
-             "    return v;\n"
-             "}")
     # The value of the setting on every point (0 when no setting is ramped), for Attribute Promote to find the range.
     rng = "\n".join([
         "// The setting being visualized, on every point: its range sets the colour ramp.",
-        value,
         'int mode = chi("../visualize");',
         'string attrib = "";',
         "float dflt = 0.0;",
         pick,
-        'f@__vis = attrib != "" ? value(attrib, i@ptnum, dflt) : 0.0;',
+        "// point() into a typed variable reads an int attribute as a float.",
+        "float v = dflt;",
+        'if (attrib != "" && haspointattrib(0, attrib)) v = point(0, attrib, i@ptnum);',
+        'f@__vis = attrib != "" ? v : 0.0;',
     ])
     colour = "\n".join([
         "// Colours each piece by the chosen value. A missing attribute is Box3D Data's default.",
-        value,
         'int mode = chi("../visualize");',
         "if (mode == 0) return;",
         "int pt = primpoint(0, i@primnum, 0);",
@@ -698,10 +693,14 @@ def visualize_vex(defaults):
         'string attrib = "";',
         "float dflt = 0.0;",
         pick,
-        'if (mode == 1) c = value("active", pt, 1.0) > 0.0 ? set(0, 1, 0) : set(0, 0, 0);',
-        'else if (mode == 2) c = value("animated", pt, 0.0) > 0.0 ? lit : dim;',
-        'else if (mode == 3) c = value("deforming", pt, 0.0) > 0.0 ? lit : dim;',
-        'else if (mode == 4) c = value("awake", pt, 1.0) > 0.0 ? dim : lit;',
+        "// The on / off setting the mode shows, read with point() (active and awake default to on).",
+        f'string flag = mode == 1 ? "active" : mode == 2 ? "animated" : mode == 3 ? "deforming" : '
+        f'mode == 4 ? "awake" : mode == 9 ? "{PIN_ATTRIB}" : "";',
+        "float on = mode == 1 || mode == 4 ? 1.0 : 0.0;",
+        'if (flag != "" && haspointattrib(0, flag)) on = point(0, flag, pt);',
+        "if (mode == 1) c = on > 0.0 ? set(0, 1, 0) : set(0, 0, 0);",
+        "else if (mode == 2 || mode == 3 || mode == 9) c = on > 0.0 ? lit : dim;",
+        "else if (mode == 4) c = on > 0.0 ? dim : lit;",
         "else if (mode >= 5 && mode <= 8) {",
         '    float v = point(0, "__vis", pt);',
         '    float lo = detail(0, "__vmin"), hi = detail(0, "__vmax");',
@@ -710,7 +709,6 @@ def visualize_vex(defaults):
         "    // blue (lowest) through white to red, RBD Configure's ramp",
         "    c = t < 0.5 ? lerp({0, 0, 1}, {1, 1, 1}, 2.0 * t) : lerp({1, 1, 1}, {1, 0, 0}, 2.0 * t - 1.0);",
         "}",
-        f'else if (mode == 9) c = value("{PIN_ATTRIB}", pt, 0.0) > 0.0 ? lit : dim;',
         f'else if (mode == 10) c = inpointgroup(0, "{INSIDE_GROUP}", pt) ? lit : dim;',
         "v@Cd = c;",
     ])

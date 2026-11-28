@@ -9,18 +9,18 @@ numbers the port does not reproduce.
 
 | Sample | Verdict | What it uses / why |
 |---|---|---|
-| Large Pyramid | now | Box pyramid on a ground box |
-| Wide Pyramid | now | Same, wide and low |
-| Many Pyramids | now | A field of small pyramids |
+| Large Pyramid | built | Box pyramid on a ground box, no sleeping |
+| Wide Pyramid | built | Stepped pyramid of boxes |
+| Many Pyramids | built | A field of small pyramids, no sleeping |
 | Rain | work | `human` ragdolls dropped in groups onto grid and torus meshes, the oldest group replaced each cycle: pieces appearing at frames and `dead` (`step_script`); joint tuning as Constraint Stiffness |
 | Large World (first) | no | Compiled out (`#if 0`) |
-| Joint Grid | now | Spheres joined in a grid by spherical joints |
-| Falling Boxes | now | Box hulls falling on a ground box |
-| Candy Cups | now | One hull from a point set (`hull_points`), many copies |
-| Explosion | work | `b3World_Explode` on boxes and cylinders over a grid mesh: radial starting `v` (or one frame of `force`) instead |
+| Joint Grid | built | Spheres joined in a grid by spherical joints (`network_sop` VEX) |
+| Falling Boxes | built | Box hulls falling on a ground box |
+| Candy Cups | built | One hull from a point set (`Bodies.hull`), many copies |
+| Explosion | work | `b3World_Explode` on boxes and cylinders over a grid mesh: starting `v` / `w` (`Bodies.explode`, which needs hulls) |
 | Height Field | no | Ray and shape casts over a height field; nothing moves |
 | Falling Trees | work | Trees of several transformed hulls: `multi_shape_body`; wave mesh or height field ground |
-| Mesh Drop | now | Boxes on a static wave mesh |
+| Mesh Drop | built | Boxes on a static wave mesh, starting velocities from `XorShift` |
 | Village | work | One baked static compound (tiles, wave meshes, capsule and sphere props): separate static pieces; bodies dropped on it; the cast curtain (queries) dropped |
 | Sensor | no | Sensor shapes and events, custom filter callback |
 | Washer | work | Kinematic drum of hull walls spun at a constant rate: `animated_piece` (or its revolute motor variant) |
@@ -29,8 +29,8 @@ numbers the port does not reproduce.
 | Chains | work | Capsule chains (spherical joints, springs, friction motors) on a wave mesh; per-shape wind: drag only (`airresist` / `targetv`) |
 | Destruction | work | A box grid blown apart and respawned periodically: starting `v`, `dead` and new pieces by frame (`step_script`) |
 | Junkyard | work | Kinematic pusher on a circle (`SetTargetTransform`): `animated_piece`; rocks, cylinders, offset boxes |
-| Convex Pile | now | Hulls of 32 random points (`hull_points`) |
-| Spinner | now | Inward cylinder mesh, paddle on a revolute motor (as `scene_paddle_mixer`) |
+| Convex Pile | built | Hulls of 32 random points (`complex_hull_points`) |
+| Spinner | built | Inward cylinder mesh, paddle on a revolute motor to the mesh's body |
 | Sleep | work | Pyramids woken by a filter joint made and destroyed when asleep: `step_script` writing `awake` |
 | SAT vs GJK | no | Only with `BOX3D_INTERNAL_BENCHMARKS`; collision timing, no simulation |
 

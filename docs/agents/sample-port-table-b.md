@@ -41,7 +41,7 @@ The plan: [sample-port-plan.md](sample-port-plan.md).
 | Distance Joint | built | A ball on a rigid distance joint (Count 1); spring, force range and limit set on the node, off |
 | Filter | built | Filter joint |
 | Motor Joint | work | Motor joint chasing a target moved each step: `animated_piece` target; max spring force / torque |
-| Top Down Friction | work | Motor joints to the ground as friction (max velocity force / torque), no gravity; GUI explosion: starting `v` |
+| Top Down Friction | built | Motor joints to the world as friction, no gravity; Explode as starting `v` / `w` (`Bodies.explode`) |
 | Prismatic | built | Spring, limits, motor, target translation |
 | Spherical | built | Cone and twist limits, spring, motor, target rotation |
 | Spherical Motor Frame | built | Spherical motor velocity; the head two hulls (`compound`), the kinematic neck static |
@@ -50,7 +50,7 @@ The plan: [sample-port-plan.md](sample-port-plan.md).
 | Weld | built | Linear and angular springs, constraint stiffness |
 | Wheel | built | Suspension, spin motor, steering and limits |
 | Ball and Chain | built | Capsule links, spherical joints with friction motors |
-| Door | work | Revolute door hit by a GUI impulse: starting `w`; per-joint constraint stiffness |
+| Door | built | Revolute door on the ground body, the Impulse button as starting `v` / `w` |
 | Bridge | built | Spherical-jointed planks with springs and damping |
 | Fold Out | built | Revolute friction motors |
 | Locked Joints | work | Joints on motion-locked bodies; lock and rotation choices are GUI (one per scene), the impulse a starting `v` |

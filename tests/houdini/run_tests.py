@@ -16,7 +16,7 @@ Run from the repository root, with the plugin built (build.bat copies it to the 
 On Windows, test.bat (in the repository root) finds Houdini and runs this.
 
 Each test runs in its own hython process, so a crash (CRASH) doesn't stop the others. Each
-test's scene is saved to tests/houdini/out/<test>.hip to open and inspect afterwards (laid out,
+test's scene is saved to examples/tests/<test>.hip to open and inspect afterwards (laid out,
 spaced apart in the viewport and annotated with sticky notes: review.py), and each
 test's latest result to tests/houdini/out/last_results.json (what --failed reads).
 Exit code 1 if anything failed, errored or crashed.
@@ -63,6 +63,10 @@ import review  # noqa: E402
 import b3dtest  # noqa: E402
 from b3dtest import Result, SetupError  # noqa: E402
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+# Each test's saved scene, beside the example scenes (examples/ is git-ignored).
+HIP_DIR = os.path.join(os.path.dirname(os.path.dirname(HERE)), "examples", "tests")
+
 # Every test, in run order: module by module.
 MODULES = [checks_core, checks_solver, checks_output, checks_packed, checks_geometry, checks_constraints, checks_more,
            checks_glue, checks_glue_compound, checks_joints, checks_mixing, checks_bullet, checks_determinism, checks_contact,
@@ -75,7 +79,7 @@ for module in MODULES:
         TESTS[name] = fn
 
 
-def run_child(name, out_dir, result_file):
+def run_child(name, hip_dir, result_file):
     """Runs one test in this process and writes its results to result_file (JSON)."""
     hou.hipFile.clear(suppress_save_prompt=True)
     b3dtest.KEPT.clear()
@@ -104,7 +108,7 @@ def run_child(name, out_dir, result_file):
     except Exception:
         traceback.print_exc()
     try:
-        hou.hipFile.save(os.path.join(out_dir, f"{name}.hip"))
+        hou.hipFile.save(os.path.join(hip_dir, f"{name}.hip"))
     except hou.OperationFailed:
         pass
     with open(result_file, "w") as f:
@@ -122,13 +126,13 @@ def hython_path():
     return sys.executable
 
 
-def run_isolated(name, out_dir):
+def run_isolated(name, hip_dir):
     """Runs one test in a separate hython process. A crash (no results written) is reported as
     CRASH with the end of the process's output."""
     fd, result_file = tempfile.mkstemp(suffix=".json")
     os.close(fd)
     os.remove(result_file)
-    cmd = [hython_path(), os.path.abspath(__file__), "--child", name, "--out", out_dir,
+    cmd = [hython_path(), os.path.abspath(__file__), "--child", name, "--hips", hip_dir,
            "--result-file", result_file]
     env = dict(os.environ, **getattr(TESTS[name], "env", {}))  # e.g. HOUDINI_MAXTHREADS=1
     try:
@@ -178,8 +182,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("tests", nargs="*", help="tests to run (default: all)")
     parser.add_argument("--list", action="store_true", help="list the tests and exit")
-    parser.add_argument("--out", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "out"),
-                        help="folder for each test's saved .hip")
+    parser.add_argument("--hips", default=HIP_DIR, help="folder for each test's saved .hip")
+    parser.add_argument("--out", default=os.path.join(HERE, "out"),
+                        help="folder for last_results.json (what --failed reads)")
     parser.add_argument("--repeat", type=int, default=1,
                         help="run the selected tests this many times (for intermittent crashes)")
     parser.add_argument("--failed", action="store_true",
@@ -193,7 +198,7 @@ def main():
     parser.add_argument("--result-file", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.child:
-        return run_child(args.child, args.out, args.result_file)
+        return run_child(args.child, args.hips, args.result_file)
     if args.update_baseline:
         os.environ[checks_regress.UPDATE_ENV] = "1"  # the test processes inherit it
     if args.list:
@@ -207,6 +212,7 @@ def main():
         print(f"unknown test(s): {', '.join(unknown)}. Use --list.")
         return 2
     os.makedirs(args.out, exist_ok=True)
+    os.makedirs(args.hips, exist_ok=True)
     last_path = os.path.join(args.out, "last_results.json")
     last = load_last(last_path)
 
@@ -226,7 +232,7 @@ def main():
             print(f"=== run {run} of {args.repeat}", flush=True)
         for name in selected:
             print(f"--- {name}", flush=True)
-            got = run_isolated(name, args.out)
+            got = run_isolated(name, args.hips)
             for r in got:
                 print(f"  {r.status:5}  {r.message}", flush=True)
             results.extend(got)

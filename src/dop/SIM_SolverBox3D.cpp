@@ -88,11 +88,11 @@ const SIM_DopDescription* SIM_SolverBox3D::getDescription()
 					  "and chains, but slower. Raise Substeps instead for "
 					  "collisions missed between frames." )
 			.subfolder( "Contacts" )
-			// Stiffer and less damped than Box3D's own defaults (30 Hz, 10):
-			// a more rigid look. Box3D caps the stiffness at 1/8 of the pass
-			// rate (fps x Substeps x Constraint Iterations), so 60 Hz needs 20 in
-			// total at 24 fps; the defaults (2 x 4 = 8) give 24 Hz.
-			.number( "contactstiffness", "Contact Stiffness", 60.0, R{ 0, 120 },
+			// Box3D's own stiffness (30 Hz), but less damped than its 10. Box3D
+			// caps the stiffness at 1/8 of the pass rate (fps x Substeps x
+			// Constraint Iterations), so 30 Hz needs 10 in total at 24 fps; the
+			// defaults (2 x 4 = 8) give 24 Hz.
+			.number( "contactstiffness", "Contact Stiffness", 30.0, R{ 0, 120 },
 					 "How stiff contacts are (cycles per second). Higher values "
 					 "recover from overlap faster but can jitter. Capped at 1/8 "
 					 "of FPS x Substeps x Constraint Iterations." )

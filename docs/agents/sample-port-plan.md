@@ -29,9 +29,10 @@ ported ones **built** in place of their verdict.
   (Query Spawn); wind lift (Wind Drop).
 * The common workarounds (helpers still to write: [todo.md](todo.md)): a kinematic body is an animated piece; a body of several shapes
   is glued pieces with Glue as One Body, or `compound` with Hull per Connected; a scripted step is keyed parameters, a
-  SOP Solver writing point attributes, or pieces appearing at a frame; an explosion is the pieces' starting `v`; wind
-  is drag (`airresist` / `targetv`); `fixedRotation` has no attribute (a large `inertialtensorstiffness`, or Motion
-  Lock's Lock Tilt for two axes); per-triangle mesh materials are one static piece per material.
+  SOP Solver writing point attributes, or pieces appearing at a frame; an explosion is starting `v` / `w`
+  (`Bodies.explode`); wind is drag (`airresist` / `targetv`); `fixedRotation` has no attribute (a large
+  `inertialtensorstiffness`, or Motion Lock's Lock Tilt for two axes); per-triangle mesh materials are one static
+  piece per material.
 * Readouts the samples draw (energy, ghost counts, hashes, profile counters) are not reproduced. The sticky note says
   what to look at instead.
 
@@ -86,8 +87,11 @@ ported ones **built** in place of their verdict.
     `weldTolerance` a Fuse). A hull's points come from a program linked with Box3D when Box3D builds them (GMod Wheel
     Stack), printed to full precision: `num` writes 9 significant digits, and rounded points can change a hull's faces.
   * `box_impulse`: the velocity a `b3Body_ApplyLinearImpulse` before the first step gives a box; `XorShift` and
-    `random_vec3`: the samples' random numbers (`shared/utils.h`, `mesh_drop.c`), computed in Python (VEX has no bit
-    shifts).
+    `random_vec3`: the samples' random numbers (`shared/utils.h`), computed in Python (VEX has no bit shifts);
+    `complex_hull_points` (`b3CreateComplexHull`), `cos_sin` and `f32`, for points a builder lists.
+  * `Bodies.explode`: `b3World_Explode` before the first step, a wrangle (`EXPLODE_VEX`) adding each box, sphere or
+    capsule body's push to its `v` / `w` (Box3D's to float rounding); its settings are on the Sample tab.
+  * `network_sop` takes a VEX string calling `joint(...)` in place of lines, for thousands of joints (Joint Grid).
 * `make_examples.py --samples` builds the samples; names select a category (`stacking`) or one sample
   (`stacking/card_house`). Without `--samples` it builds the nine scenes as before. `--check` simulates each.
 
@@ -116,6 +120,8 @@ Sticky notes state only what that comparison showed.
 * Joints: one network polyline per joint, each end at its frame's world position (the same point but for a distance
   joint's anchors), `orient` the frames' rotation on both ends (a revolute turns about the frame's z, a prismatic
   slides along x, as in Box3D). Frames that differ only by a free turn (the wheel's spin axis) make the same joint.
+  A joint to the sample's ground or mesh body names that body (`ground0`, `drum`), not the world, when its other body
+  touches it: a joint's bodies do not collide (Door's bottom edge, Spinner's paddle ends).
   One relationship node per distinct setting (`joints.node`: its Data Name its own name, since nodes of one type share
   a default one), or primitive attributes named like the parameters (Attributes Replace Values). `hertz` is
   Stiffness, angles and angular velocities in degrees, `constraintHertz` -> `constraint_stiffness`,

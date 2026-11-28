@@ -10,6 +10,7 @@ import math
 import os
 import re
 import shutil
+import struct
 
 import hou
 
@@ -287,6 +288,102 @@ void hull_points(string nm; vector p[]) {
 """
 
 
+EXPLODE_VEX = """\
+// b3World_Explode before the first step: each dynamic body (active 1) of one box, sphere or capsule shape
+// (bullet_georep) gets the push Box3D's explosion gives it, added to its v and w. The shape is sized as the solver
+// sizes it: with AutoFit the packed geometry's bounds (a box is the bounds, a sphere their half width, a capsule along
+// y within them), without it bullet_primS / bullet_radius / bullet_length about bullet_primT. Unscaled bodies.
+// The Explosion controls are on the bodies object's Sample tab.
+
+// The body's attributes, read with point(), not @ bindings: a binding would add the ones a body lacks (mass,
+// computemass ...) to every body, at 0. point() reads 0 for a missing one; those whose default is not 0 are checked.
+int active = 1, autofit = 1, computemass = 1;
+float density = 1000.0;
+if (haspointattrib(0, "active")) active = point(0, "active", @ptnum);
+if (haspointattrib(0, "bullet_autofit")) autofit = point(0, "bullet_autofit", @ptnum);
+if (haspointattrib(0, "computemass")) computemass = point(0, "computemass", @ptnum);
+if (haspointattrib(0, "density")) density = point(0, "density", @ptnum);
+float mass = point(0, "mass", @ptnum), prim_radius = point(0, "bullet_radius", @ptnum);
+float prim_length = point(0, "bullet_length", @ptnum);
+vector prim_s = point(0, "bullet_primS", @ptnum), prim_t = point(0, "bullet_primT", @ptnum);
+string rep = point(0, "bullet_georep", @ptnum);
+if (!chi("../explode") || active == 0) return;
+vector centre = chv("../explode_centre");
+float radius = ch("../explode_radius"), falloff = ch("../explode_falloff"), per_area = ch("../explode_impulse");
+
+int pr = pointprims(0, @ptnum)[0];
+matrix xform = primintrinsic(0, "packedfulltransform", pr);
+matrix3 rot = (matrix3)xform;  // the body's axes (rows)
+vector c = (centre - @P) * transpose(rot);  // the explosion in the body's frame
+float b[] = primintrinsic(0, "packedbounds", pr);
+vector lo = set(b[0], b[2], b[4]), hi = set(b[1], b[3], b[5]);
+int fit = autofit != 0;
+
+// The shape: its centre of mass, the point of its core nearest the explosion, its rounding radius (sphere, capsule).
+vector com = fit ? 0.5 * (lo + hi) : prim_t, half = 0.5 * (hi - lo), near;
+float rounding = 0.0, h = 0.0;
+if (rep == "box") {
+    if (!fit) half = prim_s;
+    near = clamp(c, com - half, com + half);
+} else if (rep == "sphere") {
+    rounding = fit ? half.x : prim_radius;
+    near = com;
+} else if (rep == "capsule") {
+    rounding = fit ? max(half.x, half.z) : prim_radius;
+    h = fit ? half.y - rounding : 0.5 * prim_length;  // half the straight part, along y
+    near = com + set(0.0, clamp(c.y - com.y, -h, h), 0.0);
+} else {
+    string body = point(0, "name", @ptnum);
+    warning("explode: %s is %s, not box, sphere or capsule: not pushed", body, rep);
+    return;
+}
+
+// b3ShapeDistance: the closest point of the shape (its centre when the explosion is inside it).
+vector gap = c - near;
+float distance = max(length(gap) - rounding, 0.0);
+if (distance > radius + falloff) return;
+vector closest = distance > 0.0 ? near + rounding * normalize(gap) : com;
+vector dir = closest - c;
+dir = length2(dir) > 100.0 * 1.4210855e-14 ? normalize(dir) : {1, 0, 0};
+
+// b3GetShapeProjectedArea along the push, and the falloff past the radius.
+float area;
+if (rep == "box")
+    area = 4.0 * (half.y * half.z * abs(dir.x) + half.x * half.z * abs(dir.y) + half.x * half.y * abs(dir.z));
+else if (rep == "sphere")
+    area = PI * rounding * rounding;
+else
+    area = PI * rounding * rounding + 2.0 * rounding * length(cross(set(0.0, 2.0 * h, 0.0), dir));
+float scale = (distance > radius && falloff > 0.0) ? clamp((radius + falloff - distance) / falloff, 0.0, 1.0) : 1.0;
+vector impulse = per_area * area * scale * dir;
+
+// The body's mass and principal inertia as Box3D computes them (b3ComputeHullMass, ...SphereMass, ...CapsuleMass).
+float m;
+vector inertia;
+if (rep == "box") {
+    m = density * 8.0 * half.x * half.y * half.z;
+    inertia = m / 3.0 * set(half.y * half.y + half.z * half.z, half.x * half.x + half.z * half.z,
+                            half.x * half.x + half.y * half.y);
+} else if (rep == "sphere") {
+    m = density * 4.0 / 3.0 * PI * pow(rounding, 3);
+    inertia = 0.4 * m * rounding * rounding * {1, 1, 1};
+} else {
+    float height = 2.0 * h, r2 = rounding * rounding;
+    float cylinder = density * PI * r2 * height, ball = density * 4.0 / 3.0 * PI * r2 * rounding;
+    float across = cylinder * (3.0 * r2 + height * height) / 12.0 + 0.4 * ball * r2
+                   + 0.125 * ball * (3.0 * rounding + 2.0 * height) * height;
+    m = cylinder + ball;
+    inertia = set(across, 0.5 * cylinder * r2 + 0.4 * ball * r2, across);
+}
+if (computemass == 0) {  // a set mass: the inertia scaled with it
+    inertia *= mass / m;
+    m = mass;
+}
+v@v += impulse / m * rot;
+v@w += cross(closest - com, impulse) / inertia * rot;
+"""
+
+
 class Bodies:
     """The geometry object holding a sample's rigid bodies. Each stream is one shape copied onto the points
     its VEX makes: body(p, q) adds a dynamic body, static_body(p, q) a static one, each returning its point for
@@ -302,6 +399,7 @@ class Bodies:
         self.attribs = {**BOX3D_MATERIAL, **(attribs or {})}
         self.streams = []  # (point wrangle or packed output, finish callback)
         self.count = 0
+        self.explosion = None  # explode()'s settings
 
     # --- shapes (SOPs), in Box3D's terms -------------------------------------------------------
 
@@ -470,15 +568,8 @@ addpointattrib(0, "w", {{0, 0, 0}});
         switch = create(self.geo, "switch", f"{tag}_choice")
         for i, (_, _, node) in enumerate(options):
             switch.setInput(i, node)
-        menu = hou.MenuParmTemplate(tag, label, [t for t, _, _ in options], [lab for _, lab, _ in options],
-                                    default_value=default)
-        group = self.geo.parmTemplateGroup()
-        folder = group.findFolder("Sample")
-        if folder is None:
-            group.append(hou.FolderParmTemplate("sample", "Sample", [menu]))
-        else:
-            group.appendToFolder(folder, menu)
-        self.geo.setParmTemplateGroup(group)
+        self._sample_parms([hou.MenuParmTemplate(tag, label, [t for t, _, _ in options],
+                                                 [lab for _, lab, _ in options], default_value=default)])
         switch.parm("input").setExpression(f'ch("../{tag}")')
         self.merge.setInput(len(self.merge.inputs()), switch)
         return switch
@@ -576,10 +667,46 @@ addpointattrib(0, "w", {{0, 0, 0}});
                            note=note or f"Sample::AddGroundBox( {num(extent)} ): the static ground, its top at y = 0",
                            **defaults)
 
+    def _sample_parms(self, templates):
+        """Adds parameters to the Sample tab of the bodies object (made on first use)."""
+        group = self.geo.parmTemplateGroup()
+        folder = group.findFolder("Sample")
+        if folder is None:
+            group.append(hou.FolderParmTemplate("sample", "Sample", templates))
+        else:
+            for template in templates:
+                group.appendToFolder(folder, template)
+        self.geo.setParmTemplateGroup(group)
+
+    def explode(self, centre, radius, falloff, impulse_per_area):
+        """b3World_Explode( b3ExplosionDef ) before the first step: a wrangle after the bodies' merge adds the push
+        to each dynamic box, sphere and capsule body's v and w (EXPLODE_VEX). Its settings are on the Sample tab."""
+        self.explosion = (centre, radius, falloff, impulse_per_area)
+
+    def _explosion(self, source):
+        centre, radius, falloff, impulse_per_area = self.explosion
+        folder = hou.FolderParmTemplate("explosion", "Explosion", [
+            hou.ToggleParmTemplate("explode", "Explode at Start", default_value=True,
+                                   help="Push the bodies apart before the first frame, as the sample's Explode."),
+            hou.FloatParmTemplate("explode_centre", "Centre", 3, default_value=centre),
+            hou.FloatParmTemplate("explode_radius", "Radius", 1, default_value=(radius,), min=0.0,
+                                  help="Bodies within this distance get the full push."),
+            hou.FloatParmTemplate("explode_falloff", "Falloff", 1, default_value=(falloff,), min=0.0,
+                                  help="Beyond the radius the push fades to nothing over this distance."),
+            hou.FloatParmTemplate("explode_impulse", "Impulse per Area", 1, default_value=(impulse_per_area,),
+                                  min=0.0, max=100000.0,
+                                  help="Push on each square metre of a body facing the explosion.")],
+            folder_type=hou.folderType.Simple)
+        self._sample_parms([folder])
+        wrangle = create(self.geo, "attribwrangle", "explode")
+        wrangle.setInput(0, source)
+        set_parm(wrangle, "snippet", EXPLODE_VEX)
+        return wrangle
+
     def finish(self):
         """Shows the merged bodies; returns the SOP path. Checks every body has a name."""
         null = create(self.geo, "null", "OUT_bodies")
-        null.setInput(0, self.merge)
+        null.setInput(0, self._explosion(self.merge) if self.explosion else self.merge)
         display(null)
         geo = cooked_geometry(null)
         self.count = len(geo.points())
@@ -717,6 +844,50 @@ def random_vec3(count, lo, hi, seed=12345):
     """The first `count` RandomVec3( lo, hi ) of the samples' generator."""
     rng = XorShift(seed)
     return [rng.vec3(lo, hi) for _ in range(count)]
+
+
+def f32(x):
+    """x rounded to a 32-bit float, as Box3D's computations hold it."""
+    return struct.unpack("f", struct.pack("f", x))[0]
+
+
+def cos_sin(radians):
+    """b3ComputeCosSin( radians ) as (cos, sin): the VEX `cossin` above, for hulls whose points the builder lists."""
+    x = radians - 2.0 * math.pi * round(radians / (2.0 * math.pi))
+    pi2 = math.pi * math.pi
+    if x < -0.5 * math.pi:
+        y = x + math.pi
+        c = -(pi2 - 4.0 * y * y) / (pi2 + y * y)
+    elif x > 0.5 * math.pi:
+        y = x - math.pi
+        c = -(pi2 - 4.0 * y * y) / (pi2 + y * y)
+    else:
+        c = (pi2 - 4.0 * x * x) / (pi2 + x * x)
+    if x < 0.0:
+        y = x + math.pi
+        s = -16.0 * y * (math.pi - y) / (5.0 * pi2 - 4.0 * y * (math.pi - y))
+    else:
+        s = 16.0 * x * (math.pi - x) / (5.0 * pi2 - 4.0 * x * (math.pi - x))
+    m = math.hypot(s, c)
+    return (c / m, s / m) if m > 0.0 else (0.0, 0.0)
+
+
+def complex_hull_points(radius):
+    """b3CreateComplexHull( radius )'s 32 points (src/hull.c): directions from a fixed LCG (seed 42)."""
+    state = 42
+    points = []
+    for _ in range(32):
+        while True:
+            p = []
+            for _ in range(3):
+                state = (state * 2147001325 + 715136305) & 0xFFFFFFFF
+                p.append((state & 0xFFFF) / 65535.0 - 0.5)
+            length_squared = sum(c * c for c in p)
+            if length_squared <= 0.25:
+                break
+        length = math.sqrt(length_squared)
+        points.append(tuple(f32(radius * c / length) for c in p))
+    return points
 
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))

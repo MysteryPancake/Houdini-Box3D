@@ -226,7 +226,8 @@ def ground(pieces, size=40.0):
 
 def network_sop(name, lines):
     """A constraint network: one polyline per joint between two pieces' anchor points.
-    lines: (name_a, pos_a, name_b, pos_b, constraint_name[, orient]). An empty name pins to the
+    lines: (name_a, pos_a, name_b, pos_b, constraint_name[, orient]), or a string of VEX calling joint( name_a,
+    pos_a, name_b, pos_b, constraint_name ) (no orient). An empty name pins to the
     world. Both points sit where the joint is; constraint_name picks the relationship node. The
     optional orient (a quaternion, on both ends) turns the joint's axes: a revolute hinge turns
     about its z axis, a prismatic slides along x, and so on."""
@@ -235,7 +236,7 @@ def network_sop(name, lines):
         child.destroy()
     wr = create(geo, "attribwrangle", "constraint_lines")
     set_parm(wr, "class", 0)
-    turned = any(len(line) > 5 for line in lines)
+    turned = any(not isinstance(line, str) and len(line) > 5 for line in lines)
     code = ['// One polyline per joint. Each end names the piece it holds ("" = the world) and',
             '// sits at the joint; constraint_name matches a relationship node\'s Data Name.',
             "void joint(string a; vector pa; string b; vector pb; string cname) {",
@@ -259,6 +260,9 @@ def network_sop(name, lines):
                  'addpointattrib(0, "orient", identity);',
                  'setattribtypeinfo(0, "point", "orient", "quaternion");']
     for line in lines:
+        if isinstance(line, str):  # VEX of its own calling joint(...), for grids of thousands of joints
+            code.append(line)
+            continue
         a, pa, b, pb, cname = line[:5]
         if len(line) > 5:
             code.append(f'joint_turned("{a}", {vec(pa)}, "{b}", {vec(pb)}, "{cname}", {vec(line[5])});')

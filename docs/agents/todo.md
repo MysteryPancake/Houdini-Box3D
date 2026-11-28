@@ -20,8 +20,9 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
   frames, `glueMirror`): `glueAdvance` 0.10 (spread 0.055, decay and break test 0.05) and the copy back 0.03 are what
   is left. Spreading only from nodes with hits would shrink the spread to the base row.
 * `glue_fracture_vs_bullet` (Box, Points from Volume, Voronoi Fracture's constraints named Glue, frame 24): Box3D's
-  equivalent Strength is 0.3 to 1.5x Bullet's with Glue as One Body on and 0.5 to 0.7x with it off, only checked on
-  that scene.
+  equivalent Strength is 0.10 to 0.21x Bullet's with Glue as One Body on and 0.09 to 0.21x with it off (means over
+  four drop heights; a single landing scatters by about a quarter), only checked on that scene: Box3D holds
+  about 10x better than Bullet at low Strength there.
 * `glue_compound_bridges` (a beam balanced on a block, a ball falling on its tip) passes only at Strength 2e5. At 1e5
   the hold frees 5 of 8 pieces on the first frame, `kGlueHoldHaloScale` times the ball's size around its path, and the
   3 left in the compound are held up by one bridge weld and creep off the block; a halo of 1 fixes that but the ball
@@ -99,8 +100,7 @@ unverified: [status.md](status.md), [status-areas.md](status-areas.md). Index an
   of 0 a prismatic one; both free (a cylinder) has no Box3D joint. Nothing in Houdini creates one but the node itself.
 * Box3D's samples as example scenes ([sample-port-plan.md](sample-port-plan.md)): the tables mark what is built.
   Left, in order:
-  1. Joints with workarounds (Door, Locked Joints, Top Down Friction, Driving), then Benchmark's portable ones
-     (pyramids, Convex Pile, Joint Grid, Spinner), timed with `--check` a few at a time.
+  1. Joints with workarounds: Locked Joints, Driving.
   2. Animated pieces and step scripts: Bodies, Kinematic, Rolling Deck, Turning Platform, Motor Joint, Junkyard,
      Washer, Static Invoke, Disable.
   3. The ragdoll: Ragdoll, then Rain, the Determinism scenes and Mesh / Reflection (`building.obj`: `mesh_file`).

@@ -1,11 +1,12 @@
 """Makes a test's saved scene easy to inspect by hand (run_tests.py calls tidy_for_review just before
-saving tests/houdini/out/<test>.hip):
+saving examples/tests/<test>.hip):
 
 * every network is laid out (as pressing L in the network editor), so no nodes overlap;
 * geometry objects that only feed a simulation are hidden, so the viewport shows the simulations,
   and the visible objects (DOP networks, and geometry that reads a simulation back, such as a DOP
   Import) are spaced out left to right along +X so they do not overlap; an object whose simulation reads its
   own transform (SideFX's crowd examples) stays put and a *_view object merging what it shows moves instead;
+  a scene with no simulation at /obj shows the objects nothing else reads (the test's output) instead;
 * a sticky note at /obj says what the test checks and expects (its docstring), what this run gave,
   and which network is which; each DOP network gets a short note saying where it sits;
 * every solver draws its collision shapes (show_collision_shapes), so a piece whose collider is not its
@@ -111,6 +112,29 @@ def _reads_simulation(node, dopnets):
             if target is not None and _top_object(target) in dopnets:
                 return True
     return False
+
+
+def _referenced_tops(tops):
+    """The /obj-level objects that a node in another top-level object names in a parameter (a DOP's SOP Path, an
+    Object Merge): the inputs of something else."""
+    found = set()
+    for top in tops:
+        try:
+            nodes = top.allSubChildren()
+        except (hou.Error, AttributeError):
+            continue
+        for n in nodes:
+            for p in n.parms():
+                try:
+                    if p.parmTemplate().type() != hou.parmTemplateType.String:
+                        continue
+                    target = p.evalAsNode()
+                except (hou.Error, AttributeError, TypeError):
+                    continue
+                other = _top_object(target) if target is not None else None
+                if other is not None and other != top:
+                    found.add(other)
+    return found
 
 
 def _layout_all(net):
@@ -259,6 +283,19 @@ def tidy_for_review(test_name, test_fn, results):
     # Inputs off, simulations (and views of them) on. `views`: the object each view shows, and the view; `pinned`:
     # objects that read their own transform and got no view (they show nothing), which must not be moved.
     shown, views, pinned = [], {}, set()
+
+    def show(n):
+        n.setDisplayFlag(True)
+        view = None
+        if _reads_own_transform(n):
+            view = _make_view(n)
+            if view is None:
+                pinned.add(n)
+            else:
+                views[n] = view
+        shown.append(view or n)
+
+    geos = []
     for n in tops:
         if n in dopnets:
             shown.append(n)
@@ -266,19 +303,22 @@ def tidy_for_review(test_name, test_fn, results):
         try:
             if n.type().category().name() != "Object" or not hasattr(n, "setDisplayFlag"):
                 continue
+            geos.append(n)
             if _reads_simulation(n, dopnets):
-                view = None
-                if _reads_own_transform(n):
-                    view = _make_view(n)
-                    if view is None:
-                        pinned.add(n)
-                    else:
-                        views[n] = view
-                shown.append(view or n)
+                show(n)
             else:
                 n.setDisplayFlag(False)
         except (hou.Error, AttributeError):
             continue
+    # No simulation at /obj (a SOP-only asset test, or one whose simulation is inside an asset such as SideFX's crowd
+    # examples): the objects nothing else reads are what the test made, so they are shown; failing that, all of them.
+    if not shown and geos:
+        referenced = _referenced_tops(tops)
+        for n in [g for g in geos if g not in referenced] or geos:
+            try:
+                show(n)
+            except (hou.Error, AttributeError):
+                continue
 
     # Side by side along +X, in the order the test made them.
     extents = [_dopnet_extent(n) if n in dopnets else _geo_extent(n) for n in shown]

@@ -64,7 +64,7 @@ How the project is built, tested and packaged. The digital assets' own notes are
 ## Example scenes
 
 `tools/examples/make_examples.py` (or `make_examples.bat`; `--check` also simulates each and prints timings) builds the demo
-scenes listed in its docstring into `examples/<number>_<name>.hip` (`examples/` is git-ignored and holds only what it builds), each from ordinary SOPs and one
+scenes listed in its docstring into `examples/<number>_<name>.hip` (`examples/` is git-ignored and holds only what it and the tests build), each from ordinary SOPs and one
 Box3D Packed Object, with a sticky note saying what to try. Not part of the build or the tests. `--samples` builds the
 ports of Box3D's own samples instead (`tools/examples/box3d_samples/`, into `examples/<category>/`;
 names pick a category or `category/sample`): [sample-port-plan.md](sample-port-plan.md). The helpers both share are in
@@ -75,7 +75,7 @@ names pick a category or `category/sample`): [sample-port-plan.md](sample-port-p
 Houdini checks: `hython tests/houdini/run_tests.py` (test names, `--list`, `--failed`, `--info`, `--repeat N`,
 `--update-baseline`), or `test.bat` on Windows. Each test builds its scene from scratch in its own hython process (a
 crash, or no result after 30 minutes, is reported as CRASH; an exception as ERROR), prints PASS / FAIL / INFO, and
-saves the scene to `tests/houdini/out/` tidied for opening by hand (`review.py`, with a sticky
+saves the scene to `examples/tests/<test>.hip` (`--hips` for another folder) tidied for opening by hand (`review.py`, with a sticky
 note holding the test's docstring and results, so write docstrings for a reader of the scene, and the solvers' collision
 shape guides on). `packed_boxes` draws a piece whose collider is a sphere or capsule fitted to its box as that shape
 (`fitted_round_shape`); hand-set shapes (`bullet_autofit` 0) stay boxes, shown by the guide. A test that clears or

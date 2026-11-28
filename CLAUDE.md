@@ -85,7 +85,7 @@ The full file-by-file map is [docs/agents/layout.md](docs/agents/layout.md). In 
   affectors, write-back. `Box3DState.h` is the shared state; `Box3DSolverInternal.h` what the solver's parts share.
 * `tools/` holds a folder per job, with the `.bat` / `.sh` helpers beside them: `assets/` (`make_*.py` build the four
   digital assets), `examples/` (`make_examples.py`, with `scene_kit.py` and `box3d_samples/`, builds the example scenes
-  into `examples/`, a git-ignored folder holding only its output) and `dev/` (`check_docs.py` checks the docs against
+  into `examples/`, a git-ignored folder holding only its output and the tests' saved scenes in `examples/tests/`) and `dev/` (`check_docs.py` checks the docs against
   the code; `b3d.py` is the cross-platform launcher).
 * `tests/core_*.cpp` are the C++ tests (`ctest`); `tests/houdini/` the Houdini checks (`test.bat`, `run_tests.py`)
   and the benchmarks (`bench.py`).
