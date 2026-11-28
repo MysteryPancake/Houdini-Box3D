@@ -95,6 +95,9 @@ function can carry `.env` (environment for its process, e.g. `HOUDINI_MAXTHREADS
 
 `baseline` (`checks_regress.py`) compares one fixed mixed scene on frame 48 with `tests/houdini/baseline.json` (1e-3).
 After an intended change of behaviour, or of `baseline_scene`, re-record it with `--update-baseline`.
+It is recorded with the default double-precision world (`BOX3DDOP_DOUBLE_PRECISION`): the scene is chaotic, so a
+single-precision build ends the chain and pile up to about 0.1 m away and fails it, and must be compared with a
+baseline recorded with that build.
 
 `checks_bullet.py` runs one scene in Box3D and in RBD Bullet Solver and compares the numbers (`solver_for`).
 `python -I tests/python/test_harness.py` needs no Houdini: it loads the Houdini checks against a stand-in `hou` and
