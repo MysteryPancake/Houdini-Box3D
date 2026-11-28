@@ -36,9 +36,11 @@ How the project is built, tested and packaged. The digital assets' own notes are
 * `BOX3DDOP_DEBUG` (default OFF) defines `BOX3DDOP_DEBUG=1` for the plugin and `b3dop_core`; with it off nothing writes
   to stdout / stderr. The value is cached in `build/`: reconfigure or delete `build/` to clear a stale ON.
 * `BOX3D_DIR` (default `extern/box3d`) points at Box3D's `CMakeLists.txt`.
-* `BOX3DDOP_MAX_WORLDS` is passed to `box3d` as PUBLIC `B3_MAX_WORLDS`. Rebuilds keep old worlds alive while cached
-  frames share them; `Box3DWorld::create` checks the count itself (Box3D would assert), and a failed rebuild fails the
-  solve (`reportWorldCreationFailure` names the limit).
+* Worlds alive at once are capped by Box3D's `B3_MAX_WORLDS`, the 16-bit id limit (the fork allocates world storage in
+  pages as worlds are created). Rebuilds keep old worlds alive while cached frames share them; `Box3DWorld::create`
+  checks the count itself (Box3D would assert), and a failed rebuild fails the solve (`reportWorldCreationFailure`
+  names the limit). The id limit is far above what memory allows, so how many old worlds stay alive (and their bodies)
+  is bounded only by the DOP cache.
 * `-DBOX3D_DOUBLE_PRECISION=ON` works: positions cross the boundary as `double[3]`.
 * Release or RelWithDebInfo only. RelWithDebInfo enables `B3_ENABLE_ASSERT`; `Box3DWorld::create` installs an assert
   handler that logs and continues (Box3D's default breaks to the debugger and kills Houdini). Inputs Box3D asserts on

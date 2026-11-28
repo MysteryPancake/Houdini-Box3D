@@ -735,9 +735,7 @@ void SIM_SolverBox3D::reportWorldCreationFailure( SIM_ObjectArray& objects )
 				 "world limit reached (" + std::to_string( live ) + " of " + std::to_string( max ) +
 					 " Box3D worlds alive). Each rebuild keeps the previous world "
 					 "while cached frames use it. "
-					 "Reset the simulation or clear the DOP cache to free them, or "
-					 "raise BOX3DDOP_MAX_WORLDS "
-					 "when building the plugin.",
+					 "Reset the simulation or clear the DOP cache to free them.",
 				 UT_ERROR_ABORT );
 	}
 	else

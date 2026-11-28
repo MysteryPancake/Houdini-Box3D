@@ -160,8 +160,6 @@ Features to add in the fork. Once one exists, the wrapper maps it and the entry 
 
 Workarounds in the wrapper that the engine could own, roughly by value:
 
-* **Worlds allocated on demand.** `B3_MAX_WORLDS` sizes the static `b3_worlds` array at compile time, so the build
-  passes `BOX3DDOP_MAX_WORLDS` through to Box3D and the solver reports "world limit reached" past it.
 * **A hull build that always succeeds.** `b3CreateHull` fails when the vertex, face or edge limits are exceeded, or
   the hull is thin (thinner than the larger of `B3_LINEAR_SLOP` and 0.1% of its largest extent), so
   `createHullWithKey` retries smaller vertex budgets (a triangulated hull hits the half-edge limit well below the

@@ -88,7 +88,7 @@ Example scenes: run `make_examples.bat` (Linux: `hython tools/examples/make_exam
 
 ## Troubleshooting
 
-**"world limit reached".** Reset the simulation or clear the DOP cache, or build with `-DBOX3DDOP_MAX_WORLDS=<n>`.
+**"world limit reached".** Reset the simulation or clear the DOP cache.
 
 **Debug logging:** configure with `-DBOX3DDOP_DEBUG=ON` to print to Houdini's console.
 

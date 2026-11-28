@@ -73,12 +73,6 @@ if(CLANG_FORMAT_EXE)
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} VERBATIM)
 endif()
 
-# How many Box3D worlds may exist at once (Box3D's own default is 128). Every rebuild makes a
-# new world and the old one lives on while cached frames use it, so long sessions and several
-# DOP networks add up. Each slot is a ~5 KB static array entry. Box3D caps it below 65535.
-set(BOX3DDOP_MAX_WORLDS 1024 CACHE STRING "Maximum number of Box3D worlds alive at once")
-target_compile_definitions(box3d PUBLIC B3_MAX_WORLDS=${BOX3DDOP_MAX_WORLDS})
-
 # ---------------------------------------------------------------------------
 # Core: plain C++ wrapper around Box3D. No Houdini headers in here.
 # ---------------------------------------------------------------------------
