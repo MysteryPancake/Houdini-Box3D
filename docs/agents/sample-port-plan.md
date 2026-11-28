@@ -92,6 +92,9 @@ ported ones **built** in place of their verdict.
     builder lists.
   * `finish(step=vex)`: `step_script`, a sample's `Step()` before `b3World_Step` (a SOP Solver ahead of the Box3D
     Solver in a Multiple Solver; a changed `v` / `w` is an edit). `Bodies.slider` / `toggle` / `menu`: a sample's GUI controls, read by the streams' VEX.
+  * `finish(keys=...)` (`key_parm`): a relationship node's parameter keyed, each key held until the next, for a key the
+    sample's `Step()` presses (Driving's throttle and steering). Its operation menu (`parmop_<name>`) goes to Set
+    Always: at Set Initial, as the nodes start, the joint keeps the first frame's value.
   * `Bodies.explode`: `b3World_Explode` before the first step, a wrangle (`EXPLODE_VEX`) adding each box, sphere or
     capsule body's push to its `v` / `w` (Box3D's to float rounding); its settings are on the Sample tab.
   * `network_sop` takes a VEX string calling `joint(...)` in place of lines, for thousands of joints (Joint Grid).
@@ -137,6 +140,6 @@ Sticky notes state only what that comparison showed.
 * GUI sliders: the defaults are baked in; the one worth playing with becomes a spare parameter on the pieces' object, as
   Count in `scene_many_bodies`. Radio buttons that pick a body are `Bodies.choice`: a stream per option (`merged=False`)
   into a Switch SOP read from a menu on the bodies object's Sample tab (Mesh's Shape). Parameters a sample changes at a
-  time become keyframes (joint settings are live).
+  time become keyframes (`finish(keys=...)`; joint settings are live).
 * Sticky note: what the sample shows, `Box3D sample <Category> / <Name> (samples/sample_<file>.cpp)`, what was
   changed for the port, and what to try.

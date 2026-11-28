@@ -4,7 +4,8 @@ sample's sliders and checkboxes, live in Houdini as they are in the sample app."
 
 import math
 
-from .common import Bodies, box_impulse, finish, num, sample, vec
+from .common import (VEX_FUNCTIONS, Bodies, box_impulse, finish, height_field, motion_locks, num, sample,
+                     vec)
 
 SOURCE = "sample_joint.cpp"
 
@@ -406,6 +407,124 @@ a 10 kg ball drops onto it.""",
                          "gives them that as a starting v and w.",
                   try_="push the boxes: v {5, 5, 5} and w {2, 2, 2} in boxes_points; drop the ball off centre.",
                   joints=joints, lines=lines)
+
+
+LOCKED_JOINTS_PORTED = """\
+the sample's lock checkboxes are the locks node's Lock X, Y and Z (live), its Rotation menu at free. Spin z
+is Lock Angular XY on that node; spin x or y needs the lock lines' orient turned so their z is along that
+axis (as Thin Wall Push Out's), and fixed rotation has no attribute (see Fixed Rotation). The force and
+torque thresholds the sample sets are not read by it, so Breakable stays off. The L key's impulse: Try."""
+
+
+@sample("Joints", "Locked Joints", SOURCE, frames=300)
+def locked_joints(s):
+    kinds = ["distance", "motor", "prismatic", "revolute", "weld", "wheel"]
+    xs = [-12.5 + 5.0 * i for i in range(len(kinds))]
+    b = Bodies(s.tag, {"angulardamping": 0.0, "enablesleep": 1})
+    b.ground(20.0)
+    b.stream("boxes", b.box("boxes", 1.0, 1.0, 0.5), f"""\
+// Six boxes 10 m up, 5 m apart along x, one per joint type: {", ".join(kinds)}.
+for (int i = 0; i < {len(kinds)}; ++i) body(set(-12.5 + 5.0 * i, 10, 0), identity);
+""", cd=(0.9, 0.6, 0.2), note="density 1, angular damping 0.5, never sleeping", density=1.0, angulardamping=0.5,
+             enablesleep=0)
+    joints = [node("distance", "distance", collide_connected=1),
+              node("motor", "motor", collide_connected=1, max_spring_force=1000.0, max_spring_torque=20.0),
+              node("prismatic", "prismatic", collide_connected=1),
+              node("revolute", "revolute", collide_connected=1),
+              node("weld", "weld", collide_connected=1, enable_angular_spring=1, angular_stiffness=2.0,
+                   angular_damping_ratio=0.5),
+              node("wheel", "wheel", collide_connected=1, enable_suspension_spring=1, suspension_stiffness=1.0,
+                   suspension_damping_ratio=0.7, enable_suspension_limit=1, lower_suspension_limit=-1.0,
+                   upper_suspension_limit=1.0, enable_spin_motor=1, max_spin_torque=10.0,
+                   spin_speed=math.degrees(1.0)),
+              node("motionlock", "locks", collide_connected=1, lock_x=1, lock_y=1, lock_z=1, lock_angular_xy=0)]
+    # The distance joint hangs the box 2 m below a world anchor above its top face; the motor joint's frames are at
+    # its centre; the others are at the middle of its left face (x - 1), their frames the world axes.
+    lines = [("", (xs[0], 13.0, 0.0), "boxes0", (xs[0], 11.0, 0.0), "distance"),
+             ("", (xs[1], 10.0, 0.0), "boxes1", (xs[1], 10.0, 0.0), "motor")]
+    lines += [("", (xs[i] - 1.0, 10.0, 0.0), f"boxes{i}", (xs[i] - 1.0, 10.0, 0.0), kinds[i]) for i in range(2, 6)]
+    lines += motion_locks([(f"boxes{i}", (xs[i], 10.0, 0.0)) for i in range(6)], "locks")
+    return finish(s, b, about="""\
+Joints on bodies that motion locks also hold. Six boxes hang in the air on a distance, motor, prismatic,
+revolute, weld and wheel joint to the world; each is also held at its centre by a motion lock to the world
+(Sample::LockMotion), here with all three positions locked and rotation free, as the sample starts, so
+the boxes stay where they are. With Lock Y off each box drops as far as its own joint lets it: the motor
+box (its springs have no stiffness) falls to the ground, the wheel box sags on its soft suspension and
+tilts, the revolute and weld boxes dip a few centimetres, the distance and prismatic boxes hold. Both ways
+the boxes are where Box3D's are, to the millimetre.""",
+                  ported=LOCKED_JOINTS_PORTED,
+                  try_="turn Lock Y off on the locks node (live): the boxes drop as their joints let them. The L key "
+                       "pushes the distance box: v {25, 0, 0} on its first point in boxes_points (an impulse of 100 on "
+                       "4 kg), with Lock X off.",
+                  joints=joints, lines=lines)
+
+
+DRIVING_PORTED = """\
+the sample drives by keyboard (W / S throttle, A / D steering, in its third-person view); here the keys
+are keyframes on the wheel nodes, held as a key is: the rear node's Spin Speed is -30 rad/s (W, the
+sample's Speed slider of 30) from frame 60 to 420, and the front node's Target Steering Angle -45
+degrees (D) from frame 180 to 252 (keyed settings need their node's operation menu at Set Always).
+Without the keys, as the sample starts, the car stands still. The wave height field is a HeightField SOP
+on a Static Object (collider0). The speed and joint readouts are not drawn. The chassis follows Box3D's
+path to within 4 cm over the 47 m it drives."""
+
+# Driving's front and rear wheel joints: b3WheelJointDef as the sample fills it (the slider defaults).
+DRIVING_WHEEL = dict(enable_suspension_spring=1, suspension_stiffness=4.0, suspension_damping_ratio=0.7,
+                     enable_suspension_limit=1, lower_suspension_limit=-0.2, upper_suspension_limit=0.2,
+                     max_spin_torque=5.0, spin_speed=0.0, steering_stiffness=10.0, steering_damping_ratio=0.7,
+                     max_steering_torque=5.0, target_steering_angle=0.0, enable_steering_limit=1,
+                     lower_steering_limit=-45.0, upper_steering_limit=45.0)
+
+
+@sample("Joints", "Driving", SOURCE, frames=540)
+def driving(s):
+    # b3CreateWave( 50, 50, (4, 2, 4), 0.02, 0.04 ) on a static body at (-20, 0, -20): heights sin(2 pi 0.02 row)
+    # times sin(2 pi 0.04 column), at b3ComputeCosSin, times 2; rows run along z, columns along x.
+    field = height_field(s.tag, 50, 50, (4.0, 2.0, 4.0), origin=(-20.0, 0.0, -20.0), heights=VEX_FUNCTIONS + """\
+int column = int(rint((@P.x + 20.0) / 4.0)), row = int(rint((@P.z + 20.0) / 4.0));
+@height = cossin(2.0 * PI * 0.02 * row)[1] * cossin(2.0 * PI * 0.04 * column)[1];
+""")
+    b = Bodies(s.tag, {"fastrotation": 0})
+    b.stream("chassis", b.box("chassis", 2.0, 0.5, 1.0), "body({0, 2.5, 0}, identity);", cd=(0.85, 0.3, 0.25),
+             note="b3MakeBoxHull( 2, 0.5, 1 ), density 0.5", density=0.5)
+    wheel_vex = f"""\
+// The four wheels, their axles along z (the body's y turned to z): front left, front right, rear left, rear right.
+// Every wheel shape names its bodies wheels0 to wheels3, so the joints find them whichever the Wheels menu picks.
+vector at[] = array(set(1.5, 2, 0.8), set(1.5, 2, -0.8), set(-1.5, 2, 0.8), set(-1.5, 2, -0.8));
+foreach (vector p; at) {{
+    int pt = body(p, {vec4(Y_TO_Z)});
+    setpointattrib(0, "name", pt, sprintf("wheels%d", pt));
+}}
+"""
+    wheel = dict(cd=(0.2, 0.2, 0.22), merged=False, density=2.0, friction=3.0, fastrotation=1)
+    shapes = [("sphere", "Sphere", b.sphere("sphere", 0.4), "a sphere of radius 0.4"),
+              ("capsule", "Capsule", b.capsule("capsule", 0.125, 0.4), "b3Capsule { (0, -0.125, 0), (0, 0.125, 0), "
+                                                                       "0.4 }"),
+              ("cylinder", "Cylinder", b.cylinder("cylinder", 0.375, 0.4, -0.1875, 16),
+               "b3CreateCylinder( 0.375, 0.4, -0.1875, 16 ): the Sides slider at 16")]
+    b.choice("wheels", "Wheels", [(token, label, b.stream(token, shape, wheel_vex, note=f"{note}; density 2, "
+                                                          "friction 3, fastrotation", **wheel))
+                                  for token, label, shape, note in shapes])
+    speed = -math.degrees(30.0)  # the rear wheels' Spin Speed while W is held: -Speed rad/s
+    front = node("wheel", "front_wheels", enable_spin_motor=0, enable_steering=1, **DRIVING_WHEEL)
+    rear = node("wheel", "rear_wheels", enable_spin_motor=1, enable_steering=0, **DRIVING_WHEEL)
+    lines = [("chassis0", p, f"wheels{i}", p, "front_wheels" if i < 2 else "rear_wheels", X_TO_Y)
+             for i, p in enumerate([(1.5, 2.0, 0.8), (1.5, 2.0, -0.8), (-1.5, 2.0, 0.8), (-1.5, 2.0, -0.8)])]
+    lines.append(("", (-20.0, 0.0, -20.0), "chassis0", (0.0, 2.5, 0.0), "upright", Z_TO_Y))
+    return finish(s, b, about="""\
+A car on a rolling height field: a box chassis on four wheel joints, each with a 4 Hz suspension spring
+and a travel limit of 0.2 m either way. The front wheels steer (a 10 Hz steering spring, up to 45
+degrees), the rear ones are driven by spin motors of at most 5 N m, and a soft parallel joint to the
+world (0.5 Hz) keeps the chassis upright. Here the car drives off along x, turns right for 1.2 s onto
++z, drives on and brakes from frame 420 (the motors held at 0).""",
+                  ported=DRIVING_PORTED,
+                  try_="change the keys on rear_wheels' Spin Speed and front_wheels' Target Steering Angle (live "
+                       "settings), or another Wheels shape on the bodies object's Sample tab (restart).",
+                  joints=[front, rear, node("parallel", "upright", collide_connected=1, stiffness=0.5,
+                                            damping_ratio=1.0)],
+                  lines=lines, statics=[field],
+                  keys={("rear_wheels", "spin_speed"): [(1, 0.0), (60, speed), (420, 0.0)],
+                        ("front_wheels", "target_steering_angle"): [(1, 0.0), (180, -45.0), (252, 0.0)]})
 
 
 def vec4(q):

@@ -15,7 +15,7 @@ import struct
 import hou
 
 from scene_kit import (SetupError, build_dops, cooked_geometry, create, display, fix_constraint_names, network_sop,
-                       num, set_parm, tidy, vec)
+                       num, set_menu_token, set_parm, tidy, vec)
 
 # ---------------------------------------------------------------------------
 # Registry
@@ -769,6 +769,23 @@ def motion_locks(names_and_points, constraint_name="motionlock"):
     return [("", p, n, p, constraint_name) for n, p in names_and_points]
 
 
+def key_parm(node, parm_name, frames):
+    """Keyframes [(frame, value)] on node's parameter, each held until the next (constant()): a sample's key held
+    down or a setting its Step() changes at a time. Its operation menu goes to Set Always, as Houdini sets it when
+    a key is made by hand: at Set Initial the data keeps the first frame's value."""
+    parm = node.parm(parm_name) if node is not None else None
+    if parm is None:
+        raise SetupError(f"{node.path() if node else '?'}: no parameter {parm_name} to key")
+    set_menu_token(node, f"parmop_{parm_name}", "always")
+    parm.deleteAllKeyframes()
+    for frame, value in frames:
+        key = hou.Keyframe()
+        key.setFrame(frame)
+        key.setValue(value)
+        key.setExpression("constant()", hou.exprLanguage.Hscript)
+        parm.setKeyframe(key)
+
+
 def step_script(dop, solver_node, vex):
     """A sample's Step() before b3World_Step: a SOP Solver running `vex` over the bodies' points, then the Box3D
     Solver, in a Multiple Solver. The solver takes a changed v / w as an edit and sets the body's velocity before it
@@ -799,14 +816,15 @@ SOLVER_NOTE = ("The solver runs as Box3D's sample app: 60 fps with Substeps 1 an
 
 
 def finish(s, bodies, about, ported="", try_="", joints=None, lines=None, solver=None, gravity=GRAVITY,
-           note_size=(10, 6), emit=False, statics=(), step=None):
+           note_size=(10, 6), emit=False, statics=(), step=None, keys=None):
     """The DOP network around the bodies, the solver set as Box3D runs, the frame range and the notes.
     joints: [(relationship type, node name, {parm: value}, constraint_name)] for the network `lines`
     (network_sop's (name_a, pos_a, name_b, pos_b, constraint_name[, orient])). emit: a Box3D Solver SOP with Emit RBDs
     in place of the DOP network, for samples that make bodies again during the run (their `rbdbullet_emit`: Every).
     statics: SOP paths of colliders (height_field) for Static Object DOPs merged in, with Box3D's material.
     step: VEX run over the bodies' points before each Box3D step (step_script), for a sample whose Step() sets
-    v, w, force, awake, enabled or dead."""
+    v, w, force, awake, enabled or dead. keys: {(relationship node name, parm): [(frame, value)]}, keyframes held
+    until the next (a key the sample's Step() presses: joint settings are live)."""
     if emit:
         if lines or step:
             raise SetupError(f"{s.tag}: emit takes no joints or step script")
@@ -822,6 +840,8 @@ def finish(s, bodies, about, ported="", try_="", joints=None, lines=None, solver
     dop, solver_node, data_names = build_dops(f"{s.tag}_sim", path, joints=joint_nodes, network_path=network)
     if network:
         fix_constraint_names(network, data_names, wanted)
+    for (node_name, parm_name), frames in (keys or {}).items():
+        key_parm(dop.node(node_name), parm_name, frames)
     if statics:
         merge = create(dop, "merge", "with_colliders")
         merge.setInput(0, solver_node.inputs()[0])

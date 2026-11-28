@@ -16,7 +16,7 @@ sys.dont_write_bytecode = True
 import hou  # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "tests", "houdini"))
-from b3dtest import SetupError, create, display, set_parm  # noqa: E402,F401  (the checks' scene helpers)
+from b3dtest import SetupError, create, display, set_menu_token, set_parm  # noqa: E402,F401  (the checks' helpers)
 from review import place_note_left  # noqa: E402
 
 # ---------------------------------------------------------------------------

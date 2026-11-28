@@ -53,9 +53,9 @@ The plan: [sample-port-plan.md](sample-port-plan.md).
 | Door | built | Revolute door on the ground body, the Impulse button as starting `v` / `w` |
 | Bridge | built | Spherical-jointed planks with springs and damping |
 | Fold Out | built | Revolute friction motors |
-| Locked Joints | work | Joints on motion-locked bodies; lock and rotation choices are GUI (one per scene), the impulse a starting `v` |
+| Locked Joints | built | Six joint types on boxes also held by motion locks: the lock checkboxes are the lock node's parameters, the Rotation menu at free |
 | Motion Lock Joint | built | Motion lock joint; the key impulse as a starting `v` / `w` (Try) |
-| Driving | work | Keyboard car on a height field: keyed Spin Speed and Target Steering Angle on the wheel node (live settings) |
+| Driving | built | Car on a wave height field (`height_field`): the keyboard is keyed Spin Speed and Target Steering Angle (`finish(keys=...)`); the Wheels menu (`choice`) |
 | Gear Lift | work | Gears of offset boxes on revolute motors, a prismatic lift, rocks, custom mesh: `Bodies.parts` |
 
 ## Manifold (`sample_manifold.cpp`)
